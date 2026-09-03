@@ -180,6 +180,7 @@ Ranked by *when* it bites, not by size of eventual win.
 | 6 | **Reports and manifests built entirely in RAM** | 284 B/cell MEASURED; caps allow 2.1 M cells | ~10–20× today's records | `write_only` workbook to a temp file; stream rows | Column widths become fixed, not content-fitted |
 | 7 | **Queue throughput: one worker, serial batch** | `media_queue.py::process_next_media_jobs`; `main.py::_acquire_queue_worker_lock` | ~5–10× today's audio | Concurrency as a setting (default 1); DB lease instead of `flock` | None at default |
 | 8 | **Unbounded aggregate responses** | `review.py::list_pending_reviews` (no paging), `data_browser.py::TAKE`, `::REPORT_TAKE` | ~200 pending per type | Paginate; stream the manifest | None |
+| 8a | **Unbounded read — `GET /questionnaire/completion` with no scope** (the View Data screen's FIRST load) — **DONE 2026-09-03** | issued `questionnaireinterview.find_many(where={}, include={artisans, responses, media})` with **no `take`** | **Now** — every open of that screen | Two `DISTINCT` statements for the (interview, section) pairs, and the artisan links only | None; strictly less data on the wire |
 | 9 | **Multi-column `ILIKE '%term%'`** | `records.py::contains`, 57 call sites | ~100–150 k rows in a searched table, MODELLED | `pg_trgm` GIN indexes — inside Postgres, no new service | Index build + write amplification; kilobytes today |
 | 10 | **OFFSET pagination depth** | `pagination.py:10` | ~100 k rows **and** deep paging, MODELLED | Cursor alongside page numbers, not instead | None; additive field |
 | 11 | **Exact `COUNT(*)` per list response** | `records.py::count_and_page` | ~1 M rows, MODELLED | Fetch `pageSize + 1`; report `hasMore` above a threshold | None until the threshold |
@@ -241,7 +242,7 @@ baseline that a redeploy has to be re-measured against:
 |---|---|---|
 | `review.py::list_pending_reviews` | 7 sequential trips, MEASURED 4,958 ms | one wave of six `find_many`; a second wave carries a `count` **only** for the record types that overflowed the cap, so a queue under the cap is one wave and nothing else |
 | `export.py::dataset_manifest` | 12.98 trips MEASURED | the six tables in one wave; the media read stays a second wave because `media_or` is built out of their ids. The two visibility predicates above them were gathered too, but see the note below — that pair is one query either way |
-| `data_browser.py::_report_records` (`/data/report`) | 19.01 trips MEASURED | the eight root reads in one wave; in the workshop branch products/tools/interviews (all keyed off the artisan ids alone) in one wave, with `processes` still below them because it needs the product ids |
+| `data_browser.py::_report_records` (`/data/report`) | 19.01 trips MEASURED | the eight root reads in one wave; in the workshop branch products/tools/interviews (all keyed off the artisan ids alone) in one wave, with `processes` still below them because it needs the product ids. **Two corrections, 2026-09-03** — "the eight root reads in one wave" is no longer true *on the deployment*: `gather_reads` is bounded by `pool_width()`, `DATABASE_CONNECTION_LIMIT` is **5** in production ([ENVIRONMENT.md](ENVIRONMENT.md), recorded 2026-09-02), so eight coroutines land as **5 + 3**. And the design-workshop second wave is now **three** reads, not one: the stage entries plus two bounded `group_by` counts — see §5.2 |
 | `media.py::list_media` | `count`, then `find_many`, then `_interview_labels`, then `media_url_scope`, in series | `count`+`find_many` in one wave; `_interview_labels`+`media_url_scope` in the next, inside the shared `_public`, so `GET /media/{id}` and `GET /media/orphans` inherit it |
 
 `data_browser.py::_scope_for` was gathered with them, and **it is the one conversion in this
@@ -472,9 +473,31 @@ not have that read site at all:**
    costs the LAST pictures in the report and never the first; nothing is sorted by size, because
    fitting more pictures in would decide which page loses one on a criterion no reader could guess.
 
+**The prefetch is no longer serial (2026-09-03), and the bound survives that.** A
+`ThreadPoolExecutor(max_workers=REPORT_IMAGE_FETCH_WORKERS = 4)` downloads *ahead* while every budget
+decision is still committed **one at a time, in `document.images` order, on the calling thread** —
+which is what preserves the property above: budget exhaustion still costs the LAST pictures and never
+an arbitrary set, because the order in which downloads *finish* never reaches the decision.
+
+**The transient memory ceiling is therefore statable, and is the number to reason with.** The 96 MiB
+aggregate budget, plus at most four undecided images in flight, each of them bounded by
+`get_object_bytes(max_bytes=…)` to `min(REPORT_IMAGE_MAX_BYTES, remaining headroom)` — so a worst
+case of **budget + 64 MiB**, against the previously unbounded single-object read this whole section
+was written around. Four workers is the number that makes that arithmetic fit on a 1 GiB box; raising
+it raises the second term linearly.
+
 **Cost to the pilot:** disk instead of RAM (the box has disk; it does not have RAM), one extra
-temp-file lifecycle, and one `HEAD` round trip per gated read — negligible against a path that is
-about to spend a cross-region provider round trip. No new service, no new dependency.
+temp-file lifecycle, and one `HEAD` round trip per fetched photograph — which is precisely what buys
+the bound, since the ceiling has to be known before the body is read. Negligible against a path that
+was written to spend a cross-region provider round trip and now spends a co-located one. No new
+service, no new dependency.
+
+**The four upload doors that enforced their cap *after* the body was in RAM (A30-10) are closed,
+2026-09-03.** They read through `backend/app/services/uploads.py::read_upload_bounded`, which refuses
+on the declared `Content-Length` before a byte moves and counts a running total when the header is
+absent or lying — the same shape as the download-side bound above, on the other side of the wire.
+Two of them are the design-workshop doors, `POST /design-workshops/ocr/identity` and
+`POST /design-workshops/{id}/dictate`. See A30-10 in [AUDIT-2026-08-30.md](AUDIT-2026-08-30.md).
 
 **The behaviour change worth stating plainly.** These are refusals where there used to be an
 attempt. A recording over the ceiling is now answered `413` (web) or written terminal-UNAVAILABLE on
@@ -508,6 +531,31 @@ That does not fit in 1 GiB alongside uvicorn and the Prisma engine. Today it is 
 the whole repository is a few thousand cells — `/data/report?format=json` returns 2.75 MB
 (MEASURED), which is perhaps 20 k cells. **The existing row caps are already above what the box can
 render**; only the data being small is holding it up.
+
+**The design-workshop block reads `DwStageEntry` with the SAME `REPORT_TAKE` cap across every
+workshop in scope — and unlike every other sheet, the cap is reached at the root today**: the
+repository already holds **6,952** stage entries against a cap of 5,000. So the design-workshop
+sheets have been silently truncated at the root for as long as the corpus has been that size, which
+is the failure mode this whole document is about arriving early rather than at 100× scale.
+
+Two things changed on 2026-09-03. **The DW sheets now flag that cut**, so a truncated workbook says
+it is truncated instead of reading as a complete one. And the **"DW tables" index page's `Rows`
+column and the overview's "Rows recorded"** are read from two bounded `group_by` queries
+(`by=["entityKey"]` and `by=["designWorkshopId"]`) rather than counted off the capped list — because
+counting `len(entries)` over a list the cap had already trimmed reported *the number of rows this
+workbook happened to carry*, which is a different quantity from the one the label promises and is
+wrong by exactly the amount that matters. That is the second wave §2's table now records as three
+reads rather than one.
+
+**A third thing changed the same day, on the RECORD and MEDIA sheets rather than the DW ones: the
+truncation banner stopped offering the `.xlsx` as the way to see the rest.** It now reads *"This list
+hit the server row cap — browse a narrower folder to see the rest."* The workbook is built from the
+**same capped read**, so a reader sent to download it got the identical first slice in a spreadsheet
+and no sign that anything was still missing — a truncation notice that points somewhere the problem
+is not fixed is worse than no notice at all. Narrowing the folder is the one move that genuinely
+returns rows the list is not showing. Design-workshop sheets are unaffected: they ship their own
+`truncatedNote`, because their cut is the TAB budget rather than the row cap and a narrower folder
+does not recover a tab.
 
 `GET /export/dataset` is the same story in JSON: it loads six tables (each ≤ 5,000 rows, with
 relation includes) plus up to `MEDIA_TAKE = 20000` media rows (`export.py:26-28`) and returns one
@@ -639,15 +687,22 @@ must survive any pool change.
 1. **Reduce trips per request** (§3, §4). This is the only change that raises the ceiling rather
    than reshuffling it. Removing the auth read alone takes `/tools` from 4.1 to 3.4 connection-
    seconds — a ~17 % throughput gain, for free, at both ends of scale.
-2. **Set `DATABASE_POOL_TIMEOUT` explicitly** (5 s). Ten seconds of queueing on a link where a
-   healthy request is 3 s means a saturated pool presents as a hang, not as an error, and CloudFront
-   times out before the client learns anything.
+2. ~~**Set `DATABASE_POOL_TIMEOUT` explicitly** (5 s).~~ **DONE in the deployment, 2026-09-03.** The
+   reasoning was: ten seconds of queueing on a link where a healthy request is 3 s means a saturated
+   pool presents as a hang, not as an error, and CloudFront times out before the client learns
+   anything. Production now sets `5`. The **code default stays unset** on purpose — the number is
+   only interesting against a pool of 5, which is itself a deployment value — so a fresh clone still
+   gets Prisma's own ten seconds. See [ENVIRONMENT.md](ENVIRONMENT.md) and A30-13 in
+   [AUDIT-2026-08-30.md](AUDIT-2026-08-30.md).
 3. **Do not raise `connection_limit` to fix a burst.** The pooler multiplexes over ~15 server
    connections; more client connections past that point buy queueing, not concurrency — and this is
    precisely the mistake the 40 → 10 cut was reverting.
-4. **`gather_reads` is bounded by `pool_width()`** (`concurrency.py:25-32`), which means one request
-   may legitimately ask for the entire pool. That is safe at one concurrent dashboard request and
-   self-throttling at several. Worth keeping the bound at the pool size and never above it.
+4. **`gather_reads` is bounded by `pool_width()`** (`backend/app/services/concurrency.py` — named
+   rather than pinned, because the line has already drifted once), which means one request may
+   legitimately ask for the entire pool. That is safe at one concurrent dashboard request and
+   self-throttling at several. Worth keeping the bound at the pool size and never above it. **On the
+   deployment that pool is 5, not 10** ([ENVIRONMENT.md](ENVIRONMENT.md)), so the bound bites sooner
+   than the arithmetic elsewhere in this document assumes — see §2's wave table.
 
 ---
 
@@ -884,6 +939,28 @@ and the worst case is bounded at 6 × 200 rows.
 Two things in this codebase already do it right and are worth copying rather than reinventing:
 `media.py::_interview_labels` (one batched query for a whole page's worth of two-hop labels) and
 `records.py::hydrate_relations` (one batched query per relation, all issued together).
+
+**A sixth site belonged in that table and was missing — closed 2026-09-03.**
+`GET /questionnaire/completion` with **no `artisanId` and no `workshopIds`** — which is the View Data
+screen's *first* load, so the unscoped branch is the one every user takes — issued
+`questionnaireinterview.find_many(where={}, include={artisans, responses, media})` **with no
+`take`**. It dragged every answer's full text and every media row's EXIF summary across the wire to
+compute a grid of **booleans**. The unscoped branch now includes only the artisan links and asks two
+`DISTINCT` statements (`_RECORDED_RESPONSE_SECTIONS_SQL`, `_MEDIA_SECTION_SIGNALS_SQL`) for the
+(interview, section) pairs. **The scoped branches are unchanged and still walk the rows in Python** —
+deliberately, because they are bounded by the scope the caller named and rewriting them would trade a
+readable loop for raw SQL that buys nothing.
+
+**And one write path that was five commits is now one.** `PATCH /workshops/{id}` was up to **five
+independent commits** in a single request — the audit row, the workshop row, the artisan roster's
+delete and its insert, then the craft roster's pair — with a failure window between every adjacent
+pair. Each `replace_*` is a delete followed by an insert, so **a failure between them committed the
+wipe**: forty artisans an administrator had picked, gone, with the save reporting an error. It is one
+transaction as of 2026-09-03. Two consequences beyond the obvious: the ledger can no longer describe
+an edit that did not land ([DATA_MODEL.md](DATA_MODEL.md)), and a 403 from the relation guards now
+rolls back the field change that arrived with it ([PERMISSIONS.md](PERMISSIONS.md) §4.1). The two
+`count` reads inside it go through the transaction's own client, because on the module client they
+would be answering from outside it.
 
 ---
 

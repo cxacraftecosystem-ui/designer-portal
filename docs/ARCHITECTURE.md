@@ -104,7 +104,7 @@ flowchart TB
   NX -->|loopback| UV
   UV --> PE
   QW --> PE
-  PE -->|"TLS, sslmode=require<br/><b>~200–400 ms per round trip</b>"| PG
+  PE -->|"TLS, sslmode=require<br/><b>~1–2 ms per round trip</b><br/><i>(was ~200–400 ms until 2026-09-02)</i>"| PG
   B -.->|presigned, direct| S3
   QW --> S3
 
@@ -116,6 +116,15 @@ flowchart TB
 
 Measured against live production on 2026-07-27, median of five, from a developer machine in India.
 These are **end-to-end** figures including the client's own network, not server timings.
+
+> ⚠ **Every number in this table is HISTORY as of 2026-09-02**, and it is kept because it is the
+> measurement that shaped the code rather than a claim about today. The database was cross-region
+> when these were taken; it is now co-located with the API box and a round trip is one or two
+> milliseconds rather than most of 700. **Nothing here has been re-measured since the move**, so no
+> figure below may be quoted as current — the same warning `backend/app/services/concurrency.py`
+> now carries above its own 756 ms. What survives is §2.2's finding, which is about *how many* round
+> trips a route makes; the ratio between "in series" and "together" did not move, only the size of
+> the prize.
 
 | Endpoint | Median | What it is measuring |
 |---|---:|---|
@@ -185,7 +194,12 @@ client limit.) The queue therefore runs as a **separate systemd unit** (`fieldre
 `python -m app.worker`) rather than as a second web worker, so ffmpeg and transcription never block
 HTTP and never share the supervisor.
 
-`MEDIA_QUEUE_WORKER_ENABLED` must be `false` on the web process for exactly that reason. See
+`MEDIA_QUEUE_WORKER_ENABLED` must be `false` on the web process for exactly that reason. **As of
+2026-09-03 the application default IS `false`**, so an unset variable no longer means "yes, also
+drain in here" — and both entry points additionally take a host-wide `flock`, so a second drain now
+refuses to start (exits non-zero) instead of running silently beside the first. Production escaped
+the old fail-open default only because the EC2 unit ships the variable explicitly, which is a
+deployment convention rather than a guard; the lock is the guard. See
 [ENVIRONMENT.md](ENVIRONMENT.md).
 
 ---
@@ -465,6 +479,9 @@ stateDiagram-v2
   Attempt --> Queued: no connection
   Online --> [*]: saved normally
 
+  Queued --> HeldForOwner: captured by another account (shared handset or shared browser profile)
+  HeldForOwner --> Queued: that designer signs in
+
   Queued --> Replaying: network returns (online event / Sync now)
   Replaying --> Created: create succeeded — <b>written back immediately</b>
   Created --> Uploading: upload each media batch
@@ -499,6 +516,23 @@ number, from `/crafts` a craft of that name, from `/questionnaire/interviews` an
 already exists for that exact artisan set. So the one answer meaning "someone else's record collides
 with yours" was destroying the record *and* the attachments *and* reporting success. The lost-response
 case it was aiming at is now covered properly by `created`, which knows rather than guesses.
+
+**An entry belongs to the account that captured it, on BOTH clients.** The owner is stamped at save
+time from the signed-in user — `PendingEntry.ownerUserId` on Android, `OutboxEntry.ownerUserId`
+stamped in `queueOffline` on the web — and the drain steps over an entry whose owner is not the
+account signed in now: `syncOutbox` on Android, `runSync` reading `outboxEntryIsForAnotherAccount`
+on the web. Otherwise two designers sharing one field handset — or one browser profile, which is the
+same fault reached through a different door — produce records created under the wrong token, with
+the wrong `createdById`, in the wrong person's lists. **A null owner passes** on both — every entry
+queued before the field existed — so no handset and no browser is stranded by an upgrade. The entry
+is not marked failed on either: failure is a state a person is asked to resolve by discarding, and
+there is nothing wrong with this entry. It is counted separately — `OutboxCounts.otherAccount` on
+Android, `SyncResult.otherAccount` on the web — and gets its own banner line naming the one act that
+moves it, which is that designer signing in: `outboxOtherAccountLine`, wired through `OutboxBanner`,
+which is also where `setOutboxSessionUser` tells the queue whose session it is answering for. The
+design-workshop half has carried the same guard on `WorkshopDraft.ownerUserId` since 2026-08; as of
+2026-09-03 the workshop list screen labels such a draft rather than opening it, which was the display
+half that had been missing.
 
 Storage: IndexedDB on the web (`File` objects survive by structured clone), a file plus a `Mutex` on
 Android. Media is stored as a **list of batches**, not one lump, because a product queues its two
@@ -591,17 +625,28 @@ flowchart TB
     E["EC2 t3.micro<br/>nginx + uvicorn(1) + fieldrepo-queue"]
     S3B[(S3 media bucket)]
   end
-  subgraph sb["Managed PostgreSQL — different region"]
-    PG2[(PostgreSQL<br/>session mode for migrations<br/>pooled/transaction mode at runtime)]
+  subgraph sb["Managed PostgreSQL — co-located since 2026-09-02"]
+    PG2[(PostgreSQL<br/>one session-mode endpoint<br/>read raw by migrate, pooled by the app)]
   end
-  GH["GitHub Actions<br/>backend → frontend → Android"]
+  GH["GitHub Actions<br/>checks → backend → frontend → Android"]
 
   NX2 --> CF2 --> E --> PG2
   NX2 -.-> S3B
   E --> S3B
-  GH -->|rsync + migrate + restart| E
+  GH -->|rsync + migrate + flip current + restart| E
   GH -->|vercel deploy --prebuilt| NX2
+  GH -->|nightly pg_dump| S3B
 ```
+
+**Two labels in that diagram used to say something else, and the difference matters when reading the
+rest of this document.** The database subgraph read *"different region"* and the endpoint node read
+*"session mode for migrations, pooled/transaction mode at runtime"*. Neither is true since
+2026-09-02: the database is co-located with the API box, so a round trip is one or two milliseconds
+rather than the 200–400 ms every latency argument written before that date is built on; and there is
+**one** endpoint, a session-mode pooler, which `prisma migrate deploy` reads raw and the app reads
+through `Settings` with `DATABASE_USE_TRANSACTION_POOLER=false`. Wherever a paragraph below reasons
+from a cross-region hop, read it as history — the *shape* of those arguments survives, the numbers do
+not. [ENVIRONMENT.md](ENVIRONMENT.md) is where the deployment is stated once.
 
 Alternative shapes are documented and, in the case of Kubernetes, partially validated:
 [DOCKER.md](DOCKER.md) for containers, [KUBERNETES.md](KUBERNETES.md) for a cluster,
@@ -617,7 +662,7 @@ flowchart LR
     bucket[[one-shot: create bucket<br/>design-workshop]]
   end
   next["Next.js :3000"]
-  fastapi["uvicorn :8000<br/>MEDIA_QUEUE_WORKER_ENABLED=true"]
+  fastapi["uvicorn :8000<br/>MEDIA_QUEUE_WORKER_ENABLED=true<br/>(explicit dev opt-in — the default is false)"]
   kotlin["Android emulator<br/>apiBaseUrl=http://10.0.2.2:8000/api/"]
 
   next --> fastapi
@@ -627,8 +672,9 @@ flowchart LR
 ```
 
 Two local-only gotchas: set `AWS_S3_SSE_ALGORITHM=` (empty) or MinIO rejects multipart creates with
-`NotImplemented`, and leave the queue worker **on** locally — the split into a separate service is a
-production concern.
+`NotImplemented`, and **turn the queue worker on** locally — the split into a separate service is a
+production concern, and since 2026-09-03 the default is `false`, so this is now a line you add rather
+than one you leave alone.
 
 ---
 

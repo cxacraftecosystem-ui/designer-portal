@@ -268,6 +268,82 @@ data class PendingEntry(
      * as [conflict] and [skewRun].
      */
     val danglingField: String? = null,
+    /**
+     * THE ACCOUNT THAT CAPTURED THIS ENTRY, so a shared field handset never sends one designer's
+     * fieldwork under another's token. Null = captured before this field existed.
+     *
+     * ── THE SAME BOUNDARY AS [WorkshopDraft.ownerUserId], ONE QUEUE ALONG ─────────────────────
+     *
+     * The design-workshop side already carries this stamp and `dwDraftIsForAnotherAccount` already
+     * enforces it, and the paragraph on `WorkshopSyncEngine.syncOneWorkshop` names exactly what its
+     * absence costs. This queue had the identical hole with a shorter fuse. Two designers share one
+     * handset — the case both fields are written for. A captures a fortnight of artisans, products
+     * and photographs with no signal; A signs out, and `logout()` clears the token store and the
+     * form cache and NOTHING ELSE, so the queue and its staged bytes stay on disk. B signs in, and
+     * `MainActivity`'s sign-in effect calls `syncOutbox` within the second. Every one of A's queued
+     * records was then created on the server under B's token: B is `createdById`, the rows land in
+     * B's lists, and A has to be granted access to their own fieldwork — which is the wrong
+     * `createdById` outcome `WorkshopDraft.ownerUserId`'s own KDoc names, arriving by the door
+     * nobody had shut.
+     *
+     * IT IS WORSE HERE THAN ON A DRAFT, in one respect. A workshop draft is a document a person can
+     * be walked back through; a queued record is DELETED the moment it syncs ([OfflineOutbox.remove]),
+     * taking its staged captures with it. By the time anybody notices the attribution, the only copy
+     * of the evidence is a row in somebody else's list.
+     *
+     * READ BY `WorkshopRepository.syncOutbox` AND BY NOTHING ELSE, which is the mistake this field
+     * exists not to repeat: `WorkshopDraft.ownerUserId` was written to disk and read by nothing for
+     * the whole of its first life, and a permission boundary that is only recorded is not a boundary.
+     *
+     * DEFAULTED TO NULL, for the reason every field in this class is defaulted and with the same
+     * consequence spelled out on [conflict] and [danglingField]: the queue on a handset that has
+     * been out of coverage for a fortnight was written by the build installed a fortnight ago, and
+     * an entry from it must replay under the behaviour it was queued under. Null therefore PASSES —
+     * exactly as a null owner passes `dwDraftIsForAnotherAccount` — because refusing it would be a
+     * silent, total drain stop on every handset upgraded into this build, which strands real
+     * fieldwork rather than merely misfiling it.
+     */
+    val ownerUserId: String? = null,
+    /**
+     * THE IDEMPOTENCY KEY THIS CREATE CARRIES — minted once when the entry was queued, sent on every
+     * replay, so a create whose answer was lost lands exactly once.
+     *
+     * ── THE DUPLICATE [createdId] CANNOT SEE ───────────────────────────────────────────────────
+     *
+     * [createdId] one field up is proof this handset RECEIVED an answer, and `replayEntry` skips the
+     * create when it is set. What it cannot see is the case where no answer ever arrived: the POST
+     * landed, the server wrote the row, and the reply died in a tunnel. Nothing was learned here, the
+     * entry is still queued, and the next pass files a SECOND government record for one save — under
+     * one designer's name, in an index nobody reconciles. The web outbox names the missing piece by
+     * name (`frontend/lib/offline.ts`, `persistProgress`): *"a few milliseconds of IndexedDB is as
+     * small as that window gets without idempotency keys on the API."*
+     *
+     * THE TWO COMPOSE RATHER THAN COMPETE, and the order is deliberate. [createdId] is checked first
+     * because it is free — a local fact, no request at all — and answers the same-device,
+     * same-profile replay. This key answers the one [createdId] structurally cannot: a lost reply, a
+     * queue restored onto a second handset, or a drain after a sign-out and back in. The server, not
+     * this file, then decides that a create it has already performed is this same create, and answers
+     * with the row it made the first time.
+     *
+     * ── WHERE IT IS AND IS NOT SENT ───────────────────────────────────────────────────────────
+     *
+     * ONLY ON CREATES OF THE FOUR RECORD TYPES THE SERVER GUARDS — workshop, product, tool, process.
+     * `artisan` and `craft` are deliberately absent: both are ALREADY idempotent under a better key
+     * than this one could be (`Artisan.aadhaarNumber @unique` with a pre-write 409 that NAMES the
+     * clashing artisan; `Craft.name @unique`), and a second mechanism beside them would be two guards
+     * that can disagree about what a duplicate is. See [WorkshopRepository.queueOfflineEntry], which
+     * holds the list.
+     *
+     * NEVER ON A CORRECTION. The server's UPDATE schemas do not declare `clientKey` and every request
+     * body there is `extra="forbid"`, so a correction carrying one would be a 422 with
+     * `extra_forbidden` — read by this queue as a disagreement between BUILDS and re-attempted once
+     * per app run, for ever, on a prepaid connection. The mint is gated on [targetId] being null, and
+     * [WorkshopRepository.writeFromEntry]'s correction branch never reads this field.
+     *
+     * DEFAULTED TO NULL, for the reason every field in this class is defaulted: an entry queued by an
+     * earlier build decodes with null, sends no key, and replays exactly as it always did.
+     */
+    val clientKey: String? = null,
 ) {
     /**
      * The link columns this entry's author DELIBERATELY emptied, and which a replay must therefore
@@ -485,13 +561,21 @@ data class OfflineQueueResult(
  * Closing it properly needs the record's version as the queued write's precondition, exactly as the
  * custom questionnaire's write does. Until then this sentence is the whole of the warning, which is
  * why it is here and not in a comment.
+ *
+ * ── AND WHY IT IS THREE CLAUSES RATHER THAN FIVE (2026-09-03) ─────────────────────────────────
+ *
+ * It closed with *"Tell them if that matters"* — an instruction naming nobody, addressed to a
+ * designer who has just put the phone in their pocket, on a toast that is gone in five seconds. The
+ * facts a person can act on are that the correction is safe, that the office is reading the old
+ * version meanwhile, and that it will overwrite whatever it lands on. Everything else on this
+ * surface competes with those three for the two seconds it is read in, which is the standing rule
+ * for both clients: one line, state the fact, name the act, and put the argument up here.
  */
 fun offlineSavedMessage(result: OfflineQueueResult, isCorrection: Boolean): String {
     val head = if (isCorrection) {
-        "This correction is saved on this device and will be sent when you have a signal. Until then " +
-            "the office still sees the earlier version. When it does go, it replaces the whole record " +
-            "— so if somebody else edits it before then, your version wins and theirs is lost. Tell " +
-            "them if that matters."
+        "Correction saved on this device — sent when you have a signal. Until then the office " +
+            "still sees the earlier version, and when it goes it replaces the whole record: your " +
+            "version wins over any edit made in between."
     } else {
         "Saved on this device. It will be sent when you have a signal."
     }
@@ -549,9 +633,19 @@ private fun endStopped(said: String): String {
  *     designer walks up the hill for a signal, and then does it again tomorrow; the records banner
  *     already spends a paragraph on that exact walk (`outboxDeviceBanner`).
  *  5. AN ORDER OF OPERATIONS THAT ENDS SOMEWHERE. Open the other record, carry the missing details
- *     across, and only THEN throw this one away. 'Only then' is load-bearing: the entry is the last
- *     copy of both the record and its photographs, and this is the one screen in the app that can
- *     say so before the delete rather than after it.
+ *     across, THEN discard this one. The ordering is load-bearing: the entry is the last copy of
+ *     both the record and its photographs, and this is the one screen in the app that can say so
+ *     before the delete rather than after it.
+ *
+ * ── AND WHY EACH CLAUSE IS NOW ONE CLAUSE (2026-09-03) ────────────────────────────────────────
+ *
+ * All five facts survive; the reasoning behind them does not appear on screen any more. This was
+ * four long sentences carrying their own justifications — "because what is in the way is not on this
+ * phone", "and only then", "Nothing has been sent and nothing has been deleted" — read by somebody
+ * standing in a courtyard deciding whether to press a red button. A tray row that has to be read
+ * twice is a tray row that gets read none, and the button under it deletes the only copy of a day's
+ * fieldwork. The argument for every clause is in this KDoc, where it can be checked and cannot be
+ * skimmed past; the sentence states what happened, what is still here, and what to do.
  *
  * PURE, and here rather than in the tray, for [offlineSavedMessage]'s reason: it is read by somebody
  * standing in a courtyard with no connection, so a JVM test is the only place it can be checked.
@@ -567,26 +661,74 @@ private fun endStopped(said: String): String {
 fun outboxConflictSentence(said: String, files: Int, isCorrection: Boolean): String {
     val carrying = if (files > 0) " and the ${stagedFiles(files)} saved with it" else ""
     // Agreement, because the subject grows a second half whenever there are files. "This entry and
-    // the 3 files saved with it IS still on this phone" is the kind of sentence a person stops
-    // reading, and everything that matters is in the clause after it.
+    // the 3 files saved with it IS still here" is the kind of sentence a person stops reading, and
+    // everything that matters is in the clause after it.
     val isAre = if (files > 0) "are" else "is"
     val server = endStopped(said).let { if (it.isEmpty()) "" else " $it" }
     // The clause every arm shares, written once: a designer moving between a clashing artisan and a
-    // clashing craft must not be told two different stories about what a clash costs them.
-    val standing = "Sending it again by itself will get the same answer, because what is in the way " +
-        "is not on this phone."
+    // clashing craft must not be told two different stories about what a clash costs them. It states
+    // the outcome only — WHY a retry cannot work is clause 4 of the KDoc above, and it is the kind of
+    // reasoning that belongs there rather than on a tray row somebody reads standing up.
+    val standing = "Retrying alone gets the same answer."
     return if (isCorrection) {
-        "This correction was not applied: it clashes with a record the register already holds.$server " +
-            "Nothing has been deleted — the correction$carrying $isAre still on this phone, and the " +
-            "office is still reading the version from before it. $standing Open the record it clashes " +
-            "with, make the change where it belongs, and only then throw this one away."
+        "Not applied — it clashes with a record the register already holds.$server Nothing was " +
+            "deleted: the correction$carrying $isAre still here, and the office still reads the " +
+            "earlier version. $standing Open the clashing record, make the change there, then " +
+            "discard this entry."
     } else {
-        "This was not saved: the register already holds a record that clashes with it.$server " +
-            "Nothing has been sent and nothing has been deleted — this entry$carrying $isAre still on " +
-            "this phone. $standing Open the record it clashes with, copy across anything that record " +
-            "is missing, and only then throw this one away."
+        "Not saved — the register already holds a clashing record.$server Nothing was deleted: " +
+            "this entry$carrying $isAre still here. $standing Open the clashing record, copy " +
+            "anything missing, then discard this entry."
     }
 }
+
+/**
+ * THE RECORD TYPES WHOSE CREATE ROUTES ACCEPT AN IDEMPOTENCY KEY — four, and the list is the
+ * decision rather than a convenience.
+ *
+ * Spelled as the literal strings `queueOfflineEntry` is handed, because that is what a
+ * [PendingEntry.type] is on disk, and a queue file written a fortnight ago is read by whatever
+ * string it holds. The server side of the same list is `services/records.CLIENT_KEY_FIELD`'s four
+ * routes; the web side is `CLIENT_KEY_ENDPOINTS` in `frontend/lib/offline.ts`.
+ */
+private val CLIENT_KEY_TYPES = setOf("workshop", "product", "tool", "process")
+
+/**
+ * Should an entry of this shape be given a [PendingEntry.clientKey]?
+ *
+ * ── WHY `artisan` AND `craft` ARE DELIBERATELY ABSENT ──────────────────────────────────────────
+ *
+ * Both are ALREADY idempotent under a better key than any this handset could mint.
+ * `Artisan.aadhaarNumber` is `@unique` and `artisans._guard_identity_conflicts` answers a pre-write
+ * 409 that NAMES the artisan already holding the number — the sentence [outboxConflictSentence]
+ * quotes verbatim so a designer can go and find them. `Craft.name` is `@unique` with its own 409.
+ * A second mechanism beside either would be two guards that can disagree about what a duplicate is,
+ * and the 409 arm of `WorkshopRepository.replayEntry` is written on the assumption that a clash is
+ * SOMEBODY ELSE'S record — which a key colliding with our own earlier create would falsify.
+ *
+ * The remaining queued types are not creates of a guarded record at all: [OFFLINE_MEDIA_ONLY]
+ * performs no create, `questionnaire` is guarded by `QuestionnaireInterview.artisanSetKey @unique`,
+ * and [OFFLINE_EXPORT_RECORD] / [OFFLINE_DESIGN_RATING] post to routes that are idempotent by
+ * construction — the rating route answers `replayed` for precisely this reason.
+ *
+ * ── AND WHY A CORRECTION NEVER GETS ONE ────────────────────────────────────────────────────────
+ *
+ * A non-null [PendingEntry.targetId] is an edit, and an edit goes to the record's PATCH route, whose
+ * server schema does NOT declare `clientKey`. Every request body on that API is `extra="forbid"`, so
+ * a key on a correction is a 422 carrying `extra_forbidden` — which this queue reads as a
+ * disagreement between BUILDS and re-attempts once per app run, for ever, on a prepaid connection.
+ * The gate is here, at queue time, so the key is never even written to disk against a correction.
+ *
+ * A correction has its own idempotency question and this is not it — see [offlineSavedMessage]'s
+ * "WHY THE CORRECTION SENTENCE SAYS WHO WINS", and `expectedUpdatedAt` on the server's six update
+ * schemas, which is the half that is built and waiting for a client to send it.
+ *
+ * PURE, and here rather than in the repository, for [outboxConflictSentence]'s reason: being wrong
+ * costs either a duplicate government record or a 422 that strands a fortnight of fieldwork, and
+ * neither shows up on a machine with a signal. Pinned by `OutboxClientKeyTest`.
+ */
+fun outboxMintsClientKey(type: String, targetId: String?): Boolean =
+    targetId == null && type in CLIENT_KEY_TYPES
 
 /** Reader for a queued payload — lenient, because it was written by a build that is not this one. */
 private val payloadReader = Json { ignoreUnknownKeys = true; isLenient = true }
@@ -735,10 +877,13 @@ fun outboxDanglingSentence(
     val carrying = if (files > 0) " and the ${stagedFiles(files)} saved with it" else ""
     val isAre = if (files > 0) "are" else "is"
     val server = endStopped(said).let { if (it.isEmpty()) "" else " The server said: $it" }
-    return "$head Nothing is lost — open it, choose one that is, and it will send.$server " +
-        "Nothing has been sent and nothing has been deleted: this entry$carrying $isAre still on " +
-        "this phone. Sending it again unchanged will get the same answer, because what is missing " +
-        "is missing on the server."
+    // The design document's own clause is kept whole because it is ALREADY the terse recipe — state,
+    // act, reassure, in one line. What went (2026-09-03) is everything after it that argued its case:
+    // "because what is missing is missing on the server" is why a retry cannot work, and that belongs
+    // in the KDoc above rather than on a row read standing up beside a delete button.
+    return "$head Nothing is lost — open it, choose one that is, and it will send.$server This " +
+        "entry$carrying $isAre still here; nothing was deleted. Retrying unchanged gets the same " +
+        "answer."
 }
 
 /**
@@ -755,6 +900,15 @@ fun outboxDanglingSentence(
  * there is no remedy to offer and no button to press; the record simply needs filing, on the record's
  * own screen, whenever the designer next has a connection.
  *
+ * ── WHAT THE SENTENCE NO LONGER ARGUES ON SCREEN (2026-09-03) ─────────────────────────────────
+ *
+ * It carried the clause *"That was never a claim that none exist."* — a disclaimer about a claim the
+ * app had not made, aimed at a misreading nobody has reported, on the one notification here that
+ * follows a SUCCESS. That is the argument for why the absence has to be stated at all, and it is
+ * stated in this KDoc two paragraphs up. What the designer does next is open the record and file it;
+ * the sentence now says that and stops. The empty picker itself is named, because the designer is
+ * being told which of the two absences this was and the noun is the whole of that.
+ *
  * @param nouns the controls that were empty, already in a person's words.
  */
 fun outboxSentUnfiledMessage(label: String, nouns: List<String>): String {
@@ -766,9 +920,8 @@ fun outboxSentUnfiledMessage(label: String, nouns: List<String>): String {
         1 -> nouns.single()
         else -> nouns.dropLast(1).joinToString(", ") + " or " + nouns.last()
     }
-    return "“$label” was sent, and it is filed under nothing: there was no $list to choose from on " +
-        "this device when it was saved. That was never a claim that none exist. Open the record and " +
-        "file it now that this phone has a connection."
+    return "“$label” was sent, filed under nothing: there was no $list to choose from on this " +
+        "device. Open the record and file it now."
 }
 
 /**
@@ -844,6 +997,13 @@ fun repickEmptyLine(noun: String, listed: Boolean): String = if (!listed) {
  * captures, whose only copy the entry was, are gone. So the arm leads with the record surviving and
  * ends with the one thing that does not.
  *
+ * BOTH ARMS SAY IT IN ONE CLAUSE EACH NOW (2026-09-03), and this is the surface where that matters
+ * most in the whole app: it is the last thing read before an irreversible delete of unsent
+ * fieldwork, inside an `AlertDialog` whose confirm button is right beneath it. "it stays exactly
+ * where it is, on the server" and "this does not take it back out: it stays in the register" were
+ * each the same fact said twice; a dialog a person skims is a dialog whose warning did not happen.
+ * Every fact is still here — nothing was traded away for the shorter line.
+ *
  * @param files how many staged captures go with the entry. ZERO OMITS THE CLAUSE ALTOGETHER rather
  *   than printing "and 0 files saved with it", which is what the tray said before this moved out of
  *   the composable — a record queued with no attachments is the common case for a craft or a
@@ -880,13 +1040,13 @@ fun outboxDiscardConfirmation(
         // one row they are the whole of what is actually lost — and the remedy for them is on a
         // different screen, so it has to be said before the delete rather than after it.
         val orphaned = if (files > 0) {
-            " The ${stagedFiles(files)} are the part the server never got, and this phone holds the " +
-                "only copy — attach them to the record there instead, if you still can."
+            " The ${stagedFiles(files)} are the part the server never got — attach them to the " +
+                "record there instead, if you still can."
         } else {
             ""
         }
-        return "$opening. The record itself is already on the server and this does not take it back " +
-            "out: it stays in the register, so entering it again would leave two of it.$orphaned"
+        return "$opening. The record is already on the server and stays there — entering it again " +
+            "would leave two of it.$orphaned"
     }
     val head = "$opening, and nothing about it has reached the server."
     if (isDangling) {
@@ -895,9 +1055,8 @@ fun outboxDiscardConfirmation(
             "no longer want at all."
     }
     if (!isConflict) return head
-    return "$head The record it clashes with is not touched — it stays exactly where it is, on the " +
-        "server. What goes is this phone's copy: anything in it that the other record does not " +
-        "already have goes with it, files included. Check that first."
+    return "$head The record it clashes with is not touched. What goes is this phone's copy — " +
+        "anything in it the other record does not have goes too. Check that first."
 }
 
 /** Live connectivity check (validated internet, not just an attached interface). */
@@ -1034,20 +1193,42 @@ object OfflineOutbox {
      * [outboxDeviceBanner] are that treatment applied to the records queue. Refusals are NOT hidden
      * by being dropped from this number: they are counted separately and given their own sentence,
      * their own colour and a retry.
+     *
+     * ── IT IS [counts]'s FIRST NUMBER AND NOT A SECOND OPINION (2026-09-03) ───────────────────
+     *
+     * This used to carry its own copy of the predicate — `read(context).count { it.failure == null }`
+     * — which was the whole of "waiting" until an entry captured by ANOTHER ACCOUNT became a third
+     * thing a connection will not move ([PendingEntry.ownerUserId]). Two copies of one test is the
+     * shape of defect this file has already paid for twice; the copy that was not updated is always
+     * the one on the surface somebody is looking at. So there is one classification, in [counts],
+     * and this is a projection of it.
      */
-    suspend fun count(context: Context): Int =
-        withContext(Dispatchers.IO) { mutex.withLock { read(context).count { it.failure == null } } }
+    suspend fun count(context: Context, signedInUserId: String? = null): Int =
+        counts(context, signedInUserId).waiting
 
-    /** Both halves of the queue in ONE read, so the two numbers cannot come from different moments. */
-    suspend fun counts(context: Context): OutboxCounts = withContext(Dispatchers.IO) {
-        mutex.withLock {
-            val entries = read(context)
-            OutboxCounts(
-                waiting = entries.count { it.failure == null },
-                refused = entries.count { it.failure != null },
-            )
+    /**
+     * Every part of the queue in ONE read, so the numbers cannot come from different moments.
+     *
+     * ── AND WHY IT TAKES THE SIGNED-IN ACCOUNT (2026-09-03) ───────────────────────────────────
+     *
+     * Because a third of these entries stopped being "waiting" the day `syncOutbox` learned to skip
+     * an entry captured by somebody else — see [PendingEntry.ownerUserId]. Such an entry has no
+     * [PendingEntry.failure] (nothing was ever sent, and nothing was refused), so it fell into
+     * `waiting`, and the banner then drew it under a cloud-off icon promising it was on its way.
+     * That is word for word the defect `outboxDeviceBanner` was written to end — a number inside a
+     * sentence a connection cannot make true — reached by a third door, and the design-workshop side
+     * closed the identical one first (`dwDeviceSyncBanner`'s `waiting` flag).
+     *
+     * NULL MEANS NOBODY IS SIGNED IN, and then nothing is another account's: the classification
+     * matches [dwDraftIsForAnotherAccount] exactly rather than keeping a second opinion about the
+     * same rule, and a pass cannot run in that state anyway.
+     */
+    suspend fun counts(context: Context, signedInUserId: String? = null): OutboxCounts =
+        withContext(Dispatchers.IO) {
+            // The IO and the lock are here; the classification is [outboxCountsOf], which is pure and
+            // pinned on a desktop JVM. One read, one moment, one opinion about each entry.
+            mutex.withLock { outboxCountsOf(read(context), signedInUserId) }
         }
-    }
 
     suspend fun enqueue(context: Context, entry: PendingEntry) = withContext(Dispatchers.IO) {
         mutex.withLock { write(context, read(context) + entry) }
@@ -1222,12 +1403,28 @@ object OfflineOutbox {
      * objecting to. Nothing about the ENTRY itself is cleared: the payload and every staged file stay
      * exactly where they are, which is the invariant [PendingEntry.conflict] spends a paragraph on.
      *
+     * AN ENTRY ANOTHER ACCOUNT CAPTURED IS NOT UNMARKED (2026-09-03), for the argument written out on
+     * [clearAllFailures]: `syncOutbox` will not send it, so clearing the refusal sends nothing and
+     * destroys the only sentence saying why. [signedInUserId] defaults to null — "nobody is signed
+     * in, so nothing is another account's" — leaving every existing caller unchanged.
+     *
      * @return true when an entry with that id was found and unmarked.
      */
-    suspend fun clearFailure(context: Context, entryId: String): Boolean = withContext(Dispatchers.IO) {
+    suspend fun clearFailure(
+        context: Context,
+        entryId: String,
+        signedInUserId: String? = null,
+    ): Boolean = withContext(Dispatchers.IO) {
         mutex.withLock {
             val current = read(context)
-            if (current.none { it.id == entryId && it.failure != null }) return@withLock false
+            if (
+                current.none {
+                    it.id == entryId && it.failure != null &&
+                        !dwDraftIsForAnotherAccount(it.ownerUserId, signedInUserId)
+                }
+            ) {
+                return@withLock false
+            }
             write(
                 context,
                 current.map {
@@ -1253,25 +1450,52 @@ object OfflineOutbox {
         }
     }
 
-    /** Unmark every refusal at once, for "try all of them again" after a sign-in or an update. */
-    suspend fun clearAllFailures(context: Context): Int = withContext(Dispatchers.IO) {
+    /**
+     * Unmark every refusal at once, for "try all of them again" after a sign-in or an update.
+     *
+     * ── EXCEPT THE ONES THIS SESSION IS NOT ALLOWED TO SEND (2026-09-03) ──────────────────────
+     *
+     * `syncOutbox` skips an entry whose [PendingEntry.ownerUserId] is not the signed-in account, so
+     * clearing ITS refusal accomplishes exactly one thing: it destroys the server's own sentence.
+     * Nothing is sent, `outboxFailureRows` no longer lists the entry (it filters on `failure`), and a
+     * fortnight of another designer's fieldwork goes back to being invisible work that no pass will
+     * ever move — with the one line that explained why now gone from the disk. The bulk button was
+     * the wide version of that: one tap wiped the reason off every refused entry on a shared handset.
+     *
+     * SKIPPED, NOT REFUSED. The other entries are cleared exactly as before and the count returned is
+     * of the ones actually unmarked, so "tried N again" names the number a person can act on.
+     *
+     * [signedInUserId] DEFAULTS TO NULL, which — through [dwDraftIsForAnotherAccount] — means "nobody
+     * is signed in, so nothing is another account's" and leaves every existing caller unchanged.
+     */
+    suspend fun clearAllFailures(
+        context: Context,
+        signedInUserId: String? = null,
+    ): Int = withContext(Dispatchers.IO) {
         mutex.withLock {
             val current = read(context)
-            val refused = current.count { it.failure != null }
-            if (refused == 0) return@withLock 0
+            // THE SAME SELECTION `retryAllOutboxFailures` COUNTS, asked of the one function that owns
+            // it. Two walks of one queue is how the clearing and the counting come to disagree about
+            // which entries a tap was about — see [outboxRetryableFailures].
+            val clearable = outboxRetryableFailures(current, signedInUserId).mapTo(HashSet()) { it.id }
+            if (clearable.isEmpty()) return@withLock 0
             write(
                 context,
                 current.map {
-                    it.copy(
-                        failure = null,
-                        failedAt = null,
-                        skewRun = null,
-                        conflict = false,
-                        danglingField = null,
-                    )
+                    if (it.id !in clearable) {
+                        it
+                    } else {
+                        it.copy(
+                            failure = null,
+                            failedAt = null,
+                            skewRun = null,
+                            conflict = false,
+                            danglingField = null,
+                        )
+                    }
                 }
             )
-            refused
+            clearable.size
         }
     }
 

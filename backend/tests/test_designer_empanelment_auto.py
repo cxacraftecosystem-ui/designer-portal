@@ -26,11 +26,19 @@ admin to notice and empanel the same person a second time in a second screen.
    guard, and it checks the admin's own note survived as well as the flag, because a row that stays
    suspended but loses what an admin wrote on it is the same defect wearing a smaller hat.
 
-3. **THE APPROVAL PATH EMPANELS TOO, SO THE ADMIN CAN SEE IT.** Sign-in alone would be enough to let
-   the person in and would leave ``/admin/designers`` empty until they first arrived — so an admin
-   who has just approved a designer looks for them, does not find them, and reasonably concludes the
-   approval did not take. What they do next is add the row by hand: a 409 if they type the address
-   the same way, and a second unmatchable row if they do not.
+3. **EVERY ADMIN DOOR THAT ADMITS A DESIGNER EMPANELS TOO, SO THE ADMIN CAN SEE IT.** Sign-in alone
+   would be enough to let the person in and would leave ``/admin/designers`` empty until they first
+   arrived — so an admin who has just approved a designer looks for them, does not find them, and
+   reasonably concludes the approval did not take. What they do next is add the row by hand: a 409 if
+   they type the address the same way, and a second unmatchable row if they do not.
+
+   THERE ARE FOUR SUCH DOORS AND THE FOURTH WAS ONLY CLOSED ON 2026-09-03: ``POST /api/users``, the
+   one an admin uses when the person is in front of them. It called ``access_roster.admit`` and
+   stopped, so an account typed in AS A DESIGNER appeared nowhere on the designer roster and the
+   person read the suspension sentence about an empanelment nobody had granted. That defect is why
+   ``_make_designer_account`` below used to be able to build "admitted, not empanelled" through the
+   API and now assembles it directly instead — see its docstring, and
+   ``tests/test_users_endpoint_empanels.py``, which is the guard on the fix itself.
 
 4. **STATUS IS CHECKED, NOT ONLY ROLE — AND ON A PENDING ROW THAT IS AN ADMISSION DECISION.**
    ``AccessRosterUpdate`` deliberately cannot change ``status``, so an admin may edit ``admitRole``
@@ -87,14 +95,25 @@ Nothing here reaches Google. ``verify_google_token`` is the only thing stubbed, 
 only part of that path that leaves the process. Everything else — both roster reads, the create, the
 refusals and the stamp — runs exactly as it does in production.
 
-**EVERY ASSERTION IS MADE THROUGH A DOOR SOMEBODY USES.** The states are set up and read back through
+**EVERY ASSERTION IS MADE THROUGH A DOOR SOMEBODY USES.** The states are read back through
 ``/api/auth/login``, ``/api/access/roster``, ``/api/users`` and ``/api/designers/roster`` rather than
 by awaiting the ``db`` singleton inside a test. That is not stylistic: the singleton is connected by
 the app's lifespan inside ``TestClient``'s own event loop, and awaiting it from a test's loop fails
 with "bound to a different event loop" rather than with anything to do with the rule under test. See
 the same note in ``tests/test_user_deletion.py``.
+
+TWO KINDS OF SETUP ARE NOT ENDPOINTS, AND BOTH ARE FORCED RATHER THAN PREFERRED. The ``world``
+fixture writes its rows around an explicit ``db.connect()``/``db.disconnect()`` pair in its own loop,
+before ``TestClient`` exists — these are states an admin's earlier decisions left behind, and several
+of them (see ``GMAIL_ADMITTED``) are no longer reachable through any endpoint at all. And
+``_make_designer_account`` writes two rows from inside a test body through ``client.portal``, which
+runs them on the loop that owns the connection: the state it builds — admitted as a DESIGNER and NOT
+empanelled — stopped being reachable through ``POST /api/users`` on 2026-09-03. Neither of them
+awaits ``db`` on the test's own loop; that is the thing that does not work. ``tests/test_stage_sync.py``
+carries the long version of the portal argument.
 """
 
+import functools
 import os
 import threading
 import uuid
@@ -122,7 +141,9 @@ pytestmark = [
 ]
 
 PASSWORD = "empanelment-test-password"
-#: The password ``POST /api/users`` will accept for an account this module creates through the API.
+#: The password for the accounts this module makes AFTER the fixture has run — the ones
+#: ``POST /api/users`` creates and the ones ``_make_designer_account`` assembles directly. Spelled to
+#: satisfy ``UserCreate``'s own strength rule, because the endpoint is still one of the two writers.
 API_PASSWORD = "LocalDev123!"
 
 # ASSERTED VERBATIM RATHER THAN IMPORTED, exactly as ``test_designer_roster`` and
@@ -390,24 +411,64 @@ def _fresh(world: dict[str, Any], slug: str) -> str:
 
 
 def _make_designer_account(client: Any, world: dict[str, Any], email: str, label: str) -> None:
-    """An account an admin typed in, at DESIGNER, with a password — and NO empanelment.
+    """An account at DESIGNER with a password, ACTIVE on the allow-list — and NO empanelment.
 
-    ``POST /api/users`` admits the address on the platform allow-list (it has to: an account created
-    by a path that did not admit it is somebody an administrator made and the sign-in page then
-    refuses) and it does NOT empanel them. That combination is exactly the state the race below needs
-    and it is a real one, so it is reached through the endpoint rather than assembled by hand.
+    **IT USED TO REACH THAT STATE THROUGH ``POST /api/users``, AND SINCE 2026-09-03 THAT ENDPOINT NO
+    LONGER PRODUCES IT.** This helper's whole previous docstring was the sentence *"it admits the
+    address on the platform allow-list and it does NOT empanel them"*, offered as the reason to go
+    through the door rather than assemble the row by hand. That second half was the FOURTH DOORWAY
+    defect, not a property worth building on: an admin who typed a designer into ``/admin/users``
+    got no row on ``/admin/designers``, and the person read *"Your designer access has been
+    suspended"* about an empanelment nobody had granted. ``create_user`` now calls
+    ``ensure_empanelled`` after it admits, exactly as the approval path and the roster edit do, so
+    the endpoint produces "admitted AND empanelled" and cannot be used to reach the state below.
+
+    SO THE STATE IS ASSEMBLED DIRECTLY, THE WAY THE ``world`` FIXTURE ASSEMBLES ITS ACCOUNTS: a
+    ``User`` row and an ACTIVE ``AccessRoster`` row admitting them as a DESIGNER, and deliberately
+    nothing on ``DesignerRoster``. It is still a REAL state and not a contrived one — it is every
+    designer account that existed before this change shipped, and every account a script or a manual
+    ``INSERT`` writes without going through the roster — so the race the two tests below exercise is
+    the one that actually happens on the next sign-in.
+
+    **THE WRITES GO THROUGH ``client.portal``, NOT THROUGH ``await db``**, and that is the same
+    mechanism ``tests/test_stage_sync.py`` spends a banner on: ``TestClient.__enter__`` keeps the
+    anyio portal it started on ``.portal``, and every request in the ``with`` block is dispatched
+    through it, so ``client.portal.call(...)`` runs the query on the loop that owns the Prisma
+    connection. Awaiting ``db`` from the test's own loop fails with *"bound to a different event
+    loop"* — see this module's header — and the fixture's ``db.connect()``/``db.disconnect()``
+    window is long closed by the time a test body runs.
 
     A password account rather than the Google branch, because the race needs the SAME address signed
     in twice at once and ``verify_google_token`` is stubbed per test through ``monkeypatch``, which
     is not safe to call from two threads at the same instant.
     """
-    made = client.post(
-        "/api/users",
-        json={"email": email, "name": f"{label} {world['stamp']}", "password": API_PASSWORD,
-              "role": "DESIGNER"},
-        headers=_headers(world),
+    client.portal.call(
+        functools.partial(
+            db.user.create,
+            data={
+                "email": email,
+                "name": f"{label} {world['stamp']}",
+                "role": "DESIGNER",
+                "passwordHash": hash_password(API_PASSWORD),
+            },
+        )
     )
-    assert made.status_code == 201, made.text
+    # THE ALLOW-LIST ROW IS NOT OPTIONAL. A ``User`` row written directly is not one of the paths
+    # that admit somebody, so without this every sign-in below answers "awaiting administrator
+    # approval" and the test would be exercising ``assert_access_admits`` while claiming to exercise
+    # the empanelment race. The fixture's own accounts carry the identical obligation and say so.
+    client.portal.call(
+        functools.partial(
+            db.accessroster.create,
+            data={
+                "email": email,
+                "status": "ACTIVE",
+                "admitRole": "DESIGNER",
+                "joinedAt": datetime.now(UTC),
+                "notes": f"Seeded by tests/test_designer_empanelment_auto.py: {label}.",
+            },
+        )
+    )
 
 
 def _two_sign_ins_at_once(client: Any, email: str) -> list[Any]:
@@ -644,9 +705,14 @@ async def test_two_simultaneous_sign_ins_for_one_new_designer_leave_exactly_one_
     """
     email = _fresh(world, "twiceatonce")
     _make_designer_account(client, world, email, "Simultaneous designer")
-    # THE PREMISE, ASSERTED RATHER THAN ASSUMED. ``POST /api/users`` admits the address and does not
-    # empanel it. If that ever changes, this becomes two sign-ins racing over a row that already
-    # existed — which every implementation passes, including the ones this test exists to fail.
+    # THE PREMISE, ASSERTED RATHER THAN ASSUMED — AND IT IS NOW ABOUT THE HELPER, NOT ABOUT AN
+    # ENDPOINT. Until 2026-09-03 this line read *"``POST /api/users`` admits the address and does not
+    # empanel it"*, and that endpoint's failure to empanel WAS the fourth-doorway defect: it now
+    # empanels, so this state is assembled directly by ``_make_designer_account`` instead. What must
+    # be true is unchanged and is why the assertion stays rather than moving into the helper: if the
+    # account already holds an empanelment, the two sign-ins below are racing over a row that already
+    # existed, which EVERY implementation passes — including the ones this test exists to fail. A
+    # race test that starts from an existing row is a test that has quietly stopped testing.
     assert email not in _empanelments(client, world, term=email), (
         "the account already had an empanelment before either sign-in, so there is no race here"
     )
@@ -680,6 +746,14 @@ async def test_the_losing_half_of_a_race_for_a_new_designer_is_let_in_on_the_win
     """
     email = _fresh(world, "lostrace")
     _make_designer_account(client, world, email, "Racing designer")
+    # THE SAME PREMISE AS THE TEST ABOVE, AND FOR THE SAME REASON. With a row already present the
+    # blinded read still forces a create and the unique index still refuses it, so every assertion
+    # below holds while the thing being replayed — the FIRST sign-in creating the row — never
+    # happens. See the longer note there.
+    assert email not in _empanelments(client, world, term=email), (
+        "the account already had an empanelment, so the winner below creates nothing and the "
+        "'losing half' this test replays is not the half it names"
+    )
 
     blind = _DbWhoseRosterNeverFindsARow(designers_service.db)
     monkeypatch.setattr(designers_service, "db", blind)
@@ -1693,18 +1767,34 @@ async def test_ending_an_empanelment_leaves_an_admin_alone_when_the_account_is_a
         "below is the only thing standing between this administrator and a lockout"
     )
 
+    # **THE EMPANELMENT IS ALREADY THERE, AND A 409 IS THE RIGHT ANSWER, 2026-09-03.** This block
+    # used to POST the roster row and assert 201. ``POST /api/users`` above now empanels a DESIGNER
+    # it admits — the fourth doorway — so the row exists before this line runs and the endpoint
+    # answers 409 naming it, which is precisely what that endpoint is for: it refuses to overwrite a
+    # row rather than doubling it. The 409 is asserted rather than tolerated because a 201 here again
+    # would mean either that the empanelment stopped happening at account creation or that a SECOND
+    # row was written for one mailbox — and the second of those is the alias defect this whole
+    # section is about, arriving from the other side.
     empanelled = client.post(
         "/api/designers/roster",
         json={"email": typed, "notes": ADMIN_NOTE},
         headers=_headers(world),
     )
-    assert empanelled.status_code == 201, empanelled.text
-    assert empanelled.json()["email"] == mailbox, (
-        "the empanelment is expected to be stored under the mailbox; if this changes, the alias "
-        "gap this test is about has moved and the test needs rewriting rather than deleting"
+    assert empanelled.status_code == 409, (
+        "creating the account was expected to empanel this designer, so adding them again must be "
+        f"refused as a duplicate rather than accepted: {empanelled.text}"
+    )
+    # THE PROPERTY THAT ACTUALLY MATTERS, and the one a status code cannot state: ONE row, under the
+    # MAILBOX. Both spellings are looked for by name — ``_rows_spelling`` counts rows rather than
+    # keying by address — because two rows for one mailbox is the failure, and a dict would report
+    # the pair as one entry.
+    rows = _rows_spelling(client, world, typed, mailbox)
+    assert [row["email"] for row in rows] == [mailbox], (
+        "expected exactly one empanelment, stored under the mailbox, after the account was "
+        f"created at DESIGNER; got {[row['email'] for row in rows]}"
     )
     ended = client.delete(
-        f"/api/designers/roster/{empanelled.json()['id']}", headers=_headers(world)
+        f"/api/designers/roster/{rows[0]['id']}", headers=_headers(world)
     )
     assert ended.status_code == 200, ended.text
     assert ended.json()["isActive"] is False, "the empanelment itself must still end"
@@ -1800,14 +1890,26 @@ async def test_ending_an_empanelment_leaves_an_admins_access_to_the_product_alon
         "guard is about, and if it were kept in step this test would prove nothing"
     )
 
+    # ALREADY EMPANELLED BY THE ACCOUNT CREATION, SO THIS IS A 409 — see the same block in
+    # ``test_ending_an_empanelment_leaves_an_admin_alone_when_the_account_is_a_gmail_alias``.
+    # ``POST /api/users`` has empanelled an admitted DESIGNER since 2026-09-03 (the fourth doorway),
+    # and this endpoint refuses a duplicate rather than writing a second row. What the test needs
+    # from here is one row to end, and the property worth asserting is that there is exactly one.
     empanelled = client.post(
         "/api/designers/roster",
         json={"email": email, "notes": ADMIN_NOTE},
         headers=_headers(world),
     )
-    assert empanelled.status_code == 201, empanelled.text
+    assert empanelled.status_code == 409, (
+        "creating the account at DESIGNER was expected to empanel them, so adding them again must "
+        f"be refused as a duplicate: {empanelled.text}"
+    )
+    rows = _rows_spelling(client, world, email, term=email)
+    assert [row["email"] for row in rows] == [email], (
+        f"expected exactly one empanelment for this address; got {[r['email'] for r in rows]}"
+    )
     ended = client.delete(
-        f"/api/designers/roster/{empanelled.json()['id']}", headers=_headers(world)
+        f"/api/designers/roster/{rows[0]['id']}", headers=_headers(world)
     )
     assert ended.status_code == 200, ended.text
     assert ended.json()["isActive"] is False, "the empanelment itself must still end"

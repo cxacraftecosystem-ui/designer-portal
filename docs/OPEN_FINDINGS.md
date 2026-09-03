@@ -1,6 +1,15 @@
 # Open findings
 
-**Status: 1 open, 51 closed.** Last re-checked against the tree on 2026-08-19.
+**Status: 2 open and 1 decision recorded, 62 closed.** Last re-checked against the tree on
+2026-09-03.
+
+**How that moved on 2026-09-03**, stated so the arithmetic can be re-done rather than trusted: a
+remediation wave closed **eleven** entries, listed under *Closed on 2026-09-03* below and counted by
+heading like every other section (51 + 11 = 62). The open count went from 1 to 2 because that wave
+also *opened* one — the two residual gaps in session revocation — and the third item under `## Open`
+is a **decision**, not a defect, which is why it is named separately in this line rather than folded
+into either number. Dedupe before you recount: this file's own history is two miscounts caused by a
+part-closed entry appearing on both sides of the ledger.
 
 **The open count was wrong, and it was wrong in the direction this file says is the dangerous one.**
 It read "0 open" from 2026-08-15 while `## Open` below carried the `[MEDIUM]` in-memory-`Blob`
@@ -119,6 +128,279 @@ these pages would be a real improvement and would not move the number that kills
 (`showSaveFilePicker`), or a `TransformStream` into a service worker, so the archive is written to
 disk as it is produced. Both are browser-support decisions rather than code-shape decisions, which
 is why this is registered rather than bolted onto a memory fix aimed at the handset.
+
+### [MEDIUM] Two residual gaps in session revocation, both named rather than closed (backend) — opened 2026-09-03
+
+Suspending an account now ends its live sessions (see the closed entry below). Two cases it does not
+reach are recorded here rather than left in a docstring, because both fail in the direction where an
+administrator has been *told* access is cut:
+
+1. **Rows barred before 2026-09-03 were never stamped, and the repair is a script somebody has to
+   run.** `User.sessionsValidFrom` had exactly one writer until that date, so every account
+   suspended or rejected before it kept whatever token it was holding for the rest of that token's
+   life. Nothing backfills them on its own — the empanelment doors return early on a bar that
+   already stands, and a sign-in cannot help because the person barred is not signing in. The remedy
+   the code names is `backend/scripts/backfill_sessions_valid_from.py`, **which now exists** (it did
+   not when this entry was first written, and the ERROR log in `routes/access.end_live_sessions`
+   named it before it was there). Run from `backend/`:
+
+   ```
+   python -m scripts.backfill_sessions_valid_from                        # DRY RUN, writes nothing
+   python -m scripts.backfill_sessions_valid_from --write                # the STILL-LIVE list
+   python -m scripts.backfill_sessions_valid_from --write --include-expired   # the historic backlog too
+   python -m scripts.backfill_sessions_valid_from --write --limit 20     # cap a first pass
+   ```
+
+   The no-argument form is the safe one and prints a plan. It splits candidates into STILL LIVE —
+   where a stamp ends a session somebody is in right now — and EXPIRED, where the column is merely a
+   watermark that ought to be true, computed from the deployment's own `JWT_EXPIRES_MINUTES`. The
+   value written is the moment of the barring (`decidedAt` / `revokedAt`, falling back to
+   `updatedAt`), not the moment of the run, which is what makes it idempotent; it never clears a
+   stamp and never lowers one. The empanelment bucket is guarded by
+   `access_roster.admissions_an_empanelment_carries` — the same function the endpoint consults,
+   called rather than reproduced — so a professor or admin on the designer roster is not signed out
+   of the product by a script. Note that the stamp does not reach a running API instantly:
+   `deps.resolve_user` caches the identity row for `AUTH_USER_CACHE_TTL_SECONDS` and this process is
+   not the API's, so revocation lands within that TTL rather than at the write.
+
+   **Still open, and the same defect one file along:** the backend also names
+   `scripts/backfill_roster_suspension_mirror.py` (in `routes/access.py`, `services/access_roster.py`
+   — including inside two operator-facing log lines) and `scripts/backfill_email_canonicalisation.py`
+   (in `routes/designers.py`, `services/designers.py`). **Neither is in the tree.** Verified
+   2026-09-03; check with `git ls-files backend/scripts/`. Both are instructions a reader cannot
+   follow, and one of them is printed at the moment an operator is being told a suspension may not
+   have taken. Either write them or reword the six references.
+2. **A sweep that could not answer does not stamp.** `access_roster.accounts_on_the_mailbox` returns
+   `None` when the Gmail-alias sweep exceeds `GMAIL_ACCOUNT_SWEEP_LIMIT` (20,000). Next door, in the
+   mirror guard, `None` correctly means "do not act". Here it means "there may be a live session this
+   suspension did not end", which is the unsafe direction. It is logged at ERROR, names the address
+   and names the repair — which is the right behaviour for something that cannot be fixed in the
+   handler — but it is still an unrevoked session, and nothing outside the log knows.
+
+### [LOW] The web's two roster screens do not say what pressing Suspend actually does (frontend) — opened 2026-09-03
+
+The server side of both acts is closed (see below). What is outstanding is **copy on the screen where
+an administrator makes the decision**, and it fails in the direction where somebody is told less than
+the act does. Verified against the tree on 2026-09-03.
+
+1. **Neither web roster screen carries the cross-roster sentence the mirror's own docstring asks
+   for** — that suspending on one screen ends the person's standing on the other, and that
+   **restoring does not bring it back**. A one-way mirror an administrator cannot see is a
+   destructive act that reads as reversible. Both `/admin/access` and `/admin/designers` owe it.
+2. **`/admin/designers`'s Suspend dialog does not say the person is signed out.** It reads *"They
+   will be refused at their next request and at every sign-in after it"*, which was written before
+   `end_live_sessions` existed and now understates the act; it owes the plainer half — *this signs
+   them out of any device they are already signed in on*.
+
+**Two things that are already done and should not be re-done.** `/admin/access`'s Suspend dialog was
+corrected the same day and now says *"Any session they are in now ends immediately."* And Android's
+line reads *"Suspending ends their access and signs them out now."* The web designer roster is the
+one screen left, plus the mirror sentence on both.
+
+### [DECISION, NOT A DEFECT] `AUTH_USER_CACHE_TTL_SECONDS` should be cut, and deliberately was not — recorded 2026-09-03
+
+The five-second identity cache was justified against a 200–400 ms cross-region database round trip.
+That round trip is gone: the database was co-located on 2026-09-02 and a keyed `find_unique` is now
+1–2 ms. What the cache still buys is burst dedupe across one page load's parallel requests, which is
+real but much smaller — and the TTL now also bounds *session* revocation, not just role and
+existence, because `_user_from_bearer` reads `sessionsValidFrom` off the cached row. In practice it
+bites only on writes no application process made, since every revocation writer invalidates and the
+deployment runs one worker on one replica. **1–2 seconds, or 0 with `AUTH_USER_CACHE_ENABLED=false`,
+is now a cheaper trade than it was.** It was not changed in this wave on purpose: a security
+parameter moved as a silent constant edit is a change nobody reviewed. It belongs in the next
+deployment review. The full argument is in [SECURITY.md §4.1](SECURITY.md).
+
+---
+
+## Closed on 2026-09-03
+
+A remediation wave across five lanes. Every entry below was verified against the tree on the day it
+was written, and each names the test that fails without the fix — the rule this register has enforced
+since 2026-08-13.
+
+### [HIGH] The dataset-token door had no lockout, and the change-password door had none either (backend) — **CLOSED 2026-09-03**
+
+The per-network credential limiter covered `POST /api/auth/login` and `POST /api/datasets/token`;
+nothing anywhere counted failures **per account**, so an attacker distributing guesses across
+addresses met no ceiling at all, and `POST /api/auth/change-password` — which a signed-in caller
+reaches with the old password — was in front of a bcrypt call with nothing before it.
+
+A per-account budget now sits in `backend/app/scale/rate_limit.py`: **ten failed attempts per account
+in five minutes**, taken by hand inside the handler at the first moment the account is known, at
+three sites (`routes/auth.login`, `routes/auth.change_password`, `routes/datasets.mint_dataset_token`).
+**A correct password is refunded and never counts**, which is what lets the ceiling be this low.
+The budget is per ACCOUNT and shared between the interactive door and the dataset door, so a script
+guessing at an admin's password closes that admin's own sign-in — a deliberate consequence, and
+documented as such in [DATASET_API.md](DATASET_API.md).
+
+The checklist it leaves behind is two items and not one, and nothing checks that you did both: add
+an anonymous path to `_CREDENTIAL_PREFIXES` for the per-network budget, **and** take the account
+budget in the handler. Pinned by `backend/tests/test_dataset_token_budget.py` and
+`backend/tests/test_change_password_budget.py`.
+
+### [HIGH] Suspending an account stopped the next sign-in and left the live session running (backend) — **CLOSED 2026-09-03**
+
+The allow-list is read on the sign-in path, so both barring doors wrote `AccessRoster.status` and
+nothing else. An administrator suspended a departing colleague, watched the row go SUSPENDED, told
+whoever asked that access was cut — and that colleague's phone went on creating records for the rest
+of the token's life, up to seven days. Every other revocation in this product is checked per request;
+this one was checked at a door the person had already walked through.
+
+`routes/access.end_live_sessions` now stamps `User.sessionsValidFrom`, which
+`deps._user_from_bearer` already compared against the token's `iat` on every authenticated request —
+so this needed no session table, no token store and no new read on the hot path. Four doors call it:
+`DELETE /api/access/roster/{id}`, the REJECT arm of `POST /api/access/roster/{id}/decision`, and the
+two designer-roster doors that end an empanelment (`DELETE /api/designers/roster/{id}` and the same
+act through the edit form, `PATCH` with `isActive: false`). **The two halves are guarded
+differently, and the asymmetry is the endpoints' own.** Barring from the allow-list is barring from
+the application, so it is unguarded. Ending an *empanelment* is narrower, and runs behind
+`access_roster.admissions_an_empanelment_carries` — the same guard as the cross-roster mirror — so a
+professor or an admin who is on the designer roster because they run workshops keeps both their
+access and the session they are in; signing them out there would be an outage, not a revocation.
+**A role change deliberately does not sign anybody out.** The lookup reaches every spelling of one Gmail mailbox rather than the one address it was
+asked about, which was a narrower gap found and closed the same day. Two residual gaps are in the
+*Open* section above. Pinned by `backend/tests/test_suspension_revokes_sessions.py`.
+
+### [MEDIUM] `POST /api/users` was the fourth door that creates a designer and the only one that did not empanel (backend) — **CLOSED 2026-09-03**
+
+An admin creating an account at `DESIGNER` produced a user with no `DesignerRoster` row, so the
+person did not appear on `/admin/designers` and nothing about the screen said why. It now empanels
+immediately, with `DesignerRoster.addedById` naming the admin who did it, and the row appears before
+the person has ever signed in. Adding them again by hand answers 409. **It never revives a suspended
+empanelment** — `ensure_empanelled` only ever creates, which is the one rule that door has. Pinned by
+`backend/tests/test_users_endpoint_empanels.py`.
+
+### [MEDIUM] A viewer grant kept working after the holder's role left the design-workshop set (backend) — **CLOSED 2026-09-03**
+
+The write path already refused to *issue* a grant to anybody outside `deps.DESIGN_WORKSHOP_ROLES`;
+the read path never re-asked, so a demotion left the grant readable. A grant is now honoured only
+while the holder's **current** role is in that set. The row is not deleted and starts working again
+the moment the role does — which is the right shape, because the grant records a decision somebody
+made and a demotion is not a revocation of it. Inspector scope is untouched: an inspector never
+reaches `load_workshop_or_404`. Pinned by `backend/tests/test_viewer_grant_role_gate.py`.
+
+### [MEDIUM] `registry_version()` recomputed a SHA-256 over the whole registry on every call (backend) — **CLOSED 2026-09-03**
+
+Memoised against a fingerprint of the installed registry, so a mutation still invalidates it and an
+`_install` cannot leave a stale digest behind. Pinned by
+`backend/tests/test_registry_version_memo.py`.
+
+### [MEDIUM] The report image prefetch was serial, and one unbounded object read sat inside the budget (backend) — **CLOSED 2026-09-03**
+
+`MediaIndex.prefetch` now downloads ahead on a `ThreadPoolExecutor(max_workers=REPORT_IMAGE_FETCH_WORKERS = 4)`
+while every budget decision is still committed one at a time, in `document.images` order, on the
+calling thread — so budget exhaustion still costs the LAST pictures rather than an arbitrary set. The
+transient ceiling is now stateable: the 96 MiB aggregate budget plus at most four undecided images,
+each bounded by `get_object_bytes(max_bytes=…)`, against a previously unbounded single-object read.
+The cost is one HEAD request per fetched photograph, and that request is what buys the bound.
+[SCALABILITY.md §5.1](SCALABILITY.md) carries the arithmetic.
+
+### [MEDIUM] The two design-workshop upload doors read the whole body before checking the cap (backend) — **CLOSED 2026-09-03**
+
+`POST /design-workshops/ocr/identity` and `POST /design-workshops/{id}/dictate` now read through
+`backend/app/services/uploads.py::read_upload_bounded` rather than `await file.read()` followed by a
+length comparison — so the ceiling is enforced against the declared `Content-Length` before a byte
+moves, and against the running total when no `Content-Length` was sent. The helper itself belongs to
+another lane; this entry covers the two doors. It is the design-workshop half of
+[AUDIT-2026-08-30.md](AUDIT-2026-08-30.md) A30-10, whose other two doors closed in the same wave.
+Pinned by `backend/tests/test_upload_bounds.py`.
+
+### [MEDIUM] The handset dropped a designer's custom answers and counted nothing (android) — **CLOSED 2026-09-03**
+
+`WorkshopSyncStatus` now carries `droppedAnswers`, summed in `statusOf` from
+`StageSyncRecord.refusal.droppedCustomKeys`, made a term of `isFullySynced` and threaded through
+`dwDeviceSyncBanner`. The `retryWorkshop` comment that prescribed the counter was updated in place
+rather than deleted, so the argument for it survives beside the thing it argued for.
+
+### [MEDIUM] The workshop list drew another account's drafts as though they were yours (android) — **CLOSED 2026-09-03**
+
+The storage half of the draft-ownership guard had been in place since 2026-08 —
+`WorkshopDraft.ownerUserId` and `dwDraftIsForAnotherAccount` — and the **display** half was missing:
+the list still drew A's drafts to B and let B open one. `WorkshopListScreen` now labels such a row
+and makes it non-openable. This finding was recorded as part-closed; it is closed.
+
+### [MEDIUM] An entry captured by one designer on a shared handset synced under the next designer's token (android) — **CLOSED 2026-09-03**
+
+The same boundary, one queue along. `PendingEntry.ownerUserId` is stamped at save time from the
+signed-in user, and `syncOutbox` steps over an entry whose owner is not the account signed in now —
+otherwise two designers sharing one field handset produce records created under the wrong token, with
+the wrong `createdById`, in the wrong person's lists. **A null owner passes**, so no handset is
+stranded by the upgrade. The entry is not marked failed: it is counted separately as
+`OutboxCounts.otherAccount` and gets its own banner line naming the one act that moves it — that
+designer signing in. Pinned by
+`android/app/src/test/java/com/designprototype/workshop/data/OutboxOwnerAccountTest.kt`.
+
+### [MEDIUM] An entry captured by one designer in a shared browser profile synced under the next designer's token (frontend) — **CLOSED 2026-09-03**
+
+**The web twin of the entry above, closed the same day.** The failure mode is identical and it is
+reached through a different door: `AuthProvider.logout` clears the token and the user from React
+state and **leaves IndexedDB exactly as it was**, so the outbox survives the handover intact — which
+is the whole premise the guard rests on — and `OutboxBanner` drains on mount, under whoever signed in
+next. A shared field laptop is not a rarer arrangement than a shared handset; it is the same
+arrangement with a bigger screen.
+
+`OutboxEntry.ownerUserId` is stamped in `queueOffline` from `setOutboxSessionUser`'s last answer,
+which `OutboxBanner` wires from the signed-in user, and `runSync` steps over an entry that
+`outboxEntryIsForAnotherAccount` reports as somebody else's. **Same null-owner rule** — every entry
+queued before the field existed passes, so no browser is stranded by the upgrade — and **the same
+not-marked-as-failed rule**: failure is a state a person resolves by discarding, and there is nothing
+wrong with this entry. It is counted separately as `SyncResult.otherAccount` and gets one banner
+line, `outboxOtherAccountLine`, naming the one act that moves it.
+
+The owner is stamped in `queueOffline` and nowhere else, which is why `ownerUserId` is excluded from
+that function's parameter type — six forms reach it and none of them may choose. Pinned by section 7
+of `frontend/e2e/outbox-drain-triage-unit.spec.ts` (eleven tests, including the drain's skip line and
+the banner sentence read out of the source).
+
+### [MEDIUM] A stage reported a refused answer and marked nothing on the screen (frontend) — **CLOSED 2026-09-03**
+
+When `save_stage` refuses a whole row it files the message under the reserved key `_row` inside that
+scope's error bucket (`{scope: {"_row": "…"}}`), which is a refusal about the ROW rather than about
+any field. **The web's box-marking pass looked every key in the bucket up in the registry's field
+list**, found no field called `_row`, and marked nothing — so the stage told the designer an answer
+had been refused and gave them nothing to look at. The count was right and the screen was empty,
+which is the worst of the two ways to be wrong: a designer re-saves, is refused again, and has no way
+to find out which row.
+
+Closed by `rowRefusal` and `RowRefusalLine` in
+`frontend/components/designworkshop/EntityForm.tsx`, drawn in three places — on the collection card,
+on the singleton, and hoisted once for `_custom`. `_row` may arrive **alone or beside real field
+messages in the same bucket**, so the line is drawn in addition to per-field marks rather than
+instead of them. Pinned by `frontend/e2e/stage-refusal-placement-unit.spec.ts`.
+
+**The literal is written by hand in three places with no generator between them** —
+`design_workshops.STAGE_ROW_CONFLICT_KEY`, `DwStageRefusal.kt`'s `DW_ROW_REFUSAL_KEY` and
+`EntityForm.tsx`'s `ROW_REFUSAL_KEY`. That is the shape of the next defect here: change one and the
+refusal simply stops being recognised on the client that was missed, and is drawn as a field named
+`_row`.
+
+### [MEDIUM] Two market-analysis port divergences, found and closed the same day (frontend) — **CLOSED 2026-09-03**
+
+`frontend/e2e/market-analysis-port-unit.spec.ts` ran for the first time on 2026-09-03 and found
+`frontend/lib/marketAnalysis.ts` disagreeing with the Python authority on two of the twenty-nine
+shared cases. Both were the browser's fault, not the table's — the goldens are regenerated from
+`backend/app/services/market_analysis.py`, so a divergence is always a defect in the port.
+
+1. **Unicode decimal digits.** Python's `float()` accepts any character in category Nd, so
+   `float("୧୨୩")` is 123.0. The port gated on an ASCII-only grammar and then handed the text to
+   `Number()`, which answers `NaN`. Measured on the case: the browser read 8 of the 10 price
+   observations the server reads, and reported a median of ₹670 against ₹545. Those are the figures
+   stage 9 prints and the report carries, so it was the panel and the .docx disagreeing about one
+   workshop. Closed by spelling the grammar with `\p{Nd}` **and** folding what it matches to ASCII —
+   one fix in two halves; either alone still reads `NaN`.
+2. **U+0085, which `String.prototype.trim()` does not strip.** Python's `str.strip()` follows
+   `str.isspace()`, which is true for the next-line control; ECMAScript's WhiteSpace set is not.
+   One line produced every consequence in the case: a padded price dropped, a padded competitor
+   vanished with its whole category distribution, a padded band bound read as absent so a SOUND-able
+   band reported `NO_EVIDENCE`, and an `evidence` field holding nothing but padding was non-empty on
+   one side and empty on the other. Closed by `pyStrip`, replacing every `trim()` that stood in for a
+   Python `.strip()`.
+
+`KNOWN_PORT_DIVERGENCES` in that spec is now empty and is kept rather than deleted: the next
+divergence needs somewhere to be named, and the rule for retiring one — `test.fail()` and never
+`test.skip()`, so the suite goes red the day the port is fixed and the annotation is left behind —
+belongs with it. The Kotlin twin `DwMarketAnalysis.kt` was the correct reference implementation for
+both and is unchanged.
 
 ---
 

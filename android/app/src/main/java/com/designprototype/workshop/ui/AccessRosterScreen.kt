@@ -645,11 +645,27 @@ fun AccessRosterScreen(
                             ". If they already have an account at a lower tier it is raised to match; " +
                             "an account that is already higher is never lowered by approving somebody."
                     } else {
-                        // The two things an admin gets wrong about Refuse, both said out loud.
+                        // The three things an admin gets wrong about Refuse, all said out loud.
+                        //
+                        // THE SECOND SENTENCE IS NEW ON 2026-09-03 AND IS THE SAME TRUTH SUSPEND
+                        // GOT THE SAME DAY. REJECTED is one of the two BARRED states, and
+                        // `routes/access.decide_access_request`'s REJECT arm calls
+                        // `end_live_sessions` UNGUARDED — the identical stamp, at the identical
+                        // point, as the suspend door. So refusing a person who is signed in right
+                        // now ends that session on their very next request, and a dialog that said
+                        // only what happens at the next attempt would understate the act on exactly
+                        // the row where an admin most needs to know it takes effect now. The words
+                        // are the web's, verbatim (`admin/access/page.tsx`'s reject arm): one
+                        // decision, one sentence, on both clients.
+                        //
+                        // "Any session" and not "their session", because most rows in this queue
+                        // belong to somebody who has never had one — the clause has to stay true of
+                        // a stranger who only ever asked.
                         "They will be told their request was reviewed and not approved, and whom to " +
-                            "contact. Nothing is deleted — the entry stays, with the record of when " +
-                            "they asked and how many times they have tried. Trying again will NOT put " +
-                            "them back in the queue: only you can reopen it, by approving them later."
+                            "contact. Any session they are in now ends with it. Nothing is deleted — " +
+                            "the entry stays, with the record of when they asked and how many times " +
+                            "they have tried. Trying again will NOT put them back in the queue: only " +
+                            "you can reopen it, by approving them later."
                     }
                 )
             },
@@ -679,11 +695,32 @@ fun AccessRosterScreen(
             onDismissRequest = { if (!busy) suspending = null },
             title = { Text("Suspend ${row.email}?") },
             text = {
+                /*
+                  IT TAKES EFFECT NOW, AND THIS DIALOG USED TO SAY IT TAKES EFFECT AT THEIR NEXT
+                  SIGN-IN.
+
+                  Until 2026-09-03 both barring doors wrote `AccessRoster.status` and nothing else,
+                  and that status is read on the SIGN-IN path — so a suspension left the browser and
+                  the phone the person was already signed in on working for the rest of the token's
+                  seven days. The API now stamps `User.sessionsValidFrom` at the same point
+                  (`routes/access.end_live_sessions` — public since 2026-09-03, when the designer
+                  roster became its second caller), which `deps._user_from_bearer` checks against
+                  the token's `iat` on every authenticated request: the sessions end with the click.
+
+                  So the first line is the one an admin is deciding on, it leads, and the sentence
+                  that implied "not before then" is gone. Nothing else in the paragraph changed —
+                  what happens at the next sign-in, and that the entry outlives the access, are both
+                  still what an admin gets wrong about this button.
+
+                  The REFUSE dialog above carries the same claim as of 2026-09-03, because the
+                  REJECT arm runs the same stamp. Change one, read the other.
+                */
                 Text(
-                    "They will be refused at their next sign-in and told that their access to this " +
-                        "application was ended — not that their password is wrong. The entry is kept: " +
-                        "it records when they joined, and that record outlives their access. Approving " +
-                        "them again here restores it, and their joining date is not moved by the round trip."
+                    "Suspending ends their access and signs them out now. Any sign-in after that is " +
+                        "refused and tells them their access to this application was ended — not that " +
+                        "their password is wrong. The entry is kept: it records when they joined, and " +
+                        "that record outlives their access. Approving them again here restores it, and " +
+                        "their joining date is not moved by the round trip."
                 )
             },
             confirmButton = {

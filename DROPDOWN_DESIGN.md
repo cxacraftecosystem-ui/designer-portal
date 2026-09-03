@@ -37,7 +37,7 @@ What is in the tree, checked against it rather than remembered:
 | §3.1 / §3.2 (B1, B2, B3) | computed asterisks, the honest offline sentence, and `fetchedAt` beside `address-reference.json` | `grep -n "REFERENCE_CACHE_STAMP_FILE" ui/LocationFields.kt` |
 | §3.2's bundled state list | `BUNDLED_STATES`, derived from `report/ReportMap.STATE_SEATS` rather than typed out | `grep -n "INDIAN_STATES_AND_UNION_TERRITORIES" android/app/src/main -r` |
 | §3.3 C1 on Android | `loadCachedRegister` and its four wrappers in `MainActivity.kt`, over `DwReferenceStore` | `grep -n "loadCraftRegister" MainActivity.kt` |
-| §3.3 on the web | `frontend/lib/referenceCache.ts` — the fourth IndexedDB database, `model__owner__filter`, no expiry, an empty fetch never overwrites a populated cache | that file exists |
+| §3.3 on the web | `frontend/lib/referenceCache.ts` — the fourth IndexedDB database, `model__owner__filter`, no expiry, an empty fetch never overwrites a populated cache; since 2026-09-03 it also holds the DESIGN-WORKSHOP stage pickers under a disjoint four-segment `dw__<model>__<owner>` namespace in the same object store at the same `DB_VERSION` (owner = the workshop id for a WORKSHOP-scoped field, the literal `ALL` otherwise — `DwReferenceStore.cacheOwner`'s rule, ported), with the same no-expiry and never-overwrite-a-populated-cache-with-an-empty-answer rules. Un-searched, un-cascaded opens only: searched, cascaded and by-id queries stay live-only, as on the handset | that file exists |
 | §3.4 | `MyAiKeysScreen` and `SearchScreen` both route through `SearchableSelectField`; `AccessRosterScreen` stays a menu, as this document pins it | `grep -rn "ExposedDropdownMenuBox" android/app/src/main` returns nothing but a comment |
 | §3.5 | the six sentences, byte for byte, on both clients | `workshopListNotice` / `registerListNotice` / `addressListNotice` |
 | §3.7 O1 | Android's `danglingField` / `repick` / `unfiled`; and now the web's `repickOutboxEntry` and the outbox's third button | `grep -n "danglingField" frontend/lib/offline.ts data/Offline.kt` |
@@ -1905,6 +1905,11 @@ rather than a call-site sweep:
 - ☑ **The web keeps the four registers on the device, and keeps NEITHER access list.** `grep -n
   "ReferenceRegister" frontend/lib/referenceCache.ts` — the type is a closed union of the four, so
   R6 is enforced by the compiler and not by a comment. A `designWorkshop` cache does not compile.
+  The stage-picker half added 2026-09-03 enforces R6 differently, because it cannot use the same
+  instrument: those models are the REGISTRY's and arrive as wire strings, so a closed union would
+  fail open at the first cast. It is a closed allow-list, `DW_CACHEABLE_REFERENCE_MODELS`, plus a
+  runtime narrowing on the way in. Neither grant model is on that list, and anything absent from it
+  is live-only.
 - ☑ **A queued record whose id 404s has a way out on both clients.** `grep -rn "danglingField"` finds
   it in `android/.../data/Offline.kt` and `frontend/lib/offline.ts`; the re-pick list is fetched LIVE
   on both, because it is an access-adjacent question (R6) and a cached answer would offer a grant

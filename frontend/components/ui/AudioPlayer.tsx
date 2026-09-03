@@ -49,7 +49,26 @@ export function AudioPlayer({ src, className }: { src: string; className?: strin
 
   const max = duration > 0 ? duration : Math.max(current, 1);
   const pct = Math.min(100, Math.max(0, (current / max) * 100));
-  const fill = `linear-gradient(to right, oklch(0.47 0.198 305) 0%, oklch(0.47 0.198 305) ${pct}%, #e4e2ef ${pct}%, #e4e2ef 100%)`;
+  /**
+   * The unplayed half of the track, THEMED — fixed 2026-09-03.
+   *
+   * This literal was `#e4e2ef`, which is the LIGHT value of `--line-200`, so the unplayed track kept
+   * its pale lavender under `data-theme="dark"` while the border two elements out inverted to
+   * `#342e47`: one control drawn half in each theme. It was a known leak rather than a pattern (the
+   * frontend reference names it as such under `AudioPlayer`), and the reason it survived is that the
+   * value goes into a GRADIENT STRING and looked unthemeable from here.
+   *
+   * It is not. `--line-200` is a bare `R G B` triplet on `:root` and `var()` references inside a
+   * custom property's value are substituted when that property is itself substituted — this string
+   * is assigned to `--audio-range-fill` on the input below, and `globals.css` reads it back through
+   * `background: var(--audio-range-fill, …)`. So the token resolves in the element's own context and
+   * follows the theme, high contrast included (`[data-high-contrast]` re-points this same rung).
+   *
+   * The purple stays a literal `oklch()`, correctly: brand purple never inverts.
+   */
+  const fill =
+    `linear-gradient(to right, oklch(0.47 0.198 305) 0%, oklch(0.47 0.198 305) ${pct}%, ` +
+    `rgb(var(--line-200)) ${pct}%, rgb(var(--line-200)) 100%)`;
 
   return (
     <div className={`flex items-center gap-3 rounded-md border border-line-200 bg-card px-3 py-2 ${className ?? ""}`}>

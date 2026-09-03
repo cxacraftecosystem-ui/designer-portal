@@ -913,20 +913,38 @@ internal fun DwReferenceSelectField(
  * opens to tick everyone in the room — so the absence is worth stating rather than leaving to be
  * discovered. Two facts stopped it landing in the same change as the single picker's:
  *
- *  · THE SHIPPED REGISTRY DECLARES NO SUCH FIELD. Every `refModel` in
- *    `app/src/main/assets/design-workshop-schema.json` is on a `REF`, so this composable is
- *    unreachable from the registry this APK carries; a reader added here could not be exercised by
- *    anything, on any surface, and an untested reader on the roster is worse than none.
+ *  · THE SHIPPED REGISTRY DECLARED NO SUCH FIELD — true until 2026-09-03 and not true in any tier
+ *    now. The registry promoted `processStep.toolsUsed` and `prototype.toolsUsed` from TAGS to a
+ *    MULTI_ENUM naming `ToolDocumentation`, and the bundled asset was regenerated in the SAME wave:
+ *    `app/src/main/assets/design-workshop-schema.json` carries `MULTI_ENUM` with that `refModel` at
+ *    BOTH sites, under digest `37b5ff5190ef0e63`. So this composable is reachable through all three
+ *    tiers — the server's registry, a cached copy, and the bundled floor — and a handset that has
+ *    never once had a connection draws the picker rather than a tag box. Nothing here is waiting on
+ *    an operator.
+ *
+ *    THE LAG IS STILL REAL AND IS ABOUT THE NEXT PROMOTION, WHICH IS WHY THIS NAMES A DIGEST. The
+ *    asset is a by-value dump and is only ever as current as the last run of the command in
+ *    [StageSchema]'s header: a registry edit made after `37b5ff5190ef0e63` reaches the server and a
+ *    cached copy and NOT the tier-2 floor, so a phone that has never fetched anything goes on drawing
+ *    whatever shipped in the APK. Check the digest before repeating this paragraph's claim about a
+ *    field promoted later.
  *  · THE BROWSER HAS NO ROSTER READER EITHER. `StageReferenceField.tsx` mounts `WorkshopCodeScanner`
  *    inside `StageReferenceSelect` and nowhere else — its own `StageReferenceMultiPicker` carries
  *    none — and a control that exists on one client and not the other is the parity failure
- *    [INLINE_CREATABLE] is written to prevent.
+ *    [INLINE_CREATABLE] is written to prevent. That is unchanged and is now the whole of the reason.
  *
- * If a MULTI_ENUM ever does carry a `refModel`, the pieces are already shared and none of them is
- * single-select-specific: [dwScannableRecordType] gates it, [dwScanLocalStep] and
- * [dwScanServerAnswer] decide it, and the pick becomes one more id in the array — the same commit
- * `createAction` below already makes. Do it in the same change that adds the field, and add the
- * browser's half with it.
+ * The pieces are already shared and none of them is single-select-specific: [dwScannableRecordType]
+ * gates it, [dwScanLocalStep] and [dwScanServerAnswer] decide it, and the pick becomes one more id in
+ * the array — the same commit `createAction` below already makes. Whoever adds it adds the browser's
+ * half in the same change. A tool card is a plausible thing to be holding at a loom, so this is now a
+ * gap somebody will feel rather than a hypothetical.
+ *
+ * ── WHAT A PROMOTED FIELD'S ARRAY HOLDS, WHICH THIS CONTROL HAS TO DRAW ──────────────────────
+ *
+ * Ids AND free text, mixed, for years: everything stored under those two keys before 2026-09-03 is a
+ * tool name somebody typed, and every 0.0.7 handset in the field is still adding to it. Nothing is
+ * migrated and nothing needs to be — MULTI_ENUM and TAGS are the same JSON array of strings on the
+ * wire and in the column. [heldOption] is what keeps a typed word drawn as a typed word.
  */
 @Composable
 internal fun DwReferenceMultiSelectField(
@@ -974,9 +992,10 @@ internal fun DwReferenceMultiSelectField(
         // first edit would write the eight back and drop the ninth.
         val known = narrowed.map { it.id }.toSet()
         buildReferenceOptions(narrowed, "", tentativeWord = list?.tentativeLabel.orEmpty()) +
-            selected.filterNot { it in known }.map { orphan ->
-                SelectOption(orphan, orphanLabel(orphan), "on this row, not in this device's list")
-            }
+            // [heldOption] AND NOT [orphanLabel] DIRECTLY: a promoted field's array holds record ids
+            // and the free text its TAGS predecessor collected, and drawing the second as a broken
+            // link replaces a designer's own word with a claim about a link nobody made.
+            selected.filterNot { it in known }.map { held -> heldOption(held) }
     }
 
     val noun = INLINE_CREATABLE[field.refModel]
@@ -1941,6 +1960,33 @@ internal fun buildReferenceOptions(
 
 /** A recognisable stand-in for an id whose record this device cannot name. Never a bare UUID. */
 private fun orphanLabel(id: String): String = "Linked record ${id.take(8)}"
+
+/**
+ * A held value this device cannot name, drawn as WHAT IT ACTUALLY IS.
+ *
+ * ── THE REGRESSION THIS EXISTS TO STOP (2026-09-03) ──────────────────────────────────────────
+ *
+ * `processStep.toolsUsed` and `prototype.toolsUsed` were free-text TAGS for the whole life of the
+ * app until the registry promoted them to a multi-select over documented `ToolDocumentation` rows.
+ * Every value stored under those keys today is therefore a tool NAME a designer typed — and a
+ * handset running the 0.0.7 registry still draws a tag box for them and is writing more of them
+ * right now.
+ *
+ * [DwReferenceMultiSelectField] gives every held token a row so the control cannot under-report its
+ * own value, and that row used to be [orphanLabel] unconditionally: "pit loom" would have been drawn
+ * as `Linked record pit loom` beside a hint saying this device's list does not hold it. Two false
+ * statements about one word, and the word is the designer's own record of their own fieldwork.
+ *
+ * [OPAQUE_ID] is `report_builder._OPAQUE_ID`, shared with the report renderer in this same module
+ * rather than re-spelled, so a token the form draws as typed text is a token the report prints as
+ * typed text. The browser's copy is `FieldInput.tsx`'s `heldRow`, hint for hint.
+ */
+private fun heldOption(token: String): SelectOption =
+    if (OPAQUE_ID.matches(token.trim())) {
+        SelectOption(token, orphanLabel(token), "on this row, not in this device's list")
+    } else {
+        SelectOption(token, token, "typed on this field, not a linked record")
+    }
 
 /**
  * The chosen record's values, resolved onto the BOXES they belong in.

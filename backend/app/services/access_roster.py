@@ -751,8 +751,35 @@ async def _accounts_on_the_mailbox(keys: list[str], mailbox: str) -> list[Any] |
     return list(found.values())
 
 
-async def admissions_an_empanelment_carries(email: Any) -> list[Any]:
+async def accounts_on_the_mailbox(email: Any) -> list[Any] | None:
+    """Every ``User`` this address could mean, HOWEVER IT IS SPELLED. ``None`` = cannot say.
+
+    :func:`_accounts_on_the_mailbox` with the two arguments derived rather than passed in — read
+    that function for the whole argument, the Gmail fold, the sweep limit and why a cut sweep
+    withdraws its answer instead of shortening it. This exists so a caller outside this module can
+    ask the question without rebuilding the key list and the canonical form, which is the pair a
+    second copy would get subtly wrong (the length filter, in particular, is not decoration: an
+    over-long key would be handed to a ``VARCHAR`` comparison).
+
+    **EXPORTED FOR ``routes/access.end_live_sessions`` (2026-09-03), AND THE FAILURE DIRECTION IS
+    NOT THE SAME THERE AS IT IS HERE.** Inside this module a ``None`` means "do not mirror", which
+    leaves two rosters disagreeing — visible, repairable, nobody barred by an unverified answer. At
+    the revocation door it means "these sessions may still be live", which is the UNSAFE direction,
+    so that caller logs rather than shrugs. The distinction belongs to the callers; the read is one
+    implementation because "which accounts are this mailbox" must not have two answers.
+    """
+    keys = [key for key in email_match_keys(email) if len(key) <= MAX_EMAIL_LENGTH]
+    if not keys:
+        return []
+    return await _accounts_on_the_mailbox(keys, canonical_email(email))
+
+
+async def admissions_an_empanelment_carries(email: Any) -> list[Any] | None:
     """The ACTIVE allow-list rows whose admission RESTS on this mailbox's designer empanelment.
+
+    ``None`` = THE SWEEP COULD NOT ANSWER, and it is a different fact from ``[]``. See the section
+    at the foot of this docstring; every caller that only mirrors may keep treating the two the
+    same, and the one caller that REVOKES may not.
 
     The guard on the empanelment-to-allow-list direction of the mirror, and the reason that
     direction is safe at all. Answers ``[]`` — mirror nothing — for everybody whose place in this
@@ -818,6 +845,20 @@ async def admissions_an_empanelment_carries(email: Any) -> list[Any]:
     existed — two screens disagreeing, both gates still refusing correctly — which is visible and
     fixable in five minutes by the same administrator on the same screen. A wrongly mirrored pair is
     somebody locked out of the entire application by a click nobody connected to them.
+
+    **``None`` IS "I COULD NOT CHECK" AND ``[]`` IS "NOBODY", AND CONFLATING THEM COST THE ONE ALARM
+    THIS PAIR HAS (2026-09-03).** Both used to be spelled ``[]``. For the MIRROR that is harmless
+    and remains so — declining to mirror on an unverified answer is the safe direction, and
+    :func:`_bar_an_ended_empanelment` still treats the two identically on purpose.
+
+    It is not harmless for the REVOCATION door. ``routes/designers._end_what_the_empanelment_carried``
+    reads this to decide whether to end the sessions the empanelment was carrying, and a cut sweep
+    made that read ``[]`` — "this person keeps their access" — so ``end_live_sessions`` was skipped
+    SILENTLY, in exactly the direction :func:`accounts_on_the_mailbox`'s own note says the callers
+    must not shrug at: an administrator has been told access is cut while a live token may run to
+    its expiry. ``end_live_sessions`` already shouts about the identical condition when it reaches
+    the sweep itself; with the two answers merged here it was never reached to shout. Distinguishing
+    them is what lets that door log the same ERROR, name the address, and name the repair.
     """
     keys = [key for key in email_match_keys(email) if len(key) <= MAX_EMAIL_LENGTH]
     if not keys:
@@ -831,7 +872,11 @@ async def admissions_an_empanelment_carries(email: Any) -> list[Any]:
         # THE SWEEP COULD NOT ANSWER, SO NEITHER CAN THIS. It has already said so at ERROR and named
         # the repair; declining here is what turns "I could not check" into an un-mirrored pair
         # rather than into a bar nobody verified. See :data:`GMAIL_ACCOUNT_SWEEP_LIMIT`.
-        return []
+        #
+        # ``None`` AND NOT ``[]`` SINCE 2026-09-03. Every mirroring caller reads both as falsy and
+        # behaves exactly as before; the revocation door reads the difference and shouts. See the
+        # last section of this docstring.
+        return None
     if any(_account_role(account) != "DESIGNER" for account in accounts):
         # ANY, not ALL. Two spellings of one Gmail mailbox can hold two accounts, and if either of
         # them is something other than a designer then somebody's access to this application does
@@ -865,6 +910,11 @@ async def _bar_an_ended_empanelment(email: Any, *, actor_id: str | None, because
     """
     rows = await admissions_an_empanelment_carries(email)
     if not rows:
+        # ``None`` (the sweep could not answer) AND ``[]`` (nobody's admission rests on it) SHARE
+        # THIS BRANCH DELIBERATELY. The mirror's failure direction is "do not bar", and both answers
+        # mean the same thing to it: there is nothing here it is willing to suspend. Only the
+        # revocation door in ``routes/designers`` needs to tell them apart, because only there does
+        # a declined answer leave a live session behind. (2026-09-03)
         return 0
     now = datetime.now(UTC)
     barred = 0

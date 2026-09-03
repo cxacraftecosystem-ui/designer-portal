@@ -515,15 +515,20 @@ function DesignerRosterPageInner() {
     return (
       <>
         {header}
+        {/*
+          ONE LINE — 2026-09-03, the same rewrite as `/admin/access`. The body argued the case for
+          the gate ("a list of named individuals and their institutional standing, so reading it is
+          admin work as much as writing it is") before stating the refusal, and then stated it
+          twice. The argument is `lib/permissions.ts`'s, beside `canManageDesignerRoster`, where it
+          is written once for every surface rather than re-typed onto each refusal screen.
+        */}
         <RestrictedPanel
           title="Admin access required"
           body={
-            `The designer roster is a list of named individuals and their institutional standing, so reading it is admin work as much as ` +
             // `roleLabel` answers "" for an absent user. AppShell never renders a protected page
-            // without one, but a sentence that reads "  does not open it" is a worse way to find
+            // without one, but a sentence that reads "  does not open this" is a worse way to find
             // that out than a fallback nobody will ever see.
-            `writing it is: ${roleLabel(user?.role) || "your tier"} does not open it, and the API refuses the same request for the same reason. ` +
-            `An admin or the master admin can add, suspend and restore designers here.`
+            `${roleLabel(user?.role) || "Your tier"} does not open this. Ask an admin or the master admin.`
           }
         />
       </>

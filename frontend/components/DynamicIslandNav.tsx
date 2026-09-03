@@ -45,6 +45,7 @@ import {
 
 import { useAdminView } from "@/components/AdminViewProvider";
 import { useAuth } from "@/components/AuthProvider";
+import { useAppReducedMotion } from "@/components/guide/useAppReducedMotion";
 import { useOpenTaskCount } from "@/components/hooks/useOpenTaskCount";
 import { usePendingAccessCount } from "@/components/hooks/usePendingAccessCount";
 import { OPEN_TASK_BADGE_HREF, openTaskBadgeSentence } from "@/components/tasks/openTaskCount";
@@ -478,6 +479,16 @@ export function isNavItemVisible(item: NavItem, user: User | null | undefined, a
 
 const spring = { type: "spring" as const, stiffness: 260, damping: 30 };
 
+/**
+ * ZERO MOTION, EXPRESSED AS A TRANSITION — the shape every branch in this file uses.
+ *
+ * There is deliberately no `MotionConfig reducedMotion="user"` anywhere in this app (the argument is
+ * in `components/guide/steps.ts`), and it would not be the right instrument here anyway: `"user"`
+ * reads the OS media query, which is only ONE of this app's two switches. Per-component branches
+ * are the house style, so this is the one they all reach for.
+ */
+const NO_MOTION = { duration: 0 } as const;
+
 export function DynamicIslandNav() {
   const { user, logout } = useAuth();
   const { adminMode, canAdmin, toggleAdminView } = useAdminView();
@@ -489,6 +500,35 @@ export function DynamicIslandNav() {
   const { scrollY } = useScroll();
   const sheetRef = useRef<HTMLDivElement | null>(null);
   const menuButtonRef = useRef<HTMLButtonElement | null>(null);
+  /**
+   * REDUCED MOTION, HONOURED HERE FOR THE FIRST TIME — 2026-09-03.
+   *
+   * This component had no reduced-motion branch at all, and it is the one nobody using this app can
+   * avoid: the pill re-projects its layout on every scroll direction change, the brand block is
+   * REMOUNTED on each compact flip (`key={compact ? …}`) so its 32px swoop replays, the desktop
+   * strip tweens its width open and shut, and the sheet slides down over a fading scrim. CSS cannot
+   * reach any of it — framer-motion writes inline styles, and `globals.css`'s two reduced-motion
+   * blocks only zero CSS transitions and animations — so a reader with the preference set got the
+   * full performance on every page of the application.
+   *
+   * `useAppReducedMotion()` and not framer's `useReducedMotion()`: the latter sees only the OS media
+   * query, and this app's second switch is the Settings toggle, which stamps
+   * `data-reduced-motion="true"` on `<html>`. Safe in this tree — `AppShell` renders this component
+   * and sits well inside `ThemeProvider`.
+   *
+   * BRANCHING `initial` AS WELL AS THE TRANSITION IS CORRECT HERE, the guide's rule rather than the
+   * hero's (§8.4). This is an in-app surface behind `AuthProvider`, so nothing here is prerendered
+   * for a visitor; and `useAppReducedMotion()` reads false on the first client render, by which time
+   * the island has already painted at rest. Every replay after that — a compact flip, an open sheet
+   * — happens long after `ThemeProvider`'s mount effect has read the stored preference.
+   *
+   * NOT a dependency of any effect in this file, and it must not become one: a preference that
+   * settles after mount tears an in-flight effect down for exactly the users who asked for less
+   * motion (§17, "effects guarded by a ref").
+   */
+  const reduce = useAppReducedMotion();
+  /** The island's shared spring, or nothing at all. Every `transition` below goes through this. */
+  const islandTransition = reduce ? NO_MOTION : spring;
 
   // Compact while travelling downward, expand at the top or on any upward scroll —
   // so the full menu is always one flick away without returning to the top.
@@ -662,20 +702,27 @@ export function DynamicIslandNav() {
     <>
       <div className="nav-island-frame pointer-events-none fixed inset-x-0 top-3 z-50 flex justify-center">
         <motion.header
+          // `layout` still projects the size change under reduce — the pill really does get smaller
+          // — it simply arrives there in one frame instead of springing. Dropping `layout` outright
+          // would leave the padding classes to a browser transition CSS has already zeroed, which
+          // is the same destination by a less predictable route.
           layout
-          transition={spring}
+          transition={islandTransition}
           onMouseLeave={() => setActive(null)}
           className={cn(
             "pointer-events-auto flex items-center gap-1 rounded-full border border-line-200 bg-card/85 shadow-island backdrop-blur-xl",
             compact ? "px-3 py-1.5" : "px-4 py-2"
           )}
         >
-          {/* Brand: swoops in from the left every time the island compacts on a downward scroll. */}
+          {/* Brand: swoops in from the left every time the island compacts on a downward scroll.
+              Under reduced motion it is simply THERE — the `key` still remounts it, so `initial` is
+              read again on every flip and has to be the resting state rather than a displacement
+              raced back to zero at duration 0. */}
           <motion.div
             key={compact ? "brand-compact" : "brand-full"}
-            initial={{ x: -32, opacity: 0 }}
+            initial={reduce ? { x: 0, opacity: 1 } : { x: -32, opacity: 0 }}
             animate={{ x: 0, opacity: 1 }}
-            transition={spring}
+            transition={islandTransition}
           >
             <Link href="/dashboard" className="flex min-w-fit items-center gap-2 pr-2 text-ink-900">
               <WorkshopLogo className={cn("rounded-lg", compact ? "h-7 w-7" : "h-8 w-8")} />
@@ -689,10 +736,13 @@ export function DynamicIslandNav() {
           <AnimatePresence initial={false}>
             {!compact ? (
               <motion.nav
+                // The width keyframes are kept under reduce — the strip genuinely has no width when
+                // it is gone, and `AnimatePresence` needs an `exit` to unmount on — but at duration
+                // 0 nothing is seen to travel. Only the DURATION changes; the states do not.
                 initial={{ opacity: 0, width: 0 }}
                 animate={{ opacity: 1, width: "auto" }}
                 exit={{ opacity: 0, width: 0 }}
-                transition={{ duration: 0.22, ease: "easeOut" }}
+                transition={reduce ? NO_MOTION : { duration: 0.22, ease: "easeOut" }}
                 className="hidden items-center gap-5 overflow-visible whitespace-nowrap pl-2 pr-1 lg:flex"
                 aria-label="Primary"
               >
@@ -782,7 +832,7 @@ export function DynamicIslandNav() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            transition={{ duration: 0.18 }}
+            transition={reduce ? NO_MOTION : { duration: 0.18 }}
             className="nav-sheet-overlay fixed inset-0 z-[90]"
           >
             {/* The scrim is its own element rather than the sheet's parent: `touch-action: none` is
@@ -799,10 +849,13 @@ export function DynamicIslandNav() {
               role="dialog"
               aria-modal="true"
               aria-label="Navigation"
-              initial={{ y: -16, opacity: 0 }}
+              // The 16px drop goes entirely under reduce rather than being raced: this panel takes
+              // focus on open, and a keyboard reader who asked for less motion should find it where
+              // it will stay. The opacity keyframes remain so `AnimatePresence` still has an exit.
+              initial={reduce ? { y: 0, opacity: 0 } : { y: -16, opacity: 0 }}
               animate={{ y: 0, opacity: 1 }}
-              exit={{ y: -16, opacity: 0 }}
-              transition={spring}
+              exit={reduce ? { y: 0, opacity: 0 } : { y: -16, opacity: 0 }}
+              transition={islandTransition}
               className="nav-sheet relative mx-auto w-[min(680px,92vw)] rounded-xl border border-line-200 bg-card shadow-lg"
             >
               <div className="grid gap-1 sm:grid-cols-2">

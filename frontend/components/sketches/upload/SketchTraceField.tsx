@@ -2451,7 +2451,10 @@ export function SketchTraceField({
               label="Photograph to trace"
               buttonLabel="Choose a photograph"
               accept={TRACEABLE_ACCEPT}
-              acceptSentence={`${TRACEABLE_IMAGE_TYPES}, wherever this browser can read them. Anything longer than ${DECODE_MAX_EDGE_PX}px on its long edge is reduced to that before tracing — the trace was never going to run above it.`}
+              // KEPT WORD FOR WORD IN STEP WITH `SharedPhotoField`'s copy of this card, which is the
+              // one a designer normally meets; this branch draws only where that picker is absent.
+              // Both were shortened together on 2026-09-03 under the owner's one-line copy rule.
+              acceptSentence={`${TRACEABLE_IMAGE_TYPES}. Anything over ${DECODE_MAX_EDGE_PX}px on the long edge is reduced before tracing.`}
               disabled={disabled}
               /*
                 THE RULE, NOT THE FILTER. `accept="image/*"` is what the dialog offers and a drop ignores
@@ -2467,7 +2470,7 @@ export function SketchTraceField({
               */
               validate={(candidate) => {
                 if (candidate.type === "image/svg+xml") {
-                  return "an SVG is already vector art, and rasterising it to trace it back can only lose detail. Attach it with the ordinary picker instead.";
+                  return "an SVG is already vector art — attach it with the ordinary picker instead.";
                 }
                 if (candidate.type === "" || candidate.type.startsWith("image/")) return null;
                 return `this is ${candidate.type}, not a photograph. A drawing has to be traced from an image.`;

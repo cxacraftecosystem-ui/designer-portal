@@ -22,6 +22,14 @@ import org.junit.Test
  * These pin it here: which sentences the records banner may say, which icon it may draw, and that a
  * refusal is never described as waiting for a signal. Every one of these strings is read by somebody
  * standing in a courtyard with no connection, so a JVM test is the only place they can be checked.
+ *
+ * ── AND A THIRD THING A CONNECTION DOES NOT MOVE (2026-09-03) ─────────────────────────────────────
+ *
+ * [OutboxCounts.otherAccount]: entries captured on this handset by the OTHER designer sharing it,
+ * which `syncOutbox` now skips rather than filing their fieldwork under this account's name. It
+ * arrived here as "waiting", exactly as a refusal once did, and it gets its own line for the reason a
+ * refusal has one — the remedy is neither a signal nor a correction. The rule that decides which
+ * entries those are is `OutboxOwnerAccountTest`'s; this file owns what is said about them.
  */
 class OutboxBannerTest {
 
@@ -108,6 +116,90 @@ class OutboxBannerTest {
         )
         val many = outboxDeviceBanner(OutboxCounts(waiting = 0, refused = 4), online = true)!!
         assertTrue(many.lines.single().text.contains("A sync will NOT move them"))
+    }
+
+    // ── The third thing a connection does not move ─────────────────────────────────────────────
+
+    /**
+     * AN ENTRY ANOTHER ACCOUNT CAPTURED, WHICH ARRIVED HERE AS "WAITING".
+     *
+     * `syncOutbox` steps over an entry whose `PendingEntry.ownerUserId` is not the signed-in account,
+     * because sending it files one designer's fieldwork under another's name on a shared handset (see
+     * that field, and `OutboxOwnerAccountTest` for the rule). Nothing is refused on such an entry and
+     * nothing failed, so it carried a null `failure` and fell into `waiting` — inside "sending now",
+     * under a cloud-off icon, for an entry no amount of signal will ever move. That is the defect this
+     * whole file exists to end, reaching the banner by a third door.
+     */
+    @Test
+    fun `another account's entries get their own line, naming the one act that moves them`() {
+        val banner = outboxDeviceBanner(
+            OutboxCounts(waiting = 0, refused = 0, otherAccount = 2),
+            online = true,
+        )!!
+        val line = banner.lines.single()
+
+        assertTrue("it is the amber one: something here is not going anywhere", line.warn)
+        assertFalse(
+            "the cloud-off icon is a claim about the NETWORK; this is a claim about a person:\n" +
+                line.text,
+            banner.showCloudOff,
+        )
+        // Two facts and nothing else: whose they are, and what moves them.
+        assertTrue(line.text, line.text.contains("2 entries captured on this phone by another account"))
+        assertTrue(line.text, line.text.contains("Sign in as them"))
+        // The standing promise of this queue on every path where something is not going.
+        assertTrue(line.text, line.text.contains("nothing has been deleted"))
+        // NOT TAPPABLE. The tray lists refusals (`outboxFailureRows` filters on `failure`), so a tap
+        // would open a screen with nothing on it — a dead end wearing the costume of a remedy, which
+        // is the phrase this queue already uses about the two buttons it had to stop offering.
+        assertFalse("there is no tray row behind this line", banner.actionable)
+    }
+
+    @Test
+    fun `one entry of another account's reads as one, through the whole sentence`() {
+        val one = outboxDeviceBanner(OutboxCounts(waiting = 0, refused = 0, otherAccount = 1), true)!!
+        val text = one.lines.single().text
+        assertTrue(text, text.contains("1 entry captured"))
+        assertTrue(text, text.contains("Sign in as them to send it"))
+    }
+
+    @Test
+    fun `the three states get three lines and none of them borrows another's remedy`() {
+        val banner = outboxDeviceBanner(
+            OutboxCounts(waiting = 2, refused = 1, otherAccount = 3),
+            online = false,
+        )!!
+        assertEquals(3, banner.lines.size)
+        assertFalse("the waiting line is not a warning", banner.lines[0].warn)
+        assertTrue("there is genuinely something on its way", banner.showCloudOff)
+        assertTrue("and a refusal a person can act on", banner.actionable)
+
+        val waitingLine = banner.lines[0].text
+        val refusedLine = banner.lines[1].text
+        val otherLine = banner.lines[2].text
+        // No two of them may word each other. One waits for a signal, one for a correction, one for a
+        // different person to sign in — and a designer sent to the wrong remedy loses a day. This is
+        // R7's rule about collapsing two absences, applied to three.
+        assertTrue(waitingLine, waitingLine.contains("will be sent when you have a signal"))
+        assertFalse(otherLine, otherLine.contains("when you have a signal"))
+        assertFalse(otherLine, otherLine.contains("the server would not accept"))
+        assertFalse(refusedLine, refusedLine.contains("Sign in as them"))
+        // And no number is folded into another: a total of six would be the old lie with two more
+        // sentences under it.
+        assertTrue(waitingLine, waitingLine.startsWith("2 entries"))
+        assertTrue(refusedLine, refusedLine.startsWith("1 entry"))
+        assertTrue(otherLine, otherLine.startsWith("3 entries"))
+    }
+
+    @Test
+    fun `a queue that is only another account's still draws something`() {
+        // It must not draw nothing. The entries are real fieldwork on the flash of a shared handset,
+        // and a banner that goes silent is how somebody concludes the work was lost and stops looking.
+        assertNull(outboxDeviceBanner(OutboxCounts(0, 0, otherAccount = 0), online = true))
+        assertEquals(
+            1,
+            outboxDeviceBanner(OutboxCounts(0, 0, otherAccount = 1), online = true)!!.lines.size,
+        )
     }
 
     // ── The tray ───────────────────────────────────────────────────────────────────────────────

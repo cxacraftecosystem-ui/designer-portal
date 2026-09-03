@@ -518,8 +518,12 @@ test.describe("design workshop visibility", () => {
       — `eligible-viewers` answers at most 2000 accounts ordered by name and that cut is reached on a
       real repository, so the picker cannot reach a late-sorting colleague on its own and the box that
       can is a stop on the keyboard route rather than a mouse-only convenience. It carries
-      `role="searchbox"` and no `aria-label` (`components/SearchInput.tsx`: the placeholder is its
-      accessible name), which is why this hop is asserted on the role.
+      `role="searchbox"`, and its accessible name is its placeholder — since 2026-09-03 through an
+      explicit `aria-label={ariaLabel ?? placeholder}` in `components/SearchInput.tsx` rather than
+      through the name-from-placeholder fallback, so it now survives a filled box. This call site
+      passes no `ariaLabel` of its own (its placeholder, "Search designers by name or email",
+      already names the corpus), which is why this hop is still asserted on the role: the next stop
+      is what is addressed by name.
     */
     await page.keyboard.press("Tab");
     await expect

@@ -311,7 +311,22 @@ fun MediaThumb(
     title: String,
     subtitle: String?,
     onOpen: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    /**
+     * The thumbnail could not be drawn.
+     *
+     * ONE REASON THIS EXISTS, AND IT IS NOT A SPINNER. `MediaFile.url` is about to become a
+     * 15-minute signature (`MEDIA_PRESIGNED_READS` on the API), and a handset that cached a payload
+     * yesterday is holding a string that has silently stopped working. Coil reports that as a load
+     * failure with a throwable and no status, which is exactly why the caller — not this row —
+     * decides what it means: see `MediaUrlRefresh`, which treats "I could not tell" as one refresh
+     * and never as two.
+     *
+     * DEFAULTED TO NULL so every existing call site behaves precisely as it did: a thumbnail that
+     * fails to draw is still a dark square with the filename beside it, which is what a row with no
+     * readable bytes has always looked like here.
+     */
+    onLoadError: (() -> Unit)? = null
 ) {
     val loader = rememberMediaImageLoader()
     Row(
@@ -327,12 +342,18 @@ fun MediaThumb(
             contentAlignment = Alignment.Center
         ) {
             when (mediaType.uppercase()) {
-                "IMAGE" -> AsyncImage(model = uri, contentDescription = title, modifier = Modifier.fillMaxSize())
+                "IMAGE" -> AsyncImage(
+                    model = uri,
+                    contentDescription = title,
+                    onError = { onLoadError?.invoke() },
+                    modifier = Modifier.fillMaxSize()
+                )
                 "VIDEO" -> {
                     AsyncImage(
                         model = ImageRequest.Builder(LocalContext.current).data(uri).build(),
                         imageLoader = loader,
                         contentDescription = title,
+                        onError = { onLoadError?.invoke() },
                         modifier = Modifier.fillMaxSize()
                     )
                     Icon(Icons.Filled.PlayArrow, contentDescription = null, tint = Color.White)

@@ -589,7 +589,17 @@ async def login(payload: LoginRequest) -> dict[str, Any]:
                 detail=PASSWORD_NOT_SET_DETAIL,
                 headers=_hint_headers(PASSWORD_NOT_SET_HINT),
             )
-        # ── THE PER-ACCOUNT GUESSING BUDGET, TAKEN HERE AND NOWHERE ELSE ──────────────────────
+        # ── THE PER-ACCOUNT GUESSING BUDGET, TAKEN HERE AND AT TWO OTHER DOORS ────────────────
+        #
+        # THIS BLOCK USED TO BE HEADED "TAKEN HERE AND NOWHERE ELSE", and on 2026-09-03 that
+        # stopped being something to be pleased about and started being the finding. Two other
+        # places in this API verify a password, and neither of them was charging anything:
+        # `routes/datasets.mint_dataset_token` (email + password for a thirty-day read token over
+        # the whole repository — a strictly better credential than the one this line protects) and
+        # `change_password` at the foot of this file (the CURRENT password, on a stolen session).
+        # Both now take and refund the SAME per-account bucket this line does, so an account is one
+        # allowance across all three doors rather than three allowances an attacker can pick from.
+        # See the second banner in `app/scale/rate_limit.py` for the whole argument.
         #
         # `app/scale/rate_limit.py` is ASGI middleware: it runs before this handler has resolved
         # anything, so it can only key on the network the request came from. That budget stays
@@ -946,6 +956,25 @@ async def change_password(
     IT DOES NOT REVOKE SESSIONS, unlike a link redemption, and the difference is who is asking. A
     person changing their own password from inside a session they are using has not lost control of
     anything; signing them out of their own phone for tidiness is a worse answer than leaving it.
+
+    **AND THE PER-ACCOUNT GUESSING BUDGET CLOSES THE OTHER HALF OF THAT SAME ARGUMENT, 2026-09-03.**
+    The paragraph above says this route exists so that a stolen session cannot become a permanent
+    takeover: the thief holds a token, not the password, so they cannot set a new one. That was only
+    half enforced. The token also let them GUESS the current password here, without limit and
+    without ever meeting a refusal — the ASGI limiter in ``app/scale/rate_limit.py`` keys anonymous
+    callers by address and this route is reached with a bearer token, and there was no per-account
+    charge on this path at all. So a stolen session was an offline-speed oracle against one specific
+    account's password, running at whatever rate bcrypt allows, with the prize being exactly the
+    permanent takeover this route was written to prevent. The same take-then-refund the sign-in door
+    uses now sits in front of that check, spending the SAME bucket keyed on ``user.id``: ten wrong
+    guesses in five minutes across every door in the API, not ten per door.
+
+    Charged BEFORE ``verify_password`` and refunded the moment it passes, for the reason
+    ``routes/auth.login`` gives at length — a check-then-charge would let a hundred parallel guesses
+    all pass the check before any of them was counted — and refunded on every outcome that is not a
+    wrong password, so somebody who types their own password correctly spends nothing however often
+    they change it. The 400 above is not charged either: an account with no password to compare
+    against has had nothing guessed at it.
     """
     if current_user.passwordHash is None:
         raise HTTPException(
@@ -955,10 +984,22 @@ async def change_password(
                 "set-password link."
             ),
         )
+    allowed, _retry = account_credential_attempt(current_user.id)
+    if not allowed:
+        # The sign-in door's sentence, deliberately verbatim rather than a second wording of the
+        # same fact: it is the same budget, and a person who has just been refused at one door and
+        # reads a different explanation at the other has been told there are two limits.
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=ACCOUNT_THROTTLED_DETAIL,
+        )
     if not verify_password(payload.currentPassword, current_user.passwordHash):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Current password is incorrect"
         )
+    # The password was right, so nothing was spent — the same refund, on the same rule, as the
+    # sign-in path. Everything from here down is a write that cannot be a wrong password.
+    account_credential_refund(current_user.id)
     await db.user.update(
         where={"id": current_user.id},
         data={

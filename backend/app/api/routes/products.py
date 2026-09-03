@@ -16,8 +16,11 @@ from app.services.records import (
     add_date_range,
     apply_status_policy_create,
     apply_status_policy_update,
+    assert_expected_updated_at,
     attach_location,
     clean_data,
+    client_key_replay,
+    client_key_replay_after_violation,
     contains,
     count_and_page,
     decimal_to_string,
@@ -30,6 +33,7 @@ from app.services.records import (
     public_encode,
     require_record,
     resubmit_status,
+    take_expected_updated_at,
     viewable_where,
 )
 from app.services.workshop_access import (
@@ -280,12 +284,19 @@ async def list_products(
     # which on a shared workshop's product list is most of a page of dead tiles.
     #
     # IT RIDES THE PAGE'S OWN WAVE RATHER THAN FOLLOWING IT. It depends only on the VIEWER, not on
-    # which rows came back, so awaiting it after ``count_and_page`` returned added a whole
-    # cross-region round trip to this route for every account below professor — invisible in the
-    # measured table, which was taken as an admin, where the lookup short-circuits without querying.
+    # which rows came back, so awaiting it after ``count_and_page`` returned added a whole round trip
+    # to this route for every account below professor — invisible in the measured table, which was
+    # taken as an admin, where the lookup short-circuits without querying. (Written against the
+    # cross-region database at ~750ms a hop; co-located and ~1-2ms since 2026-09-02,
+    # ``services/concurrency.py``. A read that waits on a read it does not depend on is still one
+    # wait too many, and it is now milliseconds rather than most of a second.)
+    #
     # Width: the count, the page and this make 3, and the relation hydration inside
     # ``count_and_page`` is a second wave of at most ``len(RELATIONS)``, so nothing here approaches
-    # ``pool_width()`` (10).
+    # ``pool_width()`` — which reads ``DATABASE_CONNECTION_LIMIT``, 10 by default and 5 on the
+    # deployment. THREE STILL FITS AT FIVE; the parenthesised "(10)" that used to end this sentence
+    # was the default rather than the number in force, which is the sort of margin a reader checks
+    # once and then trusts.
     #
     # THE UPLOADER HALF ALONE, DELIBERATELY: no design-workshop-tagged row can reach a product's
     # ``media`` list, so ``media_workshops`` stays empty here by decision, not by nobody asking. The
@@ -314,6 +325,35 @@ async def create_product(
     payload: ProductCreate,
     current_user: Any = Depends(require_record_creator),
 ) -> dict[str, Any]:
+    # ── THE IDEMPOTENT REPLAY, ABOVE EVERY GATE AND EVERY WRITE IN THIS ROUTE (2026-09-03) ──────
+    #
+    # A queued create whose answer was lost is sent again by the next drain pass, and until this
+    # branch existed that produced a second product for one save. ``client_key_replay`` carries the
+    # argument; what belongs HERE is why it is the first statement in the function:
+    #
+    #   * ABOVE THE GATES. ``enforce_workshop_submission`` and ``assert_payload_workshop`` decide
+    #     whether this caller may create the row. On a replay the row already exists, so re-asking can
+    #     only turn a create that SUCCEEDED into a 403 — for a designer whose workshop grant lapsed
+    #     while their phone was out of coverage, which is precisely the population this whole
+    #     mechanism serves.
+    #   * ABOVE ``attach_location``. That helper WRITES: it mints a ``Location`` row from the payload.
+    #     One per replay, referenced by nothing, is a leak that only ever grows.
+    #
+    # The answer goes back through this same ``status_code=201`` handler and the same encoder, so the
+    # caller cannot tell a replay from a first landing. That is deliberate — see the banner above
+    # ``client_key_replay`` — and it is why there is no ``replayed`` flag in this response.
+    #
+    # ``media_urls`` IS LEFT TO THE VIEWER-DERIVED DEFAULT, and on this branch that is a decision
+    # rather than an inherited line. Unlike a first landing, a replayed row CAN carry media: the
+    # outbox uploads its photographs after the create lands, so a pass that died between the two
+    # comes back to a product with files on it. The default resolves to the caller's own uploads,
+    # which is exactly what those files are — the same outbox entry, on the same account, whose
+    # ownership ``client_key_replay`` has just checked.
+    replayed = await client_key_replay(
+        db.productdocumentation, payload.clientKey, user_id=current_user.id, include=INCLUDE
+    )
+    if replayed is not None:
+        return public_encode(replayed, current_user)
     data = decimal_to_string(clean_data(payload.model_dump()))
     data = await attach_location(data)
     # Workshop entries: enforce assignment, then flag + pin a late submission for admin approval.
@@ -333,7 +373,23 @@ async def create_product(
     apply_status_policy_create(current_user, data)
     # After the status policy, so a late submission outranks the submitter's own approval rights.
     pin_pending_if_late(data, current_user, check=check)
-    created = await db.productdocumentation.create(data=data, include=INCLUDE)
+    try:
+        created = await db.productdocumentation.create(data=data, include=INCLUDE)
+    except Exception as exc:
+        # THE RACE THE PRE-READ ABOVE CANNOT SETTLE, and the same belt-and-braces
+        # ``artisans.create_artisan`` puts behind ``_guard_identity_conflicts``: two passes of one
+        # queue in flight together (two browser tabs, a sync that fired twice, a restored queue
+        # drained beside the original) each found no row and each planned an INSERT. Only the index
+        # can decide that, and the loser's answer is the winner's row rather than a 500.
+        #
+        # ``None`` MEANS THIS WAS NOT A ``clientKey`` COLLISION AT ALL, so the original error goes on
+        # up untouched. Swallowing it would report a create that failed as one that succeeded.
+        raced = await client_key_replay_after_violation(
+            db.productdocumentation, payload.clientKey, exc, user_id=current_user.id, include=INCLUDE
+        )
+        if raced is None:
+            raise
+        return public_encode(raced, current_user)
     # No grant lookup on the create: a MediaFile points at its product by ``productId``, and this
     # product did not exist until the statement above, so ``media`` is empty by construction and there
     # is no URL for a resolved set to decide about. The viewer is still named, for the identity mask.
@@ -366,6 +422,11 @@ async def update_product(
     data = decimal_to_string(
         clean_data(payload.model_dump(exclude_unset=True), clearable=_CLEARABLE_COLUMNS)
     )
+    # THE PRECONDITION IS A QUESTION, NOT A COLUMN — taken out of the body here, asked inside the
+    # transaction below. ``take_expected_updated_at`` says why it has to leave ``data`` this early:
+    # everything between this line and the write reads the dict, and a stray key would become an
+    # audit entry, a provenance stamp, or a 500 naming a column this table does not have.
+    expected_updated_at = take_expected_updated_at(data)
     data = await attach_location(data)
     # Moving a record into (or to a different) workshop is a workshop submission too — re-check
     # assignment + window, so the create-time guard can't be bypassed by PATCHing the workshop in later.
@@ -377,17 +438,35 @@ async def update_product(
     # re-validated — a record filed under a workshop the designer was later removed from must
     # still be editable by them.
     await assert_payload_workshop(data, current_user)
-    await guard_record_edit(product, current_user, data, "product")
-    await apply_status_policy_update(current_user, product, data)
-    # Stamped after the edit guard (the stamp is the API's bookkeeping, never a contributor's edit)
-    # and pinned after the status policy, so an already-flagged record cannot be self-approved.
-    stamp_workshop_submission(data, check=check, record=product)
-    pin_pending_if_late(data, current_user, check=check, record=product)
-    merge_field_provenance(data, current_user, previous=product)
-    resubmit_status(product, current_user, data)
-    updated = await db.productdocumentation.update(
-        where={"id": product_id}, data=data, include=INCLUDE
-    )
+    # ONE TRANSACTION FOR THE AUDIT ROW AND THE ROW IT DESCRIBES (2026-09-03). ``guard_record_edit``
+    # ends in ``record_revision``, which used to COMMIT on its own a handful of statements before the
+    # update below — so a request that died in the gap (P2024 on a cross-region pool, a dropped
+    # connection) left a ledger entry asserting a change to a product that still holds the old
+    # values. ``client=tx`` is load-bearing rather than decorative: ``db.tx()`` hands back a DIFFERENT
+    # client, so a callee writing through the module singleton is not inside this block however it
+    # reads. The argument in full is in ``access.record_revision``; the 403 ordering is untouched,
+    # because ``guard_record_edit`` still refuses above its own write.
+    async with db.tx() as tx:
+        # BEFORE ``guard_record_edit``, WHICH IS THE FIRST WRITE IN THIS BLOCK. That helper ends in
+        # ``record_revision`` — a ledger entry asserting a change — so a refusal raised after it
+        # would leave a committed claim about an edit that was then turned down: the exact defect the
+        # transaction wrapping above was added to end, arrived at from the other side. Raising here
+        # means the rollback takes the ledger entry with it.
+        #
+        # ``None`` PASSES AND CHANGES NOTHING, which is every client shipped to date.
+        assert_expected_updated_at(product, expected_updated_at)
+        await guard_record_edit(product, current_user, data, "product", client=tx)
+        await apply_status_policy_update(current_user, product, data)
+        # Stamped after the edit guard (the stamp is the API's bookkeeping, never a contributor's
+        # edit) and pinned after the status policy, so an already-flagged record cannot be
+        # self-approved.
+        stamp_workshop_submission(data, check=check, record=product)
+        pin_pending_if_late(data, current_user, check=check, record=product)
+        merge_field_provenance(data, current_user, previous=product)
+        resubmit_status(product, current_user, data)
+        updated = await tx.productdocumentation.update(
+            where={"id": product_id}, data=data, include=INCLUDE
+        )
     # The PATCH response carries ``media`` (it is in ``INCLUDE``) and the editor need not be the
     # uploader — an EDIT-tier grantee or a professor routinely saves a product somebody else
     # photographed. Resolved rather than left to the cheap default so a photograph that was openable

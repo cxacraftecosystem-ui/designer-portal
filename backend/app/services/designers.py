@@ -207,8 +207,12 @@ def email_match_keys(email: Any) -> list[str]:
 
     **ONE QUERY, NEVER TWO, AND NEVER A SCAN.** Two round trips would be two answers that can
     disagree — a row suspended between them decides the gate differently depending on which read
-    won — and this runs on the sign-in path of a deployment whose ``DATABASE_CONNECTION_LIMIT`` is
-    10, so doubling the queries per login is a real cost paid on the busiest path there is. The
+    won, and THAT is the load-bearing half, unchanged by anything about the network. The second
+    reason is cost: this runs on the sign-in path, and the deployment sets
+    ``DATABASE_CONNECTION_LIMIT`` to 5 (10 is only the default in ``core/config.py``), so doubling
+    the queries per login is doubling the busiest path's claim on the smallest pool this product
+    has. The wall-clock half of that argument shrank when production moved to a co-located database
+    on 2026-09-02 (~1-2ms a hop, ``services/concurrency.py``); the connection half did not. The
     other tempting shape, reading the table and canonicalising in Python, is worse than slow: it is
     a gate whose cost grows with the roster and which has to be given a read cap, and a capped read
     in an admission decision is a person who cannot sign in because they sorted late.

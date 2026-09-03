@@ -1,0 +1,281 @@
+name: Live end-to-end suite
+
+# ─── THE SPECS THAT HAVE NEVER RUN ANYWHERE BUT ONE LAPTOP ───────────────────────────────
+#
+# `frontend/e2e/` holds two kinds of spec. The `*-unit.spec.ts` ones read source files and call
+# pure functions; checks.yml runs those on every pull request and they need nothing. THE REST sign
+# in against a real API, create real records and drive a real browser — and until this file landed,
+# the only machine on earth that had ever executed them was the developer laptop that
+# `docs/TESTING-E2E-LOCAL.md` was written on. Every refusal path, every carry rule at save time,
+# every upload, every screen: covered by specs that ran when somebody remembered to type the
+# command.
+#
+# ─── THIS IS A WEEKLY SIGNAL, NOT A GATE, AND THAT IS DELIBERATE ─────────────────────────
+# It stands up Postgres, MinIO, the API and a production build of the web app on one runner, which
+# is minutes of setup before the first assertion. Putting that on every pull request would triple
+# the cost of a one-line change and would go red for reasons — a slow container, a cold npm cache —
+# that have nothing to do with the diff. So it runs weekly and on demand, and it MUST NOT be added
+# to branch protection. When it goes red, somebody reads it; nothing is blocked in the meantime.
+#
+# ─── IT IS docs/TESTING-E2E-LOCAL.md, SCRIPTED ───────────────────────────────────────────
+# The order of operations below is that document's "The sequence" section, in its order, for its
+# stated reasons. Where this file departs from it, it says so in the step. If you change the
+# sequence in one, change it in the other — that document's own "How this document is kept true"
+# table says the four commands are kept honest by running them, and this workflow is now the thing
+# that runs them.
+#
+# THE TWO DEPARTURES, BOTH FORCED BY CI RATHER THAN CHOSEN:
+#   • THE PORTS. That document says the host port is 55442 and warns you to read the repository
+#     root `.env` rather than trusting either number — because 55442 is an override in a gitignored
+#     file on that one machine, and the compose default is 55432. A runner has no root `.env`, so
+#     the default applies. Both host ports are therefore pinned in this job's `env:` rather than
+#     left to whatever compose resolves, so the DSN in this file and the port compose publishes
+#     cannot drift apart. MinIO is pinned to 9010 for the same reason: it is what
+#     `playwright.config.ts` defaults `E2E_MINIO_PORT` to, so pinning it here means the config's
+#     defaults are correct with nothing exported.
+#   • `prisma migrate deploy`. The document does not mention it because the laptop's database
+#     already had the schema. A runner's Postgres is empty every time, so the migrations have to be
+#     applied before anything can be seeded.
+
+on:
+  schedule:
+    # Monday 04:00 UTC (09:30 IST). Weekly, because the whole point is to catch drift over time
+    # rather than to gate a change; Monday so a failure is read at the start of a working week and
+    # not on a Friday evening. GitHub's cron drifts under load — the day is what matters here, not
+    # the minute.
+    - cron: "0 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # One at a time. Two runs would fight over the same host ports on different runners only in
+  # theory, but they would also both be writing into the same seeded account set if anyone ever
+  # points this at a shared database, and serialising costs nothing on a weekly job.
+  group: e2e-live
+  cancel-in-progress: false
+
+jobs:
+  e2e:
+    name: Browser suite against a live stack
+    runs-on: ubuntu-latest
+    # Generous and then some: compose pull, a full `pip install` from the lock, a Next production
+    # build, a Chromium download and then the suite itself. If this is regularly hitting the limit,
+    # the answer is to find what got slow, not to raise the number again.
+    timeout-minutes: 45
+
+    env:
+      # ── The stack's host ports, pinned. See the header for why they are not left to defaults. ──
+      POSTGRES_HOST_PORT: "55432"
+      MINIO_HOST_PORT: "9010"
+      # ── What the API is configured with. Loopback everywhere: the API runs ON the runner, not in
+      #    the compose network, so `postgres:5432` and `minio:9000` (which is what
+      #    .env.docker.example uses) would not resolve. This is the same shape as the laptop setup
+      #    the document describes, where the API also runs on the host.
+      DATABASE_URL: "postgresql://postgres:postgres@127.0.0.1:55432/design_workshop"
+      # Real-looking because `verify_jwt_configuration` refuses to build the app for a secret under
+      # 32 characters or one on its placeholder list. It signs tokens for a database that is deleted
+      # when this job ends, and it is deliberately in the open rather than in a secret: a value
+      # nobody can read back is a value nobody can debug.
+      JWT_SECRET: "e2e-live-not-a-secret-0123456789abcdefgh"
+      MASTER_ADMIN_EMAIL: "ci@example.invalid"
+      AWS_ACCESS_KEY_ID: "minioadmin"
+      AWS_SECRET_ACCESS_KEY: "minioadmin"
+      AWS_REGION: "us-east-1"
+      AWS_S3_BUCKET: "design-workshop"
+      AWS_S3_ENDPOINT: "http://127.0.0.1:9010"
+      AWS_S3_PUBLIC_BASE_URL: "http://127.0.0.1:9010/design-workshop"
+      BACKEND_CORS_ORIGINS: "http://localhost:3000"
+      # The web process must never run the queue — user_data.sh explains at length what that costs
+      # in production. Nothing here needs the queue, and leaving it off keeps the API's log readable.
+      MEDIA_QUEUE_WORKER_ENABLED: "false"
+      # ── The suite's own variables. frontend/e2e/README.md is the reference for each. ──
+      E2E_EMAIL: "admin2@example.org"
+      # Not a secret and deliberately not one: it is the shared password that
+      # backend/scripts/seed_test_accounts.py writes into a throwaway database, in that file, in
+      # the open. Putting it in a repository secret would imply it protects something.
+      E2E_PASSWORD: "LocalDev123!"
+      E2E_BASE_URL: "http://localhost:3000"
+      E2E_API_URL: "http://localhost:8000"
+      NEXT_PUBLIC_API_URL: "http://localhost:8000"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      # ── 1. Postgres + MinIO ───────────────────────────────────────────────────────────────
+      - name: Bring up the compose stack
+        # FROM THE REPOSITORY ROOT AND NOWHERE ELSE. docs/TESTING-E2E-LOCAL.md gives this its own
+        # warning: run compose from `backend/` and it picks up `backend/.env`, whose DATABASE_URL
+        # names the HOST port, and the containers then cannot reach their own database. On a runner
+        # backend/.env does not exist, so the trap cannot fire here — the rule is repeated anyway
+        # because this file is meant to be the executable copy of that document, including its
+        # warnings.
+        #
+        # A bare `up` starts exactly the three services with no profile (postgres, minio and the
+        # one-shot bucket creator); everything else in that file sits behind a profile. checks.yml's
+        # packaging job asserts that promise on every push.
+        run: |
+          set -euo pipefail
+          docker compose up -d
+          docker compose ps
+
+      - name: Wait for Postgres and MinIO
+        # The compose file declares health checks; this waits on them rather than sleeping, because
+        # a fixed sleep is either too short (and the seed fails with something that reads like an
+        # application bug) or too long on every run forever.
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 60); do
+            if docker compose ps --format json | grep -q '"Health":"starting"'; then
+              echo "attempt ${i}: still starting"; sleep 5; continue
+            fi
+            if docker compose ps --format json | grep -q '"Health":"unhealthy"'; then
+              echo "::error::a compose service reported unhealthy"; docker compose ps; docker compose logs --tail 50; exit 1
+            fi
+            echo "stack is up"; docker compose ps; exit 0
+          done
+          echo "::error::the compose stack did not become healthy in five minutes"
+          docker compose ps; docker compose logs --tail 80
+          exit 1
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          # 3.12 to match production and the two backend jobs in checks.yml.
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            backend/requirements.lock
+            backend/pyproject.toml
+
+      - name: Install the backend
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          pip install -r requirements.lock
+          pip install -e . --no-deps
+          python -m prisma py fetch
+          python -m prisma generate --schema prisma/schema.prisma
+
+      - name: Apply the migrations
+        # NOT IN THE DOCUMENT, and it has to be here — see the header. The laptop's database already
+        # carried the schema (and 396 crafts with it); a runner's is created empty by the compose
+        # service thirty seconds ago.
+        working-directory: backend
+        run: python -m prisma migrate deploy
+
+      # ── 2. The accounts the specs sign in as ──────────────────────────────────────────────
+      - name: Seed the test accounts
+        # `python -u`, exactly as the document insists: without it the script's output is buffered
+        # until it exits, which reads as a hang on a step that legitimately takes a while. The
+        # script is idempotent and refuses to run against anything but a loopback DSN — it is the
+        # same gate the database-backed test modules use, and it is why this is safe to run in CI
+        # at all.
+        working-directory: backend
+        run: python -u scripts/seed_test_accounts.py
+
+      # ── 3. The API ────────────────────────────────────────────────────────────────────────
+      - name: Start the API
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          # `-u` again, and to a log file so the "Diagnostics" step can print it whatever happens.
+          # A cold start here is minutes, not seconds — `import app.services.stage_definitions`
+          # alone is ~2 minutes on the machine the document was written on — so this polls rather
+          # than sleeps, and the poll budget is deliberately generous.
+          nohup python -u -m uvicorn app.main:app --host 127.0.0.1 --port 8000 > "$RUNNER_TEMP/api.log" 2>&1 &
+          for i in $(seq 1 90); do
+            if curl -fsS http://127.0.0.1:8000/health > /dev/null 2>&1; then echo "API up after ${i} polls"; break; fi
+            if [ "$i" = "90" ]; then echo "::error::the API never answered /health"; tail -100 "$RUNNER_TEMP/api.log"; exit 1; fi
+            sleep 4
+          done
+          # /health says the PROCESS is serving. /health/ready is the one that touches the database,
+          # and a stack whose API cannot reach Postgres would otherwise fail later as a wall of
+          # unrelated spec failures.
+          curl -fsS http://127.0.0.1:8000/health/ready
+
+      # ── 4. The web app: BUILD, then serve the build ───────────────────────────────────────
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Build and start the web app
+        working-directory: frontend
+        run: |
+          set -euo pipefail
+          npm ci
+          # `next build` AND NOT `next dev`, which is the document's most emphatic finding: a dev
+          # server booted in 82 s on that machine and then never served /login at all, because it
+          # was still compiling. A build costs once; `next start` then serves prebuilt routes and no
+          # spec pays a compile or races the cache compactor.
+          #
+          # NEXT_PUBLIC_API_URL is INLINED AT BUILD TIME. It is set in this job's env block, which
+          # is why the build has to come after that and why changing it would mean rebuilding rather
+          # than restarting.
+          npx next build
+          nohup npx next start -p 3000 > "$RUNNER_TEMP/web.log" 2>&1 &
+          for i in $(seq 1 60); do
+            if curl -fsS -o /dev/null http://localhost:3000/login; then echo "web up after ${i} polls"; break; fi
+            if [ "$i" = "60" ]; then echo "::error::the web app never served /login"; tail -100 "$RUNNER_TEMP/web.log"; exit 1; fi
+            sleep 3
+          done
+
+      - name: Install the browser
+        working-directory: frontend
+        # `--with-deps`, which the document does not need to mention because a laptop already has
+        # the shared libraries a headless Chromium links against and a runner image does not.
+        # Chromium only: playwright.config.ts declares exactly one project.
+        run: npx playwright install --with-deps chromium
+
+      # ── 5. The suite ──────────────────────────────────────────────────────────────────────
+      - name: Run the live specs
+        working-directory: frontend
+        # `npm run test:e2e` — the whole suite, which is what frontend/e2e/README.md defines that
+        # script to mean, and NOT a hand-written selection that would go stale the day somebody adds
+        # a spec. `test:unit` is the other script and is what checks.yml already gates on.
+        #
+        # `--reporter=list,html` is added HERE rather than in playwright.config.ts: `list` is the
+        # right reporter for a human watching a terminal, which is what the config is tuned for, and
+        # the HTML report only earns its keep when somebody is reading a failure hours later from an
+        # artifact. Adding it on the command line leaves the local experience alone.
+        #
+        # Retries stay at the config's zero. A retry turns a real intermittent defect into a green
+        # run, and a suite that runs once a week is exactly the one that must be believed.
+        run: npm run test:e2e -- --reporter=list,html
+
+      - name: Upload the Playwright report and traces
+        # `failure()`, not `always()`: on a green run these artifacts are tens of megabytes nobody
+        # opens. On a red one they are the whole story — `screenshot: only-on-failure` and
+        # `trace: retain-on-failure` in playwright.config.ts mean test-results/ holds a screenshot
+        # and a replayable trace for each failure.
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: playwright-report
+          path: |
+            frontend/playwright-report/
+            frontend/test-results/
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Diagnostics
+        # Everything a person needs to tell "the product is broken" from "the stack did not come
+        # up", which docs/TESTING-E2E-LOCAL.md's whole "failure modes that are not product bugs"
+        # section exists to distinguish. Printed on failure only, and never allowed to fail the job
+        # itself — a diagnostic that turns a red run into a differently-red run helps nobody.
+        if: ${{ failure() }}
+        run: |
+          echo "=== compose ==="; docker compose ps || true
+          echo "=== postgres/minio logs (tail) ==="; docker compose logs --tail 60 || true
+          echo "=== api log (tail) ==="; tail -120 "$RUNNER_TEMP/api.log" || true
+          echo "=== web log (tail) ==="; tail -60 "$RUNNER_TEMP/web.log" || true
+
+      - name: Tear down
+        if: ${{ always() }}
+        run: docker compose down -v || true

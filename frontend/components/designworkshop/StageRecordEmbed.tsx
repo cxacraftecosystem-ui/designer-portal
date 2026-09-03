@@ -5,8 +5,10 @@
  *
  * ── WHAT THE OWNER ASKED FOR, AND WHY THREE WAVES OF MAPPING DID NOT DELIVER IT ───────────────
  * FOUR of a design workshop's entities ask for the same facts a repository record page already
- * collects, out of the ELEVEN REF fields that hydrate from one at all — see {@link MIRROR_POINTS} for
- * the four and {@link NOT_EMBEDDED} for why the other seven are attributions rather than mirrors.
+ * collects, out of the FOURTEEN hydrating mappings that exist at all (twelve external REF fields
+ * plus the two internal prototype carries added 2026-09-03) — see {@link MIRROR_POINTS} for the
+ * four and {@link NOT_EMBEDDED} for why the other ten are attributions or internal carries rather
+ * than mirrors. The two arrays below are the authority; this sentence merely counts them.
  *
  * COUNTED, NOT REMEMBERED. An earlier draft of this paragraph said "seven" and "three", which were
  * the numbers before the pin test's first run added two refusals nobody had enumerated; it then said
@@ -366,6 +368,45 @@ export const NOT_EMBEDDED: readonly { point: string; why: string }[] = [
       "not to rush it: a craft is a row of a shared taxonomy of about 178, and a picker that mints " +
       "near-duplicates in the field fractures every join that hangs off it. This needs a policy " +
       "decision, not a UI change."
+  },
+  {
+    point: "finalProduct.prototypeRef",
+    why:
+      "THE FIRST INTERNAL CARRY, 2026-09-03, and it is refused here for a reason that applies to " +
+      "every one that follows: the source is not a RECORD. A `DwPrototype` is a row of THIS " +
+      "workshop's stage 13 — there is no repository page for it, `isInlineCreatable` does not name " +
+      "the model, and the thing a designer wants when the nine copied boxes look wrong is to open " +
+      "stage 13, which is two taps away in the same workshop and is where that row is edited with " +
+      "its own photographs, its own maker and its own stage logs beside it. Mounting a second " +
+      "editor over it here would give one prototype two forms in one workshop, each able to save " +
+      "from a different Save — the exact hazard `processStep.processRef` above describes, with the " +
+      "aggravation that both forms belong to the same designer on the same afternoon."
+  },
+  {
+    point: "prototypeValidation.prototypeRef",
+    why:
+      "The same source and the same refusal as `finalProduct.prototypeRef` above, and a narrower " +
+      "mapping on top of it: three dimensions out of the prototype's twenty-nine fields. Stage 15 " +
+      "is a JUDGEMENT of a prototype — a decision, five quality ratings, two approvals — so the row " +
+      "is not a copy of that prototype and never becomes one, which is the attribution-not-mirror " +
+      "test `existingProduct.artisanRef` and `prototype.productRef` are refused by. Ordinary picker."
+  },
+  {
+    point: "surveyPlan.questionnaireRef",
+    why:
+      "THERE IS NO FORM TO MOUNT, AND THE THING THIS ONE POINTS AT IS NOT MADE BY FILLING ONE IN. " +
+      "A `Questionnaire` is the INSTRUMENT — sections, questions, and every sitting taken on it — " +
+      "and it enters this system by UPLOADING AN .xlsx that `questionnaire_forms` parses. There is " +
+      "no small create form anywhere to reuse, `isInlineCreatable` does not name the model, and " +
+      "writing one here would be a second questionnaire builder competing with the one at " +
+      "/questionnaires over the same rows. ONE PAIR CROSSES (`name -> questionnaireName`), which " +
+      "is the attribution-not-mirror shape `existingProduct.artisanRef` is refused by: stage 7 " +
+      "CITES the instrument it will use, it does not restate it. The prose box beside the picker " +
+      "is still where a designer writes the plan, and it is deliberately untouched by the link. " +
+      "There is a second reason not to make it creatable from here, and it is the one " +
+      "`artisanBaseline.interviewRef` gives: the picker is narrowed by an ACCOUNT rule — the " +
+      "designer's own forms, their workshops' forms, and the published default — so a create " +
+      "button here would mint instruments into a list whose whole job is to be somebody's."
   }
 ] as const;
 
@@ -487,6 +528,21 @@ export function splitMirroredFields(entity: DwEntity, refField: DwField, fields:
  * and no action that differs between them. An out-of-scope record answers null too: the server
  * returns it under `outOfScopeOption` with `options` left empty on purpose, and hydrating from a
  * row this picker refuses to offer would be widening the scope by the back door.
+ *
+ * ── DELIBERATELY NOT ON THE READ-THROUGH CACHE, 2026-09-03, AND THIS IS WHERE THAT IS DECIDED ──
+ *
+ * The stage pickers gained one in the same change (`lib/referenceCache.ts` →
+ * `loadStageReferences`, wired into both copies of `useReferenceOptions`), and this call is on the
+ * same endpoint and looks like the same request. It is not: it carries `recordId`, which makes it a
+ * BY-ID RESOLVE, and every sentence above turns on the answer being the server's opinion of the
+ * record NOW. A cached list would answer it from this device's memory of a page fetched at some
+ * earlier moment, under a different scope, before the record was renamed in the very form this
+ * function describes — and the answer is not drawn on screen for a designer to judge, it is HYDRATED
+ * INTO A STAGE ROW, where hydration only ever fills blanks and a wrong value can be corrected but
+ * never un-answered. Every arm of this function already prefers saying nothing to guessing; serving
+ * it from storage would be the one arm that guesses. Android draws the same line — its cache is read
+ * for LISTS and `dwScanLocalStep` is the only local by-id path, and it re-asks whether the stored
+ * list was really narrowed before it will answer a scanned card without a request.
  */
 async function describeForField(
   workshopId: string,

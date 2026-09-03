@@ -1480,6 +1480,175 @@ REFERENCE_HYDRATION: dict[str, dict[str, str]] = {
         "interviewDocumentedOn": "interviewDocumentedOn",
         "interviewDocumentedAtWorkshop": "interviewDocumentedAtWorkshop",
     },
+    # ── THE INSTRUMENT'S TITLE, AND DELIBERATELY NOTHING ELSE (2026-09-03) ────────────────────────
+    #
+    # ``surveyPlan.questionnaireRef`` points at a ``Questionnaire`` — the FORM, not a sitting on it —
+    # and one key crosses. The refusal above is the argument in its strongest form and applies
+    # unchanged: this model's rows are sections, questions and answers, a reference carries a FLAT
+    # dict, and the copy is permanent and printed. ``REFERENCE_MODELS["Questionnaire"]`` therefore
+    # declares no ``include`` at all, so no respondent's answer is fetched into the API process, let
+    # alone written onto a stage.
+    #
+    # THE TITLE IS WHAT THE REPORT PRINTS WHEN THE FORM IS GONE. A questionnaire may be retired
+    # (``isActive: false`` is this API's delete) years before somebody re-opens the workshop's file,
+    # and ``FROM_REF``'s rule is that the id stays the join key while the copied text is what
+    # survives it.
+    "surveyPlan.questionnaireRef": {"name": "questionnaireName"},
+    # ══════════════════════════════════════════════════════════════════════════════════════════
+    # THE WORKSHOP'S OWN ROWS — THE INTERNAL CARRY, ADDED 2026-09-03
+    # ══════════════════════════════════════════════════════════════════════════════════════════
+    #
+    # Every mapping above copies from a SHARED RECORD in another table, resolved through a Prisma
+    # delegate named on ``design_workshops.REFERENCE_MODELS``. The two below copy from ANOTHER ROW
+    # OF THIS SAME WORKSHOP — a ``DwStageEntry`` the designer filled in at an earlier stage —
+    # resolved by ``hydrate_entries``' internal path, which reads ``dwstageentry`` scoped to the
+    # workshop being saved and respecting ``deletedAt``. Nothing else differs: the same
+    # only-fill-blanks rule, the same clear-and-rewrite on a re-pointed ref, the same
+    # ``coerce_value``, the same provenance stamp, the same publication to both clients through
+    # ``field_to_dict``'s ``refHydration``. The LOADING is the only branch.
+    #
+    # WHAT WAS HAPPENING WITHOUT THEM. A prototype is described once at stage 13 — its materials,
+    # its five dimensions, its weight, how long it took to make, the process followed — and stage 16
+    # asks a designer to catalogue that same object again, in boxes of the same names. The
+    # ``prototypeRef`` picker stored the id and nothing else, so the designer retyped, and the two
+    # copies then drifted: the prototypes table and the final-products table of one report printed
+    # different materials and different dimensions for one physical piece, with nothing in the
+    # document saying which was measured. That is the defect the whole reference feature exists to
+    # end, arriving on the workshop's own rows rather than on a repository record.
+    #
+    # ── THE RULE FOR AN INTERNAL CARRY, WHICH IS NARROWER THAN THE EXTERNAL ONE ────────────────
+    #
+    # THE TWO BOXES MUST ASK THE SAME QUESTION ABOUT THE SAME PHYSICAL SUBJECT. The external rule
+    # can be looser — an artisan record IS the artisan, so anything it holds is about her — but
+    # inside a workshop the rows are stages of a process, and two stages asking about "the length"
+    # are frequently asking about different moments. A drawing's intended length and the made
+    # object's measured length are not the same fact, and copying one into the other would put a
+    # number in a ministry report under a heading that claims it was measured.
+    #
+    # ── THE THIRTEEN INTERNAL REFS THIS RULE LEAVES UN-HYDRATED, EACH BY NAME ──────────────────
+    #
+    # Written out rather than merely absent, because "no mapping here" and "nobody looked at this
+    # one" are the same silence, and this table is the evidence that they are different. Fifteen
+    # live REF fields point at a ``Dw…`` model; two are below and these are the other thirteen.
+    #
+    #  * ``sketch.supersedesSketch`` — a successor sketch EXISTS because something changed, so the
+    #    predecessor's dimensions, materials and colours are exactly the answers that must not be
+    #    pre-filled. Its identity fields are worse: ``sketchNo`` and ``version`` are this drawing's
+    #    own, and ``isTentative`` is a working state the picker deliberately keeps off the wire
+    #    (see ``design_workshops._in_record_options``, and ``DwReferenceOption.tentative`` on the
+    #    handset, whose comment names this very field as the reason).
+    #  * ``sketchReview.sketchRef`` — the review's boxes are the REVIEWER's verdict (decision,
+    #    reason, feasibility, estimates). Not one of them re-asks a fact the sketch states.
+    #  * ``prototype.sketchRef`` — the sketch is a DRAWING and the prototype is an OBJECT. Their
+    #    ``materials`` and their three dimensions look symmetrical and are not: the sketch says what
+    #    was intended and the prototype says what was made, and the gap between the two is what
+    #    stages 13-15 exist to record. This is the same refusal ``prototype.productRef`` already
+    #    carries one line up, for the same reason, one source further back.
+    #  * ``prototype.artisanRef``, ``finalProduct.artisanRef``, ``certificate.participantRef`` —
+    #    NO FIELD MAPS. None of the three receiving entities declares a box for a participant's
+    #    name, village, phone or craft; they hold a maker's id and print the roster's own name
+    #    through it. Adding boxes so that something could be copied into them would be a second
+    #    copy of the roster that could only ever disagree with the first — the argument
+    #    ``existingProduct.artisanRef`` above makes for capping itself at the name.
+    #  * ``prototypeStageLog.prototypeRef`` — a log row is one day's work (date, stage name, what
+    #    was done, hours). No prototype fact is re-asked.
+    #  * ``materialUsage.prototypeRef`` — ``material`` is ONE material and ``prototype.materials``
+    #    is a LIST, so hydration cannot choose which. Identical in shape to the ``steps`` refusal on
+    #    ``processStep.processRef`` above, and refused for the identical reason.
+    #  * ``prototypeIteration.prototypeRef`` — an iteration records the CHANGE, not the prototype:
+    #    what was altered, why, what it cost in time and money, and the before/after frames. The
+    #    two IMAGE boxes are the strongest case against a carry here rather than for one — "before"
+    #    for iteration 3 is not the prototype's first photograph, and seeding it would caption a
+    #    picture with a claim about a moment it does not show.
+    #  * ``costSheet.productRef`` — stage 17's own note is the refusal: "The cost sheet stores the
+    #    quantities and rates you enter, not only the totals, so any figure printed in the report
+    #    can be traced back to the line items it came from." Seeding ``expectedPrice`` from stage
+    #    16's asserted ``sellingPrice`` would hand the sheet its answer before the arithmetic, which
+    #    is the one thing the stage was built not to do.
+    #  * ``costMaterialLine.costSheetRef``, ``costLabourLine.costSheetRef`` — a line item is an
+    #    item, a quantity, a unit and a rate. The sheet holds none of those; it holds their totals.
+    #  * ``followUp.productRef`` — a follow-up is what happened to the product MONTHS LATER (units
+    #    made, units sold, revenue, adoption). Nothing it asks is a property of the product.
+    #
+    # ── AND THE TWO THINGS THAT CROSS ON NEITHER MAPPING BELOW ─────────────────────────────────
+    #
+    #  * MEDIA NEVER CROSSES ON AN INTERNAL CARRY. ``prototypePhotos`` -> ``finalPhotos`` is the
+    #    tempting pair and it is refused: both rows live in ONE workshop, so the copy would not be a
+    #    denormalised second picture but the SAME media ids under two headings, and
+    #    ``report_builder``'s image pass dedupes by media id across rows it has already collected —
+    #    the report would print the working shots as the catalogue plate, or print one twice. The
+    #    external mappings carry a photograph because the source record is in another table and its
+    #    file would otherwise be unreachable; here it is already in the document.
+    #  * THE COSTS DO NOT CROSS, AND THAT IS AN ARITHMETIC LIMIT RATHER THAN A DECISION ABOUT THE
+    #    VALUE. ``prototype`` holds ``materialCost`` and ``labourCost``; ``finalProduct`` holds one
+    #    ``costPrice``. A mapping is one source key to one target key and cannot sum two heads, and
+    #    synthesising the sum here would assert that a product's cost is materials plus labour when
+    #    stage 17 lists four more heads. The place that arithmetic belongs is ``costSheet.totalCost``
+    #    which already declares ``derived_kind="SUM"`` over all six. Written down because "costs are
+    #    retyped" was part of the report this lane answers, and this half of it is NOT closed.
+    #
+    # THE ACCEPTED COST OF BOTH MAPPINGS, STATED ONCE: a hydrated value is a PERMANENT copy taken at
+    # save time, so correcting the prototype's length at stage 13 next week does NOT rewrite the
+    # boxes it filled here. That is the same promise every mapping above makes and the reason the
+    # whole feature exists — but it is worth restating for an internal carry, where both rows are on
+    # screens the same designer owns and the instinct is to expect them to track each other. The
+    # divergence is visible: ``fieldProvenance`` stamps every hydrated box with the row and column it
+    # came from. (``entry_provenance.canonical_divergence`` does NOT re-resolve an internal stamp —
+    # it is gated on ``model in REFERENCE_MODELS`` — so an admin audit shows the stamp and not the
+    # comparison. Named here as a known limit rather than left to be discovered.)
+    #
+    # THE PROTOTYPE, AS THE VALIDATION ROW MEASURES IT. Three boxes and no more: stage 15's other
+    # nineteen fields are the reviewers' own — five quality ratings, a decision, a reason, two
+    # approvals, buyer feedback, a checklist — and a validation row is a JUDGEMENT of a prototype
+    # rather than a second description of it.
+    #
+    # THE COUNTER-ARGUMENT, KEPT BECAUSE IT IS THE ONE THAT WOULD REVERSE THIS. The three boxes are
+    # labelled "Final length/width/height", so a reader could take a carried figure as a measurement
+    # taken AFTER validation when it was taken at making. What answers it is that the workshop has
+    # only ever held ONE statement of the prototype's size — stage 13's row, which a designer
+    # updates when the piece changes, because it is the same object — so the carry propagates the
+    # workshop's single answer rather than inventing a second. The alternative on the table was two
+    # hand-typed numbers that disagree, which is what the report was printing.
+    "prototypeValidation.prototypeRef": {
+        "lengthCm": "finalLengthCm",
+        "widthCm": "finalWidthCm",
+        "heightCm": "finalHeightCm",
+    },
+    # THE ACCEPTED PROTOTYPE, CATALOGUED. Stage 16's purpose line is "The catalogue record of each
+    # accepted product: its name and code, its final photographs, dimensions, materials, technique
+    # and description" — and every one of those except the code, the photographs, the technique and
+    # the description is a fact stage 13 already recorded about the same piece.
+    #
+    # ``productCode`` IS NOT ``prototypeCode`` AND MUST NOT BE FILLED FROM IT. They are two
+    # identifiers with two lifetimes: a prototype tag is printed the afternoon the piece is made
+    # (``workshopCodeIdForRow``) and a product code goes on a catalogue. Copying one into the other
+    # would make the catalogue claim the workshop's internal tag, and only-fill-blanks would then
+    # keep it.
+    #
+    # ``artisanRef`` -> ``artisanRef`` IS REFUSED THOUGH IT IS THE SAME QUESTION. "Made by" on the
+    # final product is the person who made the prototype, so the fact carries; the BOX does not. It
+    # is a REF, and ``finalProduct`` declares no name box for a hydrated participant to resolve
+    # through, so the picker would show a chosen id with nothing readable beside it — the artisan
+    # dropdown defect this repository already shipped once. Give ``finalProduct`` an ``artisanName``
+    # box and this pair becomes ordinary.
+    #
+    # ``processSummary`` -> ``makingProcess`` is the one RICH_TEXT pair here, and it is asymmetric
+    # between the surfaces ON PURPOSE: both clients' hydration guards accept only JSON scalars, so a
+    # rich-text document is skipped at the keyboard and written by the server at save. Skipping is
+    # the fail-closed direction — the box fills a moment later rather than holding a flattened
+    # version of a formatted narrative — and ``coerce_value``'s RICH_TEXT arm normalises the copy
+    # through the rich-text model exactly as it does a typed one.
+    "finalProduct.prototypeRef": {
+        "name": "name",
+        "materials": "materials",
+        "lengthCm": "lengthCm",
+        "widthCm": "widthCm",
+        "heightCm": "heightCm",
+        "weightG": "weightG",
+        "dimensionsNote": "dimensionsNote",
+        "makingTimeDays": "makingTimeDays",
+        "processSummary": "makingProcess",
+    },
 }
 
 
@@ -1639,16 +1808,53 @@ def validate_registry() -> list[str]:
                         "may be required, or a workshop without facilities can never complete"
                     )
                 # Rule 2: every enum resolves to a shared list.
+                #
+                # ── A MULTI_ENUM DRAWS ITS OPTIONS FROM ONE OF TWO PLACES, AND EXACTLY ONE ──────
+                #
+                # An authored vocabulary in ``ENUMS`` (five of the registry's seven MULTI_ENUM boxes
+                # on 2026-09-03 — counted, not remembered, and re-countable with
+                # ``[f for _s, e in all_entities() for f in e.fields if f.type is
+                # FieldType.MULTI_ENUM]``),
+                # or the REPOSITORY, by naming a ``ref_model`` — which is how ``processStep
+                # .toolsUsed`` and ``prototype.toolsUsed`` stopped being free-text TAGS on
+                # 2026-09-03 and became a multi-select over documented ``ToolDocumentation`` rows.
+                # Both clients have rendered the second shape for months (Android's
+                # ``DwReferenceMultiSelectField``, the browser's ``ReferenceMultiSelect``); this
+                # rule was the last thing refusing to let the registry declare one.
+                #
+                # NEITHER is refused, and so is BOTH. Neither leaves a closed list with no members,
+                # which on a required field is a stage nobody can ever submit — the failure the
+                # browser's own arm is written around. Both is worse than either: ``coerce_value``
+                # would have to decide whether a token is an enum member or a record id, and the
+                # two clients would each draw a different control from the same declaration.
                 if f.type in (FieldType.ENUM, FieldType.MULTI_ENUM):
-                    if not f.enum:
-                        problems.append(f"field {where} is {f.type.value} but names no enum")
-                    elif f.enum not in ENUMS:
+                    records_backed = f.type is FieldType.MULTI_ENUM and bool(f.ref_model)
+                    if not f.enum and not records_backed:
+                        problems.append(
+                            f"field {where} is {f.type.value} but names no enum"
+                            + (" and no ref_model" if f.type is FieldType.MULTI_ENUM else "")
+                        )
+                    elif f.enum and records_backed:
+                        problems.append(
+                            f"field {where} is MULTI_ENUM and names BOTH an enum and a "
+                            "ref_model; its options come from one place or the other"
+                        )
+                    elif f.enum and f.enum not in ENUMS:
                         problems.append(f"field {where} names unknown enum {f.enum!r}")
                 elif f.enum:
                     problems.append(f"field {where} names an enum but is {f.type.value}")
 
                 if f.type is FieldType.REF and not f.ref_model:
                     problems.append(f"field {where} is REF but names no ref_model")
+                # ``ref_model`` ON ANYTHING ELSE IS A PICKER NOBODY DRAWS. Both clients dispatch on
+                # the field TYPE and only the REF and MULTI_ENUM arms read ``refModel``, so a
+                # ``ref_model`` on a TEXT box is a silent no-op that reads, in the registry, like a
+                # link that was made.
+                if f.ref_model and f.type not in (FieldType.REF, FieldType.MULTI_ENUM):
+                    problems.append(
+                        f"field {where} names a ref_model but is {f.type.value}; only REF and "
+                        "MULTI_ENUM draw a picker"
+                    )
 
                 # THE CASCADE HAS TO RESOLVE HERE OR IT RESOLVES NOWHERE.
                 #
@@ -1674,9 +1880,20 @@ def validate_registry() -> list[str]:
                             f"field {where} is filtered by {f.ref_filter_by!r}, which is not a "
                             f"field of {entity.key!r}"
                         )
+                # A SCOPE IS A PROPERTY OF THE PICKER, NOT OF THE ARITY. Both picker types send it
+                # straight back on ``GET .../references`` — see ``field_to_dict``, which has always
+                # emitted ``refScope`` for any field naming a ``ref_model`` whatever its type — so
+                # the record-backed MULTI_ENUM added on 2026-09-03 has exactly the same need of it
+                # as a REF: ``processStep.toolsUsed`` is ALL because a pit loom is a type of object
+                # and workshop-scoping it would empty the list.
                 if f.ref_scope:
-                    if f.type is not FieldType.REF:
+                    if f.type not in (FieldType.REF, FieldType.MULTI_ENUM):
                         problems.append(f"field {where} names ref_scope but is {f.type.value}")
+                    elif f.type is FieldType.MULTI_ENUM and not f.ref_model:
+                        problems.append(
+                            f"field {where} names ref_scope but draws its options from an enum; "
+                            "a scope narrows a list of records"
+                        )
                     elif f.ref_scope not in REF_SCOPES:
                         problems.append(
                             f"field {where} names unknown ref_scope {f.ref_scope!r}; expected "
@@ -1834,9 +2051,19 @@ def validate_registry() -> list[str]:
     # the target up with ``entity.field(target_key)`` and SKIPS a target it cannot resolve — no
     # error, no log — so a mapping that names a field somebody renamed copies nothing at all, on
     # every save, for ever, and the first symptom is a submitted document whose process table has
-    # a name and no description. The source key is deliberately NOT checked: it names a key of a
-    # ``REFERENCE_MODELS`` data lambda, which lives with the database code and is the one half of
-    # the pair this module must not import.
+    # a name and no description. The source key of an EXTERNAL mapping is deliberately NOT checked
+    # here: it names a key of a ``REFERENCE_MODELS`` data lambda, which lives with the database code
+    # and is the one half of the pair this module must not import —
+    # ``design_workshops.validate_reference_carry`` is that half.
+    #
+    # AN INTERNAL MAPPING'S SOURCE KEY *IS* CHECKABLE HERE, AND IS CHECKED, which is the one place
+    # the internal carry is better guarded than the external one rather than worse. A ``Dw…``
+    # ref_model names an ENTITY OF THIS REGISTRY, so its fields are two lines away — no import, no
+    # database, no probe row. ``hydrate_entries`` reads the source row's ``data`` by key and skips a
+    # key that is absent, silently and identically to a source row that simply has not been filled
+    # in, so a typo or a rename on the source side would hydrate NOTHING for ever with no symptom
+    # but a blank box in a submitted catalogue. This is that symptom made into a failing test.
+    entities_by_model = {e.name: e for _s, e in all_entities()}
     for path, mapping in REFERENCE_HYDRATION.items():
         entity_key, _, ref_field_key = path.partition(".")
         entity = next((e for _s, e in all_entities() if e.key == entity_key), None)
@@ -1853,11 +2080,30 @@ def validate_registry() -> list[str]:
                 f"hydration path {path!r} names {ref_field.type.value} field "
                 f"{ref_field_key!r}; only a REF field hydrates a row"
             )
+        source_entity = entities_by_model.get(ref_field.ref_model) if ref_field else None
         for source_key, target_key in mapping.items():
             if entity.field(target_key) is None:
                 problems.append(
                     f"hydration {path}[{source_key!r}] writes {target_key!r}, which is not a "
                     f"field of {entity_key!r}"
+                )
+            if source_entity is None:
+                continue
+            source_field = source_entity.field(source_key)
+            if source_field is None:
+                problems.append(
+                    f"hydration {path}[{source_key!r}] reads a key {source_entity.key!r} does not "
+                    "declare, so it copies nothing"
+                )
+            elif source_field.deprecated:
+                # A deprecated source is worse than a missing one: ``entity_to_dict`` drops it from
+                # the wire and ``validate_entry`` rebuilds ``cleaned`` from the live specs, so the
+                # key is deleted from the source row on its next ordinary save. The carry would work
+                # until somebody opened the source stage, and then stop, which is the hardest shape
+                # of failure to attribute to anything.
+                problems.append(
+                    f"hydration {path}[{source_key!r}] reads {source_entity.key}.{source_key}, "
+                    "which is deprecated and is dropped from the row on its next save"
                 )
 
     return problems
@@ -1986,11 +2232,35 @@ def coerce_value(spec: FieldSpec, raw: Any) -> tuple[Any, str | None]:
             item_limit = spec.max_length or DEFAULT_MAX_ITEM_CHARS
             if any(len(v) > item_limit for v in items):
                 return None, (f"{spec.label}: one entry is longer than {item_limit} characters")
-            if t is FieldType.MULTI_ENUM:
+            if t is FieldType.MULTI_ENUM and not spec.ref_model:
                 allowed = ENUMS.get(spec.enum, {})
                 unknown = [v for v in items if v not in allowed]
                 if unknown:
                     return None, f"{spec.label}: unknown option(s) {', '.join(unknown)}"
+            # A RECORD-BACKED MULTI_ENUM IS NOT CHECKED AGAINST ANYTHING HERE, AND THAT IS THE
+            # SAME ANSWER ``REF`` HAS ALWAYS GIVEN. (2026-09-03)
+            #
+            # ── WHY NOT ──────────────────────────────────────────────────────────────────────
+            # The allow-list for these tokens is a TABLE, and this function is pure and has no
+            # database: ``ENUMS.get(spec.enum, {})`` is the EMPTY map for a field whose options
+            # come from ``ToolDocumentation``, so the branch above would have answered "unknown
+            # option(s) cmsik2jg8000eh8xc1lcy661a" to every save the picker ever made. The REF
+            # branch further down stores whatever string it is handed for exactly this reason
+            # and lets ``ReportBuilder._value`` resolve it at render time, where the repository
+            # is reachable; this is that rule, applied to a list of them.
+            #
+            # ── AND IT IS WHAT KEEPS A FIELDED HANDSET WRITING ───────────────────────────────
+            # ``processStep.toolsUsed`` and ``prototype.toolsUsed`` were TAGS until 2026-09-03,
+            # so every 0.0.7 APK in a village — and every cached web bundle — still draws a
+            # free-text tag box for them and submits ``["pit loom", "bobbin winder"]``. Those
+            # saves arrive at a registry that now calls the field MULTI_ENUM. Refusing them
+            # would not degrade the field, it would refuse the WRITE: ``save_stage`` restores a
+            # rejected key from ``previous``, and Android's ``saveOrQueue`` does not retry a
+            # 4xx, so a designer on one bar would lose the stage and be told a field they can
+            # see on their screen holds an unknown option. Both shapes are therefore accepted
+            # and stored verbatim — the ids the new picker writes and the prose the old box
+            # wrote — and the report resolves what it can and prints the rest as typed. The
+            # registry declares the id shape; the store holds whichever one it was given.
             return items, None
 
         if t in (
@@ -2781,6 +3051,121 @@ def registry_to_dict() -> dict[str, Any]:
     }
 
 
+#: What :func:`registry_version` last digested, and what it digested to: ``(fingerprint, digest)``,
+#: or ``None`` before the first call. Written by :func:`registry_version` and by nothing else.
+#:
+#: A PLAIN GLOBAL AND NOT A LOCK. Every writer stores the same two-tuple computed from the same
+#: registry, and a rebinding of one name is atomic under CPython, so the worst a second thread can
+#: do is compute a digest that was about to be handed to it. There is no state here that can be
+#: observed half-written. (2026-09-03)
+_VERSION_MEMO: tuple[tuple[Any, ...], str] | None = None
+
+
+def _registry_fingerprint() -> tuple[Any, ...]:
+    """Every input :func:`registry_version` digests, read once and UNFORMATTED.
+
+    THIS IS THE MEMO KEY, AND IT IS WHY THE MEMO CANNOT GO STALE. The obvious memoisation —
+    compute the digest at install time, or ``lru_cache`` it and clear the cache from
+    :func:`_install` — is wrong here, and the tests say so before production would. The registry is
+    module-level state that three tests in ``tests/test_stage_schema.py`` mutate IN PLACE through
+    ``object.__setattr__`` on a frozen, slotted ``FieldSpec`` (``_swapped_attrs``), by rebuilding an
+    ``EntitySpec.fields`` tuple (``_swapped_field``), or by monkeypatching
+    :data:`REFERENCE_HYDRATION` — none of which goes anywhere near ``_install``. A cache keyed on
+    installation would hand all three the pre-mutation digest, and each of those tests exists
+    because a digest that fails to move is how a stale bundled Android asset reports agreement with
+    a registry it no longer matches. So the key has to be the CONTENT.
+
+    AND THE DIGEST IS COMPUTED FROM THIS, NEVER FROM THE REGISTRY DIRECTLY — see
+    :func:`_registry_digest`. That is the whole safety argument: there is no way to add an input to
+    the digest without adding it here, because here is the only thing the digest can read. A key
+    that merely *listed* the same attributes would drift the first time somebody widened the version
+    (which the docstring below records happening four separate times), and a version that silently
+    stops moving is the exact failure every one of those paragraphs was written about.
+
+    WHAT IT COSTS, MEASURED ON THIS REGISTRY (22 stages, 640 fields) ON 2026-09-03. The old
+    unmemoised call was 1.00 ms; building this fingerprint and comparing it against the memo is
+    0.25 ms, so a hit is ~4x cheaper and a miss is within noise of what the call cost before.
+    That is worth having because of WHERE the call sites are, not because a millisecond matters
+    anywhere on its own: workshop detail, the stage list, every report row, and TWICE per stage save
+    — once of them inside the open transaction, where it is a millisecond of held locks on the write
+    a designer is standing there waiting for.
+
+    THE HYDRATION TABLE IS SNAPSHOT WHOLE RATHER THAN PER FIELD, and that is most of the saving.
+    :func:`reference_hydration_for` builds an ``f"{entity}.{field}"`` key per call, so asking it 640
+    times costs more than copying all eleven entries of the mapping once.
+    """
+    return (
+        tuple((path, tuple(mapping.items())) for path, mapping in REFERENCE_HYDRATION.items()),
+        tuple(
+            (
+                s.key,
+                e.key,
+                f.key,
+                f.type.value,
+                f.tier.value,
+                f.required,
+                f.enum,
+                f.deprecated,
+                f.derived_kind,
+                f.derived_from,
+                f.store_masked,
+                f.text_format.value,
+                f.min_items,
+            )
+            for s in STAGES
+            for e in s.entities
+            for f in e.fields
+        ),
+    )
+
+
+def _registry_digest(fingerprint: tuple[Any, ...]) -> str:
+    """The version string for one fingerprint. The ONLY place it is built.
+
+    Reads nothing but its argument — no module global, no registry — which is what makes
+    :func:`_registry_fingerprint` a complete cache key rather than a hopeful one.
+
+    The per-field part strings are byte-for-byte what this function has always produced. They have
+    to be: ``android/.../assets/design-workshop-schema.json`` carries a copy of the digest, and
+    ``test_the_bundled_android_asset_matches_the_registry_it_was_dumped_from`` compares the two
+    strings, so a formatting change here would stale every handset's bundled asset and demand a
+    re-cut APK for a refactor nobody asked for. (2026-09-03)
+    """
+    import hashlib
+
+    hydration_table = {path: dict(pairs) for path, pairs in fingerprint[0]}
+    parts: list[str] = []
+    for field in fingerprint[1]:
+        (
+            stage_key,
+            entity_key,
+            field_key,
+            field_type,
+            tier,
+            required,
+            enum,
+            deprecated,
+            derived_kind,
+            derived_from,
+            store_masked,
+            text_format,
+            min_items,
+        ) = field
+        # In DECLARATION order, not sorted: the mapping's order is what decides which
+        # source key wins if two ever named one target, so a reordering is a change.
+        hydration = ",".join(
+            f"{src}>{dst}"
+            for src, dst in hydration_table.get(f"{entity_key}.{field_key}", {}).items()
+        )
+        parts.append(
+            f"{stage_key}.{entity_key}.{field_key}:{field_type}:{tier}:"
+            f"{int(required)}:{enum}:{int(deprecated)}:"
+            f"{derived_kind}:{','.join(derived_from)}:{hydration}:"
+            f"{int(store_masked)}:{text_format}:{min_items}"
+        )
+    return hashlib.sha256("|".join(sorted(parts)).encode("utf-8")).hexdigest()[:16]
+
+
 def registry_version() -> str:
     """A short stable digest of every key, type, tier, DERIVATION and HYDRATION in the registry.
 
@@ -2843,28 +3228,34 @@ def registry_version() -> str:
     deploy is still sent under the field list it was captured with, and ``stageSpecFor`` falls back
     to the registry this browser holds when that document is gone. What a moved version actually
     costs is a re-dump of the bundled Android asset and a re-cut APK — see ``field_to_dict``.
+
+    ── IT IS MEMOISED NOW, AND THE CACHE IS KEYED ON THE REGISTRY'S CONTENT ──────────────────────
+
+    This used to re-derive 640 part strings and a SHA-256 on every call, and the call sites are not
+    occasional: workshop detail, the stage list, every report row, and twice per stage save — one of
+    those twice inside the open transaction, where the millisecond is spent holding write locks.
+    :func:`_registry_fingerprint` now reads the same inputs unformatted, and the digest is recomputed
+    only when that fingerprint differs from the memo (1.00 ms → 0.25 ms on a hit, measured
+    2026-09-03).
+
+    **MEMOISING ON INSTALLATION WOULD HAVE BEEN WRONG, AND WOULD HAVE BEEN CAUGHT BY THIS FILE'S OWN
+    TESTS RATHER THAN IN PRODUCTION.** The registry is module-level state, and the three tests that
+    hold this docstring's promises — the derivation test, the hydration test and the format test —
+    mutate it IN PLACE, never through ``_install``. A cache cleared from ``_install`` would answer
+    all three with the pre-mutation digest, which is precisely the "the staleness check reported
+    agreement" failure the paragraphs above are about. Keying on the content instead makes the memo
+    invisible: every caller, and every test, sees exactly the value it saw before.
     """
 
     _ensure_installed()
-    import hashlib
-
-    parts: list[str] = []
-    for s in STAGES:
-        for e in s.entities:
-            for f in e.fields:
-                # In DECLARATION order, not sorted: the mapping's order is what decides which
-                # source key wins if two ever named one target, so a reordering is a change.
-                hydration = ",".join(
-                    f"{src}>{dst}" for src, dst in reference_hydration_for(e.key, f.key).items()
-                )
-                parts.append(
-                    f"{s.key}.{e.key}.{f.key}:{f.type.value}:{f.tier.value}:"
-                    f"{int(f.required)}:{f.enum}:{int(f.deprecated)}:"
-                    f"{f.derived_kind}:{','.join(f.derived_from)}:{hydration}:"
-                    f"{int(f.store_masked)}:{f.text_format.value}:{f.min_items}"
-                )
-    digest = hashlib.sha256("|".join(sorted(parts)).encode("utf-8")).hexdigest()
-    return digest[:16]
+    global _VERSION_MEMO
+    fingerprint = _registry_fingerprint()
+    memo = _VERSION_MEMO
+    if memo is not None and memo[0] == fingerprint:
+        return memo[1]
+    digest = _registry_digest(fingerprint)
+    _VERSION_MEMO = (fingerprint, digest)
+    return digest
 
 
 def derive_value(spec: FieldSpec, row: dict[str, Any]) -> Any:

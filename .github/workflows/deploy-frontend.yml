@@ -17,6 +17,20 @@ name: Deploy frontend to Vercel
 # every push to main and skips its own deploy job when backend/ is untouched. That is what
 # stops a frontend-only change from dead-locking here waiting for a run that never starts.
 #
+# ─── THE CHECKS GATE, AND WHY THE BACKEND'S COPY CANNOT COVER THIS STAGE — 2026-09-03 ──
+# deploy-backend.yml gained a `wait-for-checks` job that refuses to hand over to its deploy until
+# the Checks run for the same commit is green. That protects the EC2 box and it does NOT protect
+# this stage, for the reason stated in the paragraph immediately above: the backend workflow runs
+# on every push and skips its own deploy — and therefore its own wait — when nothing under
+# backend/ changed. A FRONTEND-ONLY PUSH WITH A RED CHECKS RUN IS EXACTLY THAT CASE. The backend
+# run concludes `success` because it correctly did nothing, this workflow starts on that success,
+# and the site is published over a commit the suite has already failed. Nothing, anywhere, waited.
+#
+# It is also the push where the red tick is most likely to be a FRONTEND one — a type error, an
+# eslint finding, a failing unit spec — so the case the backend's gate could not see was the case
+# that mattered most. The `wait-for-checks` job below closes it by polling the Checks run for
+# `github.event.workflow_run.head_sha`, which is the same commit the deploy job checks out.
+#
 # ─── ONE-TIME SETUP THIS WORKFLOW ASSUMES ─────────────────────────────────────────────
 # Vercel's own Git integration must NOT also be auto-deploying `main`, or it will race
 # ahead of the backend and re-create exactly the bug this ordering exists to prevent.
@@ -52,7 +66,12 @@ on:
   workflow_dispatch:
     inputs:
       force:
-        description: "Deploy even if no frontend/ files changed"
+        # 2026-09-03: this input gained a SECOND meaning and the description says both, because a
+        # dispatch box that under-states what it does is how an override gets used by accident. It
+        # still means "ignore the change summary", and it now also means "do not wait for Checks" —
+        # the emergency path, spelled out on the `wait-for-checks` job below. The default is TRUE,
+        # so the ordinary manual run is already the override; untick it to get the gate.
+        description: "Deploy even if no frontend/ files changed, and skip the wait for Checks"
         type: boolean
         default: true
 
@@ -61,7 +80,26 @@ permissions:
   # actions: read is what lets this run download the change-detection artifact that the
   # backend run produced. Artifacts are the only channel across a workflow_run boundary —
   # job outputs do not cross it.
+  #
+  # 2026-09-03: re-derived from what this workflow actually calls rather than left as
+  # inherited. `actions/download-artifact` with `run-id:` reads ANOTHER run's artifacts and
+  # needs `actions: read`; the checkout needs `contents: read`; the Vercel CLI authenticates
+  # with its own token and needs no GITHUB_TOKEN scope at all. Nothing here writes to the
+  # repository, so there is deliberately no `contents: write`, no `deployments: write` and no
+  # `pull-requests: write` — a token that cannot push cannot be made to push.
+  #
+  # 2026-09-03, later the same day: `wait-for-checks` is now a SECOND caller of that same
+  # scope — it reads the Checks workflow's runs and their jobs through the REST API. Worth
+  # naming here because of how it fails without it: `gh api` answers 404, which this poll
+  # cannot tell apart from "Checks has not started yet", so a narrowed token would wait out
+  # the full twenty minutes and then fail for the wrong stated reason.
   actions: read
+
+# ─── EVERY `uses:` IS A COMMIT SHA, SINCE 2026-09-03 ─────────────────────────────────────
+# A version tag is mutable and the action's owner can repoint it, so `@v4` is a promise from a
+# third party rather than a fact about what runs. The SHA is the fact; the tag rides along in a
+# trailing comment for readability. `.github/dependabot.yml` is what keeps them from rotting.
+# (The Vercel CLI a step below installs is deliberately NOT pinned — its own comment says why.)
 
 concurrency:
   group: deploy-frontend
@@ -83,6 +121,12 @@ jobs:
     outputs:
       should_deploy: ${{ steps.decide.outputs.should_deploy }}
       sha: ${{ steps.decide.outputs.sha }}
+      # 2026-09-03: whether this run has to wait for Checks. Decided in the shell below rather
+      # than in the `if:` of `wait-for-checks`, so that `force` is read in exactly ONE place,
+      # as a string, with the same comparison the change-detection branch already uses. A
+      # boolean dispatch input is a string here and a real boolean in an `if:` expression, and
+      # a gate that hinges on which of those two a reader assumed is not a gate.
+      wait_for_checks: ${{ steps.decide.outputs.wait_for_checks }}
     steps:
       - name: Fetch the change summary from the backend run
         id: fetch
@@ -90,7 +134,7 @@ jobs:
         # that case, and the artifact may not even have been uploaded.
         if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
         continue-on-error: true # absent on manual dispatch, and on any older backend run
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: pipeline-changes
           path: pipeline-changes
@@ -111,6 +155,26 @@ jobs:
           set -euo pipefail
           sha="${HEAD_SHA:-$GITHUB_SHA}"
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+          # ── THE CHECKS OVERRIDE, DECIDED BEFORE ANY BRANCH BELOW CAN EXIT ────────────
+          # 2026-09-03. `wait-for-checks` reads this output, so it has to be written on EVERY
+          # path out of this step — including the two that exit early — or an unset output
+          # would read as `!= 'true'`, i.e. "do not wait", which is the failure this whole
+          # gate exists to prevent arrived at by omission.
+          #
+          # `force` defaults to TRUE, so the ordinary manual dispatch skips the wait, and that
+          # is the documented emergency override rather than an oversight: when the site is
+          # broken and the fix is known, waiting twenty minutes for a docs check is not a
+          # safety property, it is an outage extended by process, and the person typing `gh
+          # workflow run` has already decided. Untick `force` to publish through the gate. The
+          # skip is a visibly skipped job in the run graph, so the override leaves a trace.
+          if [ "$EVENT" = "workflow_dispatch" ] && [ "$FORCE" = "true" ]; then
+            wait_for_checks=false
+            echo "Manual dispatch with force=true — not waiting for the Checks run on $sha."
+          else
+            wait_for_checks=true
+          fi
+          echo "wait_for_checks=$wait_for_checks" >> "$GITHUB_OUTPUT"
 
           # ── The ordering rule, enforced ──────────────────────────────────────────────
           # Anything other than a green backend run stops the deploy dead. A cancelled or
@@ -195,9 +259,179 @@ jobs:
           echo "should_deploy=$should" >> "$GITHUB_OUTPUT"
           echo "Deploying commit $sha: should_deploy=$should" >> "$GITHUB_STEP_SUMMARY"
 
-  deploy:
+  # ═══════════════════════════════════════════════════════════════════════════════════════
+  # THE HALF OF THE CHECKS GATE THE BACKEND'S COPY CANNOT SEE — ADDED 2026-09-03
+  # ═══════════════════════════════════════════════════════════════════════════════════════
+  #
+  # WHAT IT DOES. Polls the REST API for the Checks run whose head SHA is exactly the commit this
+  # run is about to publish, and waits for the three jobs branch protection names. Success hands
+  # over to `deploy`; a failure or a timeout fails the run before anything reaches Vercel. The
+  # header of this file says at length why deploy-backend.yml's identical gate does not already
+  # cover this: it skips itself on a frontend-only push, which is the push this one is for.
+  #
+  # IT IS USUALLY ONE API CALL. The backend's copy starts racing Checks from the same push; this
+  # one starts only after a whole backend deploy has run — minutes of rsync, venv and migrate — so
+  # the Checks run for this commit has almost always concluded before the first poll. The
+  # twenty-minute budget is for the case where it has not: a queued runner, or a re-run of an
+  # older backend deploy against a commit whose Checks run is being re-run beside it.
+  #
+  # WHY ALL THREE JOBS AND NOT JUST THE WEB ONE, which is the decision most worth reading here.
+  # "Publishing the frontend can only depend on the frontend's checks" is FALSE in this repository,
+  # and checks.yml's own header is where it is written down: `test_the_web_carries_the_same_
+  # hydration_table` lives in the BACKEND suite (`backend/tests/test_reference_registry.py`), and it
+  # is what catches a wrong entry in `frontend/lib/designWorkshops.ts` — a frontend-only edit whose
+  # only red tick is `Backend tests`, gating the deploy of the very surface that carries the defect.
+  # `Docs check` is the same shape: `docs/REPO_FACTS.md` carries per-directory file and line counts
+  # for `frontend/app`, `frontend/components` and `frontend/lib`, so adding or deleting a component
+  # goes red there and nowhere else until somebody regenerates it. Keeping this
+  # gate exactly as wide as branch protection also keeps ONE definition of "fit to ship" in one
+  # place; narrowing it here would be a second, quieter one that nobody would think to re-read.
+  #
+  # WHY THE NAMED JOBS AND NOT THE WHOLE RUN. checks.yml's `Backend integration tests` stands up a
+  # Postgres service and runs the ~375 database-backed tests. It is deliberately NOT a required
+  # check (that file's section 5 says so, and says why) and it can take longer than this entire
+  # budget, so waiting on the RUN would make an advisory job into the thing that decides whether
+  # the live site can be updated — by accident, through a timeout, with no decision recorded
+  # anywhere. IF THE THREE NAMES BELOW ARE RENAMED IN checks.yml THIS GOES RED WITH A MESSAGE
+  # SAYING SO, rather than silently passing over a list that matches nothing. That is on purpose.
+  #
+  # THIS LOOP IS A COPY OF deploy-backend.yml'S, and the duplication is deliberate: the alternative
+  # is a composite action, i.e. a fourth thing to pin, audit and keep in dependabot, to hold twenty
+  # lines of `gh` and `jq`. The two are not allowed to drift — fix a defect in one, fix it in both.
+  #
+  # A RED RUN HERE DOES NOT SEVER STAGE 3. android-build.yml chains off this workflow COMPLETING
+  # and deliberately carries no `conclusion == 'success'` gate (its header argues the case), so the
+  # APK is still built and still answers "does it compile" for a commit this stage refused to
+  # publish. The gate job above stays a job that always runs, for the same reason it always did.
+  wait-for-checks:
+    name: Wait for Checks on this commit
     needs: gate
-    if: ${{ needs.gate.outputs.should_deploy == 'true' }}
+    # Only when something is actually going to be published, and only when the gate did not record
+    # the override. A run that has already decided not to deploy has nothing to gate, and hanging a
+    # twenty-minute poll off it would buy nothing.
+    #
+    # THAT IS ALSO WHY THIS CANNOT DOUBLE-RED A FAILURE THE BACKEND ALREADY CAUGHT, which is the
+    # first objection to raise against adding a second copy of the same gate. On a push that touches
+    # backend/, a red Checks fails deploy-backend.yml's `wait-for-checks`, so the backend run
+    # concludes `failure`, so the ordering rule in the gate above sets `should_deploy=false` and
+    # this job never starts. It runs exactly where the backend's copy could not: a push whose
+    # backend deploy correctly did nothing and therefore correctly waited for nothing.
+    if: ${{ needs.gate.outputs.should_deploy == 'true' && needs.gate.outputs.wait_for_checks == 'true' }}
+    runs-on: ubuntu-latest
+    # A hair over the poll's own 20-minute budget, so the loop's error message — which names what it
+    # was still waiting for — is what a reader sees rather than a bare job cancellation. It is also
+    # the bound on how long this run holds the `deploy-frontend` concurrency group, which does not
+    # cancel in progress: a stuck Checks run delays the next publish, it cannot queue for ever.
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Poll for the gating jobs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # The commit the deploy job checks out, resolved once by the gate — the backend run's
+          # `head_sha` on the chained trigger, `github.sha` on a dispatch. Reading it from the gate
+          # rather than re-deriving it here is what guarantees the commit that is GRADED is the
+          # commit that is PUBLISHED; a `workflow_run` job otherwise defaults to the tip of main,
+          # which may already have moved on.
+          SHA: ${{ needs.gate.outputs.sha }}
+          # The three checks.yml jobs branch protection names (see that file's header, and the note
+          # above for why all three). JSON because jq consumes it as a list; a shell string of names
+          # with spaces in them is how this kind of loop quietly starts matching nothing.
+          GATING_JOBS: '["Backend tests","Web typecheck, lint and unit specs","Docs check"]'
+        run: |
+          set -euo pipefail
+          # AN EMPTY SHA WOULD PASS THIS GATE OVER SOMEBODY ELSE'S COMMIT. `?head_sha=` with no
+          # value is not a filter that matches nothing, it is an absent filter: the API answers with
+          # the most recent Checks runs for ANY commit, and a green one from an hour ago would let
+          # this publish an untested tree. Unreachable today — the gate always writes a SHA — which
+          # is exactly why it is asserted rather than assumed.
+          if [ -z "${SHA}" ]; then
+            echo "::error::the gate produced no commit SHA to check. An empty head_sha filter returns the newest Checks runs for any commit, so this gate would grade a different tree and pass. Refusing to guess; nothing has been published."
+            exit 1
+          fi
+          api="repos/${GITHUB_REPOSITORY}/actions"
+          # 60 × 20 s. Twenty minutes is generous rather than tight here (see the note above): by
+          # the time this job starts the answer usually already exists, and the budget is headroom
+          # for a queued runner, not a measurement of the suite.
+          for attempt in $(seq 1 60); do
+            # `checks.yml` BY FILENAME. Looking the workflow up by its display name would break the
+            # day somebody edits `name:` at the top of that file, and would break SILENTLY — an
+            # empty result is indistinguishable from "not started yet", so the gate would time out
+            # blaming the suite for a rename.
+            runs="$(gh api "${api}/workflows/checks.yml/runs?head_sha=${SHA}&per_page=30" 2>/dev/null || echo '{"workflow_runs":[]}')"
+            # Prefer the `push` run for this SHA; fall back to whatever run exists for it. On main
+            # the push run is the one that matters, but a re-run or a dispatch of Checks against the
+            # same commit is just as good an answer and there is no reason to ignore it.
+            run_id="$(printf '%s' "$runs" | jq -r '([.workflow_runs[] | select(.event=="push")][0] // .workflow_runs[0]) | .id // ""')"
+            if [ -z "$run_id" ]; then
+              echo "attempt ${attempt}/60: no Checks run for ${SHA} yet"
+              sleep 20
+              continue
+            fi
+            jobs="$(gh api "${api}/runs/${run_id}/jobs?per_page=100" 2>/dev/null || echo '{"jobs":[]}')"
+            verdict="$(printf '%s' "$jobs" | jq -r --argjson want "$GATING_JOBS" '
+              [ .jobs[] | select(.name | IN($want[])) ]                       as $g
+              | ($want - [ $g[].name ])                                        as $missing
+              | ([ $g[] | select(.status != "completed") | .name ])            as $running
+              | ([ $g[] | select(.status == "completed" and .conclusion != "success") | .name ]) as $bad
+              | if   ($bad | length) > 0     then "fail " + ($bad | join(", "))
+                elif (($missing + $running) | length) > 0 then "wait " + (($missing + $running) | join(", "))
+                else "pass" end')"
+            state="${verdict%% *}"
+            detail="${verdict#* }"
+            case "$state" in
+              pass)
+                echo "Checks passed for ${SHA} — run ${run_id}"
+                echo "Checks green for \`${SHA}\`: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${run_id}" >> "$GITHUB_STEP_SUMMARY"
+                exit 0
+                ;;
+              fail)
+                echo "::error::Checks failed for ${SHA} (${detail}). Not publishing. See ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${run_id}"
+                {
+                  echo "### Frontend deploy stopped — Checks are red"
+                  echo ""
+                  echo "\`${detail}\` failed on \`${SHA}\`, so this commit was not published."
+                  echo "The live site is still serving the previous build."
+                  echo ""
+                  echo "[Checks run](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${run_id})"
+                } >> "$GITHUB_STEP_SUMMARY"
+                exit 1
+                ;;
+              *)
+                echo "attempt ${attempt}/60: still waiting on ${detail}"
+                ;;
+            esac
+            sleep 20
+          done
+          echo "::error::timed out after 20 minutes waiting for the Checks jobs on ${SHA}. Nothing was published and the live site is still serving the previous build, which is the safe end of this failure. If the suite is genuinely this slow now, raise the loop bound here rather than deleting the gate; to publish past it in an emergency, run this workflow from the Actions tab with force=true — that skips the wait by design."
+          exit 1
+
+  deploy:
+    needs: [gate, wait-for-checks]
+    # ─── WHY THIS CONDITION GREW A STATUS FUNCTION — 2026-09-03 ──────────────────────────
+    # `wait-for-checks` SKIPS ITSELF on the emergency override, and on any run that was never
+    # going to publish. GitHub's default is that a job whose dependency was skipped is skipped
+    # too — so leaving this as the plain `should_deploy` test would have silently turned the
+    # documented override into "a forced dispatch never deploys", which is the same class of
+    # quiet lie as the skip that cost a day on 2026-08-23 (see the gate step above). Writing a
+    # status function into the `if` is what removes the implicit `success()` and lets this job
+    # judge the results itself:
+    #   • wait-for-checks succeeded            → deploy (the normal, gated path)
+    #   • wait-for-checks was skipped          → deploy IF the gate still said so (force=true
+    #                                            dispatch; a gate that said no is caught by the
+    #                                            `should_deploy` test on the line below anyway)
+    #   • wait-for-checks failed or cancelled  → DO NOT deploy
+    # `needs.gate.result == 'success'` is restated because that same implicit `success()` used to
+    # carry it. It changes no outcome today — the gate writes `should_deploy=false` before every
+    # exit it fails on — and it is here so that an edit which ever fails the gate AFTER writing
+    # `true` cannot publish through the hole.
+    if: >-
+      ${{ !cancelled()
+          && needs.gate.result == 'success'
+          && needs.gate.outputs.should_deploy == 'true'
+          && (needs.wait-for-checks.result == 'success' || needs.wait-for-checks.result == 'skipped') }}
     runs-on: ubuntu-latest
     environment:
       # Resolved from the project this run actually deployed, not written down here. A literal was
@@ -214,7 +448,7 @@ jobs:
       VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
     steps:
       - name: Checkout the commit the backend deployed
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           # A workflow_run run defaults to the tip of the default branch, which may already
           # have moved on. Pin to the exact commit whose backend deploy just went green so
@@ -222,7 +456,7 @@ jobs:
           ref: ${{ needs.gate.outputs.sha }}
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22" # Next 16 needs ≥ 20.9; 22 matches Vercel's current build image
           cache: npm

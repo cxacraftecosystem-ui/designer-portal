@@ -254,6 +254,11 @@ from app.services.stage_schema import (
     registry_version,
     stages,
 )
+# THE ONE PLACE A MULTIPART BODY IS TURNED INTO BYTES WITH A CEILING ON IT. Both upload sites in
+# this file used to do `await file.read()` and compare the length afterwards, which is a cap that
+# has already been paid for by the time it is applied: the whole body is in this process's heap
+# before anything asks how big it was. See A30-10 and the helper's own docstring. (2026-09-03)
+from app.services.uploads import read_upload_bounded
 from app.services.workshop_transcripts import load_transcript_items
 
 router = APIRouter(prefix="/design-workshops", tags=["design-workshops"])
@@ -884,6 +889,7 @@ async def get_report_templates(_: Any = Depends(get_current_user)) -> list[dict[
 
 @router.post("/ocr/identity")
 async def scan_identity_card(
+    request: Request,
     file: UploadFile = File(...),
     retention: str = Form(RETENTION_DISCARD),
     current_user: Any = Depends(get_current_user),
@@ -930,18 +936,37 @@ async def scan_identity_card(
     _require_designer(current_user)
     declared = parse_retention(retention)
     settings = get_identity_ocr_settings()
-    content = await file.read()
+    # THE CEILING IS APPLIED WHILE THE BODY ARRIVES, NOT AFTER IT HAS. This was
+    # `content = await file.read()` followed by `len(content) > settings.max_image_bytes`, which
+    # reads the WHOLE upload into this process and only then decides it was too big — a cap that
+    # has already been paid for by the time it is enforced, on a single-worker deployment where the
+    # heap is the shared resource. `read_upload_bounded` refuses on the declared `Content-Length`
+    # before a byte moves when the client sent one, and stops mid-read when it did not. (A30-10,
+    # 2026-09-03)
+    #
+    # `request` IS PASSED BECAUSE THIS ROUTE HAS ONE. The header pre-check is the half that costs
+    # nothing at all, and a caller that omits the Request silently gives it up.
+    #
+    # THE REFUSAL'S SENTENCE COMES FROM THE HELPER, which is the point of there being one: two
+    # upload sites phrasing one limit two ways is how a designer learns that the size rule depends
+    # on which screen they are on. `purpose` is what the shared sentence names the upload by.
+    #
+    # AND THE CARD-SPECIFIC ADVICE IS BACK (2026-09-03). This route's old wording ended "photograph
+    # the card alone rather than the whole page", and moving onto the shared helper dropped it — a
+    # regression nobody would see in a diff, because the sentence that replaced it is a perfectly
+    # good sentence. It is not the same advice: a designer photographing a whole document page has
+    # no obvious way to "send a smaller file" from a phone camera, and framing the card is the
+    # action that clears this refusal AND improves the OCR that follows it.
+    content = await read_upload_bounded(
+        file,
+        settings.max_image_bytes,
+        request=request,
+        purpose="identity card photograph",
+        remedy="Photograph the card alone rather than the whole page.",
+    )
     if not content:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="No image was uploaded."
-        )
-    if len(content) > settings.max_image_bytes:
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=(
-                f"The image is larger than the {settings.max_image_bytes // (1024 * 1024)} MB "
-                "limit. Photograph the card alone rather than the whole page."
-            ),
         )
     mime_type = (file.content_type or "image/jpeg").split(";")[0].strip().lower()
     if mime_type not in SUPPORTED_MIME_TYPES:
@@ -1115,7 +1140,7 @@ DICTATION_MAX_BYTES = 6 * 1024 * 1024
 
 
 async def _transcribe_one_dictation(
-    file: UploadFile, languageHint: str | None, current_user: Any
+    file: UploadFile, languageHint: str | None, current_user: Any, request: Request
 ) -> dict[str, Any]:
     """Everything a dictation spends: the cap, the size checks, the provider, the allowance.
 
@@ -1131,9 +1156,16 @@ async def _transcribe_one_dictation(
        re-recording can clear, so telling a designer their clip is too large when their allowance is
        gone would send them off to record a shorter one for nothing. It also means the refusal costs
        one primary-key lookup rather than a provider round trip.
-    2. **Empty, then over-size** — both 4xx, both before any provider is touched, and NEITHER of them
+    2. **Over-size, then empty** — both 4xx, both before any provider is touched, and NEITHER of them
        spends an allowance. A clip refused for size never reached a provider; charging for it makes
        the ceiling arrive early for a reason the designer cannot see.
+
+       THESE TWO SWAPPED PLACES ON 2026-09-03 AND NOTHING OBSERVABLE MOVED. The size check used to
+       come second because it was `len()` of a body already read; it now runs DURING the read
+       (`read_upload_bounded`), so it necessarily precedes the emptiness test that follows the read.
+       No request can be both — an empty body is under every ceiling — so the pair has no reachable
+       ordering to assert, which is why the tests on this list are about the OTHER three positions.
+       What must not move is this pair's place relative to 1, 3 and 4.
     3. **The provider, and its 503 spends nothing either.** "No transcription is configured" is the
        server's own misconfiguration and the one refusal a designer can do nothing whatever about; a
        deployment with no API key must not silently exhaust every designer's day.
@@ -1175,19 +1207,36 @@ async def _transcribe_one_dictation(
             detail=refusal,
         )
 
-    content = await file.read()
+    # THE CEILING IS APPLIED WHILE THE BODY ARRIVES, NOT AFTER IT HAS, and the order of the four
+    # checks this function's docstring pins is UNCHANGED: the cap above still runs first, and this
+    # is still the second refusal, still before any provider is touched, still spending no
+    # allowance. What changed is that `DICTATION_MAX_BYTES` is now enforced against the declared
+    # `Content-Length` before a byte moves, and against the running total when the client declared
+    # none — instead of against `len()` of a body already sitting in this process's heap. A cap
+    # measured after the read is a cap the box has already paid for. (A30-10, 2026-09-03)
+    #
+    # THE SENTENCE THAT JUSTIFIES THE NUMBER IS BACK ON THE SCREEN (2026-09-03). This route's old
+    # 413 ended "upload a longer recording as workshop audio instead — it is transcribed in the
+    # background", and the move onto the shared helper dropped it. That clause is not decoration and
+    # not a restatement of "send a smaller file": it is the DOCUMENTED reason `DICTATION_MAX_BYTES`
+    # is 6 MB rather than an arbitrary number — this path is synchronous and a designer waits on it,
+    # while workshop audio goes to the background queue and has no such ceiling. Without it a
+    # designer with a twenty-minute recording reads a refusal with no route that accepts what they
+    # have. The paragraph above `DICTATION_MAX_BYTES` carries the argument for whoever reads the
+    # code; this carries it for whoever is standing in a courtyard.
+    content = await read_upload_bounded(
+        file,
+        DICTATION_MAX_BYTES,
+        request=request,
+        purpose="dictated clip",
+        remedy=(
+            "Upload a longer recording as workshop audio instead — it is transcribed in the "
+            "background."
+        ),
+    )
     if not content:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="No audio was uploaded."
-        )
-    if len(content) > DICTATION_MAX_BYTES:
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=(
-                f"A dictated clip may be at most {DICTATION_MAX_BYTES // (1024 * 1024)} MB. "
-                "Upload a longer recording as workshop audio instead — it is transcribed in the "
-                "background and the transcript comes back onto the stage."
-            ),
         )
     result = await transcribe_audio_bytes(
         content,
@@ -1409,6 +1458,7 @@ async def dictate(
 @router.post("/{workshop_id}/dictate")
 async def dictate_for_workshop(
     workshop_id: str,
+    request: Request,
     file: UploadFile = File(...),
     languageHint: str | None = Form(default=None),
     current_user: Any = Depends(get_current_user),
@@ -1454,7 +1504,9 @@ async def dictate_for_workshop(
     refusal = dictation_consent.gate_refusal(dictation_consent.consent_of(record))
     if refusal is not None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=refusal)
-    return await _transcribe_one_dictation(file, languageHint, current_user)
+    # The Request is handed down so the size cap can be answered off the declared `Content-Length`
+    # before the body is read. Nothing else in this handler needs it.
+    return await _transcribe_one_dictation(file, languageHint, current_user, request)
 
 
 @router.post("/{workshop_id}/dictation-consent")
@@ -2126,14 +2178,30 @@ async def update_design_workshop(
     ``_require_designer`` first — the SET ``{DESIGNER, ADMIN, MASTER_ADMIN}``, not a rank floor —
     and ``load_workshop_or_404(..., for_edit=True)`` second. Neither is new and neither may move.
 
-    THE ORDER IS WHAT KEEPS A VIEWER FROM WRITING. ``load_workshop_or_404`` performs NO role check
-    at all: it admits the creator, an admin, or the holder of any ``DesignWorkshopViewer`` row, and
-    a grant can be held by a RESEARCHER or a PROFESSOR. Run second, the role gate refuses them
-    before the row test can admit them. Swap the two lines and every viewer-grantee becomes an
-    editor of the header — silently, because the swap does not break a single test that exists
-    about reading. An INSPECTOR is refused by the same clause and has never been anything else: an
-    inspection grant is a READ relation, and ``prisma/schema.prisma`` says in so many words that no
-    read which decides a WRITE may consult it.
+    **THE TWO GATES NOW OVERLAP, AND BOTH STILL STAND — CORRECTED 2026-09-03.** This paragraph used
+    to say that ``load_workshop_or_404`` "performs NO role check at all: it admits the creator, an
+    admin, or the holder of any ``DesignWorkshopViewer`` row, and a grant can be held by a
+    RESEARCHER or a PROFESSOR". That is now the opposite of what the helper does. Its GRANT arm is
+    role-gated: a viewer row is honoured only for an account ``deps.can_run_design_workshops`` still
+    admits, and ``DESIGN_WORKSHOP_ROLES`` is the very set ``_require_designer`` tests. A researcher
+    or a professor holding an old grant is turned away by the LOADER, with a 404, before this
+    handler's own gate is reached.
+
+    **WHAT ``_require_designer`` STILL DOES ALONE, WHICH IS WHY IT IS NOT NOW REDUNDANT.** The
+    loader's CREATOR arm is deliberately ungated by role — ``createdById`` is admitted whatever the
+    account's role is today, because taking a fortnight of somebody's own fieldwork away from them
+    on a demotion is a different decision with a different owner — and ``for_edit=True`` carries no
+    role check of its own either; all it changes is that a soft-deleted workshop answers 409 instead
+    of 404. So the account this gate still turns away by itself is a CREATOR whose role has since
+    moved outside the designer set, and it is the only thing standing between them and the header.
+    Deleting it on the strength of "the loader checks now" would be reading one arm of that helper
+    as if it were the whole of it.
+
+    THE ORDER IS ALSO WHAT DECIDES WHAT THEY ARE TOLD: a 403 naming the tier they need, rather than
+    a 404 sending them to hunt for a workshop they can see on the list. An INSPECTOR is refused by
+    the same clause and has never been anything else: an inspection grant is a READ relation, and
+    ``prisma/schema.prisma`` says in so many words that no read which decides a WRITE may consult
+    it.
 
     A designer's access to a workshop is always a GRANT, never ``createdById``: the create gate is
     strictly narrower than this one and admits admins alone, so ``createdById`` can never match a
@@ -2978,9 +3046,12 @@ async def _readable_media_ids(media_ids: set[str], viewer: Any) -> set[str]:
     ``load_transcript_items`` composes it. Professor and above get an empty filter and therefore
     everything, which is that function's rule and not a new one.
 
-    One query for the whole list rather than one per layer: twenty-five interviews at two rungs each
-    is fifty layers, and fifty round trips on a link this repository measured at 756ms is a screen
-    that never finishes opening.
+    One query for the whole list rather than ONE PER LAYER: twenty-five interviews at two rungs each
+    is fifty layers, and fifty is the number that decides this — it was a screen that never finished
+    opening at the 756ms a cross-region round trip cost when this was measured, and it is fifty
+    queries to answer one permission question at the one to two milliseconds a co-located hop has
+    cost since 2026-09-02 (``services/concurrency.py``). The count grows with the workshop; the
+    latency does not. ``ai_layers.media_ids_to_check`` carries the same sentence for the same reason.
     """
     if not media_ids:
         return set()
@@ -3769,9 +3840,13 @@ async def caption_ai_layer(
     # SIZE, WHICH `_verb_source_media` DOES NOT CHECK — see `MAX_CAPTION_BYTES`. Before the try, so
     # a refusal never reaches `_count_refused_run`: nothing was sent, so nothing was spent, and
     # counting it against the workshop's allowance would charge for a request that never left.
-    await _refuse_oversize_verb_source(
-        media, budget_bytes(MAX_CAPTION_BYTES), what="caption in one piece"
-    )
+    #
+    # RESOLVED ONCE AND USED TWICE (2026-09-03): the HEAD check below and the READ inside the try are
+    # the same bound, and they have to be the SAME NUMBER. `budget_bytes` reads what the box has free
+    # right now, so calling it again forty lines down can hand back a smaller figure than the one the
+    # 413 message quoted — a request refused against a limit the caller was never told about.
+    ceiling = budget_bytes(MAX_CAPTION_BYTES)
+    await _refuse_oversize_verb_source(media, ceiling, what="caption in one piece")
     answer: Mapping[str, Any] | None = None
     try:
         language = ai_verbs.clean_language(payload.language, what="the caption")
@@ -3782,7 +3857,18 @@ async def caption_ai_layer(
         # caption in the model's own language is a perfectly good answer.
         if language and language.lower() == "multi":
             language = None
-        content = await asyncio.to_thread(get_object_bytes, media.objectKey)
+        # THE LAST UNBOUNDED OBJECT READ IN THE TREE, CLOSED 2026-09-03. This was
+        # `get_object_bytes(media.objectKey)` with no bound at all, which made the HEAD check above
+        # the ONLY thing standing between a 668 MiB object and the heap of a 1 GiB single-worker web
+        # process — and `_refuse_oversize_verb_source` returns cleanly when storage will not report a
+        # ContentLength, exactly as its docstring says. So the one case that gets past the guard is
+        # the one where nothing knows how big the object is, and that case used to be answered by
+        # reading all of it. The bound is the same `ceiling` the HEAD was measured against, so a file
+        # that slipped past an unhelpful HEAD is now refused when the transfer reaches the number the
+        # 413 would have quoted.
+        content = await asyncio.to_thread(
+            get_object_bytes, media.objectKey, max_bytes=ceiling
+        )
         answer = await ai.caption_image_bytes(
             content,
             str(getattr(media, "mimeType", "") or "image/jpeg"),
@@ -3803,6 +3889,19 @@ async def caption_ai_layer(
             language=language,
             created_by_id=current_user.id,
         )
+    except ObjectTooLarge as exc:
+        # `head_object` could not size it and the transfer hit the bound — the subtitles verb's
+        # answer to the identical situation, in the identical words, because a caller pointing the
+        # two verbs at one unsized object must not read two different explanations. Not a
+        # `VerbError`, so it deliberately does not reach `_count_refused_run`: nothing was sent to a
+        # provider, so nothing was spent.
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=(
+                f"That file is {exc.size_bytes} bytes, over the {exc.limit_bytes}-byte limit this "
+                f"server will caption in one piece. Nothing was sent anywhere and nothing was spent."
+            ),
+        ) from exc
     except (ai_verbs.VerbError, ai_layers.LayerRuleViolation) as exc:
         await _count_refused_run(
             answer, allowance=allowance, verb=ai_verbs.Verb.CAPTION, current_user=current_user
@@ -4731,13 +4830,23 @@ def _require_designer(user: Any) -> None:
 
     **The sixth is ``POST /{workshop_id}/exports`` and it is not argued anywhere.** It writes a
     ``DwReportExport`` ledger row behind ``load_workshop_or_404(for_edit=True)`` alone, and
-    ``for_edit`` performs no role check whatsoever (``services/design_workshops.py`` admits the
-    creator, an admin, or ANY ``DesignWorkshopViewer`` grantee regardless of tier) — so a RESEARCHER
-    or a PROFESSOR holding a viewer grant can append to the export ledger of a workshop they may
-    only read. This predates the docstring that now names it and is left standing rather than
-    tightened here: it is a permission decision, the row is an attestation about a file the caller
-    could already generate, and narrowing it is the owner's call, not a docstring's. It is written
-    down so the enumeration above is honest about its own edge.
+    ``for_edit`` carries no role check of its own — all it changes is that a soft-deleted workshop
+    answers 409 rather than 404.
+
+    **THE EDGE IS NARROWER THAN THIS PARAGRAPH USED TO CLAIM — CORRECTED 2026-09-03.** It said "a
+    RESEARCHER or a PROFESSOR holding a viewer grant can append to the export ledger of a workshop
+    they may only read". They cannot, and have not since 2026-09-03: the loader honours a viewer row
+    only for an account ``can_run_design_workshops`` still admits, so a grantee outside
+    ``DESIGN_WORKSHOP_ROLES`` gets a 404 from the loader itself. What is left is the arm that helper
+    deliberately does NOT role-gate: the CREATOR, admitted whatever their role is today. Since a
+    design workshop can only be created by an account the create gate admits, that means an account
+    which has since been demoted out of the designer set can still append to the ledger of a
+    workshop it made.
+
+    Left standing rather than tightened here, for the reason it always was: it is a permission
+    decision, the row is an attestation about a file the caller could already generate, and
+    narrowing it is the owner's call, not a docstring's. It is written down so the enumeration above
+    is honest about its own edge.
 
     Stated inside each handler rather than as a dependency because every one of these routes already
     takes ``current_user`` for other reasons, and because the question it asks is not about a row:
@@ -4874,11 +4983,15 @@ async def _report_inputs(
     below have to know what the document will contain; the callers use it rather than resolving it
     a second time and risking two answers.
 
-    THREE WAVES, NOT FIVE SEQUENTIAL LOADS, and on this deployment that is the whole cost of the
-    endpoint. The database is in another AWS region and one round trip measured 756ms against
-    queries that execute in under a millisecond (``services/concurrency``), so a fully-referenced
-    workshop paid roughly 6.8s of pure network before the renderer started, and again on Generate.
-    The dependency graph only ever demanded three: the entries, then everything that reads the
+    THREE WAVES, NOT FIVE SEQUENTIAL LOADS. MEASURED AGAINST A DATABASE THAT WAS IN ANOTHER AWS
+    REGION, where one round trip was 756ms against queries executing in under a millisecond
+    (``services/concurrency``): a fully-referenced workshop paid roughly 6.8s of pure network before
+    the renderer started, and again on Generate. THAT LINK IS GONE — production moved to a
+    co-located database on 2026-09-02 at one or two milliseconds a hop — so the 6.8s is the
+    measurement that motivated this shape rather than a figure for today, and nothing here has been
+    re-timed since. What survives is the dependency graph, which is not a latency claim at all and
+    is the only thing the three waves were ever derived from.
+    The graph only ever demanded three: the entries, then everything that reads the
     entries, then the media resolver — which cannot start until ``attach_report_references`` has
     told it about the photographs hanging off the REFERENCED records rather than off the stages.
     The loads in wave 2 write DIFFERENT attributes of ``data`` (``references``,

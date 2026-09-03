@@ -77,9 +77,50 @@ sequenceDiagram
 (`ExpiresIn` in `s3.py`). Both clients re-presign a part that 403s mid-transfer, and the web
 re-presigns per attempt for whole objects.
 
-`s3.py` also has `presign_get_url` — currently used only for APK release downloads
-(`app_release.py`), not for media reads. It is the building block the P0 fix in
-[SECURITY.md](SECURITY.md) needs, and it already exists.
+`s3.py` also has `presign_get_url` — used for APK release downloads (`app_release.py`), and, since
+2026-09-03, for media reads too when `MEDIA_PRESIGNED_READS` is on. That flag ships **off**; it is
+one step of the P0 sequence in [SECURITY.md](SECURITY.md), whose operator runbook is the authority on
+the order the steps must go in.
+
+### 1.1 The upload doors will not sign anything — the type gate (2026-09-03)
+
+**The `mimeType` a client declares at presign is put on the object as its signed `Content-Type`,
+which is the type the storage host later SERVES it with.** Until 2026-09-03 any string of up to 180
+characters was signed verbatim, so a stored `text/html` document was reachable on the organisation's
+own storage host and would render there.
+
+`POST /media/presign` and `POST /media/multipart/create` now both call `_assert_uploadable` before
+signing. Same door, same two checks — gating one and not the other would have left the hole open for
+precisely the large uploads. The rule is a **deny-list in front of an allow-list**:
+
+- `_UPLOAD_MIME_DENIED` wins first: `text/html` and its sandboxed spelling, `application/xhtml+xml`,
+  the four JavaScript/ECMAScript spellings, `application/x-msdownload`, `application/hta`. The
+  deny-list is `and`-ed in front, so `text/html` is refused **despite** matching the `text/` family.
+- Otherwise the type must be in `_UPLOAD_MIME_FAMILIES` (`image/`, `video/`, `audio/`, `text/`,
+  `model/`, `font/`, `application/vnd.`) or named in `_UPLOAD_MIME_ALLOWED` (PDF, Word, RTF, JSON,
+  XML, zip, gzip, tar, and `application/octet-stream`).
+- A refused **type** is **422**; a declared `sizeBytes` over `MEDIA_UPLOAD_MAX_BYTES` is **413**. Both
+  are one terse sentence, and both happen here rather than at `/complete` because nothing has moved
+  yet. `/complete` re-checks the object's real length and deletes it on a breach.
+
+**Two acceptances are deliberate.** `application/octet-stream` is both clients' fallback for an
+untypeable file and is the inert type. **`image/svg+xml` is the one genuinely scriptable type on the
+list, and it is accepted on purpose**: the registry asks for it by name (`sketch.lineArtFile` — *"An
+SVG or vector export, if one was produced"*), so refusing it would 422 a declared field's only answer
+from every device, and Android's `saveOrQueue` does not queue a 4xx — the refusal would lose the file
+rather than retry it. What makes that token defensible is that `public_url_for_key` serves media from
+a **different origin** than the app, so what executes can read neither this app's storage nor its
+cookies. **The mitigation is a rule on the DISTRIBUTION and it is now the only remaining control on
+this type**: serve `image/svg+xml` with `Content-Disposition: attachment`, or with a
+`Content-Security-Policy: sandbox` response header. It was a belt over the deny-list's absence; the
+deny-list arrived, and this is the one scriptable type it admits.
+
+**The doc trail, and the reason it has three points rather than two.** The backend banner is headed
+**"WHAT THE UPLOAD DOORS WILL SIGN"** in `backend/app/api/routes/media.py` — cite it by that heading,
+never by line number. `frontend/components/forms/MediaCaptureField.tsx` cites it the same way and
+carries the client half of the SVG argument. This subsection is the middle: it existed nowhere, and a
+frontend comment that asserted *"`POST /media/presign` has no allowlist"* survived the hole being
+closed because there was no doc between the two to correct.
 
 ---
 

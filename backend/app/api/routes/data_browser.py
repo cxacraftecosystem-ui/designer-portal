@@ -1878,8 +1878,12 @@ async def _list_design_workshops_level(segs: list[str], parent: str, scope: Scop
     wid = segs[1]
 
     if len(segs) == 2:
-        # FOUR INDEPENDENT READS, ONE WAVE. None consumes another's output, and a cross-region
-        # hop is ~750ms, so in series this level costs three seconds before a folder appears.
+        # FOUR INDEPENDENT READS, ONE WAVE. None consumes another's output, so in series this level
+        # costs four waits before a folder appears where it needs one. That was three seconds at the
+        # ~750ms a cross-region hop cost when this was written; production has been co-located since
+        # 2026-09-02 (~1-2ms — see the fuller correction at the eight-read wave below, and
+        # ``services/concurrency.py``), so it is now single-digit milliseconds. Four still fits under
+        # ``pool_width()`` at the deployment's limit of 5, so this one really is one wave.
         record, entries, media, definition = await gather_reads(
             _dw_require(wid),
             _dw_entries(wid),
@@ -2743,6 +2747,17 @@ _REPORT_KEYS = (
     "designWorkshops",
     "dwEntries",
     "dwDefinitions",
+    # THE TRUE TOTALS, ADDED 2026-09-03, and they are here because ``dwEntries`` is CAPPED and the
+    # sheets built from it were vouching for its length as if it were the corpus. Both are
+    # ``[(key, count)]`` — the same list-of-pairs shape ``dwDefinitions`` already uses, so this dict
+    # stays a dict of lists — and both are counted by the database over the SAME predicate the entry
+    # read uses, so they are the totals whether or not the cap bit. ``dwEntityCounts`` is keyed by
+    # ``entityKey`` (what the DW tables index page's Rows column reports) and ``dwWorkshopCounts`` by
+    # ``designWorkshopId`` (what the overview's "Rows recorded" reports). Empty means "nobody
+    # counted", not "zero rows": ``_dw_sheets`` falls back to counting the rows it was handed, which
+    # is what a caller building this dict by hand gets (tests do exactly that).
+    "dwEntityCounts",
+    "dwWorkshopCounts",
 )
 
 
@@ -2854,12 +2869,22 @@ async def _report_records(segs: list[str], scope: Scope) -> dict[str, list[Any]]
     if len(segs) <= 1:
         # Root (or the all-workshops folder): everything visible, each sheet capped at REPORT_TAKE.
         #
-        # EIGHT INDEPENDENT SHEETS, ONE WAVE. Not one of these reads consumes another's output — the
+        # EIGHT INDEPENDENT SHEETS, GATHERED. Not one of these reads consumes another's output — the
         # root report is eight unrelated tables side by side — and ``/data/report?format=json``
         # MEASURED 19.01 round trips (13,289 ms) against production with them in series
-        # (docs/SCALABILITY.md §1.2). Eight is inside ``pool_width()`` (10), so this is one wave and
-        # not two; do not add a ninth read here without checking that number again, because at
-        # eleven ``gather_reads`` silently splits into two waves at its semaphore.
+        # (docs/SCALABILITY.md §1.2).
+        #
+        # IT IS NO LONGER ONE WAVE, AND THE NUMBER THAT MOVED WAS THE POOL'S (2026-09-03). This
+        # comment used to read "eight is inside ``pool_width()`` (10), so this is one wave and not
+        # two". ``pool_width()`` is ``DATABASE_CONNECTION_LIMIT``, whose CODE default is still 10 but
+        # which production sets explicitly to 5 (docs/ENVIRONMENT.md, "The database", recorded
+        # 2026-09-02) — so on the deployment that matters, eight coroutines take ``gather_reads``'
+        # semaphore branch and land as 5 + 3. That is a far smaller regression than it once was: the
+        # database now sits in the same region as the API box, where a round trip is a millisecond or
+        # two rather than the ~750 ms this measurement was taken against, so the second wave costs
+        # about as much as one extra query used to cost in the noise. Gathering still wins by an
+        # order of magnitude over the series this replaced. Do not "fix" it by raising the limit —
+        # see ``core/config.py`` and ``dashboard.py`` on why that number is not the app's to spend.
         #
         # THE MEMORY IS UNCHANGED AND STILL CAPPED BY ``REPORT_TAKE``. All eight lists were resident
         # together before — the workbook is built from every sheet at once — so what moved is when
@@ -3027,8 +3052,11 @@ async def _report_records(segs: list[str], scope: Scope) -> dict[str, list[Any]]
     # PRODUCTS, TOOLS AND INTERVIEWS ALL KEY OFF ``aids`` AND OFF NOTHING ELSE, SO THEY GO TOGETHER.
     # The chain above this point is real — a workshop's artisans have to be known before any of the
     # three can be asked for — but these three are siblings, and awaiting them in series was three
-    # cross-region round trips where one wave does. ``processes`` stays BELOW them and must: it is
-    # keyed by ``pids``, which does not exist until the products have come back.
+    # round trips where one wave does. (Cross-region and ~750ms when this was written; co-located
+    # and ~1-2ms since 2026-09-02 — the eight-read wave above carries the full correction. Three
+    # waits into one is the claim, and the claim is about the dependency graph rather than the
+    # link.) ``processes`` stays BELOW them and must: it is keyed by ``pids``, which does not exist
+    # until the products have come back.
     #
     # Each closure returns exactly the list the straight-line code assigned, the empty list for a
     # branch that does not apply included — so a path that asks for one of the three still issues
@@ -3193,6 +3221,7 @@ def _sheet(
     rows: list[list[Any]],
     truncated: bool = False,
     prose: list[int] | None = None,
+    note: str | None = None,
 ) -> dict[str, Any]:
     """One sheet payload.
 
@@ -3202,11 +3231,18 @@ def _sheet(
 
     ``prose`` names the column indexes whose cells hold stored Markdown rather than a label; see
     ``_rendered`` for what the .xlsx does with them.
+
+    ``note`` REPLACES THE DEFAULT SENTENCE, for a sheet whose rows were cut somewhere other than
+    this function (2026-09-03). The default says "capped at 5000 rows", which is the truth for a
+    sheet that overflowed its own row budget and a lie on a 300-row sheet whose SOURCE list was
+    capped upstream — and the workbook outlives the page it was downloaded from, so the inline row
+    is the only copy of that sentence a reader gets a year later. Callers that pass ``truncated``
+    for an upstream cut pass the sentence that names it.
     """
     capped = truncated or len(rows) > REPORT_TAKE
     if capped:
         rows = rows[:REPORT_TAKE]
-        note = f"Note: capped at {REPORT_TAKE} rows — the full data set has more."
+        note = note or f"Note: capped at {REPORT_TAKE} rows — the full data set has more."
         rows = [*rows, [note] + [""] * (len(columns) - 1)]
     return {
         "name": name,
@@ -3762,6 +3798,37 @@ def _dw_stamp(sheet: dict[str, Any]) -> dict[str, Any]:
     return {**sheet, "group": DW_SHEET_GROUP}
 
 
+def _dw_say(sheet: dict[str, Any], note: str | None) -> dict[str, Any]:
+    """Put *note* on the screen as well as in the file, when the sheet came back flagged.
+
+    ``_sheet``'s ``note`` writes the sentence into the workbook as a trailing row; the web viewer
+    never reads that row — it renders ``truncatedNote``, and falls back to "download the .xlsx for
+    the rest", which is exactly the wrong instruction for a cut the .xlsx shares (2026-09-03). One
+    helper so the two copies of the sentence cannot drift apart.
+    """
+    if not note or not sheet.get("truncated"):
+        return sheet
+    return {**sheet, "truncatedNote": note}
+
+
+def _dw_group_counts(groups: list[Any], key: str) -> list[tuple[str, int]]:
+    """One ``group_by(by=[key], count=True)`` result as ``[(value, rows)]``.
+
+    Prisma hands back a dict per group with the grouped column beside a nested ``_count`` — the same
+    shape ``dashboard._totals_by_status`` folds — so the unwrapping is written once here rather than
+    at each of the two call sites. A group whose key came back empty is DROPPED, matching
+    ``design_workshop_data.flatten``, which skips a stage row with no ``entityKey`` at all: a row the
+    flattener does not carry must not be counted on the page that accounts for what it carried.
+    """
+    out: list[tuple[str, int]] = []
+    for group in groups:
+        value = str(group.get(key) or "")
+        if not value:
+            continue
+        out.append((value, int((group.get("_count") or {}).get("_all") or 0)))
+    return out
+
+
 async def _dw_report_load(
     data: dict[str, list[Any]], scope: Scope, workshop_ids: list[str] | None
 ) -> None:
@@ -3775,12 +3842,28 @@ async def _dw_report_load(
     split costs a granted researcher exactly zero extra queries and their workbook is byte-for-byte
     the one they got before this change.
 
-    A SECOND WAVE, DELIBERATELY, AND NOT FOLDED INTO THE ROOT REPORT'S EIGHT-READ GATHER. That
-    gather's own comment records the measurement behind it and warns that eleven coroutines split
-    silently into two waves at ``gather_reads``' semaphore (``pool_width()``, ten). Two more reads
-    there would be ten — right on the edge, and the next person to add a sheet would tip it over
-    without knowing they had. The entries read genuinely depends on the workshop ids anyway, so it
-    could never have been in the same wave.
+    A SECOND WAVE, DELIBERATELY, AND NOT FOLDED INTO THE ROOT REPORT'S EIGHT-READ GATHER. The
+    entries read genuinely depends on the workshop ids that gather returns, so it could never have
+    been in the same wave; and the eight are already at or over ``gather_reads``' semaphore
+    (``pool_width()`` = ``DATABASE_CONNECTION_LIMIT``, which production sets to 5 — see the note on
+    that wave), so reads added there queue inside the semaphore rather than going out with it.
+
+    THE COUNTS ARE READ, NOT DERIVED, AND THAT IS THE 2026-09-03 FIX. ``dwEntries`` is capped at
+    ``REPORT_TAKE`` across EVERY workshop in scope, and the repository already holds 6,952
+    ``DwStageEntry`` rows — so at the root the cap is not a hypothetical ceiling, it is what happens.
+    Every DW sheet's row count used to be ``len()`` over that capped list, which means the index page
+    that exists to say "this table has N rows and did not fit" was quoting the same truncated number
+    it was supposed to account for. Two ``group_by`` reads answer it from the database instead, over
+    the SAME predicate the entry read uses, so the counts are the corpus whether or not the cap bit.
+
+    BOTH ARE BOUNDED, WHICH IS WHY THEY ARE TWO NARROW GROUPINGS AND NOT ONE WIDE ONE. By
+    ``entityKey`` alone the result is at most one row per registry entity plus the custom key plus
+    whatever a newer client wrote — dozens. By ``designWorkshopId`` alone it is one row per workshop
+    already resident in ``data["designWorkshops"]``. Grouping by the PAIR would answer both at once
+    and is what the ``[designWorkshopId, entityKey]`` index is shaped for, but its result grows with
+    the corpus (44 × workshops in the limit), and an unbounded read is what this whole function is
+    trying to stop reporting on. Three reads in one wave costs one round trip; two more rows of
+    arithmetic costs nothing.
     """
     if not scope.design_workshops:
         return
@@ -3794,11 +3877,19 @@ async def _dw_report_load(
     if not records:
         return
     ids = [record.id for record in records]
-    data["dwEntries"] = await db.dwstageentry.find_many(
-        where={"designWorkshopId": {"in": ids}, "deletedAt": None},
-        take=REPORT_TAKE,
-        order=[{"designWorkshopId": "asc"}, {"ordinal": "asc"}],
+    entries_where: dict[str, Any] = {"designWorkshopId": {"in": ids}, "deletedAt": None}
+    entries, by_entity, by_workshop = await gather_reads(
+        db.dwstageentry.find_many(
+            where=entries_where,
+            take=REPORT_TAKE,
+            order=[{"designWorkshopId": "asc"}, {"ordinal": "asc"}],
+        ),
+        db.dwstageentry.group_by(by=["entityKey"], count=True, where=entries_where),
+        db.dwstageentry.group_by(by=["designWorkshopId"], count=True, where=entries_where),
     )
+    data["dwEntries"] = entries
+    data["dwEntityCounts"] = _dw_group_counts(by_entity, "entityKey")
+    data["dwWorkshopCounts"] = _dw_group_counts(by_workshop, "designWorkshopId")
     if len(records) == 1:
         data["dwDefinitions"] = [(records[0].id, await load_definition_or_empty(records[0].id))]
 
@@ -3826,7 +3917,9 @@ def _dw_attributions(data: dict[str, list[Any]]) -> dict[str, dw.MediaAttributio
     return index
 
 
-def _dw_overview_sheet(data: dict[str, list[Any]]) -> dict[str, Any]:
+def _dw_overview_sheet(
+    data: dict[str, list[Any]], entries_truncated: bool = False
+) -> dict[str, Any]:
     """One row per design workshop: the promoted columns, plus how much of it has been filled in.
 
     THE TWO COVERAGE COLUMNS ARE WHY THIS SHEET EXISTS RATHER THAN A LINK TO THE WORKSHOPS LIST. A
@@ -3834,8 +3927,24 @@ def _dw_overview_sheet(data: dict[str, list[Any]]) -> dict[str, Any]:
     as X" — and a per-workshop sheet with 22 stage columns would be unreadable, while a bare list of
     titles answers nothing. Stages answered and rows recorded are the two numbers that let a
     researcher decide which workshops are worth opening.
+
+    AND THAT IS EXACTLY WHY BOTH ARE NOW READ FROM THE DATABASE RATHER THAN COUNTED OFF THE ROWS
+    THIS WORKBOOK HAPPENED TO CARRY (2026-09-03). "Rows recorded" was ``len(entries)`` over the
+    ``REPORT_TAKE``-capped entry list, so at the root a workshop whose rows fell past the cap read
+    "0 rows recorded" — indistinguishable from a workshop nobody filled in, which is the one thing a
+    coverage column may not be. It is now ``dwWorkshopCounts``, counted by the database over the same
+    predicate the entry read uses.
+
+    "STAGES ANSWERED" CANNOT BE READ THE SAME WAY AND SO IT SAYS SO. Answering it truly needs a
+    grouping over ``(designWorkshopId, stageKey)``, whose result grows with the corpus — the
+    unbounded read ``_dw_report_load`` argues against. So it stays derived from the carried rows and
+    gains a ``+`` on any workshop whose carried rows are fewer than its true count: "7+ of 22" is
+    "at least seven", which is true, where a bare "7" beside 300 rows recorded would be a
+    contradiction on one line. A workshop nothing was cut from prints exactly what it printed
+    before.
     """
     grouped = _dw_by_workshop(data)
+    totals = dict(data["dwWorkshopCounts"])
     columns = [column.label for column in dw.WORKSHOP_IDENTITY_COLUMNS] + [
         "Stages answered",
         "Rows recorded",
@@ -3844,6 +3953,9 @@ def _dw_overview_sheet(data: dict[str, list[Any]]) -> dict[str, Any]:
     for record in data["designWorkshops"]:
         identity = dw.workshop_identity(record)
         entries = grouped.get(record.id, [])
+        # Absent from the grouping means the database found no rows for this workshop, which is the
+        # same zero the carried list shows; the fallback is for a caller that built ``data`` by hand.
+        recorded = totals.get(record.id, len(entries))
         answered = {
             found[0].key
             for found in (
@@ -3851,21 +3963,42 @@ def _dw_overview_sheet(data: dict[str, list[Any]]) -> dict[str, Any]:
             )
             if found is not None
         }
+        partial = "+" if recorded > len(entries) else ""
         rows.append(
             [identity.get(column.key, "") for column in dw.WORKSHOP_IDENTITY_COLUMNS]
-            + [f"{len(answered)} of {len(dw.stages())}", str(len(entries))]
+            + [f"{len(answered)}{partial} of {len(dw.stages())}", str(recorded)]
         )
-    return _sheet(
-        "Design workshops",
-        DW_COLOR,
-        columns,
-        rows,
-        truncated=len(data["designWorkshops"]) >= REPORT_TAKE,
+    # Two different cuts, and the sentence has to name the one that happened. This sheet's own rows
+    # are workshops, so ``_sheet``'s default note is right when the WORKSHOP list was capped; when
+    # only the stage rows were, the rows here are all present and it is the ``+`` that needs saying.
+    workshops_capped = len(data["designWorkshops"]) >= REPORT_TAKE
+    note = (
+        None
+        if workshops_capped
+        else (
+            f"Stage rows capped at {REPORT_TAKE} — counts are true totals; "
+            "'+' means more stages may be answered."
+        )
+    )
+    return _dw_say(
+        _sheet(
+            "Design workshops",
+            DW_COLOR,
+            columns,
+            rows,
+            truncated=workshops_capped or entries_truncated,
+            note=note,
+        ),
+        note,
     )
 
 
 def _dw_index_sheet(
-    data: dict[str, list[Any]], counts: dict[str, int], plan: dw.SheetPlan, unknown: dict[str, int]
+    data: dict[str, list[Any]],
+    counts: dict[str, int],
+    plan: dw.SheetPlan,
+    unknown: dict[str, int],
+    entries_truncated: bool = False,
 ) -> dict[str, Any]:
     """THE ANTI-SILENCE PAGE. Every one of the 44 registry entities, whether or not it got a sheet.
 
@@ -3878,6 +4011,12 @@ def _dw_index_sheet(
     The two rows that are not registry entities are here for the same reason: the designer's own
     questions (outside the registry by design) and any entity key written against a NEWER registry
     than this server runs. Both would otherwise be rows nothing in the workbook accounts for.
+
+    THE PAGE THAT ACCOUNTS FOR A CUT WAS ITSELF QUOTING THE CUT NUMBER UNTIL 2026-09-03. ``counts``
+    is now the database's own totals (see ``_dw_report_load``), so the Rows column answers "how many
+    are there" and not "how many fitted" — which is the only question that makes the three verdicts
+    beside it worth reading. Every argument above depended on that and none of it held while the
+    number came from ``len()`` over a capped list.
     """
     columns = ["Stage", "Stage name", "Table", "Rows", "In this workbook", "Table key"]
     rows: list[list[Any]] = []
@@ -3931,22 +4070,48 @@ def _dw_index_sheet(
     # never row-capped; what ran out is the TAB budget, which is a different fact with a different
     # next move. So the flag is set afterwards and carries its own sentence, and the web viewer
     # prefers that sentence over its default banner.
+    #
+    # TWO THINGS CAN RUN OUT AND THEY ARE NOT THE SAME NEXT MOVE (2026-09-03), so both sentences are
+    # kept and joined rather than one overwriting the other: the TAB budget (some tables have no
+    # sheet at all) and the ENTRIES cap (the sheets that exist are partial). This page's own rows
+    # are complete under either.
     sheet = _sheet("DW tables", DW_COLOR, columns, rows)
-    if not plan.truncated:
-        return sheet
-    return {
-        **sheet,
-        "truncated": True,
-        "truncatedNote": (
+    notes: list[str] = []
+    if plan.truncated:
+        notes.append(
             f"{len(plan.omitted)} more table"
             f"{'s' if len(plan.omitted) != 1 else ''} have rows and did not fit this workbook. "
             "They are listed above with their row counts — open one design workshop to read them."
-        ),
-    }
+        )
+    if entries_truncated:
+        notes.append(
+            f"Stage rows capped at {REPORT_TAKE} — the Rows column is the true total, "
+            "the sheets are partial."
+        )
+    if not notes:
+        return sheet
+    return {**sheet, "truncated": True, "truncatedNote": " ".join(notes)}
 
 
-def _dw_entity_sheet(entity_key: str, rows: list[dict[str, str]]) -> dict[str, Any] | None:
-    """One entity's rows as a sheet: workshop identity, the row's own ids, then its fields."""
+def _dw_entity_sheet(
+    entity_key: str, rows: list[dict[str, str]], entries_truncated: bool = False
+) -> dict[str, Any] | None:
+    """One entity's rows as a sheet: workshop identity, the row's own ids, then its fields.
+
+    ``entries_truncated`` IS THE MEDIA FIX APPLIED HERE (2026-09-03), and it is the same argument
+    ``_transcript_sheet`` makes three hundred lines up: the flag has to test the list this sheet was
+    CUT FROM, not the rows that survived. These rows are one entity's slice of ``dwEntries``, which
+    ``_dw_report_load`` capped at ``REPORT_TAKE`` across every workshop in scope; ``len(rows) >=
+    REPORT_TAKE`` can only ever catch the slice that swallowed the whole cap alone, so a table of
+    200 rows out of 900 was flagged ``truncated: false`` — a silent cut, which is the one thing a
+    cap here may not be. Both tests are kept: the slice can still overflow on its own.
+
+    AN EMPTY BODY IS A SHEET AND NOT A ``None`` HERE, and since the plan is drawn on the true counts
+    that can now happen: an entity whose every row fell past the cap keeps its tab, and the tab
+    carries its headers and the cap sentence. A tab that says "this table has rows and none of them
+    fitted" is the anti-silence rule; dropping it would leave the index page promising a sheet that
+    is not in the workbook.
+    """
     found = dw.entity_by_key(entity_key)
     if found is None:
         return None
@@ -3963,17 +4128,30 @@ def _dw_entity_sheet(entity_key: str, rows: list[dict[str, str]]) -> dict[str, A
         cells += [row.get("entry.id", ""), row.get("entry.ordinal", "")]
         cells += [row.get(column.key, "") for column in dw.entity_columns(entity)]
         body.append(cells)
-    return _sheet(
-        f"{stage.number:02d} {entity.title}",
-        DW_COLOR,
-        headers,
-        body,
-        truncated=len(rows) >= REPORT_TAKE,
+    own_rows_capped = len(rows) >= REPORT_TAKE
+    note = (
+        None
+        if own_rows_capped
+        else (
+            f"Stage rows capped at {REPORT_TAKE} — this table's true row count is on the "
+            "DW tables sheet."
+        )
+    )
+    return _dw_say(
+        _sheet(
+            f"{stage.number:02d} {entity.title}",
+            DW_COLOR,
+            headers,
+            body,
+            truncated=own_rows_capped or entries_truncated,
+            note=note,
+        ),
+        note,
     )
 
 
 def _dw_custom_sheet(
-    definition: Any, rows: list[dict[str, str]]
+    definition: Any, rows: list[dict[str, str]], entries_truncated: bool = False
 ) -> dict[str, Any] | None:
     """The designer's own questions, for the one-workshop case. See the block comment above."""
     if not rows:
@@ -3987,7 +4165,25 @@ def _dw_custom_sheet(
         cells += [row.get("entry.id", ""), row.get("entry.ordinal", "")]
         cells += [row.get(column.key, "") for column in columns]
         body.append(cells)
-    return _sheet("Designer's own questions", DW_COLOR, headers, body)
+    # Flagged on the same cap as every other DW sheet (2026-09-03), even though this one appears
+    # only on the single-workshop path where the cap is far less likely to bite: "less likely" is
+    # not "cannot", and a workshop with more than ``REPORT_TAKE`` stage rows of its own would lose
+    # custom answers here exactly as silently as anywhere else.
+    note = (
+        f"Stage rows capped at {REPORT_TAKE} — this table's true row count is on the "
+        "DW tables sheet."
+    )
+    return _dw_say(
+        _sheet(
+            "Designer's own questions",
+            DW_COLOR,
+            headers,
+            body,
+            truncated=entries_truncated,
+            note=note,
+        ),
+        note,
+    )
 
 
 def _dw_withheld_sheet(dropped: list[dict[str, Any]]) -> dict[str, Any]:
@@ -4019,6 +4215,15 @@ def _dw_sheets(data: dict[str, list[Any]]) -> list[dict[str, Any]]:
     NOTHING AT ALL RATHER THAN EMPTY SHEETS. A subtree with no design workshops in it — an artisan's
     products, say — gains no tabs, so the workbook a researcher already knows is unchanged wherever
     this data does not reach. The index page appears only alongside the data it indexes.
+
+    THE CAP BIT IS COMPUTED HERE AND HANDED TO EVERY SHEET (2026-09-03), for the reason the media
+    block states in ``_transcript_sheet``: the honest test is ``len(dwEntries) >= REPORT_TAKE`` —
+    the length of the list the cut was made on — and no individual sheet can see that list. This is
+    the one function every DW sheet passes through, so it is where the bit is worked out; the same
+    place the ``group`` stamp is applied, for the same "a sheet added later cannot forget" reason.
+    It is deliberately the CAP test and not ``true total > carried rows``: the two group counts are
+    read concurrently with the entries, so a row written between them would raise a truncation
+    banner on a workbook that lost nothing, and the cap bit cannot be wrong that way.
     """
     records = data["designWorkshops"]
     if not records:
@@ -4026,6 +4231,7 @@ def _dw_sheets(data: dict[str, list[Any]]) -> list[dict[str, Any]]:
 
     grouped_entries = _dw_by_workshop(data)
     definitions = dict(data["dwDefinitions"])
+    entries_truncated = len(data["dwEntries"]) >= REPORT_TAKE
 
     # One flattened bundle per workshop, merged by entity. ``flatten`` is the shared implementation
     # (see services/design_workshop_data.py); this loop only concatenates what it returns, so the
@@ -4048,15 +4254,50 @@ def _dw_sheets(data: dict[str, list[Any]]) -> list[dict[str, Any]]:
     counts[dw.CUSTOM_ENTITY_KEY] = counts.get(dw.CUSTOM_ENTITY_KEY, 0) + unknown.pop(
         dw.CUSTOM_ENTITY_KEY, 0
     )
+
+    # THE DATABASE'S COUNTS WIN WHERE THERE ARE ANY (2026-09-03). Everything above counts the rows
+    # this workbook CARRIED, which is the wrong number for the index page the moment the cap bites
+    # — see ``_dw_report_load``. ``dwEntityCounts`` is keyed exactly as ``flatten`` keys its output
+    # (the stored ``entityKey``, ``_custom`` included), so the substitution is one dict for another
+    # and the custom merge above is simply not needed on that path: an unnamed ``_custom`` row is
+    # counted by the database whether or not a definition was loaded to name its columns.
+    #
+    # EMPTY MEANS "NOBODY COUNTED", NOT "NO ROWS", and the fallback is the carried count rather than
+    # zero. A caller that builds ``data`` by hand — ``_report_records``' non-design-workshop paths,
+    # and the readers' tests that construct the dict from ``_REPORT_KEYS`` — gets exactly the
+    # workbook it got before this change.
+    true_counts = dict(data["dwEntityCounts"])
+    if true_counts:
+        counts = true_counts
+        # Rebuilt from the same source for the same reason: a key this build does not know is a row
+        # nothing else on the page accounts for, and its count has to be the corpus's too. The
+        # predicate is ``flatten``'s own — no registry entity answers to this key — and ``_custom``
+        # is excluded because the index gives it its own row above the unknowns.
+        unknown = {
+            key: value
+            for key, value in true_counts.items()
+            if key != dw.CUSTOM_ENTITY_KEY and dw.entity_by_key(key) is None
+        }
+
+    # PLANNED ON THE TRUE COUNTS, WHICH IS WHAT ``sheet_plan`` ALWAYS MEANT: "a fuller table beats an
+    # emptier one for a scarce tab" is a statement about the corpus, and it was being applied to
+    # whatever survived the cap. It also removes the one contradiction a truthful Rows column could
+    # otherwise produce — a table reading "1,200 rows" beside the verdict "No rows found", which is
+    # what the old plan would have said about an entity every one of whose rows fell past the cap.
     plan = dw.sheet_plan(counts)
 
-    sheets = [_dw_overview_sheet(data), _dw_index_sheet(data, counts, plan, unknown)]
+    sheets = [
+        _dw_overview_sheet(data, entries_truncated),
+        _dw_index_sheet(data, counts, plan, unknown, entries_truncated),
+    ]
     for entity_key in plan.included:
-        sheet = _dw_entity_sheet(entity_key, merged.get(entity_key, []))
+        sheet = _dw_entity_sheet(entity_key, merged.get(entity_key, []), entries_truncated)
         if sheet is not None:
             sheets.append(sheet)
     for _workshop_id, definition in data["dwDefinitions"]:
-        custom = _dw_custom_sheet(definition, merged.get(dw.CUSTOM_ENTITY_KEY, []))
+        custom = _dw_custom_sheet(
+            definition, merged.get(dw.CUSTOM_ENTITY_KEY, []), entries_truncated
+        )
         if custom is not None:
             sheets.append(custom)
     # Stamped in ONE place, on the way out, so a sheet added to this function cannot be the one that

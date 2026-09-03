@@ -24,6 +24,16 @@ delete the joining date, the attempt history and the name of the admin who appro
 because the gate treats a missing row as PENDING, would silently put the person back in the queue
 they were removed from.
 
+**BARRING SOMEBODY HERE ALSO ENDS THE SESSIONS THEY ARE ALREADY IN, SINCE 2026-09-03.** Until then
+both barring doors wrote ``AccessRoster.status`` and nothing else, and that status is read on the
+SIGN-IN path — so Suspend stopped the next sign-in and left the browser and the phone the person was
+already signed in on working for the rest of the token's seven days. An administrator pressing this
+button believes access has been cut; for a week it had not been. Both doors now stamp
+``User.sessionsValidFrom``, which ``deps._user_from_bearer`` checks against the token's ``iat`` on
+every authenticated request. See :func:`end_live_sessions`, which since 2026-09-03 reaches every
+spelling of the mailbox rather than the one the roster row is filed under, and which says so at
+ERROR on the one occasion it cannot.
+
 **BARRING SOMEBODY HERE ALSO ENDS THEIR EMPANELMENT; LETTING THEM BACK IN DOES NOT RESTORE IT.**
 Both barring endpoints — the ``DELETE`` and the REJECT arm of the decision — call
 ``app.services.access_roster.mirror_suspension``, which is the ONE place either roster's revocation
@@ -57,6 +67,7 @@ allow-list, and everything of theirs carries the ``_roster`` suffix so an import
 wrong one by accident. Keep the suffix.
 """
 
+import logging
 from datetime import UTC, datetime
 from typing import Any
 
@@ -92,6 +103,8 @@ from app.services.record_filters import enum_filter_list_or_422
 from app.services.records import add_date_range, contains, count_and_page, enum_filter_or_422
 
 router = APIRouter(prefix="/access", tags=["access"])
+
+logger = logging.getLogger(__name__)
 
 #: The statuses a caller may filter on, spelled once. An unknown value is a 422 rather than an empty
 #: list, because "no rows matched" and "you typed the status wrong" look identical on a screen and
@@ -458,6 +471,13 @@ async def decide_access_request(
     administrator's revocation as a side effect of an unrelated readmission. Only the first REJECT
     mirrors — see the comment on the guard, which is the same "on the transition, never on
     restating it" rule the other two barring endpoints apply.
+
+    **AND REJECTING ENDS THE SESSIONS THE PERSON IS ALREADY IN.** REJECTED is one of the two BARRED
+    states, so it bars this address from the application exactly as a suspension does, and the same
+    :func:`end_live_sessions` stamp runs here as at the ``DELETE`` arm — unguarded by the
+    transition, for the reason given there. APPROVE stamps nothing: letting somebody in is not an
+    act that ends anything, and it does not clear a stamp either, so a session that was revoked when
+    they were barred stays revoked and the person signs in again.
     """
     row = await db.accessroster.find_unique(where={"id": row_id})
     if row is None:
@@ -521,6 +541,14 @@ async def decide_access_request(
             await access_roster.mirror_suspension(
                 updated.email, access_roster.MIRROR_ACCESS_REJECTED, actor_id=current_user.id
             )
+        # AND THE LIVE SESSIONS GO WITH IT — the same call, at the same point, as the ``DELETE``
+        # arm, because REJECTED is one of the two BARRED states and bars this address from the
+        # application exactly as SUSPENDED does. A rejection that stopped the next sign-in and left
+        # the current session running would be the identical defect one door over; the audit that
+        # found it named the other door, and a rule enforced at whichever door somebody happened to
+        # look at is the failure mode this whole module keeps writing paragraphs about.
+        # Unguarded by ``was_barred`` for the reason given at that call site.
+        await end_live_sessions(updated.email)
         return access_payload(updated)
 
     assert_role(payload.role, current_user)
@@ -589,6 +617,16 @@ async def suspend_access_entry(
     REJECTED row moved to SUSPENDED writes but does not mirror, because the person lost their
     access when they were rejected. See the two comments in the body, and the same rule stated at
     the REJECT arm of :func:`decide_access_request`.
+
+    **AND IT ENDS THE SESSIONS THE PERSON IS ALREADY IN — ON EVERY WRITE, NOT ONLY ON THE
+    TRANSITION.** :func:`end_live_sessions` stamps ``User.sessionsValidFrom``, which is what makes
+    this button mean today what an administrator has always read it as meaning. It deliberately does
+    NOT carry the mirror's transition guard: a second stamp can only refuse tokens this row already
+    says must be refused, so there is nothing for it to undo, and REJECTED → SUSPENDED is exactly
+    where an earlier bar may have left a live session behind. The SUSPENDED → SUSPENDED early return
+    above still writes nothing at all, including this — a row that was suspended after this change
+    shipped had its sessions ended when it was suspended, and one suspended before it is a job for a
+    backfill and not for a stray second click.
     """
     row = await db.accessroster.find_unique(where={"id": row_id})
     if row is None:
@@ -638,6 +676,16 @@ async def suspend_access_entry(
         await access_roster.mirror_suspension(
             updated.email, access_roster.MIRROR_ACCESS_SUSPENDED, actor_id=current_user.id
         )
+    # ── AND THE LIVE SESSIONS GO WITH IT, 2026-09-03 ────────────────────────────────────────────
+    #
+    # UNGUARDED BY ``was_barred``, UNLIKE THE MIRROR ABOVE, and the two guards answer different
+    # questions. The mirror's guard exists because re-enacting a consequence can UNDO something an
+    # administrator deliberately did in the meantime — restore an empanelment on the other screen.
+    # Ending sessions undoes nothing: the only thing a second stamp can do is refuse tokens that
+    # this row already says must be refused, and REJECTED → SUSPENDED is precisely the case where
+    # the earlier bar may predate this fix and have left a seven-day token alive. Copying the
+    # mirror's guard here would be copying a rule past the reason for it.
+    await end_live_sessions(updated.email)
     return access_payload(updated)
 
 
@@ -721,6 +769,105 @@ async def _empanel_an_admitted_designer(row: Any, actor_id: str | None) -> None:
         # The row was already there. See the paragraph above: this is the only path on which a name
         # typed AFTER the empanelment can reach the designer roster, and it cannot overwrite one.
         await adopt_allow_list_name(getattr(row, "email", None), getattr(row, "fullName", None))
+
+
+async def end_live_sessions(email: Any) -> None:
+    """Stamp ``User.sessionsValidFrom`` so every token this address already holds stops working.
+
+    **PUBLIC, AND NOT BY ACCIDENT (2026-09-03).** It was ``_end_live_sessions`` while the allow-list
+    screen was the only screen that barred anybody. ``routes/designers`` now ends the sessions an
+    ended empanelment was carrying, and that is the same act through a second door — so this is one
+    implementation with two callers rather than two two-line writes that will drift. The
+    route-module-to-route-module import is the direction ``assert_role`` above already takes, with
+    the same standing instruction: if it ever needs to go the other way, move this to
+    ``app/core/deps.py`` rather than duplicating it.
+
+    **WHY BARRING SOMEBODY HAD TO LEARN TO DO THIS, 2026-09-03.** Both barring doors on this screen
+    wrote ``AccessRoster.status`` and nothing else, and the allow-list is read on the SIGN-IN path.
+    So pressing Suspend stopped the person getting a NEW session and did not touch the one they were
+    already in: an administrator who suspends a departing colleague at 10am watches the roster go
+    SUSPENDED, tells whoever asked that access is cut, and that colleague's phone and browser go on
+    working — creating records, reading the repository, exporting — for as long as their token lasts,
+    which is ``JWT_EXPIRES_MINUTES``, seven days by default. Every other revocation this product has
+    is checked per request; this one was checked at a door the person had already walked through.
+
+    ``sessionsValidFrom`` is the column that already existed for exactly this and had exactly one
+    writer: ``routes/auth.set_password``, which stamps it on a link redemption because the usual
+    reason somebody is resetting is that a session they no longer control is live somewhere.
+    ``deps._user_from_bearer`` compares it against the token's ``iat`` on EVERY authenticated
+    request, so a stamp here needs no session table, no token store and no new read on the hot path —
+    the User row is loaded to authenticate the request regardless.
+
+    **EVERY SPELLING OF THE MAILBOX, NOT ONE OF THEM — THE GAP THIS FUNCTION SHIPPED WITH IS CLOSED
+    (2026-09-03).** The first version looked the account up with ``db.user.find_first`` over
+    :func:`email_match_keys`, and that list is exhaustive for the ROSTER tables (canonicalised) and
+    is not exhaustive for ``User.email``, which is deliberately not canonicalised —
+    ``auth.login_with_google`` argues that at length, ``POST /api/users`` stores
+    ``payload.email.lower()`` with the dots an admin typed, and ``follow_email_change`` moves the
+    roster row onto the mailbox and leaves the account's spelling alone. Asked about an address that
+    ALREADY IS the mailbox, ``email_match_keys`` yields exactly one key. So an account filed under
+    ``a.b@gmail.com`` whose allow-list row is filed under ``ab@gmail.com`` — the ordinary,
+    product-as-designed state — was not found, and an administrator who suspended that person kept
+    a suspended row beside a working phone. The docstring said so and called the repair a backfill;
+    that was the wrong answer for THIS door, because the failure direction here is unsafe.
+
+    :func:`app.services.access_roster.accounts_on_the_mailbox` is the lookup that does answer it,
+    and it is the same read the mirror guard uses rather than a looser one written here — it
+    canonicalises both sides instead of widening the ``WHERE``, so it reaches every spelling of ONE
+    mailbox and no part of anybody else's. Every account it returns is stamped: two spellings of one
+    Gmail mailbox can hold two accounts, they are the same person by definition, and barring the
+    address means barring both.
+
+    **A SWEEP THAT COULD NOT ANSWER IS LOGGED AT ERROR AND NOT SWALLOWED, AND THIS IS THE ONE PLACE
+    IN THE PAIR WHERE THAT MATTERS.** ``accounts_on_the_mailbox`` returns ``None`` when the Gmail
+    sweep is cut (see :data:`~app.services.access_roster.GMAIL_ACCOUNT_SWEEP_LIMIT`). Next door, in
+    :func:`~app.services.access_roster.admissions_an_empanelment_carries`, ``None`` means *do not
+    mirror*, and declining is SAFE there: nobody is barred on an answer that was never verified, and
+    the cost is two screens disagreeing. Here the same ``None`` means *there may be a live session
+    this suspension did not end*, which is the UNSAFE direction — an administrator has been told
+    access is cut. There is nothing this function can do about it (the accounts it would stamp are
+    precisely the ones it could not read), so it says so, names the address, and names the repair.
+
+    **NO ROW IS NOT AN ERROR AND MUST NOT BE, AND IT IS NOT THE SAME AS "CANNOT SAY".** The
+    allow-list bars ADDRESSES, and an address may perfectly well have no account behind it — an
+    admin barring somebody they invited last week who never signed up. An empty list is that, and it
+    is silent. ``None`` is the sweep withdrawing its answer, and it is not.
+
+    Never called for a role demotion. Losing a tier is not losing access, and signing somebody out of
+    their own phone because an admin corrected their role would be a worse answer than the demotion
+    itself — ``_lift_existing_account`` below invalidates the identity cache, which is what makes a
+    demotion take effect on the very next request without ending anything.
+    """
+    accounts = await access_roster.accounts_on_the_mailbox(email)
+    if accounts is None:
+        logger.error(
+            "sessions for %r could NOT be confirmed ended: the sweep that finds every spelling of "
+            "one mailbox was cut, so any token this person is already holding may still be live "
+            "until it expires. The allow-list row was barred and the next sign-in is refused. "
+            "Raise GMAIL_ACCOUNT_SWEEP_LIMIT, then re-run the bar, or repair it from backend/ with "
+            "python -m scripts.backfill_sessions_valid_from --write",
+            email,
+        )
+        return
+    # FULL PRECISION, NOT TRUNCATED TO THE SECOND, and the asymmetry with ``iat`` is deliberate.
+    # ``create_access_token`` writes ``iat`` as whole seconds, so a token minted in the same wall
+    # second as this stamp reads as older than it and is refused. That is one second of over-strict
+    # revocation against a credential that lives seven days, in the direction that fails CLOSED, and
+    # rounding down to buy that second back would mean deliberately writing a revocation that admits
+    # a token issued after it.
+    #
+    # ONE ``now`` FOR THE WHOLE LOOP so two spellings of one mailbox get one watermark rather than
+    # two that differ by a round trip — the pair is one person and nothing should be able to tell
+    # from the rows which of them was stamped first.
+    now = _now()
+    for user in accounts:
+        await db.user.update(where={"id": user.id}, data={"sessionsValidFrom": now})
+        # The cached identity carries the OLD ``sessionsValidFrom``, and ``_user_from_bearer`` reads
+        # that column off whatever row ``resolve_user`` hands it — so without this the revocation
+        # would not take effect for the length of the identity cache's TTL. Every User write in this
+        # codebase invalidates; this is the one where forgetting it would silently keep a barred
+        # session alive.
+        invalidate_cached_user(user.id)
 
 
 async def _lift_existing_account(email: str, role: str) -> None:

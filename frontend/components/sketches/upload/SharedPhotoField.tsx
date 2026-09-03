@@ -30,9 +30,11 @@
  * naming the card, an accept sentence wired to the button through `aria-describedby`, the drop
  * announced as WORDS as well as by a border colour, and `event.target.value` cleared so re-choosing
  * a refused file fires `change` again. A drop zone that is only a `<div>` is not a control, and this
- * card does not re-litigate any of that — it passes the same `validate` the tracing panel used to
- * pass, so exactly the same files are refused with exactly the same sentences as before the picker
- * moved out.
+ * card does not re-litigate any of that — it passes the same `validate` the tracing panel passes, so
+ * exactly the same files are refused, with the same sentence, from whichever of the two cards a
+ * designer meets. (The pair was shortened TOGETHER on 2026-09-03 under the owner's one-line copy
+ * rule; `SketchTraceField`'s copy carries a note pointing back here. They are two literals, not one
+ * constant, and the day they diverge one card will refuse a file the other took.)
  */
 
 import { useRef } from "react";
@@ -115,10 +117,21 @@ function sizeSentence(photograph: ChosenPhotograph): string {
  * can only be filed onto a row that was chosen, but the row can go away underneath it: deleting the
  * sketch that was filed to leaves the host holding a row key with no row to name. Naming a row this
  * card cannot see would be worse than not naming one, so the fact survives and the name drops.
+ *
+ * ── CUT TO ONE LINE PER ARM, 2026-09-03 ────────────────────────────────────────────────────────
+ *
+ * All five arms said the right thing at three times the length the owner's copy rule allows. The
+ * clauses that went were the ones re-teaching the arrangement rather than reporting a state: "the
+ * tracing panel and the measuring panel below both work from the same photograph" (the card is
+ * directly above both of them), "exactly as it was taken" (nothing here ever alters the bytes, so
+ * this was a promise about something that had not been questioned), and "line art can be traced
+ * from it without choosing it again" (the panel below is visibly still holding it). The five
+ * STATES are unchanged and that is the half worth protecting: this function exists because a nested
+ * ternary at three states silently shipped a missing fourth.
  */
 function stateSentence(hasPhotograph: boolean, filed: boolean, imageLabel: string, rowName: string | null): string {
   if (!hasPhotograph) {
-    return "Choose it once. The tracing panel and the measuring panel below both work from the same photograph, and neither of them files anything until you press a button in it.";
+    return "Choose it once. Both panels below work from it; neither files anything until you press a button there.";
   }
   if (filed) {
     /*
@@ -137,12 +150,12 @@ function stateSentence(hasPhotograph: boolean, filed: boolean, imageLabel: strin
       would be this card asserting something about a read it did not perform.
     */
     return rowName
-      ? `This photograph is filed — “${imageLabel}” on “${rowName}” holds it, exactly as it was taken. The tracing panel below is still holding it, so line art can be traced from it without choosing it again, and filing that drawing does not write the photograph a second time.`
-      : `This photograph is filed, exactly as it was taken. The tracing panel below is still holding it, so line art can be traced from it without choosing it again, and filing that drawing does not write the photograph a second time.`;
+      ? `Filed to “${imageLabel}” on “${rowName}”. The tracing panel still holds it — tracing line art does not write it again.`
+      : `Filed. The tracing panel still holds it — tracing line art does not write it again.`;
   }
   return rowName
-    ? `Both panels below work from this photograph. Nothing has been filed yet — “${imageLabel}” on “${rowName}” is written only when a button in one of them is pressed.`
-    : `Both panels below work from this photograph. Nothing has been filed yet, and nothing can be until a sketch is chosen in the picker above.`;
+    ? `Nothing filed yet — “${imageLabel}” on “${rowName}” is written when you press a button below.`
+    : `Nothing filed yet. Choose a sketch in the picker above first.`;
 }
 
 export function SharedPhotoField({
@@ -183,7 +196,10 @@ export function SharedPhotoField({
       */
       buttonLabel={photograph ? "Choose a different photograph" : "Choose a photograph"}
       accept={TRACEABLE_ACCEPT}
-      acceptSentence={`${TRACEABLE_IMAGE_TYPES}, wherever this browser can read them. Anything longer than ${DECODE_MAX_EDGE_PX}px on its long edge is reduced to that before tracing — the trace was never going to run above it.`}
+      // One line: the formats, and the one thing that happens to a file without being asked. The
+      // clause that went ("the trace was never going to run above it") argued for the reduction
+      // rather than reporting it — 2026-09-03.
+      acceptSentence={`${TRACEABLE_IMAGE_TYPES}. Anything over ${DECODE_MAX_EDGE_PX}px on the long edge is reduced before tracing.`}
       disabled={disabled}
       /*
         THE SAME RULE THE TRACING PANEL USED TO CARRY, MOVED RATHER THAN REWRITTEN, so the files this
@@ -201,7 +217,7 @@ export function SharedPhotoField({
       */
       validate={(candidate) => {
         if (candidate.type === "image/svg+xml") {
-          return "an SVG is already vector art, and rasterising it to trace it back can only lose detail. Attach it with the ordinary picker instead.";
+          return "an SVG is already vector art — attach it with the ordinary picker instead.";
         }
         if (candidate.type === "" || candidate.type.startsWith("image/")) return null;
         return `this is ${candidate.type}, not a photograph. A drawing has to be traced from an image.`;

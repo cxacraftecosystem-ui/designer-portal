@@ -260,6 +260,51 @@ class Settings(BaseSettings):
     # see app/services/s3.py and docs/SECURITY.md for why bucket default encryption carries those.
     aws_s3_sse_algorithm: str = Field(default="AES256", alias="AWS_S3_SSE_ALGORITHM")
 
+    # WHETHER A MEDIA READ PAYLOAD CARRIES A SIGNED, EXPIRING ``url`` INSTEAD OF THE STORED ONE.
+    #
+    # ── WHAT IS WRONG TODAY, AND WHY A FLAG RATHER THAN A FIX ───────────────────────────────────
+    #
+    # ``MediaFile.url`` is ``s3.public_url_for_key(objectKey)``: the CDN host plus the key, no
+    # signature, no expiry, no authentication. The bucket policy carries a ``PublicReadMedia``
+    # statement that makes those objects world-readable, so the string IS the file — for ever, to
+    # anybody it is ever copied to, long after the grant that produced it was revoked and after the
+    # account that held it was suspended. ``records._redact_sensitive`` decides WHO is handed the
+    # string; nothing decides how long it stays good, because nothing can.
+    #
+    # The repair is two moves that must happen in this order and cannot happen together:
+    #   1. the server stops emitting the permanent URL and emits a 15-minute signed one (this flag);
+    #   2. a human removes ``PublicReadMedia`` from the bucket policy in the console, at which point
+    #      every previously-leaked URL starts answering 403.
+    #
+    # SEQUENCING, AND IT IS THE WHOLE REASON THIS IS A FLAG. Android 0.0.7 is in the field and caches
+    # ``MediaFile.url`` in its offline store: a designer's handset holds workshop payloads for days
+    # and renders photographs from the cached string with no network at all. Expiring URLs handed to
+    # THAT build produce a workshop whose photographs silently stop drawing, on a phone that may not
+    # see a network again for a week, and no server change can reach it. 0.0.8 carries the tolerance
+    # (``MediaUrlRefresh`` — re-GET the row, retry once) and the web carries the same
+    # (``lib/mediaUrlRefresh.ts``). So:
+    #
+    #   ship the tolerant clients -> WAIT for fleet adoption -> set this true -> verify -> THEN the
+    #   bucket policy.
+    #
+    # Flipping this before adoption breaks fielded phones. Flipping the BUCKET before this breaks
+    # every client at once, including the web. Doing the bucket first and this never is the only
+    # ordering that is unambiguously wrong. docs/SECURITY.md carries the operator runbook.
+    #
+    # OFF IS EXACTLY TODAY'S BEHAVIOUR, byte for byte — ``tests/test_media_presigned_reads.py``
+    # pins that a payload with the flag off is identical to one built without this code existing.
+    # The stored ``url`` COLUMN is untouched either way: it is what the flip-back path re-serves,
+    # and it is what ``/data/media/{id}/download`` still redirects to.
+    media_presigned_reads: bool = Field(default=False, alias="MEDIA_PRESIGNED_READS")
+    # How long a signed read URL stays good. 15 minutes is sized for "a page renders, a person looks
+    # at it, a person clicks download" and NOT for a long-running job — the surfaces that outlive a
+    # look (the dataset manifest, the research zip) sign their own with their own expiry and are
+    # listed in the decision table above ``records._sign_media_url``. Raise it only if the fleet
+    # measurably cannot live inside it; every second added is a second a leaked URL stays live.
+    media_presigned_read_ttl_seconds: int = Field(
+        default=900, alias="MEDIA_PRESIGNED_READ_TTL_SECONDS"
+    )
+
     # --- Offline speech model artifacts (app/services/asr_artifacts.py) --------------------------
     # Directory this API reads the ASR model files out of, one subdirectory per artifact id. UNSET by
     # default, which means /api/asr-models reports every artifact as unpublished and the byte routes
@@ -321,10 +366,49 @@ class Settings(BaseSettings):
         default="gemini-2.5-flash-lite", alias="GEMINI_MEASUREMENT_MODEL"
     )
     maptiler_api_key: str | None = Field(default=None, alias="NEXT_PUBLIC_MAPTILER_API_KEY")
-    media_queue_worker_enabled: bool = Field(default=True, alias="MEDIA_QUEUE_WORKER_ENABLED")
+    # WHETHER THE **WEB** PROCESS ALSO DRAINS THE MEDIA QUEUE. The drain itself is a separate
+    # systemd unit (``app/worker.py``, ``fieldrepo-queue.service``); this flag is only about
+    # uvicorn running a SECOND one inside itself.
+    #
+    # THE DEFAULT WAS ``True`` UNTIL 2026-09-03, AND IT WAS FAIL-OPEN AROUND A PAID PROVIDER CALL.
+    # An unset variable meant "yes, also drain in here", so any box that started both the API and
+    # the queue unit without naming the flag ran two drains: two ffmpeg workloads and two
+    # transcription providers billed against a 1 GiB box sized for one, with
+    # ``media_queue._lock_job``'s compare-and-set doing nothing about it (it makes the two claim
+    # DIFFERENT jobs honestly — it is not a mutual exclusion between drains). Production escaped
+    # only because DEPLOY_AWS.md has the web box ship ``MEDIA_QUEUE_WORKER_ENABLED=false``
+    # explicitly, which is a deployment convention rather than a guard; the EC2 unit still ships it,
+    # so flipping this default changes nothing there.
+    #
+    # OFF MEANS DRAINING INSIDE UVICORN IS AN EXPLICIT DEV OPT-IN, which is the only place it is
+    # wanted: one process, one loop, no systemd unit to run. Set MEDIA_QUEUE_WORKER_ENABLED=true to
+    # get it back. The host-wide election in ``media_queue.acquire_queue_worker_lock`` is the
+    # second half of the same fix and now refuses the second claimant whatever this flag says —
+    # this default is what stops the question being asked by accident in the first place.
+    media_queue_worker_enabled: bool = Field(default=False, alias="MEDIA_QUEUE_WORKER_ENABLED")
     media_queue_interval_seconds: float = Field(default=5.0, alias="MEDIA_QUEUE_INTERVAL_SECONDS")
     media_queue_batch_size: int = Field(default=3, alias="MEDIA_QUEUE_BATCH_SIZE")
     media_queue_job_max_attempts: int = Field(default=3, alias="MEDIA_QUEUE_JOB_MAX_ATTEMPTS")
+
+    # THE CEILING ON ONE UPLOADED OBJECT, ENFORCED AT THE DOOR THAT SIGNS IT.
+    #
+    # ``POST /media/presign`` and ``POST /media/multipart/create`` refuse a ``sizeBytes`` above this
+    # before any URL is signed, and ``POST /media/complete`` re-checks the object's REAL length
+    # (``s3.head_object``) because the declared number is the client's and always was — see that
+    # function's docstring, which is the only number in this system that is a fact.
+    #
+    # 1 GiB AND NOT THE 512 MiB THIS STARTED AS, decided from the corpus rather than from taste:
+    # the largest live object in this deployment is 668.44 MiB (MEASURED, docs/SCALABILITY.md §5.1),
+    # so a 512 MiB ceiling would refuse a re-upload of a file class the fleet demonstrably produces
+    # — a fielded phone's 4K workshop video — and Android's ``saveOrQueue`` does not queue a 4xx, so
+    # the refusal would lose the recording rather than retry it. 1 GiB admits everything in the
+    # archive today and is the same number ``media_queue.MAX_TRANSCRIBE_FETCH_BYTES`` uses, so the
+    # server will not accept an object it would then refuse to transcribe.
+    #
+    # IT DOES NOT GOVERN ``POST /media/transcribe``, whose body size is deliberately uncapped for
+    # the reason written above that route: it is admin-only and nothing in this repository sends
+    # anything but a twelve-byte smoke-test clip through it, so any number there would be a guess.
+    media_upload_max_bytes: int = Field(default=1_073_741_824, alias="MEDIA_UPLOAD_MAX_BYTES")
 
     # --- Optional scaling layer (app/scale) -----------------------------------------------------
     # EVERY field below is off/unset by default, and a fresh clone that sets none of them runs the

@@ -326,8 +326,10 @@ internal const val DW_SHARED_PHOTOGRAPH_LABEL: String = "Photograph of the sketc
  * card that is not.
  */
 internal const val DW_SHARED_PHOTOGRAPH_IDLE: String =
-    "Choose it once. The tracing panel and the measuring panel below both work from the same " +
-        "photograph, and neither of them files anything until you press a button in it."
+    // Re-copied verbatim 2026-09-03, when the portal's copy was shortened under the owner's
+    // one-line rule (SharedPhotoField.tsx). DwSketchDerivationPhotoTest holds the two equal.
+    "Choose it once. Both panels below work from it; neither files anything until you press a " +
+        "button there."
 
 /**
  * What the section says when there is no photograph on the record yet — **naming only the acts THIS

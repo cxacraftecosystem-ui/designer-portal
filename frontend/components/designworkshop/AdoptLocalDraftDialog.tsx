@@ -428,6 +428,8 @@ export function AdoptLocalDraftDialog({ open, onClose, draft, drafts, onAdopted 
                 may open at all. */}
             <SearchInput
               onChange={setSearch}
+              // The placeholder lists the columns searched; this names what is being searched.
+              ariaLabel="Search design workshops"
               placeholder="Search by title, craft, cluster or workshop code"
               value={search}
             />

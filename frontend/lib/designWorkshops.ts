@@ -33,7 +33,7 @@ import { API_BASE, ApiError, apiFetch, assertApiConfigured, buildQuery, describe
 import { prepareIdentityPhotograph } from "@/lib/identityCardImage";
 import { DW_PHOTO_RETENTION_DEFAULT, type DwPhotoRetention } from "@/lib/identityPhotoRetention";
 import type { CostFindingsPayload } from "@/lib/costIntegrity";
-import type { MarketFindingsPayload } from "@/lib/marketAnalysis";
+import { pyStrip, type MarketFindingsPayload } from "@/lib/marketAnalysis";
 import type { DwReportHistory } from "@/lib/reportDiff";
 import { isStoredRichTextEmpty, richSummary, type StoredRichDoc } from "@/lib/richText";
 import type { PageResult } from "@/lib/types";
@@ -2041,6 +2041,73 @@ const DW_REFERENCE_HYDRATION: Record<string, Record<string, string>> = {
     interviewMediaNote: "interviewMediaNote",
     interviewDocumentedOn: "interviewDocumentedOn",
     interviewDocumentedAtWorkshop: "interviewDocumentedAtWorkshop"
+  },
+  // ── THE INSTRUMENT, WHICH IS NOT THE SITTING ABOVE IT (2026-09-03) ────────────────────────────
+  //
+  // `surveyPlan.questionnaireRef` points at a `Questionnaire` — the FORM a designer uploaded, its
+  // sections and its questions — where `artisanBaseline.interviewRef` points at one SITTING taken on
+  // one. One key crosses, and the eleven refusals ledgered against the sitting apply here in their
+  // strongest form: the rows under this model are questions and respondents' answers, a hydrated
+  // value is a permanent printed copy, and the server's `REFERENCE_MODELS["Questionnaire"]` declares
+  // no `include` at all so none of them is ever loaded.
+  //
+  // The title is also what the report prints once the form is retired — `isActive: false` is that
+  // API's delete — which is the whole of why a linked record's text is copied beside its id.
+  "surveyPlan.questionnaireRef": {
+    name: "questionnaireName"
+  },
+  // ── THE WORKSHOP'S OWN ROWS: THE INTERNAL CARRY, ADDED 2026-09-03 ──────────────────────────────
+  //
+  // Every mapping above copies from a record in ANOTHER TABLE — an artisan, a documented product —
+  // which the picker resolves through a Prisma delegate. These two copy from ANOTHER ROW OF THIS
+  // SAME WORKSHOP: a `DwStageEntry` the designer filled in at an earlier stage. Nothing about the
+  // RULES differs, which is why they live in this same table and are applied by the same
+  // `hydrateFromReference` — only the server's loading branches, against `dwstageentry` scoped to
+  // the workshop and respecting `deletedAt`.
+  //
+  // WHAT WAS HAPPENING WITHOUT THEM. A prototype is described once at stage 13 (materials, five
+  // dimensions, weight, making time, the process followed) and stage 16 asks a designer to
+  // catalogue the same physical piece again in boxes of the same names. `prototypeRef` stored the
+  // id and nothing else, so the designer retyped — and the prototypes table and the final-products
+  // table of one report then printed different materials and different dimensions for one object,
+  // with nothing in the document saying which had been measured.
+  //
+  // THE RULE IS NARROWER THAN THE EXTERNAL ONE and the server's `REFERENCE_HYDRATION` argues it in
+  // full: the two boxes must ask the SAME QUESTION about the SAME PHYSICAL SUBJECT. Thirteen other
+  // internal REF fields are deliberately left out — `prototype.sketchRef` (a drawing is not the
+  // object made from it), `sketch.supersedesSketch` (a successor exists BECAUSE something changed),
+  // `materialUsage.prototypeRef` (one material, and the source holds a list), `costSheet.productRef`
+  // (stage 17 exists to build a price from line items rather than inherit one), and the rest — each
+  // named with its reason in the server's table. This copy carries the mappings and not the
+  // refusals, as it always has; `test_the_web_carries_the_same_hydration_table` asserts EQUALITY of
+  // the mappings, so an entry added there and forgotten here is a failing build.
+  //
+  // TWO THINGS DO NOT CROSS AND ARE WORTH KNOWING WHILE READING THIS. The PHOTOGRAPHS do not:
+  // both rows are in one workshop, so a carry would be the SAME media ids under two headings and
+  // the report's image pass dedupes by media id. The COSTS do not: `prototype` holds `materialCost`
+  // and `labourCost` where `finalProduct` holds one `costPrice`, and a mapping is one key to one
+  // key and cannot sum two heads.
+  //
+  // `processSummary -> makingProcess` IS THE ONE PAIR THIS SURFACE SKIPS AT THE KEYBOARD, and that
+  // is correct rather than a gap: it is RICH_TEXT, `stringifyRefValue` accepts only the two JSON
+  // scalars a display box can hold, so the browser writes nothing and the server writes the
+  // normalised document at save. Skipping is the fail-closed direction — the alternative is
+  // `"[object Object]"` in a narrative box.
+  "prototypeValidation.prototypeRef": {
+    lengthCm: "finalLengthCm",
+    widthCm: "finalWidthCm",
+    heightCm: "finalHeightCm"
+  },
+  "finalProduct.prototypeRef": {
+    name: "name",
+    materials: "materials",
+    lengthCm: "lengthCm",
+    widthCm: "widthCm",
+    heightCm: "heightCm",
+    weightG: "weightG",
+    dimensionsNote: "dimensionsNote",
+    makingTimeDays: "makingTimeDays",
+    processSummary: "makingProcess"
   }
 };
 
@@ -2214,9 +2281,46 @@ export function hydrateFromReference(
       if (point) patch[targetKey] = point;
       continue;
     }
+    /*
+     * A LIST SOURCE FOR A LIST TARGET, which the two other surfaces have always accepted and this
+     * one dropped (2026-09-03).
+     *
+     * The scalar guard below reads "a list the payload grew later" as something to skip, and that
+     * was right while every reference payload was a record's COLUMNS: an external `data` value is a
+     * scalar, and a single photograph reaching a gallery is wrapped by the `multi` arm below. It
+     * stopped being right with the internal carry — `finalProduct.materials` is a TAGS box fed from
+     * `prototype.materials`, which is a TAGS box, so the value on the wire is genuinely an array.
+     *
+     * BOTH OTHER SURFACES ALREADY DO THIS AND THE DIVERGENCE WOULD HAVE BEEN INVISIBLE.
+     * `coerce_value`'s multi arm is `[str(v).strip() for v in raw if str(v).strip()]` and
+     * `DwValues.coerceHydrated` opens with `raw as? JsonArray ?: JsonArray(listOf(raw))`. So a
+     * designer picking the prototype on a handset would have watched Materials fill in and the same
+     * pick in a browser would have left it empty until the save came back — on a REQUIRED box, which
+     * is the one a designer answers by typing rather than waiting.
+     *
+     * SAME SHAPE AS THE SERVER'S: strings, stripped, blanks dropped, and an all-blank list treated
+     * as nothing to say rather than as an empty answer. Non-scalar ENTRIES are refused with the list
+     * they are in, matching `coerceHydrated`'s "the whole value is refused when any token is
+     * unknown" — half a materials list is a claim about what a piece is made of that nobody made.
+     *
+     * `pyStrip` AND NOT `trim()`, AT BOTH THE MAP AND THE EMPTINESS TEST (2026-09-03). The quote
+     * above is `str(v).strip()`, and `trim()` is not that set — it walks past U+0085 and U+001C to
+     * U+001F, which Python strips, and cuts U+FEFF, which Python does not. A tag pasted with a
+     * next-line on it would therefore have stayed a distinct tag in the browser and become the plain
+     * word on the server and the handset, which is a stage row disagreeing with itself across three
+     * surfaces about what a piece is made of. `lib/marketAnalysis.ts` exports the set for exactly
+     * this and instructs it in as many words: anything in the web client reaching for `trim()` on a
+     * value the Python `.strip()`s imports that rather than writing a third one.
+     */
+    if (multi && Array.isArray(raw)) {
+      if (raw.some((item) => typeof item !== "string" && typeof item !== "number")) continue;
+      const items = raw.map((item) => pyStrip(String(item))).filter((item) => item !== "");
+      if (items.length) patch[targetKey] = items;
+      continue;
+    }
     // Only the two JSON scalars a display field can legitimately be. Anything else — a nested
-    // record, a list the payload grew later — is skipped rather than stringified: "[object Object]"
-    // in a participant table is a value that looks answered and is not.
+    // record, a list a single-value box could not hold anyway — is skipped rather than stringified:
+    // "[object Object]" in a participant table is a value that looks answered and is not.
     if (typeof raw !== "string" && typeof raw !== "number") continue;
     patch[targetKey] = multi ? [String(raw)] : raw;
   }

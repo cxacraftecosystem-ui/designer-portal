@@ -16,8 +16,11 @@ from app.services.records import (
     add_date_range,
     apply_status_policy_create,
     apply_status_policy_update,
+    assert_expected_updated_at,
     attach_location,
     clean_data,
+    client_key_replay,
+    client_key_replay_after_violation,
     contains,
     count_and_page,
     decimal_to_string,
@@ -30,6 +33,7 @@ from app.services.records import (
     public_encode,
     require_record,
     resubmit_status,
+    take_expected_updated_at,
     viewable_where,
 )
 from app.services.workshop_access import (
@@ -327,6 +331,15 @@ async def create_tool(
     payload: ToolCreate,
     current_user: Any = Depends(require_record_creator),
 ) -> dict[str, Any]:
+    # The idempotent replay, above every gate and every write in this route. The full argument for
+    # the ordering — above the workshop gates so a lapsed grant cannot refuse a create that already
+    # succeeded, above ``attach_location`` so a replay mints no orphan ``Location`` — is written out
+    # once, on ``products.create_product``, and applies here unchanged.
+    replayed = await client_key_replay(
+        db.tooldocumentation, payload.clientKey, user_id=current_user.id, include=INCLUDE
+    )
+    if replayed is not None:
+        return public_encode(replayed, current_user)
     data = decimal_to_string(clean_data(payload.model_dump()))
     data = await attach_location(data)
     check = await enforce_workshop_submission(current_user, data.get("workshopId"))
@@ -345,7 +358,18 @@ async def create_tool(
     apply_status_policy_create(current_user, data)
     # After the status policy, so a late submission outranks the submitter's own approval rights.
     pin_pending_if_late(data, current_user, check=check)
-    created = await db.tooldocumentation.create(data=data, include=INCLUDE)
+    try:
+        created = await db.tooldocumentation.create(data=data, include=INCLUDE)
+    except Exception as exc:
+        # The race the pre-read cannot settle — two passes of one queue in flight together, each
+        # finding no row and each planning an INSERT. See ``products.create_product`` for the whole
+        # argument, and ``artisans.create_artisan`` for the same belt-and-braces on the dedup key.
+        raced = await client_key_replay_after_violation(
+            db.tooldocumentation, payload.clientKey, exc, user_id=current_user.id, include=INCLUDE
+        )
+        if raced is None:
+            raise
+        return public_encode(raced, current_user)
     # No grant lookup on the create: a MediaFile points at its tool by ``toolId``, and this tool did
     # not exist until the statement above, so ``media`` is empty by construction and there is no URL
     # for a resolved set to decide about. The viewer is still named, for the identity mask.
@@ -375,6 +399,9 @@ async def update_tool(
     data = decimal_to_string(
         clean_data(payload.model_dump(exclude_unset=True), clearable=_CLEARABLE_COLUMNS)
     )
+    # The precondition is a question, not a column — taken out of the body here, asked inside the
+    # transaction below. See ``records.take_expected_updated_at``.
+    expected_updated_at = take_expected_updated_at(data)
     data = await attach_location(data)
     # Re-check workshop assignment + window if this edit moves the tool into/between workshops, so the
     # create-time guard can't be bypassed by PATCHing the workshop in afterwards.
@@ -386,15 +413,32 @@ async def update_tool(
     # re-validated — a record filed under a workshop the designer was later removed from must
     # still be editable by them.
     await assert_payload_workshop(data, current_user)
-    await guard_record_edit(tool, current_user, data, "tool")
-    await apply_status_policy_update(current_user, tool, data)
-    # Stamped after the edit guard (the stamp is the API's bookkeeping, never a contributor's edit)
-    # and pinned after the status policy, so an already-flagged record cannot be self-approved.
-    stamp_workshop_submission(data, check=check, record=tool)
-    pin_pending_if_late(data, current_user, check=check, record=tool)
-    merge_field_provenance(data, current_user, previous=tool)
-    resubmit_status(tool, current_user, data)
-    updated = await db.tooldocumentation.update(where={"id": tool_id}, data=data, include=INCLUDE)
+    # ONE TRANSACTION FOR THE AUDIT ROW AND THE ROW IT DESCRIBES (2026-09-03). ``guard_record_edit``
+    # ends in ``record_revision``, which used to COMMIT on its own a handful of statements before the
+    # update below — so a request that died in the gap (P2024 on a cross-region pool, a dropped
+    # connection) left a ledger entry asserting a change to a tool that still holds the old values.
+    # ``client=tx`` is load-bearing rather than decorative: ``db.tx()`` hands back a DIFFERENT client,
+    # so a callee writing through the module singleton is not inside this block however it reads. The
+    # argument in full is in ``access.record_revision``; the 403 ordering is untouched, because
+    # ``guard_record_edit`` still refuses above its own write.
+    async with db.tx() as tx:
+        # Before ``guard_record_edit``, which is the first write in this block — a refusal raised
+        # after it would leave a committed ledger entry for an edit that was then turned down. ``None``
+        # passes and changes nothing, which is every client shipped to date. See
+        # ``records.assert_expected_updated_at``.
+        assert_expected_updated_at(tool, expected_updated_at)
+        await guard_record_edit(tool, current_user, data, "tool", client=tx)
+        await apply_status_policy_update(current_user, tool, data)
+        # Stamped after the edit guard (the stamp is the API's bookkeeping, never a contributor's
+        # edit) and pinned after the status policy, so an already-flagged record cannot be
+        # self-approved.
+        stamp_workshop_submission(data, check=check, record=tool)
+        pin_pending_if_late(data, current_user, check=check, record=tool)
+        merge_field_provenance(data, current_user, previous=tool)
+        resubmit_status(tool, current_user, data)
+        updated = await tx.tooldocumentation.update(
+            where={"id": tool_id}, data=data, include=INCLUDE
+        )
     # The PATCH response carries ``media`` (it is in ``INCLUDE``) and the editor need not be the
     # uploader — an EDIT-tier grantee or a professor routinely saves a tool somebody else
     # photographed. Resolved rather than left to the cheap default so a photograph that was openable

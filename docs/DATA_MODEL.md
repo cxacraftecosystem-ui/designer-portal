@@ -320,6 +320,23 @@ Three things here that are not obvious:
 - **A response belongs to its answerer.** `answeredById` is why a question already answered by
   somebody else cannot be silently overwritten by the next contributor.
 
+**`Questionnaire` — the uploaded pro-forma, a different object from the interview family above — is
+now citable from a design-workshop stage (2026-09-03).** Stage 7's `surveyPlan.questionnaireRef` is a
+REF at it, and three facts about that citation are worth having in one place:
+
+- **It carries the TITLE and nothing else.** `REFERENCE_MODELS["Questionnaire"]`'s `data` lambda is
+  `{"name": r.title}`, and `REFERENCE_HYDRATION["surveyPlan.questionnaireRef"]` is the single pair
+  `name → questionnaireName`. **No `QuestionnaireFormEntry` and no `QuestionnaireFormAnswer` is
+  loaded on that path.** Citing a questionnaire from a stage does not pull anybody's answers into the
+  workshop, and the stage's own required prose box is untouched and still required.
+- **The picker is account-scoped, and it is the only reference model that is.** Every other entry is
+  pooled; `Questionnaire` carries `ownerId`, a nullable `designWorkshopId` and an admin-set
+  `isShared`, so its options are narrowed by the asking account through `ReferenceModel.viewer_where`.
+  A reference request that names no account is refused **401** rather than served an unfiltered list.
+- **The rule is `questionnaire_forms.visible_questionnaire_where` — the same one `GET /questionnaires`
+  applies**, moved out of the route and into the service on 2026-09-03 so there is one definition
+  rather than two copies of a four-clause visibility rule. The route keeps a one-line alias.
+
 ---
 
 ## 5. Access control
@@ -367,6 +384,39 @@ rather than deleted, so nobody can re-request their way quietly around a "no".
 reconstruct a record's original values after a cross-researcher edit. It is written on the contribute
 path, so an edit that goes through the normal PATCH is captured; a direct database write is not.
 
+**It is written inside the same transaction as the row update it describes** (since 2026-09-03: every
+PATCH route opens one `db.tx()` spanning `guard_record_edit` and its own `update`, and
+`access.record_revision` takes the caller's `client`), so a revision with no corresponding row change
+is not a state the schema can reach. What that replaces is specific: a revision committed one
+statement before an `update` that died, naming an editor as the author of a value no row holds.
+
+**The same transaction now also carries an OPTIONAL precondition — `expectedUpdatedAt`, added
+2026-09-03, and it is inert until a client opts in.** All six record PATCH routes (`/artisans`,
+`/crafts`, `/workshops`, `/products`, `/tools`, `/processes`) accept it. It is **a question, not a
+column**: `records.take_expected_updated_at` pops it off the payload before anything reaches Prisma,
+and `assert_expected_updated_at` is called **inside the transaction and above every write**, so a
+refusal rolls the `RecordRevision` back with it.
+
+* **Absent passes**, and that is the whole compatibility story — every client shipped to date sends
+  no precondition, so only a caller that opts in by sending the field can ever meet the refusal. A
+  row with no stored `updatedAt` also passes.
+* **A mismatch is `409` with a dict detail**: `{"code": "record_changed", "message": "Someone else
+  changed this record after this edit was composed.", "expectedUpdatedAt": …, "currentUpdatedAt": …}`.
+  Tell it apart from the other 409s these routes can answer — a taken craft name, an Aadhaar
+  conflict — **by `detail["code"]`, never by the status**.
+* **The comparison is a one-second tolerance, not equality**, and naive datetimes are read as UTC on
+  both sides. It is a narrowing rather than a promise: the window it closes is hours wide, not
+  milliseconds.
+* **A timestamp rather than a counter** because `updatedAt` already exists on all six models and is
+  already in every response, so the server half needed no migration.
+
+**It is not reachable from either client yet, and the gap is mechanical and named.** Six Kotlin DTOs
+(`ArtisanDetailDto`, `CraftDto`, `WorkshopDetailDto`, `ProductDetailDto`, `ToolDetailDto`,
+`ProcessDetailDto`) and the six matching TypeScript types each declare `createdAt` and **stop** —
+none declares `updatedAt`, though the server has always sent it. Until a client deserialises the
+value it has nothing to echo back, which is why the two client halves are deferred rather than
+built.
+
 One exception, in `access.REVISION_REDACTED_FIELDS` (`aadhaarNumber`, `pehchanCardNumber`, `phone`,
 `email`, `address`): those entries record which field changed, who changed it, when, and the
 direction it moved (set / replaced / cleared, flagged `redacted`), but not the value — so their
@@ -393,10 +443,64 @@ refusing to widen it is spent.
 | `AppSetting` | repository-wide settings | includes `transcriptionMode` (`RAW`/`REFINED`/`REFINED_TRANSLATED`) and the STT provider order |
 | `ManagedSecret` | runtime-editable provider keys | value is **Fernet-encrypted at rest**; never returned in full, only a masked preview |
 | `SecretTestResult` | the last reachability check per key | so "is this key working" has an answer that is not a guess |
-| `AppRelease` | published Android APKs | the OTA channel; `versionCode` is what devices compare |
+| `AppRelease` | published Android APKs | the OTA channel; `versionCode` is what devices compare, and `sizeBytes` (`BigInt`, **nullable**) is what a phone compares a finished download against before handing the file to the installer |
 | `AssignedTask` | one row per assignee | a batch of five researchers is five rows sharing a `batchId` |
 | `Feedback`, `UserPreference` | one row per user each | |
 | `ReviewLog` | one row per review decision | append-only; an edit-then-approve writes two rows |
+
+### `clientKey` on the four record models — added 2026-09-03
+
+`Workshop`, `ProductDocumentation`, `ToolDocumentation` and `Process` each carry
+**`clientKey String? @unique`** (migration `20260903100000_record_client_key`). It is what makes an
+offline replay of a CREATE idempotent, and it closes [AUDIT-2026-08-30.md](AUDIT-2026-08-30.md)'s
+A30-05 for the record family.
+
+**Nullable, with a plain `@unique` rather than a partial index.** Postgres treats NULLs as distinct
+under a unique index, so the column already permits any number of keyless rows and
+`… WHERE "clientKey" IS NOT NULL` would build exactly the same guarantee — while being inexpressible
+in `schema.prisma`. `NOT NULL DEFAULT ''` was refused for the obvious reason: one empty string would
+collide with the next, and the second create of any kind on this deployment would be refused.
+
+**The replay contract is `/media/complete`'s, copied almost line for line.** A create whose
+`clientKey` is already present returns **the existing row through the same 201 handler** — there is
+no `replayed: true`, because a caller must not be able to tell a replay from a first landing. A key
+whose row belongs to another account answers **403**. A replayed process returns its steps and writes
+no new ones; a replayed workshop writes neither roster.
+
+**Do not confuse it with `DwStageEntry.clientKey`**, which identifies one ROW WITHIN ONE WORKSHOP and
+is unique only in company (`@@unique([designWorkshopId, entityKey, clientKey])`). These four identify
+one CREATE REQUEST, globally.
+
+**Three models deliberately did not get one**, because each already carries a constraint that catches
+the same duplicate, and two idempotency mechanisms can disagree about what a duplicate is:
+`Artisan.aadhaarNumber @unique` (plus a pre-write 409 naming the holder),
+`QuestionnaireInterview.artisanSetKey @unique` (creation is already idempotent on it) and
+`Craft.name @unique`.
+
+### Two columns added on 2026-09-03
+
+**`DwStageEntry.version` — `Int NOT NULL DEFAULT 0`, the optimistic-concurrency counter.** `save_stage`
+writes `update_many(where={"id": …, "version": seen}, data={…, "version": {"increment": 1}})`, and a
+count of zero is read as **a concurrent writer, not a missing row** — the row is addressed by primary
+key, so the only way to write nothing is for the version to have moved. `update_many` rather than
+`update` exists solely to get that count: `update` raises on no-such-row and cannot distinguish the
+two.
+
+Two writes are deliberately **not** guarded by it. The **sweep** (the soft delete of rows the client
+did not send back) is not, because its input is an absence rather than a value a second designer could
+have edited — guarding it would refuse a legitimate deletion because somebody else touched an
+unrelated row in the same stage. The **`DesignWorkshop` header write** is not, because it is a
+different row with a different contention story and a version on it would make every stage save
+conflict with every header edit. Both are decisions, not omissions; the refusal contract for the
+guarded path is in [DESIGN_WORKSHOP.md](DESIGN_WORKSHOP.md).
+
+**`AppRelease.sizeBytes` — `BigInt`, nullable, the published APK's length in bytes when the publisher
+recorded one.** Nullable because **no release row written before 2026-09-03 has one and nothing
+backfills them**, so an absent value must keep meaning "download and trust the transfer" — the
+behaviour every fielded handset already has. A present value is what a phone compares a finished
+download against before handing the file to the installer; Android's own signature check remains what
+decides whether the file may be installed at all. The publish workflow's body now carries the field,
+which imposes a deploy ordering — see [CI.md](CI.md) §1.4.
 
 ---
 

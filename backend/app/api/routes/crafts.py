@@ -15,6 +15,7 @@ from app.services.pagination import normalize_pagination, page_payload
 from app.services.records import (
     Relation,
     apply_status_policy_update,
+    assert_expected_updated_at,
     clean_data,
     contains,
     count_and_page,
@@ -24,6 +25,7 @@ from app.services.records import (
     public_encode,
     require_record,
     resubmit_status,
+    take_expected_updated_at,
 )
 from app.services.workshop_access import (
     enforce_workshop_submission,
@@ -36,7 +38,9 @@ from app.services.workshop_access import (
 router = APIRouter(prefix="/crafts", tags=["crafts"])
 
 # One relation, so the wave saves nothing here — but the count no longer waits for the page, which
-# on this deployment is a whole cross-region round trip off the craft dropdown every form opens with.
+# is a whole round trip off the craft dropdown every form opens with. That was a cross-region hop
+# when it was written and is a co-located one or two milliseconds since 2026-09-02
+# (``services/concurrency.py``); the read that does not have to wait for another still does not.
 RELATIONS = (Relation("workshop", "workshop", "workshopId"),)
 INCLUDE = include_of(RELATIONS)
 
@@ -176,33 +180,75 @@ async def update_craft(
     # makes a present key mean "the caller sent this". Drop it and every optional the client left
     # alone would arrive as ``None`` and be written as an explicit NULL over stored data.
     data = clean_data(payload.model_dump(exclude_unset=True), clearable=_CLEARABLE_COLUMNS)
+    # The precondition is a question, not a column — taken out of the body here, asked inside the
+    # transaction below. See ``records.take_expected_updated_at``.
+    expected_updated_at = take_expected_updated_at(data)
     # Moving a record into (or between) workshops is a workshop submission too, so the create-time
     # guard can't be bypassed by PATCHing the workshop in afterwards.
     check = None
     if "workshopId" in data and data.get("workshopId") != craft.workshopId:
         check = await enforce_workshop_submission(current_user, data.get("workshopId"))
-    await guard_record_edit(craft, current_user, data, "craft")
-    # Craft has no status column, so this is a no-op here; wired for parity with the other 6 PATCHes.
-    await apply_status_policy_update(current_user, craft, data)
-    stamp_workshop_submission(data, check=check, record=craft)
-    pin_pending_if_late(data, current_user, check=check, record=craft)
-    merge_field_provenance(data, current_user, previous=craft)
-    resubmit_status(craft, current_user, data)
-    # THE SAME UNIQUE INDEX AS THE CREATE, SO THE SAME ANSWER. ``Craft.name`` is @unique and
-    # ``clean_data`` title-cases it on the way in, so a professor renaming a duplicate ("Bandhej") to
-    # the canonical spelling that already exists ("Bandhani") writes exactly the value another row
-    # holds. Without this the driver's UniqueViolationError reached the catch-all in main.py, which
-    # logged a stack trace and answered 500 with "Something went wrong on the server" — telling the
-    # professor the server is broken, when the truth is that the name is taken and retrying cannot
-    # help. The create path five lines up has always answered 409 for the identical collision; two
-    # routes over one index must not disagree about what a clash is. The detail string is kept
-    # BYTE-IDENTICAL to the create's so a client can match one sentence for both.
-    try:
-        updated = await db.craft.update(where={"id": craft_id}, data=data, include=INCLUDE)
-    except UniqueViolationError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT, detail="Craft name already exists"
-        ) from exc
+    # ONE TRANSACTION FOR THE AUDIT ROW AND THE ROW IT DESCRIBES (2026-09-03). ``guard_record_edit``
+    # ends in ``record_revision``, which used to COMMIT on its own one statement before the update
+    # below — so a request that died in the gap (P2024 on a cross-region pool, a dropped connection)
+    # left a ledger entry asserting a change to a craft that still holds the old name. See
+    # ``access.record_revision`` for the full argument; the ``client=tx`` is not optional decoration,
+    # because ``db.tx()`` hands back a DIFFERENT client and a callee writing through the module
+    # singleton is not in this block however it looks.
+    #
+    # THE REFUSALS STILL COME FIRST AND THE TRANSACTION DOES NOT MOVE THEM: ``guard_record_edit``
+    # raises 403 above its own write, and everything between it and the update either mutates
+    # ``data`` in place or, in ``apply_status_policy_update``'s case, reads one user row and DROPS an
+    # unauthorised status rather than raising. That read is the only round trip this block adds
+    # inside the transaction, and only on a PATCH that actually carries a status change.
+    async with db.tx() as tx:
+        # Before ``guard_record_edit``, which is the first write in this block, so the refusal takes
+        # the ledger entry with it. ``None`` passes and changes nothing, which is every client
+        # shipped to date. See ``records.assert_expected_updated_at``.
+        #
+        # THE SECOND 409 THIS ROUTE CAN ANSWER — a taken ``Craft.name``, below — CARRIES ITS OWN
+        # DETAIL, SO THE TWO NEVER HAVE TO BE TOLD APART BY A CODE. This note used to say they were
+        # distinguished by ``detail["code"]``, which was never true of the pair: the precondition
+        # failure raises a DICT carrying ``code: "record_changed"``, and the name collision raises
+        # the bare string ``"Craft name already exists"`` — kept byte-identical to the create's, so a
+        # client can match one sentence for both. ``artisans.update_artisan`` documents exactly this
+        # convention for its own pair (a stale precondition and an Aadhaar clash) and this line
+        # asserted the opposite of it; a client written to read ``detail["code"]`` on both would have
+        # indexed a string. Corrected 2026-09-03. A ``code`` is NOT being added to the collision:
+        # the sentence is the contract the create already shipped, and giving one member of a pair a
+        # new shape to make a comment true is the wrong way round.
+        assert_expected_updated_at(craft, expected_updated_at)
+        await guard_record_edit(craft, current_user, data, "craft", client=tx)
+        # Craft has no status column, so this is a no-op here; wired for parity with the other 6
+        # PATCHes.
+        await apply_status_policy_update(current_user, craft, data)
+        stamp_workshop_submission(data, check=check, record=craft)
+        pin_pending_if_late(data, current_user, check=check, record=craft)
+        merge_field_provenance(data, current_user, previous=craft)
+        resubmit_status(craft, current_user, data)
+        # THE SAME UNIQUE INDEX AS THE CREATE, SO THE SAME ANSWER. ``Craft.name`` is @unique and
+        # ``clean_data`` title-cases it on the way in, so a professor renaming a duplicate ("Bandhej")
+        # to the canonical spelling that already exists ("Bandhani") writes exactly the value another
+        # row holds. Without this the driver's UniqueViolationError reached the catch-all in main.py,
+        # which logged a stack trace and answered 500 with "Something went wrong on the server" —
+        # telling the professor the server is broken, when the truth is that the name is taken and
+        # retrying cannot help. The create path five lines up has always answered 409 for the
+        # identical collision; two routes over one index must not disagree about what a clash is. The
+        # detail string is kept BYTE-IDENTICAL to the create's so a client can match one sentence for
+        # both.
+        #
+        # THE 409 IS RAISED FROM INSIDE THE TRANSACTION, WHICH IS WHAT MAKES IT CLEAN. A unique
+        # violation aborts the transaction in Postgres whatever this handler does, so leaving the
+        # try/except out here — with the update inside — would answer 409 while the revision written
+        # four lines up rolled back anyway, telling the professor the name is taken and leaving an
+        # audit row for the rename that did not happen. Converting it in place takes the ledger entry
+        # back with the refused rename, which is the same rule the block above is written for.
+        try:
+            updated = await tx.craft.update(where={"id": craft_id}, data=data, include=INCLUDE)
+        except UniqueViolationError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail="Craft name already exists"
+            ) from exc
     # BIDIRECTIONAL, unlike the create path's one-way ``link_workshop_craft`` twenty lines up. An
     # edit can REMOVE a workshop, and until this call the removal stopped at the column: ``workshopId``
     # is in ``records.CLEARABLE_KEYS`` so an explicit null really does clear the column, but the old

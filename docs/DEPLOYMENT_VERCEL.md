@@ -299,8 +299,13 @@ variables → Actions**), which holds the whole `backend/.env` file, then re-run
 `.github/workflows/deploy-backend.yml` (or push any change under `backend/`). The workflow rewrites
 `.env` on the instance and restarts `fieldrepo` and `fieldrepo-queue`.
 
-To apply it by hand, SSH to the box, edit `/home/ubuntu/app/backend/.env` and
-`sudo systemctl restart fieldrepo fieldrepo-queue`.
+To apply it by hand, open a shell on the box (`aws ssm start-session --target i-0e091ca8e6b417b52` —
+there is no standing SSH access), edit `/home/ubuntu/app/current/backend/.env` and
+`sudo systemctl restart fieldrepo fieldrepo-queue`. **`current` is a symlink** to
+`/home/ubuntu/app/releases/<git-sha>`, and each release carries the `.env` it was deployed with — so
+an edit made this way lives on the release that is live now and **is lost the next time a deploy
+flips the symlink**, because the next release's `.env` comes from the `BACKEND_ENV` secret. Use it to
+test a value, then put the value in the secret. See [CI.md](CI.md) §1.2.
 
 ### 4.2 S3 bucket CORS
 

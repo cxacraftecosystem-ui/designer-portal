@@ -94,8 +94,10 @@ async def my_grants(current_user: Any = Depends(get_current_user)) -> dict[str, 
     """
     uid = get_value(current_user, "id")
     # The two perspectives are two different WHEREs over the same table and neither reads the
-    # other, so they go out together: this route was two cross-region round trips to answer one
-    # screen, and it is now one.
+    # other, so they go out together: this route was two sequential round trips to answer one
+    # screen, and it is now one wave. Written when a hop was a cross-region ~750ms; co-located and
+    # ~1-2ms since 2026-09-02 (``services/concurrency.py``), so the saving is milliseconds now — the
+    # count of waits is what the change was about and that is unchanged.
     incoming, outgoing = await gather_reads(
         db.dataaccessgrant.find_many(
             where={"ownerId": uid}, include=GRANT_INCLUDE, order={"updatedAt": "desc"}
@@ -197,7 +199,11 @@ async def _upsert_grant(
             )
         if add:
             # One statement, not one round trip per record: a twenty-record subset was twenty
-            # sequential hops on a cross-region link, which is the window this whole change closes.
+            # sequential hops, which is the window this whole change closes. The hops were
+            # cross-region when that was measured and are co-located since 2026-09-02
+            # (~1-2ms, ``services/concurrency.py``) — but this one is inside a TRANSACTION, so the
+            # count still buys something the link cannot: twenty statements is twenty chances for
+            # the block to outlive its timeout, and one is one.
             await tx.dataaccessscopeitem.create_many(
                 data=[
                     {"grantId": grant.id, "recordType": record_type, "recordId": record_id}

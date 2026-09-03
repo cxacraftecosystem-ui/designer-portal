@@ -1,0 +1,111 @@
+version: 2
+
+# ─── WHY THIS FILE EXISTS: SHA PINS ROT, AND A ROTTEN PIN IS WORSE THAN A TAG ─────────────
+#
+# On 2026-09-03 every `uses:` in this repository's workflows was pinned to a commit SHA with the
+# human tag in a trailing comment. That closes a real hole — a version tag is mutable, so `@v4` is
+# a standing promise from a third party that the code behind it will not change, and that promise
+# has been broken elsewhere in the ecosystem to compromise other projects' CI. The SHA is a fact
+# about what runs; the tag is not.
+#
+# It also creates a new problem, and this file is the answer to it. A pinned SHA never picks up a
+# security fix, a Node-runtime bump or a deprecation shim on its own, so pinning without automation
+# trades "somebody else can change my CI" for "my CI silently ages until it stops working" — which
+# is how `actions/upload-artifact@v3` reached its shutdown date on repositories that had pinned it
+# and forgotten. Dependabot opens a pull request when the tag a pin was taken from moves, and the
+# diff is reviewable: one SHA, one comment, one action.
+#
+# ─── THE CADENCES ARE DIFFERENT ON PURPOSE ───────────────────────────────────────────────
+# `github-actions` is WEEKLY because those bumps are the security-relevant ones and each is a
+# two-line diff a reviewer can actually judge. `npm` and `pip` are MONTHLY because they are not:
+# a Next or FastAPI bump needs the suite run and a deploy behind it, and a weekly stream of them
+# on a repository this size is how people learn to close Dependabot pull requests unread. An
+# ignored bot is worth less than no bot.
+#
+# The open-PR limits are small for the same reason. Three at a time is a queue somebody clears;
+# fifteen is a wall somebody mutes.
+#
+# ─── WHAT DEPENDABOT DOES NOT DO HERE, SAID PLAINLY ──────────────────────────────────────
+# It does NOT refresh `backend/requirements.lock`. That file is compiled from `backend/pyproject.toml`
+# by pip-compile and is deliberately named `.lock` rather than `requirements.txt`; Dependabot's pip
+# ecosystem discovers `pyproject.toml` and `requirements*.txt` and will not touch it. So a pip pull
+# request here proposes a change to the DECLARED RANGE in pyproject, and the lock has to be
+# recompiled in that same pull request or the range and the pins disagree. The command is one line
+# and lives in docs/CI.md; it is a deliberate act with its diff in review, which is the property
+# this repository wanted from a lock in the first place.
+#
+# It also does not know about the Vercel CLI (`npm i -g vercel@latest` in deploy-frontend.yml,
+# unpinned on purpose — see the comment there) or the Gradle/AGP versions under `android/`, which
+# `gradle` ecosystem support could cover and which is a separate decision with its own test cost.
+
+updates:
+  # ── GitHub Actions: the pins added on 2026-09-03 ────────────────────────────────────────
+  - package-ecosystem: github-actions
+    # "/" and not "/.github/workflows" — for this ecosystem the directory is the REPOSITORY ROOT
+    # and Dependabot looks under .github/workflows itself. Naming the workflows directory here is
+    # the common mistake and produces a configuration that silently finds nothing.
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "04:00"
+      timezone: Asia/Kolkata
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: ci
+    labels:
+      - dependencies
+      - github-actions
+
+  # ── The web client ─────────────────────────────────────────────────────────────────────
+  - package-ecosystem: npm
+    # frontend/, not the repository root. The root package.json exists only for the docs tooling
+    # and declares nothing worth watching; the application's dependency graph is here.
+    directory: "/frontend"
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: deps
+    labels:
+      - dependencies
+      - frontend
+    groups:
+      # One pull request for the patch/minor stream instead of a dozen. Majors stay individual —
+      # a Next or React major is a piece of work, not a bump, and grouping it with six patches
+      # would hide it inside a diff nobody reads to the end.
+      minor-and-patch:
+        update-types:
+          - minor
+          - patch
+
+  # ── The server ─────────────────────────────────────────────────────────────────────────
+  - package-ecosystem: pip
+    directory: "/backend"
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: deps
+    labels:
+      - dependencies
+      - backend
+    groups:
+      minor-and-patch:
+        update-types:
+          - minor
+          - patch
+    ignore:
+      # HELD DELIBERATELY, NOT NEGLECTED. `backend/pyproject.toml` pins ruff to `>=0.16.1,<0.17`
+      # and argues at length why: checks.yml fails the build on a ruff finding, `select` pins rule
+      # FAMILIES rather than their contents, and ruff adds checks to existing families in ordinary
+      # minor releases — so an automatic bump can redden a pull request that changed no Python at
+      # all. Bumping it means re-measuring the per-file baseline in the same commit, which is a
+      # human's job. Read that comment before removing this entry.
+      - dependency-name: ruff
+        update-types:
+          - version-update:semver-minor
+          - version-update:semver-major
+      # `bcrypt>=4.0.1,<4.1.0` is a compatibility ceiling for passlib's bcrypt backend, not a
+      # stale pin. Raising it needs the password path exercised, not a green Dependabot tick.
+      - dependency-name: bcrypt

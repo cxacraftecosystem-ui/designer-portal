@@ -402,7 +402,14 @@ def redacted_placeholder(old_value: Any, new_value: Any) -> dict[str, Any]:
     return _redacted_change(old_value, new_value)
 
 
-async def record_revision(record: Any, user: Any, data: dict[str, Any], record_type: str) -> None:
+async def record_revision(
+    record: Any,
+    user: Any,
+    data: dict[str, Any],
+    record_type: str,
+    *,
+    client: Any = None,
+) -> None:
     """Append an immutable RecordRevision for whichever fields in `data` actually change `record`.
 
     Call with the cleaned update payload BEFORE field-provenance is merged in, so provenance bookkeeping
@@ -410,6 +417,33 @@ async def record_revision(record: Any, user: Any, data: dict[str, Any], record_t
 
     Fields in :data:`REVISION_REDACTED_FIELDS` are logged as a change WITHOUT their value -- read the
     argument above that set before widening or narrowing it.
+
+    ── ``client`` IS THE CALLER'S TRANSACTION, AND IT EXISTS BECAUSE THE LEDGER LIED (2026-09-03) ──
+
+    This function used to write through the module-level ``db`` singleton and nothing else, so the
+    audit row COMMITTED on its own, one statement before the ``update`` it claims to describe. Every
+    PATCH route in the repository was two independent commits in a row, and the window between them
+    is not theoretical on this deployment: the database is in another AWS region, ``P2024`` (the
+    connection-pool timeout) is the failure this stack sees most, and a request that dies in that gap
+    leaves a RecordRevision asserting that a field was changed to a value no row anywhere holds.
+    That is worse than a missing audit row and not merely different: the ledger is read by an admin
+    reconstructing who did what, and a phantom entry names an innocent editor as the author of a
+    value nobody ever saved. ``processes.update_process`` already carried a comment making exactly
+    this argument about the 403 half of it; this closes the other half.
+
+    THE CLIENT MUST BE PASSED IN AND CANNOT BE DISCOVERED. Prisma's ``db.tx()`` hands back a
+    DIFFERENT client object, so a callee holding its own ``db`` reference is simply NOT inside its
+    caller's transaction however deep the ``async with`` block is — the same mechanical fact
+    ``access_roster._mirror_cross_roster_suspension`` writes out at length, and the reason a
+    thread-it-through parameter is the only shape that works. The default is deliberately ``None``
+    rather than ``db``: it keeps the fifteen-odd existing four-argument calls (the redaction tests,
+    ``review.edit_reviewed_record``'s sibling paths) working unchanged, and the failure mode of a
+    caller who forgets it is the OLD behaviour — a second commit — not a crash, which is why every
+    call site is listed in this change's report rather than left to be found later.
+
+    The permission READS in :func:`guard_record_edit` deliberately stay on the module client. They
+    ask about grants and ranks, rows no caller's transaction has written, so routing them through
+    the transaction would lengthen it without changing a single answer.
     """
     from app.core.deps import get_value, values_match
 
@@ -429,7 +463,14 @@ async def record_revision(record: Any, user: Any, data: dict[str, Any], record_t
             }
     if not changes:
         return
-    await db.recordrevision.create(
+    # ``client or db`` would be wrong for the same reason ``os.environ.setdefault`` was wrong in
+    # ``tests/conftest.py``: it asks about truthiness where the question is presence. A Prisma
+    # transaction client is an object with no ``__bool__``, so it is truthy today — but a test double
+    # standing in for one need not be, and a falsy stand-in would silently route the audit row back
+    # to the module singleton, outside the transaction, which is precisely the defect this parameter
+    # closes and the one shape in which it fails without saying so.
+    writer = db if client is None else client
+    await writer.recordrevision.create(
         data={
             "recordType": record_type.lower(),
             "recordId": get_value(record, "id"),
@@ -439,12 +480,32 @@ async def record_revision(record: Any, user: Any, data: dict[str, Any], record_t
     )
 
 
-async def guard_record_edit(record: Any, user: Any, data: dict[str, Any], record_type: str) -> bool:
+async def guard_record_edit(
+    record: Any,
+    user: Any,
+    data: dict[str, Any],
+    record_type: str,
+    *,
+    client: Any = None,
+) -> bool:
     """Authorize a field-changing edit and audit it. Returns True if the user is privileged (admin,
     owner, a professor+ outranking the record's author, or an EDIT-tier grantee) and may change any
     populated field/relation; False for an ordinary contributor (who may only fill empty fields —
     enforced here, raising 403 on a locked field). Always records a revision of the fields that
     change. Pass the cleaned `data` before provenance is merged.
+
+    ``client`` IS THE CALLER'S TRANSACTION AND IS FORWARDED TO :func:`record_revision` (2026-09-03):
+    every PATCH route now opens ONE ``db.tx()`` spanning this call and its own row update, so the
+    ledger entry and the row it describes commit together or not at all. Read that function's
+    argument for why the parameter cannot be discovered from inside.
+
+    THE 403 ORDERING IS UNCHANGED BY THE TRANSACTION, and that is the point of stating it here. A
+    refusal still happens before anything is written — ``assert_can_contribute_fields`` raises above
+    ``record_revision``, exactly as it did — and the transaction only widens what "before anything is
+    written" covers: a refusal raised by a caller AFTER this returns (the relation guards in
+    ``workshops.update_workshop``) now takes the row update back with it instead of leaving it
+    committed. The permission reads below stay on the module client on purpose; see
+    :func:`record_revision`.
     """
     from app.core.deps import (
         assert_can_contribute_fields,
@@ -467,7 +528,7 @@ async def guard_record_edit(record: Any, user: Any, data: dict[str, Any], record
             privileged = True
         else:
             assert_can_contribute_fields(record, user, data)
-    await record_revision(record, user, data, record_type)
+    await record_revision(record, user, data, record_type, client=client)
     return privileged
 
 

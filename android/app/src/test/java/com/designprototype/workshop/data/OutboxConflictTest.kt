@@ -49,6 +49,16 @@ import java.io.IOException
  *
  * `artisans.py::_identity_conflict` builds the object one; `crafts.py` the bare string;
  * `questionnaire.py::_DUPLICATE_SET_DETAIL` the interview one, verbatim.
+ *
+ * ── THE WORDS MOVED ON 2026-09-03; THE FACTS DID NOT ──────────────────────────────────────────────
+ *
+ * Every sentence here was rewritten to state its fact and stop: the reasoning that used to travel
+ * with each clause — *"because what is in the way is not on this phone"*, *"and only then"* — now
+ * lives in `outboxConflictSentence`'s KDoc. These tests moved with it and are deliberately written as
+ * structural assertions about WHICH FACTS MUST APPEAR rather than as whole-string equality, so the
+ * next person shortening a clause is stopped only when they drop something a designer acts on. The
+ * two exact-equality assertions that remain are on the discard dialog, where the sentence is the last
+ * thing read before an irreversible delete and every word of it is load-bearing.
  */
 class OutboxConflictTest {
 
@@ -181,23 +191,50 @@ class OutboxConflictTest {
 
         // 1. NOT SAVED, and said first. A refusal a designer half-reads is a refusal they assume went
         //    through in the end.
-        assertTrue(sentence.startsWith("This was not saved:"))
+        assertTrue(sentence, sentence.startsWith("Not saved —"))
         // 2. THE SERVER'S OWN WORDS, VERBATIM — which are the only thing on the screen naming the
-        //    record they have to go and find.
+        //    record they have to go and find. THE ONE CLAUSE THE TERSE PASS DID NOT TOUCH, and the
+        //    only one it may never touch: summarising it would throw away the whole remedy.
         assertTrue(
             "the existing artisan must survive into the sentence by name:\n$sentence",
             sentence.contains("Giriraj Prasad (Bhuj) is already recorded with this Aadhaar number."),
         )
         // 3. NOTHING DELETED, and how much is riding on it.
-        assertTrue(sentence.contains("Nothing has been sent and nothing has been deleted"))
-        assertTrue(sentence.contains("this entry and the 3 files saved with it are still on this phone"))
-        // 4. RETRYING ALONE CANNOT WORK, and why. Without this the designer walks up the hill to find
-        //    a signal, and does it again tomorrow.
-        assertTrue(sentence.contains("what is in the way is not on this phone"))
+        assertTrue(sentence, sentence.contains("Nothing was deleted"))
+        assertTrue(sentence, sentence.contains("this entry and the 3 files saved with it are still here"))
+        // 4. RETRYING ALONE CANNOT WORK. Without this the designer walks up the hill to find a signal
+        //    and does it again tomorrow. WHY it cannot work now lives in the KDoc, not on the row —
+        //    the fact is what a person acts on, the reasoning is what a maintainer checks.
+        assertTrue(sentence, sentence.contains("Retrying alone gets the same answer."))
         // 5. AN ORDER OF OPERATIONS THAT ENDS SOMEWHERE — the web's clause, in this app's voice.
-        assertTrue(sentence.contains("Open the record it clashes with"))
-        assertTrue(sentence.contains("copy across anything that record is missing"))
-        assertTrue(sentence.contains("only then throw this one away"))
+        assertTrue(sentence, sentence.contains("Open the clashing record"))
+        assertTrue(sentence, sentence.contains("copy anything missing"))
+        assertTrue(sentence, sentence.contains("then discard this entry"))
+    }
+
+    /**
+     * TERSE, AND MEASURABLY SO — because "we shortened it" is a claim that decays without one.
+     *
+     * The sentence that shipped ran to four long clauses carrying their own justifications, read by
+     * somebody standing in a courtyard deciding whether to press a button that deletes the only copy
+     * of a day's fieldwork. Every fact above still has to be in it; what may not come back is the
+     * argument for each one, which is in `outboxConflictSentence`'s KDoc where it can be checked and
+     * cannot be skimmed past.
+     *
+     * The bound is on OUR words only: the server's `detail` is quoted verbatim and can be any length,
+     * so it is subtracted before measuring. Being generous is the point — this trips on a paragraph
+     * growing back, not on a word.
+     */
+    @Test
+    fun `the clash sentence stays a few clauses and not a paragraph`() {
+        val said = http(409, artisanClash).apiRefusal("fallback").message
+        // The ceilings are the shipped lengths with room to breathe, not a squeeze: the sentence this
+        // replaced measured about 412 characters of our own words, and the correction arm more.
+        val ours = outboxConflictSentence(said, files = 3, isCorrection = false).replace(said, "")
+        assertTrue("our half of it is ${ours.length} characters:\n$ours", ours.length <= 280)
+
+        val correction = outboxConflictSentence(said, files = 3, isCorrection = true).replace(said, "")
+        assertTrue("our half of it is ${correction.length} characters:\n$correction", correction.length <= 340)
     }
 
     @Test
@@ -227,12 +264,12 @@ class OutboxConflictTest {
             files = 1,
             isCorrection = true,
         )
-        assertTrue(sentence.startsWith("This correction was not applied:"))
-        assertTrue(sentence.contains("the office is still reading the version from before it"))
-        assertTrue(sentence.contains("make the change where it belongs"))
+        assertTrue(sentence, sentence.startsWith("Not applied —"))
+        assertTrue(sentence, sentence.contains("the office still reads the earlier version"))
+        assertTrue(sentence, sentence.contains("make the change there"))
         assertFalse(
-            "there is nothing to copy across into a record that already holds it:\n$sentence",
-            sentence.contains("copy across"),
+            "there is nothing to copy into a record that already holds it:\n$sentence",
+            sentence.contains("copy"),
         )
         assertTrue("one file is one file, not '1 files':\n$sentence", sentence.contains("the 1 file saved with it"))
     }
@@ -245,22 +282,22 @@ class OutboxConflictTest {
             isCorrection = false,
         )
         assertFalse("\"0 files\" reads as an accusation that something went missing:\n$sentence", sentence.contains("0 file"))
-        assertTrue(sentence.contains("this entry is still on this phone"))
+        assertTrue(sentence, sentence.contains("this entry is still here"))
     }
 
     @Test
     fun `a server sentence with no full stop does not run into ours`() {
         // `crafts.py` sends "Craft name already exists" — no punctuation. Left alone it produced
-        // "…already holds a record that clashes with it. Craft name already exists Nothing has been
-        // sent…", one unpunctuated clause a designer skims and abandons before the half that tells
-        // them what to do. The same defect `WorkshopSync.refusal()` fixed for an answered 5xx.
+        // "…already holds a clashing record. Craft name already exists Nothing was deleted…", one
+        // unpunctuated clause a designer skims and abandons before the half that tells them what to
+        // do. The same defect `WorkshopSync.refusal()` fixed for an answered 5xx.
         val sentence = outboxConflictSentence(
             http(409, craftClash).apiRefusal("fallback").message,
             files = 2,
             isCorrection = false,
         )
-        assertTrue(sentence.contains("Craft name already exists. Nothing has been sent"))
-        assertFalse(sentence.contains("already exists Nothing"))
+        assertTrue(sentence, sentence.contains("Craft name already exists. Nothing was deleted"))
+        assertFalse(sentence, sentence.contains("already exists Nothing"))
     }
 
     @Test
@@ -298,10 +335,12 @@ class OutboxConflictTest {
         assertTrue(warning.contains("This cannot be undone"))
         // The fear this arm exists for: the row NAMES an artisan on the server, so an unqualified
         // "this cannot be undone" over it reads as an offer to delete that artisan.
-        assertTrue(warning.contains("The record it clashes with is not touched"))
-        assertTrue(warning.contains("it stays exactly where it is, on the server"))
-        // And the half that is a warning rather than a reassurance.
-        assertTrue(warning.contains("anything in it that the other record does not already have goes with it"))
+        assertTrue(warning, warning.contains("The record it clashes with is not touched"))
+        // And the half that is a warning rather than a reassurance: what is being deleted is this
+        // phone's copy, and what is IN it that the other record has not.
+        assertTrue(warning, warning.contains("What goes is this phone's copy"))
+        assertTrue(warning, warning.contains("anything in it the other record does not have goes too"))
+        assertTrue(warning, warning.contains("Check that first"))
     }
 
     @Test
@@ -333,10 +372,9 @@ class OutboxConflictTest {
         )
         assertEquals(
             "“Giriraj Prasad” and the 2 files saved with it will be deleted from this device. This " +
-                "cannot be undone. The record itself is already on the server and this does not take " +
-                "it back out: it stays in the register, so entering it again would leave two of it. " +
-                "The 2 files are the part the server never got, and this phone holds the only copy — " +
-                "attach them to the record there instead, if you still can.",
+                "cannot be undone. The record is already on the server and stays there — entering it " +
+                "again would leave two of it. The 2 files are the part the server never got — attach " +
+                "them to the record there instead, if you still can.",
             warning,
         )
     }

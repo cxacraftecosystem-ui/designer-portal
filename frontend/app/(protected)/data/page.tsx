@@ -31,12 +31,10 @@ import {
   UsersRound,
   Wrench
 } from "lucide-react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
-
 import { CappedListNotice } from "@/components/data/CappedListNotice";
 import { cutOf, LIST_PAGE_CEILING, listCut, type ListCut } from "@/components/data/cappedList";
 import { EmptyState } from "@/components/EmptyState";
+import { Markdown } from "@/components/Markdown";
 import { Pagination } from "@/components/Pagination";
 import { PageHeader } from "@/components/PageHeader";
 import { useAuth } from "@/components/AuthProvider";
@@ -228,45 +226,43 @@ function stem(name: string) {
 }
 
 // ---------------------------------------------------------------------------
-// Markdown renderer for transcripts (react-markdown + remark-gfm, prose-styled)
+// Transcripts, in the shared renderer
 // ---------------------------------------------------------------------------
 
+/**
+ * A transcript, inside its own scroll box.
+ *
+ * ── THIS WAS A SECOND MARKDOWN RENDERER, AND IT IS NOT ONE ANY MORE — 2026-09-03 ────────────────
+ *
+ * The body of this function was a 25-entry `components` map handed to its own `<ReactMarkdown>`: a
+ * parallel copy of `components/Markdown.tsx`, drifted. The two disagreed about the body colour
+ * (ink-700 here, ink-900 there), about inline code (a purple chip here, a bordered surface-50 one
+ * there), about blockquote rules (purple-300 against line-200) and about heading levels — this one
+ * demoted `#` to an `<h3>`. And the corpus is IDENTICAL: `/media` renders the very same transcript
+ * text through the shared component (`app/(protected)/media/page.tsx`), so one researcher reading a
+ * transcript here and another reading it there saw two different documents and neither could tell
+ * which was the house style. That is the duplication rule this repository applies to
+ * `readableError` and `useDragReorder`: a second private implementation of a shared thing is a
+ * divergence waiting for somebody to compare two screens.
+ *
+ * WHAT IS KEPT IS THE ONLY PART THAT WAS EVER LOCAL — the box. `max-h-80 overflow-y-auto` is this
+ * screen's decision (a file tree row must not grow to the length of an interview) and belongs to
+ * the caller, not to a renderer used in eight other places. The surface, border and padding go with
+ * it for the same reason.
+ *
+ * THE ESCAPING PROPERTY SURVIVES, AND IT IS THE ONE THING NOT TO LOSE HERE. `Markdown.tsx` omits
+ * `rehype-raw` deliberately, so raw HTML inside a transcript stays escaped text. A transcript is
+ * machine-generated from somebody's recording and is not trusted markup; this screen renders it for
+ * a professor with a dataset download beside it.
+ *
+ * The heading demotion is NOT reproduced, and that is a decision rather than an omission: it existed
+ * only here, `/media` never had it, and the shared renderer's h1–h4 are what the rest of the
+ * application shows for the same text. One appearance, chosen once.
+ */
 function TranscriptMarkdown({ children }: { children: string }) {
   return (
-    <div className="max-h-80 overflow-y-auto rounded-md border border-line-200 bg-surface-50 p-4 text-sm leading-6 text-ink-700">
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        components={{
-          h1: ({ children }) => <h3 className="mb-2 mt-4 font-display text-base font-bold text-ink-900 first:mt-0">{children}</h3>,
-          h2: ({ children }) => <h4 className="mb-2 mt-4 font-display text-sm font-bold text-ink-900 first:mt-0">{children}</h4>,
-          h3: ({ children }) => <h5 className="mb-1.5 mt-3 font-display text-sm font-semibold text-ink-900 first:mt-0">{children}</h5>,
-          h4: ({ children }) => <h6 className="mb-1.5 mt-3 font-display text-sm font-semibold text-ink-700 first:mt-0">{children}</h6>,
-          p: ({ children }) => <p className="my-2 first:mt-0 last:mb-0">{children}</p>,
-          strong: ({ children }) => <strong className="font-semibold text-ink-900">{children}</strong>,
-          hr: () => <hr className="my-3 border-line-200" />,
-          ul: ({ children }) => <ul className="my-2 list-disc space-y-1 pl-5">{children}</ul>,
-          ol: ({ children }) => <ol className="my-2 list-decimal space-y-1 pl-5">{children}</ol>,
-          a: ({ href, children }) => (
-            <a href={href} target="_blank" rel="noreferrer" className="font-medium text-purple-700 underline underline-offset-2">
-              {children}
-            </a>
-          ),
-          blockquote: ({ children }) => <blockquote className="my-2 border-l-2 border-purple-300 pl-3 text-ink-500">{children}</blockquote>,
-          code: ({ children }) => <code className="rounded bg-purple-50 px-1 py-0.5 text-[0.85em] text-purple-800">{children}</code>,
-          pre: ({ children }) => (
-            <pre className="my-2 overflow-x-auto rounded-md border border-line-200 bg-card p-3 text-xs leading-5">{children}</pre>
-          ),
-          table: ({ children }) => (
-            <div className="my-2 overflow-x-auto">
-              <table className="w-full border-collapse text-xs">{children}</table>
-            </div>
-          ),
-          th: ({ children }) => <th className="border border-line-200 bg-surface-50 px-2 py-1 text-left font-semibold text-ink-900">{children}</th>,
-          td: ({ children }) => <td className="border border-line-200 px-2 py-1 align-top">{children}</td>
-        }}
-      >
-        {children}
-      </ReactMarkdown>
+    <div className="max-h-80 overflow-y-auto rounded-md border border-line-200 bg-surface-50 p-4">
+      <Markdown text={children} />
     </div>
   );
 }
@@ -286,10 +282,10 @@ type ReportSheet = {
   /**
    * Why THIS sheet is truncated, when the reason is not the row cap.
    *
-   * The banner below used to be the only sentence, and it says "This sheet hit the server row cap …
-   * Download the .xlsx for the rest". That is right for a 5000-row clip and wrong for the
+   * The banner below used to be the only sentence, and it says "This list hit the server row cap —
+   * browse a narrower folder to see the rest". That is right for a 5000-row clip and wrong for the
    * design-workshop index page, which is 44 rows long and truncated because the TAB budget ran out —
-   * a different fact with a different next move, and the .xlsx does not carry the rest either.
+   * a different fact with a different next move, and a narrower folder does not recover a tab.
    */
   truncatedNote?: string | null;
   /**
@@ -564,10 +560,21 @@ function DataTablesPanel({
                         </span>
                       </div>
 
+                      {/*
+                        THE DEFAULT NO LONGER OFFERS THE DOWNLOAD AS THE WAY TO SEE THE REST, because
+                        it is not one (2026-09-03). The .xlsx is built from the same capped read, so a
+                        reader told to download it got the identical first slice in a spreadsheet and
+                        no sign that anything was still missing — a truncation notice that sends the
+                        reader somewhere it is not fixed is worse than no notice, which is the whole
+                        of rule 10. Narrowing the folder is the one move that genuinely returns rows
+                        this list is not showing. Design-workshop sheets ship their own
+                        `truncatedNote` for the tab-budget case and are unaffected; this is the
+                        fallback the record and media sheets fall to.
+                      */}
                       {sheet.truncated ? (
                         <p className="mx-4 mb-3 rounded-md bg-amber-100 px-3 py-2 text-xs text-amber-800">
                           {sheet.truncatedNote ??
-                            "This sheet hit the server row cap, so it shows the first slice of a larger set. Download the .xlsx or browse a narrower folder for the rest."}
+                            "This list hit the server row cap — browse a narrower folder to see the rest."}
                         </p>
                       ) : null}
 

@@ -1,0 +1,71 @@
+-- Optimistic concurrency for stage rows: `DwStageEntry.version`, the counter that turns a
+-- last-write-wins UPDATE into a refusal somebody can read.
+--
+-- =============================================================================================
+-- THE GAP THIS CLOSES, AND WHY `clientKey` DID NOT ALREADY CLOSE IT
+-- =============================================================================================
+--
+-- `20260822094000_dw_singleton_client_key` closed the INSERT half of the two-designer race: two
+-- saves of one stage each found no singleton, each planned an INSERT, and the unique index now
+-- refuses the second. `design_workshops._absorb_key_collisions` recovers from that refusal by
+-- re-reading and rewriting the refused INSERT into an UPDATE of the row the winner just made.
+--
+-- **THE UPDATE IT REWRITES INTO WAS ITSELF UNGUARDED**, and so was every ordinary update beside it.
+-- `save_stage` reads this stage's rows, spends a validation pass, a `hydrate_entries` pass that
+-- issues its own queries, and a provenance merge on them, and then writes `data` WHOLESALE by row
+-- id. Anything a second writer committed inside that window was overwritten: no index refused it,
+-- `updatedAt` recorded that something had happened and could not prevent it, and the response said
+-- `updated: 1` to both designers.
+--
+-- The window is not narrow and the pairing is not rare. `DesignWorkshopViewer` exists precisely so
+-- that two designers run one workshop over one set of rows; the read/write gap spans a hydration
+-- pass against a database this deployment has measured at 756 ms per round trip; and a payload
+-- that does not carry `merge: true` sends EVERY key of the row, so the loser's stale-but-complete
+-- picture silently replaced the winner's edit to a field the loser had never touched.
+--
+-- =============================================================================================
+-- WHY A COUNTER AND NOT `updatedAt`
+-- =============================================================================================
+--
+-- `updatedAt` is a timestamp written by `@updatedAt`, at whatever resolution the driver and the
+-- server agree on, and two writes inside one millisecond are indistinguishable through it. A
+-- monotonic integer that the WRITE ITSELF increments has no such tie: `WHERE id = $1 AND version =
+-- $2` matches exactly the row this request read and nothing else, and the affected-row count is the
+-- whole answer. It also survives a clock that moves, which a timestamp predicate does not.
+--
+-- =============================================================================================
+-- `NOT NULL DEFAULT 0`, SO THERE IS NO BACKFILL AND NO PARTIAL GUARANTEE
+-- =============================================================================================
+--
+-- Every row already in this table gets 0 from the DEFAULT, which Postgres applies without
+-- rewriting the heap (a non-volatile default has been metadata-only since 11). So the first
+-- ordinary save of a row written in 2025 is guarded exactly like the first save of a row written
+-- tomorrow, and there is no window in which the invariant holds only for the rows some one-off
+-- script happened to see -- the failure mode `_reserved_key_upgrade` was written to avoid on the
+-- column above it.
+--
+-- NULLABLE WAS CONSIDERED AND IS WORSE. `version = NULL` is not equal to anything, so a predicate
+-- against a null-versioned row matches nothing and EVERY save of an un-backfilled row would be
+-- reported to its designer as somebody else's edit. A default of zero cannot produce a false
+-- conflict: the count is zero only when the stored value differs from the one that was read.
+--
+-- =============================================================================================
+-- NO INDEX, AND THAT IS DELIBERATE
+-- =============================================================================================
+--
+-- The predicate is `id = $1 AND version = $2` -- the primary key plus a filter. The pkey index
+-- finds the single row and the version comparison is a field test on that row; a second index on
+-- `version` would be read on every write of this table and could never be chosen for this query.
+-- See `@@index([entityKey])` in schema.prisma for the measurement culture this follows.
+--
+-- =============================================================================================
+-- IDEMPOTENT, FOLLOWING THE RECENT PRECEDENT IN THIS DIRECTORY
+-- =============================================================================================
+--
+-- `20260829090000_profile_location_experience_and_usage` and
+-- `20260830090000_usage_consent_and_decision_log` both write `ADD COLUMN IF NOT EXISTS`. The reason
+-- is the one this repository has already paid for: migrations here are hand-authored and applied by
+-- piping .sql through psql, so a re-run of a directory that was half-applied must not fail on the
+-- statement that did land.
+
+ALTER TABLE "DwStageEntry" ADD COLUMN IF NOT EXISTS "version" INTEGER NOT NULL DEFAULT 0;

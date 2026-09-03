@@ -1092,10 +1092,34 @@ class _Clip:
         self.filename = "dictation.webm"
         self.content_type = "audio/webm"
         self.reads = 0
+        self._spent = False
 
-    async def read(self) -> bytes:
+    async def read(self, size: int = -1) -> bytes:
+        # The bounded reader (2026-09-03) consumes uploads in chunks — ``read(CHUNK_BYTES)`` until
+        # an empty answer — so this fake must behave like the stream ``UploadFile`` actually is:
+        # hand over the buffer once, then answer empty. ``reads`` keeps its original meaning ("were
+        # the BYTES spent?") by counting only answers that carried bytes; the empty tail read the
+        # chunk loop needs to see the end is bookkeeping, not spend.
+        if self._spent:
+            return b""
+        self._spent = True
         self.reads += 1
+        if size is None or size < 0 or size >= len(self._bytes):
+            return self._bytes
+        # A clip larger than one chunk still arrives whole here, deliberately: the accumulator sums
+        # what it RECEIVED, so an oversize clip crosses the cap inside one loop pass and `reads`
+        # stays 1 for it — exactly what the pre-chunking fake reported for the same refusal.
         return self._bytes
+
+
+def _plain_request():
+    """A bare ``Request`` stand-in for direct route calls (added 2026-09-03, with the parameter).
+
+    ``read_upload_bounded`` asks the request for one thing only — a Content-Length header — and a
+    stand-in that answers none exercises the bounded chunk-read path, which is the half of the
+    guard these tests care about. The header pre-check has its own tests in test_upload_bounds.py.
+    """
+    return SimpleNamespace(headers={})
 
 
 def _person(role: str):
@@ -1158,7 +1182,7 @@ def test_the_workshop_scoped_route_refuses_an_unconsented_send_before_touching_a
     with pytest.raises(HTTPException) as exc:
         asyncio.run(
             dictation.routes.dictate_for_workshop(
-                "wsp_1", file=_Clip(), languageHint=None, current_user=_person("DESIGNER")
+                "wsp_1", request=_plain_request(), file=_Clip(), languageHint=None, current_user=_person("DESIGNER")
             )
         )
     assert exc.value.status_code == 409
@@ -1170,7 +1194,7 @@ def test_the_workshop_scoped_route_refuses_an_unconsented_send_before_touching_a
 def test_a_consented_workshop_reaches_the_provider_and_gets_its_words_back(dictation):
     payload = asyncio.run(
         dictation.routes.dictate_for_workshop(
-            "wsp_1", file=_Clip(), languageHint="or", current_user=_person("DESIGNER")
+            "wsp_1", request=_plain_request(), file=_Clip(), languageHint="or", current_user=_person("DESIGNER")
         )
     )
     assert payload["text"] == "dabu resist printing"
@@ -1193,7 +1217,7 @@ def test_the_consent_gate_is_checked_before_the_cap(dictation):
     with pytest.raises(HTTPException) as exc:
         asyncio.run(
             dictation.routes.dictate_for_workshop(
-                "wsp_1", file=_Clip(), languageHint=None, current_user=_person("DESIGNER")
+                "wsp_1", request=_plain_request(), file=_Clip(), languageHint=None, current_user=_person("DESIGNER")
             )
         )
     assert exc.value.status_code == 409, "the cap answered a question consent had already settled"
@@ -1207,7 +1231,7 @@ def test_a_spent_allowance_refuses_with_a_429_and_uploads_nothing_to_a_provider(
     with pytest.raises(HTTPException) as exc:
         asyncio.run(
             dictation.routes.dictate_for_workshop(
-                "wsp_1", file=_Clip(), languageHint=None, current_user=_person("DESIGNER")
+                "wsp_1", request=_plain_request(), file=_Clip(), languageHint=None, current_user=_person("DESIGNER")
             )
         )
     assert exc.value.status_code == 429
@@ -1224,7 +1248,7 @@ def test_the_refusal_detail_is_a_sentence_and_not_a_dictionary(dictation):
     with pytest.raises(HTTPException) as exc:
         asyncio.run(
             dictation.routes.dictate_for_workshop(
-                "wsp_1", file=_Clip(), languageHint=None, current_user=_person("DESIGNER")
+                "wsp_1", request=_plain_request(), file=_Clip(), languageHint=None, current_user=_person("DESIGNER")
             )
         )
     assert isinstance(exc.value.detail, str)
@@ -1239,6 +1263,7 @@ def test_a_clip_refused_for_size_does_not_consume_an_allowance(dictation):
         asyncio.run(
             dictation.routes.dictate_for_workshop(
                 "wsp_1",
+                request=_plain_request(),
                 file=_Clip(size=dictation.routes.DICTATION_MAX_BYTES + 1),
                 languageHint=None,
                 current_user=_person("DESIGNER"),
@@ -1253,7 +1278,7 @@ def test_an_empty_upload_does_not_consume_an_allowance(dictation):
     with pytest.raises(HTTPException) as exc:
         asyncio.run(
             dictation.routes.dictate_for_workshop(
-                "wsp_1", file=_Clip(size=0), languageHint=None, current_user=_person("DESIGNER")
+                "wsp_1", request=_plain_request(), file=_Clip(size=0), languageHint=None, current_user=_person("DESIGNER")
             )
         )
     assert exc.value.status_code == 422
@@ -1268,7 +1293,7 @@ def test_a_server_with_no_provider_configured_does_not_consume_an_allowance(dict
     with pytest.raises(HTTPException) as exc:
         asyncio.run(
             dictation.routes.dictate_for_workshop(
-                "wsp_1", file=_Clip(), languageHint=None, current_user=_person("DESIGNER")
+                "wsp_1", request=_plain_request(), file=_Clip(), languageHint=None, current_user=_person("DESIGNER")
             )
         )
     assert exc.value.status_code == 503
@@ -1284,7 +1309,7 @@ def test_every_upload_that_reached_a_provider_is_counted(dictation, provider_sta
     dictation.state.result = {"status": provider_status, "text": "", "provider": "deepgram"}
     asyncio.run(
         dictation.routes.dictate_for_workshop(
-            "wsp_1", file=_Clip(), languageHint=None, current_user=_person("DESIGNER")
+            "wsp_1", request=_plain_request(), file=_Clip(), languageHint=None, current_user=_person("DESIGNER")
         )
     )
     assert dictation.seen.spends == [("usr_1", "2026-08-12")]
@@ -1301,7 +1326,7 @@ def test_the_two_hundred_carries_the_allowance_so_a_phone_need_never_be_refused_
     dictation.state.allowance = Allowance(day="2026-08-12", limit=40, used=27)
     payload = asyncio.run(
         dictation.routes.dictate_for_workshop(
-            "wsp_1", file=_Clip(), languageHint=None, current_user=_person("DESIGNER")
+            "wsp_1", request=_plain_request(), file=_Clip(), languageHint=None, current_user=_person("DESIGNER")
         )
     )
     assert payload["dictationsLimit"] == 40
@@ -1324,7 +1349,7 @@ def test_a_counter_that_could_not_be_written_reports_the_count_it_can_stand_behi
     monkeypatch.setattr(dictation.routes.dictation_cap, "spend", _failed_spend)
     payload = asyncio.run(
         dictation.routes.dictate_for_workshop(
-            "wsp_1", file=_Clip(), languageHint=None, current_user=_person("DESIGNER")
+            "wsp_1", request=_plain_request(), file=_Clip(), languageHint=None, current_user=_person("DESIGNER")
         )
     )
     assert payload["dictationsUsed"] == 27
@@ -2033,7 +2058,13 @@ def test_a_measurement_job_is_not_touched_by_the_consent_gate():
 
     reached: list[str] = []
 
-    def _fetch(key):
+    def _fetch(key, **_kwargs):
+        # ``**_kwargs`` IS THE CEILING, NOT SLOPPINESS (2026-09-03). The MEASUREMENT arm now calls
+        # ``get_object_bytes(objectKey, max_bytes=ceiling)``, so a stub pinned to the old
+        # one-positional-argument signature raises TypeError inside the worker and this test fails
+        # for a reason that has nothing to do with the consent gate it is about. The bound itself is
+        # not this file's subject — ``head_object`` is stubbed to "storage will not say" exactly so
+        # this case stays off it; ``tests/test_media_convert_bound`` is where the ceilings live.
         reached.append(key)
         return b"jpegbytes"
 

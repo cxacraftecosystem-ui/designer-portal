@@ -758,8 +758,11 @@ def media_ids_to_check(roots: Mapping[str, ChainRoot]) -> set[str]:
 
     Only the media-rooted ones contribute: an unresolved chain is withheld without asking anybody,
     and a supplied-text chain has nothing to ask about. One query for a whole workshop rather than
-    one per layer — twenty-five interviews at two rungs each is fifty round trips on a link this
-    repository measured at 756 ms, which is a screen that never finishes opening.
+    ONE PER LAYER — twenty-five interviews at two rungs each is FIFTY round trips, and fifty is the
+    number that decides this whether a hop costs 756 ms (the cross-region link this was measured
+    against, on which it was a screen that never finished opening) or the one to two milliseconds a
+    co-located one costs since 2026-09-02 (``services/concurrency.py``). Fifty queries to answer one
+    permission question is the wrong shape at any latency, and it grows with the workshop.
     """
     return {
         root.media_id for root in roots.values() if root.kind is RootKind.MEDIA and root.media_id
@@ -1227,8 +1230,11 @@ def duplicate_of(
     WHAT IT CATCHES IS A REPEAT, NOT A RACE, and the difference is worth being exact about because
     the obvious sentence to write here — "this is what a double tap produces" — is not true. The
     caller reads the existing layers and then writes, and two requests that overlap in that gap both
-    read nothing and both write; on the link this repository measured at 756ms round trip
-    (``services/concurrency``) a genuine double tap overlaps easily. The gap is not closed by a
+    read nothing and both write. On the link this repository measured at 756ms a round trip a
+    genuine double tap overlapped easily; production is co-located since 2026-09-02 and a hop is one
+    or two milliseconds (``services/concurrency``), which makes the window SMALLER AND NOT CLOSED —
+    and a window that is merely small is the one that produces a bug nobody can reproduce. Nothing
+    below rests on its size. The gap is not closed by a
     unique index, and deliberately: the rule is only expressible as a PARTIAL unique index on
     (source, kind, tier, provider, model) WHERE deletedAt IS NULL — ``@@unique`` can say the columns
     but Prisma has no syntax for the WHERE, and without it a declined row would forbid ever

@@ -1,0 +1,141 @@
+name: Uptime probe
+
+# ─── THE ZERO-VENDOR FLOOR, AND IT IS A FLOOR RATHER THAN THE ANSWER ─────────────────────
+#
+# Nothing was watching production. The deploy pipeline asserts readiness at the moment it deploys
+# and then stops looking, so the failure this closes is the ordinary one: the box wedges, the
+# pooler saturates, CloudFront starts serving 5xx, and the first report is a researcher in a
+# village who cannot sign in. `app/main.py`'s own docstring on `/health/ready` says out loud that
+# it is "what uptime alerting should watch" — and until this file landed, nothing did.
+#
+# This costs nothing, needs no account anywhere, and its alert channel is GitHub's own failed-run
+# email, which every collaborator already receives. That is the whole design.
+#
+# ─── THE UPGRADE, NAMED SO IT IS NOT RE-DISCOVERED ───────────────────────────────────────
+# A real external monitor — UptimeRobot's free tier, Better Stack, anything off this account —
+# pointed at exactly:
+#
+#     https://d3ekigkotd1xa2.cloudfront.net/health/ready
+#
+# is strictly better and should replace this the moment somebody has five minutes, for one reason
+# that this workflow can never fix: THIS PROBE RUNS ON GITHUB. A GitHub Actions incident takes the
+# monitor down together with the ability to notice it is down, and a monitor that is silent both
+# when everything is fine and when it cannot run at all is a monitor whose silence means nothing.
+# An external checker also probes from several regions and can page rather than email.
+#
+# Keep this file when that lands, or delete it — but do not keep it and believe it is the alerting.
+#
+# ─── THE CRON IS HONEST ABOUT ITSELF ─────────────────────────────────────────────────────
+# `*/15` asks for four runs an hour. GitHub's scheduler is best-effort and drifts — under load a
+# run can start ten or more minutes late, and scheduled runs are dropped outright during incidents
+# — so the real detection window is "usually a quarter of an hour, sometimes much worse". That is
+# fine for what this is and would not be fine for a paging system, which is the paragraph above.
+#
+# COST: about 96 runs a day, each well under a minute, so roughly an hour and a half of runner
+# time a month. On a public repository that is free; on a private one it is the cheapest line item
+# in this account. If minutes ever matter, `*/30` halves it and doubles the detection window —
+# change the number, not the design.
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # A probe that overlaps itself tells you nothing extra. Cancel-in-progress is safe here (nothing
+  # outside the runner is touched) but is deliberately OFF: a run cancelled by its successor is
+  # reported as cancelled rather than as failed, which would hide exactly the slow-response case
+  # this exists to catch.
+  group: monitor
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    name: Probe the API and the web app
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      # NO CHECKOUT — this job reads nothing from the repository, and a checkout is 5-10 s of every
+      # one of the ~96 daily runs for nothing at all. jq and curl are both on the runner image.
+
+      - name: The API is ready (database reachable, and fast enough)
+        # `/health/ready`, NOT `/health`. The dumb liveness endpoint deliberately never touches the
+        # database — its own docstring explains that it must stay dumb so CloudFront does not evict a
+        # box that is busy recovering — so a monitor pointed at it reports 200 through a total data
+        # outage. Readiness is the endpoint that answers the question.
+        #
+        # THE LATENCY ASSERTION IS THE HALF THAT EARNS ITS KEEP. This deployment has a documented
+        # history of connection-pool exhaustion whose first symptom is a probe that still succeeds
+        # and takes seconds (see the `/health/ready` docstring in backend/app/main.py, and the
+        # orphaned-query-engine story in infra/terraform/user_data.sh). Alerting only on failure
+        # fires once researchers are already locked out; alerting on 2000 ms fires while there is
+        # still time to restart something. The number is a ceiling on a healthy p99, not a target:
+        # a warm box answers this in tens of milliseconds, and a cold CloudFront edge plus a
+        # cross-region hop is still comfortably inside it.
+        run: |
+          set -euo pipefail
+          url="https://d3ekigkotd1xa2.cloudfront.net/health/ready"
+          # -w writes the HTTP status onto its own last line so status and body come out of ONE
+          # request. Two requests could straddle a restart and report a state that never existed.
+          # No -f: a 503 from this endpoint is a real answer with a body worth printing, and -f
+          # would throw it away and report only "22".
+          out="$(curl -sS --max-time 25 -w '\n%{http_code}' "$url")"
+          code="$(printf '%s' "$out" | tail -n1)"
+          body="$(printf '%s' "$out" | sed '$d')"
+          echo "GET ${url} -> ${code}"
+          echo "${body}"
+
+          if [ "$code" != "200" ]; then
+            echo "::error::the API answered HTTP ${code} at ${url}. Body: ${body}"
+            exit 1
+          fi
+          # Parsed, not grepped: `"database":true` as a substring would also match inside a longer
+          # key, and a body that is not JSON at all (a CloudFront error page) has to fail here
+          # rather than three lines later with something confusing about arithmetic.
+          if ! printf '%s' "$body" | jq -e 'has("database") and has("latencyMs")' > /dev/null 2>&1; then
+            echo "::error::the response is not the readiness payload. Something between here and the app — CloudFront, nginx — answered instead of the API."
+            exit 1
+          fi
+          if [ "$(printf '%s' "$body" | jq -r '.database')" != "true" ]; then
+            echo "::error::the API is up but reports no database connection. Researchers can load the site and can do nothing on it."
+            exit 1
+          fi
+          latency="$(printf '%s' "$body" | jq -r '.latencyMs')"
+          # Integer comparison in the shell cannot take the endpoint's one decimal place, and
+          # rounding here would need another tool. jq already has the number, so let jq decide.
+          if [ "$(printf '%s' "$body" | jq -r 'if .latencyMs >= 2000 then "slow" else "ok" end')" = "slow" ]; then
+            echo "::error::the database answered in ${latency} ms, over the 2000 ms ceiling. This is the shape connection-pool exhaustion takes before it becomes an outage — check the pooler's client count and the fieldrepo units."
+            exit 1
+          fi
+          echo "ready: database=true latency=${latency}ms"
+
+      - name: The web app serves its sign-in screen
+        # `/login` and not `/`. The root redirects and a redirect is served happily by a build that
+        # cannot render anything; the sign-in screen is the first page every user actually needs and
+        # the one whose absence is a total outage.
+        #
+        # NO `-f`, AND THE STATUS IS COMPARED INSTEAD. `curl -f` collapses every failure into exit
+        # code 22 with no number attached, so the alert email would say "the probe failed" where it
+        # could say "the site answered 503". Reading `%{http_code}` and comparing it costs one line
+        # and puts the actual status in the error text, which is the difference between an alert
+        # somebody can triage from their phone and one that needs a laptop.
+        #
+        # `!cancelled()` so a red API does not hide a red website. The two are deployed by different
+        # pipelines onto different infrastructure and fail independently; stopping at the first one
+        # would report half the state of production. Not `always()`: a cancelled run should not spend
+        # a runner finishing a probe nobody asked for any more.
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          url="https://designer-repository.vercel.app/login"
+          code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 25 "$url")"
+          echo "GET ${url} -> ${code}"
+          if [ "$code" != "200" ]; then
+            echo "::error::the web app answered HTTP ${code} at ${url}. Nobody can sign in."
+            exit 1
+          fi
+          echo "web: login screen served"

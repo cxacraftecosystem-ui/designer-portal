@@ -30,10 +30,22 @@ READ-ONLY IS STRUCTURAL HERE. IT IS NOT A FLAG, A TIER OR A POLICY NOTE.
 
 The obvious way to build this is a ``DesignWorkshopViewer`` row, or a ``level`` column on one. It
 was designed and rejected, because **a viewer row confers STAGE WRITES**:
-``design_workshops.load_workshop_or_404(..., for_edit=True)`` performs no role check whatsoever —
-the creator, an admin, or ANY viewer grantee passes — and that one helper is what FOURTEEN write
-routes pair with ``_require_designer``, what the export ledger stands behind ALONE, and what the
-report route stands behind alone. A predicate added to it is a WRITE grant whatever it is named.
+``design_workshops.load_workshop_or_404(..., for_edit=True)`` admits the creator, an admin, or a
+viewer grantee, and that one helper is what FOURTEEN write routes pair with ``_require_designer``,
+what the export ledger stands behind ALONE, and what the report route stands behind alone. A
+predicate added to it is a WRITE grant whatever it is named.
+
+**THIS PARAGRAPH USED TO SAY THAT HELPER "performs no role check whatsoever — the creator, an admin,
+or ANY viewer grantee passes", AND THAT HALF IS NOW WRONG (corrected 2026-09-03).** It role-gates its
+GRANT arm: a viewer row is honoured only for an account inside ``DESIGN_WORKSHOP_ROLES``. That change
+does not weaken one word of the argument above — it strengthens it in one direction and leaves the
+hazard exactly where it was. ``INSPECTION_ROLES`` is disjoint from that set BY THE IMPORT-TIME
+INVARIANT at the foot of this file, so today an inspector holding a viewer row would be refused by
+the loader's own role clause as well as by this module's structure. That is a second line, not the
+structure: it holds only for as long as the two sets stay disjoint, and the whole reason this scope
+is a separate table is that a rule which depends on somebody remembering a set membership is the
+rule that lapses. ``for_edit=True`` still carries no role check of its own, so widening the set is
+still a write grant.
 
 FOURTEEN, AND NOT THE EIGHTEEN THIS SENTENCE FIRST SAID. Eighteen is a true count of a DIFFERENT
 set — every route ``_require_designer`` guards, which is what the paragraph above uses it for —
@@ -680,9 +692,13 @@ def assert_inspection_surface(user: Any) -> None:
 
 
 # THE INVARIANT, CHECKED AT IMPORT RATHER THAN HOPED FOR. If these two sets ever overlap, one
-# account becomes eligible to hold BOTH a viewer row (which carries stage WRITES, because
-# ``load_workshop_or_404(for_edit=True)`` performs no role check) and an inspection row (read-only)
-# on the same workshop — the contradiction this whole module is built to prevent. Failing at import
+# account becomes eligible to hold BOTH a viewer row (which carries stage WRITES: the loader admits
+# a grantee and ``for_edit=True`` adds no role check of its own — and note that since 2026-09-03 the
+# loader honours that grant only for an account inside DESIGN_WORKSHOP_ROLES, which is to say only
+# for exactly the accounts this line is keeping out of INSPECTION_ROLES) and an inspection row
+# (read-only) on the same workshop — the contradiction this whole module is built to prevent. That
+# role clause is a SECOND line and not a replacement for this one: it is true only while these two
+# sets are disjoint, which is the thing being asserted here. Failing at import
 # is the right blast radius: the API does not boot, rather than booting with a scope that means two
 # things. ``tests/test_dw_inspector_scope_gate.py`` asserts it again where a reader will find it.
 _OVERLAP = INSPECTION_ROLES & DESIGN_WORKSHOP_ROLES

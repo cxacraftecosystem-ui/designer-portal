@@ -67,9 +67,10 @@ async def _load() -> tuple[list[WorkshopRows], int, bool]:
     """Every row this comparison reads, and the size of the archive it came from.
 
     THREE QUERIES, AND DELIBERATELY NOT ONE PER WORKSHOP. The naive shape — list the workshops, then
-    fetch each one's stages — grows linearly with the archive, and on a cross-region link at ~750ms a
-    round trip it never returns at all. MEASURED on the local dataset (5,924 live workshops, 6,200
-    stage entries, 55 of them matching, 39 contributing workshops), warm client:
+    fetch each one's stages — grows LINEARLY WITH THE ARCHIVE, and that is the whole argument: it is
+    a claim about the number of round trips, not about what one costs. MEASURED on the local dataset
+    (5,924 live workshops, 6,200 stage entries, 55 of them matching, 39 contributing workshops),
+    warm client:
 
         count of live workshops             9.6 ms
         stage rows for the three entities  16.9 ms
@@ -77,9 +78,16 @@ async def _load() -> tuple[list[WorkshopRows], int, bool]:
         _load() end to end                 25.7 ms   (the first two are gathered, not sequential)
 
     Against the same data the per-workshop shape took 242 ms for 39 header reads — 6.2 ms each —
-    which extrapolates to ~1.2 s for a 200-workshop archive on a LOCAL database, and to two and a
-    half minutes on the production link. The analysis itself is 0.6 ms; every millisecond here is
-    the database.
+    which extrapolates to ~1.2 s for a 200-workshop archive on a LOCAL database. The analysis itself
+    is 0.6 ms; every millisecond here is the database.
+
+    THE "TWO AND A HALF MINUTES ON THE PRODUCTION LINK" THAT USED TO END THAT PARAGRAPH IS HISTORY
+    (2026-09-03): it was 200 round trips at the ~750ms a cross-region hop cost, and production moved
+    on 2026-09-02 to a co-located database at one or two milliseconds a hop
+    (``services/concurrency.py``). Nothing here has been re-timed since, so treat the local figures
+    above as the honest ones. THE ARGUMENT IS UNCHANGED AND IS NOT ABOUT THE LINK: the naive shape
+    still issues one read per workshop, so it still grows with the archive while this one does not,
+    and the index below still exists for that reason.
 
     The middle query is served by `@@index([entityKey])`, which exists precisely for it — see the
     rationale and the before/after measurements on the index itself in `prisma/schema.prisma`

@@ -2088,7 +2088,44 @@ STAGE_5 = StageSpec(
                 # source step a row corresponds to — the same reason `name` above receives the PROCESS's
                 # name. See the note on `ENUMS["PROCESS_STEP_TYPE"]`.
                 f("stepType", "Step type", ENUM, S, enum="PROCESS_STEP_TYPE", report_role=KV),
-                f("toolsUsed", "Tools used", TAGS, S),
+                # ── PROMOTED FROM TAGS TO A MULTI-SELECT OVER DOCUMENTED TOOLS (2026-09-03) ──────────
+                #
+                # This box asked a designer to TYPE the tools used at a step, on a stage whose very
+                # next entity is `tool` — a picker over `ToolDocumentation` that fills eight boxes
+                # from one tap. So the same pit loom was a record on one row and the string "pit
+                # loom", "pitloom" or "पिट लूम" on the next, and no query could count a loom across
+                # two clusters. That is the retyping this whole feature exists to end, and the
+                # audit's registry-promotion rule names it: a free-text field that NAMES RECORDS
+                # becomes a picker where a record type exists. One does.
+                #
+                # `ALL_SCOPE`, AND THE ARGUMENT IS `tool.toolRef`'s VERBATIM: a pit loom is a TYPE
+                # of object, not an instance tied to a place. Every `ToolDocumentation` row in this
+                # database belongs to a different `Workshop`, so scoping this to the workshop would
+                # not narrow the list, it would empty it — and a designer with an empty picker types
+                # the name in, which is where this started.
+                #
+                # NOTHING IS HYDRATED FROM IT, and that is not an omission. Hydration writes ONE
+                # record's values into the row; five tools have five names and this entity has one
+                # box for them. The ids ARE the answer, and `ReportBuilder._value` resolves each of
+                # them to its record's label at render time.
+                #
+                # WHAT ALREADY SITS IN THIS COLUMN KEEPS PRINTING. The stored shape does not change
+                # — MULTI_ENUM and TAGS are both a JSON array of strings — so nothing is migrated
+                # and nothing needs to be: `coerce_value` accepts the prose a 0.0.7 handset still
+                # submits, `_value` prints any token it cannot resolve verbatim, and both clients
+                # draw a held value they cannot name as the words it is. See the arms in
+                # `stage_schema.coerce_value`, `report_builder.ReportBuilder._value`,
+                # `FieldInput.tsx`'s `referenceMultiOptions` and `DwReferenceMultiSelectField`.
+                f(
+                    "toolsUsed",
+                    "Tools used",
+                    MENUM,
+                    S,
+                    ref_model="ToolDocumentation",
+                    ref_scope=ALL_SCOPE,
+                    help="Choose the tools already documented in the repository. Anything typed "
+                    "here before this became a picker is kept and still prints.",
+                ),
                 f("problems", "Problems at this step", LT, S),
                 *photos("stepPhotos", "Step photographs", A, "Step photograph caption"),
                 f("stepVideo", "Process video", VIDEO, A),
@@ -3140,6 +3177,46 @@ STAGE_7 = StageSpec(
                     report_role=BULLETS,
                     help="One objective per line.",
                 ),
+                # ── THE INSTRUMENT THIS PLAN WILL USE, WHICH THE APP ALREADY HELD (2026-09-03) ──────
+                #
+                # The picker comes FIRST, above the box it fills, for the reason `tool.toolRef` gives:
+                # field order here is the order every client renders, and a picker under the answer it
+                # was meant to save the designer typing is a picker nobody uses.
+                #
+                # WHAT WAS HAPPENING WITHOUT IT. `Questionnaire` is a whole feature — a designer
+                # uploads an .xlsx, it becomes sections and questions, sittings are taken on it, and
+                # the report's annexure prints every one attached to the workshop. Stage 7 plans the
+                # survey, and the only thing it could say about the instrument was the PROSE box
+                # below, whose help asks for "the questions to be asked, one per line". So the
+                # questions were typed a second time, by hand, into a stage — and the plan and the
+                # form the answers actually arrived under were connected by nothing a query could
+                # follow.
+                #
+                # THE PROSE BOX IS UNTOUCHED AND STAYS REQUIRED, and that is the whole shape of this
+                # change. Re-typing `questionnaire` as a REF would have taken every workshop that has
+                # already filled it and handed `coerce_value` a `{"blocks": […]}` dict on a branch
+                # that calls `clean_text` on it — the stored prose stringified into a report as
+                # literal JSON, which is the exact defect `format_value`'s RICH_TEXT arm exists to
+                # record. A designer who has no uploaded form still writes their questions out; one
+                # who has links it; a plan may legitimately do both, because the prose is the plan
+                # and the link is the instrument.
+                #
+                # ALL scope, and `REFERENCE_MODELS["Questionnaire"]`'s account clause is what makes
+                # that safe: a form is built before it is attached to a workshop, so a WORKSHOP scope
+                # would hide the questionnaire uploaded this morning for the workshop being planned
+                # this afternoon. See that entry for what the picker will and will not offer.
+                f(
+                    "questionnaireRef",
+                    "Uploaded questionnaire",
+                    REF,
+                    S,
+                    ref_model="Questionnaire",
+                    ref_scope=ALL_SCOPE,
+                    report_role=HIDDEN,
+                    help="Link the questionnaire already uploaded to this app, if there is one. "
+                    "Its title is filled in below.",
+                ),
+                fromref("questionnaireName", "Questionnaire title", T, S, report_role=KV),
                 f(
                     "questionnaire",
                     "Questionnaire",
@@ -4211,6 +4288,34 @@ STAGE_13 = StageSpec(
                     "here. The link is what lets the report show the before and the after.",
                 ),
                 fromref("productName", "Developed from", T, S),
+                # ── STAYS TAGS, AND THE PROMOTION AUDIT'S OWN CARVE-OUT IS WHY (2026-09-03) ──────────
+                #
+                # `toolsUsed` two fields down became a picker on this same day because a TOOL RECORD
+                # TYPE EXISTS. The audit's rule for these boxes is "promote a free-text field that
+                # names records WHERE A RECORD TYPE EXISTS", and for materials none does — there is no
+                # `Material` model in `schema.prisma`, and nothing else in the registry treats a
+                # material as a record either: `materialUsage.material` on this same stage is a plain
+                # required TEXT box, and `costMaterialLine` is another.
+                #
+                # THE NEAR MISS, NAMED SO IT IS NOT RE-PROPOSED AS AN IMPROVEMENT. Stage 5 declares a
+                # `rawMaterial` collection (`DwRawMaterial`), and an in-workshop entity IS a legal
+                # `ref_model` — so this could be made a multi-select over those rows. It must not be,
+                # for two independent reasons:
+                #
+                #  1. A DIFFERENT QUESTION. Stage 5's raw materials are what the TRADITIONAL craft
+                #     uses, recorded as a baseline. A prototype is where a designer tries something
+                #     new, and "the material is not in the cluster's baseline" is frequently the whole
+                #     point of the piece. A closed list would refuse to record the intervention.
+                #  2. IT WOULD BRICK THE STAGE. This box is BASIC and required, and so is
+                #     `finalProduct.materials`. A record-backed MULTI_ENUM is a CLOSED list, so a
+                #     workshop that has not filled stage 5 — every workshop that starts from a
+                #     designer's own brief — would face a required field with no answerable option and
+                #     could never submit stage 13 or stage 16. That is the exact failure the browser's
+                #     `MultiEnumField` header spends four paragraphs warning about.
+                #
+                # `finalProduct.materials` is `fromref`-carried from THIS box and both are TAGS, which
+                # is what makes the carry a plain array copy. Promoting one without the other would
+                # hydrate free text into a closed list; promoting both would do 2. twice.
                 f(
                     "materials",
                     "Materials",
@@ -4227,7 +4332,27 @@ STAGE_13 = StageSpec(
                 f("diameterCm", "Diameter", DEC, S, unit="cm", min_value=0),
                 f("weightG", "Weight", DEC, S, unit="g", min_value=0),
                 f("dimensionsNote", "Dimensions (as described)", T, S),
-                f("toolsUsed", "Tools used", TAGS, S),
+                # THE SAME PROMOTION AS `processStep.toolsUsed`, ON THE SAME DAY AND FOR THE SAME
+                # REASON (2026-09-03) — read the long note there for the argument, the ALL scope and
+                # what happens to the prose already stored under it. Declared here rather than
+                # shared through a helper because the two live in different stages with different
+                # neighbours, and a `tools()` factory would hide the one thing a reader of this
+                # entity is looking for: that this box is a picker.
+                #
+                # NOT CARRIED to `finalProduct`, and the note beside `finalProduct.technique` is
+                # unchanged by the promotion: a LIST OF TOOLS is still not a TECHNIQUE, and it is
+                # now a list of tool RECORDS, which makes writing it into a free-text technique box
+                # worse rather than better — the catalogue would read "cmsik2jg…, cmsik2jg…".
+                f(
+                    "toolsUsed",
+                    "Tools used",
+                    MENUM,
+                    S,
+                    ref_model="ToolDocumentation",
+                    ref_scope=ALL_SCOPE,
+                    help="Choose the tools already documented in the repository. Anything typed "
+                    "here before this became a picker is kept and still prints.",
+                ),
                 f("processSummary", "Process followed", RICH, S, report_role=NARR),
                 f(
                     "makingTimeDays",
@@ -4654,9 +4779,17 @@ STAGE_15 = StageSpec(
                 f("mcpApproval", "MCP approval", BOOL, S),
                 f("approvedBy", "Approved by", T, S),
                 f("approvalDate", "Approval date", DATE, S),
-                f("finalLengthCm", "Final length", DEC, S, unit="cm", min_value=0),
-                f("finalWidthCm", "Final width", DEC, S, unit="cm", min_value=0),
-                f("finalHeightCm", "Final height", DEC, S, unit="cm", min_value=0),
+                # THE PROTOTYPE'S OWN THREE MEASUREMENTS, CARRIED FROM STAGE 13 (2026-09-03).
+                #
+                # `prototypeRef` above hydrates these and nothing else on this entity — the other
+                # nineteen fields are the reviewers' judgement rather than a description of the
+                # piece. `fromref` is what tells the designer so on the form; without the sentence a
+                # box that fills itself in is a box somebody types over first. See the internal
+                # carry's own section in `REFERENCE_HYDRATION`, which argues both the carry and the
+                # counter-argument about the word "Final".
+                fromref("finalLengthCm", "Final length", DEC, S, unit="cm", min_value=0),
+                fromref("finalWidthCm", "Final width", DEC, S, unit="cm", min_value=0),
+                fromref("finalHeightCm", "Final height", DEC, S, unit="cm", min_value=0),
                 f(
                     "buyerFeedback",
                     "Buyer / retailer / exporter feedback",
@@ -4724,6 +4857,10 @@ STAGE_16 = StageSpec(
             "DwFinalProduct",
             "Final products",
             (
+                # NOT FILLED FROM `prototype.prototypeCode`, deliberately. Two identifiers with two
+                # lifetimes: a prototype tag is printed the afternoon the piece is made and a
+                # product code goes on a catalogue. A carry would make the catalogue assert the
+                # workshop's internal tag, and only-fill-blanks would then keep it. (2026-09-03)
                 f(
                     "productCode",
                     "Product code",
@@ -4733,7 +4870,7 @@ STAGE_16 = StageSpec(
                     report_role=COL,
                     column_width_pct=12.0,
                 ),
-                f(
+                fromref(
                     "name",
                     "Product name",
                     T,
@@ -4742,6 +4879,19 @@ STAGE_16 = StageSpec(
                     report_role=COL,
                     column_width_pct=24.0,
                 ),
+                # ── THE PROTOTYPE THIS PRODUCT IS, CARRIED RATHER THAN RETYPED (2026-09-03) ────
+                #
+                # Nine of this entity's boxes now fill themselves in from the prototype row chosen
+                # here, and every one of them was being typed twice: the prototypes table at stage
+                # 13 and the final-products table at stage 16 printed different materials and
+                # different dimensions for ONE physical piece, in one report, with nothing saying
+                # which had been measured. The mapping, the eight refusals beside it and the two
+                # things that deliberately do not cross (the photographs, and the costs) are argued
+                # in `REFERENCE_HYDRATION`'s internal-carry section.
+                #
+                # STILL `report_role=HIDDEN`, and hydrating does not change that: the LINK is
+                # plumbing, and what a reader of the report needs is the nine values it filled in,
+                # which print in their own boxes.
                 f(
                     "prototypeRef",
                     "From prototype",
@@ -4750,13 +4900,20 @@ STAGE_16 = StageSpec(
                     ref_model="DwPrototype",
                     report_role=HIDDEN,
                 ),
+                # DELIBERATELY NOT `fromref`. The catalogue plate is the designer's own photograph
+                # of the finished piece; the prototype's gallery holds working shots of the same
+                # object, and both rows are in ONE workshop, so a carry would put the SAME media
+                # ids under two headings and the report's image pass — which dedupes by media id —
+                # would print the working shot as the plate. See the internal-carry section.
                 *photos("finalPhotos", "Final photographs", B, "Photograph caption"),
-                f("lengthCm", "Length", DEC, B, unit="cm", min_value=0),
-                f("widthCm", "Width", DEC, B, unit="cm", min_value=0),
-                f("heightCm", "Height", DEC, B, unit="cm", min_value=0),
-                f("weightG", "Weight", DEC, S, unit="g", min_value=0),
-                f("dimensionsNote", "Dimensions", T, B, report_role=COL, column_width_pct=18.0),
-                f(
+                fromref("lengthCm", "Length", DEC, B, unit="cm", min_value=0),
+                fromref("widthCm", "Width", DEC, B, unit="cm", min_value=0),
+                fromref("heightCm", "Height", DEC, B, unit="cm", min_value=0),
+                fromref("weightG", "Weight", DEC, S, unit="g", min_value=0),
+                fromref(
+                    "dimensionsNote", "Dimensions", T, B, report_role=COL, column_width_pct=18.0
+                ),
+                fromref(
                     "materials",
                     "Materials",
                     TAGS,
@@ -4765,9 +4922,12 @@ STAGE_16 = StageSpec(
                     report_role=COL,
                     column_width_pct=22.0,
                 ),
+                # NOT CARRIED, and it is the pair a reader will ask about. `prototype.toolsUsed` is
+                # a TAGS list of tools; a technique is the named craft operation. They are different
+                # answers and the source has no box for this one.
                 f("technique", "Technique", T, S, report_role=COL, column_width_pct=24.0),
-                f("makingProcess", "Making process", RICH, S, report_role=NARR),
-                f("makingTimeDays", "Making time", DEC, S, unit="days", min_value=0),
+                fromref("makingProcess", "Making process", RICH, S, report_role=NARR),
+                fromref("makingTimeDays", "Making time", DEC, S, unit="days", min_value=0),
                 f("costPrice", "Cost price", MONEY, S, unit="INR", min_value=0),
                 f(
                     "sellingPrice",
@@ -4779,6 +4939,12 @@ STAGE_16 = StageSpec(
                     report_role=COL,
                     column_width_pct=20.0,
                 ),
+                # NOT HYDRATED FROM `prototypeRef`, THOUGH IT IS THE SAME QUESTION. The person who
+                # made the prototype is the person who made this, so the FACT carries; the BOX does
+                # not, because a hydrated REF needs a name box on this entity to resolve through and
+                # there is none — the picker would show a chosen id with nothing readable beside it,
+                # which is the artisan-dropdown defect this repository shipped once already. Give
+                # this entity an `artisanName` and the pair becomes ordinary. (2026-09-03)
                 f("artisanRef", "Made by", REF, S, ref_model="DwParticipant"),
                 f("designerName", "Designed by", T, S),
                 f(

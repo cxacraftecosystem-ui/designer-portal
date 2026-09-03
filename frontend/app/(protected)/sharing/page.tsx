@@ -1285,12 +1285,17 @@ export default function SharingPage() {
           <h2 className="font-display font-bold text-lg text-ink">Access to your data</h2>
           <p className="text-sm text-ink-muted">People who requested or hold access to data you uploaded.</p>
         </div>
+        {/* The row rules below are `divide-line-200`, not the literal `#efe9e2` that stood there
+            until 2026-09-03: an arbitrary hex does not invert, so they stayed a warm light grey on a
+            dark card while the panel's own border turned. Non-negotiable 2 — every neutral goes
+            through the token ladder. The outgoing list further down carries the identical class for
+            the identical reason. */}
         {incoming.length === 0 ? (
           <div className="p-4">
             <EmptyState title="No requests yet" />
           </div>
         ) : (
-          <ul className="divide-y divide-[#efe9e2]">
+          <ul className="divide-y divide-line-200">
             {incoming.map((g) => (
               <li key={g.id} className="flex flex-wrap items-center gap-3 p-4">
                 <div className="min-w-0 flex-1">
@@ -1342,7 +1347,7 @@ export default function SharingPage() {
             <EmptyState title="No access yet" />
           </div>
         ) : (
-          <ul className="divide-y divide-[#efe9e2]">
+          <ul className="divide-y divide-line-200">
             {outgoing.map((g) => (
               <li key={g.id} className="flex flex-wrap items-center gap-3 p-4">
                 <div className="min-w-0 flex-1">

@@ -140,6 +140,34 @@ permission error:
    an ACTIVE `DesignerRoster` row is accepted by the allow-list as an admission, so empanelling
    somebody remains one action rather than two.
 
+**Four paths empanel a designer, and `POST /api/users` became the fourth on 2026-09-03.** The other
+three are the designer-roster screen itself (`POST /api/designers/roster`), admitting an address on
+the platform allow-list (`routes/access`), and the sign-in path (`routes/auth`, for an address the
+allow-list already admits). The fourth was the gap: an admin creating an account at `DESIGNER`
+produced a user with no roster row, so the person did not appear on `/admin/designers` and nothing on
+the screen said why. It now empanels immediately, with `DesignerRoster.addedById` naming that admin,
+and **the row appears before the person has ever signed in**. Adding them again by hand answers 409.
+**It never revives a suspended empanelment** — `ensure_empanelled` only ever creates, which is the one
+rule shared by all four doors and the reason a readmission cannot be smuggled through any of them.
+
+**Barring somebody now ends their live sessions, and a role change deliberately does not (2026-09-03).**
+Pressing **Suspend** (`DELETE /api/access/roster/{id}`) or **Reject** (the REJECT arm of
+`POST /api/access/roster/{id}/decision`) stamps `User.sessionsValidFrom`, so every token that address
+is already holding stops working on its next request — an administrator no longer has to wait out
+`JWT_EXPIRES_MINUTES` before "access is cut" is true. Ending an empanelment on the designer roster
+does the same, when the empanelment was actually carrying admissions.
+
+Two exceptions, named because both fail in the direction where the administrator has been *told*
+access is cut: **rows barred before 2026-09-03 were never stamped** and nothing backfills them, and a
+**Gmail-alias sweep that exceeds its limit** returns no answer rather than a wrong one, logs at ERROR
+naming the address, and leaves any live session running. See
+[OPEN_FINDINGS.md](OPEN_FINDINGS.md).
+
+A **role change signs nobody out** — neither the PATCH on a roster row nor `PATCH /api/users`. That is
+a decision, not an omission: losing a tier is not losing access, and ending every session somebody
+holds because an admin corrected their role would be a worse outcome than the correction. The identity
+cache is invalidated instead, so the new role takes effect on the very next request.
+
 Admin and above manage the allow-list (`can_manage_access_roster` → `require_access_manager`,
 `/api/access/roster`); read is gated with write, because the pending queue is a list of somebody's
 colleagues, applicants and former staff.
@@ -557,6 +585,18 @@ assignment curates it, and from then on the roster is the gate. That is what
 `workshop_is_curated` decides, and it is what stops adding the feature from locking everyone out of
 every existing workshop.
 
+**A 403 on the rosters now rolls back the field change that arrived in the same PATCH (2026-09-03).**
+`PATCH /workshops/{id}` guards its `artisanIds` / `craftIds` rewrites with
+`assert_can_contribute_relation`, and those guards need the existing link counts — the very truth the
+save is about to replace — so they sit *after* the workshop row's own update. Before this date that
+ordering meant an ordinary contributor who edited the title *and* tried to rewrite a populated roster
+was refused, correctly, **having already had their title change committed** (and, before that, an
+audit row written for it). The whole PATCH is now one transaction, so the refusal takes the row
+update back with it. **The 403 itself, its detail string and the response shape are unchanged; only
+the rollback is new** — and the guards were not moved, because they cannot be evaluated any earlier.
+It is the same rule `processes.update_process` states out loud: a rejected request must leave no
+partial state behind.
+
 ### 4.2 Cross-researcher data access — three tiers
 
 `DataAccessGrant` is owner-to-grantee, one row per pair (`@@unique([ownerId, granteeId])`), and it is
@@ -624,6 +664,22 @@ Widening the LOAD is what widened read and stage-writes; delete and re-granting 
 else and were deliberately left there. That is the property to preserve when this is next touched: a
 new capability gated by "can you load this workshop" silently joins the first column.
 
+**A grant is honoured only while the holder's CURRENT role is in `deps.DESIGN_WORKSHOP_ROLES`
+(2026-09-03).** Before that date the read path never re-asked, so a grantee who was demoted out of
+that set kept the grant working: the row said "this account may run workshops" and the account no
+longer could. **This narrows nobody's eligibility** — `design_workshop_viewers` already refused to
+*issue* a grant outside that set, and the write path is unchanged. What it closes is the read path's
+silence about a role that moved afterwards.
+
+**The row is not deleted, and that is the point.** A grant records a decision an admin made about a
+workshop, and a demotion is not a revocation of that decision — so the row stays and starts working
+again the moment the role does. Deleting it would make a temporary demotion into a permanent loss of
+access that an admin would have to notice and repair by hand. A demoted grantee gets the same 404 as
+a stranger and a revoked grantee, which is the existing behaviour for anyone the load turns away.
+
+**Inspector scope is untouched by this**, and not by exemption: an inspector has never reached
+`load_workshop_or_404` at all (§4.5), so there was nothing here to narrow.
+
 > **AND THAT SENTENCE CAME TRUE — THREE TIMES, ON 2026-08-12.** The dictation-consent, AI-layers
 > and custom-sections rows were added that day, after an audit found this table describing a grant
 > that had grown three capabilities nobody had recorded. (They are NAMED here rather than counted
@@ -665,6 +721,16 @@ new capability gated by "can you load this workshop" silently joins the first co
 > colleague had uploaded to their own workshop. `backend/tests/test_media_entitlement.py` pins both
 > directions of it, in `test_a_granted_co_designer_is_shown_the_workshops_own_recordings` and
 > `test_a_designer_with_no_grant_is_still_refused_the_same_recording`.
+>
+> **WHO MAY HOLD THE STRING IS ONE QUESTION; HOW LONG THE STRING STAYS GOOD IS ANOTHER, ADDED
+> 2026-09-03.** Everything above decides *whether* an account is served a `url` at all, and none of it
+> changed. What it has never said is that the string is permanent — and with `MEDIA_PRESIGNED_READS`
+> on, it is not: a served `url` is signed and expires in fifteen minutes
+> (`MEDIA_PRESIGNED_READ_TTL_SECONDS`). **Do not read the entitlement rule as a statement that a URL
+> once handed out keeps working.** Today the flag ships `false` and the URL is permanent, which is
+> exactly the exposure [SECURITY.md](SECURITY.md)'s risk P0 is about; its operator runbook is the
+> sequence that changes it. The entitlement test is unaffected either way — an unentitled account is
+> served no `url`, signed or otherwise.
 >
 > **THE ONE SURFACE THAT DISAGREED WAS `GET /media`, AND IT WAS BROUGHT INTO LINE ON THE SAME DATE.**
 > Its `url` gate keyed on uploader identity alone, so the API withheld the download link for a
@@ -832,8 +898,11 @@ module's own header explains that an autocompleted `visible_to_clause` import in
 
 **READ-ONLY IS STRUCTURAL, NOT A FLAG.** The obvious build — a `DesignWorkshopViewer` row, or a
 `level` column on one — was designed and rejected, and the reason is the one §4.4.1 has been
-recording all along. `load_workshop_or_404(…, for_edit=True)` performs no role check whatsoever: the
-creator, an admin, or **any** viewer grantee passes, and that single helper is what **fourteen**
+recording all along. `load_workshop_or_404(…, for_edit=True)` carries no *inspector* predicate: the
+creator, an admin, or a viewer grantee passes — and since 2026-09-03 a grant is honoured only for an
+account whose role is still in the design-workshop set, so a demoted or suspended grantee is turned
+away (F1's closure; the helper's own docstring carries the argument). That single helper is what
+**fourteen**
 write routes pair with `_require_designer` — nine in their own handlers plus the five AI-verb routes
 that inherit the pair from `_verb_gate`. (It said *eighteen*, which is the count of every route
 `_require_designer` guards, two of them GET allowance probes that write nothing and never reach this

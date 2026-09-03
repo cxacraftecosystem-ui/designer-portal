@@ -73,6 +73,16 @@ _EXEMPT_PREFIXES = ("/health",)
 # 110 bits of `secrets` output, and `services/design_workshop_grants.py` argues at length that
 # it must keep resting on the entropy alone rather than on a limiter. Listing it would invite the
 # next reader to weaken that argument.
+#
+# **THIS LIST GOVERNS THE PER-NETWORK BUDGET ONLY, AND SINCE 2026-09-03 THAT IS HALF THE STORY.**
+# The per-account budget below this file's second banner is NOT driven by any list: it is taken by
+# hand, inside a handler, at the first moment the account is known. As of 2026-09-03 it is taken at
+# THREE places, not one — `routes/auth.login`, `routes/auth.change_password` and
+# `routes/datasets.mint_dataset_token` — and two of those (this list's two doors) need BOTH budgets
+# while `change-password` needs only the per-account one, because it is not a path an anonymous
+# caller can reach at all. So the checklist for the next password check anybody adds is two items
+# and not one: add the path here if it is anonymous, and take the account budget in the handler.
+# Neither is inferred from the other and nothing checks that you did both.
 _CREDENTIAL_PREFIXES = ("/api/auth/login", "/api/datasets/token")
 
 # Failed sign-ins allowed per address before the door closes, and the window they refill over.
@@ -206,10 +216,27 @@ def _identity(scope: Scope, *, ignore_bearer: bool = False) -> str:
 # network for each guess meets a fresh, full bucket every time.
 #
 # THE FIX IS NOT TO TEACH THE MIDDLEWARE TO READ BODIES. It is a second, small budget keyed on the
-# RESOLVED ACCOUNT ID, spent by ``routes/auth.login`` at the first moment the account is known and
-# before bcrypt runs. One account is one bucket however it was addressed, which is the property the
-# three identifier spaces would otherwise have destroyed — an account reachable three ways would
-# have had three budgets.
+# RESOLVED ACCOUNT ID, spent at the first moment the account is known and before bcrypt runs. One
+# account is one bucket however it was addressed, which is the property the three identifier spaces
+# would otherwise have destroyed — an account reachable three ways would have had three budgets.
+#
+# **ONE BUCKET PER ACCOUNT ACROSS EVERY DOOR THAT CHECKS A PASSWORD, AND AS OF 2026-09-03 THERE ARE
+# THREE OF THEM.** It began as ``routes/auth.login``'s alone, and that sentence used to be written
+# here as though it always would be. It was not true even then:
+#
+#   * ``routes/datasets.mint_dataset_token`` exchanges the same email and password for a THIRTY-DAY
+#     read token over the entire repository, and had no lockout of any kind — so the whole budget
+#     above could be walked around by guessing at the other door, which hands out a strictly better
+#     credential than the one being protected.
+#   * ``routes/auth.change_password`` verifies the CURRENT password on a request that is already
+#     authenticated. Its own docstring explains that it exists so a stolen session cannot become a
+#     permanent takeover; unlimited guesses at that field is the brute-force half of exactly that.
+#     It is not on ``_CREDENTIAL_PREFIXES`` and must not be — the network budget there is keyed on
+#     an address for anonymous callers, and this route is reached with a bearer token — so the
+#     per-account budget is the ONLY thing in front of that bcrypt call.
+#
+# All three spend the SAME bucket for one account, which is the point rather than a side effect: a
+# budget per door is three budgets, and an attacker picks whichever door still has tokens in it.
 #
 # **IT IS NOT GATED ON ``SCALE_RATE_LIMIT_ENABLED``, UNLIKE EVERYTHING ELSE IN THIS PACKAGE.** The
 # flag answers "is this optional performance layer installed on this box"; a per-account limit in

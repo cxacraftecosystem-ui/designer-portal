@@ -48,7 +48,17 @@ retires. The database agrees with both: see the ``ON DELETE RESTRICT`` on
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    Request,
+    UploadFile,
+    status,
+)
 from fastapi.responses import Response
 
 from app.core.db import db
@@ -86,6 +96,7 @@ from app.services.questionnaire_forms import (
     reuse_questionnaire,
     save_answers,
     supersede_question,
+    visible_questionnaire_where,
 )
 from app.services.questionnaire_kinds import coerce_kind, label_for
 from app.services.questionnaire_xlsx import (
@@ -107,12 +118,20 @@ from app.services.records import (
     require_record,
     with_id_tiebreak,
 )
+from app.services.uploads import read_upload_bounded
 
 router = APIRouter(prefix="/questionnaires", tags=["questionnaires"])
 
 # A questionnaire is a page of typing, not a media file. The ceiling is generous enough for a
 # thousand-question instrument with answers in it and low enough that this endpoint cannot be used
 # to push a hundred megabytes through a synchronous parser.
+#
+# AND AS OF 2026-09-03 THAT SECOND CLAUSE IS TRUE, WHICH IT WAS NOT WHEN IT WAS WRITTEN (finding
+# A30-10). The ceiling was compared against ``len(content)`` AFTER ``await file.read()`` had already
+# put the whole body in the heap of this single-worker process, so a hundred-megabyte POST was
+# refused only once it had been paid for in full — the constant named a limit that nothing enforced
+# until it was too late to matter. ``_read_upload`` now delegates to ``services/uploads``, which
+# refuses on the declared Content-Length before a byte is read and counts what actually arrives.
 MAX_UPLOAD_BYTES = 8 * 1024 * 1024
 
 _XLSX_SUFFIXES = (".xlsx", ".xlsm", ".xltx")
@@ -279,46 +298,20 @@ async def _works_on_this_questionnaires_workshop(record: Any, user: Any) -> bool
     return await has_viewer_grant(workshop_id, user.id)
 
 
-def _visible_questionnaire_where(user: Any) -> dict[str, Any]:
-    """The row filter for "questionnaires this designer may see".
-
-    AND-COMPOSED BY THE CALLER, NEVER ASSIGNED TO `where["OR"]`. The list endpoint already spends
-    `OR` on its search box, so writing this as a top-level `OR` would silently replace the search
-    and widen the result set — the identical trap the design-workshop list hit when viewer grants
-    were added there. Returning a fragment for `where["AND"]` makes that mistake impossible to make.
-    """
-    return {
-        "OR": [
-            {"ownerId": user.id},
-            {"designWorkshop": {"is": {"createdById": user.id, "deletedAt": None}}},
-            {
-                "designWorkshop": {
-                    "is": {"deletedAt": None, "viewers": {"some": {"userId": user.id}}}
-                }
-            },
-            # ── THE FOURTH CLAUSE: THE PUBLISHED DEFAULT, added 2026-08-28 ──────────────────────
-            #
-            # An administrator's standard instrument, marked ``isShared``. The other three clauses
-            # are all "yours, or your workshop's", so a form that belongs to EVERY workshop matched
-            # none of them and was invisible to every designer while sitting in the table — which is
-            # what the owner reported. See ``Questionnaire.isShared`` in schema.prisma for why this
-            # is a column somebody SET rather than a convention inferred from the owner's role or
-            # from the absence of a workshop.
-            #
-            # ``isActive`` IS PART OF THE CLAUSE AND NOT LEFT TO THE CALLER. Two of this function's
-            # three callers pass ``activeOnly=True`` and one does not, and a retired instrument must
-            # stop appearing in everybody's picker the moment it is retired — a shared form is the
-            # one row where "still listed after retirement" is wrong for every designer at once
-            # rather than for its author. The pair is indexed together for the same reason.
-            #
-            # IT ADMITS THE FORM AND NOTHING ELSE. ``read_questionnaire`` still narrows ``entries``
-            # to the caller's own sittings unless they own the form, are an admin, or work on its
-            # workshop; that check reads ``ownerId`` / ``_works_on_this_questionnaires_workshop``
-            # and does NOT consult this flag, deliberately. Adding it there would turn one published
-            # instrument into a window onto every respondent's name and answers in the repository.
-            {"isShared": True, "isActive": True},
-        ]
-    }
+#: The row filter for "questionnaires this designer may see", now owned by the service.
+#:
+#: MOVED, NOT CHANGED (2026-09-03). The clause and every word of its argument are verbatim in
+#: ``services/questionnaire_forms.visible_questionnaire_where``; this name stays because three call
+#: sites below read it and because a private helper that quietly became public reads, in a diff, like
+#: a widening. What moved it is a second surface with the identical question:
+#: ``REFERENCE_MODELS["Questionnaire"]`` narrows stage 7's instrument picker, and
+#: ``services/design_workshops`` cannot import this module — this module imports IT — so the choice
+#: was to move the rule or to keep a second copy of it. Two copies of a visibility rule disagree
+#: eventually, and the one that wins is the wider one.
+#:
+#: The attach-to-workshop dropdown in ``list_attachable_questionnaires`` still composes its own,
+#: narrower clause by hand, and its comment says why. That was not moved and must not be merged in.
+_visible_questionnaire_where = visible_questionnaire_where
 
 
 def _require_owner(record: Any, user: Any) -> None:
@@ -443,8 +436,32 @@ def _kind_or_422(value: str | None) -> str | None:
         ) from exc
 
 
-async def _read_upload(file: UploadFile) -> bytes:
-    """The uploaded bytes, or a 4xx a designer can act on rather than a 500 from openpyxl."""
+async def _read_upload(file: UploadFile, request: Request | None = None) -> bytes:
+    """The uploaded bytes, or a 4xx a designer can act on rather than a 500 from openpyxl.
+
+    THE CAP USED TO BE CHECKED AFTER THE BODY WAS ALREADY IN MEMORY (2026-09-03, finding A30-10).
+    ``await file.read()`` ran first and ``len(content) > MAX_UPLOAD_BYTES`` second, which is a
+    ceiling that costs exactly what it was supposed to prevent: the process holds the whole upload,
+    and only then answers 413. On one uvicorn worker serving a fleet, a handful of concurrent
+    oversized POSTs is the memory of the box, and nothing about the route said no earlier — this is
+    the same shape ``data_browser``'s conversion bound was fixed for, one door along.
+
+    THE ORDER IS THE WHOLE FIX, AND IT IS THREE REFUSALS FROM CHEAPEST TO DEAREST. The extension is
+    a string on the multipart part, so a .docx is turned away without touching the body at all. The
+    declared ``Content-Length`` costs a header lookup, and turns away an honest large workbook
+    before it is uploaded. Only then is the body read, and ``read_upload_bounded`` counts it as it
+    arrives so a request that UNDERSTATES its length is stopped mid-read rather than after it.
+
+    DELEGATED RATHER THAN WRITTEN HERE, because this is the second door with this shape and there
+    will be a third: the bound belongs beside the other upload rules in ``services/uploads``, where
+    one fix reaches every route. What stays here is what is specific to this door — that the file
+    must be a workbook, and that an empty one is a designer who attached the wrong thing rather than
+    an error the parser should be asked to explain.
+
+    ``request`` IS OPTIONAL AND THE BOUND DOES NOT DEPEND ON IT. Without it only the header
+    pre-check is skipped; the mid-read count still holds, which is the refusal that cannot be lied
+    to. Every caller in this file passes one.
+    """
     name = (file.filename or "").lower()
     if name and not name.endswith(_XLSX_SUFFIXES):
         raise HTTPException(
@@ -454,20 +471,13 @@ async def _read_upload(file: UploadFile) -> bytes:
                 "upload that, or use File > Save As and choose 'Excel Workbook (.xlsx)'."
             ),
         )
-    content = await file.read()
+    content = await read_upload_bounded(
+        file, MAX_UPLOAD_BYTES, request=request, purpose="questionnaire workbook"
+    )
     if not content:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="The upload was empty. Attach the filled-in pro-forma.",
-        )
-    if len(content) > MAX_UPLOAD_BYTES:
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=(
-                f"That workbook is larger than the {MAX_UPLOAD_BYTES // (1024 * 1024)} MB limit. A "
-                "questionnaire is text — if the file is this big it probably has images or extra "
-                "sheets in it."
-            ),
         )
     return content
 
@@ -599,6 +609,7 @@ async def download_question_set(
 
 @router.post("/upload", status_code=status.HTTP_201_CREATED)
 async def upload_questionnaire(
+    request: Request,
     file: UploadFile = File(...),
     title: str | None = Form(default=None),
     designWorkshopId: str | None = Form(default=None),
@@ -613,6 +624,11 @@ async def upload_questionnaire(
     parameters instead, and a client that appended them to the body would have had them silently
     ignored: an untitled questionnaire attached to nothing, with a 201 saying it went fine.
 
+    ``request`` IS NOT A PARAMETER ANY CLIENT SENDS. FastAPI fills it from the connection, so it
+    changes nothing about this route's contract — no query string, no form field, no header a
+    fielded 0.0.7 handset or a cached web bundle has to learn. It is here only so ``_read_upload``
+    can read the declared ``Content-Length`` and refuse an oversized workbook before reading it.
+
     The response carries ``report.problems``: every row the parser could not read and every
     assumption it had to make, with its Excel row number. THAT LIST IS THE FEATURE. A designer who
     uploads forty questions and is shown thirty-eight, with no way to find out which two are missing
@@ -620,7 +636,7 @@ async def upload_questionnaire(
     Excel never calculated, "maybe" in the Required column) are all invisible from the result.
     """
     _require_designer(current_user)
-    content = await _read_upload(file)
+    content = await _read_upload(file, request)
     try:
         parsed = parse_questionnaire_workbook(content, filename=file.filename)
     except QuestionnaireXlsxError as exc:
@@ -653,6 +669,7 @@ async def upload_questionnaire(
 @router.post("/{questionnaire_id}/upload")
 async def reupload_questionnaire(
     questionnaire_id: str,
+    request: Request,
     file: UploadFile = File(...),
     title: str | None = Form(default=None),
     current_user: Any = Depends(get_current_user),
@@ -667,7 +684,9 @@ async def reupload_questionnaire(
     """
     record = await _require_questionnaire(questionnaire_id, current_user)
     _require_owner(record, current_user)
-    content = await _read_upload(file)
+    # ``request`` is filled by FastAPI from the connection and is not part of this route's contract
+    # — see ``upload_questionnaire``. It buys the Content-Length refusal before the read.
+    content = await _read_upload(file, request)
     try:
         parsed = parse_questionnaire_workbook(content, filename=file.filename)
     except QuestionnaireXlsxError as exc:

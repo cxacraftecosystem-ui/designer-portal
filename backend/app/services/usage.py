@@ -14,18 +14,25 @@ CONTENT comparison at ``/api/analytics/design-workshops`` and at ``/admin/analyt
 WHY A BUFFER, AND WHY A WRITE PER REQUEST WAS NEVER ON THE TABLE
 ================================================================================================
 
-``DATABASE_CONNECTION_LIMIT`` is 10, and it is 10 because 40 exhausted a pooler's shared
+``DATABASE_CONNECTION_LIMIT`` defaults to 10, and it is 10 because 40 exhausted a pooler's shared
 client-connection budget and crash-looped this deployment — the incident is recorded on that setting
 in ``core/config.py`` and the dashboard route carries a written warning not to raise it to fit
-something new in. ``concurrency.gather_reads`` is already bounded by that same 10.
+something new in. THE DEPLOYMENT SETS IT LOWER STILL, to 5, against a session pool of about fifteen
+slots shared with the queue process. ``concurrency.gather_reads`` is bounded by whatever it is.
 
-The database is also in a different AWS region from the web box: ``concurrency.py`` measured ONE
-Prisma round trip at 756 ms against tables whose server-side execution is 0.04–0.24 ms. Virtually
-the whole cost is latency, paid once per statement and almost independent of how many rows the
-statement carries. Those two facts settle the design between them:
+The database WAS also in a different AWS region from the web box: ``concurrency.py`` measured ONE
+Prisma round trip at 756 ms against tables whose server-side execution is 0.04–0.24 ms. Production
+moved on 2026-09-02 to a co-located database where a round trip is one or two milliseconds, so that
+figure and every "most of a second" derived from it below are HISTORY — the measurement that built
+this module rather than a claim about today, and nothing here has been re-timed since.
 
-* an INSERT inside the request path would take one of ten connections and add most of a second to
-  the response, on every request, to record that the request was slow;
+**THE DESIGN IS UNCHANGED BY THAT, AND THE CONNECTION IS WHY.** Latency was only ever half of the
+argument; the other half is that an insert on the request path takes ONE OF FIVE connections, and
+that number did not move — it got smaller. The two facts settle the design between them:
+
+* an INSERT inside the request path would take one of those five connections on every request, to
+  record that the request was slow — and it would do so under exactly the load that makes the pool
+  scarce, which is the load worth measuring;
 * one ``create_many`` of 200 rows costs very nearly what one ``create_many`` of 1 row costs, so
   batching is close to free and divides the connection cost by the batch size.
 
@@ -221,8 +228,11 @@ UNSAFE_ROUTE = "<unsafe>"
 
 #: Rows per ``create_many``, and the number that divides the connection cost.
 #:
-#: One Prisma round trip costs ~756 ms of latency against 0.04–0.24 ms of server-side work
-#: (``concurrency.py``), so the statement's cost barely moves with its row count. At 200 the
+#: One Prisma round trip cost ~756 ms of latency against 0.04–0.24 ms of server-side work when this
+#: was chosen (``concurrency.py``, and the co-located ~1-2ms it moved to on 2026-09-02), so the
+#: statement's cost barely moves with its row count. THAT RATIO IS WHAT 200 RESTS ON AND IT SURVIVED
+#: THE MOVE: a statement still costs a connection and a round trip whether it carries one row or two
+#: hundred. At 200 the
 #: amortised cost of the pool connection is 1/200th of a request; at 1,000 it would be 1/1000th and
 #: the marginal gain is nothing, while the row a designer generated would wait five times longer to
 #: become durable and a lost process would take five times as much with it. 200 is where those two
@@ -2555,7 +2565,10 @@ def _expected_buckets(since: datetime, until: datetime, unit: str) -> int:
 
     Computed BEFORE the query so an over-wide request is refused without touching the database, which
     is the same ordering ``routes/usage._window`` uses for the window cap and for the same reason: a
-    refusal that costs a 756 ms round trip teaches people to fear the endpoint.
+    refusal that costs a round trip teaches people to fear the endpoint. (That was a 756 ms hop when
+    this was written and is a co-located millisecond or two since 2026-09-02; the ordering costs
+    nothing either way, and a refusal that reaches the database is also a refusal that takes a
+    connection.)
     """
     step = timedelta(hours=1) if unit == "hour" else timedelta(days=1)
     first = _floor_to(since, unit)

@@ -444,6 +444,7 @@ import com.designprototype.workshop.data.AppScope
 import com.designprototype.workshop.data.AddressReferenceDto
 import com.designprototype.workshop.data.LocationDto
 import com.designprototype.workshop.data.AppReleaseDto
+import com.designprototype.workshop.data.DW_UPDATE_DOWNLOAD_RETRY_MESSAGE
 import com.designprototype.workshop.BuildConfig
 import com.designprototype.workshop.data.FeedbackDto
 import com.designprototype.workshop.data.FeedbackReportCreateRequest
@@ -1347,7 +1348,7 @@ private fun RepositoryApp(
     // Offline outbox auto-sync: drain queued entries on login/start, whenever the network returns, and
     // on a periodic fallback. `pendingUploads` powers the "saved offline — uploading" banner.
     /**
-     * BOTH HALVES OF THE QUEUE, not one number.
+     * EVERY PART OF THE QUEUE, not one number.
      *
      * This was a single `pendingUploads` count and the banner drew it under a cloud-off icon with the
      * words "uploading when you're online" — which was a lie for every entry the server had refused
@@ -1355,6 +1356,13 @@ private fun RepositoryApp(
      * screen told them apart; and there was no way to retry one. See `data/OfflineBanner.kt` for the
      * whole account, and `dwDeviceSyncBanner` for the same fix made on the design-workshop side
      * first.
+     *
+     * IT IS THREE NUMBERS NOW, NOT TWO (2026-09-03). [OutboxCounts.otherAccount] is the third thing a
+     * connection does not move: an entry captured on this handset by the OTHER designer sharing it,
+     * which `syncOutbox` skips rather than filing their fieldwork under this account's name. It
+     * reached this banner as "waiting" — the same shape of lie as the refusal, one field along. The
+     * count comes from `repository.outboxCounts`, which reads the signed-in account from the token
+     * store, so the number below and the pass that produced it agree about who is holding the phone.
      */
     var outboxCounts by remember { mutableStateOf(OutboxCounts(waiting = 0, refused = 0)) }
     var showOutboxTray by remember { mutableStateOf(false) }
@@ -4232,9 +4240,22 @@ private fun HomeScreen(
                                                 requestInstallPermission(context)
                                                 throw IllegalStateException("Enable \"Install unknown apps\" for Design Workshop in the screen that just opened, then tap Update now again.")
                                             }
-                                            val apk = repository.downloadApk(context, release.url!!, release.versionCode)
+                                            // THE DECLARED SIZE TRAVELS WITH THE URL. Null on every
+                                            // release published before the column existed, which
+                                            // downloads exactly as it always did — see
+                                            // `data/AppUpdateIntegrity.kt`. A short body now fails
+                                            // here, with a message this handler prints and a button
+                                            // that is enabled again a line below, instead of
+                                            // reaching the OS installer as an unparseable file
+                                            // behind a dialog the designer cannot dismiss.
+                                            val apk = repository.downloadApk(
+                                                context,
+                                                release.url!!,
+                                                release.versionCode,
+                                                expectedBytes = release.sizeBytes,
+                                            )
                                             launchApkInstaller(context, apk)
-                                        }.onFailure { updateError = it.message ?: "Unable to download the update — check your connection and try again." }
+                                        }.onFailure { updateError = it.message ?: DW_UPDATE_DOWNLOAD_RETRY_MESSAGE }
                                         // Keep `pendingUpdate` set: if the user backs out of the installer the
                                         // dialog must stay until the new version is actually installed.
                                         updateBusy = false
@@ -11322,7 +11343,8 @@ private fun ProcessForm(
                                     .onSuccess { existingPreMedia = existingPreMedia.filterNot { it.id == saved.id } }
                                     .onFailure { error -> onError(error.message ?: "Unable to remove media") }
                             }
-                        }
+                        },
+                        repository = repository
                     )
                 }
             }
@@ -11358,7 +11380,8 @@ private fun ProcessForm(
                                             .onSuccess { step.existingMedia = step.existingMedia.filterNot { it.id == saved.id } }
                                             .onFailure { error -> onError(error.message ?: "Unable to remove media") }
                                     }
-                                }
+                                },
+                                repository = repository
                             )
                         }
                     }
@@ -11811,7 +11834,9 @@ private fun DetailRow(label: String, value: String?) {
 /** A saved media row, its upload provenance, plus the transcript (or a live "transcribing" spinner). */
 @Composable
 private fun MediaWithTranscript(context: Context, media: MediaFileDto, repository: WorkshopRepository? = null) {
-    AndroidSavedMediaPreview(context = context, media = media)
+    // The repository was already optional here and was already being passed down for the transcript
+    // half; handing it on is what lets an expired URL be refreshed on this row too.
+    AndroidSavedMediaPreview(context = context, media = media, repository = repository)
     // Upload provenance: who added this media file and when.
     val uploader = media.uploadedBy?.name
     val uploadedWhen = formatIsoDate(media.createdAt)
@@ -15071,7 +15096,8 @@ private fun AndroidMediaForm(
                                 }
                                 .onFailure { error -> onError(error.message ?: "Unable to remove media") }
                         }
-                    }
+                    },
+                    repository = repository
                 )
             }
         }
@@ -15418,11 +15444,61 @@ private fun DiscardBadge(contentDescription: String, onClick: () -> Unit, modifi
 private fun AndroidSavedMediaPreview(
     context: Context,
     media: com.designprototype.workshop.data.MediaFileDto,
-    onDelete: (() -> Unit)? = null
+    onDelete: (() -> Unit)? = null,
+    /**
+     * Supplied where a caller has one, and the ONLY thing it is used for is refreshing an expired
+     * URL — see the block comment below. NULL is every behaviour this composable had before
+     * 2026-09-03, which is what makes adding it safe at four call sites one at a time.
+     */
+    repository: com.designprototype.workshop.data.WorkshopRepository? = null
 ) {
-    val uri = remember(media.url) { media.url?.let(Uri::parse) }
+    /*
+     * A CACHED `MediaFile.url` CAN NOW STOP WORKING, AND THIS IS WHERE THAT SHOWS UP FIRST.
+     *
+     * The API is gaining a flag (`MEDIA_PRESIGNED_READS`) that replaces the permanent public CDN
+     * link with a 15-minute signature, and afterwards a human removes the bucket's public-read
+     * statement — at which point every URL this handset cached starts answering 403. This row is
+     * drawn from whatever the payload said whenever the payload arrived, which on a field handset is
+     * routinely hours or days ago.
+     *
+     * `MediaUrlRefresh` owns the whole decision: offline does nothing at all (there is no network to
+     * ask and no local copy of somebody else's file to substitute), and one media id plus one failed
+     * URL buys exactly one re-read, for ever. Read its header before adding a second retry anywhere
+     * near this screen.
+     *
+     * TWO TRIGGERS, ONE LEDGER. The effect below catches a signature this handset can SEE is dead
+     * before Coil is pointed at it, so nothing broken is drawn at all; `onLoadError` catches
+     * everything else — including a permanent URL that died at the bucket flip, which carries no
+     * expiry to read and can only be discovered by failing.
+     */
+    var refreshed by remember(media.id, media.url) { mutableStateOf<String?>(null) }
+    val readableUrl = refreshed ?: media.url
+    val uri = remember(readableUrl) { readableUrl?.let(Uri::parse) }
     var showViewer by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
+    val refreshScope = rememberCoroutineScope()
+
+    LaunchedEffect(media.id, media.url, repository) {
+        val repo = repository ?: return@LaunchedEffect
+        val stored = media.url ?: return@LaunchedEffect
+        if (!com.designprototype.workshop.data.MediaUrlRefresh.isExpired(stored, System.currentTimeMillis())) {
+            return@LaunchedEffect
+        }
+        refreshed = repo.refreshMediaUrl(context, media.id, stored)
+    }
+
+    // Coil hands a throwable rather than a status, so nothing here classifies the failure — the
+    // repository asks the server and the ledger bounds the asking. A null answer leaves the row
+    // exactly as it is: a broken thumbnail a designer can see and report beats an empty one.
+    val onThumbError: () -> Unit = {
+        val repo = repository
+        if (repo != null) {
+            refreshScope.launch {
+                val next = repo.refreshMediaUrl(context, media.id, readableUrl)
+                if (next != null) refreshed = next
+            }
+        }
+    }
 
     if (uri == null) {
         // No preview URL (e.g. an old/broken row) — still offer removal when allowed.
@@ -15443,7 +15519,8 @@ private fun AndroidSavedMediaPreview(
                 subtitle = listOfNotNull(media.mimeType ?: media.mediaType, media.transcriptStatus?.let { "Transcript: $it" }).joinToString(" · "),
                 onOpen = {
                     if (media.mediaType in IN_APP_PLAYABLE) showViewer = true else openUri(context, uri, media.mimeType)
-                }
+                },
+                onLoadError = onThumbError
             )
             if (onDelete != null) {
                 DiscardBadge(
@@ -15454,7 +15531,9 @@ private fun AndroidSavedMediaPreview(
             }
         }
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            TextButton(onClick = { saveMediaToDevice(context, media.url, media.originalFilename, media.mimeType) }) {
+            // `readableUrl`, NOT `media.url`: a refreshed signature that reached the thumbnail and
+            // not the download is the shape of "the picture is there and Save fails".
+            TextButton(onClick = { saveMediaToDevice(context, readableUrl, media.originalFilename, media.mimeType) }) {
                 Icon(Icons.Filled.Download, contentDescription = null, modifier = Modifier.size(16.dp))
                 Spacer(Modifier.width(4.dp))
                 Text("Save to device", fontSize = 12.sp)
@@ -15471,7 +15550,7 @@ private fun AndroidSavedMediaPreview(
             MediaViewerDialog(
                 uri = uri,
                 mediaType = media.mediaType,
-                onSave = { saveMediaToDevice(context, media.url, media.originalFilename, media.mimeType) },
+                onSave = { saveMediaToDevice(context, readableUrl, media.originalFilename, media.mimeType) },
                 onDismiss = { showViewer = false }
             )
         }

@@ -523,10 +523,13 @@ useHeroReducedMotion()  // components/hero/  — reads data-reduced-motion + Mut
   toggle takes effect without a reload.
 - **Gate at the source.** Every `guideMotion` factory takes `reduce` and collapses to zero duration and
   zero displacement, so a new animation in that folder cannot ship without honouring the preference.
-- ⚠ **There is no `MotionConfig reducedMotion="user"` anywhere in the app.** The island's spring, the
-  brand swoop and the sheet slide still animate for a reduced-motion user. Components that do honour
-  it read it themselves: `AnchoredPopover.useLessMotion()` (OS **and** attribute), the hero, the guide.
-  `Toast.tsx` reads only `useReducedMotion()` — OS only, not the in-app toggle.
+- ⚠ **There is no `MotionConfig reducedMotion="user"` anywhere in the app.** That absence is deliberate
+  and is argued in `components/guide/steps.ts` — every framer animation branches in JS itself, so the
+  preference is honoured by a decision you can read at the animation rather than by an ancestor nobody
+  looks at. Components that honour it read it themselves: `AnchoredPopover.useLessMotion()` (OS **and**
+  attribute), the hero, the guide, and — as of 2026-09-03 — `DynamicIslandNav`, `components/ui/navbar-menu.tsx`
+  and `Toast`, each on `useAppReducedMotion()`. The corollary still bites: an animation added without that
+  branch animates for a reduced-motion user, because nothing above it will stop it.
 - ⚠ **Guide vs hero have OPPOSITE rules for `initial`.** `useAppReducedMotion()` reads false on the
   server and first client render by design, so the guide may branch on `reduce` inside `hidden`/
   `initial`. The hero may **not** — its rule is "reduced motion changes DURATIONS, never the `initial`
@@ -1044,8 +1047,11 @@ break `feImage`. The classes toggled are `lg-active` / `lg-fallback`; the compan
   `aria-current`, no live region: disabled Previous/Next are the only end-of-range cue.
 - **`ResizableTh`** — its `overflow-hidden` is required by CSS: `resize: horizontal` has no effect on an
   element whose overflow is `visible`. Removing it kills column resizing across every list table.
-- **`SearchInput`** sets `role="searchbox"` on a text input with **no label** — the accessible name is
-  only the placeholder. The clear button *is* labelled.
+- **`SearchInput`** sets `role="searchbox"` and takes an optional `ariaLabel`, emitting
+  `aria-label={ariaLabel ?? placeholder}` (2026-09-03) — a placeholder is only the accessible name while
+  the box is EMPTY, so the name now survives a filled box. Pass a specific terse label wherever the
+  placeholder names the columns rather than the corpus: artisans, design workshops ×3, questionnaires.
+  The clear button *is* labelled.
 - **`DashboardCard`** picks its icon from the **wording** (`newLabel === "Open" || "Manage"` →
   ArrowRight, else Plus) because a plus on a button that only navigates is a lie; Android draws the same
   distinction via `primaryIcon`.
@@ -1053,8 +1059,11 @@ break `feImage`. The classes toggled are `lg-active` / `lg-fallback`; the compan
   and AI text are Markdown (bold speaker labels, `---` rules) — never raw text in a `<pre>`, never
   `dangerouslySetInnerHTML`.
 - **`AudioPlayer`** re-reads duration inside `onTimeUpdate` because fresh WebM streams report
-  `Infinity` until played through. ⚠ Its inline `--audio-range-fill` hardcodes `#e4e2ef` — the **light**
-  value of `--line-200` — so the unplayed track does not invert. This is a known leak, not a pattern.
+  `Infinity` until played through. Its inline `--audio-range-fill` emits `rgb(var(--line-200))` inside the
+  gradient string (2026-09-03, was a hardcoded `#e4e2ef`): a `var()` inside a custom property's value is
+  substituted when that property is itself substituted, so a token DOES resolve there and the unplayed
+  track inverts with the theme. The brand purple in the same gradient stays a literal `oklch()` — it
+  never inverts.
 - **`min-w-0`** appears in `Field`, `Accordion`, `SearchableSelect`'s wrapper and the login buttons and
   is load-bearing every time: a grid/flex item defaults to `min-width: auto` and refuses to shrink below
   its content's intrinsic width, so a long option label widens the column and spills over the field
@@ -1856,7 +1865,6 @@ Each of these looks wrong and is deliberate. Most were a shipped bug.
 
 **Motion**
 - No `MotionConfig reducedMotion="user"` — framer animations must branch in JS themselves.
-- `Toast` honours the OS preference but **not** the in-app toggle.
 - Guide may branch `initial` on `reduce`; the hero may **not**.
 - Never centre a framer-animated element with a translate class — inline `transform` wins.
 - The guide's step card must **not** be `overflow-hidden` (the focus outline).

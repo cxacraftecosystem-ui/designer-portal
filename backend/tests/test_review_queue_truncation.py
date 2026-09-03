@@ -80,6 +80,29 @@ class _Rows:
         return len(self.rows)
 
 
+class _Client(SimpleNamespace):
+    """The fake ``db``, with an ``async with db.tx()`` that hands back itself (2026-09-03).
+
+    NO TEST IN THIS FILE REACHES A TRANSACTION — ``GET /review/pending`` only reads — but the fixture
+    below rebinds ``db`` on EVERY imported ``app.`` module, not just the review router, and both
+    review writes plus seven record PATCHes now open one. So the day a case is added here that posts
+    an approval, the failure should be about the queue and not an AttributeError on ``tx``. Same
+    shape and same caveat as the sibling review file: nothing simulates a transaction.
+    """
+
+    def tx(self) -> Any:
+        client = self
+
+        class _Tx:
+            async def __aenter__(self) -> Any:
+                return client
+
+            async def __aexit__(self, *_exc: object) -> bool:
+                return False
+
+        return _Tx()
+
+
 _CURRENT: dict[str, Any] = {"user": None}
 
 
@@ -97,8 +120,8 @@ class _Queue:
     def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
         self.monkeypatch = monkeypatch
         self.sources = {name: _Rows() for name in SOURCES}
-        fake_db = SimpleNamespace(mediafile=_Rows(), reviewlog=_Rows(), user=_Rows(),
-                                  recordrevision=_Rows(), **self.sources)
+        fake_db = _Client(mediafile=_Rows(), reviewlog=_Rows(), user=_Rows(),
+                          recordrevision=_Rows(), **self.sources)
         real_db = core_db.db
         monkeypatch.setattr(core_db, "db", fake_db)
         for module in list(sys.modules.values()):

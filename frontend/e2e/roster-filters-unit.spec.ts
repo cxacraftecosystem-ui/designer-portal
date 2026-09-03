@@ -704,10 +704,13 @@ test("every control's visible label is its accessible name", () => {
   expect(ROSTER_LABELS.dateRange).toBe("Date range");
 });
 
-test("the roster search boxes have a real accessible name, unlike SearchInput", () => {
-  // `components/SearchInput.tsx` sets role="searchbox" with no label of any kind, so its
-  // placeholder is its only accessible name — and a placeholder disappears the moment somebody
-  // types, which is exactly when the fact is being used.
+test("the roster search boxes have a real accessible name, and so does SearchInput now", () => {
+  // This bar has always passed an explicit `ariaLabel`. `components/SearchInput.tsx` did not: it set
+  // role="searchbox" with no label of any kind, so its PLACEHOLDER was its only accessible name —
+  // and a placeholder stops being the name the moment somebody types, which is exactly when the
+  // fact is being used. It now carries `aria-label={ariaLabel ?? placeholder}` (2026-09-03), so the
+  // name survives a filled box everywhere and the call sites whose placeholder named the columns
+  // rather than the corpus pass a specific one. This bar's own contract is unchanged.
   expect(BAR).toContain("aria-label={ariaLabel}");
   expect(BAR).toContain('role="searchbox"');
   expect(ROSTER_LABELS.accessSearch).toContain("note");

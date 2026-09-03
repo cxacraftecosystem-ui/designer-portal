@@ -124,15 +124,33 @@ class DwReferenceCarryParityTest {
      *
      * A PICKER WITH NO ENTRY HERE IS DELIBERATE AND IS NOT AN OVERSIGHT. Fifteen of the registry's
      * twenty-three live REF fields point at `Dw…` models — entities of this very registry, whose
-     * rows the designer is looking at on an earlier stage — and they carry a JOIN KEY rather than a
-     * copy. Copying a prototype's twenty-nine fields onto the row that references it would put two
-     * versions of the same answer in one workshop with nothing to say which was meant. The test
-     * `every picker that hydrates is one this file knows about` is what keeps that list honest
-     * rather than open-ended.
+     * rows the designer is looking at on an earlier stage.
+     *
+     * THIRTEEN OF THOSE FIFTEEN STILL CARRY A JOIN KEY AND NOTHING ELSE, AND TWO NO LONGER DO.
+     * This paragraph used to read "they carry a JOIN KEY rather than a copy. Copying a prototype's
+     * twenty-nine fields onto the row that references it would put two versions of the same answer
+     * in one workshop with nothing to say which was meant." The SECOND sentence was the argument and
+     * it was answered on 2026-09-03 rather than overruled: two versions of one answer is exactly
+     * what the product HAD, because stage 16 asks a designer to type the prototype's materials and
+     * dimensions again by hand, and the prototypes table and the final-products table of one report
+     * were printing different numbers for one physical piece. The carry does not create the second
+     * copy; it stops the second copy being typed independently. What survives of the old sentence is
+     * the NARROWNESS: nine of a prototype's twenty-nine fields cross to `finalProduct`, three to
+     * `prototypeValidation`, and the other thirteen internal refs are refused BY NAME above the
+     * server's `REFERENCE_HYDRATION` — a drawing is not the object made from it, a successor sketch
+     * exists because something changed, a material line names one material where the source holds a
+     * list, and stage 17 exists to build a price rather than inherit one.
+     *
+     * NOTHING ON THIS SURFACE HAD TO CHANGE FOR THEM, WHICH IS THE PROPERTY WORTH NOTICING. The
+     * handset keeps no hydration table (see the header): the mapping arrives as
+     * [FieldDto.refHydration] and the record's values arrive in the picker's `data`, so an internal
+     * carry reaches this client through the same two channels an external one does. The one edit
+     * here is to the FLOOR below, which is an assertion and not a mechanism.
      *
      * 81 PAIRS ACROSS 8 PICKERS as of the widening of 2026-08-16, up from 27 across 7 — the artisan
      * picker went from 8 boxes to 22, the tool picker from 6 to 24, the product picker from 6 to 22,
-     * and stage 5's `traditionalProcess` started hydrating at all.
+     * and stage 5's `traditionalProcess` started hydrating at all. 13 pickers as of 2026-09-03 with
+     * the two internal ones below.
      */
     private val FLOOR: Map<String, Map<String, String>> = mapOf(
         "workshopSetup.craftRef" to mapOf(
@@ -251,6 +269,48 @@ class DwReferenceCarryParityTest {
             "interviewMediaNote" to "interviewMediaNote",
             "interviewDocumentedOn" to "interviewDocumentedOn",
             "interviewDocumentedAtWorkshop" to "interviewDocumentedAtWorkshop",
+        ),
+        // ── THE TWO INTERNAL CARRIES, 2026-09-03 ────────────────────────────────────────────────
+        //
+        // The source of both is a `DwPrototype` — a row of THIS workshop's stage 13 — rather than a
+        // record in another table, and that difference is invisible from here on purpose: the
+        // mapping still arrives as `refHydration`, the values still arrive in the option's `data`,
+        // and `hydratedValues`/`hydrationPatch` neither know nor need to know which kind they are
+        // applying. That is why the floor below is written in exactly the shape of the eleven above.
+        //
+        // WHAT A NARROWING WOULD COST HERE, since that is what this table is for. These nine boxes
+        // are the catalogue record a ministry reads: lose `materials` and stage 16's REQUIRED
+        // Materials column empties, lose the three dimensions and the final-products table prints a
+        // product with no size, lose `makingTimeDays` and the one figure that connects the
+        // catalogue to the costing disappears. Every one of them would come back as "the designer
+        // has to type it again", which is the state this carry was built to end.
+        //
+        // `processSummary -> makingProcess` IS THE PAIR TO WATCH ON THIS SURFACE. The value is a
+        // RICH_TEXT document; `coerceHydrated`'s RICH_TEXT arm is what makes it storable here, and
+        // the web deliberately skips it (its guard takes only JSON scalars) and lets the server
+        // write it at save. The handset is therefore the client that fills this box at the keyboard,
+        // which is the opposite of the usual asymmetry and is worth knowing when the two are
+        // compared by hand.
+        // The stage-7 instrument link (spec §22, 2026-09-03): one carried box, the instrument's
+        // title into the `fromref` name field beside the picker.
+        "surveyPlan.questionnaireRef" to mapOf(
+            "name" to "questionnaireName",
+        ),
+        "prototypeValidation.prototypeRef" to mapOf(
+            "lengthCm" to "finalLengthCm",
+            "widthCm" to "finalWidthCm",
+            "heightCm" to "finalHeightCm",
+        ),
+        "finalProduct.prototypeRef" to mapOf(
+            "name" to "name",
+            "materials" to "materials",
+            "lengthCm" to "lengthCm",
+            "widthCm" to "widthCm",
+            "heightCm" to "heightCm",
+            "weightG" to "weightG",
+            "dimensionsNote" to "dimensionsNote",
+            "makingTimeDays" to "makingTimeDays",
+            "processSummary" to "makingProcess",
         ),
     )
 

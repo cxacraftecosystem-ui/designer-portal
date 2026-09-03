@@ -29,8 +29,9 @@
  */
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { CloudOff, Link2, RefreshCw, Trash2, TriangleAlert } from "lucide-react";
+import { CircleAlert, CloudOff, Link2, RefreshCw, Trash2, TriangleAlert } from "lucide-react";
 
+import { useAuth } from "@/components/AuthProvider";
 import { FieldDialog } from "@/components/dialogs/FieldDialog";
 import { Dropdown } from "@/components/ui/Dropdown";
 import { useToast, type ToastTone } from "@/components/ui/Toast";
@@ -45,12 +46,15 @@ import {
   getServerOutboxHealth,
   getServerOutboxQueuedHere,
   getServerOutboxSnapshot,
+  outboxEntriesForAnotherAccount,
   outboxIsAnswering,
+  outboxOtherAccountLine,
   referenceFieldNoun,
   refreshOutbox,
   repickEmptyLine,
   repickOutboxEntry,
   retryOutboxEntry,
+  setOutboxSessionUser,
   subscribeOutbox,
   syncOutbox,
   type OutboxEntry,
@@ -169,7 +173,23 @@ export function outboxOutcome(result: SyncResult): {
         "The app cannot say what is still waiting here, so do not assume it is empty. Reload the page, and do not clear this browser's data."
     };
   }
-  return { kind: "idle", tone: "info", title: "Nothing to send" };
+  /*
+    NOTHING MOVED AND NOTHING FAILED — and there is one way that can be true with a queue that is not
+    empty: every entry left belongs to another account (2026-09-03). "Nothing to send" is then
+    accurate about this session and useless about the device, so the same line the banner draws is
+    attached as the description rather than a second wording being invented for one toast.
+
+    Reachable only through a pass somebody else started — "Sync now" is gated on `waiting`, which
+    excludes these — so it is the belt rather than the surface. `?? 0` because `otherAccount` is
+    optional: a hand-built result asserting something else is not obliged to state it.
+  */
+  const stranded = result.otherAccount ?? 0;
+  return {
+    kind: "idle",
+    tone: "info",
+    title: "Nothing to send",
+    description: stranded ? outboxOtherAccountLine(stranded) : undefined
+  };
 }
 
 /**
@@ -270,7 +290,13 @@ function RepickDialog({
       busy={saving}
       icon={<Link2 className="h-4 w-4" aria-hidden />}
       title={`Point “${entry.label}” at another ${noun}`}
-      description="Nothing has been sent and nothing has been deleted. Choose one that is on the server and this entry sends itself."
+      /*
+        STATE, ACT, ONE SHORT REASSURANCE (2026-09-03). "Nothing has been sent" is what a queued
+        entry already means — the row it was opened from says so — so the half worth the words beside
+        a picker is that nothing was deleted. Tersened with the whole outbox family, and with
+        Android's, so one queue is not described in two voices.
+      */
+      description="Choose one that is on the server and this entry sends itself. Nothing was deleted."
       footer={
         <>
           <button type="button" className="field-button-secondary" onClick={onClose} disabled={saving}>
@@ -340,6 +366,33 @@ export function OutboxBanner() {
    */
   const [repicking, setRepicking] = useState<{ entry: OutboxEntry; field: string } | null>(null);
   const { toast } = useToast();
+  const { user, loading: authLoading } = useAuth();
+
+  /**
+   * TELL THE QUEUE WHOSE SESSION THIS IS, before anything can drain.
+   *
+   * The twin of `DraftSyncBanner`'s `setDraftSessionUser` effect, one queue along and for the same
+   * shared field laptop: `AuthProvider.logout` clears the token and the user and deliberately
+   * nothing else, so designer A's queued records and their staged photographs survive the handover
+   * — and without this, designer B's session drains them under B's token. See
+   * `OutboxEntry.ownerUserId`.
+   *
+   * GUARDED ON THE AUTH PROBE FINISHING. `user` is null both before `GET /me` answers and after a
+   * sign-out, and the two mean opposite things: stamping null in the first would leave a save made
+   * in that window unowned for ever, which is the boundary quietly not existing for one record.
+   *
+   * AND CLEARED ON THE WAY OUT, for the reason `DraftSyncBanner`'s cleanup spells out: `AppShell`
+   * returns null before it produces `children`, and this banner is one of those children, so the
+   * instant `logout()` sets `user` to null the whole subtree unmounts and the re-run that would pass
+   * null never commits. Without the cleanup the module would hold the previous designer's id through
+   * the entire signed-out period — and the next sign-in's effect would then be the only thing
+   * correcting it, after a mount drain has already run.
+   */
+  useEffect(() => {
+    if (authLoading) return;
+    setOutboxSessionUser(user?.id ?? null);
+    return () => setOutboxSessionUser(null);
+  }, [authLoading, user?.id]);
 
   // Confirming a queued save belongs HERE, not in each of the six forms that can queue one. A form
   // that queues just stops and scrolls; every one of them reaches `queueOffline`, so one watcher
@@ -480,7 +533,23 @@ export function OutboxBanner() {
   if (!entries.length && !trouble) return null;
 
   const rejected = entries.filter((entry) => entry.failure);
-  const waiting = entries.length - rejected.length;
+  /*
+    THE THIRD THING A CONNECTION DOES NOT MOVE, AND IT USED TO ARRIVE AS "WAITING".
+
+    An entry captured by another account carries no `failure` — nothing was ever sent and nothing was
+    refused — so it fell into `waiting` and was drawn under a cloud-off icon inside a sentence
+    promising it sends itself when the connection returns. No amount of signal will move it; the
+    remedy is a different person signing in. Android's `outboxCountsOf` closed the identical door on
+    the handset and its KDoc names this as the defect the whole banner exists to end, reached by a
+    third route.
+
+    SUBTRACTED RATHER THAN HIDDEN. The entries stay in the list below, because they are real
+    fieldwork sitting in this browser's storage and a designer looking for a fortnight they captured
+    yesterday needs to see it while the wrong person is signed in — a queue that silently drops to
+    zero is how somebody concludes the work was lost and stops looking.
+  */
+  const otherAccount = outboxEntriesForAnotherAccount(entries, user?.id ?? null);
+  const waiting = entries.length - rejected.length - otherAccount;
 
   const troublePanel = trouble ? (
     <section
@@ -534,18 +603,62 @@ export function OutboxBanner() {
     >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="flex items-start gap-2">
-          <CloudOff className="mt-0.5 h-4 w-4 shrink-0 text-amber-800" aria-hidden />
+          {/*
+            THE ICON FOLLOWS THE WAITING HALF ONLY (2026-09-03), and it used to draw unconditionally.
+            This is Android's gate to the predicate — `outboxDeviceBanner` computes
+            `showCloudOff = counts.waiting > 0` and `MainActivity` draws `CloudOff` or `ErrorOutline`
+            off it — and the reason is the same one the heading and the sentence under it were both
+            corrected for: a cloud-off over a queue holding only refusals, or only another account's
+            entries, tells a designer to go and find a signal, and a signal is precisely what cannot
+            move either of them. `waiting` is already the count with both of those subtracted, so the
+            icon, the heading, the sentence and the "Sync now" button all read one number.
+
+            `CircleAlert` and not the trouble panel's `TriangleAlert`: that panel says the store has
+            stopped answering, and one glyph for both would put "your disk is full" and "read this
+            refusal" in the same voice on the same screen. Both keep `text-amber-800` — this panel
+            has one ink, and the icon is never the only thing that changed.
+          */}
+          {waiting ? (
+            <CloudOff className="mt-0.5 h-4 w-4 shrink-0 text-amber-800" aria-hidden />
+          ) : (
+            <CircleAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-800" aria-hidden />
+          )}
           <div>
             <h2 className="font-display text-sm font-bold">
               {waiting
                 ? `${waiting} ${waiting === 1 ? "entry is" : "entries are"} saved on this device only`
                 : "Entries on this device need your attention"}
             </h2>
+            {/*
+              TERSENED WITH THE WHOLE OUTBOX FAMILY (2026-09-03), and one clause is not negotiable.
+              "They were made without a connection and have not reached the repository yet" is the
+              heading above said again, so it went. "They live in this browser, so do not clear its
+              data or hand the laptop on" STAYS: `lib/offline.ts`'s `OutboxStoreHealth` note records
+              the morning this whole panel disappeared over an unreadable store, and names this as
+              the one sentence that answers "may I hand this laptop on". A shorter line must not be
+              the way it goes missing a second time.
+            */}
             <p className="mt-0.5 text-xs text-ink-700">
               {waiting
-                ? "They were made without a connection and have not reached the repository yet. They send themselves when the connection returns — but they live in this browser, so do not clear its data or hand the laptop on until the outbox is empty."
-                : "Nothing is waiting on the network. The entries below were refused by the server and need a decision."}
+                ? "They send themselves when the connection returns. They live in this browser — do not clear its data or hand the laptop on until the outbox is empty."
+                : rejected.length
+                  ? "Nothing is waiting on the network. The entries below were refused by the server and need a decision."
+                  : // Nothing waiting and nothing refused leaves exactly one reason the queue is not
+                    // empty, and the line below states it. The refusal sentence would be a lie here:
+                    // the server never saw these entries.
+                    "Nothing here is waiting on the network."}
             </p>
+            {/*
+              ITS OWN LINE, AND NOT A CLAUSE ON EITHER OF THE TWO ABOVE — Android's
+              `outboxDeviceBanner` gives its equivalent one for the same two reasons. Folded into the
+              waiting sentence it would promise a send that cannot happen; folded into the refusal
+              sentence it would send a designer to a row that was never refused and carries no reason
+              to read. The words are `outboxOtherAccountLine`'s, so the sentence is pinned in a spec
+              rather than written inside a component no test can render.
+            */}
+            {otherAccount ? (
+              <p className="mt-1 text-xs font-medium text-amber-800">{outboxOtherAccountLine(otherAccount)}</p>
+            ) : null}
           </div>
         </div>
         {waiting ? (

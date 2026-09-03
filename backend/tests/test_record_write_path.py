@@ -300,6 +300,35 @@ class _Delegate:
         self.updated.append((where, data))
 
 
+class _Client(SimpleNamespace):
+    """The fake Prisma client, with an ``async with db.tx()`` that hands back itself (2026-09-03).
+
+    ``update_interview`` now wraps its edit guard, its row update and (since the relation writes were
+    threaded) its artisan links and response batch in ONE ``db.tx()``, so a plain ``SimpleNamespace``
+    standing in for ``db`` no longer answers the route — it has no ``tx``. Handing back ``self`` is
+    the shortcut ``tests/test_design_workshop_provisional_isolation`` documents, with the same
+    caveat: NOTHING HERE SIMULATES A TRANSACTION, and no assertion in this module is about rollback.
+    What it does preserve is that every write the route issues lands on the recording delegates
+    above, whether the route reaches them through ``db`` or through ``tx``.
+
+    The two ``merge_into_interview`` drives use it as well even though that function opens no
+    transaction of its own. A fold that grew one would otherwise fail with an AttributeError about
+    ``tx`` rather than about the metadata column these tests are actually about.
+    """
+
+    def tx(self) -> Any:
+        client = self
+
+        class _Tx:
+            async def __aenter__(self) -> Any:
+                return client
+
+            async def __aexit__(self, *_exc: object) -> bool:
+                return False
+
+        return _Tx()
+
+
 def test_a_duplicate_question_in_one_body_is_saved_once_last_wins(monkeypatch):
     """AN AUTHENTICATED CALLER MUST NOT BE ABLE TO TURN A SCHEMA-VALID BODY INTO A 500.
 
@@ -432,7 +461,7 @@ def test_folding_a_create_into_an_existing_interview_keeps_its_stored_metadata(m
         return None
 
     interviews.update = _update
-    monkeypatch.setattr(questionnaire, "db", SimpleNamespace(questionnaireinterview=interviews))
+    monkeypatch.setattr(questionnaire, "db", _Client(questionnaireinterview=interviews))
     # The fold's last two steps read relations and shape a response; neither touches the column
     # under test, and both would need a database.
     monkeypatch.setattr(questionnaire, "hydrate_relations", _no_relations)
@@ -522,7 +551,10 @@ def test_the_interview_patch_route_actually_declares_its_nullable_scalars(monkey
         async def _require_record(_delegate, _record_id, _stored=stored):
             return _stored
 
-        async def _guard(_record, _user, _data, _kind):
+        async def _guard(_record, _user, _data, _kind, *, client=None):
+            # ``guard_record_edit`` takes ``client=tx`` since 2026-09-03 so its RecordRevision joins
+            # the caller's transaction. Accepted and ignored: this stub writes no revision, and
+            # ``False`` (an ordinary contributor) is the verdict the clearing assertion below needs.
             return False
 
         async def _status_policy(_user, _record, _data):
@@ -533,7 +565,7 @@ def test_the_interview_patch_route_actually_declares_its_nullable_scalars(monkey
 
         interviews.update = _update
         interviews.find_unique = _find_unique
-        monkeypatch.setattr(questionnaire, "db", SimpleNamespace(questionnaireinterview=interviews))
+        monkeypatch.setattr(questionnaire, "db", _Client(questionnaireinterview=interviews))
         monkeypatch.setattr(questionnaire, "require_record", _require_record)
         monkeypatch.setattr(questionnaire, "guard_record_edit", _guard)
         monkeypatch.setattr(questionnaire, "apply_status_policy_update", _status_policy)
@@ -585,7 +617,7 @@ def test_folding_a_create_onto_a_flagged_row_does_not_launder_the_late_flag(monk
         return None
 
     interviews.update = _update
-    monkeypatch.setattr(questionnaire, "db", SimpleNamespace(questionnaireinterview=interviews))
+    monkeypatch.setattr(questionnaire, "db", _Client(questionnaireinterview=interviews))
     monkeypatch.setattr(questionnaire, "hydrate_relations", _no_relations)
     monkeypatch.setattr(questionnaire, "public_encode", lambda row: row)
 

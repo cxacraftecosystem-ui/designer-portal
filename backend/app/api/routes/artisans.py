@@ -21,6 +21,7 @@ from app.services.records import (
     Relation,
     apply_status_policy_create,
     apply_status_policy_update,
+    assert_expected_updated_at,
     attach_location,
     clean_data,
     contains,
@@ -33,6 +34,7 @@ from app.services.records import (
     public_encode,
     require_record,
     resubmit_status,
+    take_expected_updated_at,
     viewable_where,
 )
 from app.services.workshop_access import (
@@ -208,8 +210,11 @@ async def _identity_conflict(
     The number itself is echoed back MASKED.
 
     Pass ``existing`` when the caller has already loaded the clashing artisan: the pre-flight guard
-    below has it in hand, and re-reading it would cost another cross-region round trip to learn
-    something we already know.
+    below has it in hand, and re-reading it would be a whole extra round trip to learn something we
+    already know. That was written against a cross-region database and the link changed on
+    2026-09-02 (co-located, ~1-2ms a hop — ``services/concurrency.py``); the sentence did not,
+    because it is about a query that need not be issued at all, and the cheapest round trip is still
+    the one nobody makes.
     """
     if existing is None:
         existing = await db.artisan.find_first(where={field: value}, include={"craft": True})
@@ -275,9 +280,12 @@ async def _guard_identity_conflicts(data: dict[str, Any], exclude_id: str | None
     submit the same artisan in the same instant and only the index can settle that race.
 
     Both numbers are checked in ONE query, and that query already loads what the 409 needs to say.
-    Checking them one at a time cost three sequential cross-region round trips on the way to every
-    saved artisan — two probes and a third to look up the artisan being reported — for a question a
-    single ``OR`` answers.
+    Checking them one at a time cost THREE SEQUENTIAL ROUND TRIPS on the way to every saved artisan
+    — two probes and a third to look up the artisan being reported — for a question a single ``OR``
+    answers. The count is the point and it has not changed; what has is the price of one, which was
+    a cross-region hop when this was written and is a co-located one or two milliseconds since
+    2026-09-02 (``services/concurrency.py``). Three trips to answer one question is still three
+    times the right number.
     """
     checks = {field: data[field] for field in _IDENTITY_CONSTRAINTS if data.get(field)}
     if not checks:
@@ -483,6 +491,12 @@ async def update_artisan(
     # makes a present key mean "the caller sent this". Drop it and every optional the client left
     # alone would arrive as ``None`` and be written as an explicit NULL over stored data.
     data = clean_data(payload.model_dump(exclude_unset=True), clearable=_CLEARABLE_COLUMNS)
+    # The precondition is a question, not a column — taken out of the body here, asked inside the
+    # transaction below. Popped BEFORE ``drop_masked_identity_numbers`` and everything after it, for
+    # the reason ``records.take_expected_updated_at`` gives: every helper between here and the write
+    # reads this dict, and a stray key becomes an audit entry, a provenance stamp, or a 500 naming a
+    # column ``Artisan`` does not have.
+    expected_updated_at = take_expected_updated_at(data)
     # A caller shown a masked number who saves without touching it means "leave it alone" — for the
     # Pehchan card as much as for the Aadhaar, since both are masked on the way out to them.
     data = drop_masked_identity_numbers(data)
@@ -498,46 +512,78 @@ async def update_artisan(
     # re-validated — a record filed under a workshop the designer was later removed from must
     # still be editable by them.
     await assert_payload_workshop(data, current_user)
-    await guard_record_edit(artisan, current_user, data, "artisan")
-    await apply_status_policy_update(current_user, artisan, data)
-    # Stamped after the edit guard (the stamp is the API's bookkeeping, never a contributor's edit)
-    # and pinned after the status policy, so an already-flagged record cannot be self-approved.
-    stamp_workshop_submission(data, check=check, record=artisan)
-    pin_pending_if_late(data, current_user, check=check, record=artisan)
-    merge_field_provenance(data, current_user, previous=artisan)
-    resubmit_status(artisan, current_user, data)
-    # "Card available = Yes" on an edit is only valid if a number exists — either arriving in this
-    # PATCH or already stored. The create-time validator cannot make this call, because a PATCH
-    # carrying just the flag is legitimate when the record already holds a number.
+    # ONE TRANSACTION FOR THE AUDIT ROW AND THE ROW IT DESCRIBES (2026-09-03). ``guard_record_edit``
+    # ends in ``record_revision``, which used to COMMIT on its own thirty lines before the update
+    # below — so a request that died in that gap (P2024 on a cross-region pool, a dropped connection)
+    # left a RecordRevision asserting an artisan's Aadhaar or place had been changed to a value the
+    # row does not hold. ``client=tx`` is not decoration: ``db.tx()`` hands back a DIFFERENT client,
+    # so a callee writing through the module singleton is not in this block however it reads. The
+    # whole argument is in ``access.record_revision``.
     #
-    # There are two ways a PATCH can break that pair, and the schema validator can see neither: it is
-    # handed only the keys the client actually sent, so it never learns what is on the row.
-    #   * the answer turns to Yes while no number exists here or on the record, and
-    #   * the number is CLEARED while the answer stays Yes — the mirror image, and the one that
-    #     otherwise slips through as {"pehchanCardNumber": null} on its own.
-    # A PATCH touching neither key is deliberately left alone: rows that predate this feature carry
-    # the column's DEFAULT of Yes with no number, and an unrelated edit to one must not be refused.
-    answered_yes = data.get("pehchanCardAvailable") is True
-    clears_number = "pehchanCardNumber" in data and not data["pehchanCardNumber"]
-    still_yes = data.get("pehchanCardAvailable", artisan.pehchanCardAvailable) is True
-    if answered_yes or (clears_number and still_yes):
-        number = data.get("pehchanCardNumber", artisan.pehchanCardNumber)
-        if not number:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=(
-                    "Enter the Artisan Pehchan Card number, or set the card to 'No' if the artisan "
-                    "does not hold one."
-                ),
-            )
-    await _guard_identity_conflicts(data, exclude_id=artisan_id)
-    try:
-        updated = await db.artisan.update(where={"id": artisan_id}, data=data, include=INCLUDE)
-    except Exception as exc:
-        field = _violated_identity_field(exc)
-        if field is None:
-            raise
-        raise await _identity_conflict(field, data[field], exclude_id=artisan_id) from exc
+    # THIS GAP IS WIDER HERE THAN ANYWHERE ELSE, WHICH IS WHY IT IS WORTH SAYING TWICE. Two refusals
+    # sit BETWEEN the audit row and the update — the Pehchan pair below (422) and
+    # ``_guard_identity_conflicts`` (409) — and until this block existed both of them answered a
+    # refusal while leaving a committed ledger entry for the edit they had just refused. That is the
+    # exact defect ``processes.update_process`` moved its step guard upwards to avoid, arrived at
+    # from the other side: there the write was above the refusal, here the refusal is above a write
+    # that never happens. A transaction fixes both without reordering either.
+    async with db.tx() as tx:
+        # ABOVE ``guard_record_edit`` AND THEREFORE ABOVE THE LEDGER, which is what the paragraph
+        # immediately above this block is about: two refusals already sat between the audit row and
+        # the update, and this is a third. It is placed on the correct side of the ledger from the
+        # start rather than being one more thing the transaction has to rescue. ``None`` passes and
+        # changes nothing, which is every client shipped to date — see
+        # ``records.assert_expected_updated_at``, and note that an Aadhaar clash is still a 409 of
+        # its own with its own detail, so the two conflicts never have to be told apart by a code.
+        assert_expected_updated_at(artisan, expected_updated_at)
+        await guard_record_edit(artisan, current_user, data, "artisan", client=tx)
+        await apply_status_policy_update(current_user, artisan, data)
+        # Stamped after the edit guard (the stamp is the API's bookkeeping, never a contributor's
+        # edit) and pinned after the status policy, so an already-flagged record cannot be
+        # self-approved.
+        stamp_workshop_submission(data, check=check, record=artisan)
+        pin_pending_if_late(data, current_user, check=check, record=artisan)
+        merge_field_provenance(data, current_user, previous=artisan)
+        resubmit_status(artisan, current_user, data)
+        # "Card available = Yes" on an edit is only valid if a number exists — either arriving in this
+        # PATCH or already stored. The create-time validator cannot make this call, because a PATCH
+        # carrying just the flag is legitimate when the record already holds a number.
+        #
+        # There are two ways a PATCH can break that pair, and the schema validator can see neither: it
+        # is handed only the keys the client actually sent, so it never learns what is on the row.
+        #   * the answer turns to Yes while no number exists here or on the record, and
+        #   * the number is CLEARED while the answer stays Yes — the mirror image, and the one that
+        #     otherwise slips through as {"pehchanCardNumber": null} on its own.
+        # A PATCH touching neither key is deliberately left alone: rows that predate this feature
+        # carry the column's DEFAULT of Yes with no number, and an unrelated edit to one must not be
+        # refused.
+        answered_yes = data.get("pehchanCardAvailable") is True
+        clears_number = "pehchanCardNumber" in data and not data["pehchanCardNumber"]
+        still_yes = data.get("pehchanCardAvailable", artisan.pehchanCardAvailable) is True
+        if answered_yes or (clears_number and still_yes):
+            number = data.get("pehchanCardNumber", artisan.pehchanCardNumber)
+            if not number:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=(
+                        "Enter the Artisan Pehchan Card number, or set the card to 'No' if the "
+                        "artisan does not hold one."
+                    ),
+                )
+        await _guard_identity_conflicts(data, exclude_id=artisan_id)
+        try:
+            updated = await tx.artisan.update(where={"id": artisan_id}, data=data, include=INCLUDE)
+        except Exception as exc:
+            field = _violated_identity_field(exc)
+            if field is None:
+                raise
+            # ``_identity_conflict`` READS, and it deliberately reads through the module client and
+            # not ``tx``: a unique violation has already aborted this transaction in Postgres, so any
+            # further statement on ``tx`` would fail with "current transaction is aborted" and the
+            # 409 would arrive as a 500 naming nothing. The lookup only needs committed rows — it is
+            # finding whose artisan already holds the number — so a separate connection is the right
+            # place for it as well as the only working one.
+            raise await _identity_conflict(field, data[field], exclude_id=artisan_id) from exc
     # BIDIRECTIONAL, unlike the create path's one-way ``link_workshop_artisan``. An edit can REMOVE
     # a workshop, and until this call the removal stopped at the column: the join row this mirror
     # wrote the first time survived, so every query reading the roster kept the artisan in a
@@ -596,7 +642,9 @@ async def get_artisan_questionnaire(
     """
     # The artisan check, the answers and the interviews are three independent reads, so they run
     # together — the 404 is still decided first, it just no longer holds the other two behind a
-    # cross-region round trip of its own. Every interview the artisan belongs to (alone, in a subset,
+    # round trip of its own. (Written against the cross-region database; co-located since
+    # 2026-09-02, so the saving is milliseconds rather than seconds, and the shape is the same
+    # either way.) Every interview the artisan belongs to (alone, in a subset,
     # or in a larger set) comes back with its recordings and co-artisans, so the same content is
     # validatable for this artisan individually.
     artisan, responses, interview_rows = await gather_reads(

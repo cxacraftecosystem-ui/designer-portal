@@ -273,8 +273,10 @@ readinessProbe:
 ```
 
 The **startup** probe is what makes the liveness probe safe: 30 × 5s = 150s of grace while the
-Prisma engine spawns and dials a pooler in another AWS region, and liveness does not begin until it
-passes. A short liveness probe with no startup probe kills a slow boot and calls it a hang — and
+Prisma engine spawns and dials the pooler, and liveness does not begin until it passes. *(This
+sentence read "a pooler in another AWS region" until 2026-09-03; production co-located the database
+with the API box on 2026-09-02, so the dial is no longer a cross-region hop. The grace is still
+right — what it is buying is the engine spawn, not the distance.)* A short liveness probe with no startup probe kills a slow boot and calls it a hang — and
 because a cold start is slowest exactly when the pooler is busiest, that turns a slow database into
 a crash loop.
 

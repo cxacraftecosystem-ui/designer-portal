@@ -94,6 +94,9 @@ class DwWorkshopSearchRegistryTest {
         // (`REFERENCE_MODELS`'s `label` lambda reads `r.title`), so the entity has no `…Name` box for
         // the two `Name` rules to find.
         "artisanBaseline.interviewRef" to "interviewTitle",
+        // The stage-7 instrument link (spec §22, 2026-09-03): the portal labels the chosen
+        // questionnaire from `questionnaireName`, the `fromref` box the promotion added.
+        "surveyPlan.questionnaireRef" to "questionnaireName",
         // Both of these land in `documentedFor`, the box that says which product the documented thing
         // was documented FOR. `processStep` is why the client's rule for it is conditional and not a
         // fourth spelling: the step declares `documentedFor` AND its own `name`, and its `processRef`
@@ -127,17 +130,21 @@ class DwWorkshopSearchRegistryTest {
     }
 
     @Test
-    fun `exactly the six models named in the header live outside this registry`() {
+    fun `exactly the seven models named in the header live outside this registry`() {
         // The header of [DwWorkshopSearch] names these six as the records the rest of the repository
         // owns and this device cannot resolve offline. A seventh appearing is not a bug in itself — it
         // is a decision nobody has made yet about which box holds ITS hydrated name, and it must not
         // be made by a `removeSuffix` quietly finding something plausible.
         //
+        // `Questionnaire` arrived on 2026-09-03 (the stage-7 instrument link, spec §22) and went
+        // through exactly this gate: its hydrated name lives in `questionnaireName`, declared in
+        // the table above in the same change that widened this list.
+        //
         // `QuestionnaireInterview` arrived on 2026-08-24 and this assertion is what stopped it being
         // waved through: its label is a TITLE, so every `…Name` rule missed it and the sitting a
         // designer cited would have been absent from their own phone's index while the web had it.
         assertEquals(
-            listOf("Artisan", "Craft", "Process", "ProductDocumentation", "QuestionnaireInterview", "ToolDocumentation"),
+            listOf("Artisan", "Craft", "Process", "ProductDocumentation", "Questionnaire", "QuestionnaireInterview", "ToolDocumentation"),
             refsOutsideTheWorkshop().map { it.refField.refModel }.distinct().sorted(),
         )
     }

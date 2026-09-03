@@ -39,12 +39,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import signal
 from contextlib import suppress
 
 from app.core.config import get_settings
 from app.core.db import connect_db, disconnect_db, ensure_db_connected
-from app.services.media_queue import process_next_media_jobs
+from app.services.media_queue import acquire_queue_worker_lock, process_next_media_jobs
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("app.worker")
@@ -89,7 +90,53 @@ async def _run() -> None:
 
 
 def main() -> None:
-    asyncio.run(_run())
+    """Take the host-wide queue election, then drain. **A second drain exits rather than running.**
+
+    "Host-wide" means the EC2 box: on Kubernetes each pod holds its own ``/tmp``, so the lock
+    arbitrates nothing there and the container-level flag stays the protection — the banner above
+    ``media_queue.QUEUE_LOCK_PATH`` carries the argument (noted 2026-09-03).
+
+    THIS PROCESS USED TO IGNORE THE ELECTION ENTIRELY, and until 2026-09-03 that was the whole hole:
+    the lock existed, it lived in ``app/main.py``, and it arbitrated only between uvicorn workers —
+    of which there is exactly one (the Dockerfile pins ``--workers 1``, with a comment recording the
+    outage ``--workers 2`` caused). So the contention the lock is named for, TWO DRAINS ON ONE BOX,
+    was the case nobody was holding the door against. An API process with
+    ``MEDIA_QUEUE_WORKER_ENABLED`` true beside this unit gave the host two drains, and
+    ``media_queue._lock_job``'s compare-and-set does not defend against that: it makes the two claim
+    DIFFERENT jobs honestly, then both run ffmpeg and paid provider calls on a box sized for one.
+    Production escaped by convention — the web box ships ``MEDIA_QUEUE_WORKER_ENABLED=false``
+    (DEPLOY_AWS.md) — and a convention is not a guard, which is why the flag's default has also been
+    turned off (``core/config.media_queue_worker_enabled``).
+
+    EXIT NON-ZERO, AND LOUDLY, RATHER THAN SLEEPING OR DEGRADING. ``Restart=always`` in
+    ``fieldrepo-queue.service`` will bring this straight back, so a losing process becomes a visible
+    restart loop in ``systemctl status`` with this message on every cycle — which is the report an
+    operator can act on. The alternatives are both worse: idling would leave a unit reporting
+    "active (running)" while draining nothing, and running anyway is the defect. A restart loop is
+    noisy on purpose; the fix is to stop the other drain, and the log line says which one to look
+    for.
+
+    THE HANDLE IS HELD FOR THE PROCESS LIFETIME — the lock is released when it is closed, so it is
+    bound to a local that outlives the drain rather than dropped on the floor. On a platform with no
+    ``fcntl`` (Windows development) the helper grants unconditionally, so nothing here changes for a
+    developer running the worker by hand.
+    """
+    lock = acquire_queue_worker_lock()
+    if lock is None:
+        logger.error(
+            "Another media-queue drain already holds the host lock; refusing to start a second one "
+            "(pid %s). Stop the other drain — most likely an API process still running with "
+            "MEDIA_QUEUE_WORKER_ENABLED=true — and this unit will come back on its next restart.",
+            os.getpid(),
+        )
+        raise SystemExit(1)
+    logger.info("Media queue drain elected in pid %s", os.getpid())
+    try:
+        asyncio.run(_run())
+    finally:
+        if hasattr(lock, "close"):
+            with suppress(Exception):
+                lock.close()
 
 
 if __name__ == "__main__":

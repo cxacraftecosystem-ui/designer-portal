@@ -308,5 +308,12 @@ def test_every_module_that_writes_a_user_row_also_invalidates_the_identity_cache
         "app/api/routes/users.py",
         "scripts/seed_admin.py",
         "scripts/seed_test_accounts.py",
+        # The sessionsValidFrom backfill (2026-09-03) writes User rows from OUTSIDE any serving
+        # process, so calling invalidate_cached_user there would empty the wrong process's cache
+        # and prove nothing. Its write site instead carries a written refusal that names the
+        # symbol and the real bound (AUTH_USER_CACHE_TTL_SECONDS) — which is exactly the answer
+        # this sweep wants from a writer that structurally cannot invalidate: an acknowledgement,
+        # not a ritual call.
+        "scripts/backfill_sessions_valid_from.py",
     }
     assert all(writers.values()), f"user writes with no cache invalidation: {writers}"

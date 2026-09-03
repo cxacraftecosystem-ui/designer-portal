@@ -97,8 +97,23 @@ const WORD_RUN = /[\p{L}\p{M}]+/gu;
  * there. Underscores are allowed between digits because Python allows them. `inf`/`nan` are
  * deliberately absent — they parse in Python and are then rejected as non-finite, so refusing them
  * one step earlier is the same answer.
+ *
+ * `\p{Nd}` RATHER THAN `\d`, AND THE `u` FLAG IS WHAT MAKES IT MEAN THAT (2026-09-03). JavaScript's
+ * `\d` is ASCII-only, while `float()` runs its text through a decimal transform first and therefore
+ * reads ANY Unicode decimal digit: `float("୧୨୩")` is 123.0 and so is `float("١٢٣")`, on a handset
+ * whose keyboard can produce both. The ASCII gate refused them, and `Number()` behind it would have
+ * refused them again — so on `m09-comma-grouped-and-unicode-digits` this browser read 8 of the 10
+ * price observations the server read and then described the shorter sample it was left with: a
+ * median of ₹670 against ₹545, a 25th percentile of ₹338.75 against ₹123. Those are the figures
+ * stage 9's panel prints and the .docx carries, so it was the panel and the report disagreeing about
+ * one workshop with nothing on either saying a number had been dropped. `DwPy.PY_FLOAT` has been
+ * spelled `\p{Nd}` since it was written; this is the web catching up to the handset, not a new rule.
+ *
+ * The grammar is only half of it. Accepting Odia digits buys nothing unless something folds them
+ * before `Number()`, which reads none — see {@link asciiDigits}.
  */
-const PY_FLOAT = /^[+-]?(?:\d+(?:_\d+)*(?:\.(?:\d+(?:_\d+)*)?)?|\.\d+(?:_\d+)*)(?:[eE][+-]?\d+(?:_\d+)*)?$/;
+const PY_FLOAT =
+  /^[+-]?(?:\p{Nd}+(?:_\p{Nd}+)*(?:\.(?:\p{Nd}+(?:_\p{Nd}+)*)?)?|\.\p{Nd}+(?:_\p{Nd}+)*)(?:[eE][+-]?\p{Nd}+(?:_\p{Nd}+)*)?$/u;
 
 /* ────────────────────────────────────────────────────────────────────────────
  * Python-compatible primitives
@@ -109,6 +124,68 @@ const PY_FLOAT = /^[+-]?(?:\d+(?:_\d+)*(?:\.(?:\d+(?:_\d+)*)?)?|\.\d+(?:_\d+)*)(
 
 /** One row of a stage entity, exactly as it is stored. `DwRow` and a decoded API row both fit. */
 export type MarketRow = Record<string, unknown>;
+
+/**
+ * Python's `str.strip()`, character for character.
+ *
+ * `String.prototype.trim()` IS NOT THAT SET, AND IT IS WRONG IN BOTH DIRECTIONS (2026-09-03).
+ * ECMAScript's WhiteSpace is `Zs` plus a short named list plus the byte-order mark U+FEFF. Python's
+ * `str.strip()` follows `str.isspace()`, which is `Zs`/`Zl`/`Zp` plus U+0009 to U+000D, the four
+ * separators U+001C to U+001F, and the next-line U+0085; and which does not count U+FEFF at all. So
+ * `trim()` walks straight past a next-line that Python strips, and strips a byte-order mark that
+ * Python leaves attached. Either way a stored value is read on one client and not on the other.
+ *
+ * The first of those is the whole of `m28-python-whitespace-forms`, and that case is worth reading
+ * as its consequences rather than as a character. Pad the stored values with next-lines and: a price
+ * of five hundred rupees is unreadable, so the observation quietly leaves the sample; a competitor's
+ * price is unreadable, so that product disappears and takes its category's entire distribution with
+ * it; a band's lower bound reads as absent, so a band that could have been called SOUND is reported
+ * NO_EVIDENCE under a sentence about missing data; a respondent's name carries its invisible padding
+ * into `supportedBy`; and an `evidence` field holding nothing but padding counts as evidence, which
+ * flips `hasOwnEvidence` on a SWOT point. None of it draws on a screen, so the panel simply disagrees
+ * with the server and the handset about one workshop, and says nothing.
+ *
+ * THE CHARACTERS ARE NAMED HERE RATHER THAN TYPED. An invisible U+0085 inside this comment would be
+ * unreadable in every diff and every review of it, which is the defect the case above is made of.
+ * `android/app/src/test/resources/dw-analysis-cases.json` is where they are spelled out, as `\u`
+ * escapes, next to the table's own note on why they must not be tidied away.
+ *
+ * `DwPy.strip` states the same set as `isWhitespace || isSpaceChar || U+0085`, which is the JVM's
+ * vocabulary for these characters. The two spellings are one set.
+ */
+const PY_SPACE = /\p{White_Space}/u;
+
+/** Whether Python's `str.isspace()` is true of one character. */
+function isPySpace(character: string): boolean {
+  const code = character.charCodeAt(0);
+  // 28 to 31 are U+001C to U+001F, the four `\p{White_Space}` leaves out. Written as numbers because
+  // an escape for them becomes a literal control character the moment a tool decodes it, and a
+  // character class carrying one is a hazard no reader of the diff can see.
+  if (code >= 28 && code <= 31) return true;
+  return PY_SPACE.test(character);
+}
+
+/**
+ * `text` with the runs Python would strip removed from both ends.
+ *
+ * Code UNITS rather than code points, and safely: every character in the set is BMP, so a surrogate
+ * half can never satisfy {@link isPySpace} and a pair can never be cut down the middle.
+ *
+ * EXPORTED SINCE 2026-09-03, AND IT WAS PRIVATE ON PURPOSE BEFORE THAT. `costIntegrity.ts` is the
+ * second consumer: its two label reads mirrored `cost_integrity.py`'s `.strip()` with `trim()`, so
+ * a line item padded with U+0085 was named "an unnamed line" in the browser and by its real name on
+ * the server and the handset (`DwCostIntegrity.kt` calls `DwPy.strip` at both). The export is the
+ * whole of the fix — the alternative was a second implementation of this set, which is exactly the
+ * drift this comment exists to prevent. Anything else in the web client reaching for `trim()` on a
+ * value the Python `.strip()`s should import this rather than write a third one.
+ */
+export function pyStrip(text: string): string {
+  let start = 0;
+  let end = text.length;
+  while (start < end && isPySpace(text[start])) start += 1;
+  while (end > start && isPySpace(text[end - 1])) end -= 1;
+  return start === 0 && end === text.length ? text : text.slice(start, end);
+}
 
 /** Whether Python would read this value as falsy — which is what `value or ""` turns into `""`. */
 function pythonFalsy(value: unknown): boolean {
@@ -316,6 +393,50 @@ function tokens(text: string): Set<string> {
  * Reading the stored values
  * ──────────────────────────────────────────────────────────────────────────── */
 
+/** Anything outside printable ASCII, which is the only text {@link asciiDigits} has work to do on. */
+const NON_ASCII = /[^ -~]/;
+
+/** One Unicode decimal digit, for the walk in {@link asciiDigits}. */
+const ONE_DIGIT = /\p{Nd}/u;
+
+/**
+ * Unicode decimal digits folded to ASCII, so `Number()` can read what Python's `float()` reads.
+ *
+ * `float()` puts its text through a decimal transform before parsing, so every Nd character is worth
+ * its decimal value there; `Number()` knows `0`-`9` and nothing else, and answers NaN for the Odia
+ * and Arabic-Indic spellings of 123. JavaScript exposes no digit-VALUE function at all, so the value
+ * is derived from Unicode's own rule that Nd characters come in contiguous decades beginning at that
+ * script's zero: walk down at most nine code points while the character is still Nd, and the
+ * distance travelled IS the digit.
+ *
+ * NFKC FIRST, AND IT IS NOT TIDINESS — it is what makes that walk unambiguous. The Mathematical
+ * Alphanumeric digits U+1D7CE to U+1D7FF are five decades with no gap between them, so a walk down
+ * from one of them would stroll into the decade above it and read the wrong digit. Every one of them
+ * carries a compatibility decomposition to an ASCII digit, so NFKC removes the only abutting family
+ * before the walk can meet it. Running it over the whole string is safe here because the caller has
+ * already matched {@link PY_FLOAT}: nothing is left but a sign, digits, a dot, underscores and `e`.
+ *
+ * `DwPy.asciiDigits` reaches the same answer through `Character.digit`, which the JVM has and the
+ * browser does not. Added 2026-09-03 with the `\p{Nd}` half of {@link PY_FLOAT}; neither is any use
+ * without the other.
+ */
+function asciiDigits(text: string): string {
+  // The overwhelming majority of stored prices are ASCII already, and ASCII needs none of this.
+  if (!NON_ASCII.test(text)) return text;
+  let out = "";
+  for (const character of text.normalize("NFKC")) {
+    const code = character.codePointAt(0) ?? 0;
+    if (code < 128 || !ONE_DIGIT.test(character)) {
+      out += character;
+      continue;
+    }
+    let digit = 0;
+    while (digit < 9 && ONE_DIGIT.test(String.fromCodePoint(code - digit - 1))) digit += 1;
+    out += String.fromCharCode(48 + digit);
+  }
+  return out;
+}
+
 /**
  * `value` as a finite number, or null.
  *
@@ -323,6 +444,11 @@ function tokens(text: string): Set<string> {
  * knows how to read it. Non-finite is rejected rather than propagated: a NaN entering a quantile
  * silently poisons every figure downstream of it, and a report that prints "₹ NaN" has already been
  * submitted by the time anybody notices.
+ *
+ * THE TWO NON-OBVIOUS STEPS ARE {@link pyStrip} AND {@link asciiDigits}, and they are here rather
+ * than at the call sites because this is the ONLY place a stored money value is read. `trim()` and
+ * an ASCII digit gate each dropped observations the server kept, silently, and the arithmetic
+ * downstream then described a smaller sample with no sign that it had.
  */
 export function asNumber(value: unknown): number | null {
   if (value === null || value === undefined || typeof value === "boolean") return null;
@@ -332,10 +458,10 @@ export function asNumber(value: unknown): number | null {
   // the same answer reached sooner, and it closes the one place the two languages disagree:
   // `String([5])` is `"5"`, so a one-element list would have become a price here and nothing there.
   if (typeof value !== "string") return null;
-  const text = value.trim().replace(/,/g, "");
+  const text = pyStrip(value).replace(/,/g, "");
   if (!text) return null;
   if (!PY_FLOAT.test(text)) return null;
-  const number = Number(text.replace(/_/g, ""));
+  const number = Number(asciiDigits(text.replace(/_/g, "")));
   return Number.isFinite(number) ? number : null;
 }
 
@@ -600,8 +726,10 @@ export function positionCompetitors(
     // not finished, and ₹0 on a shelf is a claim about the market that nobody made.
     if (price === null) continue;
     const category = pyText(row.category);
-    const name = pyText(row.name).trim() || "Unnamed product";
-    const seller = pyText(row.seller).trim();
+    // `pyStrip` and not `trim()` at every one of these: each mirrors a `str.strip()` on the server,
+    // and a name that keeps invisible padding here is a name the report prints differently (2026-09-03).
+    const name = pyStrip(pyText(row.name)) || "Unnamed product";
+    const seller = pyStrip(pyText(row.seller));
 
     /*
       CATEGORY-MATCHED IF POSSIBLE, POOLED IF NOT, AND THE MESSAGE SAYS WHICH.
@@ -677,17 +805,19 @@ export function linkSwotEvidence(swot: MarketRow[], responses: MarketRow[]): Swo
     if (Array.isArray(row.productsDiscussed)) {
       text += ` ${row.productsDiscussed.map((tag) => pyStr(tag)).join(" ")}`;
     }
-    prepared.push({ name: pyText(row.respondentName).trim() || "A respondent", tokens: tokens(text) });
+    prepared.push({ name: pyStrip(pyText(row.respondentName)) || "A respondent", tokens: tokens(text) });
   }
 
   const out: SwotSupport[] = [];
   for (const row of swot) {
-    const point = pyText(row.point).trim();
+    const point = pyStrip(pyText(row.point));
     // A blank point is dropped rather than reported unsupported: an empty row in the table is a row
     // somebody has not typed yet, not an unevidenced claim.
     if (!point) continue;
     const kind = pyText(row.kind);
-    const own = pyText(row.evidence).trim().length > 0;
+    // An `evidence` field holding nothing but padding is NOT evidence, and `trim()` read one as if it
+    // were — `hasOwnEvidence` true here and false on the server, about the same SWOT point.
+    const own = pyStrip(pyText(row.evidence)).length > 0;
     const wanted = tokens(point);
     const matches: { shared: number; name: string }[] = [];
     for (const candidate of prepared) {
@@ -738,7 +868,7 @@ export function clusterProducts(
     const tags: unknown[] = Array.isArray(raw) ? raw : pyText(raw).split(",");
     const unique = new Set<string>();
     for (const tag of tags) {
-      const text = pyStr(tag).trim();
+      const text = pyStrip(pyStr(tag));
       if (text) unique.add(text.toLowerCase());
     }
     const cleaned = [...unique].sort(comparePyStrings);
@@ -858,7 +988,7 @@ export function collectObservations(
       category: defaultCategory,
       source: "RESPONDENT",
       group: pyText(row.respondentGroup),
-      label: pyText(row.respondentName).trim() || "A respondent"
+      label: pyStrip(pyText(row.respondentName)) || "A respondent"
     });
   }
   for (const row of competitors) {
@@ -869,7 +999,7 @@ export function collectObservations(
       category: pyText(row.category),
       source: "COMPETITOR",
       group: "",
-      label: pyText(row.name).trim() || "A competitor product"
+      label: pyStrip(pyText(row.name)) || "A competitor product"
     });
   }
   return out;

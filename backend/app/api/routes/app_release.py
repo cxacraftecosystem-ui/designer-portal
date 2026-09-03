@@ -119,6 +119,17 @@ async def publish_release(
     The download URL is critical: other devices only show the forced-update prompt when the release
     carries a non-blank URL. So if the client didn't send one, derive it from the object key here — a
     release must never be published without a way to download it, or the push silently does nothing.
+
+    ``sizeBytes`` is stored EXACTLY AS SENT, and that is the one value on this body the server does
+    not second-guess. The version code is re-derived because two publishers computing it for
+    themselves is a second definition of one number; the byte count is the opposite case — only the
+    publisher has the file, and the server has no way to measure the object it was handed a key for
+    without a HEAD it does not make anywhere else on this route. What it therefore records is the
+    publisher's claim about the bytes it uploaded, which is precisely what a downloading phone needs
+    to compare against: the two are the same measurement of the same file, taken by the process that
+    had it. It is optional, and ``None`` records no claim (see the schema for why it may never become
+    required). Nothing else on this route reads it — the check lives on the device, in
+    ``android/…/data/AppUpdateIntegrity.kt``.
     """
     url = payload.url or public_url_for_key(payload.objectKey)
     created = await db.apprelease.create(
@@ -128,6 +139,7 @@ async def publish_release(
             "objectKey": payload.objectKey,
             "url": url,
             "notes": payload.notes,
+            "sizeBytes": payload.sizeBytes,
             "publishedById": current_user.id,
         }
     )
@@ -141,6 +153,13 @@ async def latest_release(_: Any = Depends(get_current_user)) -> dict[str, Any]:
     The URL is recomputed from the object key on the way out (see :func:`_durable_url`), so a row
     saved with a blank or stale ``url`` column still tells a device where the APK is — a forced-update
     check must never skip a real release over a bookkeeping detail.
+
+    ``sizeBytes`` rides out with the rest of the row through ``jsonable_encoder``, additively: it is
+    ``None`` on every release published before the column existed, and a client that has never heard
+    of the key ignores it (``ApiClient.json`` on Android, ``apiFetch`` in the browser, both lenient
+    about unknown fields). The phone compares it against the file it actually downloaded — see
+    ``android/…/data/AppUpdateIntegrity.kt`` for why a length rather than a hash, and why ``None``
+    must go on downloading exactly as before rather than refusing.
     """
     release = await _latest_release()
     if not release:

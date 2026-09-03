@@ -114,13 +114,31 @@ test("the refusals are the ones that were argued, and the list has not silently 
     one-pair parents of the new process cascade, and `artisanBaseline.interviewRef` is the sixth
     reference model's citation on stage 6's new singleton. None of the three was in either table when
     it shipped.
+
+    TWO MORE ON 2026-09-03, AND THEY ARE A NEW KIND. `finalProduct.prototypeRef` and
+    `prototypeValidation.prototypeRef` are the first INTERNAL carries — mappings whose source is
+    another row of the same workshop rather than a record in another table — and they are refused
+    for a reason that will apply to every internal carry after them: there is no repository page to
+    embed, because a `DwPrototype` is a stage-13 row and the place to edit it is stage 13. Read
+    them as the general answer and not as two more one-offs.
+
+    ONE MORE THE SAME DAY, AND IT IS A THIRD KIND. `surveyPlan.questionnaireRef` cites a
+    `Questionnaire` — a record in another table, so not an internal carry — whose refusal turns on
+    something neither group has: the thing it points at is not MADE by filling in a form. A
+    questionnaire enters this system as an uploaded .xlsx that the server parses into sections and
+    questions, so there is no create form to reuse and writing one here would be a second
+    questionnaire builder over the same rows. Its picker is also narrowed by an ACCOUNT rule rather
+    than by the workshop, which is a second reason not to let a stage mint into that list.
   */
   expect(NOT_EMBEDDED.map((entry) => entry.point).sort()).toEqual([
     "artisanBaseline.interviewRef",
     "existingProduct.artisanRef",
+    "finalProduct.prototypeRef",
     "processStep.processRef",
     "processStep.productRef",
     "prototype.productRef",
+    "prototypeValidation.prototypeRef",
+    "surveyPlan.questionnaireRef",
     "traditionalProcess.productRef",
     "workshopSetup.craftRef"
   ]);

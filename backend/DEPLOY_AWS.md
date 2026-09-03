@@ -51,13 +51,62 @@ sudo fallocate -l 2G /swapfile && sudo chmod 600 /swapfile && sudo mkswap /swapf
 echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
 
 sudo apt update && sudo apt install -y python3.12-venv python3-pip git
-git clone <YOUR_REPO_URL> app && cd app/backend
+
+# The release layout the deploy expects. See §3.1 — do not clone into /home/ubuntu/app/backend.
+mkdir -p /home/ubuntu/app/releases/manual/backend
+git clone <YOUR_REPO_URL> /tmp/repo
+cp -a /tmp/repo/backend/. /home/ubuntu/app/releases/manual/backend/
+ln -sfn /home/ubuntu/app/releases/manual /home/ubuntu/app/current
+cd /home/ubuntu/app/current/backend
+
 python3.12 -m venv .venv
-./.venv/bin/pip install -e .          # or: pip install -r requirements
+# FROM THE LOCK, and then the project with NO dependency resolution. `pip install -e .` on its own
+# re-resolves this project's declared ranges and can lift a pin the lock had settled, which is the
+# whole property the lock exists to have — CI, this box and a developer's venv resolving to the same
+# versions. See docs/CI.md §1.3 for how the lock is refreshed (in a container, deliberately).
+./.venv/bin/pip install -r requirements.lock
+./.venv/bin/pip install -e . --no-deps
 PATH="$PWD/.venv/bin:$PATH" ./.venv/bin/python -m prisma generate
 ```
 
-Create `backend/.env` (see template in section 5).
+Create `backend/.env` (see template in section 5) **inside the release**, at
+`/home/ubuntu/app/current/backend/.env`.
+
+### 3.1 The release layout, and why the paths below all go through `current`
+
+Since 2026-09-03 the deploy does not write over a live tree. It rsyncs into a directory named for the
+commit and flips a symlink:
+
+```
+/home/ubuntu/app/releases/<git-sha>/backend/     one directory per deployed commit, its own .venv inside
+/home/ubuntu/app/current -> releases/<git-sha>   the symlink both systemd units point through
+```
+
+Every path in the units below therefore names `current`, and every release carries **the `.env` it
+was deployed with** — so the `.env` of the release that is currently serving is never touched by a
+deploy that may yet fail. The last three releases are kept; `current` is never pruned whatever its
+age, because a deploy whose migration failed deliberately leaves it pointing at an older release than
+the three newest directories on disk.
+
+**Rollback** is the symlink, not a build:
+
+```bash
+aws ssm start-session --target <INSTANCE_ID>       # there is no standing SSH access to this box
+ln -sfn /home/ubuntu/app/releases/<older-sha> /home/ubuntu/app/current
+sudo systemctl restart fieldrepo fieldrepo-queue
+```
+
+Seconds, no network fetch. **The one thing a flip cannot undo is an applied migration** — if the
+release you are rolling back to predates a migration that has run, the old code meets a schema it was
+not written for. That is a restore, not a rollback. It is also why a failed `prisma migrate deploy`
+does **not** flip: the box stays on code that matches the schema the database actually has.
+
+`.github/workflows/deploy-backend.yml` additionally installs systemd **drop-ins**
+(`/etc/systemd/system/fieldrepo{,-queue}.service.d/`) rather than replacing the units below, so a
+hand edit on a long-lived box is not silently discarded. Undo them with
+`rm -rf /etc/systemd/system/fieldrepo*.service.d && systemctl daemon-reload`. The drop-ins and the
+units in this section are deliberately redundant and are not allowed to disagree; `docs/CI.md` §1.2
+is the same story from the pipeline's side.
 
 Smoke test, then run as a service:
 
@@ -98,13 +147,20 @@ After=network.target
 
 [Service]
 User=ubuntu
-WorkingDirectory=/home/ubuntu/app/backend
-EnvironmentFile=/home/ubuntu/app/backend/.env
+WorkingDirectory=/home/ubuntu/app/current/backend
+EnvironmentFile=/home/ubuntu/app/current/backend/.env
 # ONE worker, bound to localhost (nginx fronts it). Two workers reintroduced the
 # SIGKILL/orphaned-Prisma-engine 500 outage (commit 44923bc); the media queue runs in its own
 # service below, so the web process must have MEDIA_QUEUE_WORKER_ENABLED=false in .env.
+# Applied AFTER EnvironmentFile so it always wins, whatever the .env grows.
 Environment=MEDIA_QUEUE_WORKER_ENABLED=false
-ExecStart=/home/ubuntu/app/backend/.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1
+ExecStart=/home/ubuntu/app/current/backend/.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1
+# A SOFT ceiling only, and no MemoryMax: over it the cgroup is throttled and reclaimed hard, so a
+# heavy request gets slow instead of everything else getting killed. Killing uvicorn to save memory
+# is the outcome these limits exist to prevent — on a 1 GiB box the kernel's OOM killer picks by
+# badness score, and that has meant uvicorn dying because the QUEUE was hungry, with the API then
+# 502ing for a reason that appears nowhere in its own log.
+MemoryHigh=500M
 KillMode=control-group
 Restart=always
 RestartSec=10
@@ -123,9 +179,15 @@ After=network.target
 
 [Service]
 User=ubuntu
-WorkingDirectory=/home/ubuntu/app/backend
-EnvironmentFile=/home/ubuntu/app/backend/.env
-ExecStart=/home/ubuntu/app/backend/.venv/bin/python -m app.worker
+WorkingDirectory=/home/ubuntu/app/current/backend
+EnvironmentFile=/home/ubuntu/app/current/backend/.env
+ExecStart=/home/ubuntu/app/current/backend/.venv/bin/python -m app.worker
+# The queue runs ffmpeg and AI transcription, and one large audio job can take it past what is left
+# after uvicorn. MemoryHigh throttles it first (slow, still working); MemoryMax kills it if it keeps
+# climbing, which is survivable — Restart=always brings it back and the job is retried. The queue is
+# the process that CAN be killed; uvicorn is not, which is why only this unit has a hard stop.
+MemoryHigh=400M
+MemoryMax=550M
 KillMode=control-group
 Restart=always
 RestartSec=10
@@ -133,6 +195,16 @@ RestartSec=10
 [Install]
 WantedBy=multi-user.target
 ```
+
+**The queue unit takes a host-wide advisory lock at startup and exits 1 if another drain already
+holds it** (`services/media_queue.acquire_queue_worker_lock`, 2026-09-03). So a misconfiguration that
+would once have run two drains — two ffmpeg workloads and two transcription providers billed against
+a box sized for one — now shows as a **restart loop in `systemctl status fieldrepo-queue` naming the
+cause**, rather than as two drains quietly billing the provider twice. `MEDIA_QUEUE_WORKER_ENABLED`
+now also defaults to `false`, so the `Environment=` line above and the `.env` row in §5 are belt and
+braces rather than the only guard; both stay exactly as they are, because a drop-in that re-points
+`EnvironmentFile=` moves it *after* the base unit's `Environment=` and a `.env` that ever gained the
+variable would otherwise win.
 
 ```bash
 sudo systemctl daemon-reload && sudo systemctl enable --now fieldrepo fieldrepo-queue
@@ -306,9 +378,10 @@ secret key; never commit them.
 
 ### 8.2 GitHub Actions secrets (auto-deploy on push)
 
-`.github/workflows/deploy-backend.yml` rsyncs `backend/` to the box, writes
-`.env`, installs deps, runs `prisma migrate deploy`, and restarts the service on
-every push to `main` that touches `backend/`. Set these repo secrets
+`.github/workflows/deploy-backend.yml` waits for the same commit's `Checks` run, rsyncs `backend/`
+into `releases/<sha>`, writes that release's `.env`, builds or reuses a venv from
+`requirements.lock`, runs `prisma migrate deploy`, **flips the `current` symlink** and restarts the
+units — on every push to `main` that touches `backend/`. Set these repo secrets
 (**Settings → Secrets and variables → Actions**):
 
 | Secret | Value |
@@ -316,9 +389,13 @@ every push to `main` that touches `backend/`. Set these repo secrets
 | `EC2_HOST` | the Elastic IP (`terraform output api_public_ip`) |
 | `EC2_SSH_KEY` | the **private** `.pem` contents for the EC2 key pair |
 | `BACKEND_ENV` | the entire `backend/.env` file (template in §5, with the Terraform S3 values) |
+| `DATABASE_URL` | the **session-pooler** DSN, read only by `.github/workflows/backup-db.yml` (2026-09-03). Not the transaction pooler: `pg_dump` holds one connection across the whole dump and sets session state. |
+| `AWS_MEDIA_ACCESS_KEY_ID` / `AWS_MEDIA_SECRET_ACCESS_KEY` | the `designrepo-media` IAM user's key pair, so the backup job can write the dump into the media bucket. **Deliberately not `AWS_ACCESS_KEY_ID`** — that pair belongs to `designrepo-ci-sg`, whose policy allows exactly two security-group calls and is handed to the step that opens port 22. It must never be widened. |
 
 The `.env` is piped to the server over the SSH tunnel — it is never written to
-the workflow logs or a command line.
+the workflow logs or a command line. **There is no standing SSH access to this box**: the deploy
+opens port 22 for one runner IP and revokes it in an `if: always()` step, and a human reaches the box
+with `aws ssm start-session`. `docs/CI.md` §1.2 is the full runbook, including the rollback.
 
 ### 8.3 Vercel (frontend)
 

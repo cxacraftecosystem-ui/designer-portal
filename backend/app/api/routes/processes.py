@@ -22,7 +22,10 @@ from app.services.records import (
     add_date_range,
     apply_status_policy_create,
     apply_status_policy_update,
+    assert_expected_updated_at,
     clean_data,
+    client_key_replay,
+    client_key_replay_after_violation,
     contains,
     count_and_page,
     enum_filter_or_422,
@@ -33,6 +36,7 @@ from app.services.records import (
     public_encode,
     require_record,
     resubmit_status,
+    take_expected_updated_at,
     viewable_where,
 )
 from app.services.workshop_access import (
@@ -137,7 +141,10 @@ async def _hydrate(process: Any, viewer: Any) -> dict[str, Any]:
     ``@default(cuid())`` on their own tables, and a design-workshop upload carries the
     ``DesignWorkshop``'s id in that column. Two cuids from two tables do not collide, so no row this
     query can return carries the workshop tag, and ``media_workshops`` would be a set nothing here
-    could ever be tested against — bought with a second round trip on a link where one hop is ~750ms.
+    could ever be tested against — bought with a second round trip. (That was ~750ms on the
+    cross-region link this was written against; co-located and ~1-2ms since 2026-09-02,
+    ``services/concurrency.py``. The number moved; "a query issued to build a set nothing can be in"
+    is the wrong trade at any latency.)
 
     THAT IS A NARROWER GUARANTEE THAN THE SIBLINGS' AND IT IS WORTH KNOWING WHICH ONE YOU ARE HOLDING.
     It rests on the id, so it survives an unrelated tag being added to MediaFile — but if this
@@ -203,9 +210,16 @@ def _plan_steps(process_id: str, existing: list[Any], steps: list[ProcessStepInp
 
     Batched rather than one statement per step. A process form re-sends its whole step list on every
     save, so an eight-step process cost eight sequential writes plus a delete each for anything
-    removed — every one of them a cross-region round trip on this deployment. Now the new steps go in
-    with a single insert, the removed ones leave with a single delete, and the only per-step writes
-    left are the steps whose content actually changed, which on a typical save is one or none.
+    removed — every one of them its own round trip. Now the new steps go in with a single insert,
+    the removed ones leave with a single delete, and the only per-step writes left are the steps
+    whose content actually changed, which on a typical save is one or none.
+
+    THE ROUND TRIPS WERE CROSS-REGION WHEN THAT WAS WRITTEN AND ARE CO-LOCATED SINCE 2026-09-02
+    (~1-2ms — ``services/concurrency.py``), SO THE SECOND HALF OF THE ARGUMENT NOW CARRIES IT. These
+    are WRITES, and since 2026-09-03 they run inside ``update_process``'s transaction: the statement
+    count is no longer only wall-clock, it is how long that block holds a connection and how many
+    chances it has to outlive its timeout. Sixteen statements to save eight steps is worse there than
+    it ever was on the wire.
 
     New steps need no ids read back: a freshly inserted step can never be in the previously-existing
     set, so what survives the edit is decided entirely by the ids the caller sent.
@@ -251,14 +265,26 @@ def _plan_steps(process_id: str, existing: list[Any], steps: list[ProcessStepInp
     return plan
 
 
-async def _apply_steps(plan: _StepPlan) -> None:
-    """Execute a plan: one insert, one update per genuinely changed step, one delete."""
+async def _apply_steps(plan: _StepPlan, *, client: Any = None) -> None:
+    """Execute a plan: one insert, one update per genuinely changed step, one delete.
+
+    ``client`` IS THE CALLER'S TRANSACTION AND THE PATCH PATH ALWAYS PASSES IT (2026-09-03). The three
+    statements below are not one write: a plan that both deletes a step and inserts a replacement
+    used to commit the delete first, so a failure between them destroyed a documented step and its
+    photograph links and put nothing back — and the RecordRevision the caller writes AFTER this call
+    would then be missing too, leaving the loss with no audit row to reconstruct it from. Prisma's
+    ``db.tx()`` hands back a DIFFERENT client, so the transaction cannot be discovered from in here
+    and has to arrive as an argument. ``create_process`` deliberately passes nothing: it applies a
+    plan against a row inserted one statement earlier, whose step list is empty by construction, so
+    there is no existing step for a half-applied plan to destroy.
+    """
+    writer = db if client is None else client
     if plan.to_create:
-        await db.processstep.create_many(data=plan.to_create)
+        await writer.processstep.create_many(data=plan.to_create)
     for step_id, data in plan.to_update:
-        await db.processstep.update(where={"id": step_id}, data=data)
+        await writer.processstep.update(where={"id": step_id}, data=data)
     if plan.removed:
-        await db.processstep.delete_many(where={"id": {"in": plan.removed}})
+        await writer.processstep.delete_many(where={"id": {"in": plan.removed}})
 
 
 def _step_digest(steps: list[Any]) -> list[dict[str, Any]]:
@@ -367,6 +393,23 @@ async def create_process(
     payload: ProcessCreate,
     current_user: Any = Depends(require_record_creator),
 ) -> dict[str, Any]:
+    # ── THE IDEMPOTENT REPLAY, AND ON THIS MODEL IT GUARDS CHILDREN AS WELL AS THE ROW ──────────
+    #
+    # ``products.create_product`` carries the shared argument for the ordering. What is particular to
+    # a process is what a second landing used to cost: this route writes ``ProcessStep`` rows AFTER
+    # the row itself, so a replayed create produced a second process carrying a second full copy of
+    # every step of a making sequence. Answering from the stored row is also the only way to write no
+    # steps — ``_apply_steps`` below is reached only past this branch.
+    #
+    # THE STEPS ARE HYDRATED RATHER THAN PLANNED, so the answer carries the ids the FIRST landing
+    # created. That is load-bearing for the caller and not cosmetic: both outboxes read
+    # ``steps[].id`` off this response to attach per-step photographs (``createdStepIds`` on the web,
+    # ``CreatedRecord.stepIds`` on Android, resolved by ``linkTargetFor``). A replay that answered
+    # with no steps would leave every queued step capture with nowhere to attach.
+    replayed = await client_key_replay(db.process, payload.clientKey, user_id=current_user.id)
+    if replayed is not None:
+        await hydrate_relations([replayed], RELATIONS)
+        return await _hydrate(replayed, current_user)
     await require_record(db.productdocumentation, payload.productId)
     data = clean_data(payload.model_dump(exclude={"steps"}))
     # Workshop entries: enforce assignment, then flag + pin a late submission for admin approval.
@@ -386,7 +429,19 @@ async def create_process(
     apply_status_policy_create(current_user, data)
     # After the status policy, so a late submission outranks the submitter's own approval rights.
     pin_pending_if_late(data, current_user, check=check)
-    created = await db.process.create(data=data)
+    try:
+        created = await db.process.create(data=data)
+    except Exception as exc:
+        # The race the pre-read cannot settle. On this model it is the one that would hurt most —
+        # the loser would go on to write a whole second copy of the step list against a second row —
+        # so the answer is the WINNER's row, hydrated, and ``_apply_steps`` below is never reached.
+        raced = await client_key_replay_after_violation(
+            db.process, payload.clientKey, exc, user_id=current_user.id
+        )
+        if raced is None:
+            raise
+        await hydrate_relations([raced], RELATIONS)
+        return await _hydrate(raced, current_user)
     # A row that was created one statement ago has no steps, so the plan is read off an empty list
     # rather than off a query whose answer is known — and no authorization question arises, because
     # there is nothing of anybody else's here to touch.
@@ -422,6 +477,9 @@ async def update_process(
     data = clean_data(
         payload.model_dump(exclude_unset=True, exclude={"steps"}), clearable=_CLEARABLE_COLUMNS
     )
+    # The precondition is a question, not a column — taken out of the body here, asked inside the
+    # transaction below. See ``records.take_expected_updated_at``.
+    expected_updated_at = take_expected_updated_at(data)
     if "productId" in data:
         # AN EXPLICIT ``null`` IS REFUSED HERE RATHER THAN FORWARDED. ``Process.productId`` is NOT
         # NULL — a process is documentation OF a product and cannot be orphaned — but the name is in
@@ -478,6 +536,22 @@ async def update_process(
     # silently DROPS an unauthorised status rather than raising (see its docstring), and
     # ``stamp_workshop_submission``/``pin_pending_if_late``/``resubmit_status``/``merge_field_provenance``
     # only mutate ``data``. If you add a call below that can raise, move it above this block.
+    #
+    # ── THE OTHER HALF OF THE SAME DEFECT IS CLOSED TOO, AS OF 2026-09-03 ──────────────────────────
+    #
+    # Everything above is about a REFUSAL landing between the ledger and the row. The mirror case is
+    # a FAILURE landing there — P2024 on a cross-region connection pool, a dropped socket, a
+    # constraint nothing pre-empted — and no amount of reordering could reach it, because the two
+    # writes were two separate commits in a row and the window between them is not code. The block
+    # below is now ONE ``db.tx()`` spanning ``guard_record_edit``, the row update, the step plan and
+    # the steps' own RecordRevision, so all four land together or none of them do. Both halves of the
+    # rule "the ledger never records an edit that did not happen" are now enforced rather than one.
+    #
+    # THIS PROBE STAYS OUTSIDE THE TRANSACTION AND IT IS NOT AN OVERSIGHT. It is handed ``{}``, so by
+    # the paragraph below it writes nothing at all — ``record_revision`` finds no changed field and
+    # issues no statement — and it exists precisely to refuse BEFORE any write. Opening a transaction
+    # around a call whose whole purpose is to answer without writing would add a round trip to
+    # produce the same 403.
     existing_steps: list[Any] = []
     plan: _StepPlan | None = None
     if payload.steps is not None:
@@ -500,34 +574,52 @@ async def update_process(
     # relation needs its own guard above and its own revision below, and why neither can be folded
     # back into ``data``. The return value is that same privilege verdict, already taken above;
     # deliberately not re-bound, so nobody adds a use of it that would read the wrong one.
-    await guard_record_edit(process, current_user, data, "process")
-    await apply_status_policy_update(current_user, process, data)
-    # Stamped after the edit guard (the stamp is the API's bookkeeping, never a contributor's edit)
-    # and pinned after the status policy, so an already-flagged record cannot be self-approved.
-    stamp_workshop_submission(data, check=check, record=process)
-    pin_pending_if_late(data, current_user, check=check, record=process)
-    merge_field_provenance(data, current_user, previous=process)
-    resubmit_status(process, current_user, data)
-    if data:
-        await db.process.update(where={"id": process_id}, data=data)
-    if plan is not None:
-        await _apply_steps(plan)
-        if plan.writes_anything:
-            # FEED THE AUDIT. ``REVISION_SKIP_FIELDS`` does not skip ``steps``; it was simply never
-            # handed one, because the step list never travels inside ``data``. The record is passed as
-            # a dict holding the BEFORE digest — ``record_revision`` reads its fields through
-            # ``get_value``, which takes a mapping — so the one implementation of "diff, encode and
-            # append an immutable revision" is reused rather than a second one written here.
-            # The re-read costs one query and only on a save that actually changed a step: the new
-            # rows' ids exist nowhere else, and an audit row that cannot name what replaced the
-            # deleted steps is half a record.
-            after = await db.processstep.find_many(where={"processId": process_id})
-            await record_revision(
-                {"id": process_id, "steps": _step_digest(existing_steps)},
-                current_user,
-                {"steps": _step_digest(after)},
-                "process",
-            )
+    async with db.tx() as tx:
+        # Before ``guard_record_edit``, which is the first write in this block — a refusal raised
+        # after it would leave a committed ledger entry for an edit that was then turned down, which
+        # is the very defect the long comment above spends its length on. ``None`` passes and changes
+        # nothing, which is every client shipped to date. See ``records.assert_expected_updated_at``.
+        #
+        # THE STEP PLAN ABOVE HAS WRITTEN NOTHING YET, so refusing here is still clean: ``_plan_steps``
+        # is pure and the ``guard_record_edit(…, {})`` probe issues no statement (its own comment says
+        # why). ``_apply_steps`` is inside this transaction, below, and goes with the rollback.
+        assert_expected_updated_at(process, expected_updated_at)
+        await guard_record_edit(process, current_user, data, "process", client=tx)
+        await apply_status_policy_update(current_user, process, data)
+        # Stamped after the edit guard (the stamp is the API's bookkeeping, never a contributor's
+        # edit) and pinned after the status policy, so an already-flagged record cannot be
+        # self-approved.
+        stamp_workshop_submission(data, check=check, record=process)
+        pin_pending_if_late(data, current_user, check=check, record=process)
+        merge_field_provenance(data, current_user, previous=process)
+        resubmit_status(process, current_user, data)
+        if data:
+            await tx.process.update(where={"id": process_id}, data=data)
+        if plan is not None:
+            await _apply_steps(plan, client=tx)
+            if plan.writes_anything:
+                # FEED THE AUDIT. ``REVISION_SKIP_FIELDS`` does not skip ``steps``; it was simply
+                # never handed one, because the step list never travels inside ``data``. The record is
+                # passed as a dict holding the BEFORE digest — ``record_revision`` reads its fields
+                # through ``get_value``, which takes a mapping — so the one implementation of "diff,
+                # encode and append an immutable revision" is reused rather than a second one written
+                # here. The re-read costs one query and only on a save that actually changed a step:
+                # the new rows' ids exist nowhere else, and an audit row that cannot name what
+                # replaced the deleted steps is half a record.
+                #
+                # READ THROUGH ``tx``, NOT ``db``, AND THAT IS THE WHOLE POINT OF DOING IT HERE
+                # (2026-09-03): the rows this re-read is after were inserted by ``_apply_steps`` two
+                # lines up, INSIDE this transaction and therefore invisible to any other connection.
+                # On the module client it would return the pre-edit list and the audit row would
+                # record "steps: unchanged" for the save that replaced them all.
+                after = await tx.processstep.find_many(where={"processId": process_id})
+                await record_revision(
+                    {"id": process_id, "steps": _step_digest(existing_steps)},
+                    current_user,
+                    {"steps": _step_digest(after)},
+                    "process",
+                    client=tx,
+                )
     hydrated = await db.process.find_unique(where={"id": process_id})
     await hydrate_relations([hydrated], RELATIONS)
     return await _hydrate(hydrated, current_user)

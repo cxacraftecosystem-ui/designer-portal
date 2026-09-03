@@ -22,7 +22,7 @@ Read it top to bottom once; after that use it as a lookup table. Deployment clic
 | `.env.example` (repo root) | nothing — aggregate reference of every variable in the monorepo | Yes | No |
 | `android/local.properties` | Gradle | **No** (gitignored) | No |
 | Vercel dashboard | the frontend build (via `vercel pull` on the CI runner) | n/a | No — see the "public means public" rule below, and rule 3 on the variable **type** |
-| GitHub Actions secrets | `.github/workflows/*` | n/a | **Yes** — at least `BACKEND_ENV`, `EC2_SSH_KEY`, `EC2_HOST`. **No database URL is set**, which is the fact the dormant keep-alive turns on. That comes from a `gh secret list` recorded in `.github/workflows/keep-supabase-active.yml`'s header, whose full reading was "those three and nothing else" — **but that inventory is undated and cannot be current as written**, because the Actions table below lists `VERCEL_TOKEN`/`VERCEL_ORG_ID`/`VERCEL_PROJECT_ID` as required and quotes two of their values. See the note under that table before relying on either. |
+| GitHub Actions secrets | `.github/workflows/*` | n/a | **Yes** — at least `BACKEND_ENV`, `EC2_SSH_KEY`, `EC2_HOST`. **This row used to read "no database URL is set", and that is false as of 2026-09-03.** Two now exist for two different jobs: `SUPABASE_DATABASE_URL` (set 2026-09-02, read by the keep-alive) and `DATABASE_URL` (set 2026-09-03, read by `.github/workflows/backup-db.yml` — the nightly `pg_dump`). The undated `gh secret list` quoted in `.github/workflows/keep-supabase-active.yml`'s header read "those three and nothing else"; **that inventory is undated and is now definitively stale**, in two directions at once — it predates the three `VERCEL_*` secrets the Actions table below quotes values for, and it predates both database URLs. Correcting it rather than deleting it, because the rule it teaches is the point: never quote an undated inventory as present-tense evidence. See the note under that table. |
 | `backend/.env.production` | nothing in this repository loads it; it is the developer's local copy of what production runs | **No** (gitignored by `.gitignore:23`, `.env.*`) | **Yes** — and it is this repository's authority for which provider hosts the production database. See "The database" below; establish facts about it by **host substring only** |
 
 Setup, in order, for a fresh machine:
@@ -212,8 +212,22 @@ variable is absent; a blank default means the app **refuses to start** without i
 | `DATABASE_URL` | **Yes** | — | **Yes** | Prisma/PostgreSQL connection string, in libpq form. **Two different consumers read this one name, and on a provider with two endpoints they want different values.** `prisma migrate deploy` reads it *raw* out of `schema.prisma`'s `env("DATABASE_URL")` — never through `Settings` — and needs a connection that supports **SESSION** mode, because it takes advisory locks and runs DDL that transaction pooling cannot hold across statements. The running app reads it through `Settings` and wants the **pooled** endpoint, declared as such with `DATABASE_USE_TRANSACTION_POOLER` below. Which value each process gets is a deployment arrangement, not a code decision: see `backend/app/core/db.py`'s header, and `infra/k8s/base/job-migrate.yaml`, which gives the migration Job the secret's value with no app ConfigMap attached. On a provider with a single endpoint, or a direct server, there is one value and the flag below goes `false`. **Production today runs the one-value arrangement**: the DSN names a session-mode pooler, so migrate and the app share it and the flag is `false` — see "The database" above. |
 | `DATABASE_USE_TRANSACTION_POOLER` | No | `true` | No | **A declaration about the endpoint `DATABASE_URL` names — not a router, and it matches no hostname.** True means "this DSN is a transaction-mode pooler", and `build_runtime_database_url` (`backend/app/core/db.py`) adds `pgbouncer=true` so the query engine stops relying on session-pinned named prepared statements that transaction pooling cannot keep. It takes effect on **any remote host**; a loopback/private DSN is returned untouched, and a `pgbouncer` already written into the URL always wins. **Set it `false` when `DATABASE_URL` is a direct, non-pooling endpoint** — including a provider that publishes only one endpoint. Default true because the two mistakes are not symmetric: true-against-direct costs prepared-statement caching, false-against-pooled fails queries under load. It **used to** be a host-suffix rewrite for one vendor's pooler (`.pooler.supabase.com`, `:5432 → :6543`); that was removed on 2026-08-22 and both files' headers record why. **Production sets `false`** (2026-09-02): the DSN names a session-mode endpoint, precisely so `prisma migrate deploy` can read the same URL raw. |
 | `DATABASE_CONNECTION_LIMIT` | No | `10` | No | Client connections **per uvicorn worker**. Do not raise to 40: on the Supabase deployment this ran on until 2026-08-22 that tripped a 200-client pooler ceiling (`EMAXCONN`) and crash-looped startup. The *ceiling* was that provider's; the *lesson* — that this number multiplies by every worker, pod and rollout surge — is arithmetic and applies everywhere. **The ceiling is established again as of 2026-09-02** — the same provider's, so the same shape: a per-project client ceiling in the hundreds and a **session pool of ~15 slots**, which is the binding one for today's session-mode DSN; [KUBERNETES.md](KUBERNETES.md)'s arithmetic applies rather than hangs. **Production sets the limit explicitly to `5`**: two processes (uvicorn's single worker plus the queue service) × 5 = 10 steady-state sessions, leaving 5 slots for deploy-time migrate and restart overlap. That also settles finding **A30-11** of [AUDIT-2026-08-30.md](AUDIT-2026-08-30.md) *in the deployment, as it asked*: `DATABASE_USE_TRANSACTION_POOLER=false` stops `pgbouncer=true` being appended, and the limit is an operator's measured choice (Prisma's CPU-derived default on this box is the same 5), not an unevaluated inheritance. The ⚠ for every other deployment stands: a direct DSN with the flag left on its `true` default is silently given `connection_limit=10`, which was only ever evaluated as a reduction against a pooler. |
-| `DATABASE_POOL_TIMEOUT` | No | unset → Prisma's own (10 s) | No | Seconds to wait for a pooled connection. |
+| `DATABASE_POOL_TIMEOUT` | No | unset → Prisma's own (10 s) | No | Seconds to wait for a pooled connection before the query fails. **Production sets it to `5` (2026-09-03), which closes finding A30-13 of [AUDIT-2026-08-30.md](AUDIT-2026-08-30.md).** The reasoning is the one that finding made: with `DATABASE_CONNECTION_LIMIT=5` a saturated pool is a real state on this box, and Prisma's unset default makes every request queue ten seconds behind it — which is long enough for a caller to have given up, retried, and taken another slot. Five seconds fails the request while there is still a person waiting rather than a pile-up. It is a **wait** ceiling, not a query timeout: a slow statement that already holds a connection is unaffected. |
 | `DATABASE_REQUIRE_SSL` | No | unset → automatic | No | Forces `sslmode=require` on/off. Unset means: append it for a **remote** host, leave a loopback/private host alone (docker-compose Postgres ships no certificate). A URL that already carries an `ssl*` parameter always wins. Matters because libpq/Prisma default to `sslmode=prefer`, which silently falls back to plaintext. |
+
+<a id="the-pool-numbers-stated-once"></a>
+**The two pool numbers, stated once so code comments can cite a place instead of restating a value.**
+The CODE default of `DATABASE_CONNECTION_LIMIT` is **10**; the value the DEPLOYMENT sets is **5**
+(2026-09-02). The CODE default of `DATABASE_POOL_TIMEOUT` is **unset** (Prisma's own 10 s); the value
+the deployment sets is **5 seconds** (2026-09-03). Several backend comments still assert "the default
+is 10" flatly — `backend/app/api/routes/dashboard.py`, `backend/prisma/schema.prisma`,
+`backend/app/services/usage.py`, and
+[DECISION-usage-consent-default.md](DECISION-usage-consent-default.md) and
+[METHODOLOGY-usage-instrumentation.md](METHODOLOGY-usage-instrumentation.md) with them. Each of those
+is true about `config.py` and false about production, and the distinction matters wherever the number
+is used to reason about concurrency: the arithmetic in [SCALABILITY.md](SCALABILITY.md) §2 that
+assumes eight coroutines land in one wave is the arithmetic of a pool of ten, not of five. Cite this
+paragraph rather than restating either number.
 
 ### Auth
 
@@ -227,11 +241,18 @@ variable is absent; a blank default means the app **refuses to start** without i
 
 ### Authenticated-identity cache
 
-`get_current_user` reads the user row on **every** authenticated request, and that read is one
-cross-region round trip (200–400 ms) before any of the request's real work starts. This cache removes
-it for a few seconds at a time. Unlike everything under `SCALE_*`, it is **on by default**, because
-the cost it removes is being paid right now and a flag that had to be switched on would leave it
-there.
+`get_current_user` reads the user row on **every** authenticated request. This cache removes that
+read for a few seconds at a time. Unlike everything under `SCALE_*`, it is **on by default**.
+
+**Its justification changed on 2026-09-02 and the paragraph is corrected rather than deleted.** It
+used to read *"that read is one cross-region round trip (200–400 ms) before any of the request's real
+work starts … the cost it removes is being paid right now"*. The database is now co-located with the
+API box and a keyed `find_unique` is **1–2 ms**, so what the cache still buys is **burst dedupe** —
+single-flight on one token across a page load's parallel requests — and not latency. That is real and
+much smaller. Cutting `AUTH_USER_CACHE_TTL_SECONDS` to 1–2 s, or to 0 with
+`AUTH_USER_CACHE_ENABLED=false`, is now a cheaper trade than it was; it was deliberately **not**
+changed as a silent constant edit and belongs in the next deployment review. See
+[OPEN_FINDINGS.md](OPEN_FINDINGS.md), where that decision is recorded.
 
 Read [SECURITY.md §4.1](SECURITY.md) before changing any of these — the row being cached is the one
 authorisation decisions read, so the TTL is a revocation window.
@@ -331,10 +352,23 @@ with no restart. Full semantics: [ARCHITECTURE.md §6](ARCHITECTURE.md).
 
 | Variable | Required | Default | Secret | Notes |
 |---|---|---|---|---|
-| `MEDIA_QUEUE_WORKER_ENABLED` | No | `true` | No | **Must be `false` on the production web process** — a separate `fieldrepo-queue` systemd unit runs `python -m app.worker` so ffmpeg + AI work never blocks HTTP requests. `true` is right for local dev. |
+| `MEDIA_QUEUE_WORKER_ENABLED` | No | **`false`** (was `true` until 2026-09-03) | No | Whether **uvicorn** also drains the media queue inside itself. Draining there is an explicit dev opt-in — one process, one loop, no systemd unit to run — and nothing else. Production has always run the drain as a separate `fieldrepo-queue` unit (`python -m app.worker`) so ffmpeg and AI work never blocks an HTTP request, and the EC2 unit ships `false` explicitly, so **flipping this default changed nothing on the deployment**; what it changed is the box that starts both without naming the flag, which used to get two drains and two provider bills. Both entry points now also take a **host-wide advisory lock** (`services/media_queue.acquire_queue_worker_lock`), so a second drain refuses to start rather than running quietly beside the first. |
 | `MEDIA_QUEUE_INTERVAL_SECONDS` | No | `5.0` | No | Poll interval between queue sweeps. |
 | `MEDIA_QUEUE_BATCH_SIZE` | No | `3` | No | Jobs claimed per sweep. |
 | `MEDIA_QUEUE_JOB_MAX_ATTEMPTS` | No | `3` | No | Retries before a job is marked failed. Provider throttling (HTTP 429/503) requeues **without** burning an attempt. |
+
+### Media upload ceiling
+
+| Variable | Required | Default | Secret | Notes |
+|---|---|---|---|---|
+| `MEDIA_UPLOAD_MAX_BYTES` | No | `1073741824` (1 GiB) | No | Ceiling on **one uploaded object**. `POST /media/presign` and `POST /media/multipart/create` refuse a declared `sizeBytes` above it before any URL is signed, and `POST /media/complete` re-checks the object's **real** length with `head_object` — the declared number is the client's and always was. **1 GiB and not the 512 MiB it started as**, decided from the corpus rather than from taste: the largest live object in this deployment is 668.44 MiB ([SCALABILITY.md](SCALABILITY.md) §5.1), so a 512 MiB ceiling would refuse a re-upload of a file class the fleet demonstrably produces, and Android's `saveOrQueue` does not queue a 4xx — the refusal would lose the recording rather than retry it. It is also the number `media_queue.MAX_TRANSCRIBE_FETCH_BYTES` uses, so the server will not accept an object it would then refuse to transcribe. **It does not govern `POST /media/transcribe`**, which is admin-only and deliberately uncapped. |
+
+### Signed media reads — the flag that is shipped OFF
+
+| Variable | Required | Default | Secret | Notes |
+|---|---|---|---|---|
+| `MEDIA_PRESIGNED_READS` | No | **`false`** | No | Whether a served `MediaFile.url` is a **15-minute signed URL** instead of the permanent CDN one. Off is exactly today's behaviour, byte for byte. On, `records._sign_media_url` rewrites the `url` in every `public_encode` payload at serialization; **the stored column is never rewritten**, which is what makes the flip a redeploy to undo. ⚠ **Turning this on before fleet adoption BREAKS FIELDED 0.0.7 HANDSETS**: a 0.0.7 phone caches `url` in its offline store and renders photographs from the cached string with no network, so it loses images on a device that may not see a network for a week, and no server change can reach it. **Read [SECURITY.md](SECURITY.md)'s operator runbook before setting it** — the flip is one step of six, and the bucket-policy edit that closes risk P0 comes after it, never before. The long sequencing argument is in `backend/app/core/config.py` above the field. |
+| `MEDIA_PRESIGNED_READ_TTL_SECONDS` | No | `900` (15 min) | No | How long a signed read URL stays good. Sized for *"a page renders, a person looks at it, a person clicks download"* and **not** for a long-running job — the surfaces that outlive a look sign their own with their own expiry (`/export/dataset` at six hours). `0` or negative reads as off. Leave it at `900` through the runbook; step 4's verification asserts `X-Amz-Expires=900` exactly. |
 
 ### Optional scaling layer — `SCALE_*` and the read replica
 
@@ -463,6 +497,9 @@ Set at **Settings → Secrets and variables → Actions**. Never in a file.
 | `EC2_HOST` | `deploy-backend.yml` | Yes | No | Elastic IP of **this portal's** API box: `13.206.216.18` (instance `i-0e091ca8e6b417b52`, tagged `designrepo-api`). `15.207.145.174` is the field repository's box and must never appear here. |
 | `EC2_SSH_KEY` | `deploy-backend.yml` | Yes | **Yes** | Private `.pem` contents for **this portal's** key pair `designrepo-deploy` — the file is `infra/terraform/designrepo-deploy.pem`. The sibling `fieldrepo-deploy.pem` opens the *other* product's box, and pasting it together with the *other* IP is the pair that deploys successfully onto the wrong machine. See the banner at the top of [CI.md](CI.md) before you set either of these two. |
 | `BACKEND_ENV` | `deploy-backend.yml` | Yes | **Yes** | The **entire** `backend/.env` file. Piped to the box over SSH — never echoed to logs. This is where you edit `BACKEND_CORS_ORIGINS` for production. |
+| `DATABASE_URL` | `backup-db.yml` | Yes | **Yes** | Added 2026-09-03. The **session-pooler** DSN for the production database — *not* the transaction pooler, for the same reason migrations need session mode: `pg_dump` holds one connection open across the whole dump and sets session state on it. Read by the nightly backup job and by nothing else; the running application never sees this secret (its DSN arrives inside `BACKEND_ENV`). Its own name is `DATABASE_URL` because that is what `pg_dump` is handed, not because anything shares it. |
+| `AWS_MEDIA_ACCESS_KEY_ID` | `backup-db.yml` | Yes | **Yes** | Added 2026-09-03. The `designrepo-media` IAM user's access key (`aws_iam_user.media` in `infra/terraform/main.tf`), which already holds `PutObject`/`GetObject` on the media bucket and is therefore the right identity to write a dump into it. **Deliberately NOT `AWS_ACCESS_KEY_ID`** — see the row below. |
+| `AWS_MEDIA_SECRET_ACCESS_KEY` | same | Yes | **Yes** | The matching secret key. **The reason these two are separate secrets rather than a reuse of `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`:** that pair belongs to `designrepo-ci-sg`, whose inline policy allows exactly two security-group calls on one group ARN and nothing else in the account. It is handed to a deploy step that **opens port 22**, so it is the one credential in this repository that must never be widened; giving it `PutObject` to save a secret would trade the whole point of its narrowness for a copy-paste. |
 | `VERCEL_TOKEN` | `deploy-frontend.yml` | Yes | **Yes** | Vercel → Account Settings → Tokens. Must be scoped to the **team** owning `designer-repository`, not a personal account, or the CLI 403s. The only genuinely sensitive one of the three. Absent, stage 2 skips with instructions rather than failing. |
 | `VERCEL_ORG_ID` | same | Yes | No | `team_pcTf4Alb2DCIwq2IZcdu00dS`. An identifier, not a credential. Both products live in this one team, so it is the one Vercel value that is the same either way — and therefore the one that cannot warn you. |
 | `VERCEL_PROJECT_ID` | same | Yes | No | `prj_uRYcc64FRwcrkvMDZg9Gp7ZEtCoc` — Vercel project **`designer-repository`** — the owner confirmed the production target on 2026-08-23, and `designer-repository.vercel.app/login` answers 200 while `designer-repository.vercel.app/login` answers 404. THE ID ITSELF IS UNVERIFIED against that project: it is what `vercel link` wrote into this checkout's `frontend/.vercel/project.json`, which records `projectName: designer-repository`. An identifier, not a credential, but it is the **deploy target**: `prj_EzXN8hhGKpMciFBrZRdxpcgUUzN0` is the *field repository's* project, and publishing there does not fail — it succeeds, replacing another product's live site with this one's build. Never put that value in this repository. |
@@ -476,9 +513,12 @@ undated `gh secret list` quoted in a workflow header used to be cited here as fi
 silently skipping on every push. **Re-run 2026-09-02**: eighteen repository secrets exist, including
 all three `VERCEL_*` rows above, the five `ANDROID_*` signing secrets, the four `AWS_*` values, and
 `SUPABASE_DATABASE_URL` (added that day for the keep-alive). The old inventory was stale, its
-"nothing else" clause wrong; the rows in this table stand. The rule that produced the confusion
-survives it: never quote an undated inventory as present-tense evidence — re-run
-`gh secret list --repo <this repo>` and date the answer.
+"nothing else" clause wrong; the rows in this table stand. **Three more were added on 2026-09-03**
+for the nightly backup — `DATABASE_URL`, `AWS_MEDIA_ACCESS_KEY_ID` and `AWS_MEDIA_SECRET_ACCESS_KEY`,
+tabulated above — so the 2026-09-02 count is itself now a historical number rather than the current
+one. That is the rule working rather than failing: never quote an undated inventory as present-tense
+evidence, and date every count you do take — re-run `gh secret list --repo <this repo>` and write the
+date beside the answer.
 
 The `NEXT_PUBLIC_*` values are deliberately **not** in this table. They live in the Vercel project
 and `vercel pull` fetches them into the runner at build time, so the Environment Variables screen

@@ -233,6 +233,13 @@ this document's own maintenance table forbids, so it no longer states one.**
   deliberately **not** part of `registry_version()`, since the values already stored are still valid,
   which means a client that has not refetched is enforcing the previous cap and the server remains
   the authority either way.
+- **`refModel` on a `MULTI_ENUM`** — the second thing on this list a client must act on *before* the
+  designer does anything, added 2026-09-03. A `MULTI_ENUM` has two kinds and they draw different
+  controls: with `refModel` set it is a **record-backed** picker over the repository; without it, a
+  vocabulary picker over `ENUMS`. **A client dispatches on the key, not on the type** — Android on
+  `field.refModel.isNotBlank()`, the web on `field.refModel` — and a client that renders only the
+  vocabulary control shows an empty list for a field whose options exist, with nothing saying why.
+  `refScope` rides alongside it and is emitted only where a picker is drawn.
 - **`minItems`.** How many entries a multi-valued field must hold before its stage counts as
   **complete** — declared today by stage 4's two motif galleries, at 25 each, because the owner
   asked for 25 of each and all of them. It is the mirror image of `maxItems` in every respect that
@@ -263,6 +270,35 @@ this document's own maintenance table forbids, so it no longer states one.**
   - Emitted only where declared, exactly as `maxItems` is, so both clients read the number instead of
     hard-coding it — for their ports of the scorer, and for the "20 of 25" progress bar.
 
+### Promoting a field's type, and the wire-compat rule that makes it free
+
+`TAGS → MULTI_ENUM` (2026-09-03, `processStep.toolsUsed` and `prototype.toolsUsed`) establishes a
+rule future promotions should follow, and it is the `TAGS` analogue of the `LONG_TEXT → RICH_TEXT`
+one.
+
+**It changes NO stored shape, so it needs no migration.** `TAGS` and `MULTI_ENUM` are both a JSON
+array of strings — `FieldType.is_multi` covers both and `coerce_value` takes the one branch for
+both — so what already sits in the column keeps printing and nothing is rewritten.
+
+**The vocabulary check is skipped for a ref-backed field, and that is what keeps a fielded APK
+writing.** Those two boxes were `TAGS` until 2026-09-03, so every 0.0.7 handset in a village and
+every cached web bundle still draws a free-text tag box and submits `["pit loom", "bobbin winder"]`
+to a registry that now calls the field `MULTI_ENUM`. Refusing those saves would not degrade the
+field, **it would refuse the WRITE**: `save_stage` restores a rejected key from `previous`, and
+Android's `saveOrQueue` does not retry a 4xx, so a designer on one bar loses the stage and is told a
+field they can see holds an unknown option. Both shapes are therefore accepted and stored verbatim —
+the ids the new picker writes and the prose the old box wrote — and **every render surface prints an
+unresolvable non-id token exactly as typed**. The registry declares the id shape; the store holds
+whichever it was given.
+
+The corollary is the one to state before the next promotion: **a record-backed `MULTI_ENUM` is a
+CLOSED list**, so promoting a *required* field to one can brick a stage if the source repository can
+legitimately be empty. That is the argued reason `prototype.materials` and `finalProduct.materials`
+were judged and deliberately left as `TAGS` — there is no `Material` model to back them, a prototype
+is exactly where a designer records a material the cluster's baseline does not have, and a workshop
+started from a designer's own brief would meet a required field with no answerable option and could
+never submit stage 13 or stage 16.
+
 ### Coercion is forgiving; typing is not
 
 `coerce_value` accepts `"12"` for an `INT` and `"yes"` for a `BOOL`, because three clients write
@@ -292,12 +328,27 @@ covers the promoted-column paths — every path must resolve to exactly one real
 paths may target the same column, since either mistake gives the denormalisation two possible sources
 that will disagree the first time both are edited.
 
-**Rule 2 — every enum resolves to a shared canonical list.** Several stages ask for a material, and
-several independent authors will spell it several ways. `ENUMS` is what makes `COTTON` in stage 5 the
-same answer as `COTTON` in a stage 17 cost sheet — which is the whole difference between a dataset
-you can aggregate and a pile of free text. A field typed `ENUM` or `MULTI_ENUM` that names no list,
-or names one that is not in `ENUMS`, is a violation; so is a field that names a list but is not one of
-those two types. Stored values are `UPPER_SNAKE` tokens and the **label** is what a designer sees and
+**Rule 2 — every closed list resolves to one authority, and a `MULTI_ENUM` now has two kinds.**
+Several stages ask for a material, and several independent authors will spell it several ways.
+`ENUMS` is what makes `COTTON` in stage 5 the same answer as `COTTON` in a stage 17 cost sheet —
+which is the whole difference between a dataset you can aggregate and a pile of free text.
+
+**Corrected 2026-09-03.** This paragraph used to say *"A field typed `ENUM` or `MULTI_ENUM` that
+names no list, or names one that is not in `ENUMS`, is a violation"*, and that is now false in one
+direction: **a `MULTI_ENUM` may name a `ref_model` INSTEAD of an enum** and draw its options from the
+repository. The rule is **exactly one of the two, never neither and never both**, and
+`validate_registry` enforces all three halves:
+
+- **Neither** is a violation — a closed list with no members, which on a required field is a stage
+  nobody can ever submit.
+- **Both** is a violation, and worse than either: `coerce_value` would have to decide whether a token
+  is an enum member or a record id, and the two clients would each draw a different control from one
+  declaration.
+- **An `enum` naming a list absent from `ENUMS`** is a violation, as before.
+
+An `ENUM` (singular) still takes an enum and only an enum. A field that names a list but is neither
+`ENUM` nor `MULTI_ENUM` is still a violation, and `ref_model` is accepted only on `REF` and
+`MULTI_ENUM` — those are the two types that draw a picker. Stored values are `UPPER_SNAKE` tokens and the **label** is what a designer sees and
 what the report prints, because a report that says `TIE_AND_DYE` is not a report anyone will submit.
 `enum_label` falls back to the raw token rather than raising, so a draft written by a phone one
 release ahead of the server prints something legible instead of failing an export the designer is
@@ -398,7 +449,19 @@ next would manufacture an audit trail on a document submitted to a ministry.
 **The boundary with `REFERENCE_HYDRATION` is the value/authorship line, and both policies are right.**
 Hydration deliberately COPIES field-pairs onto a stage entry so that a report — a dated observation,
 generated months later and kept by an office — is not rewritten by a later correction to a live
-record. (This sentence used to say **81** field-pairs. It was 109 when somebody next counted, which
+record. **Since 2026-09-03 the source need not be a live record at all: it may be another stage row
+of the same workshop** (`finalProduct.prototypeRef` and `prototypeValidation.prototypeRef`, resolved
+by `hydrate_entries`' internal path against `dwstageentry` scoped to the workshop being saved). Only
+the loading branch differs; the copy, the only-fill-blanks rule and the provenance stamp are the
+same.
+
+**One limit follows from that and is worth stating where the provenance rule is stated.**
+`entry_provenance.canonical_divergence` is gated on `model in REFERENCE_MODELS`, and an internal
+carry's stamp names `DwPrototype`, which is not one. So an admin audit sees an internal field's
+provenance stamp — the row and column it came from — but does **not** get the stored-vs-canonical
+comparison it gets for an artisan: `canonical` is null, `diverged` is false, `recordDeleted` is
+false. A stage-13 correction made after a stage-16 carry therefore cannot surface as divergence. It
+is a known limit, named in the registry beside the mapping rather than left to be discovered. (This sentence used to say **81** field-pairs. It was 109 when somebody next counted, which
 is a third of the way wrong and is exactly what the note below the maintenance table forbids: the
 count is the sum of `REFERENCE_HYDRATION`'s mappings and belongs in the registry, not in prose here.)
 The requirement behind `fieldProvenance` is "do not duplicate the record per designer". They
@@ -734,6 +797,18 @@ store's `importMedia` copies the bytes into `filesDir/workshops/<id>/media/` the
 captured, and every later reference is to that copy: never to the content `Uri` (which the granting
 app may revoke the moment our process dies) and never to the cache file.
 
+> **What signed media reads cost offline, stated plainly (2026-09-03).** With `MEDIA_PRESIGNED_READS`
+> on, a `MediaFile.url` is good for fifteen minutes rather than for ever. **An offline handset — or an
+> offline browser — holding an expired URL for media whose BYTES it never cached cannot render it,
+> and no refresh is attempted offline**: the refresh helpers on both clients decide `OFFLINE` before
+> anything else and do nothing, deliberately, so an unissuable refresh does not spend the one attempt
+> they allow. That is a real regression against permanent URLs and it is the price of their expiring.
+> **The designer's OWN unconfirmed captures are unaffected**, which is the half that matters in a
+> courtyard: Android draws them from `filesDir` through a `file://` path that carries no signature and
+> cannot expire, and the web keeps the `Blob` in its draft store until the server confirms the upload.
+> What an offline expiry costs is remote media this device never held. The operator sequence that
+> makes the flip safe is in [SECURITY.md](SECURITY.md).
+
 **Stage values are a map, not a class per stage.** The draft carries `Map<String, JsonElement>`
 keyed by field key, for the same reason the server stores JSON: the stages are registry data, and a
 Kotlin data class per stage would be a fourth copy of the field list to keep in step. The draft
@@ -786,6 +861,56 @@ rewritten to now, destroying the record of when the designer actually removed it
 
 `backend/tests/test_stage_sync.py` pins all of this against a real database, because the failure was
 in an index and no amount of reading the Python could have shown it.
+
+### The other race: a row somebody else saved while this stage was open (2026-09-03)
+
+The client key closes the **insert** race. The **update** race was open until 2026-09-03: two
+designers with access to one workshop both had the stage open, both typed, and the second to press
+Save won every field — including the ones they never touched, because the payload carries the whole
+entity. The first designer's answers were gone with no 409, no banner, and no `RecordRevision` for a
+stage entry.
+
+`DwStageEntry.version` closes it. Every incoming row carries the version the client last read, the
+write is an `update_many` predicated on `{id, version}` with `version: {increment: 1}`, and a count
+of zero means **a concurrent writer, not a missing row** — the row was addressed by primary key, so
+nothing else can write nothing. The refusal is reported in the response's existing `errors` map:
+
+```json
+{ "errors": { "sketch[2]": { "_row": "Someone else saved this row first — reopen the stage to see the latest before saving again." } } }
+```
+
+Four things about that shape are deliberate:
+
+* **The scope key is the same one a validation refusal uses** — `entityKey`, `entityKey[i]`, or
+  `_custom`. A client that already renders refusals per row needs no new placement logic.
+* **It is counted by `refusedAnswers`** like any other entry, so a save that refuses one row and
+  writes nine reports one refusal rather than silence.
+* **The rest of the payload still saves.** The refusal is per row, not per stage — which is the whole
+  reason it goes in `errors` rather than answering 409 over the request. A stage save is
+  all-or-nothing about the *stage's own consistency*, and one contested row is not that.
+* **`_row` is a reserved key, like `_clientKey` and `_entryId`.** It is not a field key, so a client
+  that marks boxes by field key will not find a box to mark. Android's `unplaced` valve is the
+  intended renderer for exactly this case, and the reserved-key convention is what routes it there.
+
+**The literal `_row` is written by hand in three places and there is no generator between them.**
+`backend/app/services/design_workshops.py`'s `STAGE_ROW_CONFLICT_KEY`,
+`android/app/src/main/java/com/designprototype/workshop/data/DwStageRefusal.kt`'s
+`DW_ROW_REFUSAL_KEY`, and the web's `ROW_REFUSAL_KEY` in
+`frontend/components/designworkshop/EntityForm.tsx`. Changing one and not the others is a silent
+divergence — the refusal would simply stop being recognised on the client that was missed, and would
+be drawn as a field named `_row`.
+
+**Read the shape precisely, because the box-marking pass is where this went wrong on the web.**
+`errors` is `{scope: {field: message}}`. `_row` is a refusal about the WHOLE ROW rather than a field,
+and it **may appear alone or beside real field messages in the same bucket**. It counts as one
+refused answer on both clients' existing totals. A client must not render it as a field label and
+must not hand it to per-field box marking: the web's pass looked every key in the bucket up in the
+registry's field list, found nothing for `_row`, and so reported a refusal count with nothing marked
+anywhere. `rowRefusal` / `RowRefusalLine` are the fix — drawn on the collection card, on the
+singleton, and hoisted once for `_custom`.
+
+Two writes are deliberately **not** version-guarded — the sweep, and the `DesignWorkshop` header
+write. [DATA_MODEL.md](DATA_MODEL.md) carries the argument for each.
 
 ---
 

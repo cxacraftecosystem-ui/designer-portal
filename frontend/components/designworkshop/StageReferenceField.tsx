@@ -83,9 +83,15 @@ import {
   type DwReferencePayload,
   type DwValue
 } from "@/lib/designWorkshops";
+// The app's one date format. `cachedListLine` takes the FORMATTED string, so this is the only place
+// the ISO stamp on a cached picker answer meets a locale.
+import { formatDate } from "@/lib/format";
 import { isUnreachable } from "@/lib/offline";
 import { canManageCrafts } from "@/lib/permissions";
+import { loadStageReferences } from "@/lib/referenceCache";
 import { workshopRecordTypeLabel, type WorkshopCodeRef, type WorkshopRecordType } from "@/lib/workshopCodes";
+// §3.5's cached-and-stale sentence, shared with the workshop pickers so one fact has one wording.
+import { cachedListLine } from "@/lib/workshopOptions";
 
 /**
  * How long after the last keystroke the search goes out.
@@ -116,15 +122,43 @@ type PickerState = {
   payload: DwReferencePayload | null;
   loading: boolean;
   problem: string | null;
+  /**
+   * WHEN THIS DEVICE LAST GOT THIS LIST FROM THE SERVER, or null when the payload on screen is live.
+   *
+   * Null is not "unknown"; it is "the network answered just now", which is why it is cleared on every
+   * live answer rather than left standing. A stamp that survived a refresh would tell a designer a
+   * list they are looking at is nine days old while they are online, which is worse than saying
+   * nothing at all — the whole value of the stamp is that it is only ever shown when it is true.
+   */
+  cachedAt: string | null;
 };
 
 /**
- * Everything the two variants share: the debounce, the race guard and the request itself.
+ * Everything the two variants share: the debounce, the race guard, the request and the CACHE.
  *
  * `generation` and not an `AbortSignal`, because `apiFetch` takes no signal — the house convention
  * for this exact case is to count fetches and ignore the late answer. A picker that rendered a stale
  * answer would show the results for "kam" under the word "kamla", which is precisely when a designer
  * clicks the first row without reading it.
+ *
+ * ── A30-03's RESIDUAL: THIS PICKER USED TO FETCH ITS LIST EVERY TIME IT OPENED — 2026-09-03 ────
+ *
+ * The record forms have ridden `lib/referenceCache.ts` since it landed; the design-workshop stage
+ * pickers never did, and the note at {@link SCAN_OFFLINE_NOTICE} said so in as many words. So a
+ * designer building stage 3's participant roster in a courtyard opened a picker over an artisan
+ * register the repository holds and this laptop had downloaded an hour earlier, and got nothing —
+ * which reads as "this person is not on record", and whose remedy is to type the name in by hand.
+ * That is the failure the whole reference feature exists to end, arriving on the one screen where
+ * the handset does it correctly.
+ *
+ * An UN-SEARCHED, UN-CASCADED open now goes through {@link loadStageReferences}: the stored answer
+ * is drawn immediately, the network refresh replaces it, and a refresh that fails leaves the stored
+ * one standing rather than emptying the panel. Everything else — a search, a cascade, a by-id
+ * resolve — is untouched and live-only, for the reasons written out beside that function.
+ *
+ * `loading` STAYS TRUE WHILE A CACHED LIST IS ON SCREEN AND THE REFRESH IS STILL OUT. The rows are
+ * real and usable; the spinner says the panel is not finished with them yet, which is the honest
+ * reading and is what stops a designer taking a nine-day-old list for this morning's.
  */
 function useReferenceOptions({
   workshopId,
@@ -139,7 +173,7 @@ function useReferenceOptions({
   query: string;
   active: boolean;
 }): PickerState {
-  const [state, setState] = useState<PickerState>({ payload: null, loading: false, problem: null });
+  const [state, setState] = useState<PickerState>({ payload: null, loading: false, problem: null, cachedAt: null });
   const generation = useRef(0);
 
   useEffect(() => {
@@ -147,28 +181,63 @@ function useReferenceOptions({
     const current = generation.current + 1;
     generation.current = current;
     setState((previous) => ({ ...previous, loading: true, problem: null }));
+    const model = field.refModel as string;
+    // Sent only when the descriptor asks for the cascade. An unasked-for `filterBy` on a model that
+    // cannot honour one is a 422 by design — the server refuses to silently serve the whole table to
+    // a picker the designer believes is narrowed.
+    const filterBy = field.refFilterBy ? filterValue || null : null;
+    const search = query.trim() || null;
+    const request = () => listStageReferences(workshopId, { model, scope: field.refScope, filterBy, search });
     const timer = window.setTimeout(() => {
-      listStageReferences(workshopId, {
-        model: field.refModel as string,
+      // A SEARCH OR A CASCADE IS THE SERVER'S ANSWER TO ONE QUESTION and is never stored — see
+      // `loadStageReferences`. Kept as the same shape as before so the live path is unchanged.
+      if (search || filterBy) {
+        request()
+          .then((payload) => {
+            if (generation.current !== current) return;
+            setState({ payload, loading: false, problem: null, cachedAt: null });
+          })
+          .catch((error) => {
+            if (generation.current !== current) return;
+            setState({
+              payload: null,
+              loading: false,
+              problem: error instanceof Error ? error.message : "The list could not be loaded.",
+              cachedAt: null
+            });
+          });
+        return;
+      }
+      void loadStageReferences<DwReferencePayload>({
+        workshopId,
+        model,
         scope: field.refScope,
-        // Sent only when the descriptor asks for the cascade. An unasked-for `filterBy` on a model
-        // that cannot honour one is a 422 by design — the server refuses to silently serve the whole
-        // table to a picker the designer believes is narrowed.
-        filterBy: field.refFilterBy ? filterValue || null : null,
-        search: query.trim() || null
-      })
-        .then((payload) => {
+        isEmpty: (payload) => payload.options.length === 0,
+        fetch: request,
+        onPayload: (payload, cachedAt) => {
           if (generation.current !== current) return;
-          setState({ payload, loading: false, problem: null });
-        })
-        .catch((error) => {
-          if (generation.current !== current) return;
+          // A cached answer leaves `loading` where it is (true): the refresh is still out.
+          setState({ payload, loading: cachedAt !== null, problem: null, cachedAt });
+        }
+      }).then((outcome) => {
+        if (generation.current !== current) return;
+        if (outcome.source === "none") {
+          // NOTHING ANSWERED — neither storage nor the network. The server's own sentence is what is
+          // shown, exactly as before this cache existed: a deleted design workshop and a village
+          // with no signal are different refusals and the picker must not flatten them into one.
           setState({
             payload: null,
             loading: false,
-            problem: error instanceof Error ? error.message : "The list could not be loaded."
+            problem: outcome.error instanceof Error ? outcome.error.message : "The list could not be loaded.",
+            cachedAt: null
           });
-        });
+          return;
+        }
+        // A refresh that failed OVER A CACHED LIST says nothing: the rows on screen are good, the
+        // stamp under them is what tells the designer how old they are, and a red sentence about a
+        // timed-out GET is a sentence nobody can act on.
+        setState((previous) => ({ ...previous, loading: false }));
+      });
     }, query ? SEARCH_DEBOUNCE_MS : 0);
     return () => window.clearTimeout(timer);
   }, [workshopId, field.refModel, field.refScope, field.refFilterBy, filterValue, query, active]);
@@ -185,9 +254,38 @@ function useReferenceOptions({
  * that decides whether a designer is shown it. `inlineSeed` was lifted for the same reason and the
  * same test file covers both. The component below is what is left: `lines.join(" ")` in a `<p>`.
  */
-export function scopeNoticeLines(field: DwField, payload: DwReferencePayload | null): string[] {
+export function scopeNoticeLines(
+  field: DwField,
+  payload: DwReferencePayload | null,
+  /**
+   * ISO-8601 stamp when this list came off THIS DEVICE rather than the network — 2026-09-03.
+   *
+   * OPTIONAL AND ABSENT MEANS LIVE, which is what keeps every existing caller and every existing
+   * assertion in `inline-record-host-unit.spec.ts` unchanged: a picker that has not been taught the
+   * cache says exactly what it said before.
+   *
+   * FIRST IN THE LIST, deliberately. It qualifies everything after it — a truncation notice, a
+   * widened scope, an ordering — because all of those are claims about an answer, and this line says
+   * WHICH answer. Read second, the reader has already taken the sentences as being about now.
+   */
+  cachedAt?: string | null
+): string[] {
   if (!payload) return [];
   const lines: string[] = [];
+  if (cachedAt) {
+    /*
+      §3.5's cached-and-stale sentence, through `cachedListLine` and NOT a second wording of it.
+      Both clients print this one word for word (`WorkshopOptions.kt::cachedListLine` is the twin),
+      and a second phrasing of one fact is a second fact as far as a reader is concerned. The DATE is
+      the whole sentence: without it a designer cannot tell "this artisan has no record" from "this
+      copy is nine days old", which is the judgement the cache exists to let them make.
+
+      The noun is the field's own label, lowercased — the same word the box above the list is
+      labelled with, so the sentence names what the reader is looking at rather than a model name
+      out of the registry.
+    */
+    lines.push(cachedListLine(payload.options.length, field.label.toLowerCase(), formatDate(cachedAt)));
+  }
   if (field.refScope === "WORKSHOP" && !payload.scopedToWorkshop) {
     lines.push(
       "This design workshop is not linked to a workshop record yet, so every documented record is offered rather than only this workshop's."
@@ -304,8 +402,17 @@ function tentativeWordFor(payload: DwReferencePayload | null): string {
 }
 
 /** The line under the list. Never omitted when {@link scopeNoticeLines} has something to say. */
-function ScopeNotice({ field, payload }: { field: DwField; payload: DwReferencePayload | null }) {
-  const lines = scopeNoticeLines(field, payload);
+function ScopeNotice({
+  field,
+  payload,
+  cachedAt
+}: {
+  field: DwField;
+  payload: DwReferencePayload | null;
+  /** Set only while the list on screen came off this device. See {@link PickerState.cachedAt}. */
+  cachedAt?: string | null;
+}) {
+  const lines = scopeNoticeLines(field, payload, cachedAt);
   if (!lines.length) return null;
   return <p className="px-3 pb-2 text-xs leading-5 text-ink-500">{lines.join(" ")}</p>;
 }
@@ -758,26 +865,36 @@ export function scanLookupOutcome({
 /**
  * NO SIGNAL. A by-id resolve is the one thing on this control that cannot be answered locally.
  *
- * The stage page renders from IndexedDB before the network is asked, and this picker has always been
- * the exception — `useReferenceOptions` fetches its list every time it opens, offline or not — so a
- * scan is no more network-bound than typing into the same box. What matters is that the failure is
- * SAID and that nothing is written: the row is only ever patched by `choose`, which runs on a
- * resolved option and on nothing else, so a lookup that never landed leaves the row exactly as it
- * was rather than half-pointed at a record nobody confirmed.
+ * The stage page renders from IndexedDB before the network is asked, and this picker used to be the
+ * exception — `useReferenceOptions` fetched its list every time it opened, offline or not. THAT HALF
+ * CHANGED ON 2026-09-03: an un-searched open is now served from the reference cache first (see the
+ * hook), so a designer in a courtyard picks from the last list this laptop stored. A SCAN did not
+ * change and must not: it is a by-id resolve, whose whole value is the server's opinion of the
+ * record now, and `StageRecordEmbed.describeForField` carries the long form of that argument. So
+ * this is no longer "the same as typing in the box" — the box now works offline and this cannot —
+ * which makes saying so louder, not quieter. What matters is that the failure is SAID and that
+ * nothing is written: the row is only ever patched by `choose`, which runs on a resolved option and
+ * on nothing else, so a lookup that never landed leaves the row exactly as it was rather than
+ * half-pointed at a record nobody confirmed.
  *
  * `isUnreachable` and not `isTransient`: a 500 means the server was reached and then failed, and
  * telling a designer their signal is at fault sends them out of the building while the real bug
  * wears an offline message. Same split, same reason, as `lib/workshopCodeLookup.ts`.
+ *
+ * SHORTENED 2026-09-03 to one line under the owner's copy rule. The clause it lost said the code
+ * itself checked out and the card is therefore fine — reassurance about a step the designer never
+ * saw fail, in a sentence whose job is to say the row is untouched and offer the two ways forward.
+ * That the decode succeeded and only the lookup did not is exactly what "could not be looked up"
+ * already means, and the distinction is preserved where it matters: {@link scanTypeRefusal} answers
+ * a code that decoded to the wrong record type in its own words.
  */
 const SCAN_OFFLINE_NOTICE =
-  "There is no connection, so the repository could not be asked which record that code names. The code itself " +
-  "checked out, so the card is fine and nothing on this row has been changed — scan it again when there is signal, " +
-  "or search for the record by name in the list.";
+  "No connection, so that code could not be looked up. The row is unchanged — scan again when there is signal, or " +
+  "search by name.";
 
 /** The server answered, and not with an answer. Says what did NOT happen, which is the useful half. */
 const SCAN_LOOKUP_FAILED_NOTICE =
-  "That code could not be looked up just now. Nothing on this row has been changed — try the scan again, or search " +
-  "for the record by name in the list.";
+  "That code could not be looked up just now. The row is unchanged — try the scan again, or search by name.";
 
 /**
  * ONE CARD READER OPEN AT A TIME, ACROSS EVERY PICKER ON THE STAGE — a correctness rule and not
@@ -1054,7 +1171,7 @@ export function StageReferenceSelect({
     () => inlineSeed({ entity, field, row, filterValue, linkedWorkshopId }),
     [entity, field, row, filterValue, linkedWorkshopId]
   );
-  const { payload, loading, problem } = useReferenceOptions({
+  const { payload, loading, problem, cachedAt } = useReferenceOptions({
     workshopId,
     field,
     filterValue,
@@ -1840,7 +1957,7 @@ export function StageReferenceSelect({
                 <p className="border-t border-line-200 px-3 py-2.5 text-xs leading-5 text-ink-500">{CRAFT_REGISTER_BLOCKED}</p>
               )
             ) : null}
-            <ScopeNotice field={field} payload={payload} />
+            <ScopeNotice field={field} payload={payload} cachedAt={cachedAt} />
           </div>
         ) : null}
       </div>
@@ -2208,7 +2325,7 @@ export function StageReferenceMultiPicker({
   const linkedWorkshopId = useLinkedWorkshopId();
   const seed = useMemo(() => inlineSeed({ field, linkedWorkshopId }), [field, linkedWorkshopId]);
 
-  const { payload, loading, problem } = useReferenceOptions({
+  const { payload, loading, problem, cachedAt } = useReferenceOptions({
     workshopId,
     field,
     filterValue: "",
@@ -2466,7 +2583,7 @@ export function StageReferenceMultiPicker({
             </button>
           ) : null}
 
-          <ScopeNotice field={field} payload={payload} />
+          <ScopeNotice field={field} payload={payload} cachedAt={cachedAt} />
 
           {describing ? (
             <p className="border-t border-line-200 px-3 py-2 text-xs leading-5 text-ink-500">

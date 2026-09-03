@@ -338,6 +338,22 @@ def format_value(spec: FieldSpec, value: Any) -> str:
     if t is FieldType.ENUM:
         return enum_label(spec.enum, str(value))
     if t is FieldType.MULTI_ENUM:
+        # A RECORD-BACKED MULTI_ENUM HAS NO ENUM TABLE TO LOOK ITS TOKENS UP IN. (2026-09-03)
+        #
+        # ``enum_label`` falls back to the raw token when the list does not name it, and for a
+        # field whose options come from ``ToolDocumentation`` the list is EMPTY — so every token
+        # would fall back, and this function would quietly print a column of cuids into a
+        # ministry's document. Joining them plainly is the honest floor and is what the field's
+        # own predecessor did: these two boxes were TAGS until 2026-09-03 and every value stored
+        # under them before that is a tool NAME, which prints correctly here and nowhere else.
+        #
+        # THE RESOLVED ANSWER IS ``ReportBuilder._value``'s, one layer up, and it is the one a
+        # generated report actually uses: it has ``load_report_references`` in hand and turns an
+        # id into the record's label, printing this string only for the tokens it cannot resolve.
+        # This branch is the answer for every other caller — completeness, search text, the
+        # on-device mirror — none of which can reach the repository.
+        if spec.ref_model:
+            return ", ".join(str(v) for v in value)
         return ", ".join(enum_label(spec.enum, str(v)) for v in value)
     if t is FieldType.TAGS:
         return ", ".join(str(v) for v in value)
@@ -1210,6 +1226,38 @@ class ReportBuilder:
             #                    `test_no_presentation_silently_drops_a_filled_field` is the guard.
             text = format_value(spec, raw)
             return "" if _looks_like_an_id(text) else text
+
+        # ── THE SAME TWO RULES, OVER A LIST OF THEM: A RECORD-BACKED MULTI_ENUM ──────────────
+        #
+        # ``processStep.toolsUsed`` and ``prototype.toolsUsed`` were TAGS until 2026-09-03 and are
+        # now a multi-select over documented tools, so ONE stored array can hold both shapes at
+        # once: ids the new picker wrote, and the tool names a designer typed into the old box —
+        # including on a 0.0.7 handset that is still typing them today. Printing either one wrong
+        # is a defect with a reader:
+        #
+        #   an id that resolves  -> the record's label, which is the whole point of the promotion.
+        #   an id that does not  -> nothing. The tool record was deleted after this step cited it,
+        #                           and a bare cuid in a ministry's table is worse than a gap —
+        #                           the REF branch above argues this at length and this is that
+        #                           argument, unchanged.
+        #   anything else        -> itself, verbatim. "pit loom" is a designer's own word for
+        #                           their own fieldwork and blanking it would be the silent drop
+        #                           ``test_no_presentation_silently_drops_a_filled_field`` forbids.
+        #
+        # ORDER IS THE STORED ORDER. A list of tools is not sorted anywhere else and re-ordering
+        # it here would make the table disagree with the form the designer filled in.
+        if spec.type is FieldType.MULTI_ENUM and spec.ref_model:
+            printed: list[str] = []
+            for token in row.get(spec.key) or []:
+                text = str(token).strip()
+                if not text:
+                    continue
+                label = self._ref_label(text)
+                if label:
+                    printed.append(label)
+                elif not _looks_like_an_id(text):
+                    printed.append(text)
+            return ", ".join(printed)
 
         text = format_value(spec, row.get(spec.key))
         # THE SAME RULE, FOR A FIELD THAT IS NOT A REF BUT HOLDS AN ID ANYWAY.

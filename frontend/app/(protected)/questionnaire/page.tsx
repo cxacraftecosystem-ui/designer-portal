@@ -2541,19 +2541,46 @@ function QuestionnaireAdminEditor({ sections, onChanged }: { sections: Questionn
   /**
    * Optimistically apply a question move, then persist. Within a section this is a single reorder;
    * across sections we first re-parent the question (updateQuestion{sectionId}) and then reorder the
-   * TARGET section — exactly the two existing API calls. Rolls back on any error.
+   * TARGET section — exactly the two existing API calls.
+   *
+   * ── A PURE REORDER ROLLS BACK. A CROSS-SECTION MOVE RESYNCS. ────────────────────────────────────
+   *
+   * This said "Rolls back on any error" and did exactly that, which was wrong for one of the two
+   * shapes — corrected 2026-09-03. A cross-section move is TWO writes, and the first of them lands
+   * on its own: once the PATCH has returned, the question belongs to the target section on the
+   * server whatever the reorder that follows does. Restoring the pre-move snapshot after a failed
+   * reorder therefore redrew the question in the section it had LEFT, under a sentence saying the
+   * move had failed — a screen and a server disagreeing about where a question lives, with the
+   * screen the more confident of the two. The next reader to open the page saw it in its new home
+   * with no explanation, and any edit made in the meantime was aimed at the wrong row.
+   *
+   * A single-section reorder has no such half-state: one POST either lands or does not, so the
+   * snapshot is the truth and restoring it is right.
+   *
+   * So the catch splits on `reparent`. Where one was sent it asks the server what actually happened
+   * — `onChanged()` refetches and replaces the guess with canonical state — and where it was not,
+   * it restores the snapshot as before. The resync is BEST-EFFORT and wrapped in its own try: the
+   * commonest reason the reorder failed is that the network is gone, in which case the refetch will
+   * fail too, and a throw there would replace the move's own message with the refetch's and lose the
+   * only sentence that names what the designer just did. The optimistic array is then left standing,
+   * which is the closer of the two guesses — the re-parent it shows really did happen; only the
+   * position within the target section is unproven. The message says the move is unconfirmed either
+   * way, which is what makes leaving it honest rather than silent (§1.10).
    */
   async function persistMove(next: QuestionnaireSection[], reorderSectionId: string, reparent?: { questionId: string; toSectionId: string }) {
     const snapshot = localSections;
     setLocalSections(next);
     setBusy(true);
     setMessage(null);
+    /** Flipped the moment the PATCH returns: from here on the server has moved the question. */
+    let reparented = false;
     try {
       if (reparent) {
         await apiFetch(`/questionnaire/questions/${reparent.questionId}`, {
           method: "PATCH",
           body: JSON.stringify({ sectionId: reparent.toSectionId })
         });
+        reparented = true;
       }
       const target = next.find((section) => section.id === reorderSectionId);
       if (target) {
@@ -2564,8 +2591,23 @@ function QuestionnaireAdminEditor({ sections, onChanged }: { sections: Questionn
       }
       await onChanged();
     } catch (err) {
-      setLocalSections(snapshot);
-      setMessage(err instanceof Error ? err.message : "Unable to move question");
+      if (reparented) {
+        // The write that already landed is not undone here — there is no "move it back" call that
+        // would not be a second guess — so the screen is re-read from the server instead.
+        try {
+          await onChanged();
+        } catch {
+          // Offline, almost always. The optimistic array stays; the message below says so.
+        }
+        setMessage(
+          err instanceof Error
+            ? `Moved, but the order was not saved. ${err.message}`
+            : "Moved, but the order was not saved."
+        );
+      } else {
+        setLocalSections(snapshot);
+        setMessage(err instanceof Error ? err.message : "Unable to move question");
+      }
     } finally {
       setBusy(false);
     }
@@ -2754,7 +2796,11 @@ function QuestionnaireAdminEditor({ sections, onChanged }: { sections: Questionn
                 {section.questions.length === 0 ? (
                   <div
                     className={`rounded-md border border-dashed p-3 text-center text-xs font-semibold ${
-                      dragActive ? "border-field-600 bg-field-100 text-field-700" : "border-[#d7c7bc] text-ink-muted"
+                      // `border-line-200` and not the literal `#d7c7bc` it was until 2026-09-03: an
+                      // arbitrary hex does not invert, so this drop target kept a warm light-mode
+                      // rule under `data-theme="dark"` while every other dashed border on the page
+                      // turned. Non-negotiable 2 — every neutral goes through the token ladder.
+                      dragActive ? "border-field-600 bg-field-100 text-field-700" : "border-line-200 text-ink-muted"
                     }`}
                   >
                     {dragActive ? `Drop a question here to move it into ${section.code}` : "No questions yet — add one below."}
@@ -2762,7 +2808,8 @@ function QuestionnaireAdminEditor({ sections, onChanged }: { sections: Questionn
                 ) : null}
 
                 <form
-                  className="mt-2 grid gap-3 rounded-md border border-dashed border-[#d7c7bc] p-3 md:grid-cols-[1fr_auto]"
+                  // Themed, for the reason given on the drop target above — 2026-09-03.
+                  className="mt-2 grid gap-3 rounded-md border border-dashed border-line-200 p-3 md:grid-cols-[1fr_auto]"
                   onSubmit={async (event) => {
                     event.preventDefault();
                     // Capture before the await: React nulls event.currentTarget afterwards.

@@ -179,9 +179,17 @@ services:
       # your browser to refuse http://localhost for two years, across every project on this machine.
       BACKEND_EXPOSE_DOCS: ${BACKEND_EXPOSE_DOCS:-true}
       SECURITY_HSTS_ENABLED: ${SECURITY_HSTS_ENABLED:-false}
-      # Default OFF here, unlike the application default. The queue drains real transcription and
-      # media jobs, and the failure this guards against is a container left running overnight
-      # against a database someone later repointed. Turn it on when you are testing the queue.
+      # Default OFF. The queue drains real transcription and media jobs, and the failure this
+      # guards against is a container left running overnight against a database someone later
+      # repointed. Turn it on when you are testing the queue.
+      #
+      # IT USED TO SAY "unlike the application default", AND THAT CLAUSE STOPPED BEING TRUE ON
+      # 2026-09-03: `backend/app/core/config.py` now defaults this to false too, so a box that
+      # names nothing no longer drains inside uvicorn by accident (that field's comment carries the
+      # argument — the old default was fail-open around a paid provider call). This line is
+      # therefore no longer a local OVERRIDE of anything; it is kept, and kept explicit, because it
+      # is where a developer looks to turn the queue on, and because a compose file that states the
+      # value is one a reader can answer the question from without opening the settings module.
       MEDIA_QUEUE_WORKER_ENABLED: ${MEDIA_QUEUE_WORKER_ENABLED:-false}
       ELEVENLABS_API_KEY: ${ELEVENLABS_API_KEY:-}
       DEEPGRAM_API_KEY: ${DEEPGRAM_API_KEY:-}

@@ -131,10 +131,62 @@ def test_only_basic_fields_are_required():
 
 
 def test_every_enum_field_names_a_canonical_list():
+    """Every ENUM resolves to a shared list — and every MULTI_ENUM to a list OR a record type.
+
+    WIDENED 2026-09-03 AND NOT WEAKENED. A MULTI_ENUM draws its options from one of exactly two
+    places: an authored vocabulary in ``ENUMS``, or the repository, by naming a ``ref_model``. The
+    second arrived with ``processStep.toolsUsed`` and ``prototype.toolsUsed``, promoted from free-text
+    TAGS to a multi-select over documented tools. What this test still forbids is the shape that
+    breaks a designer: a MULTI_ENUM naming NEITHER draws a closed list with no members, which on a
+    required field is a stage nobody can ever submit.
+
+    BOTH is refused too, and separately, because it is the reading that looks harmless: ``coerce_value``
+    would have to decide per token whether it is an enum member or a record id, and the two clients
+    would draw different controls from one declaration.
+    """
     for _spec, entity in all_entities():
         for f in entity.fields:
-            if f.type in (FieldType.ENUM, FieldType.MULTI_ENUM):
+            if f.type is FieldType.ENUM:
                 assert f.enum in ENUMS, f"{entity.key}.{f.key} -> {f.enum!r}"
+            elif f.type is FieldType.MULTI_ENUM:
+                where = f"{entity.key}.{f.key}"
+                assert bool(f.enum) != bool(f.ref_model), (
+                    f"{where} names {'both an enum and a ref_model' if f.enum else 'neither'}; "
+                    "a MULTI_ENUM's options come from a vocabulary or from a record type"
+                )
+                if f.enum:
+                    assert f.enum in ENUMS, f"{where} -> {f.enum!r}"
+
+
+def test_the_two_promoted_tool_boxes_are_record_backed_and_cannot_brick_a_stage():
+    """``toolsUsed`` on stage 5 and stage 13, promoted from TAGS on 2026-09-03.
+
+    THE PROMOTION IS THE POINT AND THE TIER IS THE SAFETY. A record-backed MULTI_ENUM is a CLOSED
+    list: a workshop whose repository holds no documented tool of any kind sees an empty picker. That
+    is a nuisance on an optional Standard field and a permanently unsubmittable stage on a required
+    BASIC one, which is why neither of these is required — and why this asserts it rather than
+    leaving it to be noticed by a designer in a village.
+
+    ``ALL`` and not ``WORKSHOP``, for ``tool.toolRef``'s reason verbatim: every ``ToolDocumentation``
+    row belongs to a different ``Workshop``, so a workshop scope here would not narrow the list, it
+    would empty it.
+    """
+    promoted = [
+        (entity.key, f)
+        for _spec, entity in all_entities()
+        for f in entity.fields
+        if f.key == "toolsUsed"
+    ]
+    assert [key for key, _f in promoted] == ["processStep", "prototype"]
+    for key, f in promoted:
+        assert f.type is FieldType.MULTI_ENUM, key
+        assert f.ref_model == "ToolDocumentation", key
+        assert f.ref_scope == "ALL", key
+        assert not f.enum, key
+        assert not f.required and f.tier is not Tier.BASIC, (
+            f"{key}.toolsUsed is a closed list AND required — a workshop with no documented tool "
+            "could never complete this stage"
+        )
 
 
 def test_every_caption_points_at_a_media_field_in_its_own_entity():
@@ -781,6 +833,47 @@ def test_multi_enum_rejects_any_unknown_member():
     spec = _f(type=FieldType.MULTI_ENUM, enum="MARKET_CHANNEL")
     assert coerce_value(spec, ["EMPORIUM", "ONLINE"]) == (["EMPORIUM", "ONLINE"], None)
     assert coerce_value(spec, ["EMPORIUM", "NOPE"])[1] is not None
+
+
+def test_a_record_backed_multi_enum_keeps_both_shapes_its_column_holds():
+    """The allow-list is skipped for a MULTI_ENUM whose options come from the repository.
+
+    ── WHY IT MUST BE, AND IT IS THE REF BRANCH'S OWN ANSWER ─────────────────────────────────────
+
+    The table that could validate these tokens is a TABLE, and ``coerce_value`` is pure and has no
+    database. ``ENUMS.get(spec.enum, {})`` is the EMPTY map for a field naming a ``ref_model`` and no
+    enum, so before 2026-09-03 every record id the picker wrote came back as "unknown option(s) …"
+    and the field was refused on every save. A REF stores whatever string it is handed for exactly
+    this reason and lets the report resolve it at render time, where the repository is reachable.
+
+    ── AND WHY THE OLD SHAPE HAS TO PASS, WHICH IS THE HALF WITH A DESIGNER ON THE END OF IT ─────
+
+    ``processStep.toolsUsed`` and ``prototype.toolsUsed`` were free-text TAGS until the promotion, so
+    every 0.0.7 APK in a village still draws a tag box for those keys and submits ``["pit loom"]``.
+    Refusing that body would not degrade the field, it would refuse the WRITE: ``save_stage``
+    restores a rejected key from ``previous`` and Android's ``saveOrQueue`` does not retry a 4xx, so
+    the designer loses the stage and is told a field they can see holds an unknown option.
+
+    The bounds still apply — this is an exemption from the vocabulary check and from nothing else.
+    """
+    spec = _f(type=FieldType.MULTI_ENUM, label="Tools used", ref_model="ToolDocumentation")
+
+    # The new shape: record ids, unchecked and stored verbatim.
+    ids = ["cmsik2jg8000eh8xc1lcy661a", "cmsjb6qaq01ar4otfh1p0hm1a"]
+    assert coerce_value(spec, ids) == (ids, None)
+
+    # The old shape, still arriving from the fleet. Both together, because one array holds both for
+    # as long as any handset in the field is running the registry that predates the promotion.
+    assert coerce_value(spec, ["pit loom", "बुनाई"]) == (["pit loom", "बुनाई"], None)
+    assert coerce_value(spec, ["pit loom", ids[0]]) == (["pit loom", ids[0]], None)
+
+    # AND THE EXEMPTION IS NOT UNIVERSAL. A MULTI_ENUM that names a vocabulary is still held to it;
+    # an exemption that had quietly widened to every MULTI_ENUM would pass every assertion above.
+    assert coerce_value(_f(type=FieldType.MULTI_ENUM, enum="MARKET_CHANNEL"), ["NOPE"])[1] is not None
+
+    # The ceiling and the per-entry length are untouched by any of this.
+    assert coerce_value(spec, ["x"] * (stage_schema.DEFAULT_MAX_ITEMS + 1))[1] is not None
+    assert "longer than" in coerce_value(spec, ["x" * (stage_schema.DEFAULT_MAX_ITEM_CHARS + 1)])[1]
 
 
 def test_multi_value_field_rejects_a_scalar():
@@ -1709,6 +1802,54 @@ def test_store_masked_requires_an_aadhaar_format():
         assert any("store_masked without text_format=AADHAAR" in p for p in problems), problems
 
     assert validate_registry() == []
+
+
+def test_a_multi_enum_must_draw_its_options_from_exactly_one_place():
+    """Neither is a stage nobody can submit; both is a control neither client can draw.
+
+    THE RULE THIS REPLACED WAS "EVERY MULTI_ENUM NAMES AN ENUM", and relaxing it is what let
+    ``toolsUsed`` become a picker. Relaxing it to "may name nothing" would have been the expensive
+    version of the same edit: ``field_to_dict`` emits no ``options`` and no ``refModel``, both
+    clients draw a closed dropdown with zero members, and on a required field the stage can never be
+    completed — the failure `MultiEnumField`'s header spends four paragraphs on. So the rule did not
+    go away, it changed shape, and this asserts BOTH halves of the new one because only asserting
+    the interesting half is how the boring half gets deleted.
+    """
+    tools = next(
+        f
+        for _s, e in all_entities()
+        for f in e.fields
+        if f.key == "toolsUsed" and f.type is FieldType.MULTI_ENUM
+    )
+
+    with _swapped_attrs(tools, ref_model="", ref_scope=""):
+        problems = validate_registry()
+        assert any("names no enum and no ref_model" in p for p in problems), problems
+
+    with _swapped_attrs(tools, enum="MARKET_CHANNEL"):
+        problems = validate_registry()
+        assert any("BOTH an enum and a ref_model" in p for p in problems), problems
+
+    # A scope belongs to a picker, so it is refused on the vocabulary-backed arm — otherwise a
+    # ``ref_scope`` left behind by a reverted promotion would cross the wire and be sent back on
+    # `GET .../references` for a field that names no model.
+    channels = next(
+        f
+        for _s, e in all_entities()
+        for f in e.fields
+        if f.type is FieldType.MULTI_ENUM and f.enum
+    )
+    with _swapped_attrs(channels, ref_scope="ALL"):
+        problems = validate_registry()
+        assert any("a scope narrows a list of records" in p for p in problems), problems
+
+    # And a ref_model on a type whose renderers never read one is a link that was never made.
+    text_field = next(f for _s, e in all_entities() for f in e.fields if f.type is FieldType.TEXT)
+    with _swapped_attrs(text_field, ref_model="Artisan"):
+        problems = validate_registry()
+        assert any("only REF and MULTI_ENUM draw a picker" in p for p in problems), problems
+
+    assert validate_registry() == [], "the swaps leaked"
 
 
 def test_a_format_may_only_be_declared_on_a_type_that_reaches_the_branch_enforcing_it():

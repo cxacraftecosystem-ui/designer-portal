@@ -90,27 +90,43 @@ import type { MediaType } from "@/lib/types";
 
   AND THE PART THAT IS NOT A CONVENIENCE: AN SVG IS A SCRIPTABLE DOCUMENT, not an inert raster. It
   can carry `<script>`, an `onload` handler and external references, and this pipeline does not
-  sanitise the bytes anywhere. `POST /media/presign` has no allowlist — it signs whatever
-  `mimeType` it is handed (`backend/app/api/routes/media.py:188`) and puts it straight on the stored
-  object (`"headers": {"Content-Type": payload.mimeType}`, same file, line 199) — so the object comes
-  back down labelled `image/svg+xml`, and `components/media/MediaLightbox.tsx` gives it an "Open"
-  control that is a TOP-LEVEL NAVIGATION to that URL (lines 345 and 378,
-  `<a href={item.url} target="_blank" rel="noreferrer">`). Rendered through `<img src>` the markup is
-  inert; opened in a tab it is a document that executes.
+  sanitise the bytes anywhere.
+
+  THE PRESIGN ROUTE DOES VALIDATE THE TYPE NOW, and this paragraph used to say the opposite
+  (2026-09-03). It said "`POST /media/presign` has no allowlist — it signs whatever `mimeType` it is
+  handed" and cited two of that file's lines by number; that was the client-side record of a real
+  hole, the hole was closed, and the sentence outlived it. `backend/app/api/routes/media.py` now
+  gates every presign against an allow-list of media families with a deny-list in front of it — read
+  the banner headed "WHAT THE UPLOAD DOORS WILL SIGN", and cite it by that heading rather than by
+  line number, which is how this comment came to be wrong in the first place. `text/html`, its
+  sandboxed spelling and the XHTML/JavaScript ones are refused outright, so the stored object can no
+  longer be a page a browser executes.
+
+  `image/svg+xml` IS DELIBERATELY STILL ACCEPTED THERE, FOR THIS COMMENT'S OWN REASON. The registry
+  asks for the file by name — `sketch.lineArtFile`'s help text is "An SVG or vector export, if one
+  was produced" — and the banner says so, citing this file: refusing the type would 422 a declared
+  field's only answer from every device, and Android's `saveOrQueue` does not queue a 4xx, so the
+  refusal would lose the file rather than retry it. The signed `Content-Type` therefore still rides
+  out as `image/svg+xml`, the object still comes back down labelled that way, and
+  `components/media/MediaLightbox.tsx` still gives it an "Open" control that is a TOP-LEVEL
+  NAVIGATION to that URL (`<a href={item.url} target="_blank" rel="noreferrer">`). Rendered through
+  `<img src>` the markup is inert; opened in a tab it is a document that executes.
 
   WHY THE TOKEN STILL STANDS, measured rather than waved through. `public_url_for_key`
-  (`backend/app/services/s3.py:160`) serves media from the configured S3/CDN base, which is a
-  DIFFERENT ORIGIN from the app — so what executes cannot read this app's storage or cookies — and
-  the leading `image/*` above already made an SVG selectable on every desktop platform that maps the
-  extension, so this token widens an existing path rather than opening one. What it deliberately
-  does is guarantee reachability on the platforms that could not select one before, so it is a
-  widening and is recorded as one.
+  (`backend/app/services/s3.py`) serves media from the configured S3/CDN base, which is a DIFFERENT
+  ORIGIN from the app — so what executes cannot read this app's storage or cookies — and the leading
+  `image/*` above already made an SVG selectable on every desktop platform that maps the extension,
+  so this token widens an existing path rather than opening one. What it deliberately does is
+  guarantee reachability on the platforms that could not select one before, so it is a widening and
+  is recorded as one.
 
-  THE CHEAP BELT, IF THE OWNER WANTS IT, is on the bucket/CDN rather than here: serve
+  AND THE CDN RULE IS NOW THE ONLY REMAINING CONTROL ON THIS TYPE, not a belt over anything: serve
   `image/svg+xml` with `Content-Disposition: attachment`, or with a `Content-Security-Policy:
   sandbox` response header. Either kills the executing-tab case and leaves `<img src>` rendering
-  untouched. It is one rule on the distribution, not a code change, which is why it is named here
-  rather than attempted from a chooser list.
+  untouched. It read as an optional extra while the deny-list was still to come; the deny-list came,
+  and this is the one scriptable type it admits on purpose — so the rule on the distribution is what
+  is left rather than a second line of defence. It is one rule on the distribution and not a code
+  change, which is why it is named here rather than attempted from a chooser list.
 */
 const imageAccept = "image/*,.jpg,.jpeg,.png,.gif,.webp,.heic,.heif,.tif,.tiff,.bmp,.avif,.svg";
 const audioAccept = "audio/*,.mp3,.wav,.m4a,.aac,.ogg,.oga,.opus,.webm,.flac,.amr";

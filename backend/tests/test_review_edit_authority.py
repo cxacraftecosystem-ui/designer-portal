@@ -111,6 +111,38 @@ class _Delegate:
         return SimpleNamespace(id="new")
 
 
+class _Client(SimpleNamespace):
+    """The fake ``db``, with an ``async with db.tx()`` that hands back itself (2026-09-03).
+
+    Both review writes are transactional now: ``set_review_status`` pairs the status change with its
+    ReviewLog row, and ``edit_record`` pairs a RecordRevision, the row update and a ReviewLog entry.
+    A bare ``SimpleNamespace`` has no ``tx``, so every drive in this file would fail before reaching
+    the authority question it is about.
+
+    HANDING BACK ``self`` IS WHAT KEEPS ``delegate_on`` HONEST HERE. ``review.delegate_for`` no
+    longer holds bound delegates — it resolves ``getattr(db, name)`` at call time and ``delegate_on``
+    does the same against the transaction's client — so the object returned by ``tx()`` must carry
+    the SAME model attributes as the client itself. It does, because it is the client: every name in
+    ``review._REVIEW_TYPES`` (artisan, workshop, productdocumentation, tooldocumentation, process,
+    questionnaireinterview, mediafile) plus ``reviewlog`` and ``recordrevision`` is set on it below.
+    Add a record type there and it has to be added here too, or that type's drive fails on an
+    AttributeError rather than on an authority verdict. Nothing simulates a transaction; rollback is
+    not this file's subject.
+    """
+
+    def tx(self) -> Any:
+        client = self
+
+        class _Tx:
+            async def __aenter__(self) -> Any:
+                return client
+
+            async def __aexit__(self, *_exc: object) -> bool:
+                return False
+
+        return _Tx()
+
+
 _CURRENT: dict[str, Any] = {"user": None}
 
 
@@ -129,7 +161,7 @@ class _Queue:
         self.artisan = _Delegate()
         self.reviewlog = _Delegate()
         self.recordrevision = _Delegate()
-        fake_db = SimpleNamespace(
+        fake_db = _Client(
             artisan=self.artisan,
             workshop=_Delegate(),
             productdocumentation=_Delegate(),

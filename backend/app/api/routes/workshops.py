@@ -46,8 +46,11 @@ from app.services.records import (
     add_date_range,
     apply_status_policy_create,
     apply_status_policy_update,
+    assert_expected_updated_at,
     attach_location,
     clean_data,
+    client_key_replay,
+    client_key_replay_after_violation,
     contains,
     count_and_page,
     enum_filter_or_422,
@@ -56,6 +59,7 @@ from app.services.records import (
     public_encode,
     require_record,
     resubmit_status,
+    take_expected_updated_at,
     viewable_where,
 )
 from app.services.workshop_access import (
@@ -149,28 +153,75 @@ async def _hydrate_assignment(row_id: str) -> dict[str, Any]:
     return public_encode(row)
 
 
-async def replace_workshop_artisans(workshop_id: str, artisan_ids: list[str]) -> None:
+async def replace_workshop_artisans(
+    workshop_id: str, artisan_ids: list[str], *, client: Any = None
+) -> None:
     """Rewrite the roster in two statements rather than one per artisan.
 
     A workshop with forty artisans cost forty-one sequential inserts, and on this deployment every
     one of them is a cross-region round trip — the save took longer than the form took to fill in.
     Duplicates are dropped here because the link table is unique on (workshopId, artisanId) and a
     bulk insert cannot skip a clash the way forty separate ones each could.
+
+    ── ``client`` IS THE CALLER'S TRANSACTION AND EVERY CALLER NOW PASSES ONE (2026-09-03) ──────────
+
+    "Two statements rather than one per artisan" was an honest description of the cost and a
+    dangerous one of the SEMANTICS: a delete-then-create pair outside a transaction is a window in
+    which the roster is EMPTY and committed. Two things walked through it.
+
+    * A failure between the two — P2024 on the cross-region pool, a dropped socket, the process
+      restarting — committed the wipe and nothing else. Forty artisans an administrator had picked
+      were gone, the save reported an error, and the obvious retry re-sends the same list from a form
+      that is still on screen; the retry is what has hidden this. When the form is NOT still on
+      screen there is nothing anywhere that can say what the roster held, because the join rows are
+      the only record of it. ``update_workshop`` ran this twice back to back with the workshop's own
+      update — four commits for one save — so a save could also leave the row's new dates beside the
+      old roster, or a wiped artisan roster beside an intact craft one.
+    * Two administrators saving the same workshop at once interleaved into a 500. A's delete, B's
+      delete, A's insert, B's insert against ``@@unique([workshopId, artisanId])`` — and unlike
+      ``data_access._upsert_grant``, which meets the same index, this insert has no
+      ``skip_duplicates``, so the loser got the driver's UniqueViolationError through the catch-all
+      in ``main.py``: "Something went wrong on the server", for a save that was merely concurrent.
+      A transaction serialises the pair, so the second save rewrites a whole roster instead of
+      colliding with half of one.
+
+    ``skip_duplicates`` IS DELIBERATELY STILL NOT SET, and the transaction is why it does not need to
+    be: inside one, the delete and the insert see a roster no other writer can be halfway through, so
+    a duplicate here would mean a duplicate in the CALLER'S OWN list — which ``dict.fromkeys`` above
+    has already removed. Setting it would turn a future bug in this function into silence.
+
+    The parameter cannot be defaulted away or discovered: ``db.tx()`` hands back a DIFFERENT client,
+    so a callee writing through the module singleton is not in the caller's transaction however the
+    ``async with`` reads — the mechanical fact ``access_roster`` writes out at length. ``None``
+    remains accepted so the signature does not lie about what it can do, but there is no call site in
+    the tree that omits it; a new one that does gets the old, broken atomicity back.
     """
-    await db.workshopartisan.delete_many(where={"workshopId": workshop_id})
+    writer = db if client is None else client
+    await writer.workshopartisan.delete_many(where={"workshopId": workshop_id})
     unique_ids = list(dict.fromkeys(aid for aid in artisan_ids if aid))
     if unique_ids:
-        await db.workshopartisan.create_many(
+        await writer.workshopartisan.create_many(
             data=[{"workshopId": workshop_id, "artisanId": aid} for aid in unique_ids]
         )
 
 
-async def replace_workshop_crafts(workshop_id: str, craft_ids: list[str]) -> None:
-    """The craft roster, rewritten in two statements rather than one per craft — see above."""
-    await db.workshopcraft.delete_many(where={"workshopId": workshop_id})
+async def replace_workshop_crafts(
+    workshop_id: str, craft_ids: list[str], *, client: Any = None
+) -> None:
+    """The craft roster, rewritten in two statements rather than one per craft — see above.
+
+    ``client`` carries the caller's transaction for exactly the reasons the artisan twin sets out at
+    length; the delete-then-create window and the concurrent-save collision are the same two, over
+    ``@@unique([workshopId, craftId])`` instead. It matters MORE here, not less: ``craft_workshop_clause``
+    records that on the live repository almost every craft predates the ``workshopId`` column, so
+    these join rows are not a second opinion about which workshop a craft belongs to — they are the
+    only one, and a committed wipe of them is a loss with nothing to reconstruct it from.
+    """
+    writer = db if client is None else client
+    await writer.workshopcraft.delete_many(where={"workshopId": workshop_id})
     unique_ids = list(dict.fromkeys(cid for cid in craft_ids if cid))
     if unique_ids:
-        await db.workshopcraft.create_many(
+        await writer.workshopcraft.create_many(
             data=[{"workshopId": workshop_id, "craftId": cid} for cid in unique_ids]
         )
 
@@ -296,6 +347,17 @@ async def create_workshop(
     payload: WorkshopCreate,
     current_user: Any = Depends(require_workshop_manager),
 ) -> dict[str, Any]:
+    # ── THE IDEMPOTENT REPLAY, ABOVE EVERY WRITE IN THIS ROUTE ──────────────────────────────────
+    #
+    # ``products.create_product`` carries the shared argument. What is particular to a workshop is
+    # that a second landing duplicates TWO ROSTERS as well as the row: ``replace_workshop_artisans``
+    # and ``replace_workshop_crafts`` run below, so a replayed create produced a second workshop with
+    # a second full copy of "Artisans attending" and "Crafts covered". Answering from the stored row
+    # and hydrating it writes neither.
+    replayed = await client_key_replay(db.workshop, payload.clientKey, user_id=current_user.id)
+    if replayed is not None:
+        await hydrate_relations([replayed], RELATIONS)
+        return public_encode(replayed)
     data = clean_data(payload.model_dump())
     artisan_ids = data.pop("artisanIds", [])
     craft_ids = data.pop("craftIds", [])
@@ -304,11 +366,35 @@ async def create_workshop(
     data["createdById"] = current_user.id
     merge_field_provenance(data, current_user, previous=None)
     apply_status_policy_create(current_user, data)
-    created = await db.workshop.create(data=data)
-    if artisan_ids:
-        await replace_workshop_artisans(created.id, artisan_ids)
-    if craft_ids:
-        await replace_workshop_crafts(created.id, craft_ids)
+    # THE ROW AND ITS TWO ROSTERS ARE ONE WRITE (2026-09-03), for the reason the helpers now spell
+    # out: three commits in a row meant a failure after the first committed a workshop whose "Artisans
+    # attending" and "Crafts covered" lists are empty, indistinguishable on every screen from one an
+    # administrator deliberately left blank — and the administrator saw an error, so the one person
+    # who knew the lists had been filled in believes nothing was saved at all.
+    #
+    # THE ``clientKey`` HANDLER WRAPS THE WHOLE ``async with`` AND NOT THE ``create`` INSIDE IT, and
+    # that placement is load-bearing rather than tidy. A unique violation has already aborted this
+    # transaction in Postgres, so any further statement issued on ``tx`` — including the re-read that
+    # finds the winning row — would fail with "current transaction is aborted", and a 201 would
+    # arrive as a 500 naming nothing. Catching outside the block means the transaction has been
+    # rolled back and the re-read goes through the module client, which is the only place it can
+    # work and also the right one: it only needs committed rows.
+    # ``artisans.update_artisan`` documents the identical trap on its own identity conflict.
+    try:
+        async with db.tx() as tx:
+            created = await tx.workshop.create(data=data)
+            if artisan_ids:
+                await replace_workshop_artisans(created.id, artisan_ids, client=tx)
+            if craft_ids:
+                await replace_workshop_crafts(created.id, craft_ids, client=tx)
+    except Exception as exc:
+        raced = await client_key_replay_after_violation(
+            db.workshop, payload.clientKey, exc, user_id=current_user.id
+        )
+        if raced is None:
+            raise
+        await hydrate_relations([raced], RELATIONS)
+        return public_encode(raced)
     # The row we just wrote IS the response; only its links changed after the insert, and those are
     # loaded here. Reading the whole workshop back to learn what we already know cost another
     # cross-region round trip, plus one more per relation behind it.
@@ -772,6 +858,9 @@ async def update_workshop(
 ) -> dict[str, Any]:
     workshop = await require_record(db.workshop, workshop_id)
     data = clean_data(payload.model_dump(exclude_unset=True))
+    # The precondition is a question, not a column — taken out of the body here, asked inside the
+    # transaction below. See ``records.take_expected_updated_at``.
+    expected_updated_at = take_expected_updated_at(data)
     artisan_ids = data.pop("artisanIds", None)
     craft_ids = data.pop("craftIds", None)
     data = normalize_workshop_dates(data)
@@ -791,25 +880,64 @@ async def update_workshop(
     # else populated, exactly as the creator or an admin can. guard_record_edit knows nothing about
     # workshops, so the elevation is applied here — and the revision is still written on that path,
     # so the shortcut never costs the edit audit.
-    privileged = access.at_least("EDIT")
-    if privileged:
-        await record_revision(workshop, current_user, data, "workshop")
-    else:
-        privileged = await guard_record_edit(workshop, current_user, data, "workshop")
-    await apply_status_policy_update(current_user, workshop, data)
-    merge_field_provenance(data, current_user, previous=workshop)
-    resubmit_status(workshop, current_user, data)
-    updated = await db.workshop.update(where={"id": workshop_id}, data=data)
-    if artisan_ids is not None:
-        link_count = await db.workshopartisan.count(where={"workshopId": workshop_id})
-        if not privileged:
-            assert_can_contribute_relation(workshop, current_user, link_count > 0, "artisanIds")
-        await replace_workshop_artisans(workshop_id, artisan_ids)
-    if craft_ids is not None:
-        craft_link_count = await db.workshopcraft.count(where={"workshopId": workshop_id})
-        if not privileged:
-            assert_can_contribute_relation(workshop, current_user, craft_link_count > 0, "craftIds")
-        await replace_workshop_crafts(workshop_id, craft_ids)
+    # ── ONE TRANSACTION FOR THE WHOLE SAVE (2026-09-03), AND IT CLOSES THREE THINGS AT ONCE ───────
+    #
+    # This route was the worst-affected write in the repository: up to FIVE independent commits for
+    # one PATCH — the audit row, the workshop row, the artisan roster's delete and its insert, then
+    # the craft roster's pair — with a failure window between every adjacent pair.
+    #
+    # 1. THE LEDGER. ``record_revision`` (and ``guard_record_edit``, which ends in it) committed
+    #    before the update it describes, so a failure in the gap left an audit row asserting a change
+    #    to dates or a sanction number that the row does not hold. ``client=tx`` is what joins it:
+    #    ``db.tx()`` hands back a DIFFERENT client, so a callee writing through the module singleton
+    #    is not inside this block however it reads. See ``access.record_revision``.
+    # 2. THE ROSTERS. Each ``replace_*`` is a delete followed by an insert, and a failure between
+    #    them committed the WIPE — forty artisans an administrator picked, gone, with the save
+    #    reporting an error. See ``replace_workshop_artisans`` for the full argument and for the
+    #    concurrent-save 500 the same transaction removes.
+    # 3. THE REFUSAL ORDERING, WHICH WAS BACKWARDS AND IS THE ONE BEHAVIOUR CHANGE HERE. The two
+    #    ``assert_can_contribute_relation`` calls below raise 403, and they sit AFTER the workshop
+    #    row's update — so an ordinary contributor who edited the title and also tried to rewrite a
+    #    populated roster was refused, correctly, having ALREADY had their title change committed
+    #    (and, before this, an audit row for it too). That is precisely the defect
+    #    ``processes.update_process`` moved its step guard upwards to avoid, and the rule it states
+    #    out loud: a rejected request must leave no partial state behind. The guards are not moved —
+    #    they need the link counts, and the counts are the truth this save is about to replace — the
+    #    transaction simply takes the row update back with the refusal. The 403 itself, its detail
+    #    string and the response shape are all unchanged; only the rollback is new.
+    #
+    # The two ``count`` reads go through ``tx`` because they must see this transaction's own writes:
+    # on the module client they would be answering from outside it.
+    async with db.tx() as tx:
+        # Before the ledger write on either branch below — a refusal raised after ``record_revision``
+        # or ``guard_record_edit`` would leave a committed claim about an edit that was then turned
+        # down, which is point 1 of the paragraph above arrived at from the other side. ``None``
+        # passes and changes nothing, which is every client shipped to date. See
+        # ``records.assert_expected_updated_at``.
+        assert_expected_updated_at(workshop, expected_updated_at)
+        privileged = access.at_least("EDIT")
+        if privileged:
+            await record_revision(workshop, current_user, data, "workshop", client=tx)
+        else:
+            privileged = await guard_record_edit(
+                workshop, current_user, data, "workshop", client=tx
+            )
+        await apply_status_policy_update(current_user, workshop, data)
+        merge_field_provenance(data, current_user, previous=workshop)
+        resubmit_status(workshop, current_user, data)
+        updated = await tx.workshop.update(where={"id": workshop_id}, data=data)
+        if artisan_ids is not None:
+            link_count = await tx.workshopartisan.count(where={"workshopId": workshop_id})
+            if not privileged:
+                assert_can_contribute_relation(workshop, current_user, link_count > 0, "artisanIds")
+            await replace_workshop_artisans(workshop_id, artisan_ids, client=tx)
+        if craft_ids is not None:
+            craft_link_count = await tx.workshopcraft.count(where={"workshopId": workshop_id})
+            if not privileged:
+                assert_can_contribute_relation(
+                    workshop, current_user, craft_link_count > 0, "craftIds"
+                )
+            await replace_workshop_crafts(workshop_id, craft_ids, client=tx)
     # ``update`` already handed back the saved row, so the relations are grafted onto it instead of
     # reading the whole workshop a second time from another region.
     await hydrate_relations([updated], RELATIONS)

@@ -579,25 +579,74 @@ def can_create_records(user: Any) -> bool:
 
 # --- The authenticated-identity cache -------------------------------------------------------------
 #
-# WHY IT EXISTS. ``get_current_user`` runs on every authenticated request, and its one
-# ``find_unique`` is one of only three sequential database waves left on a list endpoint like
-# ``GET /artisans``. The database is cross-region: that round trip costs 200-400ms before any of the
-# request's real work begins, and one dashboard page load pays it once per request it fires in
-# parallel. Removing it is roughly a third of the remaining latency of every authenticated endpoint.
+# WHY IT EXISTS — RE-TAKEN 2026-09-03, BECAUSE THE NUMBER IT WAS BUILT ON IS GONE.
+#
+# THE ORIGINAL ARGUMENT, VERBATIM, SO THE CHANGE IS LEGIBLE: ``get_current_user`` runs on every
+# authenticated request, and its one ``find_unique`` is one of only three sequential database waves
+# left on a list endpoint like ``GET /artisans``. The database is cross-region: that round trip costs
+# 200-400ms before any of the request's real work begins, and one dashboard page load pays it once
+# per request it fires in parallel. Removing it is roughly a third of the remaining latency of every
+# authenticated endpoint.
+#
+# **THAT ROUND TRIP NO LONGER EXISTS.** The database was moved alongside the API box on 2026-09-02
+# and a ``find_unique`` on an indexed primary key now costs on the order of 1-2ms. So the sentence
+# above justifies a revocation window with a saving that is roughly two hundred times smaller than
+# the one it was weighed against, and a cache kept on a stale measurement is a cache nobody has
+# actually decided to keep.
+#
+# IT IS KEPT, AND FOR A DIFFERENT REASON: BURST DEDUPE, NOT LATENCY. What ``_load_user`` does that a
+# bare query cannot is SINGLE-FLIGHT (see the note at the foot of this banner). One dashboard paint
+# fires a dozen requests in parallel on one token; without this they are a dozen simultaneous
+# ``find_unique`` calls for one row, on a single-worker box in front of a connection pooler this
+# deployment has already exhausted twice. Cheap queries in a thundering herd are still a herd. That
+# property is about CONCURRENCY and is unaffected by the round trip getting shorter — which is
+# exactly why it survives the number that did not.
+#
+# **WHAT THE TTL COSTS IS NOT SETTLED BY THAT, AND THIS IS THE HONEST VERSION.** The five seconds
+# below is a window on REVOCATION, and the checks it can delay now include the strongest one this
+# API has: ``_user_from_bearer`` reads ``sessionsValidFrom`` OFF THE ROW ``resolve_user`` RETURNS,
+# so a cached row carries the pre-revocation value and a revoked session survives for the remainder
+# of the TTL. It is tempting to write "the two writers that matter both stamp ``sessionsValidFrom``,
+# which is checked on every request, so the cache no longer extends anything" — and that is FALSE as
+# stated, because the check reads the cache rather than going around it.
+#
+# What is true is narrower and worth having exactly right:
+#
+#   * BOTH revocation writers call ``invalidate_cached_user`` in the same process that wrote —
+#     ``routes/auth.set_password`` on a link redemption, and ``routes/access``'s two barring doors
+#     since 2026-09-03. In-process, there is no window at all.
+#   * The deployment runs ONE uvicorn worker on ONE replica (``infra/k8s/base/deployment-api.yaml``
+#     says ``replicas: 1`` and argues for ``--workers 1`` beside it), so today there is no second
+#     process holding a stale copy of a row this one revoked.
+#   * The five seconds therefore bites on writes NO process made through the app: a ``psql`` session,
+#     ``scripts/seed_admin.py`` in its own process, a future second replica. For those the window is
+#     real and it now covers session revocation as well as role and existence.
+#
+# So the TTL is a live decision rather than a settled one, and it is recorded here as such: the case
+# for cutting it is stronger than it was (the latency it was traded against is gone), and the case
+# for keeping it is that nothing today can actually observe the staleness. Cutting it belongs with
+# whoever owns ``AUTH_USER_CACHE_TTL_SECONDS``'s documentation, not with a silent constant change in
+# this file. ``AUTH_USER_CACHE_ENABLED=false`` already removes the whole thing without a deploy, and
+# now costs 1-2ms a request to do so rather than 200-400.
 #
 # WHY THE ROW IS FETCHED AT ALL, WHICH IS THE SAME REASON THE CACHE IS DANGEROUS. The access token
 # already carries the user id in ``sub``, and ``create_access_token`` even puts ``email`` and
 # ``role`` in it — so a "cache" that simply trusted the token would be free. That is exactly the
-# shortcut this must not take. Tokens live for seven days (JWT_EXPIRES_MINUTES) and are never
-# revoked, so a role claim minted before a demotion stays valid for a week, and a deleted account
-# keeps a working token until it expires. The database read IS the revocation check. Caching it
-# shortens the revocation window; trusting the token would remove it.
+# shortcut this must not take. Tokens live for seven days (JWT_EXPIRES_MINUTES) and carry no
+# ``jti``, so a role claim minted before a demotion stays valid for a week and a deleted account
+# keeps a working token until it expires. The database read IS the revocation check — for the RANK,
+# for EXISTENCE, and (since ``sessionsValidFrom`` gained its second writer on 2026-09-03) for
+# whether the session itself has been ended, which is read off this same row at the foot of
+# ``_user_from_bearer``. Caching it shortens every one of those windows; trusting the token would
+# remove them.
 #
 # SO THE WINDOW IS KEPT SHORT AT BOTH ENDS:
 #   1. EXPLICIT INVALIDATION. Every write that changes a user's authority or identity calls
 #      ``invalidate_cached_user`` — users.py (create/update/delete), auth.py (the Google sign-in
-#      upsert, which can set MASTER_ADMIN), scripts/seed_admin.py. In-process, a demotion or a
-#      deletion takes effect on the very next request, with no window at all.
+#      upsert, which can set MASTER_ADMIN, and ``set_password``'s session revocation), access.py
+#      (the role lift, and the two barring doors' session revocation), scripts/seed_admin.py.
+#      In-process, a demotion, a deletion or a suspension takes effect on the very next request,
+#      with no window at all.
 #   2. A FIVE-SECOND TTL, which is only the backstop for writes this process cannot see: a psql
 #      session, the seed script running as its own process, a second uvicorn worker's memory. Five
 #      seconds is chosen to span the burst of parallel requests one page load makes (and the
@@ -750,12 +799,37 @@ async def resolve_user(user_id: str) -> Any:
 # administrator pressing Suspend on a departing colleague believed bulk data access was cut, and it
 # was not. A gate on issue alone revokes nothing for the life of the credential already out there.
 #
-# WHAT IS STILL NOT REVOKED, STATED SO NOBODY HAS TO INFER IT: an ordinary SESSION token. It is
-# checked by ``get_current_user``, which asks for rank and not for platform access, so a suspended
-# account keeps the interactive application until its session token expires (``jwt_expires_minutes``,
-# seven days). The allow-list read is paid HERE and not there deliberately: this dependency guards
-# the one credential that hands over the whole repository to a machine and is asked a handful of
-# times a day, where ``get_current_user`` is on the hot path of every request in the API.
+# WHAT IS STILL NOT REVOKED HERE, STATED SO NOBODY HAS TO INFER IT: an ordinary SESSION token. It is
+# checked by ``get_current_user``, which asks for rank and not for platform access, so this
+# dependency's per-request allow-list read is not what stops a suspended account using the
+# interactive application. The allow-list read is paid HERE and not there deliberately: this
+# dependency guards the one credential that hands over the whole repository to a machine and is asked
+# a handful of times a day, where ``get_current_user`` is on the hot path of every request in the API.
+#
+# **THAT PARAGRAPH USED TO END "...SO A SUSPENDED ACCOUNT KEEPS THE INTERACTIVE APPLICATION UNTIL ITS
+# SESSION TOKEN EXPIRES (SEVEN DAYS)", AND SINCE 2026-09-03 IT NO LONGER DOES.** That sentence was a
+# gap written down rather than closed, and it was the whole of it: an administrator pressing Suspend
+# on ``/admin/access`` cut the next sign-in and left the browser and the phone the person was already
+# signed in on working for the rest of ``jwt_expires_minutes``. It is closed at the WRITE end rather
+# than by adding an allow-list read to the hot path — ``routes/access.suspend_access_entry`` and the
+# REJECT arm of ``routes/access.decide_access_request`` now stamp ``User.sessionsValidFrom``, which
+# the comparison at the foot of ``_user_from_bearer`` already checked on every authenticated request
+# for the price of one ``is None``. So a barred session dies at its next request, and this dependency
+# still does not read ``AccessRoster`` for session tokens, which is the trade this paragraph was
+# always defending.
+#
+# TWO THINGS THAT STAMP DOES NOT COVER, BOTH NAMED AT ``routes/access.end_live_sessions``: a row
+# suspended BEFORE 2026-09-03 was never stamped at all (a second click on an already-SUSPENDED row
+# is a documented no-op and does not repair it), and a bar whose Gmail sweep was cut
+# (``access_roster.GMAIL_ACCOUNT_SWEEP_LIMIT``) ends nothing — it logs at ERROR and names the
+# repair rather than failing quietly. Both are ``scripts/backfill_sessions_valid_from.py`` work,
+# not behaviour to infer from this banner.
+#
+# **THE THIRD THING THIS PARAGRAPH USED TO NAME IS CLOSED (2026-09-03):** an account whose
+# ``User.email`` is a Gmail alias of the canonicalised roster address IS now found and IS stamped.
+# ``end_live_sessions`` looks accounts up through ``access_roster.accounts_on_the_mailbox``, which
+# canonicalises both sides rather than widening the ``WHERE``, so every spelling of one mailbox is
+# barred and no part of anybody else's is.
 # =================================================================================================
 
 #: Scope claim carried by a dataset token: the bulk read-only export API and nothing else.
@@ -812,14 +886,25 @@ async def _user_from_bearer(
     #
     # Bearer tokens here are stateless JWTs with no `jti` and no row behind them, so "sign every
     # device out" had nowhere to be written. `User.sessionsValidFrom` is that place: a token
-    # minted STRICTLY BEFORE it is refused. Setting a password through an admin's reset link
-    # writes it (see routes/auth.set_password), because the usual reason somebody is resetting
-    # is that a session they no longer control is live somewhere, and leaving it live would make
-    # the reset theatre.
+    # minted STRICTLY BEFORE it is refused. TWO ACTS WRITE IT, and the second arrived on
+    # 2026-09-03:
     #
-    # NULL SKIPS THE CHECK ENTIRELY, which is every account that has never had anything revoked
-    # — i.e. all of them today. So this costs the hot path one `is None` and no query: the row
-    # has already been loaded to authenticate the request.
+    #   * Setting a password through an admin's reset link (routes/auth.set_password), because the
+    #     usual reason somebody is resetting is that a session they no longer control is live
+    #     somewhere, and leaving it live would make the reset theatre.
+    #   * BARRING THE ADDRESS on the platform allow-list — `routes/access.suspend_access_entry` and
+    #     the REJECT arm of `routes/access.decide_access_request`. Suspension writes the roster
+    #     status, which is read on the SIGN-IN path, so before this it stopped the next sign-in and
+    #     left the session the person was already in running for the rest of the token's seven days.
+    #
+    # NULL SKIPS THE CHECK ENTIRELY, which is every account that has never had anything revoked.
+    # So this costs the hot path one `is None` and no query: the row has already been loaded to
+    # authenticate the request.
+    #
+    # IT READS OFF THE ROW `resolve_user` HANDED BACK, WHICH MAY BE A CACHED ONE. Both writers call
+    # `invalidate_cached_user`, so in this process the revocation lands on the very next request;
+    # for a write this process did not make, the identity cache's TTL is the window. See the banner
+    # above `_user_cache`, which re-took that decision on the same day and says what is still open.
     #
     # `iat` IS ALWAYS PRESENT — `create_access_token` writes it unconditionally and refuses to let
     # a caller override it — but a token minted by an older build might not carry one, and the
@@ -830,9 +915,18 @@ async def _user_from_bearer(
         issued_at = payload.get("iat")
         cutoff = revoked_before.timestamp()
         if not isinstance(issued_at, int | float) or issued_at < cutoff:
+            # CAUSE-NEUTRAL SINCE 2026-09-03, AND IT HAD TO BECOME SO. This sentence used to read
+            # "This session ended when the account password was changed" — true while a password
+            # redemption was the only writer, and a lie to the second population that reaches it: an
+            # account an administrator has just barred. Telling a suspended person their password
+            # changed sends them to reset a password that was never wrong, which is the precise
+            # failure `auth.DESIGNER_SUSPENDED_DETAIL` exists to argue against. The honest answer is
+            # short and identical for both, because the NEXT sign-in is what can say which — it
+            # answers with the suspension's own words, or lets them in. No client matched on the old
+            # prose (checked across frontend/ and android/ before changing it).
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="This session ended when the account password was changed. Sign in again.",
+                detail="This session is no longer valid. Sign in again.",
             )
     return user
 

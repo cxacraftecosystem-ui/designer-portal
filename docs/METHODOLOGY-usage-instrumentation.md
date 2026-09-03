@@ -210,12 +210,19 @@ cannot get in" is one of the things this record exists to be able to show.
   position below the router from which the template is knowable, which is why this cannot be a
   dependency.
 * **What the duration covers.** From the middleware entering to the response being finished. See §7.
-* **Buffered, not written per request.** `DATABASE_CONNECTION_LIMIT` is 10, cut to it from 40 after a
-  pooler's shared connection budget was exhausted and crash-looped this deployment. One round trip to
-  the database measured 756 ms against tables whose server-side execution is 0.04–0.24 ms, so an
-  INSERT on the request path would take one of ten connections and add most of a second to every
-  response in order to record that the response was slow. Rows are buffered in memory and written 200
-  at a time, at least every 5 seconds, with a 5,000-row ceiling.
+* **Buffered, not written per request.** `DATABASE_CONNECTION_LIMIT` is **10 in the code and 5 on the
+  deployment** — cut to 10 from 40 after a pooler's shared connection budget was exhausted and
+  crash-looped this deployment, then set explicitly to 5 in production
+  ([ENVIRONMENT.md](ENVIRONMENT.md)). One round trip to the database measured 756 ms against tables
+  whose server-side execution is 0.04–0.24 ms, so an INSERT on the request path would take one of
+  those connections and add most of a second to every response in order to record that the response
+  was slow. Rows are buffered in memory and written 200 at a time, at least every 5 seconds, with a
+  5,000-row ceiling.
+  **Correction, 2026-09-03:** the database was co-located with the API box on **2026-09-02** and a
+  round trip is now one or two milliseconds, so the "most of a second" half of that argument is
+  history — `backend/app/services/concurrency.py` says the same about every figure it quotes. The
+  buffering stands on what did not change: one statement per request against a pool that went from
+  10 to 5, which makes the connection bound tighter rather than looser.
 * **`createdAt` is stamped when the request finished, not when the row was written.** A row can sit
   in the buffer for seconds normally and for minutes during an outage; dating rows to the flush would
   destroy the ordering that is the entire reason per-request rows are kept instead of a daily rollup.
@@ -426,7 +433,9 @@ retention or deletion job (§8, and it means editing the notice); client-side in
 
 **Known unverified.** The 756 ms round trip and the 40 kB/s field link are quoted from
 `backend/app/services/concurrency.py` and `docs/SCALABILITY.md` and were not re-measured for this
-document. The loss counters have never been exercised against a real outage — only against a fake
+document. **The 756 ms is now definitively historic** — the database was co-located on 2026-09-02 and
+that module says so above its own figures — and nothing in this repository has been re-timed since
+the move, so it is not "unverified" so much as superseded. The loss counters have never been exercised against a real outage — only against a fake
 that refuses writes (`test_a_database_that_refuses_the_write_never_reaches_a_request` and
 `test_an_outage_abandons_batches_and_never_reaches_the_buffer_ceiling`), so the *counting* is pinned
 and the *behaviour of a real Postgres going away mid-flush* is not. **The 5.25-second and 4,720-row

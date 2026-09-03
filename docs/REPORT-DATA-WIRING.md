@@ -25,6 +25,29 @@ submission would silently change a document already handed to a ministry officer
 **That constraint is correct and must survive this work.** "Wiring more data into the report" means
 copying more at SAVE time, not resolving more at RENDER time.
 
+### The source can be a row of this workshop (added 2026-09-03)
+
+**This document's framing — that reference data reaches the report from records in OTHER TABLES — is
+now only half true.** Twelve of the mappings copy from a shared record resolved through a Prisma
+delegate named on `REFERENCE_MODELS`. **Two copy from another row of the SAME workshop**: a
+`DwStageEntry` the designer filled in at an earlier stage, resolved by `hydrate_entries`' internal
+path, which reads `dwstageentry` scoped to the workshop being saved and respects `deletedAt`. They
+are `finalProduct.prototypeRef` (9 pairs — picking a prototype at stage 16 fills nine boxes) and
+`prototypeValidation.prototypeRef` (3 pairs). Both point at `DwPrototype`, which is deliberately not
+a `REFERENCE_MODELS` key.
+
+**Only the LOADING branch differs.** Same only-fill-blanks rule, same clear-and-rewrite on a
+re-pointed ref, same `coerce_value`, same provenance stamp, same publication to both clients through
+`field_to_dict`'s `refHydration`. The argument for which internal refs carry and which deliberately
+do not — the rule is that the two boxes must ask the same question about the same physical subject,
+and the thirteen live `Dw…` refs it leaves un-hydrated are each named — is in `stage_schema.py`'s
+internal-carry section. Read it there rather than reasoning by symmetry from this file.
+
+**One limit follows and is worth knowing here**: media never crosses on an internal carry, costs do
+not cross (an arithmetic limit, not a refusal about the value), and `entry_provenance.canonical_divergence`
+is gated on `model in REFERENCE_MODELS` — so an admin audit sees an internal field's provenance
+stamp but never the stored-vs-canonical comparison it gets for an artisan.
+
 `ReferencedRecord` (in `report_builder.py`) carries what hydration cannot: **a photograph of a record
 whose own mapping seeds none.** `prototype.productRef` → `{"name": "productName"}` and
 `existingProduct.artisanRef` → `{"name": "artisanName"}` are one field each, so for those two rows
@@ -60,13 +83,32 @@ the referenced record's picture reaches the page by no other route.
 > there. Read `participant.artisanRef` in `stage_schema.py` before believing any sentence that says
 > the roster records only a village.
 
-## The registry: five models, and one that does not exist
+## The registry: seven models, and the one that is not pooled
 
-`REFERENCE_MODELS` (in `design_workshops.py`) registers exactly five:
-**Artisan, ProductDocumentation, ToolDocumentation, Process, Craft.**
+> **This heading read "five models, and one that does not exist" until 2026-09-03. It was already
+> stale at six, and it is now SEVEN** — the sentence below is kept because the *point* of it was
+> which model was absent, and that model is now present.
 
-**Questionnaire is not among them**, and `grep -rn questionnaire` over `report_builder.py` and
-`report_templates.py` returns nothing. Questionnaire data does not reach the report by any path.
+`REFERENCE_MODELS` (in `design_workshops.py`) registers **Artisan, ProductDocumentation,
+ToolDocumentation, Process, Craft, QuestionnaireInterview and Questionnaire.**
+
+**`Questionnaire` is the seventh and the first that is NOT POOLED.** Every other model here is served
+under `records.viewable_where`, which is empty — the pooling rule is that every signed-in account may
+read every artisan, product, tool, process, craft and interview. `Questionnaire` carries `ownerId`, a
+nullable `designWorkshopId` and an admin-set `isShared`, so its options are narrowed by the asking
+ACCOUNT through `ReferenceModel.viewer_where`, not by the workshop. `reference_options` composes that
+clause with the others and **refuses outright (401) when the request names no account**, because an
+account-scoped list served to nobody is a leak wearing an empty filter.
+
+The predicate is `questionnaire_forms.visible_questionnaire_where`, which is the same four-clause rule
+`GET /questionnaires` is narrowed by — **moved out of the route and into the service on 2026-09-03**
+so there is one definition rather than two copies, with a one-line alias left behind at the route.
+`design_workshops` cannot import a route module (that route imports it), so the move was the
+alternative to a second copy.
+
+The original finding below is kept as history: **Questionnaire data reached the report by no path at
+all on 2026-08-08**, and that is no longer true — see the DECIDED AND BUILT section, and now
+`surveyPlan.questionnaireRef`, which carries the TITLE and nothing else.
 
 ## The actual gaps, ranked
 
@@ -99,6 +141,11 @@ count as of 2026-08-27, taken by importing `REFERENCE_HYDRATION` from
 | `tool.toolRef` | name, localName, material, usedFor, cost, photo — **6** | **33** |
 | `existingProduct.productRef` | name, category, material, price, use, photo — **6** | **29** |
 | `processStep.processRef` | name — **1** | **3** |
+
+> **The table above is four mappings out of fourteen, and its right-hand column is dated 2026-08-27.**
+> The registry as a whole is **14 mappings carrying 136 field pairs** — counted 2026-09-03 by
+> `ast.literal_eval` over the literal, not by eye; the five one-pair mappings are written on a single
+> line each and are the ones a manual count misses. Do not treat the four rows here as the registry.
 
 The traditional-process stage is one of the report's substantive narrative sections, and it is the
 thinnest of the five by an order of magnitude.
@@ -136,6 +183,15 @@ again on every row that names the same process — the exact defect both notes e
 
 `existingProduct.artisanRef` → `{"name": "artisanName"}` and
 `prototype.productRef` → `{"name": "productName"}`, both in `REFERENCE_HYDRATION`.
+
+> **There are FIVE one-pair mappings now, not two — 2026-09-03.** The other three are
+> `traditionalProcess.productRef` and `processStep.productRef` (both `name → documentedFor`) and the
+> new `surveyPlan.questionnaireRef` (`name → questionnaireName`). The heading is kept because this
+> section's *argument* is about the two it names; the count is not the registry's. **A one-pair
+> mapping is an ATTRIBUTION rather than a mirror** — the row says who or what the record was made
+> from, and never becomes a copy of it — which is the reason all five sit in `StageRecordEmbed`'s
+> `NOT_EMBEDDED` rather than its `MIRROR_POINTS`, and it is stated there in each one's own words.
+> Do not read a one-pair mapping as an unfinished wide one.
 
 On 2026-08-08 the `ReferencedRecord` docstring explained the PHOTO omission as "those entities have a
 gallery of the designer's OWN photographs and hydration must never overwrite them", and this section
@@ -220,6 +276,15 @@ Hydration copies at save time; the report never re-resolves. Any new field must 
    hydrated but not printed, or printed but not hydrated, fails silently in a document nobody
    re-reads.
 
+**There is a fifth surface as of 2026-09-03, and it is enforced rather than remembered.** A NEW
+MAPPING must be declared in the web's `frontend/components/designworkshop/StageRecordEmbed.tsx` —
+either in `MIRROR_POINTS`, if the row earns a whole record form mounted over it, or in
+`NOT_EMBEDDED` with the reason it does not. `frontend/e2e/stage-record-embed-unit.spec.ts` reads the
+two lists as halves of one set and fails on a mapping that is in neither, so a new hydration mapping
+cannot slip past silently. Today that is 4 mirrored and 10 refused against the registry's 14. The
+step exists because "no form here" and "nobody has got to it yet" are indistinguishable from an empty
+list — and two of the refusals were found by that pin rather than by the brief.
+
 ---
 
 ## How this document is kept true
@@ -241,7 +306,9 @@ reader has to know which half they are in:
 | "There are two process mappings" and the six boxes the singleton fills | `REFERENCE_HYDRATION["traditionalProcess.processRef"]` and `REFERENCE_HYDRATION["processStep.processRef"]` in `backend/app/services/stage_schema.py`, and `_step_lines` in `backend/app/services/design_workshops.py`. **Read both mappings, not one.** This row exists because the §1 blockquote said for eleven days that `steps` and `preProcessAvailable` "are deliberately still not copied" after they had started being copied — true of the ROW mapping, false of the registry as a whole, and a reader planning to close the gap would either have rebuilt `_step_lines` or widened the row mapping and reintroduced the run-on-sequence-per-row defect. |
 | Anything this document says about WHICH galleries hydration seeds | **The mapping in `stage_schema.py`, read this minute — never a docstring, and never this file's own previous wording.** `grep -n '"photo"' backend/app/services/stage_schema.py` settles it in one command: it returns exactly three seeding mappings — `participant.artisanRef` and `tool.toolRef` (both `photo` → `photo`) and `existingProduct.productRef` (`photo` → `productPhotos`, the gallery one) — and `prototype.productRef` is not among them. **This row exists because the failure has now happened twice in three days**: `ReferencedRecord`'s docstring carried "hydration must never seed a gallery", was corrected in the tree with a capitalised note saying so, and the pre-fix sentence was then copied INTO this document from the very docstring that had struck it. A sentence of the form "hydration must never seed X's gallery" is the shape to distrust; the rule is `hydrate_entries`' — seeded when empty, never overwritten — and the consequence of acting on the wrong one is deleting a live mapping, which only-fill-blanks then makes unrecoverable row by row. |
 | "Where the artisan lives is only on `ReferencedRecord`" | `REFERENCE_HYDRATION["participant.artisanRef"]` in `backend/app/services/stage_schema.py` — count its keys. It carries `state`, `district`, `pincode`, `address` and `subjectLocation` as well as `village`. **All five code sites are corrected, and every one of them was OPENED and read on 2026-08-20 before this sentence was written. Correct none of them.** They are: `ReferencedRecord` and `_artisan_points` in `backend/app/services/report_builder.py`; `load_report_references` in `backend/app/services/design_workshops.py`; `renderMap`'s KDoc in `android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/ReportFigures.kt` (**not** `report/ReportFigures.kt` — this row once cited no path at all and the obvious guess is the wrong directory); and the test formerly called `test_artisan_homes_come_from_the_referenced_artisan_record`, which **no longer exists under that name** — it is `test_a_roster_row_that_states_no_address_falls_back_to_the_referenced_artisan_record` in `backend/tests/test_report_figures.py`, and the rename IS the correction, so a reader hunting the old symbol finds nothing and concludes the file was missed. **THE OLD SENTENCE IS STILL GREPPABLE IN ALL FIVE, BECAUSE EACH ONE QUOTES IT INSIDE ITS OWN RETRACTION — so a grep hit is evidence of a correction, not of staleness, and it is the whole trap this row now exists to spring.** Read the paragraph the hit sits in. `load_report_references` says "This bullet used to say 'No roster field holds a district — the participant row records a village as free text' … and reading that as true is what kept the ministry's map wrong"; `renderMap` says "The premise this paragraph used to rest on has gone false and is recorded here so nobody argues from it again … Both halves are now wrong"; `ReferencedRecord` says "This bullet used to say 'No participant field holds a district: the roster records a village as free text'. That is no longer true"; `_artisan_points` says "It was the other way round, on a stated reason that had gone false". **This row has now been wrong three times in two waves, always in the same direction — naming a corrected file as stale, which sends the next reader to revert a fix. Re-verify by OPENING each site, never by grepping for the retracted string.** |
-| "`REFERENCE_MODELS` registers exactly five" | Count them in `backend/app/services/design_workshops.py`. **Do not restate the number anywhere else** — it is the shape of count `docs/tools/check-docs.mjs` exists to keep out of prose, and it is stated here only because the point of the sentence is which model is *absent*. |
+| "`REFERENCE_MODELS` registers exactly five" | **It registered seven when this row was last read, on 2026-09-03 — the sentence had already been stale at six before that.** Count them in `backend/app/services/design_workshops.py`. **Do not restate the number anywhere else** — it is the shape of count `docs/tools/check-docs.mjs` exists to keep out of prose, and it is stated here only because the point of the sentence is which model is *absent*, which has now been answered twice in the same direction. The seventh, `Questionnaire`, is also the first entry whose rows are not pooled: it carries `viewer_where`, so its option list is narrowed by the asking account and `reference_options` refuses a request that names none. |
+| The four-step rule's **fifth** surface, and the counts in it | `MIRROR_POINTS` and `NOT_EMBEDDED` in `frontend/components/designworkshop/StageRecordEmbed.tsx`, and the pin in `frontend/e2e/stage-record-embed-unit.spec.ts` that reads them as one set. **The pin is what keeps this true, not this row** — a mapping absent from both lists fails that spec. The 4-and-10 figures here are what the two arrays held on 2026-09-03; re-derive them from the arrays, never from this table. Note that the module's own header prose still describes eleven REF fields with four mirrored and seven refused, which the arrays no longer say — a frontend correction, recorded here so the next reader does not take the prose over the data. |
+| "Two mappings copy a bare name" / any count of mappings or pairs | `REFERENCE_HYDRATION` in `backend/app/services/stage_schema.py`, and **count it with `ast.literal_eval`, not by eye**: five of its mappings are written on one line each and a manual pass or a naive regex misses every one of them. That is exactly how "13 mappings / 135 pairs" was reported for a registry holding **14 and 136** on 2026-09-03. |
 | The `file:line` citations | **There are none left, as of 2026-08-15, and that is the fix rather than an evasion.** Every pin in this file had rotted or was about to: `REFERENCE_MODELS` cited 58 lines above the table, `ReferencedRecord` 11 above the class, `REFERENCE_HYDRATION` cited in a module it no longer lives in, `load_workshop_or_404` 15 lines above the function, three `schema.prisma` pins into unrelated models. Two earlier attempts at this row *described* the rot instead of removing it — one of them stating a "now at" figure that was wrong within the day — which left every wrong number in the body exactly where a reader would follow it. Symbol names replace them all. **Do not add new line pins here**: these files are under active work, a citation drifts by however much code is inserted above it, and that number only ever grows. `docs/tools/check-docs.mjs` now catches drift wherever a symbol is named beside a pin, but it cannot catch a pin that names nothing, and it is not a substitute for not pinning. |
 | The Android mirror claim | `android/app/src/main/java/com/designprototype/workshop/report/ReportSettings.kt` and `ReportTemplates.kt`, plus `android/app/src/main/assets/design-workshop-schema.json` — the last of which is generated from the server's registry, so a registry change that does not reach it is precisely the cross-surface divergence step 3 exists to prevent. |
 

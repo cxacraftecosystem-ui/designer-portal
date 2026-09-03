@@ -128,13 +128,24 @@ spec:
                 # the values.
                 name: design-workshop-secrets
           env:
-            # Belt and braces over the ConfigMap: media_queue_worker_enabled defaults to TRUE in
-            # app/core/config.py, so a ConfigMap that merely omits the key would put a transcription
-            # worker in EVERY api replica. The in-process election that prevents that on EC2 is an
-            # fcntl lock on a file in the host's temp directory — and every pod has its own /tmp, so
-            # in Kubernetes it grants the lock to all of them and elects nobody. The queue therefore
-            # runs in its own single-replica Deployment (deployment-queue.yaml) and is switched off
-            # here at the container level, where no ConfigMap edit can turn it back on.
+            # 2026-09-03: THIS IS NO LONGER LOAD-BEARING, AND THE COMMENT THAT STOOD HERE SAID IT
+            # WAS. It read "media_queue_worker_enabled defaults to TRUE in app/core/config.py, so a
+            # ConfigMap that merely omits the key would put a transcription worker in EVERY api
+            # replica". That default was flipped to FALSE in the same wave: an omitted key now means
+            # off, so the omission case this line existed to catch cannot happen any more.
+            #
+            # It is kept as documentation and as defence against an OPERATOR OVERRIDE — a ConfigMap
+            # or an overlay patch that sets the key true reaches every replica, and a container-level
+            # env value beats what envFrom brought in, so this is the one place the answer cannot be
+            # changed without editing this file. That is a narrower job than the old comment claimed,
+            # and worth keeping for exactly that.
+            #
+            # WHY THE ANSWER MUST BE FALSE HERE AT ALL. The queue drains in its own single-replica
+            # Deployment (deployment-queue.yaml). The election that would otherwise stop a second
+            # drain is an fcntl lock on a file in the host's temp directory — HOST-WIDE on the EC2
+            # box it was written for, and in Kubernetes every container has its own /tmp, so the lock
+            # is granted in every pod and elects nobody. Scaling the api Deployment therefore
+            # multiplies drains rather than sharing one; docs/KUBERNETES.md carries the same caveat.
             - name: MEDIA_QUEUE_WORKER_ENABLED
               value: "false"
             - name: PYTHONUNBUFFERED

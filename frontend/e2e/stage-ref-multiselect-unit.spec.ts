@@ -263,20 +263,33 @@ test("a whole, ordinary list says nothing at all", () => {
  * 2. The control cannot under-report its own value
  * ──────────────────────────────────────────────────────────────────────────── */
 
+/*
+  REAL CUIDS RATHER THAN "a1"/"a9" IN THESE TWO, AND THE SHAPE IS NOW LOAD-BEARING.
+
+  Every other test in this file cares only that a held value gets a row and survives the round trip,
+  so a two-character stand-in is fine there and is left alone. These two assert the WORDING of the
+  row, and since the 2026-09-03 promotion the wording is chosen by `heldRow` from the token's shape:
+  a record id is drawn as a link, and anything a person could have typed is drawn as itself. "a9" is
+  not a shape Prisma produces, and pinning the link wording to it would have pinned the branch to a
+  value the application cannot contain.
+*/
+const KAMLA = "cmsik2jg8000eh8xc1lcy661a";
+const RAM = "cmsjb6qaq01ar4otfh1p0hm1a";
+
 test("an id already on the field is drawn even when the answer no longer contains it", () => {
   const rows = referenceMultiOptions({
-    payload: answer({ options: [option("a1", "Kamla Devi", "Bagru")] }),
-    values: ["a1", "a9"]
+    payload: answer({ options: [option(KAMLA, "Kamla Devi", "Bagru")] }),
+    values: [KAMLA, RAM]
   });
   // Nine stored, eight offered, "8 selected" on the trigger, and the next tick writes the eight
   // back: that is the defect this second half exists to close.
-  expect(rows.map((row) => row.value)).toEqual(["a1", "a9"]);
-  expect(rows[1].label).toBe("Linked record a9");
+  expect(rows.map((row) => row.value)).toEqual([KAMLA, RAM]);
+  expect(rows[1].label).toBe("Linked record cmsjb6qa");
   expect(rows[1].hint).toContain("already on this field");
 });
 
 test("a failed or absent answer still draws every stored id", () => {
-  const rows = referenceMultiOptions({ payload: null, values: ["a1", "a2"] });
+  const rows = referenceMultiOptions({ payload: null, values: [KAMLA, RAM] });
   expect(rows).toHaveLength(2);
   // Which is what makes the error notice's promise true: what is already chosen can still be
   // removed, because it is still on the list to untick.
@@ -420,48 +433,83 @@ test("the dispatch hands the record arm the three things it cannot derive", () =
  * ──────────────────────────────────────────────────────────────────────────── */
 
 /**
- * THE SERVER STILL REFUSES A RECORD-BACKED MULTI_ENUM, AND THIS IS HOW THAT SENTENCE STAYS
- * RE-CHECKABLE.
+ * THE SERVER HALF LANDED ON 2026-09-03, AND THIS IS THE TEST THAT WAS WRITTEN TO FAIL WHEN IT DID.
  *
- * `MultiEnumField`'s header says, in as many words, that `ref_model` must not be declared on a
- * MULTI_ENUM until two server-side repairs land with it: `coerce_value` tests every token against
- * `ENUMS.get(spec.enum, {})` — the EMPTY map for a field with a ref model and no enum, so every
- * record id comes back as "unknown option(s) …" and the field is refused on every save — and
- * `format_value` prints `enum_label(spec.enum, token)`, which falls back to the raw token, so the
- * report would carry CUIDs where a roster of names belongs.
+ * What stood here asserted the opposite — that `coerce_value` still ran every MULTI_ENUM token past
+ * `ENUMS.get(spec.enum, {})` and that `format_value` still printed `enum_label(...)` — precisely so
+ * that repairing the server would break this file and force `MultiEnumField`'s warning paragraph to
+ * be corrected in the same change rather than left standing over a fixed thing. It did, and it was.
+ * The assertions are now the mirror image, so the same file goes on being the place the claim lives.
  *
- * A comment saying that rots the day it stops being true, and a claim nobody can re-check is what
- * this repository's docs gate exists to flag. So the claim is asserted instead: this test FAILS
- * when the server half is repaired, which is the moment somebody has to come back and correct the
- * paragraph rather than leave a warning standing over a fixed thing.
+ * THREE CLAIMS, AND THE THIRD IS THE ONE WITH A DESIGNER ON THE END OF IT. The first two are that
+ * the two repairs exist. The third is that the OLD SHAPE IS STILL ACCEPTED: `processStep.toolsUsed`
+ * and `prototype.toolsUsed` were free-text TAGS until this promotion, so every 0.0.7 handset in the
+ * field still draws a tag box for them and submits `["pit loom", …]`. If coercion ever starts
+ * checking those tokens against anything, that handset's save is refused — and `saveOrQueue` does
+ * not retry a 4xx, so the stage is lost rather than degraded.
  */
-test("the backend has not yet learnt a record-backed MULTI_ENUM, so the warning above the arm stands", () => {
+test("the backend has learnt a record-backed MULTI_ENUM, and still keeps what the old box wrote", () => {
   const coerce = readRepo("backend", "app", "services", "stage_schema.py");
   expect(
     coerce,
-    "coerce_value now resolves a MULTI_ENUM's tokens differently — correct MultiEnumField's header with it"
-  ).toContain("allowed = ENUMS.get(spec.enum, {})");
+    "coerce_value no longer exempts a record-backed MULTI_ENUM from the enum allow-list — every id would be refused on save"
+  ).toContain("if t is FieldType.MULTI_ENUM and not spec.ref_model:");
+  // The allow-list still exists, for the five MULTI_ENUM fields that DO name a vocabulary. An
+  // exemption that had quietly become universal would pass the assertion above and check nothing.
+  expect(coerce, "the enum allow-list has gone entirely, not just been narrowed").toContain(
+    "allowed = ENUMS.get(spec.enum, {})"
+  );
 
   const report = readRepo("backend", "app", "services", "report_builder.py");
   expect(
     report,
-    "format_value now resolves a MULTI_ENUM's tokens through something other than the enum table"
-  ).toContain('return ", ".join(enum_label(spec.enum, str(v)) for v in value)');
+    "ReportBuilder._value no longer resolves a record-backed MULTI_ENUM's tokens — the report is printing cuids"
+  ).toContain("if spec.type is FieldType.MULTI_ENUM and spec.ref_model:");
+
+  // NOTHING WAS MIGRATED, AND NOTHING SHOULD BE. Both shapes live in one stored array — ids from the
+  // new picker, prose from the old box and from every handset still running the old registry — so
+  // the promotion owes a reader a statement that the free text is still printed. That statement is
+  // the `elif not _looks_like_an_id(text)` arm, and this is what keeps it from being deleted as
+  // dead-looking code by somebody who assumes a MULTI_ENUM only ever holds ids.
+  expect(report, "a promoted field's free text is no longer printed verbatim by the report").toContain(
+    "elif not _looks_like_an_id(text):"
+  );
 });
 
 /**
- * AND THE REGISTRY ITSELF, READ AS THE CLIENTS RECEIVE IT.
+ * AND THE REGISTRY ITSELF — WHICH IS NOW READ FROM TWO PLACES, BECAUSE THEY MOVE AT DIFFERENT TIMES.
  *
- * The shipped schema is the one artefact that answers "what does a MULTI_ENUM actually look like on
- * the wire" without anybody parsing Python: `field_to_dict` emits `refModel` for ANY field that
- * declares one, whatever its type, so a MULTI_ENUM carrying one would be visible here. Android's
- * roster picker leans on the same file for the same claim — its own comment says every `refModel`
- * in this asset is on a `REF`.
+ * This used to read the bundled Android asset alone and assert that NO MULTI_ENUM named a ref model.
+ * Two of them now do, and the asset cannot be the judge of that on its own: it is a by-value dump of
+ * `registry_to_dict()` produced by an operator command (`StageSchema.kt`'s header carries it), so it
+ * lags the registry by however long it takes somebody to re-dump it. Asserting the new state against
+ * the asset would fail until that happened; asserting the OLD state against it would pin the
+ * staleness and fail the moment it was fixed. So the two claims are split by source:
  *
- * Two assertions, and the second is what stops the first being vacuous: a walk that found no
- * MULTI_ENUM fields at all would pass while proving nothing.
+ *  · WHAT THE REGISTRY DECLARES is read from `stage_definitions.py`, which is the source of truth and
+ *    moves in the same commit as the promotion.
+ *  · WHAT SURVIVES A DUMP is read from the asset, and only for the claim that is true either side of
+ *    a regeneration: that the walk finds MULTI_ENUM fields at all (otherwise it proves nothing), and
+ *    that exactly one of them is BASIC and required — the field this whole branch was written for.
+ *    Both promoted fields are STANDARD and optional, deliberately, so that pin does not move.
  */
-test("no registry MULTI_ENUM names a ref model yet, and one of them is BASIC and required", () => {
+test("the registry declares two record-backed MULTI_ENUM fields, and neither can brick a stage", () => {
+  const registry = readRepo("backend", "app", "services", "stage_definitions.py");
+
+  // Read as source rather than counted, because what matters is that BOTH declarations carry the
+  // ref model — a promotion applied to one of the two would leave a designer typing tool names on
+  // stage 5 and picking records on stage 13 for the same tools.
+  const promoted = [...registry.matchAll(/f\(\s*"toolsUsed",\s*"Tools used",\s*(\w+),/g)].map((m) => m[1]);
+  expect(promoted, "stage_definitions no longer declares exactly two toolsUsed fields").toHaveLength(2);
+  expect(promoted, "a toolsUsed field is still TAGS — the promotion was applied to only one of them").toEqual([
+    "MENUM",
+    "MENUM"
+  ]);
+  expect(
+    registry.match(/ref_model="ToolDocumentation"/g)?.length,
+    "the two promoted boxes plus tool.toolRef are the three ToolDocumentation pickers"
+  ).toBe(3);
+
   const schema = JSON.parse(
     readRepo("android", "app", "src", "main", "assets", "design-workshop-schema.json")
   ) as {
@@ -475,15 +523,60 @@ test("no registry MULTI_ENUM names a ref model yet, and one of them is BASIC and
   );
 
   expect(multiEnums.length, "no MULTI_ENUM in the shipped schema — this walk is proving nothing").toBeGreaterThan(0);
-  expect(
-    multiEnums.filter((row) => row.field.refModel).map((row) => `${row.entity.key}.${row.field.key}`),
-    "a registry MULTI_ENUM now names a ref model — the server half above must have landed with it"
-  ).toEqual([]);
 
   // The field the whole branch is written for, named rather than described, so that a registry
-  // change which removes it also fails here and the header stops naming a field nobody has.
+  // change which removes it also fails here and the header stops naming a field nobody has. It is
+  // also the assertion that would catch a future promotion of a BASIC required TAGS box into a
+  // closed list, which is the one shape of this change that can leave a stage unsubmittable.
   const brickable = multiEnums.filter((row) => row.field.tier === "BASIC" && row.field.required);
   expect(brickable.map((row) => `${row.stage.number}:${row.entity.key}.${row.field.key}`)).toEqual([
     "10:designBrief.targetCategories"
   ]);
+});
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * 6. A promoted field's array holds two shapes, and the picker draws both
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * THE REGRESSION THIS PROMOTION COULD HAVE SHIPPED, ASSERTED SO IT CANNOT COME BACK.
+ *
+ * `processStep.toolsUsed` was a TAGS box for the whole life of the app before 2026-09-03, so every
+ * value stored under it today is a tool NAME a designer typed, and a 0.0.7 handset is still writing
+ * more of them. `referenceMultiOptions` gives every held id a row so the control cannot silently
+ * drop what it cannot see — and that row used to be `orphanRow` unconditionally, which would have
+ * drawn "pit loom" as `Linked record pit loom` under a hint saying the repository did not return it.
+ *
+ * Two false statements in one row: it is not a linked record, and nothing failed to return it. The
+ * designer's own word for their own fieldwork, replaced on screen by a claim about a link nobody
+ * made — and the stage-13 half of the same field would have done it to the same words.
+ */
+test("free text stored before the promotion is drawn as the words it is, not as a broken link", () => {
+  const rows = referenceMultiOptions({
+    payload: answer({ options: [option("cmsik2jg8000eh8xc1lcy661a", "Pit loom", "Bargarh")] }),
+    values: ["cmsik2jg8000eh8xc1lcy661a", "pit loom", "SK-01", "cmsjb6qaq01ar4otfh1p0hm1a"]
+  });
+
+  expect(rows.map((row) => row.label)).toEqual([
+    // Offered by the server, and named by it.
+    "Pit loom",
+    // Typed. Both are kept verbatim: a space fails the id shape, and so do capitals and a dash.
+    "pit loom",
+    "SK-01",
+    // A real id the current search answer does not contain — still a link, still removable.
+    "Linked record cmsjb6qa"
+  ]);
+
+  // The hint is what separates the two kinds for a designer reading the list, and it is the only
+  // thing on screen that can: both rows are just text in a dropdown.
+  expect(rows[1].hint).toBe("typed on this field, not a linked record");
+  expect(rows[3].hint).toContain("not in the list the repository returned");
+});
+
+test("every held value survives the round trip, whichever shape it is", () => {
+  // The defect `referenceMultiOptions` exists to prevent, restated for a mixed array: a control that
+  // draws three of four stored entries hands back three, and the fourth is gone with nothing said.
+  const values = ["pit loom", "cmsik2jg8000eh8xc1lcy661a", "बुनाई"];
+  const rows = referenceMultiOptions({ payload: answer(), values });
+  expect(rows.map((row) => row.value)).toEqual(values);
 });

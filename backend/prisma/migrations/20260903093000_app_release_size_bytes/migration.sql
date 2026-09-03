@@ -1,0 +1,39 @@
+-- `AppRelease.sizeBytes`: how large the published APK is, so the handset can tell a finished
+-- download from a truncated one.
+--
+-- =============================================================================================
+-- WHAT THE ANDROID UPDATER CAN AND CANNOT SEE TODAY
+-- =============================================================================================
+--
+-- The over-the-air updater compares its installed `versionCode` against the highest published one
+-- and downloads `url`. What it has no way to check is whether the bytes it received are the bytes
+-- that were published: a connection dropped at 60% on a cluster's mobile link produces a file, not
+-- an error, and the only thing that notices is the package installer refusing to parse it -- after
+-- the designer has spent the data. A declared length lets the updater refuse the transfer before it
+-- ever reaches the installer, and say why.
+--
+-- =============================================================================================
+-- NULLABLE, AND THAT IS THE WIRE CONTRACT RATHER THAN AN OMISSION
+-- =============================================================================================
+--
+-- Every release row written before this column has no size, and nothing walks S3 to give it one --
+-- a backfill would have to HEAD every published object, which is a network job and not a .sql file.
+-- So an absent size has to keep meaning what it means today: download and trust the transfer, which
+-- is exactly what every fielded 0.0.7 APK already does. That is the same shape `url` and `notes`
+-- already have on this model, and it is why the column is not `NOT NULL DEFAULT 0` -- a zero would
+-- be a CLAIM about the size, and an updater comparing against it would refuse every legacy release.
+--
+-- =============================================================================================
+-- BIGINT AND NOT INTEGER
+-- =============================================================================================
+--
+-- An APK is comfortably inside a 32-bit integer today (~40 MB against a 2.1 GB ceiling). This is a
+-- byte count on an artefact that only grows, though, and widening a column later is a second
+-- migration against a table two clients read; eight bytes on a table with one row per release is
+-- not a cost worth optimising. Prisma maps `BigInt?` to `BIGINT`, and the Python client hands it
+-- back as an `int`.
+--
+-- Idempotent for the reason the sibling migration in this wave gives: hand-authored .sql piped
+-- through psql must survive the re-run of a directory that was half-applied.
+
+ALTER TABLE "AppRelease" ADD COLUMN IF NOT EXISTS "sizeBytes" BIGINT;

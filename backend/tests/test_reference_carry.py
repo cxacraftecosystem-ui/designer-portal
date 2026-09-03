@@ -236,6 +236,27 @@ _MUTABLE_VERDICT = (
     "(design_workshops._review_flag) and never written onto an entry."
 )
 
+#: ``clientKey`` ON THE THREE REPLAYABLE RECORD MODELS — added 2026-09-03 by the idempotency lane,
+#: ledgered here in the same wave.
+#:
+#: It is NOT bookkeeping in the "created/updated timestamp" sense and it is worth separating from
+#: them, because the reason it does not cross is sharper than "nobody reads it". It is the
+#: IDEMPOTENCY KEY OF ONE CREATE REQUEST — the value a browser profile or a handset's outbox
+#: generated so that an unanswered POST could be replayed without filing the same fieldwork twice
+#: (``Workshop.clientKey`` carries the whole argument, and ``records.client_key_replay`` is what
+#: reads it). Every value in a CARRIED list is something a reader of the finished entry learns about
+#: the artisan, the product or the tool; this is a fact about a NETWORK EXCHANGE that happened once,
+#: between one device and this server, and it is null on every row nobody ever replayed.
+#:
+#: A carried copy would also be actively misleading in the one place it could land: a stage entry
+#: carrying a record's client key beside its id reads as though the workshop row and the record were
+#: created by the same send, which they never are.
+_AN_IDEMPOTENCY_KEY = (
+    "the idempotency key of the CREATE this row came from — a fact about one device's network "
+    "exchange, not about the artisan, product or tool. Null on every row nobody replayed; see "
+    "Workshop.clientKey and records.client_key_replay."
+)
+
 ARTISAN_CARRIED = {
     "name": "participant.name",
     "localName": "participant.localName",
@@ -424,6 +445,7 @@ PRODUCT_NOT_CARRIED = {
     "createdById": "bookkeeping",
     "workshopId": "join key",
     "designWorkshopId": _FILING_SCOPE,
+    "clientKey": _AN_IDEMPOTENCY_KEY,
 }
 
 TOOL_CARRIED = {
@@ -484,6 +506,7 @@ TOOL_NOT_CARRIED = {
     "createdById": "bookkeeping",
     "workshopId": "join key",
     "designWorkshopId": _FILING_SCOPE,
+    "clientKey": _AN_IDEMPOTENCY_KEY,
 }
 
 PROCESS_CARRIED = {
@@ -505,6 +528,7 @@ PROCESS_NOT_CARRIED = {
     "createdById": "bookkeeping",
     "workshopId": "join key",
     "designWorkshopId": _FILING_SCOPE,
+    "clientKey": _AN_IDEMPOTENCY_KEY,
 }
 
 PROCESS_STEP_CARRIED = {
@@ -2378,6 +2402,60 @@ async def test_the_review_verdict_is_live_in_the_sublabel_and_never_on_the_entry
         rows={"questionnaireinterview": [pending]},
     )
     assert not any("review" in str(v).lower() for v in data.values())
+
+
+def test_the_questionnaire_picker_is_scoped_by_the_account_and_not_by_the_workshop():
+    """The seventh model is the ONE whose rows are not pooled, and this is what keeps it that way.
+
+    ── WHY IT IS DIFFERENT FROM THE OTHER SIX ────────────────────────────────────────────────────
+
+    ``records.viewable_where`` is EMPTY on purpose — every signed-in account may read every artisan,
+    product, tool, process, craft and interview, because the point of pooling the fieldwork is that
+    everyone can see the pool. A ``Questionnaire`` is not pooled: it carries ``ownerId``, a nullable
+    ``designWorkshopId`` and an admin-set ``isShared``, and its own list endpoint narrows on all
+    four. Serving this table through the unscoped path would put every designer in the country's
+    private instruments into a picker whose chosen row is then CITED, permanently, in a report.
+
+    ONE RULE, IMPORTED RATHER THAN RESTATED. ``visible_questionnaire_where`` is the function the list
+    endpoint composes; this asserts it is the same object and not a second copy that can drift wider.
+
+    ── AND WHAT IT DELIBERATELY DOES NOT LOAD ────────────────────────────────────────────────────
+
+    No ``include`` at all. The rows under this model are sections, questions and respondents'
+    ANSWERS, and the eleven refusals ledgered against ``QuestionnaireInterview`` apply here in their
+    strongest form: a hydrated value is a permanent copy printed in a ministry's document. One key
+    crosses, and it is the title.
+    """
+    from app.services.questionnaire_forms import visible_questionnaire_where
+
+    spec = dw.REFERENCE_MODELS["Questionnaire"]
+    assert spec.delegate == "questionnaire"
+    assert spec.viewer_where is visible_questionnaire_where
+    # A WORKSHOP scope would be the wrong narrowing AND a redundant one: a form is built before it is
+    # attached, so `designWorkshopId` is null on exactly the instrument a designer is about to cite.
+    assert spec.workshop_where is None
+    assert spec.include == {}
+    assert spec.media_field == "" and spec.artisan_field == "" and spec.filter_field == ""
+
+    row = SimpleNamespace(
+        title="Baseline instrument",
+        kind="MARKET_SURVEY",
+        isShared=True,
+        sourceFilename="baseline.xlsx",
+    )
+    assert spec.label(row) == "Baseline instrument"
+    assert spec.data(row, None) == {"name": "Baseline instrument"}
+    # The sublabel is composed at the moment of choosing and NOTHING in it crosses onto the entry —
+    # `kind` and `isShared` are both mutable, and a frozen copy would be a claim about an
+    # administrator's decision that has since changed.
+    label = spec.sublabel(row)
+    assert "Market survey" in label and "Shared" in label and "baseline.xlsx" in label
+    assert "Market survey" not in str(spec.data(row, None))
+
+    # `label_for(None)` answers "Not stated", which is right in a form that asked the question and
+    # wrong appended to every row of a picker — and every row in this table has a null `kind` today.
+    unstated = SimpleNamespace(title="Draft", kind=None, isShared=False, sourceFilename="")
+    assert spec.sublabel(unstated) == ""
 
 
 def test_the_interview_picker_orders_by_title_because_nulls_sort_first_under_desc():
@@ -4581,12 +4659,25 @@ def test_the_hydration_table_grew_and_no_pair_was_lost():
     # RE-MEASURED 2026-08-24 with the same command, after `participant.aadhaarNumber` landed: 109.
     # Raised rather than left at 107 for the reason the paragraph above gives — two pairs of slack
     # is two pairs that could be deleted with the floor still green.
+    #
+    # RE-MEASURED 2026-09-03 with the same command, after the two INTERNAL carries landed: 135
+    # across 13 mappings. The +12 is `finalProduct.prototypeRef` (9) and
+    # `prototypeValidation.prototypeRef` (3), whose sources are rows of the workshop rather than
+    # records in another table — see the internal-carry section of `REFERENCE_HYDRATION`. Raised for
+    # the same reason again: leaving it at 109 would have left twenty-six pairs of slack, i.e. the
+    # whole of the new carry plus half of `participant.artisanRef`, deletable with this test green.
     pairs = sum(len(m) for m in REFERENCE_HYDRATION.values())
-    assert pairs >= 109, (
+    assert pairs >= 135, (
         f"the carry is down to {pairs} field-pairs; it was 32 before this lane, 107 as measured on "
-        "2026-08-22 and 109 on 2026-08-24, and a drop means a mapping was removed rather than a "
-        "source column disappearing"
+        "2026-08-22, 109 on 2026-08-24 and 135 on 2026-09-03, and a drop means a mapping was "
+        "removed rather than a source column disappearing"
     )
+    # AND THE INTERNAL PAIR IS SPOT-CHECKED LIKE THE SEVEN ABOVE, in both directions of the shape
+    # that distinguishes it: a source key that is a FIELD OF ANOTHER ENTITY rather than a column of
+    # another table, and a target whose name differs from it (`lengthCm -> finalLengthCm`), which is
+    # exactly the pair a key-name match would silently drop.
+    assert REFERENCE_HYDRATION["finalProduct.prototypeRef"]["materials"] == "materials"
+    assert REFERENCE_HYDRATION["prototypeValidation.prototypeRef"]["lengthCm"] == "finalLengthCm"
 
 def test_no_reference_model_asks_prisma_for_a_media_relation_its_delegate_does_not_have():
     """A ``media`` include is only legal on a delegate whose model really declares the relation.
@@ -4648,3 +4739,783 @@ def _asks_for_media(include: dict) -> bool:
         if isinstance(value, dict) and _asks_for_media(value.get("include") or {}):
             return True
     return False
+
+
+# ══════════════════════════════════════════════════════════════════════════════════════════════
+# THE INTERNAL CARRY — a source that is another row of the same workshop (2026-09-03)
+# ══════════════════════════════════════════════════════════════════════════════════════════════
+#
+# Everything above this line is about a REF pointing at a record in ANOTHER TABLE. The two mappings
+# below point at an ENTITY OF THIS REGISTRY: `finalProduct.prototypeRef` and
+# `prototypeValidation.prototypeRef` both name a `DwPrototype`, which is a `DwStageEntry` row the
+# designer filled in at stage 13 of the same workshop.
+#
+# THE LEDGER IDIOM IS THE SAME AND THE POPULATION IS DIFFERENT, which is the only thing worth
+# reading slowly. `_columns(model)` parses `schema.prisma` because an external source's fields ARE
+# Prisma columns; an internal source's fields are REGISTRY FIELDS, so the population comes from
+# `EntitySpec.fields` and the parser is not involved. Everything else holds: every live field of the
+# source entity appears exactly once, in CARRIED with the box it reaches or in NOT_CARRIED with the
+# reason it does not, and a field added to `prototype` next year fails
+# `test_no_internal_source_field_is_unaccounted_for` BY NAME until somebody decides about it.
+#
+# WHY THE REFUSALS ARE WRITTEN OUT TWICE FOR ONE SOURCE ENTITY. `prototype` feeds two mappings and
+# they refuse different things for different reasons — stage 16 refuses `materialCost` because it
+# has one cost box where the source has two, stage 15 refuses it because a validation row is a
+# JUDGEMENT and has no cost box at all. Collapsing them into one list would make both reasons into
+# one reason that is true of neither, and this file's whole claim is that a refusal is a decision
+# somebody made rather than a gap somebody left.
+
+#: Repeated in `PROTOTYPE_TO_VALIDATION_NOT_CARRIED` for the nineteen boxes stage 15 declares that
+#: describe the REVIEW rather than the piece. One constant rather than nineteen paraphrases, because
+#: nineteen paraphrases of one argument is how a ledger stops being read.
+_A_JUDGEMENT_NOT_A_DESCRIPTION = (
+    "stage 15 is a JUDGEMENT of a prototype — a decision, five quality ratings, two approvals, a "
+    "reason and a checklist — and the row is not a second description of the piece. The three "
+    "measurements are the only boxes that re-ask something the prototype states."
+)
+
+#: The photographs, on both mappings and for one reason.
+_MEDIA_STAYS_WHERE_IT_WAS_TAKEN = (
+    "media never crosses on an INTERNAL carry: both rows are in ONE workshop, so the copy would be "
+    "the SAME media ids under two headings and report_builder's image pass dedupes by media id — "
+    "the report would print the working shot as the catalogue plate, or print one picture twice."
+)
+
+PROTOTYPE_TO_FINAL_PRODUCT_CARRIED = {
+    "name": "finalProduct.name",
+    "materials": "finalProduct.materials",
+    "lengthCm": "finalProduct.lengthCm",
+    "widthCm": "finalProduct.widthCm",
+    "heightCm": "finalProduct.heightCm",
+    "weightG": "finalProduct.weightG",
+    "dimensionsNote": "finalProduct.dimensionsNote",
+    "makingTimeDays": "finalProduct.makingTimeDays",
+    "processSummary": "finalProduct.makingProcess",
+}
+PROTOTYPE_TO_FINAL_PRODUCT_NOT_CARRIED = {
+    "prototypeCode": (
+        "two identifiers with two lifetimes. A prototype tag is printed the afternoon the piece is "
+        "made (workshopCodeIdForRow) and a product code goes on a catalogue; a carry would make the "
+        "catalogue assert the workshop's internal tag and only-fill-blanks would keep it."
+    ),
+    "sketchRef": "a link, not a fact. finalProduct declares no sketch picker for it to land in",
+    "artisanRef": (
+        "THE SAME QUESTION, AND THE BOX IS STILL REFUSED. The person who made the prototype made "
+        "this, so the fact carries — but a hydrated REF needs a name box on the receiving entity to "
+        "resolve through and finalProduct declares none, so the picker would show a chosen id with "
+        "nothing readable beside it. Give finalProduct an artisanName and this becomes ordinary."
+    ),
+    "productRef": "a link to a ProductDocumentation, and finalProduct has no picker for one",
+    "productName": (
+        "“Developed from” — the EXISTING product a prototype reworks. A catalogue record "
+        "of the new piece has no box that means the old one, and would misread it as its own name."
+    ),
+    "prototypePhotos": _MEDIA_STAYS_WHERE_IT_WAS_TAKEN,
+    "prototypePhotosCaption": _MEDIA_STAYS_WHERE_IT_WAS_TAKEN,
+    "diameterCm": (
+        "no target. finalProduct declares length, width, height and weight and no diameter; the "
+        "free-text dimensionsNote is what a round piece is described in, and it IS carried."
+    ),
+    "toolsUsed": (
+        "a LIST OF TOOLS is not a TECHNIQUE. finalProduct.technique is the named craft operation "
+        "(“bandha tie-dye”), and writing a tool list into it would print a product's "
+        "technique as “pit loom, bobbin winder” in a catalogue."
+    ),
+    "materialCost": (
+        "TWO SOURCE HEADS, ONE TARGET BOX. finalProduct holds one costPrice; a mapping is one key "
+        "to one key and cannot sum, and synthesising materials+labour would assert a cost that "
+        "stage 17's sheet then contradicts with four more heads. See costSheet.totalCost's SUM."
+    ),
+    "labourCost": "the other half of the same arithmetic limit — see materialCost above",
+    "problemsAndModifications": (
+        "the record of what went WRONG while making it. A catalogue paragraph is not the place, "
+        "and finalProduct.description is the copy a buyer reads."
+    ),
+    "startDate": "when making began. The catalogue records the piece, not its schedule",
+    "completedDate": "as startDate — and makingTimeDays, the figure a costing can use, IS carried",
+    "measurementSheet": _MEDIA_STAYS_WHERE_IT_WAS_TAKEN,
+    "processVideo": _MEDIA_STAYS_WHERE_IT_WAS_TAKEN,
+    "audioNarration": _MEDIA_STAYS_WHERE_IT_WAS_TAKEN,
+    "audioTranscript": (
+        "the artisan's spoken account of making the piece, transcribed. It is a DIFFERENT VOICE "
+        "from the catalogue's makingProcess, which the designer writes — the distinction "
+        "documentedCraftNotes vs craftIntroduction is made for on the external side."
+    ),
+    "turntablePhotos": _MEDIA_STAYS_WHERE_IT_WAS_TAKEN,
+    "modelFile": _MEDIA_STAYS_WHERE_IT_WAS_TAKEN,
+    "rankFixedBy": "who settled the prototypes' order. A property of the LIST, not of the piece",
+    "rankFixedAt": "as rankFixedBy",
+    "peerRoundClosedAt": (
+        "the day the prototype was opened to designers outside the workshop. A review-process "
+        "state, and it belongs to the prototype row that design_ratings reads it off."
+    ),
+}
+
+PROTOTYPE_TO_VALIDATION_CARRIED = {
+    "lengthCm": "prototypeValidation.finalLengthCm",
+    "widthCm": "prototypeValidation.finalWidthCm",
+    "heightCm": "prototypeValidation.finalHeightCm",
+}
+PROTOTYPE_TO_VALIDATION_NOT_CARRIED = {
+    "prototypeCode": _A_JUDGEMENT_NOT_A_DESCRIPTION,
+    "name": (
+        "NO BOX, and deliberately no box: prototypeValidation's label_field is prototypeRef itself, "
+        "so the row is titled by the picker's own resolved label rather than by a copied name."
+    ),
+    "sketchRef": _A_JUDGEMENT_NOT_A_DESCRIPTION,
+    "artisanRef": _A_JUDGEMENT_NOT_A_DESCRIPTION,
+    "productRef": _A_JUDGEMENT_NOT_A_DESCRIPTION,
+    "productName": _A_JUDGEMENT_NOT_A_DESCRIPTION,
+    "materials": _A_JUDGEMENT_NOT_A_DESCRIPTION,
+    "prototypePhotos": _MEDIA_STAYS_WHERE_IT_WAS_TAKEN,
+    "prototypePhotosCaption": _MEDIA_STAYS_WHERE_IT_WAS_TAKEN,
+    "diameterCm": (
+        "the one measurement with no “Final…” counterpart on this entity. Three "
+        "boxes are declared and three are carried; a round piece's diameter has nowhere to go, and "
+        "inventing a fourth box to receive it is a registry decision rather than a carry."
+    ),
+    "weightG": "no target — stage 15 declares three FINAL dimensions and no weight",
+    "dimensionsNote": "no target — the three numeric boxes are the whole of what stage 15 asks",
+    "toolsUsed": _A_JUDGEMENT_NOT_A_DESCRIPTION,
+    "processSummary": _A_JUDGEMENT_NOT_A_DESCRIPTION,
+    "makingTimeDays": _A_JUDGEMENT_NOT_A_DESCRIPTION,
+    "materialCost": _A_JUDGEMENT_NOT_A_DESCRIPTION,
+    "labourCost": _A_JUDGEMENT_NOT_A_DESCRIPTION,
+    "problemsAndModifications": (
+        "the MAKER's record of what went wrong, and prototypeValidation.reason is the REVIEWER's "
+        "record of why they decided as they did. Two authors, and only-fill-blanks would put the "
+        "first where the second belongs on every row a reviewer had not written yet — the same "
+        "refusal craftIntroduction and documentedCraftNotes are separated by."
+    ),
+    "startDate": _A_JUDGEMENT_NOT_A_DESCRIPTION,
+    "completedDate": (
+        "when the piece was finished, which is not when it was APPROVED. approvalDate is a "
+        "reviewer's date and filling it from the maker's would misdate a named approval."
+    ),
+    "measurementSheet": _MEDIA_STAYS_WHERE_IT_WAS_TAKEN,
+    "processVideo": _MEDIA_STAYS_WHERE_IT_WAS_TAKEN,
+    "audioNarration": _MEDIA_STAYS_WHERE_IT_WAS_TAKEN,
+    "audioTranscript": _MEDIA_STAYS_WHERE_IT_WAS_TAKEN,
+    "turntablePhotos": _MEDIA_STAYS_WHERE_IT_WAS_TAKEN,
+    "modelFile": _MEDIA_STAYS_WHERE_IT_WAS_TAKEN,
+    "rankFixedBy": (
+        "who settled the prototypes' ORDER, which is not who approved this one. approvedBy is a "
+        "reviewer's name and a carry here would attribute an approval to whoever fixed a sort."
+    ),
+    "rankFixedAt": "as rankFixedBy",
+    "peerRoundClosedAt": (
+        "the gate that decides whether a POOL round is open at all (design_ratings.pool_is_open). "
+        "reviewRound is a designer's description of the row they are filing; copying the gate into "
+        "it would make a date look like an audience."
+    ),
+}
+
+#: ``(hydration path, source entity key, carried, refused)``. Parameterised so a failure names the
+#: MAPPING rather than reporting a set difference over two entities at once.
+INTERNAL_LEDGER = [
+    (
+        "finalProduct.prototypeRef",
+        "prototype",
+        PROTOTYPE_TO_FINAL_PRODUCT_CARRIED,
+        PROTOTYPE_TO_FINAL_PRODUCT_NOT_CARRIED,
+    ),
+    (
+        "prototypeValidation.prototypeRef",
+        "prototype",
+        PROTOTYPE_TO_VALIDATION_CARRIED,
+        PROTOTYPE_TO_VALIDATION_NOT_CARRIED,
+    ),
+]
+
+
+def _live_field_keys(entity_key: str) -> set[str]:
+    """The source entity's answerable fields.
+
+    DEPRECATED FIELDS ARE EXCLUDED, which is the internal equivalent of ``_columns`` skipping the
+    id: ``entity_to_dict`` drops a deprecated field from the wire and ``validate_entry`` rebuilds
+    ``cleaned`` from the live specs, so the key is deleted from the source row on its next ordinary
+    save. A carry from one would work until somebody opened stage 13, and then stop — which is why
+    ``validate_registry`` refuses the mapping outright and why the ledger has nothing to say here.
+    """
+    entity = next(e for _s, e in all_entities() if e.key == entity_key)
+    return {f.key for f in entity.fields if not f.deprecated}
+
+
+@pytest.mark.parametrize(
+    ("path", "source_entity", "carried", "refused"),
+    INTERNAL_LEDGER,
+    ids=[p for p, _e, _c, _r in INTERNAL_LEDGER],
+)
+def test_no_internal_source_field_is_unaccounted_for(path, source_entity, carried, refused):
+    """THE "WITHOUT A MISS" GUARANTEE, FOR A SOURCE THAT IS A STAGE ROW RATHER THAN A TABLE.
+
+    A field exists on the source entity and is in neither list => this fails, naming the field.
+    Somebody then either carries it or writes down why not. It is the same mechanism
+    :func:`test_no_source_column_is_unaccounted_for` applies to the five record models, pointed at
+    the registry instead of at ``schema.prisma`` — and it matters MORE here rather than less,
+    because a registry field is added in the same file as the mapping, by the same person, in the
+    same afternoon, so "I will come back to the carry" is a decision nothing else would record.
+    """
+    fields = _live_field_keys(source_entity)
+    accounted = set(carried) | set(refused)
+    missing = sorted(fields - accounted)
+    assert not missing, (
+        f"{path}: {source_entity} has fields this repository has never decided about: {missing}. "
+        f"Add each to the CARRIED map for this mapping with the box it reaches, or to the "
+        "NOT_CARRIED map with the reason it does not."
+    )
+    stale = sorted(accounted - fields)
+    assert not stale, f"{path}: {source_entity} no longer declares these fields: {stale}"
+
+
+@pytest.mark.parametrize(
+    ("path", "source_entity", "carried", "refused"),
+    INTERNAL_LEDGER,
+    ids=[p for p, _e, _c, _r in INTERNAL_LEDGER],
+)
+def test_no_internal_source_field_is_both_carried_and_refused(path, source_entity, carried, refused):
+    overlap = sorted(set(carried) & set(refused))
+    assert not overlap, f"{path}: {overlap} appear in both lists"
+
+
+@pytest.mark.parametrize(
+    ("path", "source_entity", "carried", "refused"),
+    INTERNAL_LEDGER,
+    ids=[p for p, _e, _c, _r in INTERNAL_LEDGER],
+)
+def test_the_internal_ledger_is_the_mapping_and_not_a_description_of_it(
+    path, source_entity, carried, refused
+):
+    """THE LEDGER MUST EQUAL THE TABLE, OR IT IS EVIDENCE FOR SOMETHING THAT IS NOT HAPPENING.
+
+    The external ledger above is deliberately loose — its values are prose that may name two boxes
+    or add a parenthetical, because a Prisma column can reach a workshop through a derivation or a
+    lambda. An internal mapping has no lambda between the two: the source row's ``data`` is read by
+    key. So the ledger can be held to EQUALITY here, in both directions, which is strictly the
+    stronger check and costs nothing.
+
+    Both directions matter and they fail for different reasons. A CARRIED entry the table does not
+    have is a ledger claiming a carry nobody wrote — the shape `existingProduct.productName` had on
+    the external side, where a mapping key that no lambda produced hydrated nothing for years. A
+    table pair the ledger does not have is a carry nobody weighed, which is the whole subject of
+    this file.
+    """
+    mapping = REFERENCE_HYDRATION[path]
+    declared = {source: f"{path.partition('.')[0]}.{target}" for source, target in mapping.items()}
+    assert declared == carried, (
+        f"{path}: the hydration table carries {sorted(declared)} and this ledger claims "
+        f"{sorted(carried)}. Every difference is either a carry nobody wrote down or a claim "
+        "nothing implements."
+    )
+
+
+def test_every_internal_ref_is_either_hydrated_or_refused_in_writing():
+    """THE OTHER HALF OF THE DECISION, AND THE ONE A READER WILL COME LOOKING FOR.
+
+    Fifteen live REF fields name a ``Dw…`` entity of this registry. Two hydrate; the other thirteen
+    were read and left alone, each with its reason written above ``REFERENCE_HYDRATION``'s internal
+    carry section. This test does not read those reasons — prose is not checkable — but it does
+    refuse to let the POPULATION change without somebody coming back here: a sixteenth internal ref
+    added next year fails this by name, and whoever adds it then either maps it or adds it to the
+    list below having read why its thirteen neighbours are on it.
+
+    IT IS A TRIPWIRE AND IT PASSES BY CONSTRUCTION TODAY, exactly as
+    ``test_no_source_relation_is_unaccounted_for`` does, and for the same reason it is still worth
+    its lines: nothing a source change can do breaks it, and a REGISTRY change is precisely what it
+    is watching for.
+    """
+    internal = {
+        f"{entity.key}.{field.key}"
+        for _stage, entity in all_entities()
+        for field in entity.fields
+        if field.type is FieldType.REF
+        and not field.deprecated
+        and any(e.name == field.ref_model for _s, e in all_entities())
+    }
+    hydrated = {path for path in internal if path in REFERENCE_HYDRATION}
+    assert hydrated == {"finalProduct.prototypeRef", "prototypeValidation.prototypeRef"}, (
+        "the set of hydrating INTERNAL refs has changed. Add the new one to INTERNAL_LEDGER with "
+        "its coverage lists, to the web's DW_REFERENCE_HYDRATION, to StageRecordEmbed's "
+        "MIRROR_POINTS or NOT_EMBEDDED, and to the handset's FLOOR."
+    )
+    assert sorted(internal - hydrated) == [
+        "certificate.participantRef",
+        "costLabourLine.costSheetRef",
+        "costMaterialLine.costSheetRef",
+        "costSheet.productRef",
+        "finalProduct.artisanRef",
+        "followUp.productRef",
+        "materialUsage.prototypeRef",
+        "prototype.artisanRef",
+        "prototype.sketchRef",
+        "prototypeIteration.prototypeRef",
+        "prototypeStageLog.prototypeRef",
+        "sketch.supersedesSketch",
+        "sketchReview.sketchRef",
+    ], (
+        "an internal REF was added or removed. If it is new, read the refusals above "
+        "REFERENCE_HYDRATION's internal-carry section, decide, and write the decision down there "
+        "before adding the path here."
+    )
+
+
+# --------------------------------------------------------------------------------------
+# The internal carry, driven through the REAL hydrate_entries
+# --------------------------------------------------------------------------------------
+
+
+class _StageRows:
+    """``db.dwstageentry`` for the internal resolver, and it enforces the two clauses that matter.
+
+    NOT A STUB THAT RETURNS EVERYTHING. The scope (``designWorkshopId``) and the liveness
+    (``deletedAt: None``) are the whole safety of resolving a reference inside the workshop, and a
+    double that ignored them would let the tests below pass while a stage-16 row filled itself from
+    another cluster's prototype or from one the designer had deleted. So this applies both, and the
+    two negative tests further down are what prove it is applying them rather than finding nothing.
+    """
+
+    def __init__(self, rows):
+        self._rows = rows
+
+    async def find_many(self, where=None, include=None, order=None, take=None):
+        where = where or {}
+        keys = set((where.get("entityKey") or {}).get("in", []))
+        out = []
+        for row in self._rows:
+            if row.designWorkshopId != where.get("designWorkshopId"):
+                continue
+            if keys and row.entityKey not in keys:
+                continue
+            if "deletedAt" in where and row.deletedAt is not where["deletedAt"]:
+                continue
+            out.append(row)
+        return out
+
+
+class _WorkshopDb:
+    """Enough Prisma client for an INTERNAL hydration: one table, and nothing else is touched.
+
+    ``_FakeDb`` above carries a delegate per reference model and a ``query_raw`` for the photograph
+    lookup; neither is reached here, because ``hydrate_entries`` builds its external ``wanted`` map
+    from ``REFERENCE_MODELS`` and the entries below name no external ref at all. A separate double
+    says that in code rather than in a comment: if a change ever made the internal path go looking
+    for a delegate or a photograph, these tests fail with AttributeError instead of quietly
+    resolving something.
+    """
+
+    def __init__(self, rows):
+        self.dwstageentry = _StageRows(rows)
+
+
+def _stage_row(entity_key, row_id, data, **overrides):
+    """One ``DwStageEntry`` as the internal resolver reads it."""
+    fields = dict(
+        id=row_id,
+        designWorkshopId="dw_1",
+        entityKey=entity_key,
+        data=dict(data),
+        clientKey=None,
+        deletedAt=None,
+        createdById="usr_maker",
+    )
+    fields.update(overrides)
+    return SimpleNamespace(**fields)
+
+
+#: A prototype as stage 13 stores one, with every box the two mappings read filled in.
+_PROTOTYPE_DATA = {
+    "prototypeCode": "PT-01",
+    "name": "Bandha tote, wide gusset",
+    "materials": ["Cotton", "Jute webbing"],
+    "lengthCm": 38.0,
+    "widthCm": 12.0,
+    "heightCm": 34.0,
+    "weightG": 420.0,
+    "dimensionsNote": "38 x 12 x 34, handle drop 24",
+    "makingTimeDays": 3.5,
+    "processSummary": "Warped on the pit loom, tied in four bands.",
+    "materialCost": "1200.00",
+    "labourCost": "800.00",
+    "prototypePhotos": ["med_a", "med_b"],
+}
+
+
+async def _hydrate_internal(monkeypatch, entity_key, sent, *, rows, previous=None, workshop="dw_1"):
+    """One entry through the REAL hydration, with a workshop's stage rows behind it.
+
+    Driving ``hydrate_entries`` itself rather than reimplementing the copy is the same decision
+    ``_hydrate`` above makes and for the same reason: the only-fill-blanks rule, the
+    clear-and-rewrite rule and ``coerce_value`` are what decide whether a carried value survives,
+    and a test that skipped them would pass while the feature was broken. What is different here is
+    only which resolver runs.
+    """
+    monkeypatch.setattr(dw, "db", _WorkshopDb(rows))
+    entry = dw.PendingEntry(
+        entity=_entity(entity_key), data=dict(sent), previous=dict(previous or {}),
+        row_id=None, ordinal=0, client_key="k1",
+    )
+    await dw.hydrate_entries([entry], workshop_id=workshop)
+    return entry
+
+
+async def test_a_prototype_fills_the_catalogue_row_that_names_it(monkeypatch):
+    """THE FIDELITY TEST, AND IT IS THE REPORT DEFECT STATED AS AN ASSERTION.
+
+    A designer fills a prototype in at stage 13, opens stage 16, picks it, and saves with the
+    catalogue boxes blank. Every one of the nine mapped boxes must arrive — through
+    ``coerce_value``, so the TAGS list is a list, the money-free decimals are numbers and the
+    rich-text narrative is a normalised document rather than the bare string it was stored as.
+
+    Written as "no declared target is missing" rather than as nine assertions so that a pair added
+    to the mapping is covered the moment it is added.
+    """
+    entry = await _hydrate_internal(
+        monkeypatch,
+        "finalProduct",
+        {"productCode": "FP-01", "prototypeRef": "ent_proto"},
+        rows=[_stage_row("prototype", "ent_proto", _PROTOTYPE_DATA)],
+    )
+
+    missing = sorted(k for k in _targets("finalProduct.prototypeRef") if not entry.data.get(k))
+    assert missing == [], f"the prototype was fully filled in and these boxes stayed empty: {missing}"
+    assert entry.data["name"] == "Bandha tote, wide gusset"
+    assert entry.data["materials"] == ["Cotton", "Jute webbing"]
+    assert entry.data["lengthCm"] == 38.0
+    assert entry.data["makingTimeDays"] == 3.5
+    # RICH_TEXT is normalised through the rich-text model on the way in, exactly as a typed value
+    # is: the phone builds its own report from the stored draft, so a bare string in a
+    # document-shaped box is a paragraph missing from the copy handed to a visiting officer.
+    assert isinstance(entry.data["makingProcess"], dict)
+    assert "blocks" in entry.data["makingProcess"]
+    # AND NOTHING THE MAPPING DOES NOT NAME. The catalogue's own code is untouched, the working
+    # photographs do not become the plate, and the two cost heads stay where the arithmetic is.
+    assert entry.data["productCode"] == "FP-01"
+    assert "finalPhotos" not in entry.data
+    assert "costPrice" not in entry.data
+
+
+async def test_the_boxes_the_designer_answered_are_left_exactly_as_they_answered_them(monkeypatch):
+    """ONLY-FILL-BLANKS, ON THE ONE SOURCE A DESIGNER OWNS BOTH ENDS OF.
+
+    The catalogue measurement is taken off the finished piece and the prototype's was taken at
+    making; where the two differ the designer has measured, and a picker that reverted a measurement
+    would be watched doing it. The TAGS box is the second half of the rule — a list already holding
+    something is not seeded either, which is `hydrate_entries`' multi arm.
+    """
+    entry = await _hydrate_internal(
+        monkeypatch,
+        "finalProduct",
+        {
+            "prototypeRef": "ent_proto",
+            "name": "Bandha tote (retail)",
+            "lengthCm": 39.5,
+            "materials": ["Cotton"],
+        },
+        rows=[_stage_row("prototype", "ent_proto", _PROTOTYPE_DATA)],
+    )
+
+    assert entry.data["name"] == "Bandha tote (retail)"
+    assert entry.data["lengthCm"] == 39.5
+    assert entry.data["materials"] == ["Cotton"]
+    # The blanks beside them still fill, which is what makes this only-fill-blanks and not a refusal.
+    assert entry.data["widthCm"] == 12.0
+    assert entry.data["weightG"] == 420.0
+
+
+async def test_a_prototype_edited_afterwards_does_not_rewrite_a_catalogue_row(monkeypatch):
+    """THE DIVERGENCE TEST. A hydrated value is a PERMANENT copy taken at save time.
+
+    This is the property the whole feature exists for, met on the surface where the instinct is
+    strongest that it should NOT hold: both rows are on screens the same designer owns, so "I fixed
+    the prototype, why did the catalogue not follow" is a question somebody will ask. The answer is
+    the one ``REFERENCE_HYDRATION``'s note gives at length — a workshop report is a historical
+    document, and a value that re-resolved at render time would rewrite a submitted .docx from a
+    live row — and it is the same answer for an internal source as for an artisan record.
+
+    THE MECHANISM IS ONLY-FILL-BLANKS AND NOTHING ELSE, which is why this is worth asserting rather
+    than assuming. The second save names the SAME prototype, so ``replaced`` is false, so the
+    clear-and-rewrite branch does not run and the filled boxes are skipped. Change that branch's
+    condition and this fails; nothing else in the suite would.
+    """
+    edited = dict(_PROTOTYPE_DATA, lengthCm=41.0, name="Bandha tote, MK II", weightG=500.0)
+    entry = await _hydrate_internal(
+        monkeypatch,
+        "finalProduct",
+        # What the row already holds, echoed back by the client on an ordinary re-save.
+        {
+            "prototypeRef": "ent_proto",
+            "name": "Bandha tote, wide gusset",
+            "lengthCm": 38.0,
+            "weightG": 420.0,
+        },
+        previous={
+            "prototypeRef": "ent_proto",
+            "name": "Bandha tote, wide gusset",
+            "lengthCm": 38.0,
+            "weightG": 420.0,
+        },
+        rows=[_stage_row("prototype", "ent_proto", edited)],
+    )
+
+    assert entry.data["name"] == "Bandha tote, wide gusset"
+    assert entry.data["lengthCm"] == 38.0
+    assert entry.data["weightG"] == 420.0
+    # And nothing was stamped, because nothing was written: the provenance map may never claim
+    # authorship of a value this save did not produce.
+    assert "name" not in entry.hydrated
+    assert "lengthCm" not in entry.hydrated
+
+
+async def test_re_pointing_at_another_prototype_clears_and_rewrites(monkeypatch):
+    """The one case that DOES overwrite, and the internal carry gets it identically.
+
+    A catalogue row holding prototype A's dimensions beside prototype B's id is a document that
+    measures two different things under one heading — the same shape as the old artisan's phone
+    beside the new artisan's name, on a table a ministry reads. What the new prototype cannot answer
+    is CLEARED rather than left standing.
+    """
+    thin = {"name": "Bandha runner", "lengthCm": 120.0}
+    entry = await _hydrate_internal(
+        monkeypatch,
+        "finalProduct",
+        {
+            "prototypeRef": "ent_other",
+            "name": "Bandha tote, wide gusset",
+            "weightG": 420.0,
+            "dimensionsNote": "38 x 12 x 34, handle drop 24",
+            "materials": ["Cotton", "Jute webbing"],
+        },
+        previous={"prototypeRef": "ent_proto"},
+        rows=[
+            _stage_row("prototype", "ent_proto", _PROTOTYPE_DATA),
+            _stage_row("prototype", "ent_other", thin),
+        ],
+    )
+
+    assert entry.data["name"] == "Bandha runner"
+    assert entry.data["lengthCm"] == 120.0
+    assert "weightG" not in entry.data
+    assert "dimensionsNote" not in entry.data
+    # THE MULTI ARM IS EXEMPT, matching the gallery rule on all three surfaces: a list is seeded
+    # when empty and never overwritten.
+    assert entry.data["materials"] == ["Cotton", "Jute webbing"]
+
+
+async def test_a_prototype_from_another_workshop_reaches_nothing(monkeypatch):
+    """THE SCOPE CLAUSE, PROVED RATHER THAN ASSERTED IN A COMMENT.
+
+    An id from another workshop is a stale form or a replayed offline queue, not a 403 — but it must
+    not be followed, or one cluster's catalogue would be filled from another cluster's prototypes.
+    The row exists, is live, and carries every value; only its ``designWorkshopId`` differs.
+    """
+    entry = await _hydrate_internal(
+        monkeypatch,
+        "finalProduct",
+        {"prototypeRef": "ent_proto"},
+        rows=[_stage_row("prototype", "ent_proto", _PROTOTYPE_DATA, designWorkshopId="dw_2")],
+    )
+    assert entry.data == {"prototypeRef": "ent_proto"}
+    assert entry.hydrated == {}
+
+
+async def test_a_deleted_prototype_hydrates_nothing_and_disturbs_nothing(monkeypatch):
+    """A soft-deleted source is a row the designer removed, and it must not fill a catalogue.
+
+    AND THE ROW IS LEFT EXACTLY AS IT IS, which is the same answer the external path gives for a
+    deleted record and the whole reason the values were copied in the first place: what the designer
+    already wrote survives, and the boxes the deleted row would have filled stay blank for them to
+    answer.
+    """
+    entry = await _hydrate_internal(
+        monkeypatch,
+        "finalProduct",
+        {"prototypeRef": "ent_proto", "name": "Bandha tote (retail)"},
+        rows=[
+            _stage_row(
+                "prototype", "ent_proto", _PROTOTYPE_DATA, deletedAt=datetime(2026, 8, 1, 9, 0)
+            )
+        ],
+    )
+    assert entry.data == {"prototypeRef": "ent_proto", "name": "Bandha tote (retail)"}
+
+
+async def test_a_prototype_addressed_by_the_key_the_handset_generated_still_resolves(monkeypatch):
+    """THE OFFLINE HALF, and it is the case this app exists for rather than an edge.
+
+    ``_in_record_options`` matches a scanned code against ``id`` OR ``clientKey`` because a
+    prototype tag has to be printable the afternoon the prototype is made and a workshop can go a
+    fortnight without signal. The resolver here keys on both for the same reason: a row created on a
+    handset carries the key that handset generated, and an id-only lookup would hydrate nothing for
+    exactly that fortnight.
+    """
+    entry = await _hydrate_internal(
+        monkeypatch,
+        "finalProduct",
+        {"prototypeRef": "local-proto-7"},
+        rows=[_stage_row("prototype", "ent_proto", _PROTOTYPE_DATA, clientKey="local-proto-7")],
+    )
+    assert entry.data["name"] == "Bandha tote, wide gusset"
+
+
+async def test_the_validation_row_takes_the_three_measurements_and_none_of_the_verdict(monkeypatch):
+    """Stage 15's mapping, and the boxes it deliberately leaves to the reviewer.
+
+    The three targets are named DIFFERENTLY from their sources (``lengthCm -> finalLengthCm``),
+    which is exactly the pair a key-name match would silently drop — the defect the external half of
+    this feature paid for once already.
+    """
+    entry = await _hydrate_internal(
+        monkeypatch,
+        "prototypeValidation",
+        {"prototypeRef": "ent_proto", "decision": "APPROVED"},
+        rows=[_stage_row("prototype", "ent_proto", _PROTOTYPE_DATA)],
+    )
+    assert entry.data["finalLengthCm"] == 38.0
+    assert entry.data["finalWidthCm"] == 12.0
+    assert entry.data["finalHeightCm"] == 34.0
+    assert entry.data["decision"] == "APPROVED"
+    for key in ("reason", "approvedBy", "approvalDate", "technicalQuality"):
+        assert key not in entry.data
+
+
+async def test_a_carried_value_is_stamped_with_the_row_it_came_from(monkeypatch):
+    """PROVENANCE, WHICH IS WHAT MAKES THE DIVERGENCE ABOVE VISIBLE RATHER THAN MERELY ACCEPTED.
+
+    A hydrated value and a typed value are the same string in ``data`` a moment later, so this is
+    the only point at which the difference can be recorded. ``merge_entry_provenance`` reads
+    ``item.hydrated`` immediately afterwards and attributes the box to the SOURCE ROW's author
+    rather than to the designer who picked it — which for an internal carry is the person who filled
+    the prototype in, and is frequently not the person filling in the catalogue.
+
+    THE MODEL IS THE ``Dw…`` NAME AND NOT A ``REFERENCE_MODELS`` KEY, deliberately, and it is worth
+    knowing what that costs: ``entry_provenance.canonical_divergence`` is gated on
+    ``model in REFERENCE_MODELS``, so an admin audit shows the stamp and does NOT re-resolve it
+    against the live prototype row. Named here so the limit is on the record.
+    """
+    entry = await _hydrate_internal(
+        monkeypatch,
+        "finalProduct",
+        {"prototypeRef": "ent_proto"},
+        rows=[_stage_row("prototype", "ent_proto", _PROTOTYPE_DATA, createdById="usr_maker")],
+    )
+    stamp = entry.hydrated["dimensionsNote"]
+    assert stamp.model == "DwPrototype"
+    assert stamp.record_id == "ent_proto"
+    assert stamp.source_key == "dimensionsNote"
+    assert stamp.author_id == "usr_maker"
+
+
+async def test_without_a_workshop_to_scope_to_the_carry_is_skipped_and_says_so(monkeypatch, caplog):
+    """THE ONE FAILURE MODE THIS PATH CAN HAVE, MADE AUDIBLE.
+
+    An internal ref resolves WITHIN one workshop, so a caller that does not name the workshop has
+    nothing to scope the read to. Raising would fail a whole stage save — a designer's afternoon —
+    over a keyword; resolving unscoped would let one workshop's catalogue be filled from another's.
+    So the carry is skipped, the row is left exactly as it arrived, and the log names the model, so
+    that the blank box has a cause somebody can find rather than being the silence this module
+    spends most of its comments avoiding.
+    """
+    monkeypatch.setattr(dw, "db", _WorkshopDb([_stage_row("prototype", "ent_proto", _PROTOTYPE_DATA)]))
+    entry = dw.PendingEntry(
+        entity=_entity("finalProduct"), data={"prototypeRef": "ent_proto"}, previous={},
+        row_id=None, ordinal=0, client_key="k1",
+    )
+    with caplog.at_level("WARNING"):
+        await dw.hydrate_entries([entry])
+
+    assert entry.data == {"prototypeRef": "ent_proto"}
+    assert any("DwPrototype" in record.getMessage() for record in caplog.records), (
+        f"the skip was silent: {[r.getMessage() for r in caplog.records]}"
+    )
+
+
+def test_the_picker_sends_the_keys_the_mapping_reads_and_no_others(monkeypatch):
+    """THE OTHER END OF THE SAME TABLE: what ``_in_record_options`` puts in an option's ``data``.
+
+    A reference option's ``data`` IS the hydration dictionary, so what belongs in it is exactly the
+    source keys some mapping names — nine for ``DwPrototype``, and NOTHING for the four internal
+    models whose refs were all judged and refused. That second half is the assertion with teeth:
+    ``DwReferenceOption.tentative`` on the handset and
+    ``test_the_flag_travels_and_the_stage_s_answers_do_not`` both depend on a ``DwSketch`` option's
+    ``data`` staying empty, because ``sketch.supersedesSketch`` fills a row that declares
+    ``isTentative`` itself and a copy of that flag would tick the new sketch's box.
+
+    DERIVED FROM THE TABLE RATHER THAN LISTED, which is what stops the picker and the save
+    disagreeing: widen the mapping and the picker widens in the same change.
+    """
+    assert dw._internal_carry_keys(dw._dw_entity("DwPrototype")) == (
+        "name",
+        "materials",
+        "lengthCm",
+        "widthCm",
+        "heightCm",
+        "weightG",
+        "dimensionsNote",
+        "processSummary",
+        "makingTimeDays",
+    )
+    for model in ("DwSketch", "DwParticipant", "DwFinalProduct", "DwCostSheet"):
+        assert dw._internal_carry_keys(dw._dw_entity(model)) == (), (
+            f"{model} started travelling in a picker payload; every REF pointing at it was refused, "
+            "so either a mapping was added without its ledger row or this allowlist has widened"
+        )
+    # AND `isTentative` IS NOT AMONG THEM, named rather than inferred from the empty tuple above: it
+    # is the one key whose arrival would be actively harmful rather than merely wide.
+    assert "isTentative" not in dw._internal_carry_keys(dw._dw_entity("DwSketch"))
+
+
+def test_an_internal_mapping_reading_a_field_the_source_does_not_have_fails_validation(monkeypatch):
+    """THE GUARD THE EXTERNAL HALF CANNOT HAVE, AND ITS NEGATIVE CONTROL.
+
+    ``validate_registry`` refuses to check an EXTERNAL mapping's source key — it names a key of a
+    ``REFERENCE_MODELS`` data lambda, and ``stage_schema`` must not import the module that holds
+    them, which is why ``design_workshops.validate_reference_carry`` exists at all. An INTERNAL
+    mapping's source key names a field of an entity of THIS registry, two lines away, so it IS
+    checked. Without this, ``hydrate_entries`` would read an absent key and skip it — silently, and
+    indistinguishably from a source row nobody had filled in — and the first symptom would be a
+    blank column in a catalogue somebody had already submitted.
+
+    A TYPO IS ONLY HALF OF IT. ``validate_registry`` is asserted sound by
+    ``test_the_registry_is_sound`` above, so this is the negative control that shows the new clause
+    can actually fail: the real table is left alone and a fake one is put under it.
+    """
+    from app.services import stage_schema as stage_schema_module
+
+    monkeypatch.setattr(
+        stage_schema_module,
+        "REFERENCE_HYDRATION",
+        {"finalProduct.prototypeRef": {"lengthInMetres": "lengthCm"}},
+    )
+    problems = validate_registry()
+    assert any("lengthInMetres" in p and "does not declare" in p for p in problems), problems
+
+
+def test_an_internal_mapping_reading_a_RETIRED_field_fails_validation():
+    """THE WORSE HALF, BECAUSE IT WORKS UNTIL IT DOES NOT.
+
+    A source key that never existed hydrates nothing from the first save. A source key that exists
+    and is later DEPRECATED hydrates correctly until somebody opens the source stage and presses
+    Save: ``entity_to_dict`` drops a deprecated field from the wire and ``validate_entry`` rebuilds
+    ``cleaned`` from the live specs, so the key is deleted from the row — and the carry then stops,
+    on a workshop whose earlier rows carry the value, with nothing to attribute it to.
+
+    NO REF IN THE REGISTRY POINTS AT AN ENTITY THAT HAS A DEPRECATED FIELD TODAY (the only one is
+    ``sketchReview.rank``, and nothing references ``DwSketchReview``), so the state has to be
+    manufactured — and it is manufactured on the REAL mapping rather than on a fake one, which makes
+    this the stronger of the two arms: it retires a field ``finalProduct.prototypeRef`` genuinely
+    reads and asserts the registry refuses the pair.
+
+    ``object.__setattr__`` because ``FieldSpec`` is frozen and slotted; the same idiom
+    ``test_an_in_place_attribute_change_still_moves_the_version`` uses, and restored in a ``finally``
+    for the same reason — the registry is a process global and a leaked flag would fail whichever
+    later test happened to read it.
+    """
+    spec = _field("prototype", "dimensionsNote")
+    object.__setattr__(spec, "deprecated", True)
+    try:
+        problems = validate_registry()
+    finally:
+        object.__setattr__(spec, "deprecated", False)
+
+    assert any("dimensionsNote" in p and "deprecated" in p for p in problems), problems
+    assert validate_registry() == [], "the registry was restored and the guard did not follow"

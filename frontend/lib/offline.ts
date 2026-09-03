@@ -217,6 +217,12 @@ export type OutboxEntry = {
    * `created` is the load-bearing one — true means the record IS on the server and re-sending the
    * body would make a second one, so the replay must skip straight to the media. The rest say what
    * the media may link to and which batches are already up there.
+   *
+   * READ AS A PAIR, NEVER AS `created` ALONE — 2026-09-03. A `createdId` with no `created` beside it
+   * is the same fact recorded once instead of twice, and the drain treats it as such. The two are
+   * written in one `updateEntry`, so nothing here produces that pair on purpose; an interrupted
+   * write and a second tab's pass both do. {@link entryAlreadyCreated} is the one place that
+   * decides, and carries the whole argument, including what this does NOT close.
    */
   created?: boolean;
   createdId?: string | null;
@@ -291,6 +297,89 @@ export type OutboxEntry = {
    * certainty.
    */
   danglingField?: string | null;
+  /**
+   * THE ACCOUNT THAT CAPTURED THIS ENTRY, so a shared browser profile never sends one designer's
+   * fieldwork under another's token. Null = captured before this field existed, or before `GET /me`
+   * answered.
+   *
+   * ── THE SAME BOUNDARY AS `DwDraft.ownerUserId`, ONE QUEUE ALONG ──────────────────────────────
+   *
+   * The design-workshop store already carries this stamp and `draftBelongsToSession` already
+   * enforces it; the note above `sessionUserId` in `lib/designWorkshopStore.ts` sets out exactly
+   * what its absence cost there. This queue had the identical hole. A field laptop is shared:
+   * designer A saves a fortnight of artisans, products and photographs in a courtyard with no
+   * signal; A signs out, and `AuthProvider.logout` clears the token and the user and NOTHING ELSE,
+   * because A's fortnight has to survive the handover, so the outbox and its staged files stay in
+   * IndexedDB; B signs in, `OutboxBanner` drains on mount within the second, and every one of A's
+   * queued records is created on the server under B's token. B is `createdById`, the rows land in
+   * B's lists, and A has to be granted access to their own fieldwork.
+   *
+   * IT IS WORSE HERE THAN ON A DRAFT, in one respect, and Android's `PendingEntry.ownerUserId` says
+   * the same: a workshop draft is a document a person can be walked back through, while a queued
+   * record is DELETED the moment it syncs, taking its staged captures with it. By the time anybody
+   * notices the attribution, the only copy of the evidence is a row in somebody else's list.
+   *
+   * NULL PASSES, and that is the whole reason this is optional rather than required. A browser that
+   * has been out of coverage for a fortnight holds entries written by the build installed a
+   * fortnight ago, and one of those must replay under the behaviour it was queued under. Refusing
+   * an unowned entry would be a silent, total drain stop on every laptop upgraded into this build —
+   * stranding real fieldwork rather than merely misfiling it. Exactly the rule
+   * {@link draftBelongsToSession} applies to a null draft owner, for exactly that reason, and every
+   * entry written from now on carries an owner, so the null case closes itself.
+   *
+   * READ BY {@link runSync} AND BY {@link outboxEntriesForAnotherAccount}, WHICH IS THE MISTAKE
+   * THIS FIELD EXISTS NOT TO REPEAT: `DwDraft.ownerUserId` was written to disk and read by nothing
+   * for the whole of its first life, and a permission boundary that is only recorded is not one.
+   *
+   * ADDITIVE, WITH NO SCHEMA VERSION BUMP. The store is `{ keyPath: "id", autoIncrement: true }`
+   * and holds whole objects with no declared shape, so a new optional property needs no
+   * `onupgradeneeded` and no {@link DB_VERSION} change — and a bump would be actively wrong here,
+   * because an upgrade transaction is the one moment a browser can decide it cannot open the store
+   * that is holding somebody's fortnight.
+   */
+  ownerUserId?: string | null;
+  /**
+   * THE IDEMPOTENCY KEY THIS CREATE CARRIES — minted once, at queue time, and sent on every replay.
+   *
+   * ── THE DUPLICATE `createdId` CANNOT SEE, AND THIS FILE ALREADY NAMED IT ────────────────────────
+   *
+   * {@link entryAlreadyCreated} closes the case where the answer ARRIVED and this browser wrote it
+   * down. The case it cannot close is the one where the answer never arrived at all: the POST landed,
+   * the row was written, and the response died on the way back — a tunnel, a captive portal, the tab
+   * closed mid-flight. Nothing here learned anything, so the entry is still queued and the next pass
+   * sends the identical body. {@link persistProgress} says exactly this, and the sentence is the
+   * specification for this field: *"a few milliseconds of IndexedDB is as small as that window gets
+   * without idempotency keys on the API."*
+   *
+   * ── HOW IT COMPOSES WITH `createdId`, WHICH IS THE POINT OF HAVING BOTH ─────────────────────────
+   *
+   * They answer two different questions and neither subsumes the other:
+   *
+   *   * `createdId` is SAME-PROFILE, SAME-DEVICE replay. It is proof, held locally, that this
+   *     browser already got an answer — so the drain skips the create and goes straight to the media.
+   *     It costs no request at all, which is why it stays first: the cheapest guard is the one that
+   *     never leaves the device.
+   *   * `clientKey` is CROSS-DEVICE, CROSS-PROFILE replay, and the only one that survives this
+   *     browser knowing nothing. It travels WITH the body, so the server — not this store — decides
+   *     that a create it has already performed is this same create, and answers with the row it made
+   *     the first time. That covers the lost answer, a second tab that raced this one, and a queue
+   *     that reaches the API from somewhere this profile has never been.
+   *
+   * So the order is: `createdId` if we have it, `clientKey` if we do not, and a duplicate government
+   * record only if neither exists — which is every entry queued before this build.
+   *
+   * ── ADDITIVE, AND OLDER ENTRIES SEND NOTHING ───────────────────────────────────────────────────
+   *
+   * Optional, so an entry written by an earlier build simply has none and {@link bodyWithClearances}
+   * adds no key to its body — which replays byte for byte as it always did, and is the same rule
+   * `unfiled` and `ownerUserId` follow. No {@link DB_VERSION} bump: the store holds whole objects
+   * with no declared shape, and a bump is the one moment a browser can decide it cannot open the
+   * store that is holding somebody's fortnight.
+   *
+   * ONLY ON CREATES OF THE FOUR MODELS THE SERVER GUARDS — see {@link outboxMintsClientKey}, which
+   * carries the list and the reason the other record types are not on it.
+   */
+  clientKey?: string | null;
 };
 
 /**
@@ -425,6 +514,55 @@ export function emptyPickerKeys(entry: Pick<OutboxEntry, "unfiled">): string[] {
   return Object.entries(entry.unfiled ?? {})
     .filter(([, reason]) => reason === UNFILED_NO_OPTIONS)
     .map(([key]) => key);
+}
+
+/**
+ * HAS THIS ENTRY'S RECORD ALREADY BEEN WRITTEN TO THE SERVER? Read from the entry's OWN bookkeeping.
+ *
+ * ── THE DUPLICATE THIS CLOSES, AND THE ONE IT DOES NOT ─────────────────────────────────────────
+ *
+ * The drain used to ask `if (!progress.created)` and nothing else, so an entry whose `createdId` was
+ * on disk but whose `created` flag was not got its body POSTed a second time — a second government
+ * record for one save, under one researcher's name, in an index nobody reconciles. `persistProgress`
+ * writes the two fields in one `updateEntry` and cannot itself produce that pair, which is exactly
+ * why it survived: the pair is produced by everything AROUND the write, and two of those shapes are
+ * ordinary in the field.
+ *
+ *   * A DRAIN INTERRUPTED INSIDE THE WRITE. `updateEntry` is a read-then-write on a row another tab
+ *     may also be writing; a tab closed, a laptop lidded or a browser killed between the server's
+ *     commit and IndexedDB's `oncomplete` leaves whatever the store managed to keep. This is the
+ *     window the drain's own header already calls "the only place a duplicate can still be born".
+ *   * A ROW WRITTEN BY ANOTHER TAB'S PASS, read by this one from a snapshot taken before it.
+ *     `refreshOutbox` reads the whole store once at the top of a pass; a second tab that ran without
+ *     the Web Lock (no secure context, or an older browser) can advance an entry underneath it.
+ *
+ * In both, an id in the row is the only proof of the create there will ever be — and it is PROOF, not
+ * a guess: the drain writes it only from `savedRow(...).id`, a non-empty string read off a 2xx the
+ * server sent, and a 2xx that carries no readable id is refused as a captive portal rather than
+ * recorded. So an entry carrying one has had its record written, whatever the flag beside it says.
+ *
+ * `POST` ONLY, DELIBERATELY, and the asymmetry is the point. Skipping a POST that already landed
+ * prevents a duplicate record; skipping a PATCH that already landed prevents nothing — a correction
+ * replayed twice is the same correction — while WRONGLY skipping one would silently drop a
+ * researcher's edit. The two mistakes are not the same size, so the guard is applied only where the
+ * cost of not applying it is the larger one.
+ *
+ * ── WHAT IS STILL OPEN, SAID HERE SO NOBODY READS THIS AS THE WHOLE FIX ────────────────────────
+ *
+ * This is the cheap 80%: it closes every duplicate whose evidence is ON THIS DEVICE. It cannot close
+ * the case where the evidence never reached the device at all — a create that committed on the
+ * server while the answer was lost on the way back, and a queue on a SECOND device holding the same
+ * work. Both need a client-minted idempotency key travelling with the request (`clientKey`) and a
+ * server that recognises a replay of it; that lands in a later phase and this guard is not a
+ * substitute for it. Note also `OutboxEntry.savedIdIn`'s neighbour on the design-ratings route,
+ * which is the shape of a server that already answers "replayed" rather than "created".
+ */
+export function entryAlreadyCreated(entry: Pick<OutboxEntry, "created" | "createdId" | "method">): boolean {
+  if (entry.created === true) return true;
+  if (entry.method !== "POST") return false;
+  // An empty string is not an identity — the same rule `unsyncedSheetCount` applies to a cost sheet's
+  // `_entryId`. A row carrying `""` here has no proof of anything and must replay.
+  return typeof entry.createdId === "string" && entry.createdId.length > 0;
 }
 
 /** {@link OutboxEntry.danglingField} read back as the list it is. Empty when nothing is dangling. */
@@ -669,6 +807,111 @@ export async function refreshOutbox(): Promise<OutboxEntry[]> {
   return cache;
 }
 
+/* ────────────────────────────────────────────────────────────────────────────
+ * Whose entries these are
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * The signed-in account this queue is answering for. See {@link OutboxEntry.ownerUserId}.
+ *
+ * MODULE STATE AND NOT A PARAMETER, which is `lib/designWorkshopStore.ts`'s idiom one queue along
+ * and is right for the same reason: the two places that need it — the stamp at queue time and the
+ * skip at drain time — are reached from six forms and from two events (`online`, and the mount
+ * drain), none of which holds a `User`. Threading an id through every one of them would be eight
+ * call sites that can each forget it, and a save that forgot would be an unowned entry: the safe
+ * direction, but silently so, which is how a boundary stops being one.
+ *
+ * TWO STATES HERE AND THREE THERE, deliberately. The draft store needs a "nobody has said yet"
+ * because it FILTERS what it shows, and hiding a designer's own work for the length of a round trip
+ * would be its own bug. This queue hides nothing: an unknown session stamps null, and a null owner
+ * passes the drain. So the only cost of not yet knowing is an entry nobody owns, which is exactly
+ * the state every pre-existing entry is already in.
+ */
+let outboxSessionUserId: string | null = null;
+
+/**
+ * Tell the queue who is signed in. Called by `OutboxBanner`, which is mounted once in the protected
+ * layout and is therefore on every screen a save can be made from.
+ *
+ * `null` means signed out, and it does NOT delete anything: the other designer's fortnight has to
+ * survive the handover, which is the whole premise of {@link OutboxEntry.ownerUserId}. It also means
+ * nothing is "another account's" — a signed-out pass cannot send anyway (`runSync` returns
+ * `credentialExpired` before the loop), so classifying entries against nobody would only put a
+ * sentence about signing in as somebody else in front of a person who is not signed in at all.
+ */
+export function setOutboxSessionUser(userId: string | null): void {
+  if (outboxSessionUserId === userId) return;
+  outboxSessionUserId = userId;
+  // Through the SAME channel the entries go out on, so the banner cannot draw a count classified
+  // against the previous account beside a list read a moment later — the two snapshots would then
+  // describe different sessions, which is the arithmetic `refreshOutbox` already refuses to produce.
+  publish();
+}
+
+/** What {@link setOutboxSessionUser} was last told. Exported for the banner and for its spec. */
+export function outboxSessionUser(): string | null {
+  return outboxSessionUserId;
+}
+
+/**
+ * Is this entry another account's — the one question the drain and the banner must not answer
+ * differently?
+ *
+ * PURE AND EXPORTED so the partition can be pinned without IndexedDB, two accounts and a handover.
+ * It is `draftBelongsToSession` inverted, over the same two null rules: a null OWNER passes, because
+ * an entry queued before the stamp existed must replay under the behaviour it was queued under; a
+ * null SESSION passes, because nobody is signed in and a pass cannot run in that state anyway.
+ *
+ * ONE FUNCTION AND NOT TWO COPIES OF A COMPARISON. Android's `outboxCountsOf` KDoc records what the
+ * second copy costs — "the copy that was not updated is always the one on the surface somebody is
+ * looking at" — and here the two surfaces are a banner that says an entry will not be sent and a
+ * drain that decides whether to send it. Those two disagreeing is the bug, not a detail.
+ */
+export function outboxEntryIsForAnotherAccount(
+  ownerUserId: string | null | undefined,
+  signedInUserId: string | null
+): boolean {
+  if (!signedInUserId) return false;
+  if (ownerUserId === null || ownerUserId === undefined) return false;
+  return ownerUserId !== signedInUserId;
+}
+
+/**
+ * How many queued entries this session will not send because somebody else captured them.
+ *
+ * REFUSALS ARE NOT COUNTED HERE, and the omission is the partition Android's `outboxCountsOf` makes
+ * explicit: an entry the server has permanently refused is reported as a refusal whoever captured
+ * it, because that is the one a person can act on and the list below the banner shows it with its
+ * reason. Counting it twice would put one record inside two sentences and make the banner's
+ * arithmetic larger than the queue.
+ */
+export function outboxEntriesForAnotherAccount(
+  entries: readonly OutboxEntry[],
+  signedInUserId: string | null
+): number {
+  return entries.filter(
+    (entry) => !entry.failure && outboxEntryIsForAnotherAccount(entry.ownerUserId, signedInUserId)
+  ).length;
+}
+
+/**
+ * ONE LINE, AND IT IS THE ONLY THING THE BANNER SAYS ABOUT THESE ENTRIES.
+ *
+ * STATE THEN ACTION, like every other sentence in this file since 2026-09-03. The remedy is neither
+ * a signal nor a correction — it is a different person signing in — so it cannot be a clause on the
+ * waiting line (which would promise a send that cannot happen) or on the refusal line (which would
+ * send somebody to a row that was never refused). Android's `outboxDeviceBanner` gives its
+ * equivalent its own line for exactly these two reasons.
+ *
+ * "NOTHING IS DELETED" IS NOT SAID, and that is a judgement rather than an oversight: this line is
+ * read by the person who did NOT capture the entries, and reassuring them about somebody else's
+ * work is noise. The person who needs that promise gets it the moment they sign back in, from the
+ * waiting line above.
+ */
+export function outboxOtherAccountLine(count: number): string {
+  return `${count} ${count === 1 ? "entry was" : "entries were"} captured by another account — sign in as them to send.`;
+}
+
 // ---------------------------------------------------------------------------
 // Queue / discard
 // ---------------------------------------------------------------------------
@@ -736,12 +979,105 @@ export function getServerOutboxQueuedHere(): number {
   return 0;
 }
 
-export async function queueOffline(entry: Omit<OutboxEntry, "id" | "createdAt" | "attempts" | "failure">): Promise<void> {
+/**
+ * The create endpoints whose server routes accept `clientKey`, spelled as the entry stores them.
+ *
+ * FOUR AND NOT SIX, and the two absences are the whole reason this is a list rather than a shrug at
+ * every POST:
+ *
+ *   * `/artisans` is ALREADY IDEMPOTENT by a better key than any this client could mint.
+ *     `Artisan.aadhaarNumber` is `@unique` and `artisans._guard_identity_conflicts` answers a
+ *     pre-write 409 that NAMES the artisan already holding the number. A second mechanism beside it
+ *     would be two guards that can disagree about what a duplicate is, and the 409 arm of the drain
+ *     below is written on the assumption that a clash is somebody else's record.
+ *   * `/crafts` the same, through `Craft.name @unique` and that route's own 409.
+ *
+ * A KEY SENT TO A ROUTE THAT DOES NOT DECLARE IT IS A 422, NOT A SHRUG. Every request body on this
+ * API is an `APIModel` with `extra="forbid"`, so this list is not an optimisation — sending a key to
+ * `/artisans` would refuse the whole save, and `saveOrQueue` does not re-queue a 4xx.
+ */
+const CLIENT_KEY_ENDPOINTS: ReadonlySet<string> = new Set([
+  "/workshops",
+  "/products",
+  "/tools",
+  "/processes"
+]);
+
+/**
+ * Should this queued entry carry an idempotency key?
+ *
+ * PURE AND EXPORTED so the unit spec can pin the list without a store, a server or a browser — the
+ * same treatment {@link entryAlreadyCreated} gets, and for the same reason: the cost of being wrong
+ * is a duplicate government record or a 422 that strands a fortnight of fieldwork, and neither shows
+ * up in an integration test on a machine with a signal.
+ *
+ * A PATCH IS NEVER GIVEN ONE. `clientKey` is declared on the four CREATE schemas and on none of the
+ * four update schemas, so a correction carrying one would be `extra_forbidden` — refused as a
+ * disagreement between builds, re-attempted once per app run, for ever. The correction's own
+ * idempotency question is a different one with a different answer: see `expectedUpdatedAt`.
+ */
+export function outboxMintsClientKey(
+  entry: Pick<OutboxEntry, "endpoint" | "method">
+): boolean {
+  return entry.method === "POST" && CLIENT_KEY_ENDPOINTS.has(entry.endpoint);
+}
+
+/**
+ * A fresh idempotency key, or null where this browser cannot mint one.
+ *
+ * NULL RATHER THAN A HAND-ROLLED FALLBACK. `crypto.randomUUID` needs a secure context, and a browser
+ * that does not offer it is a browser whose `Math.random` UUID would be the one thing this key must
+ * never be: guessable, or worse, repeated. A missing key means the entry behaves exactly as an entry
+ * queued before this build — which is a known, survivable state — while a colliding key means one
+ * designer's create answers with another's row.
+ */
+function mintClientKey(): string | null {
+  try {
+    return typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function queueOffline(
+  entry: Omit<OutboxEntry, "id" | "createdAt" | "attempts" | "failure" | "ownerUserId">
+): Promise<void> {
   // Not awaited: the save must land on the device now, and a permission prompt must never sit
   // between the researcher and their record.
   void requestPersistence();
   await tx("readwrite", (store) =>
-    store.add({ ...entry, createdAt: Date.now(), attempts: 0, failure: null } as OutboxEntry)
+    store.add({
+      ...entry,
+      createdAt: Date.now(),
+      attempts: 0,
+      failure: null,
+      /*
+        STAMPED HERE AND NOWHERE ELSE, which is why `ownerUserId` is excluded from the parameter
+        type rather than left for a caller to pass. Six forms reach this function through
+        `saveOrQueue`; a stamp any of them could forget is a stamp one of them eventually does, and
+        the forgotten one is an unowned entry that any account may drain — the exact hole this
+        closes, reintroduced by omission on one form. The module knows who is signed in
+        ({@link setOutboxSessionUser}) and every save path passes through this line.
+      */
+      ownerUserId: outboxSessionUserId,
+      /*
+        MINTED HERE AND NOWHERE ELSE, for `ownerUserId`'s reason one line up: six forms reach this
+        function, and a mint any of them could forget is a mint one of them eventually does — leaving
+        exactly one record type able to duplicate itself, on the one path nobody tests with a signal.
+
+        AT QUEUE TIME AND NOT AT SEND TIME, which is the whole mechanism rather than a detail. A key
+        minted in the drain would be a NEW key on every pass, so the second send of a lost create
+        would look to the server like a different create and make the second record this exists to
+        prevent. The key has to be as old as the record it identifies.
+
+        `entry.clientKey` IS RESPECTED IF A CALLER SET ONE, so this cannot silently overwrite a key a
+        future path minted deliberately (a re-queue that must keep its identity). Nothing does that
+        today; the `??` is what makes it safe when something does.
+      */
+      clientKey: outboxMintsClientKey(entry) ? (entry.clientKey ?? mintClientKey()) : null
+    } as OutboxEntry)
   );
   // AFTER the write, never before: a save the device refused is not a save, and announcing one would
   // be the reassurance this whole module exists to make true. `refreshOutbox` publishes both.
@@ -861,6 +1197,15 @@ function anyOneOf(nouns: readonly string[]): string {
  *  4. THAT A BARE RETRY CANNOT WORK. Without it the researcher walks up the hill for a signal and
  *     does it again tomorrow.
  *
+ * ── WHAT THE SENTENCE NO LONGER ARGUES ON SCREEN (2026-09-03) ─────────────────────────────────
+ *
+ * Android tersened this family the same day and the two clients cannot tell one queue's story in two
+ * voices, so the web follows. What went is the JUSTIFICATION, not a fact: "Nothing has been sent and
+ * nothing has been deleted" became "nothing was deleted" (nothing was sent is what the row is FOR),
+ * and "because what is missing is missing on the server" — the reason a retry cannot work — moved
+ * into point 4 above. All four facts are still said. The recipe is the one the rest of this
+ * repository's copy keeps: state, act, one short reassurance, and the argument in the comment.
+ *
  * PURE and exported, for the reason every sentence in this file is: it is read by somebody standing
  * in a courtyard, so a spec is the only place it can be checked.
  */
@@ -876,10 +1221,13 @@ export function outboxDanglingSentence(said: string, nouns: readonly string[], f
   const isAre = files > 0 ? "are" : "is";
   const trimmed = said.trim();
   const server = trimmed ? ` The server said: ${/[.!?]$/.test(trimmed) ? trimmed : `${trimmed}.`}` : "";
+  // The nothing-is-lost clause is kept WHOLE because it is already the terse recipe — state, act,
+  // reassure, in one line. Word for word Android's `outboxDanglingSentence`, save for "in this
+  // browser": one queue, one story, and the two clients differ only where the device does.
   return (
     `${head} Nothing is lost — open it, choose one that is, and it will send.${server} ` +
-    `Nothing has been sent and nothing has been deleted: this entry${carrying} ${isAre} still in this browser. ` +
-    "Sending it again unchanged will get the same answer, because what is missing is missing on the server."
+    `This entry${carrying} ${isAre} still in this browser; nothing was deleted. ` +
+    "Retrying unchanged gets the same answer."
   );
 }
 
@@ -899,9 +1247,13 @@ export function outboxDanglingSentence(said: string, nouns: readonly string[], f
  * the one surface whose whole job is to be a way out.
  */
 export function repickEmptyLine(noun: string, listed: boolean): string {
+  // Both arms keep their two facts and drop the sentence that restated them (2026-09-03): "so there
+  // is nothing to point this at" and "so this is not showing what exists" were each the previous
+  // clause said twice. The remedy and the reassurance stay, because they are the two things a
+  // researcher looking at a dead end has to be told.
   return listed
-    ? `No ${noun} is open to this account, so there is nothing to point this at. An administrator can give you access to one. Until then the record stays here — nothing is deleted.`
-    : `The ${noun} list could not be read just now, so this is not showing what exists. Nothing has been lost — the record and anything saved with it stay in this browser, and this will work when the list can be read.`;
+    ? `No ${noun} is open to this account. An administrator can give you access to one; until then the record stays here, and nothing is deleted.`
+    : `The ${noun} list could not be read just now, so this is not showing what exists. Nothing has been lost — the record and anything saved with it stay in this browser.`;
 }
 
 /**
@@ -917,6 +1269,16 @@ export function repickEmptyLine(noun: string, listed: boolean): string {
  * IT IS NOT THE DANGLING SENTENCE AND IT IS NOT AN EMPTY-PICKER SENTENCE. Nothing is refused, so
  * there is no remedy to offer and no button to press; the record simply needs filing, on its own
  * screen, whenever there is next a connection. R7: the two failures never share a message.
+ *
+ * ── WHAT THE SENTENCE NO LONGER ARGUES ON SCREEN (2026-09-03) ─────────────────────────────────
+ *
+ * It carried the clause "That was never a claim that none exist." — a disclaimer about a claim the
+ * app had not made, aimed at a misreading nobody has reported, on the one notification in this file
+ * that follows a SUCCESS. That is the argument for why the absence has to be stated at all, and it
+ * is stated two paragraphs up. What the researcher does next is open the record and file it; the
+ * sentence now says that and stops. Android cut the identical clause the same day — see
+ * `Offline.kt`'s `outboxSentUnfiledMessage` — because one queue told in two voices is worse than
+ * either voice.
  */
 export function outboxSentUnfiledMessage(label: string, nouns: readonly string[]): string {
   // NO ARTICLES, because "no" already carries the determiner: "there was no design & prototype
@@ -929,9 +1291,8 @@ export function outboxSentUnfiledMessage(label: string, nouns: readonly string[]
         ? nouns[0]
         : `${nouns.slice(0, -1).join(", ")} or ${nouns[nouns.length - 1]}`;
   return (
-    `“${label}” was sent, and it is filed under nothing: there was no ${list} to choose from in this ` +
-    "browser when it was saved. That was never a claim that none exist. Open the record and file it now that " +
-    "there is a connection."
+    `“${label}” was sent, filed under nothing: there was no ${list} to choose from in this browser. ` +
+    "Open the record and file it now."
   );
 }
 
@@ -1045,15 +1406,33 @@ async function persistProgress(entry: OutboxEntry): Promise<boolean> {
  * A BODY THAT WILL NOT PARSE IS RETURNED UNTOUCHED rather than rebuilt. It was not written by this
  * build, nothing here can safely reason about it, and sending it exactly as queued is the behaviour
  * it was queued under.
+ *
+ * ── AND THE SECOND THING WRITTEN IN AT REPLAY: {@link OutboxEntry.clientKey} ────────────────────
+ *
+ * The idempotency key is stored BESIDE the body rather than inside it, and merged in here, for the
+ * reason the clearances are: `body` is *"serialised at queue time so a later schema change cannot
+ * alter what the user actually saved"*, and the key is not something the user saved — it is
+ * bookkeeping about the SEND. Keeping it out of `body` also means an entry queued by this build and
+ * replayed by a later one can have the key spelled differently without rewriting stored fieldwork.
+ *
+ * AN ENTRY WITH NO KEY ADDS NO KEY, which is every entry from every earlier build and every entry
+ * this build queues for a route that does not accept one ({@link outboxMintsClientKey}). That is not
+ * politeness: `APIModel` is `extra="forbid"`, so a `clientKey` posted to a route whose schema has
+ * none is a 422 on the whole save.
  */
 function bodyWithClearances(entry: OutboxEntry): string {
   const cleared = clearedLinkKeys(entry);
-  if (cleared.length === 0) return entry.body;
+  const clientKey = typeof entry.clientKey === "string" && entry.clientKey ? entry.clientKey : null;
+  if (cleared.length === 0 && !clientKey) return entry.body;
   try {
     const parsed: unknown = JSON.parse(entry.body);
     if (!parsed || typeof parsed !== "object") return entry.body;
     const record = parsed as Record<string, unknown>;
     for (const key of cleared) record[key] = null;
+    // Written LAST, so nothing above can have shadowed it, and only when there is one to write. The
+    // empty string is treated as absent for {@link entryAlreadyCreated}'s reason about a stored `""`:
+    // it is not an identity, and sending it would claim one.
+    if (clientKey) record.clientKey = clientKey;
     return JSON.stringify(record);
   } catch {
     return entry.body;
@@ -1338,6 +1717,19 @@ export type SyncResult = {
    * in this pass went up unfiled. Every reader takes it as `?? []`.
    */
   sentUnfiled?: string[];
+  /**
+   * ENTRIES THIS PASS STEPPED OVER because another account captured them. Never sent, never marked,
+   * never deleted. See {@link OutboxEntry.ownerUserId}.
+   *
+   * REPORTED RATHER THAN FOLDED INTO `remaining`, which counts them too. `remaining` answers "how
+   * much is still on this device"; this answers "how much of it no amount of signal will move", and
+   * a pass that reports the first without the second is the sentence Android's `outboxDeviceBanner`
+   * spends a paragraph on — a number under a promise that a connection will clear it.
+   *
+   * OPTIONAL, so a caller building one of these by hand — the drain spec does, several times — is
+   * not obliged to state an outcome it is not asserting. Absent means the same as zero.
+   */
+  otherAccount?: number;
 };
 
 let syncing: Promise<SyncResult> | null = null;
@@ -1413,6 +1805,17 @@ async function runSync(): Promise<SyncResult> {
   // Sentences, not a count. Each names the entry and which control was empty, and the banner toasts
   // them individually: a number would be the fact without the record it is about.
   const sentUnfiled: string[] = [];
+  /*
+    READ ONCE, AT THE TOP OF THE PASS, and held for the whole loop.
+
+    A pass sends several records and uploads their files, which on a village connection is minutes;
+    `setOutboxSessionUser` can land in the middle of that if somebody signs out in another tab. Read
+    per entry, the pass would then classify the first half of one queue against one account and the
+    second half against another — and the entry it is midway through would be neither. One read is
+    one opinion for one pass, which is the same rule `refreshOutbox` keeps about the list itself.
+  */
+  const sessionUserId = outboxSessionUserId;
+  let otherAccount = 0;
 
   // NOBODY IS SIGNED IN, SO NOTHING CAN BE SENT — and this is the reachable half of the 401 case:
   // another tab signed out and `AuthProvider.logout` cleared the token both tabs share. Answered
@@ -1439,9 +1842,40 @@ async function runSync(): Promise<SyncResult> {
     // update, not on the user, and holding it for ever means one queued artisan and their
     // photographs are stranded by a skew that an update has since closed.
     if (blocksRetry({ permanent: entry.failure !== null, skewRun: entry.skewRun })) continue;
+    /*
+      SOMEBODY ELSE CAPTURED THIS — STEP OVER IT, COUNT IT, AND CHANGE NOTHING ABOUT IT.
+
+      After the refusal test and before anything else, which is the partition Android's
+      `outboxCountsOf` states: an entry that has been refused is reported as a refusal whoever
+      captured it, because that is the one a person can act on and it is listed with its reason.
+      Everything below this line either sends the entry or writes a failure onto it, and neither is
+      right here — nothing is wrong with the entry, and nothing about it is this session's to record.
+
+      NOT MARKED, so the row keeps whatever it holds and the owner finds it exactly as they left it.
+      NOT DELETED, ever: this is somebody's fortnight of fieldwork and its staged photographs, and
+      the only copy is on this disk. The remedy is a different person signing in, which the banner
+      says in one line ({@link outboxOtherAccountLine}).
+    */
+    if (outboxEntryIsForAnotherAccount(entry.ownerUserId, sessionUserId)) {
+      otherAccount += 1;
+      continue;
+    }
     // Everything this pass achieves is recorded on `progress` and written through as it happens, so
     // that an interruption resumes rather than restarts. See the resumability note at the top.
     const progress: OutboxEntry = { ...entry };
+    /*
+      A STORED `createdId` IS ALSO A RECORD THAT THE CREATE LANDED — 2026-09-03. See
+      {@link entryAlreadyCreated} for the whole argument. Normalised HERE, before the create branch,
+      and written back so that this pass, the next one and any other tab all read one answer instead
+      of three: `created` is the flag every later test in this loop is spelled against, so a row that
+      says "I have an id" and "I was never created" is repaired rather than re-interpreted at each
+      site. A false from `persistProgress` means another tab finished and deleted the entry while
+      this pass was reading it — the same reading it has everywhere else in this loop.
+    */
+    if (!progress.created && entryAlreadyCreated(progress)) {
+      progress.created = true;
+      if (!(await persistProgress(progress))) continue;
+    }
     try {
       if (!progress.created) {
         try {
@@ -1471,10 +1905,13 @@ async function runSync(): Promise<SyncResult> {
             const files = pendingFileCount(progress);
             await markFailure(
               progress,
-              "The server accepted this but did not say what it saved, so it cannot be confirmed or its files " +
-                `attached. This entry${files ? ` and its ${files} file(s)` : ""} are still on this device. If you were ` +
-                "on a wi-fi network that asks you to sign in, connect properly and check whether the record arrived " +
-                "before discarding this."
+              // Tersened with the rest of the family on 2026-09-03: "so it cannot be confirmed or
+              // its files attached" is the consequence of the first clause and is argued in the
+              // comment above, not on a row read standing up beside a Discard button.
+              "The server accepted this but did not say what it saved. This entry" +
+                `${files ? ` and its ${files} file(s)` : ""} are still in this browser. If you were on a wi-fi ` +
+                "network that asks you to sign in, connect properly and check whether the record arrived before " +
+                "discarding this."
             );
             failed += 1;
             continue;
@@ -1492,9 +1929,12 @@ async function runSync(): Promise<SyncResult> {
             const files = pendingFileCount(progress);
             await markFailure(
               progress,
-              `The server refused this as a duplicate. ${error.message} Nothing has been sent and nothing has been ` +
-                `thrown away — this entry${files ? ` and its ${files} file(s)` : ""} are still on this device. Open the ` +
-                "record it clashes with, carry across anything it is missing, then discard this entry."
+              // Android's `outboxConflictSentence`, in this client's words and tersened with it on
+              // 2026-09-03: "Nothing has been sent" is what the row already means, so "nothing was
+              // deleted" is the half that has to be said beside a Discard button.
+              `Not saved — the register already holds a clashing record. ${error.message} Nothing was deleted: ` +
+                `this entry${files ? ` and its ${files} file(s)` : ""} are still in this browser. Open the clashing ` +
+                "record, copy anything missing, then discard this entry."
             );
             failed += 1;
             continue;
@@ -1780,7 +2220,8 @@ async function runSync(): Promise<SyncResult> {
     declined: false,
     credentialExpired,
     storeUnreadable: health.readFailedAt !== null,
-    sentUnfiled
+    sentUnfiled,
+    otherAccount
   };
 }
 

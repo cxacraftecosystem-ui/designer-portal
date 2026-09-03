@@ -95,9 +95,14 @@ _STALE_GRACE_SECONDS = 6 * 60 * 60.0
 # amplification shape that has taken this API down before.
 _RETRY_BACKOFF_SECONDS = 15.0
 
-# The census's own deadline. Eight gathered cross-region counts complete in about a second; ten
-# seconds is an order of magnitude of headroom and still comfortably under CloudFront's 30s
-# origin-response timeout, so this route can never be the request that trips it.
+# The census's own deadline. Eight gathered counts completed in about a second against the
+# cross-region database this was set against — an order of magnitude of headroom at ten seconds,
+# and comfortably under CloudFront's 30s origin-response timeout, so this route can never be the
+# request that trips it. Production moved to a co-located database on 2026-09-02 (~1-2ms a round
+# trip, ``services/concurrency.py``), which makes the headroom larger and not smaller. THE NUMBER IS
+# NOT LOWERED TO MATCH: this is the deadline on a public URL under load, where the thing it must
+# survive is a database that has become slow, and tightening a timeout because the happy path got
+# faster is how a transient stall turns into an outage on the one endpoint anybody can reach.
 _COUNT_TIMEOUT_SECONDS = 10.0
 
 # Browser TTL. Short, because a reader who reloads should see the corpus move; the shared-cache TTL
@@ -178,10 +183,14 @@ def clear_census_cache() -> None:
 async def _count_everything() -> dict[str, int]:
     """Every record type's total, counted concurrently.
 
-    Sequentially this is eight cross-region round trips — roughly six seconds of pure waiting for
-    eight queries whose server-side cost is a fraction of a millisecond each. Gathered it is one
-    round trip's worth. ``gather_reads`` bounds the fan-out by the connection pool, so the busiest
-    public URL in the system still cannot claim more connections than the pool has.
+    Sequentially this is EIGHT ROUND TRIPS for eight queries whose server-side cost is a fraction of
+    a millisecond each; gathered it is one wave. That was roughly six seconds of pure waiting on the
+    cross-region database this was measured against, and is tens of milliseconds on the co-located
+    one production moved to on 2026-09-02 (``services/concurrency.py``) — the ratio is what the
+    gather buys and the ratio did not move. ``gather_reads`` bounds the fan-out by the connection
+    pool, so the busiest public URL in the system still cannot claim more connections than the pool
+    has; at the deployment's ``DATABASE_CONNECTION_LIMIT`` of 5 the eight counts are two waves
+    rather than one, which is the semaphore working and not a regression.
 
     Deliberately all-or-nothing: one failed count aborts the whole census rather than being folded
     in as a zero. A silent zero in a published ledger is worse than an admitted outage — it reads as
@@ -232,7 +241,11 @@ async def _census() -> tuple[dict, str]:
 
     # A database that just refused us gets left alone for a moment, and a refresh already in flight
     # is not worth queueing behind when there are numbers on hand — a reader would rather have a
-    # five-minute-old census now than a current one after a cross-region round trip.
+    # five-minute-old census now than a current one after waiting for a wave of counts. (That wait
+    # was cross-region when this was written; co-located since 2026-09-02. The argument is about the
+    # request that is ALREADY IN FLIGHT and the one that has just failed, so it does not rest on the
+    # latency at all: queueing behind a refresh means waiting for whatever the database is doing to
+    # it, which is exactly the case where the database is slow.)
     gate = _refresh_gate()
     backing_off = (
         _state.last_failure_at is not None and now - _state.last_failure_at < _RETRY_BACKOFF_SECONDS

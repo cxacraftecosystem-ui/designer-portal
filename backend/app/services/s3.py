@@ -207,7 +207,12 @@ def presign_put_url(object_key: str, mime_type: str) -> str:
 
 
 def presign_get_url(
-    object_key: str, *, filename: str, mime_type: str, expires_in: int = 900
+    object_key: str,
+    *,
+    filename: str,
+    mime_type: str,
+    expires_in: int = 900,
+    disposition: str = "attachment",
 ) -> str:
     """Presigned GET URL that also dictates how the browser receives the object.
 
@@ -221,15 +226,34 @@ def presign_get_url(
     The signature also expires, which is the point for anything a page hands out as a link: a URL
     that stops working cannot be bookmarked, mailed on, or cached by an intermediary and quietly
     replayed months later.
+
+    ``disposition`` IS "attachment" BY DEFAULT AND MUST STAY THAT WAY, because that is what every
+    caller that existed before 2026-09-03 asked for by not asking: the app-release download, the
+    dataset media index, the research-zip manifest. All three hand the URL to something that SAVES a
+    file, and ``attachment`` is what puts the chosen filename on it.
+
+    "inline" EXISTS FOR ONE CALLER AND IT IS THE ONE THAT RENDERS RATHER THAN SAVES.
+    ``records._sign_media_url`` mints the URL that goes into an ``<img src>``, a ``<video>``, an
+    ``<audio>`` and — the case that actually forced this parameter — a PDF ``<iframe src>`` and
+    ``<object data>``. Browsers ignore ``Content-Disposition`` on image/video/audio subresources, so
+    ``attachment`` would have LOOKED correct on three of the four while turning every inline PDF
+    preview on both clients into a download prompt (``components/media/DocumentPreview.tsx`` renders
+    ``<object data={file.url}>``; ``DwDocumentPreview.kt`` hands the same string to a viewer). A
+    filename is still signed in either mode — a browser that does honour it on a save-as gets the
+    archive name rather than the object key.
+
+    Nothing else is a legal value. Anything other than "inline" is spelled "attachment", rather than
+    interpolated, so a caller cannot smuggle a second header directive through this parameter.
     """
     settings = get_settings()
+    kind = "inline" if disposition == "inline" else "attachment"
     return _client().generate_presigned_url(
         ClientMethod="get_object",
         Params={
             "Bucket": settings.aws_s3_bucket,
             "Key": object_key,
             "ResponseContentType": mime_type,
-            "ResponseContentDisposition": f'attachment; filename="{safe_filename(filename)}"',
+            "ResponseContentDisposition": f'{kind}; filename="{safe_filename(filename)}"',
         },
         ExpiresIn=expires_in,
         HttpMethod="GET",
@@ -287,7 +311,13 @@ def abort_multipart_upload(object_key: str, upload_id: str) -> None:
     )
 
 
-def get_object_bytes(object_key: str) -> bytes:
+#: How much of a bounded read is pulled off the socket at a time. Only the REFUSAL granularity —
+#: the bound itself is exact — so this trades a few hundred KiB of overshoot for far fewer socket
+#: reads on the ordinary 14 MiB phone photograph this path exists for.
+_READ_CHUNK_BYTES = 1024 * 1024
+
+
+def get_object_bytes(object_key: str, *, max_bytes: int | None = None) -> bytes:
     """The whole object, in the heap, in one contiguous ``bytes``.
 
     **THE RIGHT CALL ONLY WHEN THE CALLER GENUINELY NEEDS EVERY BYTE AT ONCE AND THE OBJECT IS
@@ -298,16 +328,61 @@ def get_object_bytes(object_key: str) -> bytes:
     and the largest live object in this deployment is 668.44 MiB against a 1 GiB box
     (MEASURED, docs/SCALABILITY.md §5.1).
 
-    **AND GATE IT ON :func:`head_object` FIRST.** Nothing here bounds what it will allocate: an
-    object larger than the box has memory for is read until the allocation fails, and on a
-    single-worker uvicorn that takes every in-flight request with it.
+    ``max_bytes`` IS THE GATE, AND BEFORE 2026-09-03 THERE WAS NO WAY TO ASK FOR ONE. This function
+    took no bound at all, so the paragraph that used to stand here could only tell the caller to
+    "gate it on :func:`head_object` first" — advice, not a guarantee, and advice that
+    ``media_queue``'s MEASUREMENT arm followed only as far as the HEAD. ``head_object`` answers
+    ``None`` whenever storage will not say (a custom endpoint with no ``HEAD``, a credential
+    without the permission, an object replaced between the HEAD and the GET), and ``None`` means
+    UNKNOWN rather than small — so a caller that stopped at the HEAD had no bound whatsoever on the
+    exact objects a bound is for. Passing ``max_bytes`` re-runs that cheap HEAD *and* measures what
+    actually arrives, which is the same two-layer shape :func:`download_to_temp` already uses and
+    the reason its ``max_bytes`` is a real guarantee rather than a hint.
+
+    **THE BOUND IS EXACT; THE NUMBER IN THE EXCEPTION IS A FLOOR.** A refusal raised from inside the
+    transfer stops reading the moment the accumulated total passes the limit, so
+    :class:`ObjectTooLarge`'s ``size_bytes`` is "at least this much" rather than the object's true
+    length — which is the honest thing to report, since nothing here ever learned the rest. The
+    refusal from the HEAD branch above carries the real number.
+
+    **THERE ARE NO UNBOUNDED CALLERS LEFT AS OF 2026-09-03, AND THE DEFAULT SURVIVES ANYWAY.**
+    ``max_bytes=None`` was kept so the callers that predated the parameter did not change shape on
+    the day it landed; the last of them — ``design_workshops.caption_ai_layer``, which read a
+    photograph of unknown size straight into the heap whenever ``head_object`` declined to size it —
+    now passes the same ``budget_bytes(MAX_CAPTION_BYTES)`` ceiling its own 413 quotes. The
+    remaining reason not to delete the default is that this is the honest signature of what the
+    function does: with no bound, an object larger than the box has memory for is read until the
+    allocation fails, and on a single-worker uvicorn that takes every in-flight request with it. So
+    the sentence is now a floor to hold rather than a backlog to clear — DO NOT ADD SUCH A CALLER,
+    and a new one is a regression from zero rather than one more of several.
     """
     settings = get_settings()
+    if max_bytes is not None:
+        # The cheap fact first, exactly as `download_to_temp` does it: an oversized object that
+        # storage WILL size is refused before a byte moves.
+        head = head_object(object_key)
+        if head is not None and head.size_bytes > max_bytes:
+            raise ObjectTooLarge(object_key, head.size_bytes, max_bytes)
     response = _client().get_object(Bucket=settings.aws_s3_bucket, Key=object_key)
+    body = response["Body"]
     try:
-        return response["Body"].read()
+        if max_bytes is None:
+            return body.read()
+        buffer = bytearray()
+        while True:
+            chunk = body.read(_READ_CHUNK_BYTES)
+            if not chunk:
+                break
+            buffer += chunk
+            if len(buffer) > max_bytes:
+                raise ObjectTooLarge(object_key, len(buffer), max_bytes)
+        # `bytes()` copies the buffer, so peak here is twice the object rather than once. Accepted
+        # deliberately: the callers of this function are bounded to tens of MiB by their own
+        # ceilings, and returning the bytearray would put a mutable buffer into a provider request
+        # body that every caller then has to reason about.
+        return bytes(buffer)
     finally:
-        response["Body"].close()
+        body.close()
 
 
 @dataclass(frozen=True, slots=True)

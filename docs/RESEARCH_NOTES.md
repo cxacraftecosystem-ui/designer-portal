@@ -423,6 +423,16 @@ contribution: nothing was eliminated. The same work is issued; it is issued conc
 co-located database this refactor would be worth approximately nothing, which is precisely why it
 went unnoticed until the database was 5,000 km away.
 
+**And the database IS co-located, as of 2026-09-02 — so the sentence above now describes the
+deployment it was written to contrast with.** A hop is one or two milliseconds rather than 200–400,
+which means the *gather* buys milliseconds where it used to buy seconds. This is recorded rather than
+deleted because the reasoning is the point and it is still right: the refactor's value was always a
+function of the link, and a reader arriving at this section from a fast deployment needs to know that
+the numbers below are the old link's. **What survives the move is the BOUND, and it matters more than
+it did**, not less: the pool went from 10 to 5 ([ENVIRONMENT.md](ENVIRONMENT.md)), so a single
+request asking for the whole pool is now asking for half of what it used to be — the ceiling arrives
+at fewer concurrent readers, and the argument in the next paragraph is the one that carries.
+
 The gather is **bounded**, not bare, and the bound is derived from the pool rather than chosen:
 `pool_width()` returns `DATABASE_CONNECTION_LIMIT`, so a single request can never ask for more
 connections than exist. This codebase had already been taken down twice by pool exhaustion (§6), so

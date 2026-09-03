@@ -79,8 +79,18 @@ async def dashboard_stats(current_user: Any = Depends(get_current_user)) -> dict
     own_media_where = await own_rows_where(current_user, owner_field="uploadedById")
 
     # This endpoint used to issue fourteen reads one after another: five totals, four "recent"
-    # lists, five pending counts. On a cross-region link where a round trip costs ~750ms and the
-    # query itself costs a fraction of a millisecond, that was 10.1s of almost pure waiting.
+    # lists, five pending counts. MEASURED 2026-08 against the cross-region database of the time,
+    # where a round trip cost ~750ms and the query itself a fraction of a millisecond: 10.1s of
+    # almost pure waiting.
+    #
+    # THAT LINK IS GONE AND EVERY MILLISECOND FIGURE IN THIS COMMENT IS HISTORY (2026-09-03).
+    # Production moved on 2026-09-02 to a database co-located with the API box, where a round trip
+    # is one or two milliseconds rather than three quarters of a second — see the header of
+    # ``services/concurrency.py``, which carries the same correction for the module this route
+    # leans on. Nothing here has been re-timed since. WHAT SURVIVES IS THE COUNTING, which is the
+    # only thing the change below ever altered: sixteen serial hops still cost sixteen times one
+    # hop, and the ratio between "in series" and "together" is untouched. What moved is the size of
+    # the prize — ten seconds of waiting became tens of milliseconds either way.
     #
     # Two things fix it, and the first matters more than the second. The four record tables are
     # counted TWICE each — once for the total, once for the PENDING subset — so a single
@@ -90,17 +100,25 @@ async def dashboard_stats(current_user: Any = Depends(get_current_user)) -> dict
     # MEASURED BEFORE THE `mine` HALF WAS ADDED and is not a figure for the wave as it now stands;
     # nothing has re-measured it since, and it should not be quoted as if it had.
     #
-    # THE `mine` HALF IS A SECOND WAVE, NOT MORE ROWS IN THE FIRST — and this comment used to claim
+    # THE `mine` HALF IS A LATER WAVE, NOT MORE ROWS IN THE FIRST — and this comment used to claim
     # the opposite. The unpack below is SIXTEEN coroutines and ``gather_reads`` is bounded by
-    # ``pool_width()`` (``concurrency.py``), which is ``DATABASE_CONNECTION_LIMIT`` = 10
-    # (``core/config.py``). Sixteen against a bound of ten takes the SEMAPHORE branch, so ten reads
-    # go out, and the remaining six follow as they free up: two waves, ~2 x 694 ms, not one. It is
-    # still far better than the fourteen sequential reads it replaced, and the six are still
-    # independent of everything else here — what is false is "instead of adding a round trip".
+    # ``pool_width()`` (``concurrency.py``), which reads ``DATABASE_CONNECTION_LIMIT``. Sixteen
+    # against that bound takes the SEMAPHORE branch, so a first batch goes out and the rest follow as
+    # connections free up.
     #
-    # To make it one wave again, either narrow the unpack below ten or lower the `mine` half onto a
-    # cache; do not raise ``DATABASE_CONNECTION_LIMIT`` to fit it, which is the mistake the 40 -> 10
-    # cut recorded in ``core/config.py`` was reverting.
+    # AND IT IS FOUR WAVES, NOT TWO, ON THE DEPLOYMENT AS IT ACTUALLY RUNS. This paragraph said
+    # "two waves, ~2 x 694 ms" against a limit of 10 — the default in ``core/config.py``. The
+    # deployment sets the variable explicitly to 5 against a session pool of about fifteen slots
+    # shared with the queue process, so sixteen reads at a width of five is FOUR waves. That is the
+    # semaphore doing exactly its job and not a regression: at ~1-2ms a co-located round trip
+    # (2026-09-02, ``services/concurrency.py``) four waves is single-digit milliseconds, where the
+    # fourteen sequential reads this replaced were ten seconds on the old link. The 694ms is the old
+    # link's number and is kept only as the measurement that motivated the gather.
+    #
+    # To narrow it to fewer waves, either shrink the unpack or lower the `mine` half onto a cache; do
+    # NOT raise ``DATABASE_CONNECTION_LIMIT`` to fit it. That number is the deployment's budget
+    # rather than this route's to spend — the 40 -> 10 cut recorded in ``core/config.py`` was
+    # reverting exactly that mistake, and the deployment's 5 is a further deliberate narrowing.
     grouped = (db.artisan, db.workshop, db.productdocumentation, db.tooldocumentation)
 
     def pending(where: dict[str, Any]) -> dict[str, Any]:

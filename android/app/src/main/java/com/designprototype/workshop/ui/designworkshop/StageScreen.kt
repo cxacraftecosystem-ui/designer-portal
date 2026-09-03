@@ -75,6 +75,7 @@ import com.designprototype.workshop.data.AppScope
 import com.designprototype.workshop.data.CUSTOM_ENTITY_KEY
 import com.designprototype.workshop.data.ConnectivityObserver
 import com.designprototype.workshop.data.DW_ROW_KEY_SEPARATOR
+import com.designprototype.workshop.data.DW_ROW_REFUSAL_KEY
 import com.designprototype.workshop.data.DraftMedia
 import com.designprototype.workshop.data.DraftRow
 import com.designprototype.workshop.data.DwCustomCache
@@ -2451,7 +2452,13 @@ private fun CollectionRowCard(
     services: DwFieldServices,
     /** The one field of THIS row a designer was sent to, or null. */
     focusFieldKey: String? = null,
-    /** The repository's per-field refusals for THIS row — see [DwStageRefusal]. */
+    /**
+     * The repository's refusals for THIS row, by field key — see [DwStageRefusal].
+     *
+     * [DW_ROW_REFUSAL_KEY] may be among them, and it is the one entry that is not a field: it is the
+     * repository's sentence about the whole row. It is drawn by this card rather than passed on to
+     * [EntitySection], which can only mark a control it can find. See the note at the draw.
+     */
     errors: Map<String, String> = emptyMap(),
     /**
      * The list's own decorations for this row: its lift, and the shift a neighbour's drag pushes it
@@ -2623,6 +2630,29 @@ private fun CollectionRowCard(
                 }
             }
 
+            /*
+              THE REPOSITORY REFUSED THIS WHOLE ROW, AND THERE IS NO BOX TO MARK FOR IT.
+
+              A version conflict — somebody else saved this row while this phone's save was in
+              flight — arrives under [DW_ROW_REFUSAL_KEY] inside this row's scope, where every other
+              entry marks a field. Rendered verbatim: the sentence arrives complete, and it names the
+              state and the next move in one line.
+
+              DRAWN UNDER THE ROW'S OWN TITLE AND OUTSIDE `if (expanded)`, which is the whole point
+              of putting it here rather than leaving it to the card at the top of the stage. That
+              card lists it — "Cost line (row 3): …" — and a designer holding a stage of eleven
+              collapsed rows still has to find row 3. This is the mark that makes the list findable,
+              and it is the same two-halves rule the per-field refusals follow. (2026-09-03)
+            */
+            errors[DW_ROW_REFUSAL_KEY]?.let { note ->
+                Text(
+                    note,
+                    color = MaterialTheme.colorScheme.error,
+                    fontSize = 11.sp,
+                    lineHeight = 16.sp,
+                )
+            }
+
             if (expanded) {
                 EntitySection(
                     entity = entity,
@@ -2630,7 +2660,11 @@ private fun CollectionRowCard(
                     media = media,
                     services = services,
                     focusFieldKey = focusFieldKey,
-                    errors = errors,
+                    // Field refusals only. A section handed [DW_ROW_REFUSAL_KEY] would look for a
+                    // control keyed `_row`, find none, and drop the one refusal on this row in
+                    // silence — see the note above and [DwStageRefusalReport.byAddress], which
+                    // leaves it out of the singleton's map for the same reason.
+                    errors = errors - DW_ROW_REFUSAL_KEY,
                     showAdvanced = showAdvanced,
                     onToggleAdvanced = { showAdvanced = !showAdvanced },
                     onValueChange = onValueChange,

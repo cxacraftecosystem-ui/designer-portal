@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import tempfile
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -75,6 +76,83 @@ RATE_LIMIT_MAX_SECONDS = 900
 # Outside the off-peak window, transcription still runs when the box is idle — 1-minute load average
 # below this fraction of the CPU count — so spare daytime capacity is used instead of waiting for night.
 IDLE_LOAD_FACTOR = 0.6
+
+
+# ── WHO IS ALLOWED TO DRAIN, AND WHY THE ELECTION LIVES HERE RATHER THAN IN main.py ────────────
+#
+# A single, host-wide lock file elects ONE media-queue drain per box. The jobs run ffmpeg and paid
+# provider calls and read whole media files; letting two drains run in parallel saturated the small
+# EC2 box's CPU and RAM, which made ordinary API requests (presign, complete, …) slow enough that
+# CloudFront's origin-response timeout fired and clients saw HTTP 504.
+#
+# THE ELECTION USED TO ARBITRATE ONLY HALF THE FIELD, WHICH IS WHY IT MOVED (2026-09-03). It lived
+# in ``app/main.py`` as a private helper and was consulted by the uvicorn lifespan alone, so the
+# only claimant it could ever turn away was a SECOND UVICORN WORKER — and there is no second
+# uvicorn worker: the Dockerfile pins ``--workers 1``, with a comment recording the outage
+# ``--workers 2`` caused. Meanwhile the drain that actually runs in production, ``app/worker.py``'s
+# ``fieldrepo-queue.service``, took the lock into account not at all. So the one contention the lock
+# was named for — two drains on one host — was precisely the one it did not arbitrate: an operator
+# who started the queue unit on a box whose API still had ``MEDIA_QUEUE_WORKER_ENABLED`` true got
+# two drains, both selecting on ``status: QUEUED``, and ``_lock_job``'s CAS defends only the
+# instant of claiming. It does NOT defend the recording: two drains interleave batches, each
+# honestly claims different jobs, and the box is billed for both while serving requests with what
+# is left. Production escaped because the web box ships ``MEDIA_QUEUE_WORKER_ENABLED=false``
+# explicitly (DEPLOY_AWS.md) — a deployment convention, not a guard, and the flag's own default was
+# ``True`` until this same change.
+#
+# BOTH ENTRY POINTS NOW ACQUIRE IT, from here, so neither can be fixed without the other. There is
+# no third home for this: ``main.py`` importing ``worker.py`` (or the reverse) would drag a systemd
+# entry point into the web process's import graph, and a new module for eleven lines would be a
+# file whose only reader is a lock. It sits in the module that owns the drain.
+#
+# "HOST-WIDE" MEANS THE EC2 BOX, NOT A KUBERNETES NODE (noted 2026-09-03). ``tempfile.gettempdir()``
+# is per-container on k8s — the api pod and the queue pod each hold their own ``/tmp``, so both
+# would win this election and it would elect nobody. There the protection is still the container's
+# explicit ``MEDIA_QUEUE_WORKER_ENABLED: "false"`` (infra/k8s/base/deployment-api.yaml says so) —
+# a convention, which is exactly what this lock exists to replace on the single-box deployment that
+# actually serves production. If those manifests are ever applied, the election needs a shared home
+# (a lease, a Postgres advisory lock) before the flag can be trusted any less there.
+QUEUE_LOCK_PATH = os.path.join(tempfile.gettempdir(), "design-workshop-media-queue.lock")
+
+
+def acquire_queue_worker_lock(path: str | None = None) -> Any | None:
+    """Try to become THE media-queue drain for this host.
+
+    Returns a held lock handle on success, or ``None`` when another process already holds it. The
+    handle must be kept for the process's lifetime — closing it releases the lock — which is why
+    both callers park it on something long-lived rather than dropping it on the floor.
+
+    AN OS ADVISORY FILE LOCK (``fcntl.flock``) WHERE THERE IS ONE, AND A GRANT WHERE THERE IS NOT.
+    On a platform without ``fcntl`` — local Windows development, which is the only one — this
+    returns a sentinel and the drain runs. That is deliberate rather than a gap: the lock exists to
+    arbitrate two processes on the deployed Linux box, and refusing to run on a developer's machine
+    because the arbitration primitive is missing would turn "no contention to arbitrate" into "no
+    queue at all".
+
+    ``flock`` LOCKS THE OPEN FILE DESCRIPTION, NOT THE PROCESS, so two calls in ONE process contend
+    exactly as two processes do — each ``open`` creates a distinct description and the second
+    ``LOCK_EX | LOCK_NB`` fails with ``EWOULDBLOCK``. That is what makes the election testable
+    without spawning anything, and it is a property of ``flock`` rather than an accident:
+    ``fcntl``-style POSIX record locks would have granted the second acquisition and made this
+    silently useless in-process.
+
+    *path* is for tests, which must not fight whatever real drain is running on the developer's own
+    machine for the shared path. Production passes nothing.
+    """
+    lock_path = path or QUEUE_LOCK_PATH
+    try:
+        import fcntl  # POSIX only (the EC2 host); absent on Windows dev boxes.
+    except ImportError:
+        return object()  # No multi-process contention to arbitrate — run the queue here.
+    try:
+        handle = open(lock_path, "w")  # noqa: SIM115 - kept open for the process lifetime
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        handle.write(str(os.getpid()))
+        handle.flush()
+        return handle
+    except OSError:
+        return None
+
 
 # PER-PROCESS STATE, AND IN PRODUCTION THERE ARE TWO PROCESSES. This used to read "Single elected
 # worker (see main.py), so module-level cooldown state is safe", and both halves of that sentence are
@@ -520,7 +598,18 @@ async def _oversize_reason(media: Any, ceiling: int, *, what: str) -> str | None
     the REAL ``ContentLength`` and no bytes, which is the only number in this system that is a fact.
 
     ``head_object`` answering ``None`` (storage would not say) is NOT read as "small": the caller
-    still passes the same ceiling to ``download_to_temp``, which counts what actually lands.
+    still passes the same ceiling to its fetch — ``download_to_temp(max_bytes=)`` on the
+    transcription path, ``get_object_bytes(max_bytes=)`` on the measurement one — and both count
+    what actually lands.
+
+    THAT SENTENCE WAS HALF FALSE UNTIL 2026-09-03, and it is recorded rather than quietly corrected
+    because it is the shape of promise that goes stale silently. It named ``download_to_temp``
+    alone, which is what the TRANSCRIPTION caller does; the MEASUREMENT caller below then called
+    ``get_object_bytes(objectKey)`` — a function that until that date accepted no bound at all — so
+    for an image storage would not size, this returned ``None`` ("go ahead") and the very next line
+    read the object unbounded into the heap of a 1 GiB box. The gate was exactly as strong as the
+    HEAD, on the one path where the HEAD had already failed. ``get_object_bytes`` now takes
+    ``max_bytes`` and the promise above is true of both callers again.
     """
     declared = 0
     try:
@@ -710,23 +799,107 @@ def _transcript_write(result: dict[str, Any], status: str) -> dict[str, Any]:
 
 
 async def recover_stale_processing_jobs() -> int:
+    """Unstick jobs whose worker died holding the lock — and BURY the ones that killed it.
+
+    ================================================================================================
+    THE POISON PILL THIS GUARD ENDS
+    ================================================================================================
+
+    This function used to requeue EVERY ``PROCESSING`` row older than the cutoff, unconditionally.
+    The attempts ladder was consulted nowhere in it, because the ladder lived entirely in
+    :func:`_handle_job_failure` — and that function is reached only by an exception RAISED IN THIS
+    PROCESS. A job that takes the process down with it raises nothing anybody catches: an OOM kill,
+    a SIGKILL from a supervisor, an ffmpeg child that eats the box, a deploy's ``systemctl restart``
+    landing mid-provider-call. So the one class of job that most needs a ladder was the one class
+    that could never climb it.
+
+    **THE FAILURE IN ONE SENTENCE:** a recording that OOM-kills the worker was resurrected every
+    thirty minutes, for ever, and took the whole drain down with it on each pass — so every OTHER
+    clip in the queue was starved by a job that had already failed more times than its own
+    ``maxAttempts`` allows.
+
+    ``attempts`` IS ALREADY THE RIGHT NUMBER TO READ, WHICH IS WHY NO NEW COLUMN APPEARS HERE.
+    :func:`_lock_job` increments it at the instant of claiming, before any work is attempted — so a
+    row sitting in ``PROCESSING`` has ALREADY spent the attempt it is on, and ``attempts >=
+    maxAttempts`` on a stale row means "this job has been given every run it is entitled to and each
+    one ended without a word". A job killed on its first of three attempts is still requeued
+    exactly as before; only the row that has exhausted the ladder is buried. That is the same
+    predicate ``_handle_job_failure`` uses, deliberately, so a job cannot die two different deaths
+    depending on whether its worker was alive enough to raise.
+
+    THE CLIP IS FINALISED THROUGH THE SHARED WRITER and not by a second ``update_many`` spelled out
+    here — see :func:`_finalize_failed_clip` for the ``transcriptText``-preserving predicate it
+    carries. A clip left at ``transcriptStatus="QUEUED"`` under a job nobody will ever run again is
+    the exact trap that function's docstring is about, and duplicating its predicate would be two
+    copies of a rule that has already been got wrong once.
+
+    THE ERROR NAMES THE WORKER, because ``lockedBy`` is the only evidence left of what happened:
+    there is no traceback, no provider response and no log line in this process. "Interrupted while
+    held by queue-service" is what tells an operator to go and read that unit's journal rather than
+    look for an application bug.
+    """
     cutoff = datetime.now(UTC) - STALE_PROCESSING_AFTER
     stale_jobs = await db.mediaprocessingjob.find_many(
         where={"status": PROCESSING, "lockedAt": {"lt": cutoff}},
         take=25,
     )
+    # The return value counts REQUEUED jobs only (corrected 2026-09-03): since the poison-pill arm
+    # landed, a stale row can also be BURIED, and a caller reading "N recovered" over a sum of the
+    # two over-reports the moment that arm starts firing — a job finalized as FAILED was not
+    # recovered by any reading of the word.
+    requeued = 0
     for job in stale_jobs:
+        now = datetime.now(UTC)
+        if _attempts_exhausted(job):
+            error = (
+                f"Interrupted while held by {_value(job, 'lockedBy') or 'an unnamed worker'} and "
+                f"out of attempts ({_value(job, 'attempts')} of {_value(job, 'maxAttempts')}). "
+                "The worker did not survive this job; it will not be retried automatically."
+            )[:2000]
+            await db.mediaprocessingjob.update(
+                where={"id": job.id},
+                data={
+                    "status": FAILED,
+                    "lockedAt": None,
+                    "lockedBy": None,
+                    "completedAt": now,
+                    "error": error,
+                },
+            )
+            await _finalize_failed_clip(job, error)
+            continue
         await db.mediaprocessingjob.update(
             where={"id": job.id},
             data={
                 "status": QUEUED,
                 "lockedAt": None,
                 "lockedBy": None,
-                "runAfter": datetime.now(UTC),
+                "runAfter": now,
                 "error": "Recovered after worker interruption.",
             },
         )
-    return len(stale_jobs)
+        requeued += 1
+    return requeued
+
+
+def _attempts_exhausted(job: Any) -> bool:
+    """Whether this job has spent every run its ``maxAttempts`` allows.
+
+    Read defensively because it decides whether a row is buried: a ``maxAttempts`` that is absent,
+    NULL or zero is treated as the settings floor of 1 rather than as "no attempts allowed", so a
+    malformed row is requeued once rather than finalised on sight. ``enqueue_media_processing_jobs``
+    writes ``max(settings.media_queue_job_max_attempts, 1)``, so a zero here can only come from a
+    row an operator inserted by hand.
+    """
+    try:
+        attempts = int(_value(job, "attempts") or 0)
+    except (TypeError, ValueError):
+        attempts = 0
+    try:
+        max_attempts = int(_value(job, "maxAttempts") or 0)
+    except (TypeError, ValueError):
+        max_attempts = 0
+    return attempts >= max(max_attempts, 1)
 
 
 async def _lock_job(job_id: str, worker_id: str) -> Any | None:
@@ -896,7 +1069,39 @@ async def _process_job(job: Any, settings: Settings) -> None:
                 {"available": False, "status": UNAVAILABLE, "analysis": None, "message": oversize},
             )
             return
-        content = await asyncio.to_thread(get_object_bytes, media.objectKey)
+        # THE SAME CEILING CARRIED INTO THE FETCH, WHICH IS WHAT MAKES THE GATE ABOVE A GUARANTEE.
+        # ``_oversize_reason`` promises that a ``None`` from ``head_object`` is not read as "small"
+        # because the caller bounds the download — and until 2026-09-03 this caller did not: it
+        # called ``get_object_bytes(objectKey)``, which took no bound, so an image storage would not
+        # size was read into the heap of a 1 GiB box whatever its length. That is precisely the
+        # case a bound is for; the HEAD covers the others. ``download_to_temp`` was the alternative
+        # and was rejected here for the reason the paragraph above gives: a vision model is sent
+        # base64 of the whole image, so a temp file would buy a second copy on disk beside the one
+        # in the heap and no reduction in peak memory at all.
+        try:
+            content = await asyncio.to_thread(
+                get_object_bytes, media.objectKey, max_bytes=ceiling
+            )
+        except ObjectTooLarge as exc:
+            # Storage would not size it and the transfer hit the bound. Terminal through the SAME
+            # arm the gate above uses, and NOT left to the ordinary retry: every attempt would pull
+            # the same oversized object over the same link before failing in the same place. The
+            # number is a floor — the read stopped the moment it passed the limit — and the sentence
+            # says "at least" rather than implying anything was measured that was not.
+            await _apply_measurement_result(
+                job,
+                {
+                    "available": False,
+                    "status": UNAVAILABLE,
+                    "analysis": None,
+                    "message": (
+                        f"This image is at least {exc.size_bytes} bytes, over the "
+                        f"{exc.limit_bytes}-byte limit this server will analyse in one piece. "
+                        "Nothing was sent to a provider and nothing was spent."
+                    ),
+                },
+            )
+            return
         result = await analyze_measurement_image_bytes(
             content,
             media.originalFilename or "measurement.jpg",
@@ -1109,12 +1314,9 @@ async def _handle_job_failure(job_id: str, exc: Exception) -> None:
     ``_SETTLED_TRANSCRIPT_STATUSES`` (that set's own comment says so), so the recovery path the
     consent-refusal writer already relies on picks this clip up too.
 
-    IT WILL NOT WRITE OVER A TRANSCRIPT THAT ALREADY EXISTS. The ``transcriptText`` guard in the
-    ``update_many`` below mirrors :func:`_record_transcription_refused` and honours
-    :func:`_transcript_write`'s hard-won rule: a clip transcribed months ago whose re-run failed must
-    not be relabelled FAILED, because that is a lie about the row and hides it from every screen that
-    filters on the status. Expressed as a predicate on the UPDATE rather than as a read-then-write so
-    there is no window between the two, and so the whole thing stays one round trip.
+    IT WILL NOT WRITE OVER A TRANSCRIPT THAT ALREADY EXISTS. The ``transcriptText`` guard now lives
+    in :func:`_finalize_failed_clip` — see there — and it mirrors
+    :func:`_record_transcription_refused` while honouring :func:`_transcript_write`'s hard-won rule.
     """
     job = await db.mediaprocessingjob.find_unique(where={"id": job_id})
     if not job:
@@ -1124,7 +1326,7 @@ async def _handle_job_failure(job_id: str, exc: Exception) -> None:
     # raised — including one built by a library out of a URL that carried a credential. services/ai
     # keeps its own results clean; this is the guard for everything else that can fail in here.
     error = redact_secrets(str(exc))[:2000]
-    exhausted = job.attempts >= job.maxAttempts
+    exhausted = _attempts_exhausted(job)
     retry_delay = timedelta(minutes=min(60, 2 ** max(job.attempts - 1, 0)))
     await db.mediaprocessingjob.update(
         where={"id": job_id},
@@ -1137,23 +1339,61 @@ async def _handle_job_failure(job_id: str, exc: Exception) -> None:
             "error": error,
         },
     )
-    if exhausted and job.jobType == TRANSCRIPTION and job.mediaFileId:
+    if exhausted:
         # Only on exhaustion: while attempts remain the clip really IS queued, and saying FAILED
         # between two retries would make ``enqueue_stage_transcriptions`` file a second job for a
         # recording the first one is still working through.
-        try:
-            await db.mediafile.update_many(
-                where={
-                    "id": job.mediaFileId,
-                    "OR": [{"transcriptText": None}, {"transcriptText": ""}],
-                },
-                data={"transcriptStatus": FAILED, "transcriptError": error},
-            )
-        except Exception as exc2:  # noqa: BLE001 — the job's own terminal state is already written.
-            logger.warning(
-                "media_queue: transcription job %s is exhausted but the clip's status could not be "
-                "written, so media %s may stay stuck at QUEUED (%s)",
-                job_id,
-                job.mediaFileId,
-                exc2,
-            )
+        await _finalize_failed_clip(job, error)
+
+
+async def _finalize_failed_clip(job: Any, error: str) -> None:
+    """Write a dead transcription job's terminal state onto the CLIP. Never raises.
+
+    ONE WRITER FOR TWO DEATHS, WHICH IS THE WHOLE POINT OF IT BEING A FUNCTION (extracted
+    2026-09-03). A transcription job can now reach its end two ways: an exception this process
+    caught (:func:`_handle_job_failure`) or a worker that died holding the lock with its ladder spent
+    (:func:`recover_stale_processing_jobs`). Both have to leave ``MediaFile.transcriptStatus``
+    saying the same thing, and both have to leave it under the same predicate. Spelling the second
+    one out beside the first would have been two copies of a rule this repository has already got
+    wrong once — see :func:`_transcript_write`.
+
+    FAILED rather than any new value, because FAILED is deliberately ABSENT from
+    ``workshop_transcripts._SETTLED_TRANSCRIPT_STATUSES`` (that set's own comment says so), so the
+    recovery path the consent-refusal writer already relies on picks this clip up too: the next save
+    of the stage that names the recording queues it again.
+
+    IT WILL NOT WRITE OVER A TRANSCRIPT THAT ALREADY EXISTS. A clip transcribed months ago whose
+    re-run failed must not be relabelled FAILED — that is a lie about the row and hides it from
+    every screen that filters on the status. Expressed as a predicate on the UPDATE rather than as a
+    read-then-write so there is no window between the two, and so the whole thing stays one round
+    trip.
+
+    MEASUREMENT JOBS ARE SKIPPED, not merely uninteresting here: a failed image measurement has
+    nothing whatever to say about a recording's transcript, and the two job types share this
+    function.
+
+    IT SWALLOWS ITS OWN FAILURE because the job's terminal state is already committed by the time
+    this runs, and in the recovery loop there are up to twenty-four more rows behind it. Letting a
+    second write raise would abandon the rest of the sweep over a row that is already correct.
+    """
+    if _value(job, "jobType") != TRANSCRIPTION:
+        return
+    media_id = _value(job, "mediaFileId")
+    if not media_id:
+        return
+    try:
+        await db.mediafile.update_many(
+            where={
+                "id": media_id,
+                "OR": [{"transcriptText": None}, {"transcriptText": ""}],
+            },
+            data={"transcriptStatus": FAILED, "transcriptError": error},
+        )
+    except Exception as exc:  # noqa: BLE001 — the job's own terminal state is already written.
+        logger.warning(
+            "media_queue: transcription job %s is finished but the clip's status could not be "
+            "written, so media %s may stay stuck at QUEUED (%s)",
+            _value(job, "id"),
+            media_id,
+            exc,
+        )

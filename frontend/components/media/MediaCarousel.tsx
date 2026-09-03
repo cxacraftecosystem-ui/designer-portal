@@ -57,6 +57,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { ChevronLeft, ChevronRight, ImageOff, Maximize2 } from "lucide-react";
 
 import { useAppReducedMotion } from "@/components/guide/useAppReducedMotion";
+import { useMediaUrl } from "@/components/hooks/useMediaUrl";
 import { MediaLightbox, type PreviewMedia } from "@/components/media/MediaLightbox";
 
 /** The house cubic. Named in §8.2 of the frontend contract; do not invent another. */
@@ -475,6 +476,12 @@ function ArrowButton({
  * screen-reader user nothing about which one they are on, which is the one thing the control is for.
  */
 function Slide({ item, onZoom }: { item: CarouselItem | null; onZoom: () => void }) {
+  // Called unconditionally, ABOVE the two early returns, because a hook cannot sit behind one. It
+  // is a no-op for a null item and for a row with no url, which are exactly those two branches.
+  // Signed read URLs expire (`lib/mediaUrlRefresh.ts`); a carousel is a reading control that sits
+  // in a form for as long as somebody is typing beside it, so it is one of the surfaces most likely
+  // to be holding a stale one.
+  const { src, onError } = useMediaUrl(item);
   if (!item) return null;
   if (!item.url) {
     return (
@@ -493,7 +500,8 @@ function Slide({ item, onZoom }: { item: CarouselItem | null; onZoom: () => void
     >
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
-        src={item.url}
+        src={src ?? item.url}
+        onError={onError}
         alt={item.caption?.trim() || item.name}
         loading="lazy"
         className="max-h-full max-w-full object-contain"

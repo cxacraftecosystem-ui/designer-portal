@@ -166,10 +166,22 @@ rejections.
 
 ## Why the writes are batched, in numbers
 
-`DATABASE_CONNECTION_LIMIT` is 10, cut to it from 40 after a pooler's shared connection budget was
-exhausted and crash-looped this deployment. One Prisma round trip measured **756 ms** against tables
-whose server-side execution is 0.04–0.24 ms (`backend/app/services/concurrency.py`), so cost is
-latency, paid once per statement and nearly independent of row count.
+`DATABASE_CONNECTION_LIMIT` is **10 in the code and 5 on the deployment** — cut to 10 from 40 after a
+pooler's shared connection budget was exhausted and crash-looped this deployment, then set explicitly
+to 5 in production ([ENVIRONMENT.md](ENVIRONMENT.md)). One Prisma round trip measured **756 ms**
+against tables whose server-side execution is 0.04–0.24 ms
+(`backend/app/services/concurrency.py`), so cost was latency, paid once per statement and nearly
+independent of row count.
+
+> **The link is no longer the price (correction, 2026-09-03).** Production moved on **2026-09-02** to
+> a database co-located with the API box, where a round trip is one or two milliseconds rather than
+> three quarters of a second. The 756 ms is kept above because it is the measurement that BUILT this
+> batching, not a claim about today, and nothing here has been re-timed since the move.
+> **The batching decision survives the correction on its other leg, not on this one:** the counting
+> is unchanged — a per-request INSERT is still one statement per request holding one of a *smaller*
+> pool — and the pool went from 10 to 5, so the bound matters more than it did, not less. What has
+> gone is the "most of a second added to every response" arithmetic. Do not quote the millisecond
+> figures below as current.
 
 * **200 rows per `create_many`.** The amortised connection cost is 1/200th of a request. At 1,000 the
   marginal gain is nothing and a row waits five times longer to become durable.

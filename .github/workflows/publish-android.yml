@@ -179,7 +179,7 @@ jobs:
         working-directory: android
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           # No `ref:` override here, unlike android-build.yml. That file builds a `workflow_run`
           # commit, where the default ref (tip of main) may have moved past what was deployed.
@@ -466,7 +466,7 @@ jobs:
           esac
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
         with:
           distribution: temurin
           # 17 is not a free choice: android/app/build.gradle.kts pins
@@ -1506,10 +1506,10 @@ jobs:
         if: ${{ env.DRY_RUN == 'false' }}
         # THE ONE IRREVERSIBLE CALL IN THIS WORKFLOW, and the only step a dry run skips.
         #
-        # Body: {versionCode, versionName, objectKey, url, notes}. versionCode is REQUIRED by the
-        # schema (`ge=1`) even though the server RE-DERIVES it from the version name and overrides
-        # what was sent — and that derivation returns None for a name that is not three plain
-        # numbers, in which case the server falls back to the client's number. So the value sent
+        # Body: {versionCode, versionName, objectKey, url, notes, sizeBytes}. versionCode is REQUIRED
+        # by the schema (`ge=1`) even though the server RE-DERIVES it from the version name and
+        # overrides what was sent — and that derivation returns None for a name that is not three
+        # plain numbers, in which case the server falls back to the client's number. So the value sent
         # here is not decoration: it is the fallback, and GUARD 1 is what makes it the same number
         # the APK carries.
         #
@@ -1518,6 +1518,26 @@ jobs:
         # URL. The server derives it from the object key when it is absent, so this is belt and
         # braces, and it is what the browser publisher sends too.
         #
+        # ─── `sizeBytes`: WHAT MAKES A PHONE ABLE TO TELL "FINISHED" FROM "STOPPED" ────────────
+        # `WorkshopRepository.downloadApk` used to accept any 2xx and hand the bytes to Android's
+        # package installer. A response is successful the moment its HEADERS are; the body streams
+        # afterwards, so a link that dies part-way through 66 MB leaves a truncated file that the OS
+        # then refuses in a system dialog, stacked over a FORCED update prompt with no "Later" in it.
+        # The declared length is what lets the app say "that download did not finish" and offer the
+        # button again. See android/app/src/main/java/com/designprototype/workshop/data/
+        # AppUpdateIntegrity.kt for why a length rather than a hash.
+        #
+        # IT IS `$APK_BYTES` AND NOT A SECOND MEASUREMENT. GUARD 5 already stats the file
+        # (`bytes="$(stat -c%s "$APK")"`), refuses it below MIN_APK_BYTES, chooses the upload path
+        # from it and exports it; the single-PUT presign declares the same number, and the multipart
+        # step splits into parts by it. A second `stat` here could disagree with all three — which,
+        # on the one number a phone will compare a downloaded file against, is worse than not sending
+        # it. Both upload paths run before this step and neither rewrites APK_BYTES, so one variable
+        # covers both.
+        #
+        # OPTIONAL ON THE SCHEMA, so a workflow run against an API that predates the field is a 422
+        # rather than a silent no-op — see the error arm below, which now names it.
+        #
         # The notes carry the tag, the commit and the run id, so that six months later "where did
         # this build come from" has an answer that does not depend on anybody remembering.
         run: |
@@ -1525,17 +1545,28 @@ jobs:
           out="${RUNNER_TEMP}/publish.json"
           notes="Published by ${{ github.workflow }} from tag ${RELEASE_TAG} (commit ${{ github.sha }}, run ${{ github.run_id }})."
 
+          # Refused rather than sent as null: an empty APK_BYTES here means the measuring step did not
+          # run or did not export, and publishing a release with no size claim over a pipeline that is
+          # supposed to make one is the quiet failure this workflow's whole guard set exists against.
+          # A release row is irreversible, so this is checked BEFORE the POST.
+          if [ -z "${APK_BYTES:-}" ]; then
+            echo "::error::APK_BYTES is empty, so the APK was never measured. GUARD 5 sets it; nothing has been published."
+            exit 1
+          fi
+
           code="$(jq -nc \
                 --arg versionName "$VERSION_NAME" \
                 --argjson versionCode "$VERSION_CODE" \
                 --arg objectKey "$OBJECT_KEY" \
                 --arg url "$PUBLIC_URL" \
                 --arg notes "$notes" \
+                --argjson sizeBytes "$APK_BYTES" \
                 '{versionCode: $versionCode,
                   versionName: $versionName,
                   objectKey: $objectKey,
                   url: (if $url == "" then null else $url end),
-                  notes: $notes}' \
+                  notes: $notes,
+                  sizeBytes: $sizeBytes}' \
             | curl -sS --max-time 60 --config "$CURL_AUTH" -o "$out" -w '%{http_code}' \
                 -X POST "${API_BASE}/api/app/release" \
                 -H 'content-type: application/json' \
@@ -1545,7 +1576,7 @@ jobs:
             echo "::error::POST /api/app/release answered ${code} instead of 201. NOTHING IS PUBLISHED — the APK is sitting in object storage under ${OBJECT_KEY_SAFE} with no release row pointing at it (harmless, and a re-run uploads it again)."
             case "$code" in
               403) echo "::error::403 means the account is not a MASTER_ADMIN. That is checked at login, so this would mean the role changed mid-run." ;;
-              422) echo "::error::422 is a schema rejection. The body is exactly {versionCode, versionName, objectKey, url, notes} and the schema forbids extra fields — check whether it has gained or lost one." ;;
+              422) echo "::error::422 is a schema rejection. The body is exactly {versionCode, versionName, objectKey, url, notes, sizeBytes} and the schema forbids extra fields — check whether it has gained or lost one. If the detail names 'sizeBytes' as an extra input, this workflow is newer than the deployed API: deploy the backend carrying AppReleasePublishRequest.sizeBytes, then re-run." ;;
             esac
             jq -r '.detail // empty' "$out" 2>/dev/null | sed 's/^/    detail: /' || true
             exit 1
@@ -1554,6 +1585,23 @@ jobs:
           server_code="$(jq -r '.versionCode // empty' "$out")"
           server_name="$(jq -r '.versionName // empty' "$out")"
           echo "Server recorded: ${server_name} (code ${server_code})."
+
+          # ─── THE SIZE CLAIM, GRADED OFF THE STORED ROW AND NOT OFF THE REQUEST ────────────────
+          # A WARNING AND NOT A FAILURE, deliberately. A release row carrying no size is a perfectly
+          # good release — an absent size means "download and trust the transfer", which is exactly
+          # what every fielded 0.0.7 APK already does — so failing the run here would destroy a
+          # correct publish over a check that is an improvement rather than a requirement. What it
+          # buys is that the day the column stops round-tripping (a schema drift, a client
+          # regenerated without it) somebody sees it on the run that caused it, instead of nobody
+          # noticing that no phone has verified a download for six months.
+          server_size="$(jq -r '.sizeBytes // empty' "$out")"
+          if [ -z "$server_size" ]; then
+            echo "::warning title=No size recorded::The release row came back with no sizeBytes, so phones will download this build without checking the transfer completed. The publish itself is fine. Check that the deployed API carries AppRelease.sizeBytes."
+          elif [ "$server_size" != "$APK_BYTES" ]; then
+            echo "::warning title=Size mismatch::This run built ${APK_BYTES} bytes but the release row records ${server_size}. A phone comparing a good download against that number will refuse it and offer a retry that cannot succeed."
+          else
+            echo "Size recorded: ${server_size} bytes, matching what was uploaded."
+          fi
           if [ "$server_code" != "$VERSION_CODE" ] || [ "$server_name" != "$VERSION_NAME" ]; then
             echo "::error::The server stored ${server_name}/${server_code} but this run built ${VERSION_NAME}/${VERSION_CODE}. The server re-derives the version code from the name, so a disagreement means the two derivations have drifted apart."
             echo "::error::A release row is now live carrying a version this run did not build. Read it at GET /api/app/release/latest and decide deliberately; do not just re-run."
@@ -1815,7 +1863,7 @@ jobs:
 
       - name: Upload the published APK as a run artifact
         if: ${{ always() && steps.size.outcome == 'success' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           # THE EXACT BYTES THAT WENT OUT, kept for as long as artifacts are kept. Not a
           # convenience: the release-signed APK is what a support question ("which build is this
@@ -1831,7 +1879,7 @@ jobs:
 
       - name: Upload the R8 mapping
         if: ${{ always() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           # WITHOUT THIS, THE CRASHES FROM THIS BUILD CANNOT BE READ. Release is the only variant
           # with R8 enabled, so every stack trace from a field handset arrives obfuscated, and

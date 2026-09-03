@@ -10,8 +10,23 @@ name: Deploy backend to EC2
 # Nothing secret is stored in this file — values come from the secrets above.
 #
 # ─── THIS WORKFLOW IS THE HEAD OF THE RELEASE PIPELINE ────────────────────────────────
-#   deploy-backend.yml  →  deploy-frontend.yml  →  android-build.yml
-#         (push)              (workflow_run)          (workflow_run)
+#   checks.yml  ⇢  deploy-backend.yml  →  deploy-frontend.yml  →  android-build.yml
+#    (push)          (push, gated)           (workflow_run)          (workflow_run)
+#
+# The `⇢` is a WAIT, not a trigger, and it is new as of 2026-09-03. One workflow cannot `needs:`
+# a job in another, so on main these two used to RACE: a push started both, and the deploy could
+# reach the box before the suite had said anything about the commit it was shipping. The
+# `wait-for-checks` job below closes that by POLLING for the Checks run at this exact SHA and
+# refusing to hand over to `deploy` until the three gating jobs are green. checks.yml's own
+# header explains why a `needs:` was rejected in the other direction (it never fires on a pull
+# request, which is where the drift is introduced) — that reasoning is untouched and still right;
+# this is the main-branch half it explicitly did not cover.
+#
+# THE WAIT DESCRIBED HERE IS BACKEND-ONLY, AND SO IS THE STAGE IT PROTECTS. Later on 2026-09-03
+# deploy-frontend.yml grew its own copy for the case this one structurally cannot see: on a
+# frontend-only push the `changes` job skips `deploy` and therefore skips the wait too, correctly
+# waiting for nothing, and stage 2 would otherwise publish over a red Checks run. See that file's
+# header — the two loops are duplicated deliberately and are not allowed to drift.
 #
 # The order is a real dependency, not a preference:
 #   • The web app calls API endpoints that only exist after the backend is deployed and
@@ -35,6 +50,28 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# ─── LEAST PRIVILEGE FOR THE GITHUB_TOKEN, ADDED 2026-09-03 ───────────────────────────────
+# This file had no `permissions:` block, which means the token it hands every step was whatever
+# the repository default happens to be — historically read/WRITE on contents for repositories
+# created before GitHub changed the default, i.e. a token that can push to main sitting in a job
+# that also opens a port and holds the production .env. Nothing here writes to the repository.
+#
+#   contents: read   the checkout, and nothing more.
+#   actions: read    `wait-for-checks` reads another workflow's runs and their jobs through the
+#                    REST API. That is the only reason this scope is here; without it the poll
+#                    below gets a 404 that looks exactly like "Checks has not started yet" and
+#                    would wait out its full twenty minutes before failing.
+permissions:
+  contents: read
+  actions: read
+
+# ─── EVERY `uses:` IS A COMMIT SHA, SINCE 2026-09-03 ─────────────────────────────────────
+# A version tag is mutable: the owner of an action can repoint `v4`, and the next deploy runs
+# different code on the box holding this product's database credentials with no change in this
+# file. The SHA is what runs; the human tag rides in a trailing comment so the line stays
+# readable. `.github/dependabot.yml` is what keeps them from going stale, which is the failure
+# mode pinning introduces.
+
 # cancel-in-progress is deliberately OFF. This workflow now starts on every push to main,
 # so overlapping runs are far more likely than they were with the old paths filter — and
 # cancelling mid-deploy is destructive here: the remote script stops the fieldrepo service
@@ -57,7 +94,7 @@ jobs:
       android: ${{ steps.detect.outputs.android }}
     steps:
       - name: Checkout (full history so the push range can be diffed)
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
 
@@ -106,23 +143,139 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Publish the change summary for the downstream workflows
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: pipeline-changes
           path: changes.env
           retention-days: 7
           if-no-files-found: error
 
-  deploy:
+  # ═══════════════════════════════════════════════════════════════════════════════════════
+  # THE GATE THAT DID NOT EXIST UNTIL 2026-09-03
+  # ═══════════════════════════════════════════════════════════════════════════════════════
+  #
+  # WHAT WAS WRONG. checks.yml and this workflow both fire on `push: main`, and one workflow
+  # cannot `needs:` a job in another, so they raced. In practice the deploy usually WON — its
+  # first real work is an rsync, while the suite is minutes of pytest — which means the ordinary
+  # case was: a commit that breaks the backend reaches the production box, and the red tick that
+  # says so arrives afterwards, on a run nobody is watching because the deploy already went green.
+  # Every guard checks.yml exists for was, on main, advisory after the fact.
+  #
+  # WHAT THIS DOES. It polls the REST API for the Checks run whose head SHA is exactly the commit
+  # being deployed, and waits for the three jobs that branch protection names. Success hands over
+  # to `deploy`; a failure or a timeout fails the run before anything on the box is touched.
+  #
+  # WHY THE THREE JOBS AND NOT THE WHOLE RUN, which is the decision most worth reading here.
+  # checks.yml gained a `Backend integration tests` job on the same day, which stands up a Postgres
+  # service and runs the ~375 database-backed tests that have never run in CI. It is deliberately
+  # NOT a required check yet (nobody has measured what it costs), and it can take far longer than
+  # the whole budget of this poll. Waiting on the RUN would therefore make an advisory job into the
+  # thing that decides whether production can be deployed — by accident, through a timeout, with no
+  # decision recorded anywhere. Waiting on the NAMED jobs keeps the gate exactly as wide as branch
+  # protection is, so promoting a job to "blocking" stays one deliberate act in one place.
+  # IF THE THREE NAMES BELOW ARE RENAMED IN checks.yml, THIS GOES RED WITH A MESSAGE SAYING SO —
+  # it does not silently pass, and that is on purpose.
+  #
+  # WHY workflow_dispatch SKIPS IT ENTIRELY. This is the documented emergency override. When the
+  # site is down and the fix is known, waiting twenty minutes for a docs check is not a safety
+  # property, it is an outage extended by process — and the person typing `gh workflow run` has
+  # already decided. The skip is visible in the run graph, so the override leaves a trace.
+  wait-for-checks:
+    name: Wait for Checks on this commit
     needs: changes
+    # Push only, and only when a deploy would actually follow. A frontend-only push skips this
+    # for the same reason it skips `deploy` — there is nothing to gate.
+    if: ${{ needs.changes.outputs.backend == 'true' && github.event_name != 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    # A hair over the poll's own 20-minute budget, so the loop's error message (which names what
+    # it was still waiting for) is what a reader sees rather than a bare job cancellation.
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Poll for the gating jobs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHA: ${{ github.sha }}
+          # The three checks.yml jobs branch protection names (see that file's header). JSON
+          # because jq consumes it as a list; a shell string of names with spaces in them is how
+          # this kind of loop quietly starts matching nothing.
+          GATING_JOBS: '["Backend tests","Web typecheck, lint and unit specs","Docs check"]'
+        run: |
+          set -euo pipefail
+          api="repos/${GITHUB_REPOSITORY}/actions"
+          # 60 × 20 s. Twenty minutes is roughly double the measured wall clock of the three
+          # gating jobs, which leaves room for a queued runner without letting a stuck run hold
+          # the box's deploy open indefinitely.
+          for attempt in $(seq 1 60); do
+            # `checks.yml` BY FILENAME. Looking the workflow up by its display name would break
+            # the day somebody edits `name:` at the top of that file, and would break silently —
+            # an empty result is indistinguishable from "not started yet".
+            runs="$(gh api "${api}/workflows/checks.yml/runs?head_sha=${SHA}&per_page=30" 2>/dev/null || echo '{"workflow_runs":[]}')"
+            # Prefer the `push` run for this SHA; fall back to whatever run exists for it. On main
+            # the push run is the one that matters, but a re-run or a dispatch of Checks against
+            # the same commit is just as good an answer and there is no reason to ignore it.
+            run_id="$(printf '%s' "$runs" | jq -r '([.workflow_runs[] | select(.event=="push")][0] // .workflow_runs[0]) | .id // ""')"
+            if [ -z "$run_id" ]; then
+              echo "attempt ${attempt}/60: no Checks run for ${SHA} yet"
+              sleep 20
+              continue
+            fi
+            jobs="$(gh api "${api}/runs/${run_id}/jobs?per_page=100" 2>/dev/null || echo '{"jobs":[]}')"
+            verdict="$(printf '%s' "$jobs" | jq -r --argjson want "$GATING_JOBS" '
+              [ .jobs[] | select(.name | IN($want[])) ]                       as $g
+              | ($want - [ $g[].name ])                                        as $missing
+              | ([ $g[] | select(.status != "completed") | .name ])            as $running
+              | ([ $g[] | select(.status == "completed" and .conclusion != "success") | .name ]) as $bad
+              | if   ($bad | length) > 0     then "fail " + ($bad | join(", "))
+                elif (($missing + $running) | length) > 0 then "wait " + (($missing + $running) | join(", "))
+                else "pass" end')"
+            state="${verdict%% *}"
+            detail="${verdict#* }"
+            case "$state" in
+              pass)
+                echo "Checks passed for ${SHA} — run ${run_id}"
+                echo "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${run_id}" >> "$GITHUB_STEP_SUMMARY"
+                exit 0
+                ;;
+              fail)
+                echo "::error::Checks failed for ${SHA} (${detail}). Not deploying. See ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${run_id}"
+                exit 1
+                ;;
+              *)
+                echo "attempt ${attempt}/60: still waiting on ${detail}"
+                ;;
+            esac
+            sleep 20
+          done
+          echo "::error::timed out after 20 minutes waiting for the Checks jobs on ${SHA}. Nothing was deployed. If the suite is genuinely this slow now, raise the loop bound here rather than deleting the gate; to ship past it in an emergency, run this workflow from the Actions tab — workflow_dispatch skips the wait by design."
+          exit 1
+
+  deploy:
+    needs: [changes, wait-for-checks]
+    # ─── THE CONDITION HAS TO NAME THE SKIP CASE EXPLICITLY ──────────────────────────────
     # Skipped (not failed) when the push did not touch backend/. A skipped job still lets
     # the workflow run finish as a success, which is what keeps the frontend stage moving
     # on a frontend-only change. Manual dispatch always deploys.
-    if: ${{ needs.changes.outputs.backend == 'true' || github.event_name == 'workflow_dispatch' }}
+    #
+    # 2026-09-03: `needs:` gained `wait-for-checks`, and that job SKIPS ITSELF on a manual
+    # dispatch. GitHub's default is that a job whose dependency was skipped is skipped too —
+    # which would have silently turned the emergency override into "dispatch never deploys".
+    # Writing an `if` that contains a status function (`!cancelled()`) is what removes the
+    # implicit `success()` and lets this job judge the results itself, so:
+    #   • wait-for-checks succeeded            → deploy (the normal, gated path)
+    #   • wait-for-checks was skipped          → deploy (manual dispatch, or nothing to gate)
+    #   • wait-for-checks failed or cancelled  → DO NOT deploy
+    if: >-
+      ${{ !cancelled()
+          && needs.changes.result == 'success'
+          && (needs.wait-for-checks.result == 'success' || needs.wait-for-checks.result == 'skipped')
+          && (needs.changes.outputs.backend == 'true' || github.event_name == 'workflow_dispatch') }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       # ─── OPEN A DEPLOY WINDOW ON PORT 22, FOR THIS RUNNER ONLY ───────────────────────────────
       #
@@ -199,7 +352,7 @@ jobs:
             2>&1 | tail -5 || echo "authorize returned non-zero (likely InvalidPermission.Duplicate) — continuing"
 
       - name: Start ssh-agent with the deploy key
-        uses: webfactory/ssh-agent@v0.9.0
+        uses: webfactory/ssh-agent@dc588b651fe13675774614f8e6a936a468676387 # v0.9.0
         with:
           ssh-private-key: ${{ secrets.EC2_SSH_KEY }}
 
@@ -208,18 +361,285 @@ jobs:
           mkdir -p ~/.ssh
           ssh-keyscan -H "${{ secrets.EC2_HOST }}" >> ~/.ssh/known_hosts
 
-      - name: Sync code to the server
+      # ═══════════════════════════════════════════════════════════════════════════════════
+      # THE RELEASE LAYOUT — ADDED 2026-09-03, AND EVERY PATH BELOW MOVED WITH IT
+      # ═══════════════════════════════════════════════════════════════════════════════════
+      #
+      # WHAT THIS DEPLOY USED TO BE. `rsync --delete` straight over /home/ubuntu/app/backend, then
+      # `pip install`, then `systemctl stop`, then migrate, then restart. Two properties of that
+      # are worth naming because they are what changed:
+      #
+      #   1. THERE WAS NO PREVIOUS VERSION ON THE BOX. The rsync overwrote it. So "roll back" meant
+      #      "find the last good commit, push a revert, and wait for a whole deploy" — minutes of
+      #      outage while somebody works out which commit that was, during the incident the bad
+      #      deploy just caused. A deployment scheme whose recovery path is another deployment has
+      #      no recovery path.
+      #   2. EVERY DEPLOY STOPPED THE APP, whether or not it needed to. The stop is there for a real
+      #      reason (see the migrate step: the schema engine cannot get a session while uvicorn
+      #      holds the pooler's clients), but it is a reason that applies ONLY when a migration is
+      #      pending, which most deploys are not. Every no-op code change bought an outage of
+      #      however long `pip install` plus `prisma generate` plus a cold start takes on a
+      #      CPU-credit-throttled t3.micro — measured in minutes, not seconds.
+      #
+      # WHAT IT IS NOW.
+      #
+      #   /home/ubuntu/app/releases/<sha>/backend/   one directory per deployed commit, venv inside
+      #   /home/ubuntu/app/current -> releases/<sha> the symlink both systemd units point through
+      #   /home/ubuntu/app/backend                   the LEGACY tree, left alone; see the shim below
+      #
+      # Rolling back is now `ln -sfn releases/<older-sha> current && systemctl restart fieldrepo
+      # fieldrepo-queue`, by hand over SSM, in seconds, with no build and no network. The last three
+      # releases are kept, so "the one before this one" is always there. NOTE THE ONE THING A
+      # SYMLINK FLIP CANNOT UNDO: a migration that has already been applied. The schema only ever
+      # moves forward, so rolling the CODE back is only safe while the older code tolerates the
+      # newer schema — which is why the migrate branch below refuses to flip forward on failure
+      # rather than trying to be clever about going backwards.
+      #
+      # ─── FIRST-RUN AND REPEAT-RUN FAILURE MODES, WRITTEN DOWN BECAUSE THEY ARE THE ONES ────
+      # ─── A DEPLOY WORKFLOW ONLY EVER HITS ONCE, ON THE DAY IT MATTERS ──────────────────────
+      #
+      #   • EMPTY releases/ AND NO SYMLINK, WITH A LIVE LEGACY TREE. This is the state of the box
+      #     the first time this workflow runs, and it is the dangerous one: the step below installs
+      #     systemd drop-ins that point at `current`, so if `current` did not exist the units would
+      #     be rewritten to a path that resolves to nothing and the next restart — including an
+      #     automatic one, `Restart=always` — would leave the API down. The shim runs FIRST and
+      #     makes `current` resolve to the running code before anything else happens.
+      #   • NO LEGACY TREE EITHER (a rebuilt box). `current` is pointed at the release about to be
+      #     created. It dangles for the length of this job, which is harmless: nothing is started
+      #     until the restart step at the end, by which time the release is complete.
+      #   • THE SAME SHA DEPLOYED TWICE (a re-run, or `gh workflow run` on an unchanged main). The
+      #     release directory already exists and is the one `current` already points at. rsync into
+      #     it is idempotent, the venv in it is kept rather than copied onto itself, and the flip is
+      #     a no-op. Every step below is written to survive this; it is the most likely "unusual"
+      #     case, not the least.
+      #   • A HALF-FINISHED RELEASE from a cancelled run. It is never flipped to, so it is inert. It
+      #     is pruned when three newer releases exist. It is not cleaned up eagerly, on purpose: a
+      #     directory nobody points at costs disk, and deleting things during a deploy is how a
+      #     deploy deletes the wrong thing.
+      - name: Prepare the release layout and the systemd units
+        env:
+          SHA: ${{ github.sha }}
         run: |
+          ssh ubuntu@${{ secrets.EC2_HOST }} "SHA='$SHA' bash -s" <<'REMOTE'
+          set -euo pipefail
+          APP=/home/ubuntu/app
+          REL="$APP/releases/$SHA"
+          mkdir -p "$APP/releases"
+
+          # ── THE ONE-TIME MIGRATION SHIM ──────────────────────────────────────────────────
+          # `ln -s` to the legacy tree rather than `cp -a` of it, deliberately. A copy would
+          # duplicate a venv whose scripts carry absolute paths to the directory they were built
+          # in, and would take minutes of disk I/O on a box that is serving traffic, to produce a
+          # bootstrap release nothing will point at again after today. The symlink makes
+          # `current/backend` resolve to exactly the tree that is running RIGHT NOW — which is the
+          # only property the shim needs — and costs nothing. `rm -rf releases/bootstrap` later
+          # removes the link and not the legacy tree; rm does not follow symlinks.
+          if [ ! -e "$APP/current" ] && [ -d "$APP/backend" ]; then
+            echo "first run on a box with the old layout: seeding releases/bootstrap from $APP/backend"
+            mkdir -p "$APP/releases/bootstrap"
+            ln -sfn "$APP/backend" "$APP/releases/bootstrap/backend"
+            ln -sfn "$APP/releases/bootstrap" "$APP/current.tmp"
+            mv -Tf "$APP/current.tmp" "$APP/current"
+          fi
+          if [ ! -e "$APP/current" ]; then
+            echo "no legacy tree either — pointing current at the release this run will build"
+            mkdir -p "$REL/backend"
+            ln -sfn "$REL" "$APP/current.tmp"
+            mv -Tf "$APP/current.tmp" "$APP/current"
+          fi
+          mkdir -p "$REL/backend"
+          echo "current -> $(readlink "$APP/current")"
+
+          # ── SYSTEMD: DROP-INS, NOT REPLACEMENT UNITS ─────────────────────────────────────
+          # The base units are written by infra/terraform/user_data.sh at FIRST BOOT ONLY, so the
+          # live box's copies are whatever was laid down the day it was created — possibly with a
+          # hand edit on top from the months this pipeline could not reach the box at all.
+          # Overwriting them wholesale would silently discard that. Drop-ins override exactly the
+          # directives that had to move and leave everything else — KillMode=control-group,
+          # RestartSec=10, TimeoutStopSec, the Description — exactly as it was. Undoing this is
+          # `rm -rf /etc/systemd/system/fieldrepo*.service.d && systemctl daemon-reload`.
+          #
+          # user_data.sh has been updated to bake the same paths and limits into the base units, so
+          # a REBUILT box matches a deployed one without needing this step to have run. The two are
+          # deliberately redundant; they are not allowed to disagree.
+          #
+          # ── THE QUEUE FLAG IS RESTATED HERE, AND IT IS NOT THE GUARANTEE IT LOOKS LIKE ────────
+          # THE PRECEDENCE TRUTH FIRST, BECAUSE THIS COMMENT USED TO STATE IT BACKWARDS. It said
+          # systemd applies Environment= and EnvironmentFile= "in the order they appear across the
+          # merged unit — LATER WINS", and therefore that putting `Environment=…=false` after the
+          # EnvironmentFile= line kept `false` on the winning side. systemd does not work that way.
+          # systemd.exec(5) is explicit: the files named by EnvironmentFile= are read shortly before
+          # the process is executed and "settings from these files override settings made with
+          # Environment=" — WHATEVER THE TEXTUAL ORDER. Order decides only which of several
+          # EnvironmentFile= lines wins against the others. So a `.env` carrying
+          # MEDIA_QUEUE_WORKER_ENABLED=true beats the line below, in this drop-in and in the base
+          # unit alike, and always has.
+          #
+          # WHAT THE LINE IS STILL FOR. It is the DEFAULT for a `.env` that omits the key, and that
+          # is worth having: `app/core/config.py` now defaults the flag to false too, so this is
+          # documentation and defence-in-depth rather than the only thing standing between uvicorn
+          # and a second queue drain. What it is NOT is protection against a `.env` that sets the
+          # key. Keep it; do not rely on it; do not delete it because "the .env does not set it".
+          #
+          # SO THE CONVENTION IS ENFORCED BY THE PIPELINE INSTEAD. The step named "Refuse a .env
+          # that would start a second queue drain", immediately after the .env is written, fails the
+          # deploy if the secret ever gains a truthy value for this key — which is the only place
+          # the guarantee can actually be made, because it is the only place that can see the file.
+          # What it prevents is a second drain inside uvicorn beside fieldrepo-queue: two ffmpeg
+          # workloads and two paid transcription runs on a 1 GiB box sized for one, a starved
+          # health-ping, a SIGKILLed worker, orphaned Prisma query-engines, and a pooler at its
+          # client ceiling answering 500 to every login. user_data.sh tells the same story from the
+          # base unit's side.
+          changed=0
+          write_dropin() {
+            dir="/etc/systemd/system/$1.d"
+            sudo mkdir -p "$dir"
+            tmp="$(mktemp)"
+            cat > "$tmp"
+            # `cmp` rather than an unconditional copy so a redeploy that changes nothing does not
+            # daemon-reload for nothing, and so the log says which of these actually moved.
+            if sudo cmp -s "$tmp" "$dir/$2"; then
+              echo "unchanged $dir/$2"
+            else
+              sudo cp "$tmp" "$dir/$2"
+              sudo chmod 0644 "$dir/$2"
+              changed=1
+              echo "installed $dir/$2"
+            fi
+            rm -f "$tmp"
+          }
+
+          write_dropin fieldrepo.service 10-release-layout.conf <<'CONF'
+          [Service]
+          WorkingDirectory=/home/ubuntu/app/current/backend
+          EnvironmentFile=
+          EnvironmentFile=/home/ubuntu/app/current/backend/.env
+          Environment=MEDIA_QUEUE_WORKER_ENABLED=false
+          ExecStart=
+          ExecStart=/home/ubuntu/app/current/backend/.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1
+          CONF
+
+          write_dropin fieldrepo-queue.service 10-release-layout.conf <<'CONF'
+          [Service]
+          WorkingDirectory=/home/ubuntu/app/current/backend
+          EnvironmentFile=
+          EnvironmentFile=/home/ubuntu/app/current/backend/.env
+          ExecStart=
+          ExecStart=/home/ubuntu/app/current/backend/.venv/bin/python -m app.worker
+          CONF
+
+          # ── THE MEMORY GUARDRAILS ────────────────────────────────────────────────────────
+          # This is a t3.micro: 1 GiB of RAM and a 2 GiB swap file. The queue worker runs ffmpeg and
+          # AI transcription, and a single large audio job can take it well past what is left after
+          # uvicorn, Postgres client buffers and the kernel. Unbounded, the kernel's OOM killer picks
+          # the victim — and it does not pick the greedy one, it picks by badness score, which on
+          # this box has meant uvicorn dying because the QUEUE was hungry. The API then 502s for a
+          # reason that appears nowhere in its own logs.
+          #
+          # MemoryHigh is a SOFT ceiling: over it the cgroup is throttled and reclaimed aggressively,
+          # so a heavy job gets slow instead of getting everything else killed. MemoryMax is the hard
+          # stop and only the queue has one — over it the queue's own process is killed, which is
+          # recoverable (Restart=always, and the job is retried) in a way that losing uvicorn is not.
+          # uvicorn deliberately has NO MemoryMax: killing the API to save memory is the outcome
+          # these limits exist to prevent.
+          #
+          # 400M/550M and 500M are chosen so the two soft ceilings plus headroom fit inside 1 GiB.
+          # They are a first setting, not a measurement — if the queue starts thrashing on real
+          # transcription work, raise MemoryHigh and watch `systemctl status fieldrepo-queue` for
+          # the memory line rather than guessing again.
+          write_dropin fieldrepo.service memory.conf <<'CONF'
+          [Service]
+          MemoryHigh=500M
+          CONF
+
+          write_dropin fieldrepo-queue.service memory.conf <<'CONF'
+          [Service]
+          MemoryHigh=400M
+          MemoryMax=550M
+          CONF
+
+          if [ "$changed" = "1" ]; then
+            sudo systemctl daemon-reload
+            echo "systemd reloaded"
+          fi
+          REMOTE
+
+      - name: Sync code to the release directory
+        env:
+          SHA: ${{ github.sha }}
+        run: |
+          # `--delete` STAYS, and it is safe against the venv for a reason worth stating rather
+          # than trusting: rsync does not delete files the transfer EXCLUDED unless it is asked to
+          # with --delete-excluded. So `.venv`, `__pycache__` and `.env` on the receiver survive a
+          # --delete run, and what --delete actually removes is a source file that this commit
+          # deleted — which is exactly what it is for, and is what makes re-rsyncing into an
+          # existing release directory (the repeat-SHA case) produce the right tree instead of a
+          # union of two commits.
+          #
+          # `.env` IS NEWLY EXCLUDED. It is written by the next step, so on a first pass it makes no
+          # difference — but on a redeploy of the same SHA the old behaviour deleted the live .env
+          # and left the release without one for the length of the rsync. Nothing restarts in that
+          # window today; a file the deploy is not allowed to lose should still not depend on that.
           rsync -az --delete \
-            --exclude '.venv' --exclude '__pycache__' --exclude '*.pyc' \
-            ./backend/ ubuntu@${{ secrets.EC2_HOST }}:/home/ubuntu/app/backend/
+            --exclude '.venv' --exclude '__pycache__' --exclude '*.pyc' --exclude '.env' \
+            ./backend/ "ubuntu@${{ secrets.EC2_HOST }}:/home/ubuntu/app/releases/$SHA/backend/"
 
       - name: Write .env on the server (piped over the SSH tunnel, never on the command line)
-        run: |
-          printf '%s' "$BACKEND_ENV" | ssh ubuntu@${{ secrets.EC2_HOST }} \
-            'cat > /home/ubuntu/app/backend/.env && chmod 600 /home/ubuntu/app/backend/.env'
         env:
           BACKEND_ENV: ${{ secrets.BACKEND_ENV }}
+          SHA: ${{ github.sha }}
+        run: |
+          # Into the RELEASE directory, not the shared one. Each release carries the .env it was
+          # deployed with, so rolling the symlink back rolls the configuration back with it.
+          printf '%s' "$BACKEND_ENV" | ssh "ubuntu@${{ secrets.EC2_HOST }}" \
+            "cat > /home/ubuntu/app/releases/$SHA/backend/.env && chmod 600 /home/ubuntu/app/releases/$SHA/backend/.env"
+
+      # ─── THE CONVENTION THAT WAS ONLY EVER A CONVENTION, ENFORCED 2026-09-03 ────────────────
+      #
+      # `Environment=MEDIA_QUEUE_WORKER_ENABLED=false` in fieldrepo.service's drop-in above reads
+      # like a guarantee and is not one: systemd.exec(5) says EnvironmentFile= overrides
+      # Environment= regardless of the order the two appear in, so THIS FILE — the .env written a
+      # step ago — is the winner for every key it sets. The comment on that drop-in claimed the
+      # opposite for months. Nothing broke, because BACKEND_ENV has never carried this key; that is
+      # luck plus habit, and habit is not a control.
+      #
+      # So the check is here, where the file actually exists, and it is the cheapest possible one.
+      # It runs BEFORE the units are restarted, so a bad secret fails the deploy with the previous
+      # release still serving rather than after two drains are already running.
+      #
+      # WHAT IT PREVENTS, NAMED SO THE FAILURE IS RECOGNISABLE: a second media-queue drain inside
+      # uvicorn, beside the fieldrepo-queue unit that is already draining. Two ffmpeg workloads and
+      # two paid transcription runs on a 1 GiB box sized for one; uvicorn's health-ping starved by
+      # a heavy chunk until the supervisor SIGKILLs it; a Prisma query-engine orphaned per kill
+      # cycle until the pooler hits its client ceiling and every login answers 500 while /health
+      # stays 200. `media_queue.acquire_queue_worker_lock` refuses a second drain per HOST and is
+      # the other half of the fix; this is the half that stops the box being asked in the first
+      # place. `false` is allowed and normal — only a TRUE value is refused.
+      #
+      # NOTHING FROM .env IS EVER PRINTED HERE. `grep -q` is silent by construction and the message
+      # names the key, not the line: a deploy log is not the place to leak a secret while asserting
+      # about one.
+      - name: Refuse a .env that would start a second queue drain
+        env:
+          SHA: ${{ github.sha }}
+        run: |
+          ssh ubuntu@${{ secrets.EC2_HOST }} "SHA='$SHA' bash -s" <<'REMOTE'
+          set -euo pipefail
+          cd "/home/ubuntu/app/releases/$SHA/backend"
+          if [ ! -s .env ]; then
+            echo "::error::the release .env is missing or empty after the write step — the BACKEND_ENV secret is unset or the pipe into it failed. This box would boot with no DATABASE_URL."
+            exit 1
+          fi
+          # `tr -d` strips quotes first so MEDIA_QUEUE_WORKER_ENABLED="true" is caught as well as
+          # the bare form; the anchored tail is what keeps `t` from matching a word starting with t.
+          # The truthy set is the one pydantic-settings accepts for a bool.
+          if tr -d "\"'" < .env \
+            | grep -Eiq '^[[:space:]]*(export[[:space:]]+)?MEDIA_QUEUE_WORKER_ENABLED[[:space:]]*=[[:space:]]*(1|t|y|on|yes|true)[[:space:]]*$'; then
+            echo "::error::BACKEND_ENV sets MEDIA_QUEUE_WORKER_ENABLED to a true value. On this box the .env WINS over the systemd drop-in (EnvironmentFile overrides Environment, whatever the order), so uvicorn would drain the media queue alongside fieldrepo-queue: two ffmpeg workloads and two billed transcription runs on a 1 GiB box, a SIGKILLed web worker and orphaned query-engines. Remove the key from the secret, or set it to false."
+            exit 1
+          fi
+          echo "queue flag: the release .env does not enable the in-process drain"
+          REMOTE
 
       # Pin CORS to the origins that actually exist, in the workflow rather than in BACKEND_ENV.
       #
@@ -238,10 +658,15 @@ jobs:
       # — omitting it would break every developer's browser while looking like an API fault. The
       # Android client is unaffected either way: a native HTTP client does not do CORS.
       - name: Pin the CORS origins
+        env:
+          SHA: ${{ github.sha }}
         run: |
-          ssh ubuntu@${{ secrets.EC2_HOST }} 'bash -s' <<'REMOTE'
+          ssh ubuntu@${{ secrets.EC2_HOST }} "SHA='$SHA' bash -s" <<'REMOTE'
           set -euo pipefail
-          cd /home/ubuntu/app/backend
+          # 2026-09-03: the release layout moved this file. It is edited in the release directory,
+          # BEFORE the symlink flip, so the origins land in the .env the new code will read and the
+          # currently-serving release's .env is never touched by a deploy that may yet fail.
+          cd "/home/ubuntu/app/releases/$SHA/backend"
           # The step above writes this file with `printf '%s'`, which emits NO trailing newline, so a
           # bare `>>` glues the new key onto the end of whatever the last line is and silently
           # corrupts that variable. Guarantee the newline first. (This is not hypothetical: the first
@@ -295,44 +720,202 @@ jobs:
           echo "CORS origins pinned"
           REMOTE
 
-      - name: Install deps, migrate, restart
+      # ─── THE VENV, AND WHY IT IS COPIED RATHER THAN REBUILT OR HARD-LINKED ──────────────────
+      #
+      # A venv per release is what makes the symlink flip a real rollback: roll back to a release
+      # whose lock pinned a different prisma, and you get that prisma, not whatever the last deploy
+      # left in a shared directory. It also means a deploy that fails halfway has not touched the
+      # environment the running code is using. The cost is disk, and on a 30 GiB root with three
+      # releases kept that cost is not interesting.
+      #
+      # Building it from scratch every time IS interesting, though: `pip install` of seventy-one
+      # wheels on a CPU-credit-throttled t3.micro is minutes, every deploy, for a commit that
+      # usually changed a route handler. So the venv is REBUILT only when the dependency set moved
+      # — decided by comparing this release's `requirements.lock` and `pyproject.toml` against the
+      # previous release's copies — and otherwise COPIED from the previous release.
+      #
+      # `cp -a` AND NOT `cp -al`, WHICH IS THE ONE DECISION HERE THAT IS NOT OBVIOUS. Hard links
+      # would make the copy instant and free, and they would be WRONG: `prisma generate` writes the
+      # generated client INTO site-packages, in place, so a hard-linked venv means generating for
+      # this release silently rewrites the previous release's client to this release's schema. The
+      # rollback target would then be code from one commit running a Prisma client generated for
+      # another commit's schema — a corruption that appears only when you roll back, which is the
+      # worst possible time to discover it. A real copy is a few seconds of I/O to keep releases
+      # genuinely independent.
+      #
+      # `pip install -e . --no-deps` runs on BOTH paths, copied or fresh. The editable install
+      # writes a path file naming the directory it was run from, so a copied venv still points at
+      # the PREVIOUS release's source tree until it is re-run here. `--no-deps` is what keeps the
+      # lock authoritative — without it pip re-resolves this project's declared ranges and can lift
+      # a pin the lock had settled.
+      - name: Build or reuse the release venv, and generate the Prisma client
+        env:
+          SHA: ${{ github.sha }}
         run: |
-          ssh ubuntu@${{ secrets.EC2_HOST }} 'bash -s' <<'REMOTE'
-          set -euxo pipefail
-          cd /home/ubuntu/app/backend
-          if [ ! -d .venv ]; then python3.12 -m venv .venv; fi
-          ./.venv/bin/pip install --upgrade pip
-          ./.venv/bin/pip install -e .
+          ssh ubuntu@${{ secrets.EC2_HOST }} "SHA='$SHA' bash -s" <<'REMOTE'
+          set -euo pipefail
+          APP=/home/ubuntu/app
+          REL="$APP/releases/$SHA"
+          # `readlink -f` resolves through the bootstrap symlink too, so PREV is a real directory
+          # or empty. `|| true` because on a brand-new box there is nothing to resolve.
+          PREV="$(readlink -f "$APP/current" 2>/dev/null || true)"
+          cd "$REL/backend"
+
+          if [ -n "$PREV" ] && [ "$PREV" = "$REL" ] && [ -x .venv/bin/python ]; then
+            # Redeploy of the commit that is already live. The venv in this directory IS the one in
+            # use; rebuilding or copying it onto itself would at best waste minutes and at worst
+            # delete the environment of the running process.
+            echo "same commit already current — keeping the venv that is in this release"
+          elif [ -n "$PREV" ] && [ -x "$PREV/backend/.venv/bin/python" ] \
+               && [ -f "$PREV/backend/requirements.lock" ] && [ -f requirements.lock ] \
+               && cmp -s "$PREV/backend/requirements.lock" requirements.lock \
+               && cmp -s "$PREV/backend/pyproject.toml" pyproject.toml; then
+            echo "dependencies unchanged since $PREV — copying its venv"
+            rm -rf .venv
+            cp -a "$PREV/backend/.venv" .venv
+          else
+            # Also the path taken on the FIRST run of this workflow, where PREV is the legacy tree
+            # and has no requirements.lock to compare against. Building once is the right answer
+            # there: the legacy venv was installed from unpinned ranges and is exactly what the lock
+            # exists to replace.
+            echo "building a fresh venv from requirements.lock"
+            rm -rf .venv
+            python3.12 -m venv .venv
+            ./.venv/bin/python -m pip install --upgrade pip
+            ./.venv/bin/python -m pip install -r requirements.lock
+          fi
+
+          # `python -m pip` and never `./.venv/bin/pip`: a copied venv's console scripts carry a
+          # shebang naming the directory they were BUILT in, which is the previous release and may
+          # since have been pruned. The interpreter is a symlink to the system python and does not
+          # have that problem.
+          ./.venv/bin/python -m pip install -e . --no-deps
           PATH="$PWD/.venv/bin:$PATH" ./.venv/bin/python -m prisma generate
-          # Migrations need SESSION mode; on the Supabase deployment this was written against, until
-          # 2026-08-22, that meant a pooler with pool_size 15. The running app
-          # holds most of those client sessions across its uvicorn workers, so the schema engine had
-          # no connection left and failed with "EMAXCONNSESSION max clients reached". Stop the app to
-          # free its sessions, then migrate (with a short retry for any sessions the pooler hasn't
-          # reclaimed yet). The app is ALWAYS restarted afterwards, so a transient migrate failure
-          # never leaves the API down — but a genuine migrate failure still fails the deploy.
-          sudo systemctl stop fieldrepo || true
-          sleep 5
-          migrate_ok=0
-          for attempt in 1 2 3 4 5; do
-            if PATH="$PWD/.venv/bin:$PATH" ./.venv/bin/python -m prisma migrate deploy; then migrate_ok=1; break; fi
-            echo "migrate attempt ${attempt} failed; waiting for pooler sessions to drain..."; sleep 10
-          done
-          sudo systemctl restart fieldrepo
-          # The media queue runs in its OWN service (decoupled from uvicorn so its heavy AI/ffmpeg
-          # work can never starve uvicorn's worker health-ping and get the worker SIGKILLed, which
-          # used to orphan Prisma query-engines and exhaust the pooler -> HTTP 500). Restart it too
-          # so it picks up the new code; '|| true' keeps deploys working on a box provisioned before
-          # this service existed.
-          sudo systemctl restart fieldrepo-queue 2>/dev/null || true
-          if [ "$migrate_ok" != "1" ]; then echo "prisma migrate deploy failed after retries"; exit 1; fi
+          REMOTE
+
+      # ─── MIGRATE ONLY IF THERE IS SOMETHING TO MIGRATE, THEN FLIP ──────────────────────────
+      #
+      # THE STOP IS THE OUTAGE, AND IT IS NOT ALWAYS NEEDED. The paragraph inside this step
+      # explains why a pending migration requires stopping the app first, and every word of it is
+      # still true — it is preserved verbatim below. What was wrong was applying it unconditionally:
+      # most deploys carry no migration, and those paid for a full stop/start cycle they had no
+      # reason to. `prisma migrate status` answers the question in one round trip, so the common
+      # case is now a symlink flip plus a restart — sub-second, and the units come back on the new
+      # code without the box ever having no code to serve.
+      #
+      # WHY A FAILED `migrate status` COUNTS AS "PENDING". It exits non-zero for pending migrations
+      # AND for a database it could not reach or read. Treating both as pending sends an
+      # unreachable database down the stop-and-retry path, which is the branch that already knows
+      # how to fail loudly. The alternative — treating an error as "nothing to do" — would flip to
+      # new code against a schema nobody checked.
+      #
+      # WHAT HAPPENS WHEN THE MIGRATION FAILS ANYWAY: THE SYMLINK IS NOT FLIPPED. The box goes back
+      # to serving the PREVIOUS release, which is code that matches the schema that is actually
+      # there, and the run goes red. That is the whole point of the layout: before it, a failed
+      # migrate left new code on disk with no way back except another deploy.
+      - name: Migrate if needed, flip the symlink, restart
+        env:
+          SHA: ${{ github.sha }}
+        run: |
+          ssh ubuntu@${{ secrets.EC2_HOST }} "SHA='$SHA' bash -s" <<'REMOTE'
+          set -uo pipefail
+          APP=/home/ubuntu/app
+          REL="$APP/releases/$SHA"
+          cd "$REL/backend"
+          export PATH="$PWD/.venv/bin:$PATH"
+
+          # ATOMIC BY `mv -T`, not by `ln -sfn` alone. `ln -sfn` unlinks and re-creates, so there is
+          # a window — brief, but real — in which `current` does not exist at all, and an automatic
+          # `Restart=always` landing in it would fail. Renaming a finished symlink over the old one
+          # is a single syscall with no such window.
+          flip() {
+            ln -sfn "$REL" "$APP/current.tmp"
+            mv -Tf "$APP/current.tmp" "$APP/current"
+            echo "current -> $(readlink "$APP/current")"
+          }
+          restart_units() {
+            sudo systemctl restart fieldrepo
+            # The media queue runs in its OWN service (decoupled from uvicorn so its heavy AI/ffmpeg
+            # work can never starve uvicorn's worker health-ping and get the worker SIGKILLed, which
+            # used to orphan Prisma query-engines and exhaust the pooler -> HTTP 500). Restart it too
+            # so it picks up the new code; '|| true' keeps deploys working on a box provisioned before
+            # this service existed.
+            sudo systemctl restart fieldrepo-queue 2>/dev/null || true
+          }
+
+          deploy_failed=0
+          if ./.venv/bin/python -m prisma migrate status; then
+            echo "no pending migrations — taking the no-downtime path (flip, then restart)"
+            flip
+            restart_units
+          else
+            echo "migrations are pending (or the database could not be read) — taking the stop-first path"
+            # Migrations need SESSION mode; on the Supabase deployment this was written against, until
+            # 2026-08-22, that meant a pooler with pool_size 15. The running app
+            # holds most of those client sessions across its uvicorn workers, so the schema engine had
+            # no connection left and failed with "EMAXCONNSESSION max clients reached". Stop the app to
+            # free its sessions, then migrate (with a short retry for any sessions the pooler hasn't
+            # reclaimed yet). The app is ALWAYS restarted afterwards, so a transient migrate failure
+            # never leaves the API down — but a genuine migrate failure still fails the deploy.
+            sudo systemctl stop fieldrepo || true
+            # 2026-09-03: the QUEUE is stopped too, and it was not before. It holds pooler sessions of
+            # its own — that is the whole reason it exists as a separate process — so leaving it up
+            # while stopping uvicorn frees only some of the clients the schema engine is waiting for.
+            sudo systemctl stop fieldrepo-queue 2>/dev/null || true
+            sleep 5
+            migrate_ok=0
+            for attempt in 1 2 3 4 5; do
+              if ./.venv/bin/python -m prisma migrate deploy; then migrate_ok=1; break; fi
+              echo "migrate attempt ${attempt} failed; waiting for pooler sessions to drain..."; sleep 10
+            done
+            if [ "$migrate_ok" = "1" ]; then
+              flip
+              restart_units
+            else
+              echo "::error::prisma migrate deploy failed after retries. NOT flipping the symlink — the box stays on $(readlink "$APP/current"), which is code that matches the schema the database actually has. Nothing is half-deployed; fix the migration and push again."
+              deploy_failed=1
+              restart_units
+            fi
+          fi
+
           # App startup connects to a remote database, possibly cross-region, so poll rather than sleep.
+          # This runs on the rollback path too: whichever release the units came back on, the deploy
+          # does not finish until something is answering.
           for i in $(seq 1 40); do
             if curl -fsS http://127.0.0.1:8000/health >/dev/null 2>&1; then echo "healthy after ${i} tries"; break; fi
             if [ "$i" = "40" ]; then echo "service did not become healthy:"; sudo journalctl -u fieldrepo -n 80 --no-pager; exit 1; fi
             sleep 2
           done
           curl -fsS http://127.0.0.1:8000/health
+          exit "$deploy_failed"
+          REMOTE
+
+      # Keep three: the one that is live, the one to roll back to, and one more for the case where
+      # the obvious rollback target is the release that caused the problem. Older ones are disk, not
+      # insurance — nobody rolls back four deploys.
+      #
+      # `current` IS NEVER PRUNED, whatever its age. That guard is not theoretical: a deploy that
+      # failed its migration leaves `current` pointing at an OLDER release than the three newest
+      # directories on disk, and without the guard the next run would delete the code the box is
+      # running out from under it.
+      - name: Prune old releases
+        run: |
+          ssh ubuntu@${{ secrets.EC2_HOST }} 'bash -s' <<'REMOTE'
+          set -euo pipefail
+          APP=/home/ubuntu/app
+          keep="$(basename "$(readlink -f "$APP/current")")"
+          cd "$APP/releases"
+          # find/sort rather than `ls -t`: a glob over an empty directory is an error under `set -e`,
+          # and this has to be safe on a box where releases/ has just been created.
+          find . -maxdepth 1 -mindepth 1 -type d -printf '%T@ %f\n' \
+            | sort -rn | tail -n +4 | cut -d' ' -f2- \
+            | while read -r d; do
+                [ -n "$d" ] || continue
+                [ "$d" = "$keep" ] && { echo "keeping $d (current)"; continue; }
+                echo "pruning $d"
+                rm -rf -- "$d"
+              done
+          echo "releases now: $(find . -maxdepth 1 -mindepth 1 -type d | wc -l) (current: $keep)"
           REMOTE
 
       # ─── THE CHECK THAT WOULD HAVE CAUGHT A THREE-DAY LOGIN OUTAGE ───────────────────────────
@@ -359,6 +942,14 @@ jobs:
       # NOT prove the edge forwards the `Origin` header, so a CloudFront cache policy that strips it
       # would still break the browser while this step passes. That is a smaller and much rarer
       # failure than the one being closed, and closing it needs the hostname question answered first.
+      #
+      # 2026-09-03: this now runs AFTER the symlink flip, so what it interrogates is the release that
+      # is actually live — which is what it always meant to assert and could not, back when "the code
+      # on disk" and "the deployed code" were the same directory either way. Its one path reference
+      # moved to `current/` with everything else. It is deliberately still the LAST gate before the
+      # SSH window closes: if it fails the run is red, the previous release is still on disk, and the
+      # rollback is `ln -sfn releases/<sha> current && sudo systemctl restart fieldrepo
+      # fieldrepo-queue` over SSM — seconds, no build, no network.
       - name: Assert the API is ready AND answers CORS for the production origin
         run: |
           ssh ubuntu@${{ secrets.EC2_HOST }} 'bash -s' <<'REMOTE'
@@ -382,7 +973,7 @@ jobs:
           # carriage return and an end-anchored pattern can never match it.
           if ! echo "${hdr}" | grep -qi "^access-control-allow-origin: ${origin}"; then
             echo "::error::the API refuses CORS for ${origin}, so no browser on the live site can call it. Every request fails the preflight with 'Disallowed CORS origin' and the user sees only 'failed to fetch'."
-            echo "::error::BACKEND_CORS_ORIGINS on the server is: $(grep -E "^BACKEND_CORS_ORIGINS=" /home/ubuntu/app/backend/.env 2>/dev/null || echo "<not found in backend/.env>")"
+            echo "::error::BACKEND_CORS_ORIGINS on the server is: $(grep -E "^BACKEND_CORS_ORIGINS=" /home/ubuntu/app/current/backend/.env 2>/dev/null || echo "<not found in the current release's .env>")"
             echo "::error::Fix the 'Pin the CORS origins' step in this workflow, not the box by hand: the step rewrites .env on every deploy and would overwrite a manual edit."
             exit 1
           fi

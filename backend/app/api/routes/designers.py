@@ -20,12 +20,19 @@ there is something left to show.
 
 **AND ENDING AN EMPANELMENT ALSO ENDS THE PLATFORM ADMISSION THAT RESTED ON IT — RESTORING IT DOES
 NOT BRING THAT BACK.** Both endpoints that suspend a row (the ``DELETE`` and a ``PATCH`` carrying
-``isActive: false``) call ``app.services.access_roster.mirror_suspension``; the restore path calls
+``isActive: false``) go through ``_end_what_the_empanelment_carried``; the restore path calls
 nothing. The mirror is guarded so that a professor or an admin who is on this roster because they
 run workshops keeps their access to the application — see
 ``access_roster.admissions_an_empanelment_carries``, and ``auth.assert_roster_admits`` for why that
 guard is not optional. The asymmetry costs an administrator something real and both screens owe a
 sentence about it; that is named in the mirror's docstring.
+
+**AND SINCE 2026-09-03 IT ALSO ENDS THE SESSIONS THAT ADMISSION WAS CARRYING.** The empanelment gate
+runs at sign-in and nowhere else, so ending an empanelment used to leave the person's phone working
+until the token expired — a week, by default. The stamp runs behind the SAME guard as the mirror, so
+the professor and the admin above are not signed out either. Read
+``_end_what_the_empanelment_carried`` before touching either half; the order in it is the part that
+fails silently.
 
 **ROUTE ORDER IS LOAD-BEARING.** ``/me/profile`` and ``/directory`` are declared before
 ``/{user_id}/profile``. FastAPI matches in declaration order, so the other way round the literal
@@ -40,6 +47,15 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
+# THE ONE IMPLEMENTATION OF "END EVERY SESSION THIS ADDRESS IS ALREADY IN", imported rather than
+# retyped (2026-09-03). Ending an empanelment and barring somebody from the allow-list are two
+# decisions, but the revocation they both need is one act — find every spelling of the mailbox,
+# stamp ``User.sessionsValidFrom``, invalidate the identity cache — and a second two-line copy of it
+# here is a copy that will not learn whatever the first one learns next. This is the same
+# route-module-to-route-module direction ``routes/access`` already takes for ``users.assert_role``,
+# with the same standing instruction attached: if it ever needs to go the other way, the function
+# moves to ``app/core/deps.py`` rather than being duplicated.
+from app.api.routes.access import end_live_sessions
 from app.core.db import db
 from app.core.deps import (
     DESIGN_WORKSHOP_ROLES,
@@ -612,6 +628,85 @@ async def add_to_roster(
     return roster_payload(row)
 
 
+async def _end_what_the_empanelment_carried(email: Any, *, actor_id: str | None) -> None:
+    """Mirror the ended empanelment onto the allow-list, AND end the sessions it was carrying.
+
+    Both doors that end an empanelment call this — the ``DELETE`` below and a ``PATCH`` turning
+    ``isActive`` off — because a rule enforced at one of two doors is the shape of bug this whole
+    feature exists to correct, and the ordering rule below is too easy to get wrong twice.
+
+    **THE HALF THAT WAS MISSING UNTIL 2026-09-03.** Ending an empanelment stopped the person's next
+    SIGN-IN and did nothing to the session they were already in. ``auth.assert_roster_admits`` is
+    called from ``login_with_google``, once, at the door — while ``deps._user_from_bearer`` checks
+    ``User.sessionsValidFrom`` on EVERY authenticated request. So an admin who removed a departing
+    designer at 10am watched the roster row go inactive, told whoever asked that access was cut, and
+    that designer's phone went on filing records for the rest of the token's life
+    (``JWT_EXPIRES_MINUTES``, seven days by default). It is the identical defect the allow-list
+    screen had, one screen over, found by the same audit.
+
+    **THE STAMP IS GUARDED, AND THE GUARD IS THE WHOLE DIFFICULTY.** A professor or an admin who is
+    on the designer roster because they run workshops keeps their access to this application when
+    somebody ends their empanelment — ``auth.assert_roster_admits`` returns early for any role that
+    is not DESIGNER, and ``access_roster.admissions_an_empanelment_carries`` is the predicate that
+    stops the cross-roster mirror barring them. Signing them out of their own phone would be the
+    same outage delivered by a different column: not a refusal they can read and act on, but every
+    session they hold ended by an administrative click that had nothing to do with them. So the
+    stamp asks the SAME predicate rather than a second one written to resemble it — no rows carried,
+    no revocation.
+
+    **IT IS ASKED BEFORE THE MIRROR RUNS, AND THAT ORDER IS LOAD-BEARING RATHER THAN TIDY.**
+    ``mirror_suspension`` on this cause reaches ``_bar_an_ended_empanelment``, which suspends
+    precisely the ACTIVE rows the predicate names — so asking afterwards returns ``[]`` for
+    everybody and the stamp would never fire at all. That failure is silent: every test of the
+    mirror still passes and every session stays live.
+
+    The predicate therefore runs twice, once here and once inside the mirror, for two or three reads
+    on an administrator's write path. Deliberate. The cheap alternative is to branch on
+    ``mirror_suspension``'s return count, and that count answers a different question: it is 0 when
+    the allow-list row was already suspended, 0 when the Gmail sweep declined to answer, and 0 when
+    there was nothing to do — three states that must not share a branch with "this person keeps
+    their access".
+
+    **WHAT THIS DOES NOT COVER, NAMED SO NOBODY INFERS IT.** Both callers already refuse to act on a
+    bar that already stands (the ``DELETE`` returns early, the ``PATCH`` tests the transition), so an
+    empanelment ended BEFORE this shipped keeps whatever token it left alive and a second click does
+    not re-stamp it. That is the opposite choice from ``access.suspend_access_entry``, which stamps
+    on every write — and the difference is the mirror: re-enacting it here can undo an
+    administrator's deliberate restoration next door, which is not a price worth paying for a
+    watermark. The repair for the backlog is ``backend/scripts/backfill_sessions_valid_from.py``,
+    which is written for exactly this and prints its plan before it writes anything.
+
+    **AND A SWEEP THAT COULD NOT ANSWER IS SHOUTED ABOUT RATHER THAN READ AS "NOTHING TO DO"
+    (2026-09-03).** ``admissions_an_empanelment_carries`` answers ``None`` when the Gmail sweep that
+    finds every spelling of one mailbox is cut, and it used to answer ``[]`` — the same value it
+    gives for a professor whose access rests on something else. Merged, the two produced the one
+    outcome this function exists to prevent, silently: no revocation, no log line, and an
+    administrator told that access was cut. ``end_live_sessions`` already logs precisely this
+    condition at ERROR when it reaches the sweep itself; with the answers merged it was never
+    reached. The branch below therefore has THREE arms, not two, and the middle one is the alarm.
+    """
+    carried = await access_roster.admissions_an_empanelment_carries(email)
+    await access_roster.mirror_suspension(
+        email, access_roster.MIRROR_EMPANELMENT_ENDED, actor_id=actor_id
+    )
+    if carried is None:
+        # THE SAME SENTENCE ``end_live_sessions`` LOGS FOR THE SAME CAUSE, because it is the same
+        # failure arriving one function earlier: the address, what may still be live, and the two
+        # repairs. Deliberately not a 5xx — the empanelment WAS ended and the mirror above HAS run,
+        # so failing the request would undo a correct administrative action to report an incomplete
+        # one. What is missing is the session stamp, and the operator needs to know that, not a 500.
+        logger.error(
+            "sessions for %r could NOT be confirmed ended after the empanelment was ended: the "
+            "sweep that finds every spelling of one mailbox was cut, so any token this person is "
+            "already holding may still be live until it expires. The empanelment is ended and the "
+            "next sign-in is refused. Raise GMAIL_ACCOUNT_SWEEP_LIMIT, then re-run the removal, or "
+            "repair it from backend/ with python -m scripts.backfill_sessions_valid_from --write",
+            email,
+        )
+    elif carried:
+        await end_live_sessions(email)
+
+
 @router.patch("/roster/{roster_id}")
 async def update_roster_entry(
     roster_id: str,
@@ -627,9 +722,11 @@ async def update_roster_entry(
     **``isActive: false`` HERE IS THE SAME ACT AS ``DELETE`` BELOW, AND MIRRORS THE SAME WAY.** This
     endpoint is the other door onto one decision — the web client's roster screen sends the DELETE
     and an admin editing a row sends this — and a rule enforced at one of two doors is the shape of
-    bug this whole feature exists to correct. ``isActive: true`` mirrors NOTHING: restoring an
-    empanelment must not restore an admission an administrator ended for some unrelated reason. See
-    :func:`app.services.access_roster.mirror_suspension` for the full argument, which is
+    bug this whole feature exists to correct. So both go through the same
+    :func:`_end_what_the_empanelment_carried`, which suspends the admission AND ends the sessions
+    that rested on it, behind one guard. ``isActive: true`` mirrors NOTHING and ends nothing:
+    restoring an empanelment must not restore an admission an administrator ended for some unrelated
+    reason. See :func:`app.services.access_roster.mirror_suspension` for the full argument, which is
     ``ensure_empanelled``'s create-only rule read in the other direction.
     """
     row = await db.designerroster.find_unique(where={"id": roster_id})
@@ -676,11 +773,7 @@ async def update_roster_entry(
     # the allow-list row for the address it used to name is deliberately left alone — nothing on the
     # designer roster says anything about that address any more.
     if data.get("isActive") is False and row.isActive:
-        await access_roster.mirror_suspension(
-            updated.email,
-            access_roster.MIRROR_EMPANELMENT_ENDED,
-            actor_id=current_user.id,
-        )
+        await _end_what_the_empanelment_carried(updated.email, actor_id=current_user.id)
     return roster_payload(updated)
 
 
@@ -696,14 +789,18 @@ async def suspend_roster_entry(
     mirror with it: a second click must not re-enact a consequence on the other roster either — see
     the note on ``access.suspend_access_entry``, which returns early for the same reason.
 
-    **AND IT NOW ENDS THE PLATFORM ADMISSION THAT RESTED ON THIS EMPANELMENT, WHICH IS A NARROWER
-    STATEMENT THAN IT SOUNDS.** A professor or an admin who is on this roster because they run
-    workshops too keeps their access to the application, and so does anybody admitted at any other
-    tier: :func:`app.services.access_roster.admissions_an_empanelment_carries` is the guard, and it
-    exists because ``auth.assert_roster_admits`` argues at length that ending an empanelment must
-    not lock somebody out of the whole product. Restoring this row does NOT bring the admission
-    back — see :func:`app.services.access_roster.mirror_suspension` for why reactivation is the one
-    direction that never propagates, and for what that costs.
+    **AND IT NOW ENDS THE PLATFORM ADMISSION THAT RESTED ON THIS EMPANELMENT — AND, SINCE
+    2026-09-03, THE SESSIONS IT WAS CARRYING — WHICH IS A NARROWER STATEMENT THAN IT SOUNDS.** A
+    professor or an admin who is on this roster because they run workshops too keeps their access to
+    the application AND stays signed in, and so does anybody admitted at any other tier:
+    :func:`app.services.access_roster.admissions_an_empanelment_carries` is the one guard on both
+    halves, and it exists because ``auth.assert_roster_admits`` argues at length that ending an
+    empanelment must not lock somebody out of the whole product. Without the second half this button
+    was a suspension the person's phone did not hear about for a week — the empanelment gate is
+    asked at sign-in, and they had already signed in. See :func:`_end_what_the_empanelment_carried`.
+    Restoring this row does NOT bring the admission back — see
+    :func:`app.services.access_roster.mirror_suspension` for why reactivation is the one direction
+    that never propagates, and for what that costs.
     """
     row = await db.designerroster.find_unique(where={"id": roster_id})
     if row is None:
@@ -714,9 +811,7 @@ async def suspend_roster_entry(
         where={"id": roster_id},
         data={"isActive": False, "revokedAt": row.revokedAt or datetime.now(UTC)},
     )
-    await access_roster.mirror_suspension(
-        updated.email, access_roster.MIRROR_EMPANELMENT_ENDED, actor_id=current_user.id
-    )
+    await _end_what_the_empanelment_carried(updated.email, actor_id=current_user.id)
     return roster_payload(updated)
 
 

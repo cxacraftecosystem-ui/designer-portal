@@ -942,6 +942,17 @@ object DwValues {
             // `coerce_value`'s MULTI_ENUM arm returns an error for the list rather than filtering
             // it, and the two are not the same outcome: half a market-channel answer is a claim
             // about where a product is sold that nobody actually made.
+            //
+            // `field.options.isNotEmpty()` IS LOAD-BEARING AND MUST NOT BE "TIDIED" INTO A NULL
+            // CHECK ON THE VALUE. It was written as a defensive guard and became the branch that
+            // decides a field's KIND on 2026-09-03, when the registry gained MULTI_ENUM fields whose
+            // options come from the REPOSITORY rather than from an authored vocabulary — the server
+            // emits `options` only for a field naming an `enum`, so this is empty for
+            // `processStep.toolsUsed` and `prototype.toolsUsed` and the allow-list is skipped. That
+            // is exactly what the server now does (`coerce_value`: `if t is FieldType.MULTI_ENUM and
+            // not spec.ref_model`), and it has to be: those arrays hold record ids AND the free text
+            // their TAGS predecessor collected, and a client that refused either would silently
+            // decline to write a hydrated value the server would have kept.
             if (type == DwFieldType.MULTI_ENUM && field.options.isNotEmpty() &&
                 items.any { token -> field.options.none { it.value == token } }
             ) return null

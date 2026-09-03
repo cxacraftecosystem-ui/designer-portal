@@ -28,9 +28,12 @@ import org.junit.Test
  * either wrong and this stops a sync that should run, which strands real fieldwork rather than
  * merely misfiling it.
  *
- * The other half of the finding — the workshop LIST still drawing A's drafts to B — is not closed and
- * is not pinned here; `WorkshopDraftStore.list` enumerates every directory and its caller applies no
- * account filter.
+ * THE OTHER HALF OF THE FINDING IS CLOSED TOO (2026-09-03). It read: "the workshop LIST still drawing
+ * A's drafts to B is not closed and is not pinned here". `WorkshopListScreen` now asks this same
+ * function of every device-only draft and draws another account's row LABELLED AND NOT OPENABLE —
+ * [DW_DRAFT_OTHER_ACCOUNT_ROW], pinned below. The row cannot be asserted from a desktop JVM (it is a
+ * private composable), so what is pinned is the sentence it draws and the two things that sentence
+ * must not become: the sync pass's own status-screen note, or silence.
  */
 class DwDraftOwnershipTest {
 
@@ -61,5 +64,40 @@ class DwDraftOwnershipTest {
     fun `no signed-in account is not a mismatch`() {
         assertFalse(dwDraftIsForAnotherAccount(ownerUserId = "designer-A", signedInUserId = null))
         assertFalse(dwDraftIsForAnotherAccount(ownerUserId = null, signedInUserId = null))
+    }
+
+    // ── The display half ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * ONE LINE, TWO FACTS, AND NEITHER OF THEM AN ACCUSATION.
+     *
+     * The row it sits on will not open under a finger. A designer reading nothing there has exactly
+     * two conclusions available — the app is broken, or the fortnight is gone — and both send them to
+     * a support request instead of to the sign-in screen that fixes it in ten seconds.
+     */
+    @Test
+    fun `the list row says whose the work is and what moves it`() {
+        assertTrue(DW_DRAFT_OTHER_ACCOUNT_ROW.contains("Captured by another account"))
+        assertTrue(DW_DRAFT_OTHER_ACCOUNT_ROW.contains("sign in as them"))
+        // TERSE, and this is the surface where that is enforceable: it is drawn under a title on a
+        // scrolling list, beside twenty other rows.
+        assertTrue(
+            "one line, not a paragraph:\n$DW_DRAFT_OTHER_ACCOUNT_ROW",
+            DW_DRAFT_OTHER_ACCOUNT_ROW.length <= 90,
+        )
+    }
+
+    @Test
+    fun `the row line never claims the work has been deleted or lost`() {
+        // The whole reason the row is LABELLED rather than filtered out: the draft stays on the disk
+        // either way, and a workshop that silently disappears from the list is indistinguishable from
+        // a fortnight that has been thrown away — on the one screen a designer opens to check it has
+        // not been. Nothing in the sentence may suggest otherwise.
+        for (forbidden in listOf("deleted", "lost", "removed", "gone")) {
+            assertFalse(
+                "\"$forbidden\" appeared in:\n$DW_DRAFT_OTHER_ACCOUNT_ROW",
+                DW_DRAFT_OTHER_ACCOUNT_ROW.contains(forbidden),
+            )
+        }
     }
 }

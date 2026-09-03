@@ -158,7 +158,22 @@ class _DatabaseTouched(Exception):
 
 class _Tripwire:
     """Stands in for ``db``. Reading any delegate off it means the handler got past every guard,
-    unless the test explicitly handed that delegate over with ``preload``."""
+    unless the test explicitly handed that delegate over with ``preload``.
+
+    ``db.tx()`` NEEDS NO SPECIAL CASE, AND THAT WAS CHECKED RATHER THAN ASSUMED (2026-09-03). The
+    seven record PATCH routes and both review writes now open ``async with db.tx()``; ``tx`` is an
+    attribute like any other, so ``__getattr__`` below sets ``touched`` and raises the same
+    ``_DatabaseTouched`` it raises for ``artisan`` or ``craft``, and an outcome built from it means
+    exactly what it means everywhere else in this file. Giving the class an explicit ``tx`` METHOD
+    would be strictly worse: the raise would move from attribute lookup to call, and the ``touched``
+    bookkeeping would have to be written a second time to stay true.
+
+    The ordering the ``touched is False`` assertions rely on is also unchanged, for the mechanical
+    reason that every one of those PATCH routes reads its record first: ``require_record(db.craft,
+    ...)`` and ``require_record(db.workshop, ...)`` sit ABOVE their ``db.tx()``, so the wire is
+    tripped where it always was and no refusal that used to arrive as a status code now arrives as
+    ``reached``.
+    """
 
     def __init__(self) -> None:
         object.__setattr__(self, "touched", False)

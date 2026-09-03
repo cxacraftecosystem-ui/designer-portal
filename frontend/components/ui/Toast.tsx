@@ -19,10 +19,11 @@
  *    button does not have the toast vanish mid-reach.
  */
 
-import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
+import { AnimatePresence, motion } from "framer-motion";
 import { CheckCircle2, Info, TriangleAlert, X, type LucideIcon } from "lucide-react";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 
+import { useAppReducedMotion } from "@/components/guide/useAppReducedMotion";
 import { cn } from "@/lib/utils";
 
 export type ToastTone = "info" | "success" | "error";
@@ -101,7 +102,29 @@ export function useToast() {
 }
 
 function ToastViewport({ toasts, onDismiss }: { toasts: ToastRecord[]; onDismiss: (id: string) => void }) {
-  const reduce = useReducedMotion() ?? false;
+  /**
+   * BOTH SWITCHES, NOT JUST THE OS ONE — corrected 2026-09-03.
+   *
+   * This read `useReducedMotion()` from framer-motion, which subscribes to
+   * `prefers-reduced-motion: reduce` and to nothing else. This app has a SECOND switch — the
+   * Settings toggle, which stamps `data-reduced-motion="true"` on `<html>` — and it reaches CSS
+   * through a paired selector block while reaching framer's inline styles not at all. So a reader
+   * who turned reduced motion on in this app, on a machine whose OS preference is unset, still got
+   * the spring slide and the layout shuffle on every toast: the one preference they had expressed,
+   * ignored by the one surface that animates unprompted.
+   *
+   * `useAppReducedMotion()` is the union of the two and is the house answer everywhere else
+   * (`AppShell`, `FieldDialog`, the guide, `useDragReorder`). It reads `ThemeProvider`'s context,
+   * which is safe here: `app/layout.tsx` mounts `ToastProvider` INSIDE `ThemeProvider`, and this
+   * viewport is rendered by that provider. Moving `ToastProvider` above `ThemeProvider` would throw
+   * on first paint rather than fail quietly.
+   *
+   * It reads false on the server and on the first client render (the stored preference has not been
+   * read yet) and corrects a tick later. That is harmless here for the reason it is harmless in
+   * `AppShell`: nothing is animating at first paint — the viewport is deliberately mounted EMPTY,
+   * and the first toast arrives from a user action long after `ThemeProvider`'s mount effect.
+   */
+  const reduce = useAppReducedMotion();
 
   return (
     <div

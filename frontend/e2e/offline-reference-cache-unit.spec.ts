@@ -1,5 +1,9 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
 import { expect, test } from "@playwright/test";
 
+import { scopeNoticeLines } from "@/components/designworkshop/StageReferenceField";
 import { ApiError } from "@/lib/api";
 import {
   clearedLinkKeys,
@@ -16,8 +20,23 @@ import {
   unfiledLinkReason,
   workshopUnfiledReasons
 } from "@/lib/offline";
-import { narrowedTo, referenceCacheKey, referenceRecordIsReadable, REFERENCE_CACHE_VERSION } from "@/lib/referenceCache";
+import {
+  DW_CACHEABLE_REFERENCE_MODELS,
+  isDwCacheableReferenceModel,
+  isWorkshopInternalReferenceModel,
+  loadStageReferences,
+  narrowedTo,
+  referenceCacheKey,
+  referenceRecordIsReadable,
+  REFERENCE_CACHE_VERSION,
+  stageReferenceCacheKey,
+  stageReferenceCacheOwner,
+  stageReferenceRecordIsReadable
+} from "@/lib/referenceCache";
 import { cachedListLine } from "@/lib/workshopOptions";
+
+/** Read for the two rules that can only be pinned on the source — see the stage-picker block below. */
+const CACHE_SOURCE = readFileSync(join(__dirname, "..", "lib", "referenceCache.ts"), "utf8");
 
 /**
  * THE OFFLINE REFERENCE CONTRACT'S PURE HALF, PINNED WHERE IT CAN ACTUALLY BE CHECKED.
@@ -129,6 +148,295 @@ test.describe("what may be served out of the register store", () => {
     // next move is to create one). Collapsing them is the bug this whole area is about.
     expect(referenceRecordIsReadable({ ...record, items: [] })).toBe(true);
     expect(referenceRecordIsReadable(null)).toBe(false);
+  });
+});
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * The DESIGN-WORKSHOP stage pickers — A30-03's residual half, landed 2026-09-03
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * WHY THIS SECTION IS PURE FUNCTIONS AND ONE FAKE STORE RATHER THAN A BROWSER.
+ *
+ * Same argument as the header: the branch that matters is only ever reached on a laptop with no
+ * signal. The KEY, the ALLOW-LIST and the READ-THROUGH's order of operations are the three rules
+ * that decide whether a designer in a courtyard gets a roster or an empty panel, and all three are
+ * expressible without IndexedDB — `loadStageReferences` takes its `fetch` from the caller, so the
+ * network half can be a function that throws.
+ *
+ * The IndexedDB half (`getCachedStageReferences` / `putCachedStageReferences`) is NOT exercised here
+ * and that is stated rather than hidden: this spec process has no `indexedDB`, so both functions
+ * take their catch and answer null, and a behavioural test built on that would prove the catch and
+ * nothing else. Their one load-bearing rule is pinned on the source instead, below.
+ */
+
+const STAGE_FIELD = { key: "artisanRef", label: "Artisan", type: "REF", refModel: "Artisan" } as const;
+
+test.describe("the stage-picker cache key", () => {
+  test("an ALL-scoped list is one document for the whole device", () => {
+    // The sharing is the FEATURE and not a space saving: the artisan register is the same register
+    // in every workshop, so a workshop created offline — one with no server id at all — still picks
+    // from the copy some earlier workshop on this laptop downloaded. `DwReferenceStore.cacheOwner`.
+    expect(stageReferenceCacheKey("Artisan", "ALL", "ws-1")).toBe("dw__Artisan__ALL");
+    expect(stageReferenceCacheKey("Artisan", "ALL", "ws-2")).toBe(stageReferenceCacheKey("Artisan", "ALL", "ws-1"));
+    // A blank or absent scope is not WORKSHOP, so it shares too — the registry's own default.
+    expect(stageReferenceCacheKey("Artisan", "", "ws-1")).toBe("dw__Artisan__ALL");
+    expect(stageReferenceCacheKey("Artisan", null, "ws-1")).toBe("dw__Artisan__ALL");
+  });
+
+  test("a WORKSHOP-scoped list is one document PER WORKSHOP", () => {
+    // This workshop's sketches are meaningless in another one, and serving one workshop's roster
+    // for another is the cross-workshop leak `DwReferenceStore.cacheKey`'s KDoc is about.
+    //
+    // `DwSketch` now reaches this answer by the STRONGER route below — it is workshop-internal, so
+    // the declared scope is not consulted at all — and the declared-scope arm is pinned on a
+    // repository model in "a REPOSITORY register still shares one document across workshops".
+    expect(stageReferenceCacheKey("DwSketch", "WORKSHOP", "ws-1")).toBe("dw__DwSketch__ws-1");
+    expect(stageReferenceCacheKey("DwSketch", "WORKSHOP", "ws-1")).not.toBe(
+      stageReferenceCacheKey("DwSketch", "WORKSHOP", "ws-2")
+    );
+    // Case-insensitively, because `refScope` arrives off the wire and the Kotlin twin compares the
+    // same way (`scope.equals("WORKSHOP", ignoreCase = true)`).
+    expect(stageReferenceCacheKey("DwSketch", "workshop", "ws-1")).toBe("dw__DwSketch__ws-1");
+  });
+
+  test("A WORKSHOP-INTERNAL MODEL KEYS UNDER THE WORKSHOP WHATEVER ITS SCOPE SAYS", () => {
+    /*
+      THE CROSS-WORKSHOP DISJOINTNESS PIN, and the defect it is made of (2026-09-03). These five
+      entities are declared `ref_scope=ALL_SCOPE` in `stage_definitions.py`, or with no scope at all,
+      so an owner read off `refScope` filed EVERY workshop's roster, sketches, prototypes, cost
+      sheets and final products under one `ALL` document — and served the first workshop's people
+      into the second workshop's picker. The server never consults the scope for these either:
+      `reference_options` dispatches on `_dw_entity(model)` and `_in_record_options` is "always
+      scoped to the workshop whatever the field's declared scope says".
+    */
+    const internal = ["DwParticipant", "DwPrototype", "DwSketch", "DwCostSheet", "DwFinalProduct"];
+    for (const model of internal) {
+      for (const scope of ["ALL", "", "WORKSHOP", "workshop", null, undefined]) {
+        expect(stageReferenceCacheKey(model, scope, "ws-1"), `${model}/${String(scope)}`).toBe(`dw__${model}__ws-1`);
+        expect(stageReferenceCacheKey(model, scope, "ws-1")).not.toBe(stageReferenceCacheKey(model, scope, "ws-2"));
+      }
+      // The stored record's own `owner` reads through the same rule, so a document keyed per
+      // workshop can never describe itself as shared.
+      expect(stageReferenceCacheOwner(model, "ALL", "ws-1")).toBe("ws-1");
+      // Every one of them is on the allow-list, which is what makes the leak reachable at all.
+      expect(isDwCacheableReferenceModel(model)).toBe(true);
+    }
+  });
+
+  test("a REPOSITORY register still shares one document across workshops", () => {
+    // `ALL` is reserved for these, and the sharing is the whole feature: a brand-new workshop in a
+    // village picks from the copy some earlier workshop on this laptop downloaded.
+    for (const model of ["Artisan", "Craft", "Process", "ProductDocumentation", "ToolDocumentation"]) {
+      expect(stageReferenceCacheKey(model, "ALL", "ws-1")).toBe(`dw__${model}__ALL`);
+      expect(stageReferenceCacheKey(model, "ALL", "ws-1")).toBe(stageReferenceCacheKey(model, "ALL", "ws-2"));
+    }
+    // A repository model whose FIELD is WORKSHOP-scoped still keys per workshop. That is the
+    // registry's own narrowing (`ref_scope=W_SCOPE` on `interviewRef`, on stage 6's `artisanRef`)
+    // and it is untouched by the rule above.
+    expect(stageReferenceCacheKey("QuestionnaireInterview", "WORKSHOP", "ws-1")).toBe(
+      "dw__QuestionnaireInterview__ws-1"
+    );
+  });
+
+  test("the internal predicate mirrors the registry's naming and nothing looser", () => {
+    // `_dw_entity` matches the model against the registry's entity NAMES, and every `single(…)` /
+    // `many(…)` in `stage_definitions.py` names one `Dw` + PascalCase.
+    expect(isWorkshopInternalReferenceModel("DwSketch")).toBe(true);
+    expect(isWorkshopInternalReferenceModel("DwPrototypeIteration")).toBe(true);
+    // `DesignWorkshop` is `De`, not `Dw`. The grant model is refused by the allow-list long before
+    // this is asked, and it must not be read as an in-workshop entity on the way there.
+    expect(isWorkshopInternalReferenceModel("DesignWorkshop")).toBe(false);
+    for (const model of ["Artisan", "Craft", "Process", "QuestionnaireInterview", "Questionnaire"]) {
+      expect(isWorkshopInternalReferenceModel(model)).toBe(false);
+    }
+    // PascalCase after the prefix, so an ordinary word beginning "Dw" is not swept in.
+    expect(isWorkshopInternalReferenceModel("Dwelling")).toBe(false);
+    expect(isWorkshopInternalReferenceModel("")).toBe(false);
+    expect(isWorkshopInternalReferenceModel(null)).toBe(false);
+    expect(isWorkshopInternalReferenceModel(undefined)).toBe(false);
+  });
+
+  test("the namespace is disjoint from the record-form register keys, by construction", () => {
+    // Same object store, same database, no DB_VERSION bump — which is only safe because no register
+    // key can begin with a literal `dw` segment. THE COUNT IS NOT THE PROOF and never was: both
+    // shapes are three segments, and the file's own comments claimed four until 2026-09-03. What
+    // separates them is the leading NAME, against `ReferenceRegister`'s closed union of four.
+    expect(stageReferenceCacheKey("Artisan", "ALL", "ws-1").split("__")).toHaveLength(3);
+    expect(stageReferenceCacheKey("Artisan", "ALL", "ws-1").split("__")[0]).toBe("dw");
+    for (const model of ["craft", "artisan", "product", "tool"] as const) {
+      expect(referenceCacheKey(model).split("__")).toHaveLength(3);
+      expect(referenceCacheKey(model).split("__")[0]).not.toBe("dw");
+      expect(referenceCacheKey(model)).not.toBe(stageReferenceCacheKey(model, "ALL", "ws-1"));
+    }
+  });
+
+  test("a workshop id with punctuation in it still yields whole, parseable segments", () => {
+    // The Kotlin twin's `safeName` trims for exactly this reason: a segment that could end in `_`
+    // lets a prefix ending in `__` match HALF a segment, and the cross-workshop leak comes back.
+    const key = stageReferenceCacheKey("DwSketch", "WORKSHOP", "ws/1 ");
+    expect(key.split("__")).toHaveLength(3);
+    for (const segment of key.split("__")) expect(segment.endsWith("_")).toBe(false);
+  });
+});
+
+test.describe("R6 — which models a stage picker may keep a copy of", () => {
+  test("the two grant lists are not on the allow-list and cannot be cached", () => {
+    /*
+      A stale ACCESS list is wrong in the PERMISSIVE direction: a stored copy of "which workshops may
+      I file under" reads a revoked grant as a grant. The register half enforces this with a closed
+      union; here the models arrive off the wire as strings, so the enforcement is a closed
+      allow-list and everything absent from it is live-only.
+    */
+    expect(isDwCacheableReferenceModel("Workshop")).toBe(false);
+    expect(isDwCacheableReferenceModel("DesignWorkshop")).toBe(false);
+    expect(DW_CACHEABLE_REFERENCE_MODELS as readonly string[]).not.toContain("Workshop");
+    expect(DW_CACHEABLE_REFERENCE_MODELS as readonly string[]).not.toContain("DesignWorkshop");
+  });
+
+  test("a model the registry adds later is live-only until somebody names it", () => {
+    // The safe direction: a new REF model behaves exactly as every picker did before this cache
+    // existed, rather than being cached on a guess about what it holds.
+    expect(isDwCacheableReferenceModel("DwSomethingNew")).toBe(false);
+    expect(isDwCacheableReferenceModel("")).toBe(false);
+    expect(isDwCacheableReferenceModel(null)).toBe(false);
+    expect(isDwCacheableReferenceModel(undefined)).toBe(false);
+    // …and the registers a stage picker really does draw are on it.
+    for (const model of ["Artisan", "Craft", "DwSketch", "DwParticipant"]) {
+      expect(isDwCacheableReferenceModel(model)).toBe(true);
+    }
+  });
+});
+
+test.describe("the read-through, and the rule it must never break", () => {
+  /** A payload just real enough for the two things `loadStageReferences` reads: nothing, and `isEmpty`. */
+  type FakePayload = { options: { id: string }[] };
+  const answer = (count: number): FakePayload => ({
+    options: Array.from({ length: count }, (_, index) => ({ id: `a${index}` }))
+  });
+  const isEmpty = (payload: FakePayload) => payload.options.length === 0;
+
+  test("a model that cannot be cached still loads, live, exactly as it always did", async () => {
+    const seen: Array<string | null> = [];
+    const outcome = await loadStageReferences<FakePayload>({
+      workshopId: "ws-1",
+      model: "DesignWorkshop",
+      scope: "ALL",
+      isEmpty,
+      fetch: async () => answer(3),
+      onPayload: (_payload, cachedAt) => seen.push(cachedAt)
+    });
+    // Once, with a live answer. No storage was consulted and none was written — see R6 above.
+    expect(seen).toEqual([null]);
+    expect(outcome.source).toBe("live");
+    expect(outcome.cachedAt).toBeNull();
+  });
+
+  test("a failed fetch with nothing stored answers `none` AND CARRIES THE ERROR", async () => {
+    /*
+      THE ERROR IS CARRIED RATHER THAN SWALLOWED, which is where this differs from
+      `loadCachedRegister`. The picker prints the server's own sentence when a load fails outright,
+      and a deleted design workshop and a village with no signal are different refusals — flattening
+      them into one generic line is the thing this whole area exists to stop a control from doing.
+    */
+    const refusal = new ApiError(404, "This design workshop no longer exists.", null);
+    const outcome = await loadStageReferences<FakePayload>({
+      workshopId: "ws-1",
+      model: "Artisan",
+      scope: "ALL",
+      isEmpty,
+      fetch: async () => {
+        throw refusal;
+      },
+      onPayload: () => undefined
+    });
+    expect(outcome.source).toBe("none");
+    expect(outcome.error).toBe(refusal);
+  });
+
+  test("a picker with no workshop id does not consult storage, and still fetches", async () => {
+    // A workshop that exists only on this device has no id the references endpoint would recognise,
+    // and an empty owner segment would file every such picker under one shared key.
+    const seen: Array<string | null> = [];
+    const outcome = await loadStageReferences<FakePayload>({
+      workshopId: "",
+      model: "Artisan",
+      scope: "WORKSHOP",
+      isEmpty,
+      fetch: async () => answer(2),
+      onPayload: (_payload, cachedAt) => seen.push(cachedAt)
+    });
+    expect(seen).toEqual([null]);
+    expect(outcome.source).toBe("live");
+  });
+
+  test("the never-overwrite-with-empty rule is the WRITE's, and the write is not awaited", () => {
+    /*
+      THE RULE ITSELF IS `putCachedStageReferences`', and it is the one rule in this file that can
+      empty a picker if it is ever dropped: a server answering `[]` because a permission check
+      quietly failed would wipe the roster off a laptop about to lose signal for three days. It is
+      pinned on the source because this process has no IndexedDB — the function's own catch would
+      make any behavioural assertion here pass for the wrong reason.
+
+      `[]` STILL WRITES WHERE THERE IS NOTHING TO PROTECT: a genuinely empty roster on day one is a
+      real answer, and refusing to record it would leave the picker unable to tell "the server said
+      there are none" from "this device has never asked" for ever.
+    */
+    const put = CACHE_SOURCE.slice(CACHE_SOURCE.indexOf("export async function putCachedStageReferences"));
+    expect(put.slice(0, 1400), "an empty answer must not overwrite a populated document").toContain(
+      "if (isEmpty(payload) && existing && !isEmpty(existing.payload)) return existing;"
+    );
+    // Not awaited by the read-through: a picker must not wait on storage to draw a list it is
+    // already showing, and a refused write is not a failed read.
+    const read = CACHE_SOURCE.slice(CACHE_SOURCE.indexOf("export async function loadStageReferences"));
+    expect(read.slice(0, 2600)).toContain(
+      "void putCachedStageReferences(model, scope, workshopId, landed.value, isEmpty);"
+    );
+  });
+
+  test("the stored document is refused when it comes from a future build", () => {
+    const record = {
+      key: stageReferenceCacheKey("Artisan", "ALL", "ws-1"),
+      schemaVersion: REFERENCE_CACHE_VERSION,
+      model: "Artisan",
+      owner: "ALL",
+      fetchedAt: "2026-08-22T09:00:00.000Z",
+      payload: answer(0)
+    };
+    expect(stageReferenceRecordIsReadable(record)).toBe(true);
+    expect(stageReferenceRecordIsReadable({ ...record, schemaVersion: REFERENCE_CACHE_VERSION + 1 })).toBe(false);
+    expect(stageReferenceRecordIsReadable(null)).toBe(false);
+  });
+});
+
+test.describe("what a cached stage list says about itself", () => {
+  test("a cached answer leads with §3.5's sentence, and a live one says nothing extra", () => {
+    /*
+      THE STAMP IS THE WHOLE POINT OF STORING ONE. Without it a designer cannot tell "this artisan
+      has no record" from "this copy is nine days old", which is the judgement the cache exists to
+      let them make — and it is FIRST in the list because every other line here is a claim about an
+      answer and this one says WHICH answer.
+    */
+    const payload = { scopedToWorkshop: true, truncated: false, filtered: false, options: [{ id: "a1" }, { id: "a2" }] };
+    const cached = scopeNoticeLines(STAGE_FIELD as never, payload as never, "2026-08-22T09:00:00.000Z");
+    expect(cached[0]).toContain("2 artisan on this device, last refreshed");
+    expect(cached[0]).toContain("before concluding it is not on record");
+    // Absent means live, which is what keeps every pre-existing caller and assertion unchanged.
+    expect(scopeNoticeLines(STAGE_FIELD as never, payload as never)).toEqual([]);
+    expect(scopeNoticeLines(STAGE_FIELD as never, payload as never, null)).toEqual([]);
+  });
+
+  test("the stamp does not replace the truncation sentence, it precedes it", () => {
+    // A cached page of fifty is still a page of fifty. Dropping the cap sentence offline would draw
+    // a truncated list as if it were the whole register — rule 10, in the place nobody can check it.
+    const lines = scopeNoticeLines(
+      STAGE_FIELD as never,
+      { scopedToWorkshop: true, truncated: true, filtered: false, options: [{ id: "a1" }] } as never,
+      "2026-08-22T09:00:00.000Z"
+    );
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toContain("on this device");
+    expect(lines[1]).toContain("Only the first 50 matches are listed");
   });
 });
 
@@ -262,7 +570,12 @@ test.describe("what the researcher is told", () => {
     // Nothing-is-lost comes BEFORE the server's words, because the control beside this sentence is
     // Discard and a person who has read "the server rejected this" reaches for it.
     expect(said.indexOf("Nothing is lost")).toBeLessThan(said.indexOf("The server said"));
-    expect(said).toContain("Sending it again unchanged will get the same answer");
+    // Tersened on 2026-09-03 with Android's `outboxDanglingSentence`. The FACT is pinned, not the
+    // wording of its justification: "because what is missing is missing on the server" moved into
+    // the KDoc, and what a row read standing up beside a Discard button still has to say is that a
+    // bare retry is pointless. Nothing was deleted is pinned beside it for the same reason.
+    expect(said).toContain("Retrying unchanged gets the same answer");
+    expect(said).toContain("nothing was deleted");
   });
 
   test("more than one candidate is an honest ambiguity, never a guess", () => {
@@ -300,10 +613,18 @@ test.describe("the re-pick panel with nothing to offer", () => {
 
 test("a record that went up filed under nothing says so, and it is not a failure", () => {
   const said = outboxSentUnfiledMessage("Artisan · Giriraj Prasad", ["design & prototype workshop", "workshop"]);
-  expect(said).toContain("was sent, and it is filed under nothing");
+  expect(said).toContain("was sent, filed under nothing");
   // NO ARTICLES: "no" already carries the determiner.
   expect(said).toContain("there was no design & prototype workshop or workshop to choose from");
-  expect(said).toContain("That was never a claim that none exist.");
+  // What the researcher does next, and it is the whole of the remedy.
+  expect(said).toContain("Open the record and file it now.");
+  /*
+    AND THE DISCLAIMER IS GONE, DELIBERATELY (2026-09-03). It read "That was never a claim that none
+    exist." — a denial of a claim the app had not made, aimed at a misreading nobody has reported, on
+    the one notification here that follows a SUCCESS. Android cut the identical clause the same day.
+    Asserted as an ABSENCE so a well-meaning restoration has to delete this line to land.
+  */
+  expect(said).not.toContain("never a claim");
   // It must not borrow the dangling sentence's remedy: nothing is refused and there is no button.
   expect(said).not.toContain("Re-pick");
 });

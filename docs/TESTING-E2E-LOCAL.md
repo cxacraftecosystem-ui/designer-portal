@@ -47,6 +47,14 @@ one of the scripts the page it returns actually asks for. So a missing piece arr
 naming it instead of a hundred failures that each name something else. It stays out of the way of
 `npm run test:unit`, which is still allowed to need nothing at all.
 
+**Two specimens of that rule from 2026-09-03, because both look like they should need a stack and do
+not.** `backend/tests/test_media_presigned_reads.py` needs **neither a database nor a bucket** — the
+encoder is a pure walk over an already-encoded dict, the flag is a pure read of settings, and
+presigning is local HMAC — so it carries no `needs_db` and runs in the fast lane with everything else
+that needs nothing. And `frontend/e2e/media-url-refresh-unit.spec.ts` is part of the `test:unit` set:
+it ends in `-unit.spec.ts`, it is not one of that script's two excluded files, and it drives pure
+functions plus a source-text pin rather than a browser. Neither needs step 1 or step 3 above.
+
 ### The host port is 55442 here, not the compose default
 
 `docker-compose.yml` defaults to `55432`; the repository root `.env` overrides
@@ -229,6 +237,7 @@ machine does, and a machine can be asked again.
 
 | Claim class | Kept true by |
 |---|---|
+| The four commands, and their order — **now also executed weekly by a machine** | `.github/workflows/e2e-live.yml`, added 2026-09-03. It is this document's "The sequence" section, scripted, in its order and for its stated reasons, run every Monday and on demand — which makes it the thing that can be *asked again* rather than a person remembering to. If you change the sequence in one, change it in the other. **Two departures, both forced by CI and both documented in that file's own header:** the host ports are pinned to `55432` and `9010` in the job's `env:` (a runner has no repository-root `.env`, so the compose defaults apply and `55442` is an override on one laptop), and it runs `prisma migrate deploy`, which this document does not mention because the laptop's database already carried the schema. A runner's Postgres is empty every time. |
 | The four commands, and their order | Run them. Each one either brings a port up or it does not. `e2e/support/preflight.ts` then re-asks four of these questions before the first spec — the API's `/health`, a real login (standing in for Postgres **and** the seeded accounts), MinIO's `/minio/health/live`, and the web app plus one script the page it serves asks for — so a sequence that has gone stale fails as a sentence rather than as a wall of red. It does **not** know which build `next start` is serving, and the storage probe warns rather than throwing, because a QR or stage-form run is perfectly valid without object storage. If you change the sequence here, change the preflight's remedy strings in the same edit; they are the copy a person actually reads, and they said `npm run dev` for a day after this document had stopped recommending it. |
 | The DSN and the host port `55442` | The repository root `.env` (`POSTGRES_HOST_PORT`) and `docker-compose.yml`'s `${POSTGRES_HOST_PORT:-55432}`. **Re-read them rather than this file** — the default and the override differ, and which one applies is a property of the checkout, not of the documentation. |
 | The account `admin2@example.org` and its password | `backend/scripts/seed_test_accounts.py` — `ACCOUNTS` and `PASSWORD`, in the file, not here. |

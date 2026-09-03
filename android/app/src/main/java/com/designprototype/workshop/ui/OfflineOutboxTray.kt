@@ -31,6 +31,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.designprototype.workshop.data.DW_DRAFT_OTHER_ACCOUNT_ROW
 import com.designprototype.workshop.data.REFERENCE_FIELD_NOUNS
 import com.designprototype.workshop.data.OutboxFailureRow
 import com.designprototype.workshop.data.RepickChoices
@@ -125,8 +126,16 @@ fun OfflineOutboxTray(
         //
         // The PROJECTION and not the entries — the tray never holds `PendingEntry.payloadJson`, which
         // is the whole record body including an artisan's identity answers. See OutboxFailureRow.
+        //
+        // THE SIGNED-IN ACCOUNT GOES DOWN WITH THE ENTRIES (2026-09-03), exactly as it already does
+        // for `outboxCountsOf` behind the banner, and from the same `cachedUser()` the drain reads.
+        // Without it this tray offered Try again / Try all again / Re-pick on the OTHER designer's
+        // refused entries: the retry cleared the refusal, `syncOutbox` skipped the entry on the owner
+        // check, and the row vanished from this list with the server's reason destroyed and nothing
+        // sent. See [OutboxFailureRow.otherAccount].
         rows = outboxFailureRows(
-            runCatching { repository.outboxFailures(appContext) }.getOrDefault(emptyList())
+            runCatching { repository.outboxFailures(appContext) }.getOrDefault(emptyList()),
+            repository.cachedUser()?.id,
         )
         loading = false
     }
@@ -296,7 +305,11 @@ fun OfflineOutboxTray(
         },
         confirmButton = { TextButton(onClick = onClose) { Text("Close", fontSize = 13.sp) } },
         dismissButton = {
-            if (rows.size > 1) {
+            // COUNTED OVER THE ROWS THIS SESSION MAY ACT ON (2026-09-03). Another account's refusals
+            // are listed but not sendable, and `retryAllOutboxFailures` now skips them; offering the
+            // button because two such rows are on screen would be a button whose own sentence
+            // ("There was nothing refused to try.") contradicts the list underneath it.
+            if (rows.count { !it.otherAccount } > 1) {
                 TextButton(
                     enabled = !busy,
                     onClick = {
@@ -378,6 +391,18 @@ private fun OutboxFailureCard(
         }
         // VERBATIM, and never truncated. It is the server's sentence, written for this person.
         Text(row.reason, color = MaterialTheme.field.warning, fontSize = 12.sp, lineHeight = 17.sp)
+        if (row.otherAccount) {
+            // THE ONE LINE THE WORKSHOP LIST ALREADY USES, reused rather than re-worded: one app must
+            // not describe one boundary two ways, and this constant is where that boundary's words
+            // live. It says whose the entry is and what moves it, which is the whole of the remedy —
+            // there is nothing on this row for THIS designer to do. (2026-09-03)
+            Text(
+                DW_DRAFT_OTHER_ACCOUNT_ROW,
+                color = MaterialTheme.field.muted,
+                fontSize = 11.sp,
+                lineHeight = 16.sp,
+            )
+        }
         if (row.awaitingUpdate) {
             // The one refusal nobody can act on. `blocksRetry` already re-attempts this class on the
             // next app run; saying so stops a designer deleting a good record to make a message go
@@ -407,28 +432,39 @@ private fun OutboxFailureCard(
                 lineHeight = 16.sp,
             )
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (row.repickKeys.isNotEmpty()) {
-                // FIRST, AND BEFORE Try again, because it is the only one of the three that can work
-                // on this row. Button order is an instruction on a screen somebody reads in a
-                // courtyard, and putting the one useful act third — beside a retry that cannot help
-                // and a delete that destroys fieldwork — is how the delete gets pressed.
-                OutlinedButton(onClick = onRepick, enabled = !busy, modifier = Modifier.heightIn(min = 48.dp)) {
-                    Text("Re-pick it", fontSize = 12.sp)
+        // NO BUTTONS AT ALL ON ANOTHER ACCOUNT'S ENTRY, and all three are withheld rather than just
+        // the retry (2026-09-03). *Try again* cleared the refusal and sent nothing, destroying the
+        // sentence printed two lines above; *Re-pick it* rewrites a key in a payload this session may
+        // not send, so it would edit another designer's record and leave it exactly as stuck; and
+        // *Throw away* is the irreversible one — it deletes the only copy of somebody else's
+        // fieldwork and its staged photographs, and this is the one screen in the app that can. The
+        // row is still drawn, with the server's reason and the line above, for
+        // [OutboxCounts.otherAccount]'s reason: work that silently disappears is work people conclude
+        // was lost. The remedy is on the line above and it is the only one there is.
+        if (!row.otherAccount) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (row.repickKeys.isNotEmpty()) {
+                    // FIRST, AND BEFORE Try again, because it is the only one of the three that can
+                    // work on this row. Button order is an instruction on a screen somebody reads in
+                    // a courtyard, and putting the one useful act third — beside a retry that cannot
+                    // help and a delete that destroys fieldwork — is how the delete gets pressed.
+                    OutlinedButton(onClick = onRepick, enabled = !busy, modifier = Modifier.heightIn(min = 48.dp)) {
+                        Text("Re-pick it", fontSize = 12.sp)
+                    }
                 }
-            }
-            OutlinedButton(onClick = onRetry, enabled = !busy, modifier = Modifier.heightIn(min = 48.dp)) {
-                Text("Try again", fontSize = 12.sp)
-            }
-            OutlinedButton(onClick = onDiscard, enabled = !busy, modifier = Modifier.heightIn(min = 48.dp)) {
-                // "this copy" on a clash, for the reason the confirmation dialog gives at length: the
-                // row a designer is reading names a record on the SERVER, and an unqualified "Throw
-                // away" beside it invites the reading that this button deletes that one.
-                Text(
-                    if (row.conflict) "Throw away this copy" else "Throw away",
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.error,
-                )
+                OutlinedButton(onClick = onRetry, enabled = !busy, modifier = Modifier.heightIn(min = 48.dp)) {
+                    Text("Try again", fontSize = 12.sp)
+                }
+                OutlinedButton(onClick = onDiscard, enabled = !busy, modifier = Modifier.heightIn(min = 48.dp)) {
+                    // "this copy" on a clash, for the reason the confirmation dialog gives at length:
+                    // the row a designer is reading names a record on the SERVER, and an unqualified
+                    // "Throw away" beside it invites the reading that this button deletes that one.
+                    Text(
+                        if (row.conflict) "Throw away this copy" else "Throw away",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
             }
         }
     }

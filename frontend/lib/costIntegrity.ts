@@ -56,7 +56,7 @@
  * spent, and its absence from every subtotal may be the very discrepancy being looked at.
  */
 
-import { asNumber, pyRound, pySum } from "@/lib/marketAnalysis";
+import { asNumber, pyRound, pyStrip, pySum } from "@/lib/marketAnalysis";
 
 /** One stored stage row's `data`, with `_entryId` injected by whoever loaded it. */
 export type CostRow = Record<string, unknown>;
@@ -188,7 +188,10 @@ export function rollUp(kind: "MATERIAL" | "LABOUR", lines: CostRow[]): LineRollU
   for (const line of lines) {
     const amount = money(line.amount);
     if (amount === null) {
-      unreadable.push(String(line[labelKey] ?? "").trim() || "an unnamed line");
+      // `pyStrip` and not `trim()`: `cost_integrity.py:166` is `.strip()` and `DwCostIntegrity.kt`
+      // is `DwPy.strip`, and the two sets differ over U+0085 and U+FEFF (2026-09-03). A label padded
+      // with a next-line reads as its real name there and as "an unnamed line" here.
+      unreadable.push(pyStrip(String(line[labelKey] ?? "")) || "an unnamed line");
       continue;
     }
     total += amount;
@@ -705,7 +708,9 @@ export function analyseCostIntegrity({
       for (const row of rows) {
         ofKind.push({
           kind,
-          label: String(row[labelKey] ?? "").trim() || "an unnamed line",
+          // `pyStrip` for the same reason as in `rollUp` above: `cost_integrity.py:671` strips the
+          // Python set, and an orphan is NAMED in a caution an admin reads (2026-09-03).
+          label: pyStrip(String(row[labelKey] ?? "")) || "an unnamed line",
           ref: String(row.costSheetRef ?? ""),
           amount: round(money(row.amount))
         });

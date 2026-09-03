@@ -177,14 +177,20 @@ function describeTrouble(error: unknown, action: string): Trouble {
     };
   }
 
+  /*
+    THE ADVICE LINES ARE ONE SENTENCE EACH — 2026-09-03, the same copy rule as `EntityForm`'s cap
+    notice. Each of these was a 40-to-60-word paragraph explaining the mechanism: that a 404 means
+    the screen is newer than the API and no setting has been lost, that a 403 is a permission rather
+    than a fault so retrying gives the same answer, that a 5xx is not the reader's doing. All true,
+    none of it changed the one act available — deploy, ask an admin, press Try again. `headline`
+    already states what happened and `technical` already carries the line an engineer needs, so the
+    middle paragraph was the only one with nothing to do. The mechanism stays in this comment; the
+    branch structure itself is unchanged and is documented above.
+  */
   if (status === 404) {
     return {
       headline: "This server does not have the provider ranking yet.",
-      advice:
-        `The screen is newer than the API it is talking to — the address it asked for simply is not there. ` +
-        `Nothing is wrong with your account or your recordings, and no setting has been lost. Whoever deploys ` +
-        `the backend needs to release the current version; until they do, the order below is the app's built-in ` +
-        `default rather than the live one, and cannot be changed from here.`,
+      advice: `The API needs the current release deployed. Until then the order below is the built-in default and cannot be changed.`,
       technical,
       retryable: true
     };
@@ -192,10 +198,7 @@ function describeTrouble(error: unknown, action: string): Trouble {
   if (status === 403) {
     return {
       headline: "Your account is not allowed to see or change this ranking.",
-      advice:
-        `Choosing which engine transcribes recordings needs the Admin role or above. Ask a master admin either ` +
-        `to raise your role or to make the change for you — this is a permission, not a fault, so retrying will ` +
-        `give the same answer.`,
+      advice: `Ranking transcription engines needs Admin or above. Ask a master admin.`,
       technical,
       retryable: false
     };
@@ -215,10 +218,7 @@ function describeTrouble(error: unknown, action: string): Trouble {
   if (verdict.kind === "transient") {
     return {
       headline: "The server ran into a problem of its own.",
-      advice:
-        `This one is on the API side, not on anything you did, and it is not fixable from this screen. Give it a ` +
-        `minute and press Try again. If it keeps happening, send whoever looks after the backend the line below ` +
-        `and roughly what time it was — that is enough for them to find it in the logs.`,
+      advice: `Give it a minute and press Try again. If it keeps happening, send the line below to whoever looks after the backend.`,
       technical,
       retryable: true
     };
@@ -228,9 +228,7 @@ function describeTrouble(error: unknown, action: string): Trouble {
   if (verdict.kind === "unreachable") {
     return {
       headline: "The page could not reach the server at all.",
-      advice:
-        `No answer came back, which is usually this device's internet connection or the API being down entirely. ` +
-        `Check you are online and press Try again.`,
+      advice: `Check this device is online, then press Try again.`,
       technical,
       retryable: true
     };
@@ -467,24 +465,29 @@ export function ProviderOrderPanel() {
     const runnable = saved.filter((provider) => provider.configured);
     const verified = saved.filter((provider) => provider.rankable);
 
+    /*
+      FOUR BANNERS, ONE LINE EACH — 2026-09-03, the copy rule this whole file was swept for. Each of
+      these was two or three sentences whose second half explained the pipeline: that the ranking is
+      still stored while nothing has a key, that an untested list is "a preference rather than a
+      promise", that the runtime already prefers whatever answers so a normalising save merely stops
+      the list disagreeing with it, that transcription still finishes past a failing key. Correct,
+      and none of it named a different act. The act is what is left; the pipeline's behaviour is
+      documented in `backend/app/services/transcription` and repeated here in a comment rather than
+      on screen. The CONDITIONS are untouched — which banner fires when is a separate question from
+      how long it is, and the `else if` chain still shows only the first applicable state.
+    */
     if (runnable.length === 0) {
       out.push({
         tone: "warn",
-        body: (
-          <>
-            None of these engines has an API key, so recordings cannot be transcribed at all yet. The ranking is
-            still saved and starts applying the moment a key is added and passes its test.
-          </>
-        )
+        body: <>No engine has an API key, so nothing can be transcribed. Add a key and test it; this order then applies.</>
       });
     } else if (verified.length === 0) {
       out.push({
         tone: "info",
         body: (
           <>
-            Nothing here has been tested yet, so nothing is frozen — rank the engines however you like. Press{" "}
-            <span className="font-semibold">Test</span> on the one you want first: until an engine has answered,
-            this list is a preference rather than a promise.
+            Nothing has been tested yet, so nothing is frozen. Press <span className="font-semibold">Test</span> on the
+            engine you want first.
           </>
         )
       });
@@ -493,9 +496,8 @@ export function ProviderOrderPanel() {
         tone: "warn",
         body: (
           <>
-            <span className="font-semibold">{saved[0]?.name}</span> is ranked first but has no API key, so the next
-            recording actually goes to <span className="font-semibold">{runnable[0]?.name}</span>. Add the{" "}
-            {saved[0]?.keyLabel} key to make this ranking count.
+            <span className="font-semibold">{saved[0]?.name}</span> is ranked first but has no key, so jobs go to{" "}
+            <span className="font-semibold">{runnable[0]?.name}</span>. Add the {saved[0]?.keyLabel} key.
           </>
         )
       });
@@ -507,11 +509,9 @@ export function ProviderOrderPanel() {
         tone: "warn",
         body: (
           <>
-            This saved order puts {join(stragglers.map((provider) => provider.name))} above{" "}
-            {join(verified.map((provider) => provider.name))}, which {verified.length === 1 ? "has" : "have"} passed
-            a test. The next save moves the unverified{" "}
-            {stragglers.length === 1 ? "one" : "ones"} below — the pipeline already prefers whatever actually
-            answers, so the list will simply stop disagreeing with it.
+            This order puts {join(stragglers.map((provider) => provider.name))} above{" "}
+            {join(verified.map((provider) => provider.name))}, which {verified.length === 1 ? "has" : "have"} passed a
+            test. The next save moves {stragglers.length === 1 ? "it" : "them"} below.
           </>
         )
       });
@@ -523,9 +523,9 @@ export function ProviderOrderPanel() {
         tone: "warn",
         body: (
           <>
-            {join(failing.map((provider) => provider.name))} still {failing.length === 1 ? "has" : "have"} a key, so
-            every job keeps trying {failing.length === 1 ? "it" : "them"} and waiting for the refusal before moving
-            on. Replacing or removing the key is worth doing even though transcription still finishes.
+            {join(failing.map((provider) => provider.name))} {failing.length === 1 ? "has" : "have"} a failing key, so
+            every job waits for {failing.length === 1 ? "its" : "their"} refusal first. Replace or remove{" "}
+            {failing.length === 1 ? "it" : "them"}.
           </>
         )
       });
@@ -539,11 +539,16 @@ export function ProviderOrderPanel() {
     <section className="panel grid gap-4 p-5" data-testid="provider-order-panel">
       <div>
         <h2 className="font-display text-base font-bold text-ink-900">Transcription provider order</h2>
+        {/*
+          ONE LINE, NOT FOUR SENTENCES — 2026-09-03. The paragraph that stood here taught the whole
+          fallback chain and then reassured the reader that the setting is not per-browser. The
+          three facts a reader acts on are: how to reorder, that only a tested engine may be ranked,
+          and that this is everyone's setting. The chain itself is visible in the rows below (each
+          carries its own key state) and does not need narrating above them.
+        */}
         <p className="mt-1 text-sm leading-6 text-ink-500">
-          Drag a provider to rank it, or use the arrows. The one at the top is tried first; if it fails, or has
-          no API key, the next one down takes the job. An engine can only be ranked once it has passed a test —
-          press <span className="font-medium text-ink-700">Test</span> to ask the provider whether its key works.
-          This applies to everyone, not just this browser.
+          Drag or use the arrows to rank; the top engine with a working key takes each job. An engine can be ranked
+          only after <span className="font-medium text-ink-700">Test</span> passes. This order applies to everyone.
         </p>
       </div>
 
@@ -586,7 +591,7 @@ export function ProviderOrderPanel() {
           {trouble ? (
             <p className="text-xs font-medium text-ink-500" data-testid="provider-order-stale-note">
               {
-                "Showing the app’s built-in default order. This is not the live ranking, and none of the controls below will do anything until the panel can reach the server."
+                "Built-in default order shown — not the live ranking. The controls below do nothing until the server answers."
               }
             </p>
           ) : null}

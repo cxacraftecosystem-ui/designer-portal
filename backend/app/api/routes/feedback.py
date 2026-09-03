@@ -166,8 +166,11 @@ async def list_feedback(
     # ``len(rows) == pageSize``: that reports a shortfall on the page that happens to end exactly on
     # the boundary, and a master admin told rows are missing when they are not has no way to check.
     # The two go out together: nothing in the page depends on the count and nothing in the count
-    # depends on the page, so in series the count was a whole cross-region round trip spent on a
-    # number. It is still EXACT, which is the property the paragraph above defends.
+    # depends on the page, so in series the count was a whole round trip spent on a number — a
+    # cross-region one when this was written, a co-located one or two milliseconds since 2026-09-02
+    # (``services/concurrency.py``). What that move changes is the SIZE of the saving, not the
+    # shape; and it changes nothing at all about the paragraph above, because exactness is not a
+    # performance property. It is still EXACT, which is what that paragraph defends.
     total, rows = await gather_reads(
         db.feedback.count(),
         db.feedback.find_many(

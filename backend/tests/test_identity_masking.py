@@ -209,6 +209,31 @@ class _Creating:
         return SimpleNamespace(id="new")
 
 
+class _Client(SimpleNamespace):
+    """The fake ``db``, with an ``async with db.tx()`` that hands back itself (2026-09-03).
+
+    ``PATCH /artisans/{id}`` now runs its edit guard, its RecordRevision and its row update inside
+    ONE ``db.tx()`` (see ``access.record_revision``), so a bare ``SimpleNamespace`` no longer answers
+    the route. Handing back ``self`` keeps both delegates below reachable through ``tx`` as well as
+    through ``db`` — which is the whole point here, because the two assertions this file makes are
+    "the artisan row was written without the masked columns" and "no revision claims they changed",
+    and both are read off those recorders. NOTHING SIMULATES A TRANSACTION; rollback is not this
+    file's subject.
+    """
+
+    def tx(self) -> Any:
+        client = self
+
+        class _Tx:
+            async def __aenter__(self) -> Any:
+                return client
+
+            async def __aexit__(self, *_exc: object) -> bool:
+                return False
+
+        return _Tx()
+
+
 @pytest.fixture
 def route(monkeypatch: pytest.MonkeyPatch):
     """The real PATCH /artisans/{id}, wired to delegates that record what they are asked to write.
@@ -224,7 +249,7 @@ def route(monkeypatch: pytest.MonkeyPatch):
     async def find_grant(where: dict, include: dict | None = None) -> SimpleNamespace:
         return grant
 
-    fake_db = SimpleNamespace(
+    fake_db = _Client(
         artisan=artisans,
         recordrevision=revisions,
         dataaccessgrant=SimpleNamespace(find_unique=find_grant),

@@ -371,7 +371,10 @@ unit running `python -m app.worker`, with `MEDIA_QUEUE_WORKER_ENABLED=false` on 
 live box that `.github/workflows/deploy-backend.yml` restarts by that literal string. The full
 argument is in the module docstring of `backend/app/worker.py`.)
 Running ffmpeg and transcription inside a uvicorn worker is what caused the orphaned-Prisma-engine
-500s. Locally, leave the flag `true` and the FastAPI lifespan starts it in-process. Either way the
+500s. Locally, **set** the flag `true` and the FastAPI lifespan starts it in-process — since
+2026-09-03 the default is `false`, so that is a line you add rather than one you leave alone. Both
+entry points also take a host-wide advisory lock, so a second drain on one box refuses to start
+instead of running silently beside the first. Either way the
 worker:
 
 - recovers stale `PROCESSING` jobs after worker interruption;
@@ -520,12 +523,13 @@ Useful optional backend variables:
 
 - `AWS_REGION` (default `us-east-1`; production `ap-south-1`) and `AWS_S3_PUBLIC_BASE_URL` for preview/export links — use the **dual-stack** host so media loads on IPv6-only mobile networks.
 - `AWS_S3_ENDPOINT` only for MinIO or other non-AWS storage; leave it unset on real AWS.
-- `DATABASE_USE_TRANSACTION_POOLER` (default `true`; it *declares* that `DATABASE_URL` is a transaction-mode pooler and adds `pgbouncer=true` to any remote DSN — **set it `false` for a direct endpoint**; no hostname is matched, see [docs/ENVIRONMENT.md](docs/ENVIRONMENT.md)), `DATABASE_CONNECTION_LIMIT` (default `10` per worker — raising it once exhausted a pooler's client ceiling and crash-looped startup), `DATABASE_POOL_TIMEOUT`.
+- `DATABASE_USE_TRANSACTION_POOLER` (default `true`; it *declares* that `DATABASE_URL` is a transaction-mode pooler and adds `pgbouncer=true` to any remote DSN — **set it `false` for a direct endpoint**; no hostname is matched, see [docs/ENVIRONMENT.md](docs/ENVIRONMENT.md)), `DATABASE_CONNECTION_LIMIT` (code default `10` per worker — raising it once exhausted a pooler's client ceiling and crash-looped startup; **the deployment sets `5`**), `DATABASE_POOL_TIMEOUT` (unset by default → Prisma's own 10 s; **the deployment sets `5`** seconds, so a saturated pool fails rather than hangs). Both deployed values are stated once, with their reasoning, in [docs/ENVIRONMENT.md](docs/ENVIRONMENT.md).
 - `NEXT_PUBLIC_APP_URL` and `BACKEND_CORS_ORIGINS` — comma-separated **exact** frontend origins, no trailing slash or wildcard.
 - `GOOGLE_CLIENT_ID` to verify Google OAuth ID tokens; `GOOGLE_ANDROID_CLIENT_ID` to also accept Android OAuth audience tokens if needed.
 - `MASTER_ADMIN_NAME` defaults to `Ankit Kumar`; `DEFAULT_SIGNUP_ROLE` defaults to `CROWDSOURCE_VOLUNTEER`.
 - `ELEVENLABS_API_KEY`/`ELEVENLABS_STT_MODEL`, `DEEPGRAM_API_KEY`/`DEEPGRAM_STT_MODEL`, `OPENAI_API_KEY`/`OPENAI_TRANSCRIPTION_MODEL`/`OPENAI_CHAT_MODEL`, `GEMINI_API_KEY`/`GEMINI_API_KEYS`/`GEMINI_MEASUREMENT_MODEL` (default `gemini-2.5-flash-lite`), `NEXT_PUBLIC_MAPTILER_API_KEY` for optional transcription, refinement, measurement and map picking.
-- `MEDIA_QUEUE_WORKER_ENABLED` (set **false** on the production web process — the separate `fieldrepo-queue` service drains the queue), `MEDIA_QUEUE_INTERVAL_SECONDS`, `MEDIA_QUEUE_BATCH_SIZE`, `MEDIA_QUEUE_JOB_MAX_ATTEMPTS`.
+- `MEDIA_QUEUE_WORKER_ENABLED` (default **false** since 2026-09-03; set it `true` only to drain inside uvicorn for local dev — the separate `fieldrepo-queue` service drains production, and both entry points take a host-wide lock), `MEDIA_QUEUE_INTERVAL_SECONDS`, `MEDIA_QUEUE_BATCH_SIZE`, `MEDIA_QUEUE_JOB_MAX_ATTEMPTS`, `MEDIA_UPLOAD_MAX_BYTES` (default 1 GiB — the ceiling on one uploaded object, refused at presign and re-checked at complete).
+- `MEDIA_PRESIGNED_READS` (default **false**) and `MEDIA_PRESIGNED_READ_TTL_SECONDS` (default `900`) — whether a served media `url` is a 15-minute signed URL instead of the permanent CDN one. Off is exactly today's behaviour and the stored column is never rewritten, so the flip is a redeploy to undo. ⚠ **Do not turn it on ad hoc**: a fielded 0.0.7 handset renders photographs from a cached `url` with no network, so flipping ahead of fleet adoption loses images on a phone nothing can reach. It is one step of the sequenced operator runbook in [docs/SECURITY.md](docs/SECURITY.md).
 - `SUPABASE_REST_URL`, `SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_SECRET_KEY` — **unused; historical since 2026-08-22.** No code in this repository reads them: the application consumes exactly one thing from its database host — the PostgreSQL DSN — never a provider's HTTP APIs. Kept, unset, only so the names are explained rather than mysterious; see [docs/ENVIRONMENT.md](docs/ENVIRONMENT.md).
 - `ADMIN_EMAIL`, `ADMIN_NAME`, `ADMIN_PASSWORD` for seeding the first admin. Keep the password only in private `.env` files or deployment secrets.
 - Security knobs, all safe at their defaults: `JWT_ALGORITHM` (`HS256`; HS-family only), `ALLOW_WEAK_JWT_SECRET` (local dev only), `DATABASE_REQUIRE_SSL` (unset = `sslmode=require` for remote hosts only), `AWS_S3_SSE_ALGORITHM` (`AES256`; empty for MinIO), and `SECURITY_HSTS_ENABLED`/`SECURITY_HSTS_MAX_AGE`/`SECURITY_FORCE_HSTS` — **set `SECURITY_FORCE_HSTS=true` in production**, because nginx overwrites `X-Forwarded-Proto` and the app otherwise never sees that the viewer used TLS. Details in [docs/SECURITY.md](docs/SECURITY.md).

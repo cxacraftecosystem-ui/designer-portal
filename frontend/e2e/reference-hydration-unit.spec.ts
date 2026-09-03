@@ -438,3 +438,263 @@ test("the picker's trigger shows the sitting's title, not the interview id", () 
   const row = hydrateFromReference(ARTISAN_BASELINE, INTERVIEW_REF, SITTING, {}, "");
   expect(referenceDisplayHint(ARTISAN_BASELINE, INTERVIEW_REF, row)).toBe("Barpali weavers, group 2");
 });
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * The internal carry — a source that is another row of the same workshop
+ *
+ * ADDED 2026-09-03 with the first two mappings whose `refModel` is a `Dw…` entity of this very
+ * registry rather than a record in another table. The RULES below are the rules already exercised
+ * above, and that is the assertion: `hydrateFromReference` has no internal branch, does not know
+ * that one option's `data` came from a `DwStageEntry` rather than from an `Artisan`, and must not
+ * grow a branch for it. What these pin is that the two mapping ENTRIES are present, land in the
+ * right boxes, and behave the same way — because the one way this table can hurt anybody is by
+ * being WRONG rather than by being absent (a missing entry costs one retyped box that the server
+ * fills at save; a wrong one writes a value nobody can see is wrong).
+ *
+ * WHY THE ENTRIES ARE PINNED HERE AND NOT ONLY IN THE BACKEND PARITY TEST.
+ * `test_the_web_carries_the_same_hydration_table` asserts equality with the server and is the
+ * authority on WHAT the table holds; it runs in the backend suite, on a different job. These run
+ * wherever the web's specs run and fail with the box named, which is what a person editing this
+ * file needs.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/** Stage 16's catalogue row. `prototypeRef` is the widest internal mapping in the table. */
+const FINAL_PRODUCT: DwEntity = {
+  key: "finalProduct",
+  name: "DwFinalProduct",
+  cardinality: "COLLECTION",
+  title: "Final products",
+  description: "",
+  parent: "",
+  labelField: "name",
+  fields: [
+    field("productCode", "TEXT"),
+    field("name", "TEXT"),
+    field("prototypeRef", "REF", { refModel: "DwPrototype" }),
+    field("finalPhotos", "IMAGE_LIST"),
+    field("lengthCm", "DECIMAL"),
+    field("widthCm", "DECIMAL"),
+    field("heightCm", "DECIMAL"),
+    field("weightG", "DECIMAL"),
+    field("dimensionsNote", "TEXT"),
+    field("materials", "TAGS"),
+    field("technique", "TEXT"),
+    field("makingProcess", "RICH_TEXT"),
+    field("makingTimeDays", "DECIMAL")
+  ]
+};
+
+const PROTOTYPE_REF = FINAL_PRODUCT.fields[2];
+
+/** Stage 15's validation row, whose three "Final …" boxes are the whole of its mapping. */
+const PROTOTYPE_VALIDATION: DwEntity = {
+  key: "prototypeValidation",
+  name: "DwPrototypeValidation",
+  cardinality: "COLLECTION",
+  title: "Validation",
+  description: "",
+  parent: "",
+  labelField: "prototypeRef",
+  fields: [
+    field("prototypeRef", "REF", { refModel: "DwPrototype" }),
+    field("decision", "ENUM"),
+    field("reason", "RICH_TEXT"),
+    field("approvedBy", "TEXT"),
+    field("finalLengthCm", "DECIMAL"),
+    field("finalWidthCm", "DECIMAL"),
+    field("finalHeightCm", "DECIMAL")
+  ]
+};
+
+const VALIDATION_PROTOTYPE_REF = PROTOTYPE_VALIDATION.fields[0];
+
+/**
+ * A stage-13 prototype as `_in_record_options` now serialises one.
+ *
+ * THE KEYS ARE THE PROTOTYPE ENTITY'S OWN, which is the whole difference from an external option: a
+ * workshop row's `data` IS its display projection, so there is no `REFERENCE_MODELS` data lambda in
+ * between and no second vocabulary to diverge from. The server narrows the payload to the nine keys
+ * some mapping names (`_internal_carry_keys`), which is why `prototypeCode`, the photo gallery and
+ * the two cost heads are absent here exactly as they are on the wire.
+ */
+const PROTOTYPE = option("proto-1", {
+  name: "Bandha tote, wide gusset",
+  materials: ["Cotton", "Jute webbing"],
+  lengthCm: 38,
+  widthCm: 12,
+  heightCm: 34,
+  weightG: 420,
+  dimensionsNote: "38 x 12 x 34, handle drop 24",
+  makingTimeDays: 3.5
+});
+
+test("a chosen prototype fills the catalogue row's boxes and nothing else", () => {
+  const patch = hydrateFromReference(FINAL_PRODUCT, PROTOTYPE_REF, PROTOTYPE, {}, "");
+
+  expect(patch).toEqual({
+    name: "Bandha tote, wide gusset",
+    materials: ["Cotton", "Jute webbing"],
+    lengthCm: 38,
+    widthCm: 12,
+    heightCm: 34,
+    weightG: 420,
+    dimensionsNote: "38 x 12 x 34, handle drop 24",
+    makingTimeDays: 3.5
+  });
+  // THE CODE IS NOT THE PROTOTYPE'S. Two identifiers with two lifetimes: a prototype tag is printed
+  // the afternoon the piece is made, a product code goes on a catalogue.
+  expect(patch).not.toHaveProperty("productCode");
+  // THE PLATE IS NOT THE WORKING SHOT. Both rows live in ONE workshop, so a carry would be the SAME
+  // media ids under two headings, and the report's image pass dedupes by media id.
+  expect(patch).not.toHaveProperty("finalPhotos");
+  // `technique` has no source: `prototype.toolsUsed` is a list of tools, not a named operation.
+  expect(patch).not.toHaveProperty("technique");
+});
+
+test("a measurement the designer took off the finished piece is not reverted", () => {
+  // ONLY-FILL-BLANKS, ON THE ONE SOURCE A DESIGNER OWNS BOTH ENDS OF. The catalogue measurement is
+  // taken off the finished piece; the prototype's is taken at making. Where the two differ the
+  // designer has measured, and a picker that reverted a measurement would be watched doing it.
+  const row: DwEntryData = { lengthCm: 39.5, materials: ["Cotton"] };
+  const patch = hydrateFromReference(FINAL_PRODUCT, PROTOTYPE_REF, PROTOTYPE, row, "");
+
+  expect(patch).not.toHaveProperty("lengthCm");
+  // A TAGS box already holding one tag is FILLED, so it is not seeded either: a list is never
+  // replaced, only seeded when empty.
+  expect(patch).not.toHaveProperty("materials");
+  expect(patch.widthCm).toBe(12);
+});
+
+test("a carried tag is stripped the way PYTHON strips, not the way trim() does", () => {
+  /*
+    `coerce_value`'s multi arm is `[str(v).strip() for v in raw if str(v).strip()]`, and `trim()` is
+    not that set: U+0085 and U+001C to U+001F are whitespace to Python and not to JavaScript. A
+    material pasted with a next-line on it would have stayed a distinct tag in the browser and become
+    the plain word on the server and the handset — one row disagreeing with itself across three
+    surfaces about what a piece is made of, with nothing on any screen to show why.
+
+    `lib/marketAnalysis.ts` exports `pyStrip` to end exactly this divergence and says so in its
+    docstring; this arm was the last `String(item).trim()` claiming byte-parity with a `.strip()`
+    (2026-09-03). The characters are named and built rather than typed, for the reason below.
+  */
+  // NAMED AND BUILT RATHER THAN TYPED. An invisible U+0085 sitting inside a string literal here
+  // would be unreadable in every diff and every review of this spec — which is the defect the case
+  // itself is made of. `android/app/src/test/resources/dw-analysis-cases.json` spells the same
+  // characters out for the same reason, and `lib/marketAnalysis.ts` says why in its own words.
+  const NEL = String.fromCharCode(0x85); // U+0085 NEXT LINE
+  const FS = String.fromCharCode(0x1c); // U+001C FILE SEPARATOR
+  const US = String.fromCharCode(0x1f); // U+001F UNIT SEPARATOR
+  const padded = option("proto-4", {
+    name: "Bandha tote",
+    materials: [NEL + "Cotton" + NEL, FS + "Jute webbing" + US, "   ", NEL]
+  });
+  const patch = hydrateFromReference(FINAL_PRODUCT, PROTOTYPE_REF, padded, {}, "");
+  expect(patch.materials).toEqual(["Cotton", "Jute webbing"]);
+  // The emptiness test reads the STRIPPED token too, or a tag of pure padding survives as `""` and
+  // the box shows a blank chip nobody typed.
+  expect(patch.materials).not.toContain("");
+});
+
+test("a rich-text narrative is left for the server rather than flattened at the keyboard", () => {
+  /*
+   * `processSummary -> makingProcess` is the one pair this surface skips, and skipping is correct.
+   * `stringifyRefValue` accepts only the two JSON scalars a display box can legitimately hold, and a
+   * RICH_TEXT document is neither — `"[object Object]"` in a narrative box is a value that LOOKS
+   * answered and is not. The server writes the normalised document at save through `coerce_value`'s
+   * RICH_TEXT arm, exactly as it does for a typed one.
+   */
+  const withProse = option("proto-2", {
+    name: "Bandha tote",
+    processSummary: { blocks: [{ type: "paragraph", text: "Warped on the pit loom." }] }
+  });
+  expect(hydrateFromReference(FINAL_PRODUCT, PROTOTYPE_REF, withProse, {}, "")).toEqual({
+    name: "Bandha tote"
+  });
+});
+
+test("re-pointing at a different prototype rewrites the boxes the last one filled", () => {
+  // The internal carry gets the SAME clearing rule, and it matters more here than anywhere: the
+  // prototypes table and the final-products table of one report describe one physical object, so a
+  // catalogue row holding prototype A's dimensions beside prototype B's id is a document that
+  // measures two different things under one heading.
+  const row: DwEntryData = hydrateFromReference(FINAL_PRODUCT, PROTOTYPE_REF, PROTOTYPE, {}, "");
+  const thinner = option("proto-3", { name: "Bandha runner", lengthCm: 120 });
+  const patch = hydrateFromReference(FINAL_PRODUCT, PROTOTYPE_REF, thinner, row, "proto-1");
+
+  expect(patch.name).toBe("Bandha runner");
+  expect(patch.lengthCm).toBe(120);
+  // What the new prototype cannot answer is CLEARED rather than left holding the old one's answer.
+  expect(patch.weightG).toBeNull();
+  expect(patch.dimensionsNote).toBeNull();
+  expect(patch.makingTimeDays).toBeNull();
+});
+
+test("the validation row takes the three dimensions and none of the reviewers' own boxes", () => {
+  // Stage 15 is a JUDGEMENT of a prototype rather than a second description of it, so `decision`,
+  // `reason` and `approvedBy` belong to the reviewer and the mapping stops at the measurements.
+  const patch = hydrateFromReference(
+    PROTOTYPE_VALIDATION,
+    VALIDATION_PROTOTYPE_REF,
+    PROTOTYPE,
+    {},
+    ""
+  );
+  expect(patch).toEqual({ finalLengthCm: 38, finalWidthCm: 12, finalHeightCm: 34 });
+});
+
+test("the same prototype fills differently named boxes on the two stages that name it", () => {
+  // THE MAPPING'S WHOLE REASON FOR EXISTING, restated for the internal half: `data.lengthCm` lands
+  // on `lengthCm` at stage 16 and on `finalLengthCm` at stage 15. A key-name match would write
+  // nothing at all on stage 15 — silently, which is how the external half of this feature lost a
+  // column for a year.
+  const catalogue = hydrateFromReference(FINAL_PRODUCT, PROTOTYPE_REF, PROTOTYPE, {}, "");
+  const validation = hydrateFromReference(
+    PROTOTYPE_VALIDATION,
+    VALIDATION_PROTOTYPE_REF,
+    PROTOTYPE,
+    {},
+    ""
+  );
+  expect(catalogue.lengthCm).toBe(38);
+  expect(catalogue).not.toHaveProperty("finalLengthCm");
+  expect(validation.finalLengthCm).toBe(38);
+  expect(validation).not.toHaveProperty("lengthCm");
+});
+
+test("the internal refs that were judged and refused hydrate nothing", () => {
+  /*
+   * THE OTHER HALF OF THE DECISION, MADE MECHANICAL ON THIS SURFACE. Thirteen internal REF fields
+   * were read and left un-hydrated, each with its reason written above the server's table. Three are
+   * pinned here because they are the ones somebody would "fix" by pattern-matching the two entries
+   * above: a sketch is a DRAWING and the prototype made from it is an OBJECT; a successor sketch
+   * exists BECAUSE something changed; and a material-usage line names ONE material where the
+   * prototype holds a LIST, so hydration cannot choose which.
+   *
+   * The table fails closed, so an absent entry hydrates nothing rather than guessing — which is
+   * what makes these three assertions cheap and a WRONG entry the only real hazard.
+   */
+  const fromSketch: DwEntity = {
+    ...FINAL_PRODUCT,
+    key: "prototype",
+    fields: [field("sketchRef", "REF", { refModel: "DwSketch" }), field("materials", "TAGS")]
+  };
+  expect(hydrateFromReference(fromSketch, fromSketch.fields[0], PROTOTYPE, {}, "")).toEqual({});
+
+  const supersedes: DwEntity = {
+    ...FINAL_PRODUCT,
+    key: "sketch",
+    fields: [
+      field("supersedesSketch", "REF", { refModel: "DwSketch" }),
+      field("name", "TEXT"),
+      field("isTentative", "BOOL")
+    ]
+  };
+  expect(hydrateFromReference(supersedes, supersedes.fields[0], PROTOTYPE, {}, "")).toEqual({});
+
+  const usage: DwEntity = {
+    ...FINAL_PRODUCT,
+    key: "materialUsage",
+    fields: [field("prototypeRef", "REF", { refModel: "DwPrototype" }), field("material", "TEXT")]
+  };
+  expect(hydrateFromReference(usage, usage.fields[0], PROTOTYPE, {}, "")).toEqual({});
+});

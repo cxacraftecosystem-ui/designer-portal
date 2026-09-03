@@ -1,5 +1,5 @@
 from collections.abc import Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any, NamedTuple
 
@@ -92,6 +92,16 @@ _IDENTITY_KEYS = ("aadhaarNumber", "pehchanCardNumber")
 # not the other would be a lock on the door beside an open window. Nothing reads ``objectKey`` off a
 # LISTED row (the upload flow gets its key from the presign response, which is the caller's own object
 # by construction), so removing it from a read response costs no client anything.
+#
+# AND THE URL A CALLER *IS* ENTITLED TO NOW HAS AN END DATE — OR WILL HAVE, ONE ENV VAR FROM NOW.
+# Everything above answers WHO may hold the string. Nothing above answers FOR HOW LONG, and until
+# 2026-09-03 the answer was "for ever": ``public_url_for_key`` is the CDN host plus the key, the
+# bucket policy's ``PublicReadMedia`` statement makes those objects world-readable, and no part of
+# this system can withdraw a string somebody has already copied. So a grant revoked, a permission
+# removed and an account suspended all leave every URL that account was ever handed working.
+# ``MEDIA_PRESIGNED_READS`` (off by default) replaces the kept ``url`` with a 15-minute signature at
+# serialization time — AFTER this decision, never instead of it. See :func:`_sign_media_url` for the
+# per-surface table and the sequencing that must not be reordered.
 _MEDIA_URL_KEYS = ("url", "publicUrl", "objectKey")
 
 #: The transcript columns, withheld under the SAME entitlement as the URL — see the banner above.
@@ -109,6 +119,205 @@ _MEDIA_TAKEABLE_KEYS = (*_MEDIA_URL_KEYS, *_TRANSCRIPT_KEYS)
 # ``uploadedById``, so the entitlement decision can be made per node. Exactly the trick
 # ``_IDENTITY_KEYS`` uses with ``createdById``.
 _MEDIA_MARKER = "objectKey"
+
+
+def _sign_media_url(node: dict[str, Any], ttl_seconds: int) -> None:
+    """Replace this entitled media node's stored ``url`` with a signed, expiring one. In place.
+
+    Called ONLY when ``MEDIA_PRESIGNED_READS`` is on and only for a node
+    :func:`_redact_sensitive` has just decided may keep its bytes. The RBAC is therefore already
+    settled by the time this runs — this function grants nothing and refuses nothing; it changes how
+    long a string that was going to be handed over anyway stays good for.
+
+    ── WHY IT IS HERE AND NOT AT THE ROUTES ────────────────────────────────────────────────────────
+
+    ``public_encode`` is the one door every read payload leaves by: 103 call sites across fifteen
+    route modules and seven services, every list, every detail, every embedded relation. The URL was
+    already being decided here (:data:`_MEDIA_URL_KEYS`), which means signing here cannot be
+    forgotten by a route that has not heard of this change, and cannot be applied to a caller the
+    entitlement layer just refused. A per-route swap would have to be right in a hundred places and
+    would be wrong the first time somebody adds the hundred-and-first.
+
+    ── THE STORED COLUMN IS NOT TOUCHED ────────────────────────────────────────────────────────────
+
+    ``MediaFile.url`` on the row keeps the permanent CDN string. Three things need it: the flip-back
+    path (set the flag false and the API serves exactly what it served yesterday, with no data
+    migration and no backfill), ``/data/media/{id}/download``'s 307 redirect, and the research-zip
+    manifest's fast path. Rewriting the column would make this decision one-way, which is not a
+    property a security change wants on the day it is turned on.
+
+    ── THE PER-SURFACE DECISION TABLE ──────────────────────────────────────────────────────────────
+
+    A signed URL is right for a surface a person LOOKS at and wrong for an artefact that OUTLIVES the
+    look. Every place in this repository that emits a media URL was read on 2026-09-03 and decided
+    one at a time; a surface not in this table does not emit one.
+
+    ============================================  ==========================  ======================
+    Surface                                       What it emits               Decision
+    ============================================  ==========================  ======================
+    Every ``public_encode`` payload — ``GET        the row's ``url``           **SIGNED, 15 min,
+    /media``, ``/media/{id}``, ``/search``,                                    inline FOR WHAT A PAGE
+    products/tools/processes/workshops/                                        RENDERS** (this
+    artisans/crafts, review, dashboard,                                        function). A page
+    data-access, questionnaire, tasks                                          renders and a person
+                                                                               looks; both clients
+                                                                               re-fetch the row on a
+                                                                               403 and retry once.
+                                                                               The type and the
+                                                                               disposition come from
+                                                                               ``signed_read_headers``
+                                                                               — see below.
+    ``questionnaire_consolidation`` recordings    a hand-built node's         **SIGNED, same TTL**,
+                                                  ``url``                      at that call site,
+                                                                               through the SAME
+                                                                               helper — it is a
+                                                                               player on a page,
+                                                                               identical in kind, and
+                                                                               it carries no
+                                                                               ``objectKey`` so this
+                                                                               walk never sees it.
+    Generated report (docx/pdf), both clients     nothing — ``MediaIndex``     **UNCHANGED.** Already
+                                                  fetches object BYTES         the right answer: the
+                                                  server-side and embeds       document embeds the
+                                                  them                         image, so it cannot
+                                                                               expire. This is the
+                                                                               pattern the audit asks
+                                                                               other exports to copy
+                                                                               and the only one that
+                                                                               makes a file that is
+                                                                               still readable in a
+                                                                               year.
+    ``/export/dataset`` manifest                  ``m.url``, else a signed     **KEEP PUBLIC UNTIL THE
+                                                  URL at 6 h                   BUCKET FLIP**, then the
+                                                                               existing 6-hour signing
+                                                                               fallback carries it —
+                                                                               it already exists,
+                                                                               already handles the
+                                                                               null-url case, and 6 h
+                                                                               is sized for a
+                                                                               thousand-object zip
+                                                                               over a field
+                                                                               connection. Not
+                                                                               narrowed to 15 min:
+                                                                               that produces a
+                                                                               corrupt archive with
+                                                                               no error.
+    ``/data`` tree + manifest (``data_browser``)  ``m.url`` on each entry      **KEEP PUBLIC UNTIL THE
+                                                                               BUCKET FLIP.** Same
+                                                                               job, same shape,
+                                                                               same 6-hour answer
+                                                                               when it comes — and it
+                                                                               is one edit in
+                                                                               ``_media_entry``
+                                                                               rather than four,
+                                                                               which is why it is
+                                                                               deferred to the owner
+                                                                               of that module rather
+                                                                               than smuggled in here.
+    ``/data/report.xlsx`` media sheets            ``m.url`` in a CELL          **NEEDS THE BYTES
+                                                                               PATTERN OR NOTHING.** A
+                                                                               spreadsheet is opened
+                                                                               next week; a 15-minute
+                                                                               URL in a cell is a
+                                                                               column of dead links,
+                                                                               and a 6-hour one is a
+                                                                               column of links that
+                                                                               die by Friday. After
+                                                                               the bucket flip that
+                                                                               column is dead
+                                                                               whatever it holds, so
+                                                                               the decision is
+                                                                               ``mediaId`` + the
+                                                                               download route
+                                                                               instead of a URL. An
+                                                                               owner call, raised in
+                                                                               doc_requests, and
+                                                                               DELIBERATELY NOT
+                                                                               changed here.
+    ``/data/media/{id}/download``                 307 to ``media.url``,        **UNCHANGED.** It is
+                                                  else streams the bytes       authenticated per
+                                                                               request; after the
+                                                                               bucket flip the
+                                                                               redirect target 403s
+                                                                               and the streaming
+                                                                               fallback is what
+                                                                               carries it. Noted for
+                                                                               the runbook's verify
+                                                                               step.
+    ``/app-releases`` APK download                its own presign, 30 min      **UNCHANGED.** Not
+                                                                               media; different
+                                                                               bucket prefix,
+                                                                               different lifecycle,
+                                                                               already signed.
+    ============================================  ==========================  ======================
+
+    ── FAILURE ─────────────────────────────────────────────────────────────────────────────────────
+
+    Signing is local arithmetic, but it needs credentials and a region to be configured, so it CAN
+    raise on a misconfigured deployment. It fails to the STORED URL rather than to nothing and never
+    to a 500: a list of four hundred rows must not become an error page because object storage is
+    misconfigured, and this repository has settled that trade twice already the same way
+    (``datasets._presign_media_row``, ``export.dataset_manifest``). Note what that means while the
+    bucket is still public — the caller gets today's working URL — and after the bucket flip: the
+    caller gets a URL that 403s, which the clients then try to refresh, which fails the same way. A
+    deployment that cannot sign after the flip is broken, and it is broken loudly, at the client, on
+    every image. That is the correct place for it to be loud.
+
+    A node with no ``objectKey`` value, or with no ``url`` string on it, is left exactly alone.
+    ``url`` NULL is a real and different state — an upload that never completed, or a deployment with
+    no ``AWS_S3_PUBLIC_BASE_URL`` — and both clients read it as "there is nothing to play here".
+    Minting a URL into that hole would be a behaviour change wearing a security change's clothes.
+
+    ── WHAT IS SIGNED, AND WHY IT IS NOT THE ROW'S OWN STRING (2026-09-03) ──────────────────────────
+
+    The type and the disposition are decided by ``api.routes.media.signed_read_headers``, which is
+    the same module the upload allow-list lives in. This line used to pass ``node["mimeType"]``
+    straight through with ``disposition="inline"`` — and that column holds whatever a caller sent to
+    ``/media/complete``, which gated nothing. S3's ``response-content-*`` overrides beat the stored
+    object headers and any CDN rule, so this signature was the final word on how a browser received
+    a file somebody uploaded, and it said "render it, as whatever they called it". A row typed
+    ``text/html`` therefore served an executable page inline from the deployment's storage origin,
+    on every read, once ``MEDIA_PRESIGNED_READS`` was on.
+    """
+    object_key = node.get(_MEDIA_MARKER)
+    stored = node.get("url")
+    if not object_key or not isinstance(stored, str) or not stored:
+        return
+    from app.api.routes.media import signed_read_headers
+    from app.services.s3 import presign_get_url
+
+    # THE TYPE AND THE DISPOSITION ARE DERIVED, NOT COPIED — see :func:`signed_read_headers`.
+    #
+    # This used to sign ``node["mimeType"]`` verbatim with ``disposition="inline"``, and the stored
+    # column is the CALLER'S STRING: ``/media/complete`` accepted any ``str`` and wrote it down. An
+    # S3 ``response-content-type`` override beats the object's own header AND any CDN
+    # ``Content-Disposition`` rule, so this line was the last word on how a browser received a file
+    # somebody uploaded — and it said "render this, as whatever they called it". ``text/html`` there
+    # is a page executing on the deployment's storage origin. (2026-09-03)
+    #
+    # ``import`` INSIDE THE FUNCTION, like ``presign_get_url`` beside it. ``api/routes/media``
+    # imports this module at module scope, so a top-level import here would be a cycle; deferring it
+    # is what this file already does for its storage dependency and for the same reason.
+    mime_type, disposition = signed_read_headers(node.get("mimeType"))
+    try:
+        node["url"] = presign_get_url(
+            str(object_key),
+            filename=str(node.get("originalFilename") or object_key),
+            mime_type=mime_type,
+            expires_in=ttl_seconds,
+            # STILL INLINE FOR THE MEDIA THAT RENDERS, which is the whole reason
+            # ``presign_get_url`` grew the parameter: this URL goes into an ``<img>``, a
+            # ``<video>``, an ``<audio>`` and a PDF ``<iframe>``/``<object>``, and "attachment"
+            # would have rendered fine in three of those four while turning every inline PDF
+            # preview on both clients into a download prompt. What changed is that the answer is
+            # now per TYPE rather than unconditional — and for the types a gallery actually shows
+            # it is unchanged, because browsers ignore this header on image/video/audio
+            # subresources.
+            disposition=disposition,
+        )
+    except Exception:  # noqa: BLE001 — see FAILURE above: fall back to the stored URL, never 500.
+        return
+
 
 #: Passed as ``media_urls`` to mean "every URL may travel" — a professor, an admin, or a surface that
 #: has already gated itself (``datasets.py`` behind ``require_dataset_admin``). NOT the holder of the
@@ -129,6 +338,36 @@ class _Unset:
 
 
 _UNSET = _Unset()
+
+
+def presigned_read_ttl() -> int | None:
+    """Seconds a served media ``url`` should stay good for, or ``None`` to serve the stored one.
+
+    ``None`` is the answer whenever ``MEDIA_PRESIGNED_READS`` is off, which is the default and is
+    every deployment until an operator works through the runbook in docs/SECURITY.md. It is also the
+    answer if settings cannot be constructed at all — a unit test that imports this module without an
+    environment, say. Failing to the CURRENT behaviour is right for a flag whose "on" state is the
+    new thing: an encoder that threw here would take every read route in the API down with it.
+
+    Exported rather than private because :mod:`app.services.questionnaire_consolidation` builds a
+    media node BY HAND — deliberately without the ``objectKey`` marker, so the scrub walks past it —
+    and has to reach the same decision from the same place. Two reads of one flag is fine; two
+    spellings of one rule is what this repository keeps paying for.
+
+    A non-positive TTL is treated as ``None``. ``MEDIA_PRESIGNED_READ_TTL_SECONDS=0`` is somebody
+    disabling the feature by the wrong lever, and a zero-second signature is a URL that is expired
+    before it is sent — serving the stored one is the less astonishing reading of the same intent.
+    """
+    from app.core.config import get_settings
+
+    try:
+        settings = get_settings()
+    except Exception:  # noqa: BLE001 — see above: no environment means no change in behaviour.
+        return None
+    if not getattr(settings, "media_presigned_reads", False):
+        return None
+    ttl = int(getattr(settings, "media_presigned_read_ttl_seconds", 0) or 0)
+    return ttl if ttl > 0 else None
 
 
 def derive_age(date_of_birth: Any, *, on: datetime | None = None) -> int | None:
@@ -345,6 +584,7 @@ def _redact_sensitive(
     unmasked: bool,
     media_urls: set[str] | None = None,
     media_workshops: frozenset[str] = frozenset(),
+    presign_ttl: int | None = None,
 ) -> Any:
     """Recursively scrub an already-encoded payload of everything that must not leave the API.
 
@@ -363,6 +603,15 @@ def _redact_sensitive(
 
     Both per-node tests read an owner column off the node being walked, which is what lets one pass
     over an arbitrary shape make a per-record decision without knowing what shape it is.
+
+    ``presign_ttl`` is the FOURTH job and it is a no-op unless the caller passed one. ``None`` — the
+    default, and what every direct caller outside :func:`public_encode` gets — means "serve the
+    stored URL", which is byte for byte what this function did before 2026-09-03. An integer means
+    ``MEDIA_PRESIGNED_READS`` is on and every media node that SURVIVED the entitlement test above
+    has its ``url`` replaced with a signature that expires in that many seconds; see
+    :func:`_sign_media_url` for the per-surface decision table and why the stored column is left
+    alone. The value is resolved ONCE per ``public_encode`` call rather than read here, because
+    ``get_settings`` is cached but this function runs per NODE of every payload in the API.
     """
     if isinstance(value, dict):
         for key in _SENSITIVE_KEYS:
@@ -400,22 +649,33 @@ def _redact_sensitive(
         # FAIL-CLOSED BY CONSTRUCTION: a node that does not carry both tag columns simply falls through
         # to the uploader test above, and ``media_workshops`` defaults to the empty set, so a caller
         # that has not thought about this arm withholds exactly as much as it did before.
-        if (
-            media_urls is not None
-            and _MEDIA_MARKER in value
-            and value.get("uploadedById") not in media_urls
-            and not (
-                value.get("linkedRecordType") == MEDIA_TAG
-                and value.get("linkedRecordId") in media_workshops
-            )
-        ):
-            for key in _MEDIA_TAKEABLE_KEYS:
-                value.pop(key, None)
+        #
+        # THE ``elif`` IS THE ENTITLEMENT ORDER, SPELLED STRUCTURALLY. The signing arm is reachable
+        # only when the withholding arm did NOT fire, so a node whose bytes were just refused can
+        # never be handed a signature instead — the two are exclusive by construction rather than by
+        # two conditions that have to agree. Note the arm is also reached when ``media_urls`` is
+        # ``ALL_MEDIA_URLS`` (professor, or an already-gated download surface), which is correct: a
+        # professor's URL should expire too, and their entitlement is unchanged by that.
+        if _MEDIA_MARKER in value:
+            if (
+                media_urls is not None
+                and value.get("uploadedById") not in media_urls
+                and not (
+                    value.get("linkedRecordType") == MEDIA_TAG
+                    and value.get("linkedRecordId") in media_workshops
+                )
+            ):
+                for key in _MEDIA_TAKEABLE_KEYS:
+                    value.pop(key, None)
+            elif presign_ttl is not None:
+                _sign_media_url(value, presign_ttl)
         for nested in value.values():
-            _redact_sensitive(nested, viewer_id, unmasked, media_urls, media_workshops)
+            _redact_sensitive(
+                nested, viewer_id, unmasked, media_urls, media_workshops, presign_ttl
+            )
     elif isinstance(value, list):
         for item in value:
-            _redact_sensitive(item, viewer_id, unmasked, media_urls, media_workshops)
+            _redact_sensitive(item, viewer_id, unmasked, media_urls, media_workshops, presign_ttl)
     return value
 
 
@@ -435,7 +695,11 @@ def public_encode(
     * ``aadhaarNumber`` and ``pehchanCardNumber`` are masked unless ``viewer`` is entitled to the raw
       value — professor and above, or the researcher who recorded that particular artisan;
     * ``url`` is removed from media nodes unless the caller may take that uploader's files — see
-      :data:`_MEDIA_URL_KEYS` for why a URL is a download rather than a description.
+      :data:`_MEDIA_URL_KEYS` for why a URL is a download rather than a description;
+    * and, when ``MEDIA_PRESIGNED_READS`` is on, the ``url`` a caller DOES keep is replaced with a
+      15-minute signature (:func:`_sign_media_url`). Off by default and off in every deployment
+      until the runbook is worked through; off means this function's output is unchanged, which
+      ``tests/test_media_presigned_reads.py`` pins byte for byte.
 
     ``viewer`` DEFAULTS TO MASKED, and that default is the point. The mask used to be applied
     per-route inside artisans.py, so it held on the three artisan routes and nowhere else: every
@@ -462,6 +726,10 @@ def public_encode(
     from app.core.deps import get_value, has_rank
 
     encoded = jsonable_encoder(obj)
+    # ONCE PER PAYLOAD, NOT ONCE PER NODE. ``get_settings`` is ``lru_cache``d, but this walk visits
+    # every dict of every response in the API and a per-node call would put a cache lookup and an
+    # attribute read on all of them for a value that cannot change mid-request.
+    presign_ttl = presigned_read_ttl()
     if viewer is None:
         # No viewer named: mask everything and withhold every URL. `set()` rather than None, because
         # None means "all allowed" and this is the path a route reaches by NOT thinking about it.
@@ -472,6 +740,7 @@ def public_encode(
             unmasked=False,
             media_urls=allowed,
             media_workshops=media_workshops,
+            presign_ttl=presign_ttl,
         )
 
     viewer_id = get_value(viewer, "id")
@@ -491,6 +760,7 @@ def public_encode(
         unmasked=has_rank(viewer, "PROFESSOR"),
         media_urls=allowed,
         media_workshops=media_workshops,
+        presign_ttl=presign_ttl,
     )
 
 
@@ -1271,6 +1541,255 @@ async def require_record(delegate: Any, record_id: str) -> Any:
     return record
 
 
+# --- The create-idempotency key, and the replay it makes indistinguishable from a first landing ---
+#
+# WHAT THIS IS FOR, IN ONE PARAGRAPH. A queued create is POSTed, the row is written, and the answer
+# is lost on the way back — a tunnel, a captive portal, the process killed while the request was in
+# flight. The client learned nothing, so the entry is still queued and the next pass sends it again.
+# Both outboxes guard the case they can SEE (`frontend/lib/offline.ts`'s `createdId`, Android's
+# `PendingEntry.createdId`), and neither can guard an answer that never arrived, because both are
+# records of a reply. The web outbox names the missing piece by name in `persistProgress`: *"a few
+# milliseconds of IndexedDB is as small as that window gets without idempotency keys on the API."*
+#
+# THE TEMPLATE IS `media.complete_media_upload`, DELIBERATELY AND ALMOST LINE FOR LINE. That route
+# has answered a replayed `objectKey` with the already-created row since the 504-retry incident, and
+# its comment states the contract this follows: *"a row already present for this key IS this same
+# upload — return it instead of failing with a 500 UniqueViolationError (the bug users hit)"*, with
+# the replay *"only honoured for the row's own uploader; anyone else gets a 403"*.
+#
+# THE CALLER MUST NOT BE ABLE TO TELL A REPLAY FROM A FIRST LANDING, and that is the whole point
+# rather than a nicety. A client that could tell would have to decide what to do about it, and the
+# only information it has is that its own queue is older than it thought — which is not a fact about
+# the record and not a fact a designer can act on. So the replay returns through the SAME
+# `status_code=201` handler, encoded by the same encoder over the same `INCLUDE`, and the response
+# is byte-comparable with the one the first request produced. There is no `replayed: true`. The one
+# route in this API that DOES answer "replayed" is `POST /design-ratings`, and it is a different
+# shape on purpose — it is one route for create, amend and replay, so the flag is the only way a
+# caller can learn which of the three it got. Here there is nothing to learn.
+
+#: The wire name of the create-idempotency key, spelled ONCE so the four schemas, the four routes and
+#: the violation sniffer below cannot drift apart. A rename that misses one of them is a create that
+#: writes the column and a replay that never finds it — a guard that is present and does nothing,
+#: which is the failure mode `DwDraft.ownerUserId` spent its whole first life in.
+CLIENT_KEY_FIELD = "clientKey"
+
+
+def is_client_key_violation(error: Exception) -> bool:
+    """Was this write refused by the ``clientKey`` unique index?
+
+    Shaped exactly like ``artisans._violated_identity_field`` and for its reason: Prisma raises a
+    generic error whose TEXT names the constraint, and the alternative — treating every exception
+    from a create as a possible replay — would answer 201 with somebody else's row for a failure
+    that has nothing to do with idempotency. Both tests have to pass: a unique violation on some
+    OTHER column of the same table (``Craft.name``, a future one) must go on raising.
+    """
+    text = str(error)
+    return "unique" in text.lower() and CLIENT_KEY_FIELD in text
+
+
+async def client_key_replay(
+    delegate: Any,
+    client_key: str | None,
+    *,
+    user_id: str,
+    include: dict[str, Any] | None = None,
+) -> Any | None:
+    """The row an earlier create with this ``clientKey`` already made, or ``None`` for a first landing.
+
+    ``None`` FOR AN ABSENT KEY IS THE WIRE CONTRACT AND IS CHECKED FIRST. A create that sends no key
+    — every fielded 0.0.7 APK, every cached web bundle, every script — takes exactly the path it took
+    before this function existed, and pays not even a read for it. An empty string is treated as
+    absent for the reason ``entryAlreadyCreated`` gives about a stored ``""``: *"an empty string is
+    not an identity … a row carrying `""` here has no proof of anything."*
+
+    THE REPLAY IS HONOURED ONLY FOR THE ROW'S OWN CREATOR, and anyone else gets a 403 — the rule
+    ``complete_media_upload`` applies to ``uploadedById``, ported. A key is a v4 UUID and therefore
+    unguessable, so this is not really a defence against an attacker; it is a defence against
+    ANSWERING WITH THE WRONG PERSON'S RECORD if one ever collides or is copied between accounts, and
+    a 403 is the honest answer to "your key is taken" — 201 would hand over a stranger's fieldwork
+    and 409 would invite a retry that can only fetch the same answer.
+
+    CALL IT BEFORE THE WRITE GATES, NEVER AFTER. The gates (``enforce_workshop_submission``,
+    ``assert_payload_workshop``) are about whether this caller may create the row, and on a replay
+    the row already exists — so re-asking can only turn a create that SUCCEEDED into a 403 for a
+    designer whose workshop grant was withdrawn in the meantime. That is the same ordering
+    ``complete_media_upload`` uses, where the replay branch sits above ``_assert_owns_object``. It
+    also keeps ``attach_location`` from minting a second, unreferenced ``Location`` row per replay.
+    """
+    if not client_key:
+        return None
+    kwargs: dict[str, Any] = {"where": {CLIENT_KEY_FIELD: client_key}}
+    if include:
+        kwargs["include"] = include
+    existing = await delegate.find_unique(**kwargs)
+    if existing is None:
+        return None
+    if getattr(existing, "createdById", None) != user_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="That record belongs to another account.",
+        )
+    return existing
+
+
+async def client_key_replay_after_violation(
+    delegate: Any,
+    client_key: str | None,
+    error: Exception,
+    *,
+    user_id: str,
+    include: dict[str, Any] | None = None,
+) -> Any | None:
+    """The row that WON a race this create just lost on the ``clientKey`` index — or ``None``.
+
+    ``client_key_replay`` above closes the ordinary case with one read. This closes the one it
+    cannot: two passes of the same queue in flight at once (two browser tabs, a phone whose sync
+    fired twice, a restored queue drained beside the original), each finding no row and each planning
+    an INSERT. Only the index can settle that, which is the argument
+    ``artisans._guard_identity_conflicts`` makes about its own pre-check — *"the write is still
+    wrapped in its own handler, because two researchers can submit the same artisan in the same
+    instant and only the index can settle that race."*
+
+    ``None`` MEANS RE-RAISE, and the caller must. An exception that is not a ``clientKey`` violation
+    is somebody else's problem arriving through this door, and swallowing it would report a failed
+    create as a successful one.
+
+    THE RE-READ MUST NOT GO THROUGH AN ABORTED TRANSACTION. Where the create sits inside ``db.tx()``
+    — ``workshops.create_workshop`` does, because its row and its two rosters are one write — the
+    unique violation has already aborted that transaction in Postgres, so any further statement on
+    the transaction client fails with "current transaction is aborted" and this 201 would arrive as
+    a 500 naming nothing. Callers therefore pass the MODULE delegate (``db.workshop``) and place the
+    handler outside the ``async with``. ``artisans.update_artisan`` documents the identical trap from
+    the other side, and the read only needs committed rows anyway.
+    """
+    if not client_key or not is_client_key_violation(error):
+        return None
+    return await client_key_replay(delegate, client_key, user_id=user_id, include=include)
+
+
+# --- The correction precondition: an edit that says what it was composed against -----------------
+#
+# WHAT THIS CLOSES. A queued correction replays a WHOLE create-shaped body through the record's PATCH
+# route with no precondition of any kind, so it overwrites, field for field, anything anybody else
+# changed while it sat in the queue — and nobody is told. Android's `offlineSavedMessage` documents
+# the gap and names its own closing condition, which is this field:
+#
+#     "Closing it properly needs the record's version as the queued write's precondition, exactly as
+#      the custom questionnaire's write does. Until then this sentence is the whole of the warning."
+#
+# The sentence it refers to — *"your version wins over any edit made in between"* — stays exactly as
+# it is. It is still true for an entry queued by a build that does not send the precondition, and it
+# is still the honest thing to say to somebody who is about to walk away from a phone.
+#
+# ── WHY A TIMESTAMP HERE, WHEN `DwStageEntry` WAS DELIBERATELY GIVEN A COUNTER ───────────────────
+#
+# `20260903090000_dw_stage_entry_version` chose an integer over `updatedAt` and its reasoning is
+# sound and unchanged: *"two writes inside one millisecond are indistinguishable through it … a
+# monotonic integer that the WRITE ITSELF increments has no such tie."* THAT ARGUMENT IS ACCEPTED,
+# AND THIS IS STILL A TIMESTAMP, for reasons that are about these six tables rather than about
+# timestamps:
+#
+#   1. `updatedAt` ALREADY EXISTS ON ALL SIX AND IS ALREADY IN EVERY RESPONSE. `public_encode` is
+#      `jsonable_encoder` over the row, so every client that has ever read a record has been handed
+#      this value. A counter is a seventh migration, six more columns, and a bump every one of the
+#      six update routes must remember for ever — and a counter one writer forgets is a guard that
+#      silently stops guarding, which is strictly worse than one that guards coarsely.
+#   2. THE WINDOW HERE IS HOURS, NOT MILLISECONDS. `save_stage`'s race is two designers inside one
+#      read/hydrate/write pass — a sub-second window that a timestamp genuinely cannot resolve. This
+#      one is a correction composed in a courtyard and drained on the bus home. Two edits to one
+#      artisan inside the same SECOND, one of them from a queue, is not the case this exists for.
+#   3. IT IS A NARROWING AND NOT A PROMISE, and is documented as one. Where this cannot tell two
+#      writes apart, the behaviour is what it is today: last write wins, exactly as
+#      `offlineSavedMessage` warns. Nothing regresses; some things stop being silent.
+#
+# The upgrade path, if the register ever needs it, is the one the stage rows took — and it is a
+# separate change with its own migration, not something to half-do here.
+
+#: The wire name of the precondition, spelled once for the six schemas and the six routes.
+EXPECTED_UPDATED_AT_FIELD = "expectedUpdatedAt"
+
+#: How far apart a caller's ``expectedUpdatedAt`` and the stored ``updatedAt`` may be and still be
+#: called the same moment.
+#:
+#: A SECOND, AND THE SIZE IS CHOSEN BY WHICH MISTAKE IT MAKES. Too tight and a TRUE match is reported
+#: as a conflict — a designer's queued correction parked behind a comparison they cannot see, cannot
+#: fix and did not cause, on a handset with no signal. Too loose and a competing write inside the
+#: tolerance passes unnoticed, which is precisely today's behaviour and therefore not a regression.
+#: One of those two failures costs somebody their fieldwork and the other costs nothing that is not
+#: already being lost, so the tolerance is deliberately generous.
+#:
+#: WHAT THE PRECISION ACTUALLY IS, so the next reader can re-derive the number instead of trusting
+#: it. Prisma maps ``DateTime`` to Postgres ``timestamp(3)``, so the stored value carries
+#: milliseconds. A browser round-tripping the value through ``Date`` also lands on milliseconds; a
+#: handset through ``java.time.Instant`` keeps everything it was given. So the honest floor is a
+#: millisecond and a second is three orders of margin — bought because the ONLY thing that margin
+#: costs is a guarantee this function never claimed to make.
+EXPECTED_UPDATED_AT_TOLERANCE = timedelta(seconds=1)
+
+
+def take_expected_updated_at(data: dict[str, Any]) -> datetime | None:
+    """Pop the precondition out of a PATCH body, because it is a QUESTION and not a column.
+
+    POPPED AT THE TOP OF THE ROUTE, beside ``clean_data``, rather than left for the guard to remove
+    later: everything between here and the write reads ``data`` — ``guard_record_edit`` diffs it into
+    a ``RecordRevision``, ``merge_field_provenance`` stamps a contributor against every key it holds,
+    and Prisma is finally handed it as columns. A field that survived into any one of those would be
+    an audit entry for an edit nobody made, a provenance stamp on a field that does not exist, or a
+    500 naming a column this table has never had.
+    """
+    value = data.pop(EXPECTED_UPDATED_AT_FIELD, None)
+    return value if isinstance(value, datetime) else None
+
+
+def assert_expected_updated_at(record: Any, expected: datetime | None) -> None:
+    """Refuse an edit composed against a version of this record that is no longer the current one.
+
+    ``None`` PASSES, AND THAT IS THE WHOLE COMPATIBILITY STORY. Every client shipped to date sends no
+    precondition; every one of them goes on behaving exactly as it does now, unrefusable by this
+    function. Only a caller that opts in by SENDING the field can ever meet the 409 — which is why no
+    fielded 0.0.7 APK and no cached web bundle can be refused by this change.
+
+    CALL IT INSIDE THE TRANSACTION AND BEFORE ANY WRITE IN IT. The six update routes open with
+    ``guard_record_edit``, which ends in ``record_revision`` — a ledger entry asserting a change. A
+    refusal raised after that would leave a committed claim about an edit that was then turned down,
+    which is the exact defect the 2026-09-03 transaction wrapping was written to end; raising here,
+    above it, means the rollback takes the ledger entry with it.
+
+    THE COMPARISON IS ``abs(difference) <= tolerance`` AND NOT AN EQUALITY. See
+    ``EXPECTED_UPDATED_AT_TOLERANCE`` for the size and for which of the two possible mistakes it
+    deliberately makes. A NAIVE datetime from the caller is read as UTC rather than refused: every
+    value this can be compared against was produced by this API, which encodes UTC, and 422-ing a
+    correction over a missing "Z" would lose fieldwork to punctuation.
+    """
+    if expected is None:
+        return
+    stored = getattr(record, "updatedAt", None)
+    if not isinstance(stored, datetime):
+        # Nothing to compare against — a row this old has no claim to make, and inventing a refusal
+        # from an absent value would park a correction over the server's own gap.
+        return
+    if expected.tzinfo is None:
+        expected = expected.replace(tzinfo=UTC)
+    if stored.tzinfo is None:
+        stored = stored.replace(tzinfo=UTC)
+    if abs(stored - expected) <= EXPECTED_UPDATED_AT_TOLERANCE:
+        return
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail={
+            "code": "record_changed",
+            # TERSE, AND WRITTEN TO BE QUOTED. Android's ``outboxConflictSentence`` embeds the
+            # server's own ``detail`` verbatim between its own clauses, so this has to read as one
+            # self-contained sentence in the middle of a paragraph — not as a heading, and not as an
+            # instruction that competes with the remedy that sentence already gives ("Open the
+            # clashing record, make the change there, then discard this entry").
+            "message": "Someone else changed this record after this edit was composed.",
+            "expectedUpdatedAt": expected.isoformat(),
+            "currentUpdatedAt": stored.isoformat(),
+        },
+    )
+
+
 # --- Loading a page's relations without paying for them one at a time ----------------------------
 #
 # THE PROBLEM THIS SOLVES, measured rather than guessed. Prisma's query engine already batches a
@@ -1453,6 +1972,14 @@ PROVENANCE_SKIP_FIELDS = {
     "measurementAnalysis",
     "measurementAnalysisStatus",
     "measurementImageId",
+    # THE CREATE-IDEMPOTENCY KEY, WHICH IS BOOKKEEPING ABOUT A SEND AND NOT A FIELD ANYBODY FILLED
+    # IN (2026-09-03). It reaches ``data`` on the four create routes that accept it, so without this
+    # entry ``merge_field_provenance`` would write a ``{by, byName, at}`` stamp against it — and the
+    # web client's "Field contributions" panel builds its rows from whatever keys that object holds,
+    # so every replayable record would list a row attributing a v4 UUID to the designer, as though
+    # they had typed it. Exactly the reasoning ``MARKER_BODY_KEY`` below carries: *"it is not a field
+    # anybody filled in"*. See ``CLIENT_KEY_FIELD`` for what the column is.
+    CLIENT_KEY_FIELD,
     # The per-dimension method markers a client sends alongside the numbers. Skipped for the same
     # reason as the three measurement keys above it, and then some: it is not a field anybody filled
     # in, it is a hint about HOW they filled in three other fields. Attributed as a field of its own

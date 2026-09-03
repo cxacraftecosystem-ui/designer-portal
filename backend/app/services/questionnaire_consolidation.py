@@ -34,8 +34,14 @@ from app.core.db import db
 from app.core.deps import get_value, is_empty_value
 from app.services.concurrency import gather_reads
 from app.services.record_filters import resolve_workshop_ids, workshop_clause
-from app.services.records import media_url_owners, public_encode, viewable_where
+from app.services.records import (
+    media_url_owners,
+    presigned_read_ttl,
+    public_encode,
+    viewable_where,
+)
 from app.services.rich_text import plain_from_stored
+from app.services.s3 import presign_get_url
 
 # How many statements ``consolidate_for_artisan`` issues, whatever the artisan's interview count.
 # Asserted by the route's ``meta.queryCount`` so the number is checkable from a live response rather
@@ -182,6 +188,52 @@ def _may_take(media: Any, media_owners: set[str] | None) -> bool:
     everywhere", and this document reaches every sitting an artisan has ever been in.
     """
     return media_owners is None or get_value(media, "uploadedById") in media_owners
+
+
+def _readable_url(media: Any) -> str | None:
+    """This clip's ``url`` as the page should receive it: stored today, signed once the flag is on.
+
+    THE SECOND HALF OF A ONE-DOOR CHANGE, and it exists because this module deliberately walks
+    around the door. ``records._sign_media_url`` swaps a permanent CDN URL for a 15-minute signature
+    on every media node the encoder walks; the entry this module builds carries no ``objectKey``, so
+    the encoder never walks it (see the comment beside the ``"url"`` key, and :func:`_may_take` for
+    why that divergence is deliberate and safe). Without this the consolidated questionnaire would be
+    the one read surface in the API still handing out permanent links after the flag went on — and
+    the one that would keep working after the bucket flip is verified, which is precisely how a
+    forgotten surface stays forgotten.
+
+    The entitlement is NOT re-decided here. :func:`_may_take` has already said yes by the time this
+    is called; this only changes how long the string stays good for.
+
+    Fails to the stored URL, never raises: same trade, same reasons, as the encoder's own signing —
+    a storage misconfiguration must not turn one artisan's consolidated document into a 500.
+    """
+    stored = get_value(media, "url")
+    ttl = presigned_read_ttl()
+    object_key = get_value(media, "objectKey")
+    if ttl is None or not object_key or not isinstance(stored, str) or not stored:
+        return stored
+    # THE SAME HELPER THE ENCODER USES, NOT A SECOND SPELLING OF IT. This module deliberately walks
+    # around ``public_encode``'s door (see the docstring above), so it is also the module most likely
+    # to be forgotten when the rule on the other side changes — and the rule here is a security one:
+    # the stored ``mimeType`` is the caller's string, and an S3 ``response-content-type`` override
+    # beats both the object's header and any CDN rule. One import, one answer, one place to change
+    # it. Deferred inside the function because ``api/routes/media`` reaches this package. (2026-09-03)
+    from app.api.routes.media import signed_read_headers
+
+    mime_type, disposition = signed_read_headers(get_value(media, "mimeType"))
+    try:
+        return presign_get_url(
+            str(object_key),
+            filename=str(get_value(media, "originalFilename") or object_key),
+            mime_type=mime_type,
+            expires_in=ttl,
+            # A player for what a page plays, an attachment for everything else — see
+            # ``records._sign_media_url`` and ``signed_read_headers`` for the argument.
+            disposition=disposition,
+        )
+    except Exception:  # noqa: BLE001 — a misconfigured store must not 500 the document.
+        return stored
 
 
 def _answer_key(text: str | None) -> str:
@@ -402,7 +454,15 @@ async def consolidate_for_artisan(
             # A missing URL is a first-class state on this page: the transcript and the answer text are
             # the document, and the audio is the evidence behind them. A reader who may not take the
             # file still gets the whole account; the player simply is not offered.
-            "url": media.url if _may_take(media, media_owners) else None,
+            #
+            # SIGNED WHEN ``MEDIA_PRESIGNED_READS`` IS ON, THROUGH THE SAME HELPER THE ENCODER USES.
+            # This is a player on a page — the same kind of surface as ``GET /media``, and named as
+            # such in ``records._sign_media_url``'s decision table — so it gets the same 15-minute
+            # inline signature. It has to be asked for HERE for exactly the reason the comment above
+            # gives: no ``objectKey`` on the node means the encoder's walk never sees it. The helper
+            # reads the flag itself and is a no-op while the flag is off, so this line is unchanged
+            # in every deployment that has not worked through the runbook.
+            "url": _readable_url(media) if _may_take(media, media_owners) else None,
             "transcriptText": media.transcriptText,
             "transcriptStatus": media.transcriptStatus,
             # TRUE OR ABSENT, NEVER FALSE, and the missing third value is the point. The stamp behind

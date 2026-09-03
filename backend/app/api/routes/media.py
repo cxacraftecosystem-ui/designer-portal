@@ -3,7 +3,7 @@ import math
 from datetime import UTC, datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
 from prisma.errors import UniqueViolationError
 
 from app.core.config import get_settings
@@ -69,11 +69,13 @@ from app.services.s3 import (
     complete_multipart_upload,
     create_multipart_upload,
     delete_object,
+    head_object,
     make_object_key,
     presign_put_url,
     presign_upload_part,
     public_url_for_key,
 )
+from app.services.uploads import read_upload_bounded
 from app.services.workshop_access import (
     enforce_workshop_submission,
     pin_pending_if_late,
@@ -294,12 +296,250 @@ async def _public(
     return encoded
 
 
+# ══ WHAT THE UPLOAD DOORS WILL SIGN ══════════════════════════════════════════════════════════════
+#
+# ``POST /media/presign`` puts the caller's ``mimeType`` into the SIGNED ``Content-Type`` of the
+# stored object, and until 2026-09-03 it accepted any string of up to 180 characters
+# (``schemas/media.PresignRequest``) and signed it verbatim. So the type an object is later SERVED
+# with was chosen by whoever uploaded it: ``text/html`` produced a stored, world-readable document
+# on the deployment's own storage host that a browser executes when opened — a phishing page or a
+# credential-harvesting form living at an ``s3.…amazonaws.com`` / CDN URL the organisation owns,
+# reachable through ``GET /data/media/{id}/download``'s 307 and through the media lightbox's "Open"
+# control. ``components/forms/MediaCaptureField.tsx`` had already written this hole down from the
+# client side, citing this very file's two lines by number.
+#
+# ══ THE SHAPE IS AN ALLOW-LIST WITH A DENY-LIST IN FRONT OF IT, AND BOTH HALVES ARE NEEDED ═══════
+#
+# The families below are broad on purpose — an allow-list that is narrower than what the fleet
+# actually uploads is not a security control, it is an outage. Android's ``saveOrQueue`` does not
+# queue a 4xx, so a refused presign LOSES the recording rather than retrying it; a type this list
+# forgets is a file that never comes back. Hence prefix families rather than an enumeration of
+# subtypes, and hence the deny-list: ``text/`` has to be admitted for ``.txt`` and ``.csv``, and
+# ``text/html`` has to be refused, and one list cannot say both.
+#
+# ══ WHAT THE FLEET ACTUALLY SENDS, READ RATHER THAN ASSUMED (2026-09-03) ═════════════════════════
+#
+# * ``application/octet-stream`` IS ACCEPTED, and the audit that produced this change asked for it
+#   to be refused outright. It is not, because BOTH shipped clients emit it as their fallback for a
+#   file the platform will not type — ``frontend/lib/media.ts`` (``file.type ||
+#   "application/octet-stream"``), Android's ``Offline.kt``, ``WorkshopDraftStore.kt`` and
+#   ``WorkshopRepository.kt`` (``contentResolver.getType(uri) ?: "application/octet-stream"``) —
+#   and ``MediaCaptureField``'s own note records that this is the case a ``.glb`` model file takes
+#   in a browser with no mapping for the extension. Refusing it would 422 a real, declared registry
+#   field from every device. It is also the INERT type: a browser downloads it and never renders it,
+#   so it is not the type the hole above was about.
+# * ``application/vnd.android.package-archive`` IS ACCEPTED because the phone uploads its own APK
+#   through this route — ``WorkshopRepository.publishAppUpdate``, the "Push update to all" flow —
+#   and refusing it would break over-the-air updates for the whole fleet from a fielded build.
+#   Covered by the ``application/vnd.`` family below rather than named, along with every Office and
+#   OpenDocument type the two document pickers offer.
+# * ``image/svg+xml`` IS ACCEPTED, and it is the one genuinely scriptable type on this list. The
+#   registry asks for it by name (``sketch.lineArtFile``: "An SVG or vector export, if one was
+#   produced"), ``MediaCaptureField``'s ``imageAccept`` lists ``.svg`` explicitly, and that file
+#   carries the whole measured argument for why the token stands — the storage host is a DIFFERENT
+#   ORIGIN from the app, so what executes can read neither this app's storage nor its cookies — and
+#   names the mitigation as a rule on the distribution (``Content-Disposition: attachment`` or a
+#   ``Content-Security-Policy: sandbox`` response header on the bucket/CDN), not a code change here.
+#   Refusing it from this list would delete a declared field's only answer; the belt still belongs
+#   on the CDN.
+#
+# The list is therefore permissive WITHIN the media families and closed to the two things that made
+# the stored object a document: HTML, and the XHTML/JavaScript spellings of it.
+_UPLOAD_MIME_DENIED = frozenset(
+    {
+        "text/html",
+        "text/html-sandboxed",
+        "application/xhtml+xml",
+        "application/javascript",
+        "application/x-javascript",
+        "application/ecmascript",
+        "text/javascript",
+        "text/ecmascript",
+        "application/x-msdownload",
+        "application/hta",
+    }
+)
+
+#: Family prefixes, matching the four ``MediaType`` families the product stores (IMAGE / VIDEO /
+#: AUDIO / PDF) plus the DOCUMENT and OTHER buckets those two enums leave open. ``application/vnd.``
+#: is what carries Office, OpenDocument, the APK and the questionnaire bundle without this file
+#: having to enumerate a vendor registry it does not own; ``model/`` is the ``.glb`` / ``.gltf``
+#: pair ``MediaCaptureField`` added for ``prototype.modelFile``.
+_UPLOAD_MIME_FAMILIES: tuple[str, ...] = (
+    "image/",
+    "video/",
+    "audio/",
+    "text/",
+    "model/",
+    "font/",
+    "application/vnd.",
+)
+
+#: The named ``application/`` subtypes outside ``vnd.`` that the two clients' choosers offer:
+#: ``documentAccept`` in ``MediaCaptureField`` (.pdf .txt .csv .doc .docx .odt .xls .xlsx .json
+#: .glb .gltf), the designer-profile CV picker on both clients, and the archive types the
+#: questionnaire hand-off writes.
+_UPLOAD_MIME_ALLOWED = frozenset(
+    {
+        "application/pdf",
+        "application/msword",
+        "application/rtf",
+        "application/json",
+        "application/xml",
+        "application/zip",
+        "application/x-zip-compressed",
+        "application/gzip",
+        "application/x-gzip",
+        "application/x-tar",
+        # See the banner above: the inert fallback both clients send for an untypeable file.
+        "application/octet-stream",
+    }
+)
+
+
+def _normalized_mime(raw: str | None) -> str:
+    """The bare ``type/subtype``, lower-cased, with any ``; charset=…`` parameter dropped.
+
+    Matches how ``analyze_media_measurement`` below already normalises ``file.content_type``, so the
+    two gates in this file cannot disagree about whether ``image/jpeg; charset=binary`` is a JPEG.
+    """
+    return (raw or "").split(";")[0].strip().lower()
+
+
+def is_uploadable_mime(mime_type: str | None) -> bool:
+    """Whether this type may be stored here at all — the allow-list, with the deny-list in front.
+
+    THE PREDICATE IS EXPORTED SO THAT THE READ SIDE CAN ASK THE SAME QUESTION THE WRITE SIDE ASKED.
+    :func:`signed_read_headers` is the other caller, in this module, and it exists because a row's
+    ``mimeType`` is only as trustworthy as the door it came through: until 2026-09-03 ``/media/
+    complete`` stored the caller's string verbatim with no gate at all (``MediaCompleteRequest.
+    mimeType`` is a bare ``str``), so a presign as ``application/octet-stream`` followed by a
+    complete as ``text/html`` put a row on the table this list would never have signed. A second
+    spelling of the list in the signer would have been one edit away from disagreeing with this one,
+    and a security gate that disagrees with itself is the shape of the hole. (2026-09-03)
+    """
+    normalized = _normalized_mime(mime_type)
+    return normalized not in _UPLOAD_MIME_DENIED and (
+        normalized in _UPLOAD_MIME_ALLOWED
+        or any(normalized.startswith(family) for family in _UPLOAD_MIME_FAMILIES)
+    )
+
+
+#: The families a signed READ may hand a browser with ``Content-Disposition: inline``.
+#:
+#: INLINE MEANS "THE BROWSER MAY RENDER THIS IN ITS OWN WINDOW", and for a stored object that is a
+#: decision about whether a file somebody uploaded gets to execute on the deployment's storage
+#: origin. So this list is NOT the upload allow-list and must never be widened into one: it is the
+#: subset that both (a) a page actually renders — ``<img>``, ``<video>``, ``<audio>``, the PDF
+#: ``<iframe>``/``<object>`` in ``DocumentPreview.tsx`` and ``DwDocumentPreview.kt`` — and (b) a
+#: browser treats as data rather than as a document with script in it.
+#:
+#: Everything else signs as ``attachment``. That costs the two clients NOTHING for the media they
+#: display: browsers ignore ``Content-Disposition`` on image/video/audio SUBRESOURCES, so a gallery
+#: renders identically either way. It bites only when the URL is NAVIGATED to — the lightbox's
+#: "Open" control, a pasted link — which is precisely the case the disposition is for.
+_INLINE_SAFE_MIME_FAMILIES: tuple[str, ...] = ("image/", "audio/", "video/")
+
+#: The named types outside those families that a page renders inline. PDF and nothing else: the two
+#: document previews are the caller that forced ``presign_get_url``'s ``disposition`` parameter into
+#: existence, and a PDF viewer is a sandboxed renderer rather than a document context.
+_INLINE_SAFE_MIME = frozenset({"application/pdf"})
+
+#: Inside an inline-safe FAMILY and still never inline.
+#:
+#: ``image/svg+xml`` is an image to every picker in this repository and an HTML DOCUMENT to a
+#: browser: navigate to one and its ``<script>`` runs, on the storage origin, with whatever that
+#: origin can reach. The registry asks for SVG by name (``sketch.lineArtFile``) and
+#: ``MediaCaptureField``'s ``imageAccept`` offers it, so refusing the UPLOAD would delete a declared
+#: field's only answer — which is exactly why ``_UPLOAD_MIME_DENIED``'s banner says the belt belongs
+#: on the DISTRIBUTION. This is that belt, and it is now in the signature rather than in a CDN rule
+#: nobody can see from here: an S3 ``response-content-disposition`` override beats both the stored
+#: header and any CDN rule, so it is the one place the answer cannot be configured away. A sketch in
+#: an ``<img>`` still renders; only navigating to it changes. (2026-09-03)
+_INLINE_UNSAFE_MIME = frozenset({"image/svg+xml"})
+
+
+def signed_read_headers(mime_type: str | None) -> tuple[str, str]:
+    """What a presigned READ should force: ``(response content type, disposition)``.
+
+    THE STORED ``mimeType`` IS THE CALLER'S STRING, NOT THE SERVER'S FACT, and this function is
+    written on that assumption. S3's ``response-content-*`` overrides beat the object's own stored
+    headers AND any ``Content-Disposition`` rule on the CDN in front of it, so whatever is signed
+    here is what a browser is handed — which made the signers the last place the type could be
+    checked, and until 2026-09-03 they signed the row verbatim with ``disposition="inline"``.
+
+    Three answers, narrowest first:
+
+    * a type this deployment would never have ACCEPTED as an upload is signed as
+      ``application/octet-stream`` + ``attachment``. Not the caller's string, because the string is
+      the payload: ``text/html`` reaching a browser inline is a page executing on the organisation's
+      own storage host, reachable from the media lightbox's "Open" control and from
+      ``/data/media/{id}/download``'s 307. ``octet-stream`` is the inert type both clients already
+      send for a file the platform will not name, and a browser downloads it and renders nothing;
+    * an uploadable type that is not in the inline set — an ``.xlsx``, a ``.zip``, an APK, an SVG —
+      keeps its own type and signs ``attachment``;
+    * an inline-safe type keeps its own type and signs ``inline``, which is what the galleries and
+      the two PDF previews need.
+
+    A blank or missing type takes the first arm, which is the same answer both signers already
+    reached by defaulting to ``application/octet-stream``.
+    """
+    normalized = _normalized_mime(mime_type)
+    if not is_uploadable_mime(normalized):
+        return "application/octet-stream", "attachment"
+    inline = normalized not in _INLINE_UNSAFE_MIME and (
+        normalized in _INLINE_SAFE_MIME
+        or any(normalized.startswith(family) for family in _INLINE_SAFE_MIME_FAMILIES)
+    )
+    return normalized, "inline" if inline else "attachment"
+
+
+def _assert_uploadable(mime_type: str, size_bytes: int | None, settings: Any) -> None:
+    """Gate an upload BEFORE a URL is signed: what type, and how big. See the banner above.
+
+    A 422 for the type and a 413 for the size, both one terse sentence. The refusal happens here
+    rather than at ``/media/complete`` because nothing has moved yet: no object exists, the caller
+    has spent no bytes, and the client can pick a different file. A ceiling enforced after the
+    upload would be a refusal that costs the uploader everything it was meant to save them.
+
+    **THE TYPE HALF IS RUN AT ``/media/complete`` TOO, and that is not belt-and-braces.** The two
+    routes take different strings: the presign gate reads ``PresignRequest.mimeType`` and the create
+    reads ``MediaCompleteRequest.mimeType``, and nothing but a client's good manners made them the
+    same value. See the call there for the swap that gate closes.
+    """
+    normalized = _normalized_mime(mime_type)
+    if not is_uploadable_mime(normalized):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"{normalized or 'That file type'} cannot be uploaded here.",
+        )
+    ceiling = int(getattr(settings, "media_upload_max_bytes", 0) or 0)
+    if ceiling and size_bytes is not None and int(size_bytes) > ceiling:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=(
+                f"That file is over the {ceiling // (1024 * 1024)} MB upload limit; "
+                "split it or send a smaller one."
+            ),
+        )
+
+
 @router.post("/presign", response_model=PresignResponse)
 async def presign_media_upload(
     payload: PresignRequest,
     current_user: Any = Depends(get_current_user),
 ) -> dict[str, Any]:
+    """Sign a single PUT for one object. **The caller's declared type and size are checked first.**
+
+    ``payload.mimeType`` becomes the SIGNED ``Content-Type`` of the stored object and therefore the
+    type a browser is later handed it under, which is why it is validated rather than passed
+    through — see the banner above ``_UPLOAD_MIME_DENIED``. ``sizeBytes`` was previously read by
+    nothing at all on this route (only ``/multipart/create`` used it, and only to divide by the part
+    size); it is a claim rather than a fact, so it is checked here for what it costs — nothing — and
+    the real length is checked again at ``/media/complete``.
+    """
     settings = get_settings()
+    _assert_uploadable(payload.mimeType, payload.sizeBytes, settings)
     object_key = make_object_key(current_user.id, payload.filename)
     return {
         "uploadUrl": presign_put_url(object_key, payload.mimeType),
@@ -326,8 +566,17 @@ async def create_multipart(
 ) -> dict[str, Any]:
     """Start a multipart (chunked) upload for a large file. The client uploads each part straight to
     S3 via the presigned URLs from /multipart/presign-parts, then calls /multipart/complete; S3
-    stitches the parts into a single object."""
+    stitches the parts into a single object.
+
+    THE SAME TWO CHECKS AS ``/presign``, because this is the same door for a bigger file.
+    ``create_multipart_upload`` writes ``payload.mimeType`` onto the object exactly as the single-PUT
+    signature does, and this is the route the fleet uses for anything over the multipart threshold
+    — so gating one and not the other would leave the hole open for precisely the large uploads.
+    ``sizeBytes`` was already read here, but only to compute ``partCount``: a declared 40 GB simply
+    produced 2,560 part URLs.
+    """
     settings = get_settings()
+    _assert_uploadable(payload.mimeType, payload.sizeBytes, settings)
     object_key = make_object_key(current_user.id, payload.filename)
     upload_id = await asyncio.to_thread(create_multipart_upload, object_key, payload.mimeType)
     part_count = max(1, math.ceil(payload.sizeBytes / MULTIPART_PART_SIZE))
@@ -455,6 +704,7 @@ MEASUREMENT_MAX_BYTES = 8 * 1024 * 1024
 
 @router.post("/analyze-measurement")
 async def analyze_media_measurement(
+    request: Request,
     file: UploadFile = File(...),
     dimension: str | None = Query(default=None),
     _: Any = Depends(require_record_creator),
@@ -508,19 +758,25 @@ async def analyze_media_measurement(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
         ) from exc
 
-    content = await file.read()
+    # THE CEILING IS NOW ENFORCED WHILE THE BODY ARRIVES, NOT AFTER IT HAS ALL ARRIVED (A30-10).
+    # This was ``content = await file.read()`` followed by ``len(content) > MEASUREMENT_MAX_BYTES``
+    # — a no-argument ``read()`` reads to EOF, so an 800 MB body was materialised in one contiguous
+    # ``bytes`` on a single-worker 1 GiB box and only THEN measured and refused. The 413 was honest
+    # and useless; the cost it exists to avoid had already been paid in full one line above it.
+    # ``services/uploads.read_upload_bounded`` carries the whole argument, including why the
+    # ``Content-Length`` pre-check in front of the chunked read is not redundant with it.
+    #
+    # THE SECOND SENTENCE OF THE OLD REFUSAL IS GONE, DELIBERATELY. It read "Photograph the object
+    # alone on the grid sheet rather than the whole workbench", which is good advice and is already
+    # what the grid control on both clients says on screen beside the button. One line on the wire;
+    # the argument lives here.
+    content = await read_upload_bounded(
+        file, MEASUREMENT_MAX_BYTES, request=request, purpose="image"
+    )
     if not content:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="No image was uploaded. Photograph the object on the grid sheet and try again.",
-        )
-    if len(content) > MEASUREMENT_MAX_BYTES:
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=(
-                f"The image is larger than the {MEASUREMENT_MAX_BYTES // (1024 * 1024)} MB limit. "
-                "Photograph the object alone on the grid sheet rather than the whole workbench."
-            ),
         )
     mime_type = (file.content_type or "image/jpeg").split(";")[0].strip().lower()
     if mime_type not in SUPPORTED_MIME_TYPES:
@@ -645,6 +901,47 @@ SERVER_WRITTEN_TRANSCRIPT_FIELDS = frozenset(
 )
 
 
+async def _assert_stored_object_within_ceiling(object_key: str, settings: Any) -> None:
+    """Refuse — and delete — a staged object grossly larger than the declared ceiling allows.
+
+    THE DELETE IS THE POINT AND IT IS NARROWLY SAFE. Refusing without removing the object would
+    leave the bytes sitting in the bucket, paid for and unreferenced, which is precisely the
+    condition ``DELETE /media/object`` and the client-side key journal exist to clean up — so an
+    upload the server has just declared inadmissible would be the one class of orphan nothing
+    sweeps. It is safe here because of where "here" is: ``_assert_owns_object`` has already forced
+    the key under ``media/<caller_id>/``, the idempotent-replay branch above has already returned
+    for any key that HAS a row, and no ``MediaFile`` is created on this path until several lines
+    later. So the object being removed is the caller's own staged upload, referenced by nothing.
+
+    ``head_object`` ANSWERING ``None`` LETS THE UPLOAD THROUGH, deliberately. None means storage
+    would not say — a custom endpoint without ``HEAD``, a credential lacking the permission — never
+    "small", and turning an unanswerable pre-check into a refusal would fail every upload on a
+    MinIO configuration that works today. The bound that does not need a HEAD is the one on the READ
+    side (``media_queue``'s ceilings, ``data_browser``'s convert bound), which is where an
+    unmeasurable object is eventually stopped anyway.
+
+    IT RUNS IN A THREAD because ``head_object`` is boto3 and therefore blocking, and this is the
+    request path of a single-worker process.
+    """
+    ceiling = int(getattr(settings, "media_upload_max_bytes", 0) or 0)
+    if not ceiling:
+        return
+    head = await asyncio.to_thread(head_object, object_key)
+    if head is None or head.size_bytes <= ceiling:
+        return
+    try:
+        await asyncio.to_thread(delete_object, object_key)
+    except Exception:  # noqa: BLE001 — the refusal is the answer; a storage hiccup must not mask it
+        pass
+    raise HTTPException(
+        status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+        detail=(
+            f"That file is over the {ceiling // (1024 * 1024)} MB upload limit; "
+            "split it or send a smaller one."
+        ),
+    )
+
+
 def _assert_enqueueable(processing_requests: list[str] | None) -> None:
     """Refuse a processing request this route will not queue. See ENQUEUEABLE_PROCESSING_REQUESTS."""
     unsupported = sorted(
@@ -705,6 +1002,33 @@ async def complete_media_upload(
     # only ever reached from below this line.
     _assert_enqueueable(processing_requests)
 
+    # ── THE TYPE GATE, RUN AGAIN HERE BECAUSE THIS ROUTE STORES A DIFFERENT STRING ───────────────
+    #
+    # ``_assert_uploadable`` runs at ``/media/presign`` and ``/multipart/create``, and what it gates
+    # there is the type SIGNED ONTO THE OBJECT. ``MediaCompleteRequest.mimeType`` is a separate,
+    # ungated ``str`` that is stored on the ROW — and the row is what every read path believes:
+    # ``records._sign_media_url`` puts it on a presigned GET as ``response-content-type``, and an S3
+    # response override beats both the object's stored header and any CDN ``Content-Disposition``
+    # rule. So a signed-in account could presign as ``application/octet-stream``, PUT anything, and
+    # complete as ``text/html`` — and with ``MEDIA_PRESIGNED_READS`` on, every read of that row
+    # served an executable page inline from the organisation's own storage host, reachable from the
+    # media lightbox's "Open" control and from ``/data/media/{id}/download``'s 307. Two chokepoints,
+    # both closed 2026-09-03: this one, and ``signed_read_headers`` on the way out.
+    #
+    # AHEAD OF THE IDEMPOTENCY READ, for the reason the line above gives about the flag: a refusal
+    # here leaves nothing behind and costs no query. It also means a REPLAY of a row poisoned before
+    # this gate existed is refused rather than confirmed, which is the answer to want.
+    #
+    # WIRE-SAFE FOR EVERY FIELDED BUILD. Both clients complete with the same type they presigned
+    # with — the phone from one ``contentResolver.getType`` result, the web from one ``file.type`` —
+    # and that value has already passed this exact predicate at the presign door. Only a caller that
+    # CHANGED the type between the two calls is refused, which is the attack and not a client.
+    #
+    # ``None`` FOR THE SIZE, NOT ``payload.sizeBytes``: the caller's claimed length is worth nothing
+    # here, and ``_assert_stored_object_within_ceiling`` below asks STORAGE for the real one. Passing
+    # the claim would add a second 413 on a number this route has already decided not to trust.
+    _assert_uploadable(payload.mimeType, None, settings)
+
     # Idempotency. The client retries /complete when the first call is slow or times out (504
     # resilience), but that first call may already have created the row. ``objectKey`` is unique and
     # embeds the uploader id + a per-upload uuid, so a row already present for this key IS this same
@@ -724,6 +1048,17 @@ async def complete_media_upload(
     # New row: the staged object must live under the caller's own media/<user_id>/ prefix, so a user
     # cannot register a media row over another user's staged object.
     _assert_owns_object(payload.objectKey, current_user)
+
+    # AND THE OBJECT'S REAL LENGTH, WHICH IS THE ONLY NUMBER HERE THAT IS A FACT.
+    #
+    # ``_assert_uploadable`` refused an oversized ``sizeBytes`` at the presign door, and that check
+    # is worth exactly what a client's own claim is worth — ``s3.head_object``'s docstring spells
+    # out the rest: the presign signature deliberately carries no ``content-length-range`` (signing
+    # one breaks every Android build already in the field), so an account can declare 1 KB, PUT
+    # 1.5 GB to the URL it was handed, and complete it. This is the one moment the server can ask
+    # storage instead of the caller, and it is before the row exists — so a refusal leaves nothing
+    # behind and the staged object goes with it.
+    await _assert_stored_object_within_ceiling(payload.objectKey, settings)
 
     # The transcript columns are dropped here rather than overwritten: there is nothing for the server
     # to derive at create time, and the queue is their only writer. See
@@ -984,7 +1319,10 @@ async def _tag_only_orphans() -> list[Any]:
         planned.append((kind, delegate.find_many(where={"id": {"in": sorted(ids)}})))
     # ONE WAVE, NOT ONE ROUND TRIP PER TAGGED TYPE. There are at most four of them
     # (``_orphan_tag_delegate``) and none of them reads another's output, so awaiting them in turn
-    # was up to four cross-region waits on an admin recovery screen that already pays several.
+    # was up to four sequential waits on an admin recovery screen that already pays several. Those
+    # were cross-region hops when this was written and are co-located ones since 2026-09-02 (~1-2ms
+    # — ``services/concurrency.py``), so four-into-one is now milliseconds rather than seconds; the
+    # count of waits is the claim and it is unchanged.
     for (kind, _coro), rows in zip(
         planned, await gather_reads(*(coro for _kind, coro in planned)), strict=True
     ):
@@ -1401,14 +1739,58 @@ async def process_media_processing_jobs(
     return await process_next_media_jobs(limit=limit, worker_id="manual-api", recover=False)
 
 
+#: The two job states ``POST /media/jobs/{id}/retry`` will move back to QUEUED.
+#:
+#: RETRY USED TO CARRY NO STATUS PREDICATE AT ALL, and a job's lock is its status. The update was an
+#: unconditional ``update(where={"id": job.id}, data={"status": "QUEUED", "lockedAt": None,
+#: "lockedBy": None, ...})``, so an admin pressing Retry on a job that was PROCESSING —
+#: mid-provider-call in the queue process, which cannot see this button and is not asked — erased
+#: the lock out from under it. ``media_queue._lock_job``'s compare-and-set then MATCHES, because it
+#: matches on ``status: QUEUED`` and this route has just made that true: the next drain pass claims
+#: the same job honestly, sends the same eleven-minute recording to the same provider a second time,
+#: and the two answers race to write ``MediaFile.transcriptText``. Billed twice, and the stored
+#: transcript is whichever call happened to finish last.
+#:
+#: THE WEB PANEL DOES NOT OFFER RETRY ON A PROCESSING ROW, AND NEVER DID — corrected 2026-09-03.
+#: ``components/media/MediaJobsPanel.tsx`` computes ``retryable = status === "FAILED" || status ===
+#: "CANCELLED"`` and renders a dash for anything else; that line is pre-wave, present at 0.0.7. An
+#: earlier note here claimed the button was on every row, which overstated the case and, worse, made
+#: this predicate read as a patch for one screen's bug rather than as what it is.
+#:
+#: WHAT IT IS: SERVER-SIDE DEPTH. ``POST /media/jobs/{id}/retry`` is a plain admin endpoint, and one
+#: client's rendering choice is not a guard on it. curl reaches it, so does a script, so does the
+#: next client written against this API, and so would the panel the day somebody adds a bulk
+#: "retry everything that has not finished" control on top of the same route. A UI that declines to
+#: draw a button is a courtesy to the person looking at it; the predicate below is what makes the
+#: outcome impossible, and the two are worth having separately.
+#:
+#: COMPLETED IS ABSENT AS WELL AS PROCESSING, and that is the smaller half of the same rule: a
+#: finished transcription re-run through the queue spends the provider again and, through
+#: ``_transcript_write``, can only overwrite a good transcript with a worse one or with nothing.
+#: "Transcribe now" is the deliberate, admin-only path for redoing a finished clip.
+RETRYABLE_JOB_STATUSES = ("FAILED", "CANCELLED")
+
+
 @router.post("/jobs/{job_id}/retry")
 async def retry_media_processing_job(
     job_id: str,
     _: Any = Depends(require_admin),
 ) -> dict[str, Any]:
+    """Requeue a failed or cancelled processing job. 409 for a job in any other state.
+
+    THE UPDATE IS A COMPARE-AND-SET, deliberately the same shape as ``media_queue._lock_job``: the
+    status is both the predicate and the thing being written, so a job that leaves PROCESSING (or
+    arrives in it) between the read above and the write below cannot be caught in the middle. A
+    read-then-update with the check in Python would be correct almost always and wrong exactly when
+    it matters — the drain claiming the job in the same instant the admin presses the button.
+    ``update_many`` is what carries a ``where`` beyond the primary key; it returns a count rather
+    than the row, which is why the row is read back afterwards.
+
+    See ``RETRYABLE_JOB_STATUSES`` for why PROCESSING and COMPLETED are not in the set.
+    """
     job = await require_record(db.mediaprocessingjob, job_id)
-    updated = await db.mediaprocessingjob.update(
-        where={"id": job.id},
+    requeued = await db.mediaprocessingjob.update_many(
+        where={"id": job.id, "status": {"in": list(RETRYABLE_JOB_STATUSES)}},
         data={
             "status": "QUEUED",
             "runAfter": datetime.now(UTC),
@@ -1417,7 +1799,17 @@ async def retry_media_processing_job(
             "completedAt": None,
             "error": None,
         },
-        include={"mediaFile": True},
+    )
+    if requeued != 1:
+        # A 409 AND NOT A 403: the caller is an admin and is entitled to press this. What is not in
+        # a state to be retried is the JOB. The sentence names the two states rather than the job's
+        # current one, because the current one may already have moved again by the time it is read.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Only a failed or cancelled job can be retried.",
+        )
+    updated = await db.mediaprocessingjob.find_unique(
+        where={"id": job.id}, include={"mediaFile": True}
     )
     # NO VIEWER, for the reason written out at ``list_media_processing_jobs``: the nested
     # ``mediaFile`` comes back stripped of ``url``, ``objectKey`` and its transcript, for the admin

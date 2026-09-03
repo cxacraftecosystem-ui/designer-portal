@@ -95,6 +95,11 @@ from app.core.deps import (
     require_dataset_admin,
 )
 from app.core.security import create_access_token, verify_password
+
+# The per-account guessing budget, shared with `routes/auth.login` and `routes/auth.change_password`
+# rather than reimplemented: one account is one allowance across every door in this API that turns a
+# password into something. See the second banner in that module.
+from app.scale.rate_limit import account_credential_attempt, account_credential_refund
 from app.schemas.auth import LoginRequest
 from app.services.concurrency import gather_reads
 from app.services.csv_export import record_media
@@ -666,6 +671,19 @@ def _csv_shape(dataset: Dataset) -> tuple[str | None, list[str]]:
 # =================================================================================================
 
 
+#: The per-account guessing budget is spent. Its own sentence rather than the sign-in screen's,
+#: because the reader here is an operator at a terminal wiring up a cron job and not a designer at a
+#: form: "sign-in" is not what they think they are doing, and the actionable half is that a CORRECT
+#: password costs nothing, so a job that is simply misconfigured is not making things worse by
+#: retrying. Deliberately a 429 and not a 401, for ``auth.ACCOUNT_THROTTLED_DETAIL``'s reason — a
+#: 401 here would be charged a second time by the per-network budget in ``app/scale/rate_limit.py``
+#: (this path is on ``_CREDENTIAL_PREFIXES``) and the two would compound.
+_TOKEN_THROTTLED_DETAIL = (
+    "Too many failed credential attempts for this account. Wait a few minutes and try again — "
+    "a correct password does not count against this limit."
+)
+
+
 @router.post("/token")
 async def mint_dataset_token(payload: LoginRequest) -> dict[str, Any]:
     """Exchange ADMIN credentials for a long-lived, read-only token for this API.
@@ -703,8 +721,14 @@ async def mint_dataset_token(payload: LoginRequest) -> dict[str, Any]:
     about the cron job's own account changed. It is the honest answer — the request genuinely could
     not be written down for an administrator to see — but it is not one a machine caller's author
     would predict, so it is named here. ``docs/DATASET_API.md``'s error table does not yet list it
-    (nor the 403 this gate can now answer to a correct ADMIN credential) — adding those two rows is
-    an outstanding documentation fix, not a behaviour this docstring is describing loosely.
+    (nor the 403 this gate can now answer to a correct ADMIN credential, nor the 429 below) —
+    adding those three rows is an outstanding documentation fix, not a behaviour this docstring is
+    describing loosely.
+
+    **IT ALSO ANSWERS 429 NOW, PER ACCOUNT, 2026-09-03.** Ten wrong passwords for one account in
+    five minutes and this door closes for a few minutes — see the block at the credential check,
+    which is where the reasoning is. A caller holding the right password never meets it; the budget
+    charges failures and refunds everything else.
 
     THIS GATE STOPS NEW MINTS AND CANNOT RECALL AN OLD TOKEN. There is no token store; a credential
     already issued is refused instead by ``deps.require_dataset_admin``, which re-reads the
@@ -730,12 +754,46 @@ async def mint_dataset_token(payload: LoginRequest) -> dict[str, Any]:
         )
 
     user = await db.user.find_unique(where={"email": (payload.email or "").lower()})
+    # ── THE PER-ACCOUNT GUESSING BUDGET, TAKEN HERE TOO SINCE 2026-09-03 ────────────────────────
+    #
+    # THIS DOOR HAD NO LOCKOUT AT ALL, AND IT IS THE ONE THAT PAYS BEST TO ATTACK. `/auth/login`
+    # has charged a per-account budget in front of its bcrypt call since 2026-08-30; this endpoint
+    # takes the same email and the same password and answers with a THIRTY-DAY read token over the
+    # entire repository. So every guess the sign-in door refused could simply be re-aimed here, at
+    # the door with the better prize, and nothing counted it — the budget next door was a lock on
+    # one of two doors into the same room.
+    #
+    # The middleware in `app/scale/rate_limit.py` does cover this path (it is on
+    # `_CREDENTIAL_PREFIXES`), and that is not the same protection: it keys on the network the
+    # request arrived from, so an attacker on a different mobile network — or a botnet — meets a
+    # fresh, full bucket for every guess at one victim. Keying on `user.id` is what makes one
+    # ACCOUNT one allowance, and it is the SAME bucket `/auth/login` and `change_password` spend,
+    # so the ten failures are ten across the whole API rather than ten per endpoint.
+    #
+    # Take-then-refund, before bcrypt, exactly as the sign-in path does it and for the identical
+    # reason: a check-then-charge lets a hundred parallel guesses all pass the check before any of
+    # them is counted. Only a WRONG PASSWORD keeps the token — the refund below fires the moment
+    # the credential verifies, so the 403 for a non-admin, the gate's own refusals (403, 503) and
+    # the 200 all cost nothing. That matters here more than it does at the sign-in door: the
+    # operator whose nightly job is refused 503 because strangers filled the approval queue (see
+    # the docstring) is having a bad enough evening without also being locked out for it.
+    if user is not None:
+        allowed, _retry = account_credential_attempt(user.id)
+        if not allowed:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=_TOKEN_THROTTLED_DETAIL,
+            )
     # One message for "no such account" and "wrong password", the same as POST /auth/login: telling
     # them apart turns this endpoint into an oracle for which admin addresses exist.
     if not user or not verify_password(payload.password or "", user.passwordHash):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password"
         )
+    # The password was right, so nothing was spent. See the block above, and the module docstring of
+    # app/scale/rate_limit.py: charging attempts rather than failures would lock a correctly
+    # configured job out of the repository the first time somebody rotated a password badly.
+    account_credential_refund(user.id)
     if not is_admin(user):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

@@ -179,6 +179,9 @@ export default function ArtisansPage() {
             setApplied(query);
             setPage(1);
           }}
+          // The placeholder names the COLUMNS, not the corpus, and a placeholder stops being the
+          // accessible name the moment the box has something in it — so the name is stated here.
+          ariaLabel="Search artisans"
           placeholder="Search by name, craft, place or notes"
         />
       </div>

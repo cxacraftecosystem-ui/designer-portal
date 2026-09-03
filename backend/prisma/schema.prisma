@@ -599,6 +599,20 @@ model AppRelease {
   objectKey     String
   url           String?
   notes         String?
+  /// The size of the APK behind `objectKey`, in bytes, when the publisher recorded one.
+  ///
+  /// NULLABLE, AND THAT IS THE WIRE CONTRACT RATHER THAN laziness. Every release row written before
+  /// this column has no size and never will — nothing walks S3 to backfill them — so the handset
+  /// has to keep working when it is absent, which is exactly the shape it already has for `url` and
+  /// `notes`. An absent size means "download and trust the transfer", which is what every fielded
+  /// 0.0.7 APK does today; a present one lets the updater refuse a truncated download before it
+  /// installs it. (2026-09-03)
+  ///
+  /// `BigInt` AND NOT `Int`. An APK is comfortably inside a 32-bit int today (~40 MB), but this is
+  /// a byte count on an artefact that only grows, and a column that has to be widened later is a
+  /// migration against a table two clients read. It costs nothing here: Postgres stores it in eight
+  /// bytes on a table with one row per release.
+  sizeBytes     BigInt?
   publishedById String?
   publishedBy   User?    @relation("AppReleasePublishedBy", fields: [publishedById], references: [id], onDelete: SetNull)
   publishedAt   DateTime @default(now())
@@ -996,6 +1010,45 @@ model Workshop {
   updatedAt     DateTime     @updatedAt
   locationId    String?
   createdById   String
+  /// THE CREATE THIS ROW CAME FROM, NAMED BY THE CLIENT THAT QUEUED IT — the idempotency key that
+  /// makes an offline replay land once, however many times it is sent.
+  ///
+  /// ── THE DUPLICATE THIS CLOSES, WHICH BOTH OUTBOXES HAD WRITTEN DOWN AS UNCLOSABLE ──────────
+  ///
+  /// A queued create is POSTed, the server writes the row, and the answer is lost on the way back:
+  /// a tunnel, a captive portal, the process killed by the OS while the request was in flight. The
+  /// client learned nothing, so the entry is still queued and the next pass sends it again. Both
+  /// clients guard the case they CAN see — `frontend/lib/offline.ts` writes `createdId` the moment
+  /// an answer lands and `entryAlreadyCreated` reads it; Android's `PendingEntry.createdId` does the
+  /// same. Neither can guard the case where the answer never arrived at all, and `persistProgress`
+  /// says so in as many words: *"a few milliseconds of IndexedDB is as small as that window gets
+  /// without idempotency keys on the API."* This is that key.
+  ///
+  /// IT IS ALSO THE ONLY GUARD THAT CROSSES A DEVICE OR A PROFILE. `createdId` is a fact ONE browser
+  /// profile — or one handset's queue file — holds about its own send. A queue restored onto a
+  /// second handset, or drained after a sign-out and back in, holds no such record, and the same
+  /// fieldwork is then filed twice under one designer's name in a register nobody reconciles.
+  ///
+  /// ── WHY A PLAIN `@unique` ON A NULLABLE COLUMN, AND NOT A PARTIAL INDEX ────────────────────
+  ///
+  /// Postgres permits any number of NULLs under a unique index, so `String? @unique` ALREADY IS the
+  /// partial index: `CREATE UNIQUE INDEX … WHERE "clientKey" IS NOT NULL` builds the same guarantee
+  /// while being inexpressible in this file, which would leave the schema and the database
+  /// describing different tables. `Artisan.aadhaarNumber` above carries the identical argument for
+  /// the identical reason ("Postgres permits any number of NULLs under one"), and this follows it
+  /// rather than inventing a second treatment of one problem.
+  ///
+  /// THIS IS NOT `DwStageEntry.clientKey`, and the shared spelling earns one line of warning. That
+  /// column identifies one ROW WITHIN ONE WORKSHOP and is unique only in company
+  /// (`@@unique([designWorkshopId, entityKey, clientKey])`) — which is exactly why a partial unique
+  /// is refused there, since its null-keyed collection rows must coexist by the many. This one
+  /// identifies one CREATE REQUEST, globally, and is null on every row nobody ever replayed.
+  ///
+  /// NULL IS TODAY'S BEHAVIOUR, EXACTLY. Every row written before this column has none, no backfill
+  /// invents one, and a create that sends no key is written and answered precisely as it was before
+  /// — which is what every fielded 0.0.7 APK and every cached web bundle does. See
+  /// `services/records.client_key_replay` for what a key that IS sent buys.
+  clientKey     String?      @unique
 
   location  Location?              @relation(fields: [locationId], references: [id], onDelete: SetNull)
   createdBy User                   @relation("WorkshopCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
@@ -1096,6 +1149,11 @@ model ProductDocumentation {
   /// whole argument — why it is a second column rather than a typed `Workshop`, and why the delete
   /// rule is SetNull.
   designWorkshopId           String?
+  /// The idempotency key of the create this row came from — one of the four record types a client
+  /// outbox can replay. `Workshop.clientKey` carries the whole argument: what an unanswered POST
+  /// costs, why a plain `@unique` on a nullable column IS the partial index, and why null must go on
+  /// meaning exactly what it means today.
+  clientKey                  String?  @unique
 
   artisan   Artisan?    @relation(fields: [artisanId], references: [id], onDelete: SetNull)
   craft     Craft?      @relation(fields: [craftId], references: [id], onDelete: SetNull)
@@ -1166,6 +1224,8 @@ model ToolDocumentation {
 
   /// The design & prototype workshop this tool belongs to. See `Artisan.designWorkshopId`.
   designWorkshopId              String?
+  /// The idempotency key of the create this row came from. See `Workshop.clientKey`.
+  clientKey                     String?  @unique
 
   artisan   Artisan?    @relation(fields: [artisanId], references: [id], onDelete: SetNull)
   craft     Craft?      @relation(fields: [craftId], references: [id], onDelete: SetNull)
@@ -1776,6 +1836,13 @@ model Process {
   workshopId          String?
   /// The design & prototype workshop this process was documented for. See `Artisan.designWorkshopId`.
   designWorkshopId    String?
+  /// The idempotency key of the create this row came from. See `Workshop.clientKey`.
+  ///
+  /// A REPLAYED PROCESS RETURNS ITS STEPS AND WRITES NO NEW ONES, which is the one thing this model
+  /// needs said that the other three do not: `create_process` writes `ProcessStep` rows AFTER the
+  /// row itself, and a replay that re-ran `_apply_steps` would double every step of the process.
+  /// The replay branch answers from the stored row and its hydrated steps instead of planning any.
+  clientKey           String?      @unique
 
   product   ProductDocumentation @relation(fields: [productId], references: [id], onDelete: Cascade)
   createdBy User                 @relation("ProcessCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
@@ -3256,6 +3323,51 @@ model DwStageEntry {
   /// A COLLECTION ROW IS UNTOUCHED and may still be null — the browser sets no key at all, and
   /// `test_stage_sync.test_many_rows_without_a_client_key_coexist` pins that.
   clientKey String?
+
+  /// THE OPTIMISTIC-CONCURRENCY COUNTER, AND THE OTHER HALF OF THE RACE `clientKey` CLOSED.
+  ///
+  /// `clientKey` above closed the INSERT side: two designers on one workshop each found no
+  /// singleton, each planned an INSERT, and the unique index now refuses the second — which
+  /// `design_workshops._absorb_key_collisions` turns into an UPDATE of the row the winner made. The
+  /// UPDATE it rewrites into was itself unguarded, and so was every ordinary update beside it:
+  /// `save_stage` reads this stage's rows, spends a hydration pass and a provenance merge on them,
+  /// and then writes `data` WHOLESALE by row id. Anything a second writer committed in that window
+  /// was overwritten with no index to refuse it and nothing on the wire to say it had happened.
+  ///
+  /// That is not a narrow window and it is not a rare pairing. `DesignWorkshopViewer` exists so two
+  /// designers run one workshop over one set of rows; the read/write gap spans a `hydrate_entries`
+  /// pass that issues its own queries; and a payload that
+  /// is not a `merge` carries EVERY key of the row, so the loser's stale-but-complete picture
+  /// silently replaces the winner's edit to a field the loser never touched. `updatedAt` recorded
+  /// that something happened and could not prevent it. (2026-09-03)
+  ///
+  /// THE GAP USED TO BE DESCRIBED AS "a database measured 756 ms away", AND THAT NUMBER IS NOW
+  /// HISTORY — production moved on 2026-09-02 to a co-located database at one or two milliseconds a
+  /// round trip (`app/services/concurrency.py`). It is REMOVED FROM THE SENTENCE RATHER THAN
+  /// UPDATED, because quoting any latency there invites the reading this column exists to refuse:
+  /// that a small window is an acceptable one. The gap is however many statements `hydrate_entries`
+  /// issues wide, whatever each costs, and two designers on one stage collide inside it at any
+  /// speed. A version column is not an optimisation whose value scales with latency; it is the only
+  /// thing here that can say no. (2026-09-03)
+  ///
+  /// HOW IT IS USED. `save_stage` carries the version it READ on each planned update and writes
+  /// through `update_many(where={id, version}, data={..., version: {increment: 1}})`. A count of
+  /// zero is a concurrent writer, not a missing row: the transaction is rolled back and re-run the
+  /// same way the unique-violation path re-runs it, and a row whose stored `data` no longer matches
+  /// what this request planned is REFUSED into the response's `errors` map rather than clobbered.
+  /// A row the winner happened to store identically is simply re-applied at the fresh version, so
+  /// an offline replay does not raise a conflict against itself.
+  ///
+  /// NOT NULLABLE AND `@default(0)`, so every row that predates this column starts at zero and the
+  /// first ordinary save of it is guarded like any other — there is no backfill and no window in
+  /// which the guarantee holds only for new rows. The migration's DEFAULT does the same for rows
+  /// already in the table.
+  ///
+  /// THE SWEEP AND THE HEADER ARE DELIBERATELY NOT GUARDED BY IT. Soft-deleting a swept row writes
+  /// one timestamp and is idempotent, and `DesignWorkshop` has no counter of its own; guarding the
+  /// sweep would let one collection's deletion refuse another entity's singleton save in the same
+  /// payload, which trades a real write for a race nobody has had.
+  version Int @default(0)
 
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt

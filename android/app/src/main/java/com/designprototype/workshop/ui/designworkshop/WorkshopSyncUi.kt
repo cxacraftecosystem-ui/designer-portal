@@ -255,6 +255,16 @@ internal fun DeviceSyncBanner(
      * workshop it cannot name.
      */
     unsentDeletions: Int,
+    /**
+     * Answers the server had nowhere to store, because this workshop's own sections stopped asking —
+     * see [WorkshopSyncStatus.droppedAnswers].
+     *
+     * Handed down for the reason the two above it are, and it is the third time the same omission
+     * would have made this banner lie: it is a term of [WorkshopSyncStatus.isFullySynced], so such a
+     * workshop reaches the caller's `outstanding` list, and a banner given no number for it draws a
+     * workshop it cannot name.
+     */
+    droppedAnswers: Int,
     busy: Boolean,
     onSyncNow: () -> Unit,
 ) {
@@ -266,6 +276,7 @@ internal fun DeviceSyncBanner(
         failures = refusals,
         refusedAnswers = refusedAnswers,
         unsentDeletions = unsentDeletions,
+        droppedAnswers = droppedAnswers,
     ) ?: return
     Row(
         verticalAlignment = Alignment.CenterVertically,

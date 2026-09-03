@@ -16,9 +16,16 @@ The deciding reason is the one ``design_ratings`` and ``design_workshop_access``
 own prefixes: **the caller of every route in this file is, by definition, somebody
 ``load_workshop_or_404`` turns away.** An inspector is not in ``DESIGN_WORKSHOP_ROLES``, so that
 loader 404s them. A route sharing that prefix invites the next reader to "fix" the inconsistency by
-widening the shared loader — and widening it grants STAGE WRITES, because
-``load_workshop_or_404(for_edit=True)`` performs no role check at all. The prefix boundary is a
-guard rail, not a filing decision.
+widening the shared loader — and widening it grants STAGE WRITES.
+
+THAT LAST CLAUSE USED TO REST ON "``load_workshop_or_404(for_edit=True)`` performs no role check at
+all", AND IT NO LONGER DOES (corrected 2026-09-03). Since that date the loader honours a
+``DesignWorkshopViewer`` row only for an account inside ``DESIGN_WORKSHOP_ROLES``, so an inspector is
+now refused twice over rather than once. The conclusion is unchanged and so is the guard rail:
+``for_edit=True`` still carries no role check of its own — all it changes is that a deleted workshop
+answers 409 instead of 404 — so the reader who "fixes" the inconsistency by adding INSPECTION_ROLES
+to that set, or by hanging a fourth arm off the loader, is granting stage writes and not reads. The
+prefix boundary is a guard rail, not a filing decision.
 
 =======================================================================================
 THE TWO DOORS
@@ -225,8 +232,10 @@ async def list_inspectable_workshops(
     where.setdefault("AND", []).append(inspectable_by_clause(current_user.id))
 
     clean_page, clean_size, skip = normalize_pagination(page, pageSize)
-    # Count and page together: neither reads the other, and in series the count was a whole
-    # cross-region round trip added to every page of an inspector's list. The ORDER is deliberately
+    # Count and page together: neither reads the other, and in series the count was a whole round
+    # trip added to every page of an inspector's list — a cross-region one when this was written,
+    # a co-located one or two milliseconds since 2026-09-02 (``services/concurrency.py``). One wait
+    # instead of two is the claim, and it survives the move. The ORDER is deliberately
     # left exactly as it was rather than routed through ``records.count_and_page``, which would add
     # an ``id`` tiebreak and quietly change which rows land on which page of an existing client.
     total, rows = await gather_reads(

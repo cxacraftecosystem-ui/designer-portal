@@ -437,8 +437,9 @@ object DwWorkshopSearch {
      *
      * [FieldDto.refModel] is the entity's [EntityDto.name] ("DwSketch", "DwPrototype", …), so this
      * join needs no table to maintain and picks up a new referenceable entity the day the registry
-     * declares one. The five models that are NOT entities of this registry — Craft, Artisan, Process,
-     * ToolDocumentation, ProductDocumentation — are records the rest of the repository owns and
+     * declares one. The six models that are NOT entities of this registry — Craft, Artisan, Process,
+     * ToolDocumentation, ProductDocumentation, and (since the stage-7 instrument link, 2026-09-03)
+     * Questionnaire — are records the rest of the repository owns and
      * cannot be resolved offline from a workshop draft at all; they fall through to
      * [referenceDisplayHint].
      */

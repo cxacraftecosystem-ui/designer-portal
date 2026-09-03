@@ -38,16 +38,36 @@ name: Checks
 #
 # Two specific things it does NOT do. It does not block a merge unless `Backend tests`, `Web
 # typecheck, lint and unit specs` and `Docs check` are named as required checks on `main`. And it
-# does not block a deploy: deploy-backend.yml fires on its own `push: main` trigger and one workflow
-# cannot `needs:` a job in another, so on main the two RACE. A `needs:` inside deploy-backend.yml
-# was considered and rejected — that workflow never fires on a pull request, which is where the
-# drift these jobs catch is introduced, so it would have gated the wrong half. See docs/CI.md §5.
+# does not block a deploy FROM HERE: deploy-backend.yml fires on its own `push: main` trigger and
+# one workflow cannot `needs:` a job in another. A `needs:` inside deploy-backend.yml was considered
+# and rejected — that workflow never fires on a pull request, which is where the drift these jobs
+# catch is introduced, so it would have gated the wrong half. See docs/CI.md §5.
+#
+# 2026-09-03: THE SECOND OF THOSE USED TO END "so on main the two RACE", AND IT NO LONGER DOES —
+# the race is closed from the OTHER end, which is why nothing in this file changed. The deploy
+# usually WON that race (an rsync starts faster than minutes of pytest), so the ordinary case was a
+# breaking commit reaching production and the red tick arriving after, on a run nobody was watching.
+# Both deploy stages now carry a `wait-for-checks` job that POLLS for the Checks run at the exact
+# SHA being shipped and refuses to hand over until the three jobs named above are green:
+# deploy-backend.yml gates a push that touches backend/, and deploy-frontend.yml gates a
+# frontend-only one — the case the backend's copy structurally cannot see, because a backend run
+# with nothing to deploy correctly waits for nothing. This file is still only the RUNNER of the
+# guards; the gate lives in the two workflows that ship. If the three names above are renamed, both
+# waits go RED with a message saying so rather than silently matching nothing.
 #
 # ─── WHY NO `paths:` FILTER ──────────────────────────────────────────────────────────────
 # Deliberate, and it is the specific mistake this file was written to not repeat. A path filter
 # is how android-build.yml ended up unreachable from a backend PR. The three jobs below are
 # cheap and independent; a filter would buy a few minutes and cost the property that makes this
 # workflow worth having — that EVERY pull request runs it. Do not add one.
+#
+# ─── EVERY `uses:` IS A COMMIT SHA, SINCE 2026-09-03 ─────────────────────────────────────
+# `actions/checkout@v4` is a MUTABLE tag: whoever controls that repository can move it, and the
+# next run of this workflow then executes different code with the same line in the diff. That is
+# the supply-chain shape that has compromised other projects' CI, and the cost of closing it is
+# unreadable `uses:` lines — so the human tag is kept in a trailing comment and the SHA is what
+# runs. `.github/dependabot.yml` is what keeps them from rotting; read its header before bumping
+# one by hand.
 
 on:
   pull_request:
@@ -112,27 +132,62 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           # 3.12 because that is what the EC2 box runs (`python3.12 -m venv .venv` in
           # deploy-backend.yml). A test suite that passes on a version production does not have
           # is a weaker statement than it looks. pyproject allows >= 3.11.
           python-version: "3.12"
           cache: pip
-          cache-dependency-path: backend/pyproject.toml
+          # Both files, since 2026-09-03: the lock is what decides the installed set now, and a
+          # cache keyed only on pyproject would be reused across a lock refresh that changed every
+          # pin. pyproject stays in the key because it is still what a refresh is compiled FROM.
+          cache-dependency-path: |
+            backend/requirements.lock
+            backend/pyproject.toml
 
       - name: Install the backend and its test extras
         # `[dev]`, not a bare install: pytest-asyncio lives there, and `asyncio_mode = "auto"` is
         # INERT without it — pytest collects the async tests, finds no runner, warns, and reports
         # green. That has already happened once on this project (see the note beside the pin in
         # pyproject.toml), and it would happen here in the one place nobody is watching the output.
+        #
+        # 2026-09-03: THE INVOCATION CHANGED AND THE ARGUMENT ABOVE DID NOT. `backend/requirements.lock`
+        # is compiled from this pyproject WITH the dev extra (`pip-compile --extra dev`), so
+        # pytest-asyncio is still installed here and the paragraph above still describes why it must
+        # be — the lock is now the thing that guarantees it rather than the `[dev]` marker on the
+        # command line. What the lock buys is that CI, the EC2 box and a developer's venv resolve to
+        # the SAME versions: before it, three machines each took whatever the index offered that day,
+        # which is how an unpinned transitive dependency turns a green branch red overnight with no
+        # commit behind it. `--no-deps` on the editable install is what keeps the lock authoritative:
+        # without it pip re-resolves this project's own declared ranges and can quietly lift a pin.
+        #
+        # REFRESH IT DELIBERATELY, NEVER AS A SIDE EFFECT. It is compiled in a container so the
+        # Python that resolves it is the Python that runs it (3.12 — the local venv on the machine
+        # this was written from is 3.14, and a lock compiled there would carry that interpreter's
+        # markers into production):
+        #
+        #   docker run --rm -v "$PWD/backend:/w" -w /w python:3.12 sh -c \
+        #     "pip install -q pip-tools && pip-compile -q --strip-extras --extra dev \
+        #      --output-file requirements.lock pyproject.toml"
+        #
+        # `--extra dev` AND NOT `--all-extras`: `ai-local` pulls rembg and onnxruntime, ~400 MB of
+        # wheels that backend/pyproject.toml explicitly says must not be installed on the t3.micro.
+        # Measured on the way in — `--all-extras` produced a lock with onnxruntime, rembg, numpy and
+        # scipy in it, and this line is the correction.
+        #
+        # DO NOT PASTE THE COMMAND FROM THE LOCK'S OWN HEADER. pip-compile writes `--no-index` into
+        # that header to record that no index URL was emitted into the file; passing it for real
+        # tells pip to resolve against no index at all and the refresh fails.
+        # docs/CI.md carries the same procedure in prose.
         run: |
           set -euo pipefail
           python -m pip install --upgrade pip
-          pip install -e '.[dev]'
+          pip install -r requirements.lock
+          pip install -e . --no-deps
 
       - name: Generate the Prisma client
         # `from prisma import Prisma` in app/core/db.py resolves against code that `prisma
@@ -424,10 +479,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           # 22 to match deploy-frontend.yml, which matches Vercel's current build image. A
           # typecheck that passes on a different major than the one that builds production is
@@ -508,10 +563,10 @@ jobs:
       - name: Checkout
         # Full history is NOT needed, but a git checkout is: check-docs shells out to
         # `git ls-files` to decide which paths a document is allowed to name.
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22"
 
@@ -553,7 +608,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: The manifest tree must be present
         # CHECKED BEFORE THE BUILD, so a missing tree is reported as a missing tree rather than as
@@ -623,3 +678,190 @@ jobs:
             --build-arg NEXT_PUBLIC_APP_URL=http://localhost:3000 .
           docker image ls --format '  {{.Repository}}:{{.Tag}}  {{.Size}}' \
             | grep -E 'design-workshop-(backend|frontend):ci'
+
+  # ═══════════════════════════════════════════════════════════════════════════════════════
+  # 5 · The database-backed suite  (added 2026-09-03)
+  # ═══════════════════════════════════════════════════════════════════════════════════════
+  #
+  # ─── THIS IS THE OTHER HALF OF JOB 1, NOT A REPLACEMENT FOR IT ───────────────────────────
+  # Read job 1's `env:` block before touching this one. It argues, at length and correctly, that
+  # THERE MUST BE NO DATABASE IN THAT JOB: twenty-six modules gate themselves on a loopback DSN
+  # because they create and delete users, workshops and stage entries, and a DSN that resolves to
+  # anything real is how field data gets destroyed. That argument stands and that job is unchanged.
+  #
+  # What it does NOT argue — and what was silently taken as read — is that those modules should
+  # therefore never run ANYWHERE. Job 1's own comment records the number: 375 of its 381 skips are
+  # the database gate. So on every pull request this repository has ever had, the suite that
+  # exercises the actual round trips — the Craft round trip, the reference-carry hydration at SAVE
+  # time, the permission refusals, the stage-entry provenance — was collected, counted as green and
+  # not executed. A skip is not a pass, and 375 of them reported as a green tick is this project's
+  # own named failure mode.
+  #
+  # This job runs them, against a Postgres that exists for ninety seconds and is thrown away. The
+  # DSN is loopback, so `backend/tests/conftest.py`'s gate reads LOCAL and admits them — by design,
+  # and that gate needs no change: it was always "a scratch database on this machine is fine", and
+  # a service container is exactly that. `HAS_LOCAL_DATABASE` goes true, the remote-connection
+  # refusal in conftest disarms itself, and the `database:` sentence at the head of the log reads
+  # "local DSN resolved — database-backed tests WILL run" instead of the SKIP wording. That
+  # sentence is how you tell at a glance which of the two jobs you are reading.
+  #
+  # ─── IT RUNS EVERYTHING, WHICH MEANS IT OVERLAPS JOB 1 AND THAT IS DELIBERATE ────────────
+  # A `-k` selection of "just the database ones" is a list, and a list goes stale the day somebody
+  # adds a file — the same argument job 1 makes for running the whole suite. So the ~2892 tests that
+  # already pass up there pass again down here, costing runner time and buying one real thing:
+  # cross-module pollution between a database-backed module and a pure one is only visible in a run
+  # where both execute. Job 1 stays because it is fast, needs no service, and is the one that gates.
+  #
+  # ─── NOT A REQUIRED CHECK YET, ON PURPOSE ────────────────────────────────────────────────
+  # Nothing in `.github/` can make a job required — that lives in branch protection — and this one
+  # should NOT be added there until somebody has watched a few runs and knows what it costs and how
+  # steady it is. A newly-required check that turns out to take twenty-five minutes, or to flake on
+  # a service container that was slow to accept connections, trains people to merge past red. Let it
+  # run advisory first; promote it when its history says it deserves it. `Backend tests`, `Web
+  # typecheck, lint and unit specs` and `Docs check` remain the three named in job 1's header.
+  backend-integration:
+    name: Backend integration tests
+    runs-on: ubuntu-latest
+    # Generous, because it is the whole suite plus ~375 tests that have never run in CI and a
+    # `prisma migrate deploy` of 73 migrations against a cold database. Measured on a laptop the
+    # DB-less half alone is ~6 minutes; this has no measurement yet, which is the other reason it is
+    # not a required check. A timeout is still set: a hung query against a service container would
+    # otherwise burn the job's full six-hour default.
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: backend
+
+    services:
+      postgres:
+        # 16 to match docker-compose.yml's `postgres:16-alpine`, so a test that passes here passes
+        # on a developer's local stack. The managed production database is a different major, and
+        # that gap is real but is not this job's to close: `prisma migrate deploy` is what says the
+        # migrations apply, and it is the same migration set either way.
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: design_workshop
+        ports:
+          # Published to the runner's loopback, which is where pytest and prisma both look. The
+          # DSN below therefore says 127.0.0.1 and NOT `postgres` — a service container's DNS name
+          # only resolves from inside another container, and a job whose steps run on the host would
+          # fail to resolve it. It also has to say a loopback literal for conftest's gate to admit
+          # anything at all.
+          - 5432:5432
+        # Without a health check the first step races the database's initdb and fails on "the
+        # database system is starting up" — which reads as a broken migration rather than as a slow
+        # container. GitHub holds the job until this passes.
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      PYTHONUTF8: "1"
+      # LOOPBACK, AND THAT IS THE ENTIRE DIFFERENCE FROM JOB 1. `ci.invalid` up there means "never
+      # connect to anything"; this means "connect to the throwaway container beside this job". It is
+      # created empty by the service, migrated by a step below, and destroyed with the runner.
+      DATABASE_URL: "postgresql://postgres:postgres@127.0.0.1:5432/design_workshop"
+      # REAL-LOOKING RATHER THAN REAL, and it has to be real-LOOKING or nothing boots:
+      # `app.core.security.verify_jwt_configuration` refuses to build the app for a secret under 32
+      # characters or one on its placeholder list, and `create_app` calls it. So this is 43
+      # characters of obviously-not-a-secret. It signs tokens for a database that will not exist in
+      # half an hour. It is NOT a repository secret and must never become one: a value in a secret
+      # cannot be read back to check, and this one has to be readable to be understood.
+      JWT_SECRET: "ci-integration-not-a-secret-0123456789abcdef"
+      AWS_ACCESS_KEY_ID: "ci-placeholder"
+      AWS_SECRET_ACCESS_KEY: "ci-placeholder"
+      AWS_S3_BUCKET: "ci-placeholder"
+      MASTER_ADMIN_EMAIL: "ci@example.invalid"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          # 3.12, matching production (`python3.12 -m venv` on the EC2 box) and job 1.
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            backend/requirements.lock
+            backend/pyproject.toml
+
+      - name: Install from the lock
+        # The same two lines as job 1 and as the EC2 deploy, so all three resolve to one set of
+        # versions. See the long note on job 1's install step for why `--no-deps` is what keeps the
+        # lock authoritative.
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          pip install -r requirements.lock
+          pip install -e . --no-deps
+
+      - name: Fetch the Prisma engines and generate the client
+        # TWO COMMANDS, IN THIS ORDER, AND THE ORDER IS COPIED FROM backend/Dockerfile's `prisma`
+        # stage rather than invented here. `py fetch` downloads the standalone Rust query engine
+        # that prisma-client-py talks to at run time; `generate` writes the models into the
+        # installed `prisma` package, without which `from prisma import Prisma` raises "Client
+        # hasn't been generated yet" and every module that reaches app/core/db.py fails to import.
+        #
+        # `py fetch` is the step that has failed silently on this project before — on Windows it has
+        # exited 0 without placing the engines, which then reads as several hundred pytest defects
+        # that are nothing of the kind. On Linux it is well-behaved, and the explicit fetch is here
+        # so that a failure to obtain the engine is reported BY THE FETCH rather than by the first
+        # test that tries to open a connection.
+        #
+        # PYTHONUTF8 is set at job level for parity with the rest of the repository; it is a Windows
+        # concern and does nothing on a runner.
+        run: |
+          set -euo pipefail
+          python -m prisma py fetch
+          python -m prisma generate --schema prisma/schema.prisma
+
+      - name: Apply the migrations to the service database
+        # `migrate deploy`, never `migrate dev`. This repository hand-authors its migrations (see
+        # backend/prisma/migrations/) and `dev` would try to author another one against a schema
+        # drift it detected, interactively, on a runner with no terminal.
+        #
+        # This is also a real check in its own right and the reason it gets its own step: it is the
+        # only place in CI where the 73-migration history is applied end to end onto an EMPTY
+        # database. A migration that only works against a database that already has the previous
+        # shape — a hand-written `ALTER` with no guard, a column added twice — passes on production
+        # forever and fails exactly here, which is where it should fail.
+        run: python -m prisma migrate deploy
+
+      - name: Run the full suite against the database
+        # THE WHOLE SUITE. Same reasoning as job 1's run step: what executes is decided by the tests
+        # rather than by a selection in this file. The difference is that here the gate lets the
+        # database-backed modules in, so this is the first CI job in this repository's history in
+        # which they run at all.
+        #
+        # `-rf --durations=15` mirrors job 1 exactly, including the missing `s` — the conftest's own
+        # `pytest_terminal_summary` already groups skips by reason, and `-rfs` would print a wall of
+        # near-identical SKIPPED lines on top of it. There will still be skips here (the handful
+        # that are not the database gate), and the tally is where to read them.
+        #
+        # NO `database:` SENTENCE GATE HERE, unlike job 1, and that is not an oversight: that gate
+        # exists to catch a hook being deleted or `-q` being re-added, it is asserted once already
+        # in a job that runs on every same event, and asserting it twice would just mean two red
+        # ticks for one cause. What IS worth asserting here is the opposite property — that the gate
+        # opened — because a job with a service container that silently reverted to skipping
+        # everything would look identical to a green run. That is the grep below.
+        run: |
+          set -uo pipefail
+          status=0
+          if ! python -m pytest -rf --durations=15 | tee pytest-integration.log; then
+            status=1
+          fi
+          # THE ASSERTION THAT THIS JOB DID ITS JOB. If the DSN stops resolving as local — a typo in
+          # the service mapping, a conftest change, an env override — every database-backed module
+          # skips again and the suite still reports green, which is precisely the "green skip that
+          # cannot be told apart from a test nobody wrote" this repository refuses elsewhere.
+          if ! grep -q '^database: local DSN resolved' pytest-integration.log; then
+            echo "::error::conftest did not report a LOCAL database, so this job ran the same DB-less suite as 'Backend tests' and proved nothing extra. Check the postgres service, the port mapping and DATABASE_URL. See backend/tests/conftest.py::_gate_sentence."
+            exit 1
+          fi
+          exit "$status"

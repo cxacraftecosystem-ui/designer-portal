@@ -257,15 +257,15 @@ class OutboxDanglingReferenceTest {
 
         // The dangling row is the only one that is still queued and the only one with a re-pick.
         assertTrue(dangling.contains("points at a design & prototype workshop that is not on the server"))
-        assertTrue(dangling.contains("still on this phone"))
-        // The unfiled record SENT. Saying "still on this phone" about it would send a designer to a
-        // tray that no longer lists it.
+        assertTrue(dangling, dangling.contains("still here"))
+        // The unfiled record SENT. Saying "still here" about it would send a designer to a tray that
+        // no longer lists it.
         assertTrue(sentUnfiled.contains("was sent"))
-        assertFalse("a record that has gone is not still here:\n$sentUnfiled", sentUnfiled.contains("still on this phone"))
+        assertFalse("a record that has gone is not still here:\n$sentUnfiled", sentUnfiled.contains("still here"))
         // R7: the two must not word each other. A clash sends the designer to compare two records; a
         // dangling id sends them to one dropdown; neither instruction helps with the other.
         assertFalse("\n$dangling", dangling.contains("clashes with"))
-        assertFalse("\n$dangling", dangling.contains("copy across"))
+        assertFalse("\n$dangling", dangling.contains("copy anything missing"))
         assertFalse("\n$clash", clash.contains("points at"))
         // And neither of them may borrow §3.5's empty-picker sentence, which is about a record that
         // has not been saved yet and promises it still can be.
@@ -290,12 +290,15 @@ class OutboxDanglingReferenceTest {
         // The design document's own clause, byte for byte (DROPDOWN_DESIGN §3.7, O1 point 3).
         assertTrue(sentence.contains("Nothing is lost — open it, choose one that is, and it will send."))
         // 2. THE SERVER'S OWN WORDS, because a route that starts saying something more useful must
-        //    not have to wait for a client release to be heard.
+        //    not have to wait for a client release to be heard. NEVER SHORTENED, on any of these
+        //    sentences, whatever else the terse pass touched.
         assertTrue(sentence.contains("The server said: Record not found."))
         // 3. NOTHING DELETED, and how much is riding on it.
-        assertTrue(sentence.contains("this entry and the 3 files saved with it are still on this phone"))
-        // 4. THAT THE WALK UP THE HILL IS POINTLESS.
-        assertTrue(sentence.contains("Sending it again unchanged will get the same answer"))
+        assertTrue(sentence, sentence.contains("This entry and the 3 files saved with it are still here"))
+        assertTrue(sentence, sentence.contains("nothing was deleted"))
+        // 4. THAT THE WALK UP THE HILL IS POINTLESS. The fact only; WHY it is pointless — "because
+        //    what is missing is missing on the server" — is in the KDoc now (2026-09-03).
+        assertTrue(sentence, sentence.contains("Retrying unchanged gets the same answer."))
         // And it never claims the record reached the server — the misreading that, on the 409 path,
         // destroyed a queued record and its photographs while reporting success.
         for (forbidden in listOf("was saved", "has been saved", "already saved", "was uploaded", "already sent")) {
@@ -313,7 +316,7 @@ class OutboxDanglingReferenceTest {
         )
         assertTrue(sentence.contains("It is a workshop or an artisan — the server's answer does not say which."))
         assertFalse("\"0 files\" reads as an accusation:\n$sentence", sentence.contains("0 file"))
-        assertTrue(sentence.contains("this entry is still on this phone"))
+        assertTrue(sentence, sentence.contains("This entry is still here"))
         // "an artisan", not "a artisan". The list is read aloud by a screen reader as often as it is
         // read on a screen.
         assertFalse(sentence.contains("a artisan"))
@@ -397,18 +400,21 @@ class OutboxDanglingReferenceTest {
             files = 0,
             isCorrection = false,
         )
-        assertTrue(sentence.contains("The server said: Record not found. Nothing has been sent"))
+        assertTrue(sentence, sentence.contains("The server said: Record not found. This entry is still here"))
     }
 
     @Test
     fun `the sent-unfiled message says which absence it was and what to do next`() {
         val message = outboxSentUnfiledMessage("Giriraj Prasad", listOf("design & prototype workshop"))
-        assertTrue(message.startsWith("“Giriraj Prasad” was sent, and it is filed under nothing"))
-        // The whole point: the absence is explained, and explicitly NOT as a claim about what exists.
+        assertTrue(message, message.startsWith("“Giriraj Prasad” was sent, filed under nothing"))
+        // The whole point: WHICH of the two absences it was, named by the control that was empty.
         assertTrue(message.contains("there was no design & prototype workshop to choose from on this device"))
         assertFalse("“no a workshop” is a seam a reader learns to skim: $message", message.contains("no a "))
-        assertTrue(message.contains("That was never a claim that none exist."))
-        assertTrue(message.contains("Open the record and file it now"))
+        // And the one act that fixes it. The disclaimer this used to carry — "That was never a claim
+        // that none exist" — was an argument about a claim the app had not made, on a notification
+        // that follows a SUCCESS; it is in `outboxSentUnfiledMessage`'s KDoc now (2026-09-03).
+        assertTrue(message, message.contains("Open the record and file it now"))
+        assertTrue("one line on a success notification: $message", message.length <= 200)
     }
 
     @Test

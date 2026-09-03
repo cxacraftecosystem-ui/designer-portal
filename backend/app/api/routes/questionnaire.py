@@ -120,9 +120,11 @@ def section_codes_from_title(title: str | None, valid_codes: set[str]) -> set[st
 
 # What an interview carries on the wire — the widest payload in the app: six relations, two of them
 # nested. Read as a Prisma ``include`` that was TWELVE sequential statements for a page of four
-# interviews, and on this deployment every one of them is a cross-region round trip. They load in
-# one parallel wave instead (see services/records.py), on the write paths too: those hydrate the row
-# they just saved, so this is the single description of an interview's relations.
+# interviews, and every one of them is a round trip. They load in one parallel wave instead (see
+# services/records.py), on the write paths too: those hydrate the row they just saved, so this is
+# the single description of an interview's relations. (Written when a hop was a cross-region ~750ms;
+# co-located and ~1-2ms since 2026-09-02, ``services/concurrency.py``. Twelve statements in series
+# still cost twelve times one, which is the whole reason this list exists in one place.)
 RELATIONS = (
     Relation("createdBy", "user", "createdById"),
     Relation("location", "location", "locationId"),
@@ -233,7 +235,29 @@ async def section_payloads(active_only: bool = True) -> list[dict[str, Any]]:
     return payload
 
 
-async def replace_interview_artisans(interview_id: str, artisan_ids: list[str]) -> None:
+async def replace_interview_artisans(
+    interview_id: str, artisan_ids: list[str], *, client: Any = None
+) -> None:
+    """Rewrite the artisan set on one interview, links and cached set key together.
+
+    ``client`` CARRIES THE CALLER'S TRANSACTION, AND IT IS THE SAME PARAMETER
+    ``workshops.replace_workshop_artisans`` takes, for the same two failures (2026-09-03). This is a
+    ``UPDATE`` of the interview row's ``artisanSetKey`` followed by a ``DELETE`` of every link and an
+    ``INSERT`` of the new set — three commits in a row until the caller could hand a transaction
+    down. A failure between the delete and the insert committed the WIPE: the artisans a researcher
+    picked for a group sitting, gone, with the save reporting an error, and the join rows are the
+    only record of who was in that interview. A failure between the key and the links left the row
+    claiming a set it does not have, which is worse than either half — the uniqueness guard on
+    ``artisanSetKey`` is what stops a second interview being opened for the same people, so a stale
+    key blocks a legitimate save with a 409 nobody can explain.
+
+    The parameter cannot be defaulted away or discovered: ``db.tx()`` hands back a DIFFERENT client,
+    so a callee writing through the module singleton is not in the caller's transaction however the
+    ``async with`` reads. ``None`` remains accepted because ``create_interview`` genuinely has no
+    transaction to offer — it writes the row and then the links, and folding that into one is a
+    separate change with its own argument.
+    """
+    writer = db if client is None else client
     unique_ids = sorted({aid for aid in artisan_ids if aid})
     set_key = artisan_set_key(unique_ids)
 
@@ -241,62 +265,104 @@ async def replace_interview_artisans(interview_id: str, artisan_ids: list[str]) 
     # re-sends the same artisanIds; rewriting the unique set key + links on every such save is both
     # wasteful and the ONLY thing that could trip the one-interview-per-set guard. Skipping it means an
     # ordinary edit can never 409. We still heal a drifted cached key (its own value, so no conflict).
-    current = await db.questionnaireinterviewartisan.find_many(where={"interviewId": interview_id})
+    current = await writer.questionnaireinterviewartisan.find_many(
+        where={"interviewId": interview_id}
+    )
     if sorted({link.artisanId for link in current}) == unique_ids:
-        existing = await db.questionnaireinterview.find_unique(where={"id": interview_id})
+        existing = await writer.questionnaireinterview.find_unique(where={"id": interview_id})
         if existing is not None and existing.artisanSetKey != set_key:
-            await db.questionnaireinterview.update(
+            await writer.questionnaireinterview.update(
                 where={"id": interview_id}, data={"artisanSetKey": set_key}
             )
         return
 
     # The set is genuinely changing. Validate every artisan up front so a bad id can't leave a
     # half-rewritten link set, then keep the unique set key in lock-step with the links. ONE query
-    # answers "do all of these exist" — asking per artisan cost a cross-region round trip each, and
-    # a group interview names a dozen.
+    # answers "do all of these exist" — asking per artisan cost a round trip each, and a group
+    # interview names a dozen. The link is co-located since 2026-09-02 (~1-2ms), so the twelve are
+    # milliseconds rather than nine seconds; what makes the single query matter MORE now is that
+    # this runs inside ``update_interview``'s transaction, where a dozen statements is a dozen
+    # chances to outlive the block's timeout.
     if unique_ids:
-        found = await db.artisan.find_many(where={"id": {"in": unique_ids}})
+        found = await writer.artisan.find_many(where={"id": {"in": unique_ids}})
         if len(found) != len(unique_ids):
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Record not found")
     try:
-        await db.questionnaireinterview.update(
+        await writer.questionnaireinterview.update(
             where={"id": interview_id}, data={"artisanSetKey": set_key}
         )
     except UniqueViolationError as exc:
+        # THE 409 IS RAISED FROM INSIDE THE CALLER'S TRANSACTION WHERE THERE IS ONE, AND THAT IS
+        # WHAT MAKES IT CLEAN — ``crafts.update_craft``'s argument, applied to the other unique
+        # index. A unique violation aborts the transaction in Postgres whatever this handler does,
+        # so raising here takes the interview's own scalar update back with it instead of answering
+        # 409 beside a committed edit. Nothing below this line runs, so no statement is issued on an
+        # already-aborted transaction.
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail=_DUPLICATE_SET_DETAIL
         ) from exc
-    await db.questionnaireinterviewartisan.delete_many(where={"interviewId": interview_id})
+    await writer.questionnaireinterviewartisan.delete_many(where={"interviewId": interview_id})
     if unique_ids:
-        await db.questionnaireinterviewartisan.create_many(
+        await writer.questionnaireinterviewartisan.create_many(
             data=[{"interviewId": interview_id, "artisanId": aid} for aid in unique_ids]
         )
 
 
-async def upsert_responses(interview_id: str, responses: list[Any], current_user: Any) -> None:
+async def upsert_responses(
+    interview_id: str, responses: list[Any], current_user: Any, *, client: Any = None
+) -> None:
     """Save a batch of answers: validate once, read once, insert once, and update only what changed.
 
-    This was THREE cross-region round trips PER ANSWER — a question existence check, a read of the
-    stored answer, and the upsert. A questionnaire section carries dozens of questions and the app
-    submits the whole section, so a single save cost a hundred sequential round trips and minutes of
-    wall time. All of the validation and all of the reading now happen in one statement each, every
-    genuinely new answer goes in with one insert, and the only per-row writes left are the answers
-    whose text or notes ACTUALLY differ from what is stored.
+    This was THREE ROUND TRIPS PER ANSWER — a question existence check, a read of the stored answer,
+    and the upsert. A questionnaire section carries dozens of questions and the app submits the whole
+    section, so a single save cost A HUNDRED SEQUENTIAL ROUND TRIPS, which on the cross-region
+    database of the time was minutes of wall time (co-located and ~1-2ms a hop since 2026-09-02 —
+    ``services/concurrency.py`` — so the same hundred would now be a fraction of a second, and the
+    "minutes" is history rather than a claim about today). All of the validation and all of the
+    reading now happen in one statement each, every genuinely new answer goes in with one insert, and
+    the only per-row writes left are the answers whose text or notes ACTUALLY differ from what is
+    stored.
+
+    THE COUNT IS WHAT MATTERS AND IT MATTERS MORE THAN IT DID, because this now runs inside
+    ``update_interview``'s transaction: statements are how long that block holds a connection, not
+    only how long the request takes.
 
     Skipping the unchanged rows is not merely an optimisation: it also stops a save that touched one
     answer from re-stamping ``answeredById`` on every other answer in the section, which would have
     taken authorship of work the saver never edited. The permission rule directly below is unchanged
     — only the original contributor or an admin may alter an answer that already has text.
+
+    ``client`` CARRIES THE CALLER'S TRANSACTION (2026-09-03), so that the PATCH route's scalar edit,
+    its artisan links and this batch of answers are one commit. Without it, a 403 raised by the
+    permission rule below — the ordinary case of two researchers editing one section — left the
+    interview's scalar changes and its rewritten artisan set committed behind a refusal, and the
+    obvious retry re-sent everything.
+
+    **AND THE TWO READS GO SEQUENTIAL WHEN THERE IS ONE.** ``services/concurrency.gather_reads``
+    says it in its own docstring: an interactive transaction is ONE connection, so awaiting two
+    queries concurrently on it is not a parallel read, it is two statements racing for one socket.
+    Outside a transaction they still overlap, which is what that helper is for and where the saving
+    actually is (this is called with a whole section's answers). The cost inside one is a single
+    extra round trip on a co-located link.
     """
     if not responses:
         return
+    writer = db if client is None else client
     question_ids = sorted({r.questionId for r in responses if r.questionId})
-    existing_rows, questions = await gather_reads(
-        db.questionnaireresponse.find_many(
+    if client is None:
+        existing_rows, questions = await gather_reads(
+            db.questionnaireresponse.find_many(
+                where={"interviewId": interview_id, "questionId": {"in": question_ids}}
+            ),
+            db.questionnairequestion.find_many(where={"id": {"in": question_ids}}),
+        )
+    else:
+        existing_rows = await writer.questionnaireresponse.find_many(
             where={"interviewId": interview_id, "questionId": {"in": question_ids}}
-        ),
-        db.questionnairequestion.find_many(where={"id": {"in": question_ids}}),
-    )
+        )
+        questions = await writer.questionnairequestion.find_many(
+            where={"id": {"in": question_ids}}
+        )
     known = {q.id for q in questions}
     if len(known) != len(question_ids):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Record not found")
@@ -350,10 +416,16 @@ async def upsert_responses(interview_id: str, responses: list[Any], current_user
         )
 
     # Validation for the WHOLE batch has already run, so nothing below can leave a half-written set.
+    #
+    # THE PER-ROW UPDATES ARE THE ONE UNBOUNDED THING IN THIS FUNCTION, and inside a caller's
+    # transaction that is a statement count the caller has to reason about rather than a private
+    # detail — see the note at ``update_interview``'s ``db.tx()``. It is bounded by what actually
+    # CHANGED and not by the batch size (the comparison above is what makes those two different
+    # numbers), so the ordinary save of a section issues one insert and nothing else.
     if to_create:
-        await db.questionnaireresponse.create_many(data=to_create)
+        await writer.questionnaireresponse.create_many(data=to_create)
     for row_id, data in to_update:
-        await db.questionnaireresponse.update(where={"id": row_id}, data=data)
+        await writer.questionnaireresponse.update(where={"id": row_id}, data=data)
 
 
 @router.get("/questions")
@@ -898,6 +970,65 @@ async def _zero() -> int:
     return 0
 
 
+async def _no_rows() -> list[dict[str, Any]]:
+    """An awaitable empty result set — :func:`_zero` for a query rather than for a count."""
+    return []
+
+
+# ── THE WHOLE-REPOSITORY COMPLETION MATRIX'S TWO NARROW READS (2026-09-03) ──────────────────────────
+#
+# ``_derived_completed_sections`` answers a question about BOOLEANS — did any question in this
+# section get an answer, is there a clip filed against it — and it used to answer it by loading every
+# interview in the repository with ``include={"artisans", "responses", "media"}`` and NO ``take``,
+# then reading the full text of every answer and the ``extraMetadata`` of every media row in Python.
+# The columns it dragged across the region to compute a tick are the widest in the schema:
+# ``QuestionnaireResponse.answerText`` is a whole spoken answer, and ``MediaFile.extraMetadata``
+# carries an EXIF summary per photograph. It is the FIRST read the View Data screen issues.
+#
+# These two statements answer the same two questions with the rows the answer actually needs — one
+# (interview, section) pair per recorded section, and one small tuple of section SIGNALS per media
+# row — so the payload stops scaling with how much people wrote and starts scaling with how many
+# sections exist. Both are ``DISTINCT``, so a section answered forty times arrives once.
+#
+# ONE DIVERGENCE, NAMED RATHER THAN LEFT TO BE FOUND. ``is_empty_value`` calls Python's
+# ``str.strip()``, which removes every character ``str.isspace()`` admits — the ASCII six plus a
+# handful of Unicode separators (NBSP, the EM-space family, IDEOGRAPHIC SPACE). ``btrim`` takes an
+# explicit character set and this one lists the ASCII six, because the alternatives are worse: a
+# ``\uXXXX`` escape is a runtime error on a non-UTF8 server, and ``[[:space:]]`` is defined by the
+# server's ctype rather than by Python's table, so neither is actually exact and both read as though
+# they were. So an answer consisting of nothing but a non-breaking space counts as recorded here and
+# as empty on the per-artisan view, which still walks the rows in Python. Nobody can reach that state
+# from either client and no such row exists on the repository today; it is written down because the
+# scoped and unscoped branches now compute the same tick two ways, and the day they disagree this is
+# the paragraph that says how. The proper fix is to put BOTH branches on these statements — the
+# scoped ones only need an ``interviewId = ANY($1)`` — and it is deliberately not done in the change
+# that introduced them, because it would alter what the most-used view on the screen reports.
+_RECORDED_RESPONSE_SECTIONS_SQL = r"""
+    SELECT DISTINCT r."interviewId" AS interview_id, q."sectionId" AS section_id
+    FROM "QuestionnaireResponse" r
+    JOIN "QuestionnaireQuestion" q ON q."id" = r."questionId"
+    WHERE q."sectionId" IS NOT NULL
+      AND r."answerText" IS NOT NULL
+      AND btrim(r."answerText", E' \t\n\r\f\v') <> ''
+"""
+
+# The three section signals a questionnaire media row can carry, and NOTHING else off the row — the
+# ``->>`` projections are what keep the EXIF blob in the database. ``->>`` on a JSONB value that is
+# not an object returns NULL rather than raising, which is exactly the ``isinstance(meta, dict)``
+# guard the Python path applies, and ``split_part(..., '_', 1)`` is ``.split("_", 1)[0]`` for the
+# clip-filename nomenclature (SECTIONCODE_QUESTION_INTERVIEW_DURATION_STAMP) — including its
+# behaviour on a filename holding no underscore, where both return the whole name.
+_MEDIA_SECTION_SIGNALS_SQL = r"""
+    SELECT DISTINCT
+      m."questionnaireInterviewId"                           AS interview_id,
+      m."extraMetadata"->>'questionId'                       AS question_id,
+      m."extraMetadata"->>'sectionCode'                      AS section_code,
+      split_part(COALESCE(m."originalFilename", ''), '_', 1) AS filename_token
+    FROM "MediaFile" m
+    WHERE m."questionnaireInterviewId" IS NOT NULL
+"""
+
+
 async def _derived_completed_sections(
     artisan_id: str | None = None, workshop_ids: list[str] | None = None
 ) -> dict[str, set[str]]:
@@ -920,6 +1051,21 @@ async def _derived_completed_sections(
     matrix could only answer the second one. The clause is built by the SHARED
     ``record_filters.workshop_clause`` so the interview scope means exactly what it means everywhere
     else, the reserved "none" value included.
+
+    ── AND WHEN NEITHER IS GIVEN, WHICH IS THE DEFAULT VIEW (2026-09-03) ────────────────────────────
+
+    Both narrowings above are optional, and the View Data screen's own first load supplies NEITHER —
+    so the unscoped branch was the one that mattered most and the only one nothing protected. It
+    issued ``find_many`` over EVERY interview in the repository with responses and media attached and
+    no ``take``, and computed a grid of ticks from full answer text and per-photograph EXIF. That
+    branch now asks two narrow statements for exactly the pairs a tick is made of; see
+    :data:`_RECORDED_RESPONSE_SECTIONS_SQL` for what they return, why they are raw SQL, and the one
+    place where they and the Python walk can disagree.
+
+    THE SCOPED BRANCHES ARE UNTOUCHED ON PURPOSE. They are already bounded — by one artisan's
+    interviews, or by one workshop's — and their in-Python walk is the definition every other reader
+    of this rule follows. Moving them onto the statements below is the right end state and is a
+    change to what the most-used view reports, so it is not smuggled in beside a performance fix.
     """
     interview_where: dict[str, Any] = (
         {"artisans": {"some": {"artisanId": artisan_id}}} if artisan_id else {}
@@ -931,13 +1077,28 @@ async def _derived_completed_sections(
         # the shared clause builder rather than the workshop-table one.
         clause = workshop_clause(ids, include_unassigned)
         interview_where.setdefault("AND", []).append(clause or {"id": {"in": []}})
-    questions, sections, interviews = await gather_reads(
+    # SCOPED IS "the caller narrowed this to something", asked of the WHERE rather than of the two
+    # parameters, because that is the thing the read is actually bounded by: ``workshop_ids`` can
+    # resolve to no clause at all, and an empty ``interview_where`` is the unbounded scan whatever
+    # arrived at the door.
+    scoped = bool(interview_where)
+    questions, sections, interviews, response_section_rows, media_signal_rows = await gather_reads(
         db.questionnairequestion.find_many(),
         db.questionnairesection.find_many(),
         db.questionnaireinterview.find_many(
             where=interview_where,
-            include={"artisans": True, "responses": True, "media": True},
+            # The artisan links are needed on BOTH branches — they are what turns "this interview
+            # covered section K" into "this artisan has section K" — but the answers and the media
+            # rows are only walked on the scoped one. Asking for them unscoped is what made this the
+            # heaviest read on the screen.
+            include=(
+                {"artisans": True, "responses": True, "media": True} if scoped else {"artisans": True}
+            ),
         ),
+        # Their slots are held with ``_no_rows`` rather than dropped, for the reason ``_zero`` exists:
+        # ``gather_reads`` returns positionally.
+        _no_rows() if scoped else db.query_raw(_RECORDED_RESPONSE_SECTIONS_SQL),
+        _no_rows() if scoped else db.query_raw(_MEDIA_SECTION_SIGNALS_SQL),
     )
     section_by_question = {q.id: q.sectionId for q in questions if q.sectionId}
     section_id_by_code = {s.code: s.id for s in sections}
@@ -945,34 +1106,61 @@ async def _derived_completed_sections(
     # non-alphanumerics) so the SECTION_QUESTION_... nomenclature resolves back to its section.
     section_id_by_norm_code = {_norm_code(s.code): s.id for s in sections if _norm_code(s.code)}
     valid_codes = {_norm_code(s.code) for s in sections if _norm_code(s.code)}
+    # interviewId -> the sections the two narrow statements say were recorded in it. Empty on the
+    # scoped branches, where the same verdicts are reached by walking the rows below instead.
+    by_interview: dict[str, set[str]] = {}
+    for row in response_section_rows:
+        interview_id = row.get("interview_id")
+        section_id = row.get("section_id")
+        if interview_id and section_id:
+            by_interview.setdefault(str(interview_id), set()).add(str(section_id))
+    for row in media_signal_rows:
+        interview_id = row.get("interview_id")
+        if not interview_id:
+            continue
+        # The same three signals the media walk below reads, in the same order and with the same
+        # lookups — the SQL only chose the columns, it decided nothing.
+        hits = {
+            section_by_question.get(row.get("question_id")),
+            section_id_by_code.get(row.get("section_code")),
+            section_id_by_norm_code.get(_norm_code(row.get("filename_token"))),
+        }
+        hits.discard(None)
+        if hits:
+            by_interview.setdefault(str(interview_id), set()).update(hits)  # type: ignore[arg-type]
     completed: dict[str, set[str]] = {}
     for interview in interviews:
         recorded: set[str] = set()
         # Title-named sections: the only signal for pre-nomenclature recordings (titled by section).
+        # Read off the interview row on BOTH branches — the title is a column, so narrowing the
+        # include never cost it.
         for code in section_codes_from_title(interview.title, valid_codes):
             section_id = section_id_by_norm_code.get(code)
             if section_id:
                 recorded.add(section_id)
-        for response in interview.responses or []:
-            section_id = section_by_question.get(response.questionId)
-            if section_id and not is_empty_value(response.answerText):
-                recorded.add(section_id)
-        for media in interview.media or []:
-            meta = media.extraMetadata if isinstance(media.extraMetadata, dict) else None
-            if meta:
-                section_id = section_by_question.get(meta.get("questionId"))
-                if section_id:
+        if not scoped:
+            recorded.update(by_interview.get(interview.id, ()))
+        else:
+            for response in interview.responses or []:
+                section_id = section_by_question.get(response.questionId)
+                if section_id and not is_empty_value(response.answerText):
                     recorded.add(section_id)
-                code_section = section_id_by_code.get(meta.get("sectionCode"))
+            for media in interview.media or []:
+                meta = media.extraMetadata if isinstance(media.extraMetadata, dict) else None
+                if meta:
+                    section_id = section_by_question.get(meta.get("questionId"))
+                    if section_id:
+                        recorded.add(section_id)
+                    code_section = section_id_by_code.get(meta.get("sectionCode"))
+                    if code_section:
+                        recorded.add(code_section)
+                # Fallback: the audio clip filename leads with the section code
+                # (SECTIONCODE_QUESTION_INTERVIEW_DURATION_STAMP), the only section signal carried by
+                # the app's recorded questionnaire clips.
+                first_token = (media.originalFilename or "").split("_", 1)[0]
+                code_section = section_id_by_norm_code.get(_norm_code(first_token))
                 if code_section:
                     recorded.add(code_section)
-            # Fallback: the audio clip filename leads with the section code
-            # (SECTIONCODE_QUESTION_INTERVIEW_DURATION_STAMP), the only section signal carried by the
-            # app's recorded questionnaire clips.
-            first_token = (media.originalFilename or "").split("_", 1)[0]
-            code_section = section_id_by_norm_code.get(_norm_code(first_token))
-            if code_section:
-                recorded.add(code_section)
         if recorded:
             for link in interview.artisans or []:
                 completed.setdefault(link.artisanId, set()).update(recorded)
@@ -996,8 +1184,11 @@ async def completion_matrix(
     ``workshopIds`` to scope it to one or more workshops."""
     # Four independent questions — which sections are active, which artisans are in scope, what the
     # data says is recorded, and what an admin has overridden — asked in one wave instead of one
-    # after the other. The matrix was ten sequential cross-region round trips, and it is the first
-    # thing the View Data screen loads.
+    # after the other. The matrix was TEN SEQUENTIAL ROUND TRIPS, and it is the first thing the View
+    # Data screen loads. (Ten cross-region hops was seven or eight seconds when that was measured;
+    # co-located since 2026-09-02 it is tens of milliseconds either way — ``services/concurrency.py``
+    # carries the correction in full. The four-into-one shape is unchanged and is still the right
+    # one; it is simply no longer the difference between a usable screen and an unusable one.)
     status_where = {"artisanId": artisanId} if artisanId else {}
     artisan_where: dict[str, Any] = {"id": artisanId} if artisanId else {}
 
@@ -1152,26 +1343,75 @@ async def update_interview(
     # Same gate on the PATCH, keyed on PRESENCE. See the create above and
     # `services/record_design_workshop.py`.
     await assert_payload_workshop(data, current_user)
-    privileged = await guard_record_edit(interview, current_user, data, "questionnaire")
-    await apply_status_policy_update(current_user, interview, data)
-    # Stamped after the edit guard (the stamp is the API's bookkeeping, never a contributor's edit)
-    # and pinned after the status policy, so an already-flagged record cannot be self-approved.
-    stamp_workshop_submission(data, check=check, record=interview)
-    pin_pending_if_late(data, current_user, check=check, record=interview)
-    merge_field_provenance(data, current_user, previous=interview)
-    resubmit_status(interview, current_user, data)
-    jsonify_metadata(data)
-    if data:
-        await db.questionnaireinterview.update(where={"id": interview_id}, data=data)
-    if payload.artisanIds is not None:
-        link_count = await db.questionnaireinterviewartisan.count(
-            where={"interviewId": interview_id}
+    # ONE TRANSACTION FOR THE AUDIT ROW AND THE ROW IT DESCRIBES (2026-09-03). ``guard_record_edit``
+    # ends in ``record_revision``, which used to COMMIT on its own several statements before the
+    # update below — so a request that died in the gap (P2024 on a cross-region pool, a dropped
+    # connection) left a RecordRevision asserting that an interview's notes or title had changed to
+    # something no row holds. ``client=tx`` is load-bearing, not decoration: ``db.tx()`` hands back a
+    # DIFFERENT client, so a callee writing through the module singleton is not inside this block
+    # however it reads. The full argument lives in ``access.record_revision``.
+    #
+    # THE COST, STATED AND NOT HIDDEN: an artisans-only or responses-only PATCH arrives here with
+    # ``data == {}``, and this still opens and commits a transaction that writes nothing — two extra
+    # round trips on a link that is already the slowest thing in the request. The obvious saving is a
+    # branch that runs the guard outside the transaction when ``data`` is empty, and it is refused
+    # deliberately: it would put the SAME authorization call in two places, which is the "second
+    # authorization rule to keep in step with the first" that the ``{}`` probe in
+    # ``processes.update_process`` was written to avoid. One rule, one call site, two round trips.
+    #
+    # THE TWO RELATION WRITES ARE NOW INSIDE IT TOO (2026-09-03), which is what the note that used
+    # to stand here deferred. Both helpers take ``client`` and both use it for every statement they
+    # issue, so the whole save — the ledger entry, the interview's own columns, its ``artisanSetKey``
+    # and link set, and the batch of answers — is one commit. What that closes is not hypothetical:
+    # ``upsert_responses`` raises 403 when somebody edits an answer another researcher wrote, which
+    # is the ORDINARY case of two people working one section, and until this block reached it that
+    # refusal arrived with the interview's scalar edit and its rewritten artisan roster already
+    # committed. The researcher retries, having no way to know half of it landed.
+    #
+    # ``replace_interview_artisans`` also closes a delete-then-insert window on the link set — the
+    # committed WIPE of a group sitting's artisans, ``replace_workshop_artisans``' defect on the
+    # other table — and its 409 on the unique ``artisanSetKey`` now takes the scalar update back
+    # with it instead of standing beside it.
+    #
+    # THE STATEMENT COUNT IS THE COST, AND IT IS THE ONE THING TO WATCH HERE. A bare ``db.tx()``
+    # carries Prisma's default 5-second timeout. Fixed statements in this block: the revision, the
+    # interview update, the link count, and up to four from ``replace_interview_artisans`` — nine at
+    # most, which is ``workshops.update_workshop``'s block almost exactly. ``upsert_responses`` adds
+    # one insert plus ONE UPDATE PER CHANGED ANSWER, and that last number is bounded by the payload
+    # rather than by this code, so this site can exceed the workshops one on a save that rewrites a
+    # whole section of previously answered questions. On the co-located database this deployment now
+    # runs (~1-2ms a statement) that is milliseconds; on a link where it is not, this is the block
+    # that would hit the timeout first. Raise ``db.tx(timeout=...)`` here before splitting the
+    # transaction — a split is what put the ledger and the row in different commits to begin with.
+    async with db.tx() as tx:
+        privileged = await guard_record_edit(
+            interview, current_user, data, "questionnaire", client=tx
         )
-        if not privileged:
-            assert_can_contribute_relation(interview, current_user, link_count > 0, "artisanIds")
-        await replace_interview_artisans(interview_id, payload.artisanIds)
-    if payload.responses is not None:
-        await upsert_responses(interview_id, payload.responses, current_user)
+        await apply_status_policy_update(current_user, interview, data)
+        # Stamped after the edit guard (the stamp is the API's bookkeeping, never a contributor's
+        # edit) and pinned after the status policy, so an already-flagged record cannot be
+        # self-approved.
+        stamp_workshop_submission(data, check=check, record=interview)
+        pin_pending_if_late(data, current_user, check=check, record=interview)
+        merge_field_provenance(data, current_user, previous=interview)
+        resubmit_status(interview, current_user, data)
+        jsonify_metadata(data)
+        if data:
+            await tx.questionnaireinterview.update(where={"id": interview_id}, data=data)
+        if payload.artisanIds is not None:
+            # THROUGH ``tx`` BECAUSE IT MUST SEE THIS TRANSACTION'S OWN WRITES. On the module client
+            # this count would be answered from outside the block — the same reason
+            # ``workshops.update_workshop`` moved its two counts onto the transaction.
+            link_count = await tx.questionnaireinterviewartisan.count(
+                where={"interviewId": interview_id}
+            )
+            if not privileged:
+                assert_can_contribute_relation(
+                    interview, current_user, link_count > 0, "artisanIds"
+                )
+            await replace_interview_artisans(interview_id, payload.artisanIds, client=tx)
+        if payload.responses is not None:
+            await upsert_responses(interview_id, payload.responses, current_user, client=tx)
     # Re-read the row itself (the PATCH may have changed its columns), but graft the six relations on
     # in one parallel wave rather than letting the include walk them one after another.
     updated = await db.questionnaireinterview.find_unique(where={"id": interview_id})

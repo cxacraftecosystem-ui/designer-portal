@@ -861,7 +861,13 @@ async def dataset_manifest(
         # note below says so rather than leaving a hole. Naming their columns needs that workshop's
         # ``DwCustomSection``/``DwCustomField`` rows, which ``custom_sections.load_definition`` reads
         # in two queries PER WORKSHOP - so a repository export of four hundred workshops would pay
-        # eight hundred cross-region round trips (~750ms each) to label them. ``data_browser`` draws
+        # EIGHT HUNDRED ROUND TRIPS to label them. That was ten minutes of pure waiting at the
+        # ~750ms a cross-region hop cost when this was written; production moved to a co-located
+        # database on 2026-09-02 (~1-2ms, ``services/concurrency.py``), so the same eight hundred
+        # trips are now a second or two. The count is what the argument rests on and it did not
+        # move: eight hundred queries to label columns nobody asked for is the wrong shape at any
+        # latency, and this export already runs long enough to be a background job.
+        # ``data_browser`` draws
         # exactly this line for exactly this reason and loads a definition only when the path names
         # ONE workshop; a per-workshop folder in the tree therefore still carries
         # ``designer-questions.txt``, which is where the note sends the reader.

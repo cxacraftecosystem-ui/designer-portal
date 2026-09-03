@@ -986,7 +986,14 @@ class WorkshopRepository(
                     // Read by the outbox banner and by the "could not be uploaded" notice, so it has
                     // to name the thing a designer would recognise: the file they just handed over.
                     label = "Export log · ${body.fileName}",
-                    createdAt = Instant.now().toString()
+                    createdAt = Instant.now().toString(),
+                    // WHO MADE THE EXPORT, stamped for [PendingEntry.ownerUserId]'s reason. This is
+                    // one of the three places that reach `OfflineOutbox.enqueue` without going
+                    // through `queueOfflineEntry`, and it is a log of WHO handed a report to an
+                    // officer — replayed under the other designer sharing the handset it would
+                    // record the wrong person as having done so, which is precisely the fact the
+                    // log exists to establish.
+                    ownerUserId = cachedUser()?.id,
                 )
             )
         }
@@ -2100,6 +2107,13 @@ class WorkshopRepository(
                     ),
                     label = label,
                     createdAt = Instant.now().toString(),
+                    // WHOSE JUDGEMENT THIS IS — see [PendingEntry.ownerUserId]. The sharpest case in
+                    // the whole queue: a design rating is one designer's opinion of a colleague's
+                    // piece, and the server attributes it to the token that sends it. Replayed after
+                    // the other designer on this handset signs in, the register would record B as
+                    // having judged the work, with A's stars against B's name and no trace anywhere
+                    // that it was not theirs.
+                    ownerUserId = cachedUser()?.id,
                 )
             )
             return DwRatingOutcome.Queued
@@ -4093,7 +4107,12 @@ class WorkshopRepository(
                 versionCode = versionCode,
                 versionName = versionName,
                 objectKey = presign.objectKey,
-                url = presign.publicUrl
+                url = presign.publicUrl,
+                // The same `size` the presign above was issued for, so what is recorded on the
+                // release is by construction the length of the object that was actually uploaded —
+                // measured once, from `apk.length()`, and used for both. See
+                // [AppReleaseDto.sizeBytes] and `data/AppUpdateIntegrity.kt` for what reads it.
+                sizeBytes = size
             )
         )
     }
@@ -4194,8 +4213,33 @@ class WorkshopRepository(
      */
     suspend fun transcribeNow(mediaId: String): MediaFileDto = api.transcribeNow(mediaId)
 
-    /** Download an update APK to the cache and return the file, for handing to the system installer. */
-    suspend fun downloadApk(context: Context, url: String, versionCode: Int): File = withContext(Dispatchers.IO) {
+    /**
+     * Download an update APK to the cache and return the file, for handing to the system installer.
+     *
+     * ── A 2xx IS NOT A WHOLE FILE, AND THIS USED TO TREAT IT AS ONE ──────────────────────────────
+     *
+     * `response.isSuccessful` is a statement about the HEADERS. The body streams afterwards, so a
+     * link that dies half-way through 66 MB, a proxy that truncates and a captive portal that
+     * answers a short page all produced a file on disk and a `File` handed back to a caller that
+     * immediately started the system installer on it. See `data/AppUpdateIntegrity.kt` for what that
+     * costs on a forced-update dialog with no "Later" in it, and for why the check is a length
+     * rather than a hash.
+     *
+     * [expectedBytes] IS THE RELEASE'S OWN `sizeBytes`, NULLABLE, and null means "no claim was
+     * recorded" — every release published before that column existed. Those download exactly as they
+     * always did: refusing them would strand the whole fleet on the build it is running, which is
+     * the one failure worse than the truncation this guards against.
+     *
+     * THE OS SIGNATURE CHECK REMAINS THE BOUNDARY. This catches a short or wrong body and claims
+     * nothing about authenticity; `PackageInstaller` parses and verifies the signature, and that is
+     * the check that decides whether these bytes are allowed to become this app.
+     */
+    suspend fun downloadApk(
+        context: Context,
+        url: String,
+        versionCode: Int,
+        expectedBytes: Long? = null,
+    ): File = withContext(Dispatchers.IO) {
         val dir = File(context.cacheDir, "updates").apply { mkdirs() }
         dir.listFiles()?.forEach { runCatching { it.delete() } } // drop older downloads
         // Purely local: this file lives in cacheDir/updates, which the line above empties on every
@@ -4210,7 +4254,10 @@ class WorkshopRepository(
             val body = response.body ?: throw IllegalStateException("Update download returned no body")
             body.byteStream().use { input -> FileOutputStream(out).use { output -> input.copyTo(output, 64 * 1024) } }
         }
-        out
+        // MEASURED OFF THE FILE AFTER THE COPY, not off the stream's own idea of what it handed over
+        // — the same rule `OfflineOutbox.stageMedia` states about a staged capture, and for the same
+        // reason: what matters is what is on the disk, because that is what the installer will read.
+        dwRequireWholeApk(out, expectedBytes)
     }
 
     /**
@@ -4626,6 +4673,46 @@ class WorkshopRepository(
 
     /** One media file by id, for the View Data media detail. */
     suspend fun mediaItem(id: String): MediaFileDto = api.getMedia(id)
+
+    /**
+     * A media URL that failed, replaced ONCE with whatever the server serves for that row now.
+     *
+     * ── WHY THIS EXISTS ───────────────────────────────────────────────────────────────────────
+     *
+     * [MediaFileDto.url] is about to stop being permanent. The API grows a flag
+     * (`MEDIA_PRESIGNED_READS`) that serves a 15-minute signature instead of the public CDN link,
+     * and afterwards a human removes the bucket's public-read statement — at which point every URL
+     * this handset cached, in a draft or in a screen left open, starts answering 403. A cached
+     * string that has silently stopped working is a photograph that vanishes from a workshop with
+     * no error anywhere, which is the failure mode this repository spends most of its length
+     * refusing to ship.
+     *
+     * ── WHAT IT DOES, AND EVERYTHING IT DOES NOT ──────────────────────────────────────────────
+     *
+     * Re-GETs the row and returns its `url`, or null. It does NOT retry the image load — the caller
+     * owns its own model and its own frame — and it does NOT write anything back to the draft
+     * store. Both are deliberate: the store's media rows are the designer's own captures, whose
+     * URLs are `file://` paths that cannot expire, and rewriting a cached payload from a render
+     * path is how one screen's repair becomes another screen's surprise.
+     *
+     * [MediaUrlRefresh] owns the whole decision — offline, no id, already tried, a status a fresh
+     * link cannot fix — and holds the loop guard. This function is only the network half, which is
+     * exactly why the policy lives in an object a JVM test can drive with no Retrofit in it.
+     *
+     * `null` on every unhappy path, including a 403 or a 404 from `getMedia` itself: the caller's
+     * correct behaviour is to keep drawing what it has, and every media surface on this handset
+     * already renders a considered state for a row with no URL.
+     */
+    suspend fun refreshMediaUrl(context: Context, mediaId: String?, failedUrl: String?): String? =
+        MediaUrlRefresh.refreshOnce(
+            mediaId = mediaId,
+            failedUrl = failedUrl,
+            // Coil hands a throwable rather than a status, and nothing on this handset reads the
+            // code behind a failed image load. NULL is the honest answer and `verdictFor` treats it
+            // as "refresh once" for the reason written there.
+            httpStatus = null,
+            online = ConnectivityObserver.isOnline(context),
+        ) { id -> api.getMedia(id).url }
 
     /** Delete one saved media file (its DB row + S3 object). Backend allows the uploader or an admin. */
     suspend fun deleteMedia(id: String) = api.deleteMedia(id)
@@ -5852,11 +5939,24 @@ class WorkshopRepository(
     /** True when the device currently has validated internet. */
     fun isOnline(context: Context): Boolean = ConnectivityObserver.isOnline(context)
 
-    /** How many records are waiting in the local outbox to be uploaded — refusals excluded. */
-    suspend fun pendingUploads(context: Context): Int = OfflineOutbox.count(context)
+    /**
+     * How many records are waiting in the local outbox to be uploaded — refusals excluded, and
+     * entries another account captured excluded with them.
+     */
+    suspend fun pendingUploads(context: Context): Int =
+        OfflineOutbox.count(context, cachedUser()?.id)
 
-    /** Both halves of the queue, for the banner that must not describe one as the other. */
-    suspend fun outboxCounts(context: Context): OutboxCounts = OfflineOutbox.counts(context)
+    /**
+     * Every part of the queue, for the banner that must not describe one as another.
+     *
+     * THE SIGNED-IN ACCOUNT IS HANDED DOWN because it is what decides whether an entry is waiting at
+     * all: `syncOutbox` will not send one captured by somebody else, so counting it as waiting puts
+     * it inside a sentence a connection cannot make true. See [PendingEntry.ownerUserId] and
+     * [OutboxCounts.otherAccount]. Read from the token store — the same source the drain itself
+     * reads, so the banner and the pass cannot disagree about who is signed in.
+     */
+    suspend fun outboxCounts(context: Context): OutboxCounts =
+        OfflineOutbox.counts(context, cachedUser()?.id)
 
     /**
      * Try a refused entry again, at a person's request, and drain the queue while we are here.
@@ -5885,7 +5985,11 @@ class WorkshopRepository(
         // cleared either way: an entry a person has asked to retry should be waiting rather than
         // parked, so the next automatic pass picks it up when the signal returns.
         val online = isOnline(context)
-        OfflineOutbox.clearFailure(context, entryId)
+        // THE SIGNED-IN ACCOUNT IS HANDED DOWN, and it is the same read `syncOutbox` makes one line
+        // later. An entry another account captured is one the drain will skip, so unmarking it would
+        // send nothing and delete the server's own sentence — see [OfflineOutbox.clearFailure]. The
+        // tray no longer offers the button on such a row; this is the guard under it. (2026-09-03)
+        OfflineOutbox.clearFailure(context, entryId, cachedUser()?.id)
         val moved = syncOutbox(context)
         val stillQueued = OfflineOutbox.all(context).any { it.id == entryId }
         return OutboxRetryResult(
@@ -5900,6 +6004,17 @@ class WorkshopRepository(
     /**
      * Try every refused entry again — after signing in again, or after an app update.
      *
+     * ── AND NOT ONE THIS SESSION IS NOT ALLOWED TO SEND (2026-09-03) ──────────────────────────
+     *
+     * An entry captured by another account on this shared handset is skipped by `syncOutbox`, so
+     * including it here did the one thing that cannot be undone: `clearAllFailures` wiped its
+     * `failure`, nothing was sent, and the row left the tray — because `outboxFailureRows` lists a row
+     * only while it carries a refusal — taking the server's own sentence with it. One tap, every
+     * refused entry of the other designer's fortnight, no copy of the reason anywhere. Both halves are
+     * fixed together and must be: the clearing skips them ([OfflineOutbox.clearAllFailures]), and
+     * `wereRefused` counts only the ones this session may actually send, so the sentence "tried N
+     * again" names a number a person can act on rather than one including rows nothing tried.
+     *
      * @return how many of the entries that WERE REFUSED went. Not [syncOutbox]'s number, for the
      *   reason given on [retryOutboxEntry]: that number includes entries which were only ever waiting
      *   on a signal, so "tried all of them again; 4 went" was said over a tray in which four refusals
@@ -5907,8 +6022,13 @@ class WorkshopRepository(
      */
     suspend fun retryAllOutboxFailures(context: Context): OutboxRetryResult {
         val online = isOnline(context)
-        val wereRefused = OfflineOutbox.failed(context).map { it.id }.toSet()
-        OfflineOutbox.clearAllFailures(context)
+        val signedIn = cachedUser()?.id
+        // THE SAME SELECTION `clearAllFailures` UNMARKS — one function, asked twice, so the number in
+        // "tried N again" and the set actually tried cannot part company.
+        val wereRefused = outboxRetryableFailures(OfflineOutbox.failed(context), signedIn)
+            .map { it.id }
+            .toSet()
+        OfflineOutbox.clearAllFailures(context, signedIn)
         val moved = syncOutbox(context)
         val remaining = OfflineOutbox.all(context).map { it.id }.toSet()
         val refusedThatWent = wereRefused.count { it !in remaining }
@@ -6104,6 +6224,15 @@ class WorkshopRepository(
      * Called by `uploadAttachments` at the moment it would otherwise have thrown the instruction the
      * designer could not follow. The bytes are copied out of `cacheDir` here, which is the last
      * moment they exist: see [OFFLINE_MEDIA_ONLY].
+     *
+     * IT GOES THROUGH [queueOfflineEntry] AND SO IT IS STAMPED WITH ITS OWNER LIKE EVERY OTHER
+     * ENTRY — [PendingEntry.ownerUserId], written there and nowhere else. Stated because this path
+     * is the one that would look like an exception if it were not: the record it attaches to is
+     * already on the server under somebody's name, so a reader might reason that the photographs
+     * belong to whoever is signed in now. They do not. The bytes were captured by the account that
+     * was holding the phone when the record was typed, and uploading them under another token
+     * records that account as the uploader on every media row (`uploadedBy`), which is the same
+     * misattribution one field along.
      */
     suspend fun queueMediaForSavedRecord(
         context: Context,
@@ -6147,6 +6276,21 @@ class WorkshopRepository(
      *
      * A failure of the ENQUEUE itself — a full disk, an unwritable queue file — is still thrown, and
      * every file staged for this entry is deleted on the way out, so a failed save leaks nothing.
+     *
+     * ── AND WHOSE FIELDWORK IT IS, STAMPED HERE BECAUSE HERE IS THE ONLY PLACE THAT KNOWS ─────
+     *
+     * [PendingEntry.ownerUserId] is written from `cachedUser()` at the moment of the save, which is
+     * the one instant at which the account that TYPED the record is known for certain. The drain
+     * happens minutes or a fortnight later, on a handset two designers share, and by then the only
+     * thing the queue file records about authorship is whatever was written down here.
+     *
+     * THIS IS THE STAMPING SITE FOR EVERY RECORD FORM — [queueMediaForSavedRecord] and all seven
+     * `trySaveOffline` handlers reach the outbox through this one function, so there is one place to
+     * keep right rather than eight, the same argument [workshopUnfiledReasons] makes about its keys.
+     * TWO OTHER PATHS CALL `OfflineOutbox.enqueue` DIRECTLY and stamp themselves, named here so that
+     * a reader auditing the boundary can find all three: `recordDesignWorkshopExport` (a log of who
+     * handed a report over) and `submitDesignRating` (whose judgement of a colleague's piece it is).
+     * Both queue a body rather than a record with media, which is why they do not come through here.
      */
     suspend fun queueOfflineEntry(
         context: Context,
@@ -6186,6 +6330,22 @@ class WorkshopRepository(
                 ?: unreadable.add(spec.uri.lastPathSegment ?: "file ${position + 1}")
         }
         val entryId = java.util.UUID.randomUUID().toString()
+        // READ ONCE, HERE, AND NOT AT THE DRAIN. `cachedUser()` answers about whoever is signed in
+        // right now; at replay time that may be the other designer sharing the handset, which is the
+        // whole failure the field exists to stop. Null when the token store has no user cached (a
+        // save racing a sign-out), and null passes the guard — an entry with no owner behaves exactly
+        // as every entry queued before this field did. See [PendingEntry.ownerUserId].
+        val owner = cachedUser()?.id
+        // MINTED HERE AND NOWHERE ELSE, for the reason `owner` above is read here: this is the one
+        // function every record form reaches the outbox through, so there is one place to keep right
+        // rather than eight. A mint any form could forget is a mint one of them eventually does,
+        // leaving exactly one record type able to duplicate itself.
+        //
+        // AT QUEUE TIME AND NOT AT DRAIN TIME, which is the mechanism rather than a detail. A key
+        // minted in `replayEntry` would be a NEW key on every pass, so the second send of a create
+        // whose answer was lost would look to the server like a different create — and make the
+        // second record this exists to prevent. The key has to be exactly as old as the entry.
+        val clientKey = clientKeyForNewEntry(type, targetId)
         try {
             OfflineOutbox.enqueue(
                 context,
@@ -6198,6 +6358,8 @@ class WorkshopRepository(
                     createdAt = Instant.now().toString(),
                     targetId = targetId,
                     unfiled = unfiled,
+                    ownerUserId = owner,
+                    clientKey = clientKey,
                 )
             )
         } catch (e: Throwable) {
@@ -6209,6 +6371,17 @@ class WorkshopRepository(
         }
         OfflineQueueResult(entryId = entryId, queuedFiles = media.size, unreadableFiles = unreadable)
     }
+
+    /**
+     * A fresh [PendingEntry.clientKey] for an entry about to be queued, or null where none belongs.
+     *
+     * The DECISION is [outboxMintsClientKey] in `Offline.kt` — pure, and there rather than here for
+     * the reason every other outbox judgement is: a JVM test is the only place it can be checked, and
+     * being wrong about it costs either a duplicate government record or a 422 that strands a
+     * fortnight of fieldwork. This function is only the UUID, which is the half a test cannot pin.
+     */
+    private fun clientKeyForNewEntry(type: String, targetId: String?): String? =
+        if (outboxMintsClientKey(type, targetId)) java.util.UUID.randomUUID().toString() else null
 
     /**
      * Replay every queued offline entry: create the record, then upload its copied media, then drop
@@ -6260,8 +6433,56 @@ class WorkshopRepository(
             // because its only symptom is a count that quietly drops.
             OfflineOutbox.takeAlert()?.let { notifyUser(context, it) }
             if (!ConnectivityObserver.isOnline(context)) return@withLock 0
+            // Read ONCE for the whole pass rather than per entry: the token store can be written by
+            // a sign-out on another coroutine while this loop runs, and a pass that changed its mind
+            // about who is signed in half-way through would send the first half of a fortnight under
+            // one account and skip the rest. See [PendingEntry.ownerUserId].
+            val signedIn = cachedUser()?.id
             var synced = 0
             for (queued in queue) {
+                /*
+                  AN ENTRY ANOTHER ACCOUNT CAPTURED IS NOT THIS ACCOUNT'S TO SEND — see
+                  [PendingEntry.ownerUserId], and `WorkshopSyncEngine.syncOneWorkshop` for the
+                  identical guard on the identical failure one queue along.
+
+                  Two designers share one field handset. A captures a fortnight of artisans and their
+                  photographs with no signal and signs out; `logout()` clears the token store and the
+                  form cache and nothing else, so the queue and its staged bytes stay on disk. B signs
+                  in, `MainActivity`'s sign-in effect calls this function within the second, and every
+                  one of A's records is created under B's token: B is `createdById`, the rows land in
+                  B's lists, and A has to be granted access to their own fieldwork. Unlike a workshop
+                  draft the entry is then DELETED (`OfflineOutbox.remove`) with its staged captures,
+                  so the misattribution is discovered with no local evidence left to compare against.
+
+                  THE SAME RULE FUNCTION AS THE DRAFT PASS, deliberately, rather than a second copy of
+                  one line: `dwDraftIsForAnotherAccount` already carries the two permissive cases and
+                  the reason each of them must NOT stop a send. A null owner passes — an entry queued
+                  before this field existed replays exactly as it always did, and refusing those would
+                  be a silent, total drain stop on every handset upgraded into this build.
+
+                  IT SKIPS THE ENTRY AND CARRIES ON (`continue`, not a `return`): the connection is
+                  fine and this account's own records must still go. Nothing is marked failed —
+                  `markFailure` is for an answer the server gave, and the server has not been asked.
+                  The entry keeps its place, its payload and its bytes.
+
+                  AND IT SAYS NOTHING HERE, WHICH IS THE OPPOSITE OF THE ARM BELOW IT. A refusal
+                  raises `notifyUser`, guarded by `queued.failure != outcome.reason` so it fires only
+                  when the reason CHANGES — and that guard is the whole reason it is safe, because
+                  this loop runs at sign-in, on the connectivity callback and every 12-45 seconds from
+                  `MainActivity`'s fallback timer. This state has no such durable field to compare
+                  against: it is not a failure and must not be written as one (a `failure` would park
+                  the entry behind `blocksRetry` and list it in the refusal tray, where every button
+                  offered is one a retry cannot honour). An unguarded Toast would therefore fire once
+                  per skipped entry per pass, for as long as the wrong designer is signed in — which
+                  is precisely how a researcher learns to dismiss this channel unread, and then
+                  dismisses the one that mattered too.
+
+                  THE DURABLE SURFACE IS THE BANNER, and it is better than a Toast anyway: the entry
+                  counts into [OutboxCounts.otherAccount], which draws its own amber line above the
+                  list naming the count and the one act that moves it, and stays on screen instead of
+                  lasting five seconds in a courtyard.
+                */
+                if (dwDraftIsForAnotherAccount(queued.ownerUserId, signedIn)) continue
                 // Already triaged as permanent: this one is waiting on a person, not on the network —
                 // UNLESS it is waiting on an update instead, in which case this run is the one that
                 // gets to find out whether the update has landed. The identical gate the design
@@ -6884,9 +7105,39 @@ class WorkshopRepository(
                 withIdentityAnswer(offlineJson.decodeFromString<ArtisanCreateRequest>(entry.payloadJson))
             ).id
         )
-        "product" -> CreatedRecord(api.createProduct(offlineJson.decodeFromString<ProductCreateRequest>(entry.payloadJson)).id)
-        "tool" -> CreatedRecord(api.createTool(offlineJson.decodeFromString<ToolCreateRequest>(entry.payloadJson)).id)
-        "workshop" -> CreatedRecord(api.createWorkshop(offlineJson.decodeFromString<WorkshopCreateRequest>(entry.payloadJson)).id)
+        // ── THE IDEMPOTENCY KEY IS COPIED ONTO THE BODY HERE, NOT STORED INSIDE IT ─────────────
+        //
+        // `payloadJson` is the form's own serialisation, written at queue time so that "a later
+        // schema change cannot alter what the user actually saved". The key is not something the
+        // user saved — it is bookkeeping about the SEND — so it lives beside the payload on
+        // [PendingEntry.clientKey] and is merged in at replay, exactly as the web outbox merges it
+        // in `bodyWithClearances` rather than into its stored `body`.
+        //
+        // NULL COPIES AS NULL AND IS THEN DROPPED. `ApiClient.json` has `explicitNulls = false`, so
+        // an entry from an earlier build — or one of a type that gets no key — sends a body with no
+        // `clientKey` at all, byte-identical to what this app has always sent.
+        //
+        // THIS IS THE CREATE PATH AND ONLY THE CREATE PATH. `writeFromEntry`'s correction branch
+        // decodes the same request classes and must NOT do this: the server's update schemas do not
+        // declare the field and are `extra="forbid"`. See [outboxMintsClientKey].
+        "product" -> CreatedRecord(
+            api.createProduct(
+                offlineJson.decodeFromString<ProductCreateRequest>(entry.payloadJson)
+                    .copy(clientKey = entry.clientKey)
+            ).id
+        )
+        "tool" -> CreatedRecord(
+            api.createTool(
+                offlineJson.decodeFromString<ToolCreateRequest>(entry.payloadJson)
+                    .copy(clientKey = entry.clientKey)
+            ).id
+        )
+        "workshop" -> CreatedRecord(
+            api.createWorkshop(
+                offlineJson.decodeFromString<WorkshopCreateRequest>(entry.payloadJson)
+                    .copy(clientKey = entry.clientKey)
+            ).id
+        )
         "craft" -> CreatedRecord(api.createCraft(offlineJson.decodeFromString<CraftCreateRequest>(entry.payloadJson)).id)
         "questionnaire" -> CreatedRecord(
             api.createQuestionnaireInterview(
@@ -6902,7 +7153,15 @@ class WorkshopRepository(
             ).id
         )
         // Steps come back in submit order, so `stepIndex` on a queued file selects the matching one.
-        "process" -> api.createProcess(offlineJson.decodeFromString<ProcessCreateRequest>(entry.payloadJson))
+        //
+        // AND ON A REPLAY THEY COME BACK FROM THE FIRST LANDING, which is why the key matters most
+        // here. The server's replay branch answers with the stored process and its EXISTING step
+        // ids rather than writing a second set — so `linkTargetFor` still resolves every queued step
+        // photograph, and a making sequence is not duplicated end to end.
+        "process" -> api.createProcess(
+            offlineJson.decodeFromString<ProcessCreateRequest>(entry.payloadJson)
+                .copy(clientKey = entry.clientKey)
+        )
             .let { detail -> CreatedRecord(detail.id, detail.steps.map { it.id }) }
         // NOT a record — a bookkeeping row about a report this phone already produced. It carries no
         // media, so the replay reaches Synced the moment this returns and the entry leaves the queue.

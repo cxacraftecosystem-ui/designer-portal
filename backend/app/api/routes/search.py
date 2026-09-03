@@ -162,11 +162,22 @@ async def global_search(
     #
     # The count and the read for every selected bucket go out TOGETHER. They were sequential, on the
     # reasoning that ten concurrent queries would exhaust the pooler — but that fear dates from when
-    # each of two uvicorn workers held a pool of forty. The box now runs one web worker with a pool
-    # of ten, and `gather_reads` will not exceed it. Re-measured against production at 4, 8 and 16
-    # simultaneous searches: no connection errors at any level, and the gathered version was faster
-    # or level every time. An all-bucket search went from 8.25s to 1.43s, because on a cross-region
-    # link ten sequential reads is ten times ~750ms of waiting and almost no database work.
+    # each of two uvicorn workers held a pool of forty. The box runs ONE web worker, and
+    # `gather_reads` never asks for more connections than the pool actually has, whatever it is set
+    # to. Re-measured against production at 4, 8 and 16 simultaneous searches: no connection errors
+    # at any level, and the gathered version was faster or level every time. An all-bucket search
+    # went from 8.25s to 1.43s.
+    #
+    # THOSE TWO FIGURES ARE THE OLD LINK'S, AND ARE KEPT AS THE MEASUREMENT THAT BUILT THIS PLAN
+    # RATHER THAN AS A CLAIM ABOUT TODAY (2026-09-03). They were taken when the database sat in
+    # another region and one hop cost ~750ms, so ten sequential reads was ten times three quarters
+    # of a second of waiting and almost no database work. The database moved into the same region as
+    # the API box on 2026-09-02 (docs/ENVIRONMENT.md, "The database"): a hop is now a millisecond or
+    # two, that 8.25s is tens of milliseconds either way, and nothing on this route has been
+    # re-measured since. What did not change is WHICH SHAPE COSTS FEWER ROUND TRIPS, which is the
+    # only thing the plan below decides. The pool, meanwhile, got SMALLER — production sets
+    # `DATABASE_CONNECTION_LIMIT` to 5 — so the wave arithmetic in that plan bites sooner than when
+    # it was written, not later.
     #
     # An unselected bucket contributes NO coroutine — it must not cost a round trip to return 0 —
     # so the reads are collected with their bucket names and zipped back up after the gather.
@@ -214,8 +225,11 @@ async def global_search(
     else:
         planned.append(("media_uploaders", media_url_owners(current_user)))
 
-    # THE ARITHMETIC, AND THE GATHER COMES OUT LEVEL RATHER THAN AHEAD. A Prisma hop here is ~750ms
-    # and the only number that moves this page is how many run IN SERIES. Before this change the route
+    # THE ARITHMETIC, AND THE GATHER COMES OUT LEVEL RATHER THAN AHEAD. The only number this plan
+    # can move is how many hops run IN SERIES; a hop is now a millisecond or two rather than the
+    # ~750ms this paragraph was first written against (2026-09-02 — see the note above the plan), so
+    # every difference below is a difference of milliseconds. It is COUNTING, not timing, and the
+    # count is unchanged by the move: what follows holds at any hop cost. Before this change the route
     # gathered the buckets (one hop) and then awaited ``media_url_owners`` at the encode (one more):
     # two hops. ``media_url_scope`` is TWO reads run one after the other — the grant table, then the
     # workshops this account may open — so awaiting it at the encode would now cost three, a hop the
@@ -230,15 +244,29 @@ async def global_search(
     # the hop.
     #
     # PLANNED FIRST, AND THAT ORDERING IS LOAD-BEARING RATHER THAN TIDY. ``gather_reads`` bounds
-    # itself with a semaphore of ``pool_width()`` — ``DATABASE_CONNECTION_LIMIT``, ten by default
-    # (true as of 2026-08-27; check `grep -n database_connection_limit backend/app/core/config.py`) —
-    # and admits coroutines in the order it is handed them. An omitted ``types`` means all five
-    # buckets, which is ten reads, exactly filling the pool; this one is then the eleventh and there
-    # is no slot for it. LAST in the list it would wait for a bucket to return before starting its own
-    # two serial reads — three hops, WORSE than the sequential version it replaced, and worst on the
-    # default search. FIRST it takes a slot immediately, and the bucket read that queues in its place
-    # is a single hop that lands alongside this pair's second one, off the critical path. Keep this
-    # plan above the bucket block.
+    # itself with a semaphore of ``pool_width()`` — ``DATABASE_CONNECTION_LIMIT`` — and admits
+    # coroutines in the order it is handed them. That number is 10 in ``core/config.py`` and 5 on the
+    # deployment: production sets it explicitly, against a session pool of about fifteen slots shared
+    # with the queue process (docs/ENVIRONMENT.md, "The database", recorded 2026-09-02). The
+    # paragraph this replaced was written when it was ten, and said an omitted ``types`` "exactly
+    # fills the pool" with this pair as the eleventh coroutine; both halves of that sentence have
+    # since moved — the sixth bucket landed on 2026-08-31 and the pool halved.
+    #
+    # RE-EXPRESSED AT FIVE, AND THE CONCLUSION IS THE SAME ONE MORE STRONGLY (2026-09-03). An omitted
+    # ``types`` means every bucket this caller may read — six for a professor and above — which is
+    # twelve bucket coroutines, and this pair makes thirteen. Thirteen against a bound of five is
+    # three waves whatever the order, so the plan does not decide how many waves there are; it
+    # decides WHICH WAVE THIS PAIR STARTS IN. FIRST, it takes a slot at t=0 and its second serial
+    # read lands in wave two beside bucket queries that were going to run anyway — off the critical
+    # path entirely. LAST, it would not start until wave three, and its second read would need a
+    # FOURTH wave of its own: one whole wave added to the widest search in the app, where against a
+    # pool of ten the same mistake cost a single hop. Keep this plan above the bucket block.
+    #
+    # AND THE CONDITIONAL ABOVE IS NOT A LATENCY DECISION AT ALL, which is why neither the move nor
+    # the pool touches it. Which of the two calls runs decides WHICH ANSWER the encode is given —
+    # ``public_encode``'s own default is NARROWER than ``media_url_owners``, so a saved read would
+    # have to be replaced by a wrong answer rather than by nothing. That argument holds at 750ms and
+    # at one.
     if "artisans" in selected:
         planned.append(("artisans", db.artisan.count(where=artisan_where)))
         planned.append(
@@ -294,16 +322,15 @@ async def global_search(
             )
         )
     if DESIGN_WORKSHOP_TYPE in selected:
-        # THIRTEEN COROUTINES RATHER THAN ELEVEN ON AN ALL-BUCKET SEARCH — twelve bucket reads plus
-        # the media-entitlement one — WHICH IS PAST ``pool_width()`` (10) AND THEREFORE TWO WAVES.
+        # THIRTEEN COROUTINES ON AN ALL-BUCKET SEARCH — twelve bucket reads plus the
+        # media-entitlement one — WHICH IS PAST ``pool_width()`` AND THEREFORE SEVERAL WAVES.
         #
-        # Stated rather than hidden. The paragraph above the plan already records that an omitted
-        # ``types`` is ten bucket reads "exactly filling the pool" with the entitlement read as the
-        # eleventh, and that is why THAT one is planned first; this bucket adds two more, and the
-        # queue at the semaphore grows from one coroutine to three. It is the honest cost of a sixth
-        # bucket — a count and a read cannot be fewer than two queries — and it is paid ONLY on a
-        # search that asks for all six. A researcher who ticks "Design workshops" alone pays two
-        # reads in one wave, as every single-bucket search always has.
+        # Stated rather than hidden, and the count of waves is the deployment's rather than this
+        # file's: two against the pool of ten this comment was written for on 2026-08-31, three
+        # against the 5 production sets today (2026-09-03 — see the plan above). Either way it is
+        # the honest cost of a sixth bucket — a count and a read cannot be fewer than two queries —
+        # and it is paid ONLY on a search that asks for all six. A researcher who ticks "Design
+        # workshops" alone pays two reads in one wave, as every single-bucket search always has.
         design_workshop_where = wheres[DESIGN_WORKSHOP_TYPE]
         planned.append(
             (DESIGN_WORKSHOP_TYPE, db.designworkshop.count(where=design_workshop_where))

@@ -59,6 +59,7 @@ import com.designprototype.workshop.data.DesignWorkshopCreateBody
 import com.designprototype.workshop.data.DwEligibleViewerDto
 import com.designprototype.workshop.data.DwEligibleViewers
 import com.designprototype.workshop.data.DW_MAX_NAMED_DESIGNERS
+import com.designprototype.workshop.data.DW_DRAFT_OTHER_ACCOUNT_ROW
 import com.designprototype.workshop.data.DW_LOCAL_DRAFT_LINK_PROMPT
 import com.designprototype.workshop.data.DW_LOCAL_DRAFT_UNLINKED
 import com.designprototype.workshop.data.DW_LOCAL_START_ACTION
@@ -78,6 +79,7 @@ import com.designprototype.workshop.data.DwCustomSectionStore
 import com.designprototype.workshop.data.computeWorkshopCompleteness
 import com.designprototype.workshop.data.dwAdoptCandidateNotice
 import com.designprototype.workshop.data.dwAdoptNoCandidatesMessage
+import com.designprototype.workshop.data.dwDraftIsForAnotherAccount
 import com.designprototype.workshop.data.dwNamedDesignerId
 import com.designprototype.workshop.data.dwNamedDesignerTeam
 import com.designprototype.workshop.data.dwOrderedDesignerPicks
@@ -216,6 +218,28 @@ private data class WorkshopRow(
      * because a request failed.
      */
     val fromServer: Boolean = false,
+    /**
+     * THIS DRAFT WAS CAPTURED ON THIS HANDSET BY A DIFFERENT ACCOUNT — see
+     * [WorkshopDraft.ownerUserId] and `dwDraftIsForAnotherAccount`.
+     *
+     * **THE DISPLAY HALF OF A FINDING WHOSE SEND HALF SHIPPED FIRST.** `WorkshopSyncEngine` already
+     * refuses to create such a draft under this session's token, because doing so files A's fortnight
+     * on the server as B's. The list went on drawing it as an ordinary row: openable, editable, and
+     * offered a "Move into a workshop" button that is one-way and unrepeatable. So the boundary held
+     * on the wire and not on the screen — B could add answers to A's fieldwork and adopt it into a
+     * workshop of B's, and the sync guard would then correctly refuse to send any of it.
+     *
+     * **LABELLED, NOT HIDDEN.** Filtering the row out was the smaller change and the wrong one: the
+     * draft stays on the disk either way, and a workshop that silently disappears from the list is
+     * indistinguishable from a fortnight that has been deleted — on the one screen a designer opens
+     * to reassure themselves it has not been. The row keeps its title and its progress, states whose
+     * it is in one line, and does not open.
+     *
+     * FALSE FOR A NULL OWNER, always, and that is the same rule the sync guard keeps: a draft written
+     * before the stamp existed, or one a stage screen created for a workshop opened from the server,
+     * carries no owner and is nobody's to withhold.
+     */
+    val otherAccount: Boolean = false,
 ) {
     val localOnly: Boolean get() = remoteId == null
 }
@@ -413,6 +437,11 @@ fun WorkshopListScreen(
             val drafts = localIds.mapNotNull { id -> WorkshopDraftStore.load(appContext, id)?.let { id to it } }
             val draftById = drafts.toMap()
             val remoteToLocal = drafts.mapNotNull { (id, draft) -> draft.remoteId?.let { it to id } }.toMap()
+            // WHO IS SIGNED IN, READ ONCE FOR THE WHOLE LIST. From the token store, which is the same
+            // source `WorkshopSyncEngine` reads, so a row's label and the pass's decision about the
+            // same draft are made against the same answer. Null (nobody signed in) labels nothing, by
+            // `dwDraftIsForAnotherAccount`'s own rule. See [WorkshopRow.otherAccount].
+            val signedInUserId = repository.cachedUser()?.id
 
             // EVERY page the server says this account may see, not the first one.
             //
@@ -500,6 +529,23 @@ fun WorkshopListScreen(
                         updatedAt = draft.updatedAt,
                         schema = registry,
                         draft = draft,
+                    ).copy(
+                        /*
+                          THE DISPLAY HALF OF THE OWNERSHIP GUARD — see [WorkshopRow.otherAccount] and
+                          `dwDraftIsForAnotherAccount`, which is asked here rather than re-spelled, so
+                          the list and the sync pass cannot form two different opinions about one
+                          draft. The pass's own comment used to end "the display half needs the list
+                          screen, which this change deliberately does not touch"; this is that touch.
+
+                          ASKED ONLY OF THE DEVICE-ONLY ROWS, which is where the whole hazard lives: a
+                          row the SERVER returned is one this account has been granted, whatever the
+                          local draft remembers about who first typed into it, and withholding those
+                          would hide a workshop from a designer the repository has explicitly given it
+                          to. `signedInUserId` is read once above the walk for the reason the pass
+                          reads it once per pass — a sign-out landing mid-list would otherwise label
+                          half the rows and not the other half.
+                        */
+                        otherAccount = dwDraftIsForAnotherAccount(draft.ownerUserId, signedInUserId),
                     )
                 }
                 .filter { row ->
@@ -790,7 +836,15 @@ fun WorkshopListScreen(
         // [offerMove] AND NOT `!mayCreate` ALONE, so this sentence cannot name a control the row
         // below has decided not to draw. The browser counts the same way — `unlinkedCount =
         // offerMove ? orphanDrafts.size : 0`.
-        val unlinkedCount = if (offerMove) rows.count { it.localOnly && it.hasLocalDraft } else 0
+        // AND IT COUNTS THE SAME ROWS THE BUTTON IS DRAWN ON, `otherAccount` included in the test for
+        // that reason and no other: this sentence ends by naming "Move into a workshop" on the row,
+        // and a count that included a row which deliberately has no such button sends a designer
+        // looking for a control that is not there. See [WorkshopRow.otherAccount].
+        val unlinkedCount = if (offerMove) {
+            rows.count { it.localOnly && it.hasLocalDraft && !it.otherAccount }
+        } else {
+            0
+        }
         if (!offline && unlinkedCount > 0) {
             Text(
                 (if (unlinkedCount == 1) {
@@ -844,7 +898,17 @@ fun WorkshopListScreen(
         // could not name and fell through to "Waiting to upload … it uploads whenever there is a
         // connection", directly above a row reading "2 answers refused — the rest is backed up".
         // Measured on the handset; see [dwDeviceSyncBanner], which now decides both sentences.
-        val outstanding = rows.mapNotNull { it.status }.filterNot { it.isFullySynced }
+        //
+        // AND ANOTHER ACCOUNT'S ROWS ARE NOT COUNTED HERE AT ALL (2026-09-03). Such a draft is
+        // local-only, so `isFullySynced` is false and it would have walked straight into this list —
+        // contributing stages and photographs to a banner whose whole sentence is "these upload
+        // whenever there is a connection", above a "Sync now" button that `syncOutbox` and
+        // `syncOneWorkshop` both step over. That is the same lie one row further out: a number inside
+        // a promise a connection cannot keep. The fact is said on the row itself, where the title is
+        // and where the remedy names a person rather than a signal. See [WorkshopRow.otherAccount].
+        val outstanding = rows.filterNot { it.otherAccount }
+            .mapNotNull { it.status }
+            .filterNot { it.isFullySynced }
         /*
           WHAT A SYNC PASS CANNOT MOVE, READ BEFORE THE PASS RUNS.
 
@@ -882,6 +946,30 @@ fun WorkshopListScreen(
                 "cannot move — open the stage once with a connection so this phone can read it, and " +
                 "the deletion goes up on the save straight after."
         }
+        /*
+          AND THE THIRD THING A SYNC PASS CANNOT MOVE (2026-09-03), found the same way as the two above
+          and with a third remedy again. A stage whose save came back reporting `droppedCustomKeys` has
+          a signature that MATCHES — the payload was accepted — so the pass sends nothing, `didAnything`
+          is false and `refused` is 0, and this button fell to its last arm over an answer the
+          repository has no column for. Not "correct it" (nothing is wrong and no box is marked) and
+          not "open the stage" (the stage is fine): the sections that asked the question were edited on
+          the web, so what is needed is opening the WORKSHOP with a connection to re-read them. See
+          [WorkshopSyncStatus.droppedAnswers].
+
+          THE SECOND HALF OF THE SENTENCE NOW HAPPENS. It was written before the mechanism that
+          discharges it existed: `buildStageBody` sent the orphaned key in every payload, so the
+          re-read changed nothing and the count never moved however often a designer did as they were
+          told. `dwWithheldCustomKeys` closed that, and the wording is corrected here in the same
+          change and in the same words as `dwDeviceSyncBanner`'s — read three lines apart on two
+          surfaces, they must not describe one remedy two ways.
+        */
+        val droppedNow = outstanding.sumOf { it.droppedAnswers }
+        val droppedLine = if (droppedNow == 0) "" else {
+            " $droppedNow answer${if (droppedNow == 1) "" else "s"} " +
+                "${if (droppedNow == 1) "was" else "were"} not stored — this workshop's sections no " +
+                "longer ask for ${if (droppedNow == 1) "it" else "them"}. Open the workshop once " +
+                "with a connection — it re-reads the sections, and the next sync clears this."
+        }
         DeviceSyncBanner(
             workshops = outstanding.size,
             stages = outstanding.sumOf { it.pendingStages },
@@ -890,6 +978,7 @@ fun WorkshopListScreen(
             refusals = outstanding.sumOf { it.failedStages + it.failedMedia },
             refusedAnswers = outstanding.sumOf { it.refusedAnswers },
             unsentDeletions = outstanding.sumOf { it.unsentDeletions },
+            droppedAnswers = droppedNow,
             busy = busy || sendingId != null,
             onSyncNow = {
                 busy = true
@@ -923,6 +1012,10 @@ fun WorkshopListScreen(
                                 // blunter reason: the stage was never sent at all, because its
                                 // signature already matched.
                                 append(deletionsLine)
+                                // Counted by neither either, and by the third route: the stage WAS
+                                // sent, the save was accepted, and the server had nowhere to put one
+                                // of the answers in it.
+                                append(droppedLine)
                                 // A workshop the pass would not even attempt is invisible in every
                                 // number above it, and a pass that moved nineteen stages of one
                                 // workshop while a second one sits behind a refusal must not report
@@ -979,6 +1072,7 @@ fun WorkshopListScreen(
                                 }
                                 append(refusedAnswersLine)
                                 append(deletionsLine)
+                                append(droppedLine)
                             }
                         )
                         result.stoppedOffline -> onMessage(
@@ -988,8 +1082,9 @@ fun WorkshopListScreen(
                         // reached by exactly the phone the banner above was describing wrongly: a
                         // clean pass with nothing to send, because the only outstanding thing is an
                         // answer the repository has already read and declined. See `refusedAnswersNow`.
-                        refusedAnswersNow > 0 || deletionsNow > 0 -> onMessage(
-                            "There was nothing to send.$refusedAnswersLine$deletionsLine"
+                        refusedAnswersNow > 0 || deletionsNow > 0 || droppedNow > 0 -> onMessage(
+                            "There was nothing to send." +
+                                "$refusedAnswersLine$deletionsLine$droppedLine"
                         )
                         else -> onMessage("Everything on this device is already on the server.")
                     }
@@ -1042,7 +1137,15 @@ fun WorkshopListScreen(
                     // row.hasLocalDraft` alone, which offered an ADMIN a control that can only lose
                     // their work — theirs syncs itself. See [offerMove] for that argument in full and
                     // for why the banner above had already been narrowed and this had not.
-                    onAdopt = if (offerMove && row.localOnly && row.hasLocalDraft) {
+                    //
+                    // AND NEVER FOR ANOTHER ACCOUNT'S DRAFT. Adoption is one-way and unrepeatable —
+                    // the paragraph on the dialog's `candidates` says what pointing a fortnight at
+                    // the wrong workshop costs — and the judgement it asks for is "which workshop is
+                    // MY fieldwork part of", which nobody can make about somebody else's. Worse, the
+                    // move would succeed locally and the sync guard would then correctly refuse to
+                    // send any of it, leaving A's fortnight adopted into B's workshop and stranded.
+                    // See [WorkshopRow.otherAccount].
+                    onAdopt = if (offerMove && row.localOnly && row.hasLocalDraft && !row.otherAccount) {
                         { adopting = row }
                     } else {
                         null
@@ -1271,7 +1374,15 @@ private fun WorkshopCard(
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
-                modifier = Modifier.fillMaxWidth().clickable(onClick = onOpen)
+                // NOT CLICKABLE FOR ANOTHER ACCOUNT'S DRAFT — the modifier is absent rather than the
+                // handler being a no-op, so the row does not ripple under a finger and then do
+                // nothing, which reads as the app having broken. The sentence below says why in one
+                // line; a control that reacts and refuses silently is the failure this repository
+                // already names about disabled buttons ("a control with its reason somewhere else is
+                // a control people tap repeatedly"). See [WorkshopRow.otherAccount].
+                modifier = Modifier.fillMaxWidth().let {
+                    if (row.otherAccount) it else it.clickable(onClick = onOpen)
+                }
             ) {
                 CompletenessRing(percent = row.percent)
                 Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -1292,13 +1403,32 @@ private fun WorkshopCard(
                     )
                 }
             }
+            // WHOSE THIS IS, SAID ON THE ROW THAT WILL NOT OPEN, and said before anything else on it.
+            // Without this the row is simply inert: a designer taps a workshop, nothing happens, and
+            // the only readings available are that the app is broken or that the work is corrupt. One
+            // line, the fact and the act; the whole argument is on [WorkshopRow.otherAccount] and on
+            // `WorkshopSyncEngine.syncOneWorkshop`.
+            if (row.otherAccount) {
+                Text(
+                    DW_DRAFT_OTHER_ACCOUNT_ROW,
+                    color = MaterialTheme.field.warning,
+                    fontSize = 11.sp,
+                    lineHeight = 16.sp
+                )
+            }
             // THE SYNC STATE, ON EVERY ROW AND NOT ONLY ON THE LOCAL-ONLY ONES. The badge this
             // replaced appeared only when a workshop had no server id, which is a statement about
             // the HEADER: a workshop created on the server on day one and then captured offline for
             // thirteen days showed nothing at all and looked identical to one that was fully backed
             // up. What a designer needs before they leave a cluster is not "does a record exist" but
             // "has everything I captured left this phone".
-            val status = row.status
+            //
+            // NOT ON ANOTHER ACCOUNT'S ROW, and that is not tidiness. Every sentence the chip and its
+            // actions can say is about what a connection or this account's Try again will do, and
+            // neither will do anything here — `syncOutbox` and `syncOneWorkshop` both step over it.
+            // "3 stages waiting to upload" beside a Send button that cannot send is the exact class
+            // of lie `dwDeviceSyncBanner` exists to end, drawn on the row instead of above it.
+            val status = row.status.takeUnless { row.otherAccount }
             if (status != null) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,

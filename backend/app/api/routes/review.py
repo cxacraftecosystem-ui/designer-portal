@@ -55,26 +55,55 @@ LATE_SUBMISSION_LOG_NOTE = "Late workshop submission — approved by an admin."
 EDIT_LOG_PREFIX = "EDITED"
 
 
-def delegate_for(record_type: str) -> tuple[Any, str, str]:
-    """Delegate, ReviewLog record type, and the name of the relation pointing at the creator."""
-    mapping = {
-        "artisan": (db.artisan, "ARTISAN", "createdBy"),
-        "workshop": (db.workshop, "WORKSHOP", "createdBy"),
-        "product": (db.productdocumentation, "PRODUCT", "createdBy"),
-        "tool": (db.tooldocumentation, "TOOL", "createdBy"),
-        # Processes and interviews carry a status and can be pinned PENDING by the late-submission
-        # gate, so they must be reviewable — without these a late process or interview was
-        # unapprovable by anyone and sat in PENDING forever.
-        "process": (db.process, "PROCESS", "createdBy"),
-        "questionnaire": (db.questionnaireinterview, "QUESTIONNAIRE", "createdBy"),
-        "media": (db.mediafile, "MEDIA", "uploadedBy"),
-    }
+#: record_type -> (Prisma delegate ATTRIBUTE NAME, ReviewLog record type, creator relation).
+#
+# THE DELEGATE IS NAMED AND NOT BOUND, AS OF 2026-09-03, and the indirection buys exactly one thing:
+# ``db.tx()`` hands back a DIFFERENT client, so a review write that has to happen inside a
+# transaction needs the same delegate resolved against THAT client. Holding ``db.artisan`` in the
+# table would make every consumer of it write outside whatever transaction it appears to be in —
+# silently, which is the only way this mistake ever fails. Both accessors below read this one table,
+# so the seven record types stay a single list rather than a list and a shadow copy of it.
+_REVIEW_TYPES: dict[str, tuple[str, str, str]] = {
+    "artisan": ("artisan", "ARTISAN", "createdBy"),
+    "workshop": ("workshop", "WORKSHOP", "createdBy"),
+    "product": ("productdocumentation", "PRODUCT", "createdBy"),
+    "tool": ("tooldocumentation", "TOOL", "createdBy"),
+    # Processes and interviews carry a status and can be pinned PENDING by the late-submission
+    # gate, so they must be reviewable — without these a late process or interview was
+    # unapprovable by anyone and sat in PENDING forever.
+    "process": ("process", "PROCESS", "createdBy"),
+    "questionnaire": ("questionnaireinterview", "QUESTIONNAIRE", "createdBy"),
+    "media": ("mediafile", "MEDIA", "uploadedBy"),
+}
+
+
+def _review_type_or_404(record_type: str) -> tuple[str, str, str]:
     key = record_type.lower()
-    if key not in mapping:
+    if key not in _REVIEW_TYPES:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Unsupported review record type"
         )
-    return mapping[key]
+    return _REVIEW_TYPES[key]
+
+
+def delegate_for(record_type: str) -> tuple[Any, str, str]:
+    """Delegate, ReviewLog record type, and the name of the relation pointing at the creator.
+
+    Resolved against the module client, which is what every READ on this router wants. For a write
+    that must land inside a transaction, use :func:`delegate_on` with that transaction's client.
+    """
+    attribute, log_type, creator_relation = _review_type_or_404(record_type)
+    return getattr(db, attribute), log_type, creator_relation
+
+
+def delegate_on(client: Any, record_type: str) -> Any:
+    """The delegate :func:`delegate_for` returns, bound to ``client`` rather than to ``db``.
+
+    Exists so a status change and the ReviewLog row that explains it can be issued through ONE
+    transaction client — see ``set_review_status``, which is where the pair used to come apart.
+    """
+    attribute, _log_type, _creator_relation = _review_type_or_404(record_type)
+    return getattr(client, attribute)
 
 
 # Record types surfaced in the review queue, with the field used as a human label. Media is
@@ -307,16 +336,27 @@ async def set_review_status(
         )
         notes = (payload.notes or "").strip()
         log_notes = f"{notes}\n\n{LATE_SUBMISSION_LOG_NOTE}" if notes else LATE_SUBMISSION_LOG_NOTE
-    updated = await delegate.update(where={"id": record_id}, data=data)
-    await db.reviewlog.create(
-        data={
-            "recordType": log_type,
-            "recordId": record_id,
-            "status": new_status,
-            "notes": log_notes,
-            "reviewerId": reviewer.id,
-        }
-    )
+    # THE DECISION AND THE LOG OF IT ARE ONE WRITE (2026-09-03). This is the audit-ledger defect the
+    # six PATCH routes carry, INVERTED: there the RecordRevision committed before the row, here the
+    # row committed before the ReviewLog. A failure in the gap — P2024 on a cross-region pool, a
+    # dropped socket — left a record APPROVED or REJECTED with nothing anywhere saying who decided
+    # it, when, or on what note. That is strictly worse than the forward version: the review ladder's
+    # whole purpose is accountability for the decision, ``GET /review/{type}/{id}/log`` is what an
+    # admin reads to reconstruct one, and a status change with no log entry is a decision that
+    # appears to have made itself. The delegate is re-resolved against ``tx`` because ``db.tx()``
+    # hands back a DIFFERENT client and the ``delegate`` above is bound to the module singleton —
+    # writing through it here would leave the update outside the transaction it is written inside.
+    async with db.tx() as tx:
+        updated = await delegate_on(tx, record_type).update(where={"id": record_id}, data=data)
+        await tx.reviewlog.create(
+            data={
+                "recordType": log_type,
+                "recordId": record_id,
+                "status": new_status,
+                "notes": log_notes,
+                "reviewerId": reviewer.id,
+            }
+        )
     return public_encode(updated)
 
 
@@ -511,31 +551,42 @@ async def edit_reviewed_record(
         field for field, value in data.items() if not values_match(get_value(record, field), value)
     )
 
-    # Audit BEFORE provenance is merged in, so the revision holds real content changes only.
-    await record_revision(record, reviewer, data, key)
-    # Provenance rebuilds extraMetadata from this payload, which would drop the workshop-submission
-    # stamp; carry it forward first, exactly as the record's own PATCH route does.
-    stamp_workshop_submission(data, record=record)
-    merge_field_provenance(data, reviewer, previous=record)
-    jsonify_metadata(data)
-    updated = await delegate.update(where={"id": record_id}, data=data)
+    # THREE WRITES, ONE TRANSACTION (2026-09-03). A reviewer's edit produces a RecordRevision, the
+    # row itself, and a ReviewLog entry, and until this block they were three separate commits in a
+    # row — so this route carried BOTH halves of the ledger defect at once. A failure after the first
+    # left a revision for an edit that never landed; a failure after the second left an edited record
+    # with no reviewer's log entry naming who changed it. The reviewer sees one error either way and
+    # retries, which appends a SECOND revision for the same edit. All three now land together or none
+    # of them do, and ``client=tx`` is what makes the first one join: ``db.tx()`` hands back a
+    # DIFFERENT client, so ``record_revision`` writing through the module singleton would commit
+    # outside the block it sits inside.
+    async with db.tx() as tx:
+        # Audit BEFORE provenance is merged in, so the revision holds real content changes only.
+        await record_revision(record, reviewer, data, key, client=tx)
+        # Provenance rebuilds extraMetadata from this payload, which would drop the workshop-submission
+        # stamp; carry it forward first, exactly as the record's own PATCH route does.
+        stamp_workshop_submission(data, record=record)
+        merge_field_provenance(data, reviewer, previous=record)
+        jsonify_metadata(data)
+        updated = await delegate_on(tx, record_type).update(where={"id": record_id}, data=data)
 
-    summary = (
-        f"{EDIT_LOG_PREFIX}: {', '.join(changed)}"
-        if changed
-        else f"{EDIT_LOG_PREFIX}: no values changed"
-    )
-    note = (payload.note or "").strip()
-    await db.reviewlog.create(
-        data={
-            "recordType": log_type,
-            "recordId": record_id,
-            # The record's own, unchanged status — see EDIT_LOG_PREFIX for why the verb lives in notes.
-            "status": str(enum_or_raw(get_value(record, "status"))),
-            "notes": f"{summary}\n\n{note}" if note else summary,
-            "reviewerId": reviewer.id,
-        }
-    )
+        summary = (
+            f"{EDIT_LOG_PREFIX}: {', '.join(changed)}"
+            if changed
+            else f"{EDIT_LOG_PREFIX}: no values changed"
+        )
+        note = (payload.note or "").strip()
+        await tx.reviewlog.create(
+            data={
+                "recordType": log_type,
+                "recordId": record_id,
+                # The record's own, unchanged status — see EDIT_LOG_PREFIX for why the verb lives in
+                # notes.
+                "status": str(enum_or_raw(get_value(record, "status"))),
+                "notes": f"{summary}\n\n{note}" if note else summary,
+                "reviewerId": reviewer.id,
+            }
+        )
 
     if payload.approve:
         # Re-reads the freshly edited row and re-applies the late-submission gate, so approving here

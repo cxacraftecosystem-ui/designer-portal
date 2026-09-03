@@ -72,6 +72,31 @@ class _Writes:
         return []
 
 
+class _Client(SimpleNamespace):
+    """The fake Prisma client, with an ``async with db.tx()`` that hands back itself (2026-09-03).
+
+    The five record PATCHes driven below now wrap their guard and their row update in ONE
+    ``db.tx()`` (see ``access.record_revision`` for why), so a bare ``SimpleNamespace`` standing in
+    for ``db`` no longer answers the route: it has no ``tx``. Handing back ``self`` is the same
+    shortcut ``tests/test_design_workshop_provisional_isolation`` takes, and it carries the same
+    caveat — NOTHING HERE SIMULATES A TRANSACTION and no assertion in this module is about rollback.
+    What it preserves is that the route's writes are issued through the recording delegates, which
+    is all this file's subject (the ``clearable`` tuple and the ``exclude_unset`` dump) needs.
+    """
+
+    def tx(self) -> Any:
+        client = self
+
+        class _Tx:
+            async def __aenter__(self) -> Any:
+                return client
+
+            async def __aexit__(self, *_exc: object) -> bool:
+                return False
+
+        return _Tx()
+
+
 class _Payload:
     """A stand-in for the pydantic update model, recording how the route dumped it.
 
@@ -102,7 +127,12 @@ def _editor():
     return _Row(id="usr_7", name="R. Menon", role="RESEARCHER")
 
 
-async def _privileged(_record, _user, _data, _kind):
+async def _privileged(_record, _user, _data, _kind, *, client=None):
+    """``guard_record_edit``'s stand-in. ``client`` is accepted and ignored ON PURPOSE (2026-09-03):
+    the routes now pass ``client=tx`` so the audit row lands in the caller's transaction, and a stub
+    with the old four-argument signature would fail every drive below with a TypeError that says
+    nothing about what this file asserts. Ignoring it is honest here — the revision write is what
+    the argument steers, and this stub writes no revision at all."""
     return True
 
 
@@ -130,7 +160,7 @@ def _drive_artisan(monkeypatch, fields: dict[str, Any], stored: _Row) -> tuple[A
     async def _sync(_previous, _next, _artisan_id):
         return None
 
-    monkeypatch.setattr(artisans, "db", SimpleNamespace(artisan=writes))
+    monkeypatch.setattr(artisans, "db", _Client(artisan=writes))
     monkeypatch.setattr(artisans, "require_record", _require_record)
     monkeypatch.setattr(artisans, "guard_record_edit", _privileged)
     monkeypatch.setattr(artisans, "apply_status_policy_update", _no_status_policy)
@@ -153,7 +183,7 @@ def _drive_product(monkeypatch, fields: dict[str, Any], stored: _Row) -> tuple[A
     async def _no_media_urls(_viewer):
         return set()
 
-    monkeypatch.setattr(products, "db", SimpleNamespace(productdocumentation=writes))
+    monkeypatch.setattr(products, "db", _Client(productdocumentation=writes))
     monkeypatch.setattr(products, "require_record", _require_record)
     monkeypatch.setattr(products, "guard_record_edit", _privileged)
     monkeypatch.setattr(products, "apply_status_policy_update", _no_status_policy)
@@ -176,7 +206,7 @@ def _drive_tool(monkeypatch, fields: dict[str, Any], stored: _Row) -> tuple[Any,
     async def _no_media_urls(_viewer):
         return set()
 
-    monkeypatch.setattr(tools, "db", SimpleNamespace(tooldocumentation=writes))
+    monkeypatch.setattr(tools, "db", _Client(tooldocumentation=writes))
     monkeypatch.setattr(tools, "require_record", _require_record)
     monkeypatch.setattr(tools, "guard_record_edit", _privileged)
     monkeypatch.setattr(tools, "apply_status_policy_update", _no_status_policy)
@@ -199,7 +229,7 @@ def _drive_process(monkeypatch, fields: dict[str, Any], stored: _Row) -> tuple[A
     async def _hydrate(row, _viewer):
         return row
 
-    monkeypatch.setattr(processes, "db", SimpleNamespace(process=writes))
+    monkeypatch.setattr(processes, "db", _Client(process=writes))
     monkeypatch.setattr(processes, "require_record", _require_record)
     monkeypatch.setattr(processes, "guard_record_edit", _privileged)
     monkeypatch.setattr(processes, "apply_status_policy_update", _no_status_policy)
@@ -232,7 +262,7 @@ def _drive_craft(monkeypatch, fields: dict[str, Any], stored: _Row) -> tuple[Any
     async def _sync(_previous, _next, _craft_id):
         return None
 
-    monkeypatch.setattr(crafts, "db", SimpleNamespace(craft=writes))
+    monkeypatch.setattr(crafts, "db", _Client(craft=writes))
     monkeypatch.setattr(crafts, "require_record", _require_record)
     monkeypatch.setattr(crafts, "guard_record_edit", _privileged)
     monkeypatch.setattr(crafts, "apply_status_policy_update", _no_status_policy)
@@ -567,7 +597,7 @@ def test_moving_a_process_to_another_product_still_checks_that_product_exists(mo
     monkeypatch.setattr(
         processes,
         "db",
-        SimpleNamespace(process=writes, productdocumentation=_Writes(row=_Row(id="prd_2"))),
+        _Client(process=writes, productdocumentation=_Writes(row=_Row(id="prd_2"))),
     )
     monkeypatch.setattr(processes, "require_record", _require_record)
     monkeypatch.setattr(processes, "guard_record_edit", _privileged)
@@ -942,13 +972,15 @@ def test_the_interview_patch_dumps_with_exclude_unset(monkeypatch):
     async def _require_record(_delegate, _record_id):
         return stored
 
-    async def _privileged_edit(_record, _user, _data, _kind):
+    async def _privileged_edit(_record, _user, _data, _kind, *, client=None):
+        # ``client=tx`` since 2026-09-03 — see the module-level ``_privileged`` for why it is
+        # accepted and ignored.
         return True
 
     async def _attach_location(data):
         return data
 
-    monkeypatch.setattr(module, "db", SimpleNamespace(questionnaireinterview=writes))
+    monkeypatch.setattr(module, "db", _Client(questionnaireinterview=writes))
     monkeypatch.setattr(module, "require_record", _require_record)
     monkeypatch.setattr(module, "guard_record_edit", _privileged_edit)
     monkeypatch.setattr(module, "apply_status_policy_update", _no_status_policy)

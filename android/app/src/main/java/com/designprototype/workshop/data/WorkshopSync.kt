@@ -228,6 +228,37 @@ data class StageSyncRecord(
      * on: a draft written by an earlier build decodes with null and behaves exactly as it did.
      */
     val refusal: DwStageRefusalRecord? = null,
+    /**
+     * Custom keys the LAST PAYLOAD LEFT OUT because the repository has nowhere to put them, and this
+     * device's own definition agrees — see [dwWithheldCustomKeys] and [BuiltStage.withheldCustom].
+     * (2026-09-03)
+     *
+     * ── WHY IT IS NOT [refusal]'s `droppedCustomKeys`, WHICH IS THE SAME LIST ONE SAVE EARLIER ────
+     *
+     * Because that list is cleared by the very save this one makes possible, and a rule that reads it
+     * therefore oscillates. `recordStageSent` writes `refusal = …takeIf { !it.isEmpty }`, so a clean
+     * response writes NULL — which is exactly what [WorkshopSyncStatus.droppedAnswers] needs, and
+     * exactly what the builder must not depend on. Without this field: pass 1 withholds the key and
+     * the save comes back clean; pass 2 reads no refusal, puts the key back, and the server drops it
+     * again; pass 3 withholds it once more. Two payloads, alternating, twice a minute, for the life of
+     * the installation — a worse defect than the permanent counter it was meant to fix.
+     *
+     * SO THE TWO FACTS ARE STORED APART BECAUSE THEY ANSWER DIFFERENT QUESTIONS. `droppedCustomKeys`
+     * is *what the repository refused a home on the last save*, it is what the count and the stage
+     * card are built from, and it is right that a clean save erases it. This is *what this device has
+     * stopped sending, and why the last save was clean* — bookkeeping about the payload, counted by
+     * nothing, shown by nothing, and read only by the builder that wrote it. With it, the second body
+     * is byte-identical to the first, the signature matches, and the pass sends nothing at all.
+     *
+     * IT IS NOT A DELETION AND IT IS NOT PERMANENT. The answer is untouched in [StageDraft.custom];
+     * this only records that no payload is currently carrying it. The moment the definition declares
+     * the key again, [dwWithheldCustomKeys] returns nothing for it, the next body carries the answer,
+     * and the save that lands writes this back empty.
+     *
+     * Additive and defaulted, the rung [refusal] itself was added on: a draft written by an earlier
+     * build decodes with an empty list and behaves exactly as it did.
+     */
+    val withheldCustomKeys: List<String> = emptyList(),
 )
 
 /** Everything the draft knows about its own journey to the server. See [WorkshopDraft.sync]. */
@@ -348,6 +379,47 @@ data class WorkshopSyncStatus(
      * next save carries it. One sentence per stage, naming the stage, is what a designer can act on.
      */
     val unsentDeletions: Int = 0,
+    /**
+     * Answers the server DID NOT STORE because this workshop's own custom sections no longer ask the
+     * question — `droppedCustomKeys`, counted at last.
+     *
+     * ── THE GAP THAT WAS DOCUMENTED VERBATIM AND LEFT OPEN ────────────────────────────────────────
+     *
+     * `WorkshopSyncEngine.retryWorkshop` has carried the whole of this in a comment: a save reporting
+     * ONLY `droppedCustomKeys` writes the note, writes a non-null [StageSyncRecord.refusal] carrying
+     * the keys, and leaves [StageSyncRecord.refusedFields] at 0 — because nothing was REFUSED, the
+     * server simply had nowhere to put the answer. `statusOf` then scored it as nothing at all:
+     * `failedStages` counts only `permanent` records and [refusedAnswers] sums only `refusedFields`.
+     * Signature matches, nothing pending, nothing failed — [isFullySynced] true, and the list row read
+     * "Backed up to the server" over a question whose answer was never stored anywhere but this phone.
+     * That comment ended *"it needs a counter of its own on [WorkshopSyncStatus]"*. This is it.
+     *
+     * ── WHY IT IS NOT FOLDED INTO [refusedAnswers] ────────────────────────────────────────────────
+     *
+     * Because the remedy is a different act, and this file's whole discipline is that two hold-ups
+     * with two remedies get two counters. A refused answer is corrected IN THE STAGE FORM: the
+     * repository read the value and declined it, and the save carrying the corrected one clears it. A
+     * dropped custom answer is not wrong and cannot be corrected — the SECTION that asked for it is
+     * gone, edited on the web since this phone last read the definitions — so the act is to open the
+     * workshop once with a connection, which re-reads the sections. Told "correct it", a designer
+     * looks for a red box that does not exist, on a stage where nothing is marked.
+     *
+     * A COUNT OF ANSWERS, like [refusedAnswers] beside it and unlike [unsentDeletions]: the keys are
+     * enumerated in [DwStageRefusalRecord.droppedCustomKeys], so there is something real to count, and
+     * "3 answers" is the unit a designer compares against what they typed.
+     *
+     * ── AND IT CAN NOW REACH ZERO, WHICH FOR ONE RELEASE IT COULD NOT (2026-09-03) ────────────────
+     *
+     * The counter shipped ahead of the mechanism that discharges it. `buildStageBody` sent the whole
+     * stored bucket on every pass, so an orphaned key was in every payload, the server dropped it
+     * every time, `recordStageSent` re-recorded the identical refusal and this sum restamped the same
+     * number — a workshop permanently short of [isFullySynced] under a banner whose named remedy could
+     * not move it. [dwWithheldCustomKeys] is the discharge: once the phone re-reads the sections and
+     * its own definition agrees the question is gone, the key is held back, the next save comes back
+     * clean, `recordStageSent` writes a null [StageSyncRecord.refusal], and this drops to zero on the
+     * same disk write. A number that cannot return to zero is not a status, it is a scar.
+     */
+    val droppedAnswers: Int = 0,
 ) {
     /**
      * Nothing outstanding at all: the record exists remotely and every stage and file has landed.
@@ -365,10 +437,22 @@ data class WorkshopSyncStatus(
      *
      * A STAGE THE REGISTRY NO LONGER DECLARES is held by the same term, through [pendingStages] — see
      * [dwStrandedStages] for why it is counted there rather than given a counter of its own.
+     *
+     * [droppedAnswers] IS PART OF IT TOO (2026-09-03), and it is the third instance of one shape: work
+     * this device is holding that no future payload will carry, so the signature matches for ever and
+     * nothing is pending. "Backed up" has to mean the repository holds what this phone holds, and an
+     * answer the server had nowhere to put is a way in which it does not.
+     *
+     * IT IS ALSO THE ONE OF THE THREE THAT HAD NO DISCHARGE, until [dwWithheldCustomKeys] gave it one
+     * later the same day: a refused answer is cleared by correcting it, a deletion by reading the
+     * stage once, and this by re-reading the sections — but the payload went on carrying the orphaned
+     * key, so the re-read changed nothing and the term was permanent. A term of this that can never go
+     * back to zero does not make the status honest, it makes it useless. See [droppedAnswers].
      */
     val isFullySynced: Boolean
         get() = remoteId != null && pendingStages == 0 && pendingMedia == 0 &&
-            failedStages == 0 && failedMedia == 0 && refusedAnswers == 0 && unsentDeletions == 0
+            failedStages == 0 && failedMedia == 0 && refusedAnswers == 0 && unsentDeletions == 0 &&
+            droppedAnswers == 0
 
     val hasFailures: Boolean get() = failedStages > 0 || failedMedia > 0
 
@@ -391,7 +475,8 @@ data class WorkshopSyncStatus(
             // " waiting to upload" with a leading space and no subject. A blank sentence over a
             // workshop that is not backed up, in the one place a designer looks to decide whether they
             // can leave.
-            pendingStages == 0 && pendingMedia == 0 && (refusedAnswers > 0 || unsentDeletions > 0) ->
+            pendingStages == 0 && pendingMedia == 0 &&
+                (refusedAnswers > 0 || unsentDeletions > 0 || droppedAnswers > 0) ->
                 buildList {
                     if (refusedAnswers > 0) add("$refusedAnswers answer${plural(refusedAnswers)} refused")
                     if (unsentDeletions > 0) {
@@ -400,6 +485,14 @@ data class WorkshopSyncStatus(
                         // there is nothing left to count — and "3 deleted rows" over three stages
                         // holding six between them would be a number nobody could reconcile.
                         add("$unsentDeletions stage${plural(unsentDeletions)} with a deletion not sent")
+                    }
+                    // "NOT STORED", NOT "REFUSED", and the two words are the whole difference. The
+                    // clause above describes an answer the repository read and declined; this one an
+                    // answer it had nowhere to put, because the sections stopped asking the question.
+                    // One is corrected on the form, the other by re-reading the sections, and a row
+                    // that called both "refused" would send half the designers to the wrong screen.
+                    if (droppedAnswers > 0) {
+                        add("$droppedAnswers answer${plural(droppedAnswers)} not stored")
                     }
                 }.joinToString(", ") + " — the rest is backed up"
             else -> buildList {
@@ -486,13 +579,30 @@ fun dwDeviceSyncBanner(
      * existing callers and their pinned sentences are unchanged.
      */
     unsentDeletions: Int = 0,
+    /**
+     * Answers the server had nowhere to store — see [WorkshopSyncStatus.droppedAnswers].
+     *
+     * THE SIXTH THING A ROW CAN BE OUTSTANDING FOR, ARRIVING THE WAY THE FOURTH AND FIFTH DID, and
+     * threaded here in the same change that made it a term of [WorkshopSyncStatus.isFullySynced] —
+     * because that is what puts such a workshop into the caller's `outstanding` list. With no counter
+     * here it would contribute a workshop to [workshops] and nothing to any number, so this banner
+     * would draw a workshop it cannot name and fall through to "Waiting to upload … it uploads
+     * whenever there is a connection". That is word for word the defect this function was written to
+     * end. Defaulted, so the existing callers and their pinned sentences are unchanged.
+     */
+    droppedAnswers: Int = 0,
 ): DwDeviceSyncBanner? {
-    if (workshops == 0 && failures == 0 && refusedAnswers == 0 && unsentDeletions == 0) return null
-    // FALSE IN EXACTLY TWO SITUATIONS, and they are the two things a connection alone does not fix:
-    // an answer the repository has already read and declined, and a deletion that needs this phone to
-    // READ a stage before it can be stated. Everything else on this banner — a stage whose payload has
-    // not been sent, a photograph whose bytes are only here, a workshop with no server record at all —
-    // really is waiting for a connection, and the cloud-off icon is honest over it.
+    if (workshops == 0 && failures == 0 && refusedAnswers == 0 && unsentDeletions == 0 &&
+        droppedAnswers == 0
+    ) {
+        return null
+    }
+    // FALSE IN EXACTLY THREE SITUATIONS, and they are the three things a connection alone does not
+    // fix: an answer the repository has already read and declined, a deletion that needs this phone to
+    // READ a stage before it can be stated, and an answer the repository had nowhere to store.
+    // Everything else on this banner — a stage whose payload has not been sent, a photograph whose
+    // bytes are only here, a workshop with no server record at all — really is waiting for a
+    // connection, and the cloud-off icon is honest over it.
     //
     // A DELETION SITS ON THIS SIDE OF THE LINE EVEN THOUGH ITS REMEDY NEEDS SIGNAL, and the distinction
     // is what the icon actually claims: that the pass will carry it away by itself, the next time there
@@ -500,7 +610,18 @@ fun dwDeviceSyncBanner(
     // stage, and the deletion sits there through a hundred passes on perfect Wi-Fi until a person opens
     // the stage. An icon promising otherwise is the same sentence that sent a designer out of a
     // building looking for signal.
-    val waiting = stages > 0 || files > 0 || (refusedAnswers == 0 && unsentDeletions == 0)
+    //
+    // A DROPPED CUSTOM ANSWER IS ON THE SAME SIDE OF THE LINE AS A REFUSED ONE, and for a sharper
+    // version of the same reason: the payload's signature already matches, so no pass will ever send
+    // it again, and the section that asked the question is gone from the SERVER's definitions while
+    // this phone still holds a copy that declares it. A hundred passes on perfect Wi-Fi change
+    // nothing about it — `pushStages` only ever pushes, and re-reading a definition is something only
+    // opening the workshop does. What a pass DOES now do is finish the job once that read has
+    // happened (2026-09-03, [dwWithheldCustomKeys]), which is why the sentence below names the read
+    // first and the sync second; the icon still belongs to the read, because that is the act nobody
+    // else will perform.
+    val waiting = stages > 0 || files > 0 ||
+        (refusedAnswers == 0 && unsentDeletions == 0 && droppedAnswers == 0)
     val headline = buildList {
         if (stages > 0) add("$stages stage${plural(stages)}")
         if (files > 0) add("$files file${plural(files)}, $bytesText")
@@ -509,8 +630,13 @@ fun dwDeviceSyncBanner(
         if (unsentDeletions > 0) {
             add("$unsentDeletions stage${plural(unsentDeletions)} with a deletion not sent")
         }
+        // "NOT STORED" rather than "refused", the same distinction [WorkshopSyncStatus.summary] draws
+        // ten lines apart: one is an answer the repository read and declined, the other one it had
+        // nowhere to put. Two counts under one word would be a number nobody could reconcile with
+        // either row beneath it.
+        if (droppedAnswers > 0) add("$droppedAnswers answer${plural(droppedAnswers)} not stored")
     }.joinToString(" · ").ifBlank {
-        // Reached only when a workshop is outstanding for a reason none of the four counters names —
+        // Reached only when a workshop is outstanding for a reason none of the five counters names —
         // it exists nowhere but this phone. That IS waiting for a connection, so the old default is
         // still the true sentence for it, and it is now the ONLY thing that reaches it.
         "Waiting to upload"
@@ -537,6 +663,35 @@ fun dwDeviceSyncBanner(
         "${if (dOne) "that stage" else "those stages"} once before it can tell the server what to " +
         "delete. Open the workshop, then the stage, with a connection — the deletion goes up on the " +
         "save straight after."
+    /*
+      THE DROPPED ANSWER'S OWN SENTENCE, AND WHY IT IS NOT THE REFUSAL'S.
+
+      The refusal arm ends "open the workshop, then the stage, to see which and correct them", and for
+      this it would be an instruction nobody can carry out: nothing is marked on the stage, because
+      nothing was refused — the SECTION that asked the question has gone, edited on the web since this
+      phone last read the definitions. There is no box to correct. What re-reads the definitions is
+      opening the workshop with a connection, and that is the only act that clears this, so it is the
+      only act named. `recordStageSent`'s own note ends "open this workshop once with a connection",
+      so the banner and the stage note beneath it name the same screen rather than sending a designer
+      to two.
+
+      ── THE SENTENCE NOW DESCRIBES SOMETHING THAT ACTUALLY HAPPENS (2026-09-03) ────────────────────
+
+      It used to read "…and a sync will NOT change that. Open the workshop once with a connection so
+      this phone re-reads the sections", and the second half was a remedy that provably could not work:
+      `buildStageBody` sent the whole stored bucket, so the orphaned key rode in EVERY payload, the
+      server dropped it every time and `recordStageSent` re-recorded the refusal on every pass. A
+      designer could do exactly as told, all afternoon, and the number never moved.
+      [dwWithheldCustomKeys] is what closed that loop, and the wording is corrected in the same change
+      rather than left standing over a fixed mechanism: re-reading is the act, and the ordinary sync
+      that follows is what carries it away. Naming both, in that order, is the difference between an
+      instruction and a description.
+    */
+    val pOne = droppedAnswers == 1
+    val droppedSentence = "$droppedAnswers answer${plural(droppedAnswers)} " +
+        "${if (pOne) "was" else "were"} not stored: this workshop's own sections no longer ask " +
+        "${if (pOne) "that question" else "those questions"}. Open the workshop once with a " +
+        "connection — it re-reads the sections, and the next sync clears this."
     val detail = buildString {
         append(
             when {
@@ -562,6 +717,15 @@ fun dwDeviceSyncBanner(
                     "$across Everything else is on the server. $deletionSentence"
                 unsentDeletions > 0 -> "$across Everything is saved here and editable offline; the " +
                     "stages and files above upload whenever there is a connection. $deletionSentence"
+                // And the same two arms a third time, for a device whose only stuck item is an answer
+                // the repository had nowhere to put. Reached only when neither of the two above is —
+                // when they are, the appends below carry it — so a workshop whose ONLY outstanding
+                // item is a dropped custom answer gets a named sentence rather than the "waiting to
+                // upload" fall-through this function exists to end.
+                droppedAnswers > 0 && !waiting ->
+                    "$across Everything else is on the server. $droppedSentence"
+                droppedAnswers > 0 -> "$across Everything is saved here and editable offline; the " +
+                    "stages and files above upload whenever there is a connection. $droppedSentence"
                 else -> "$across Everything is saved here and editable offline; it uploads whenever " +
                     "there is a connection."
             }
@@ -573,6 +737,14 @@ fun dwDeviceSyncBanner(
         if (refusedAnswers > 0 && unsentDeletions > 0) {
             append(" ")
             append(deletionSentence)
+        }
+        // A THIRD REMEDY, APPENDED FOR THE SAME REASON AND UNDER THE SAME RULE. Whichever arm above
+        // ran, it said nothing about a dropped answer — and "correct it" and "open the stage" are
+        // both wrong for one. Guarded on the two arms that can have consumed the head, so the
+        // sentence appears exactly once however many kinds of stuck work this device is holding.
+        if (droppedAnswers > 0 && (refusedAnswers > 0 || unsentDeletions > 0)) {
+            append(" ")
+            append(droppedSentence)
         }
     }
     return DwDeviceSyncBanner(headline = headline, detail = detail, waiting = waiting)
@@ -1049,6 +1221,13 @@ internal const val DW_WORKSHOP_CREATE_AMBIGUOUS =
  * `if/else` inside a `mapValues` inside an `updateBookkeeping` inside a suspend function, so asking it
  * one question needed a Context, a filesystem, a coroutine and a whole draft on disk — and so nothing
  * asked it, which is how it came to key on the one field that is 0 in the case it most had to keep.
+ *
+ * [StageSyncRecord.withheldCustomKeys] RIDES THROUGH BOTH ARMS UNTOUCHED (2026-09-03), because both
+ * are `copy` and neither names it — and that is the correct behaviour, not an omission. It is not a
+ * refusal a person can act on; it is the record of what the last payload left out, and clearing it
+ * would put the orphaned key straight back into the next body, get it dropped again, and restart the
+ * two-payload alternation [dwWithheldCustomKeys] exists to prevent. "Try again" cannot re-read a
+ * section definition, which is the same sentence the call site gives about the refusal beside it.
  */
 internal fun retriedStageRecord(record: StageSyncRecord): StageSyncRecord =
     if (record.refusedFields > 0 || record.refusal != null) {
@@ -1166,6 +1345,23 @@ internal fun dwOwedDeletions(spec: StageDto, stored: StageDraft?): DwOwedDeletio
  */
 internal fun dwDraftIsForAnotherAccount(ownerUserId: String?, signedInUserId: String?): Boolean =
     ownerUserId != null && signedInUserId != null && ownerUserId != signedInUserId
+
+/**
+ * WHAT A ROW SAYS WHEN THE FIELDWORK ON IT BELONGS TO THE OTHER DESIGNER SHARING THIS HANDSET.
+ *
+ * ONE LINE, and one copy of it. The sync pass writes a longer version of the same fact into
+ * [DraftSyncState.lastError] because that string is read on a STATUS screen, where a designer has
+ * gone looking for an explanation; this is read on a list, in passing, on a row that has just refused
+ * to open under their finger. Two facts and nothing else: whose it is, and what moves it.
+ *
+ * IT IS NOT AN ACCUSATION AND IT IS NOT A LOSS. Every word here is chosen against the two readings a
+ * designer makes of a row they cannot open — that the app has broken, or that their fortnight has
+ * gone. "Captured by another account" says whose it is; "sign in as them" says the whole remedy; and
+ * the row is still drawn, with its title and its count of filled fields, because a row that vanished
+ * would be indistinguishable from work that had been deleted.
+ */
+internal const val DW_DRAFT_OTHER_ACCOUNT_ROW =
+    "Captured by another account on this phone — sign in as them to continue."
 
 /**
  * The stages a draft holds that the resolved registry does not declare AND that hold work.
@@ -1460,9 +1656,16 @@ object WorkshopSyncEngine {
             // signature compared below is the signature that would actually be sent. Both are part of
             // the payload's meaning and therefore of its digest, so a status pass that guessed
             // differently would report every stage as pending for ever.
+            //
+            // THE WITHHELD KEYS ARE PART OF THAT PAYLOAD AND THEREFORE PART OF ITS DIGEST
+            // (2026-09-03). They are read off the same `record` this loop already has, so the moment
+            // a refusal names a key the definition no longer declares, this pass reports the stage
+            // pending — which is exactly right: the body has changed and one more save is owed before
+            // the workshop is honestly backed up. See [dwWithheldCustomKeys].
             val built = buildStageBody(
                 spec, stored, mediaById, isAuthoritative(stored, record),
                 customHeld = dwCustomHeldFor(definition, spec.key),
+                withheldCustomKeys = dwWithheldCustomKeys(definition, spec.key, record),
             )
             if (built.unresolved.isNotEmpty()) {
                 pendingStages++
@@ -1513,9 +1716,37 @@ object WorkshopSyncEngine {
         // refused, files still to upload) is worth showing but is not a failed stage, so it is listed
         // after the refusals rather than counted with them.
         var refusedAnswers = 0
+        var droppedAnswers = 0
         draft.sync.stages.forEach { (key, record) ->
             if (record.permanent) return@forEach
             refusedAnswers += record.refusedFields
+            /*
+              AND THE ANSWERS THE SERVER HAD NOWHERE TO PUT — see [WorkshopSyncStatus.droppedAnswers].
+
+              READ OFF THE RECORD THIS PASS ALREADY HAS, from `refusal.droppedCustomKeys`, which
+              `recordStageSent` writes from the same response that produced `refusedFields` beside it.
+              So the count and the addressing are one event, exactly as they are for a refusal, and a
+              number here can never outlive the evidence that justifies it: a save that comes back
+              clean writes a null `refusal` and this drops to zero on the same disk write.
+
+              COUNTED FOR A NON-PERMANENT RECORD ONLY, by the `return@forEach` above, which is the same
+              gate `refusedFields` sits behind: a permanently failed stage is already a `failedStage`
+              with a sentence of its own, and counting its dropped keys as well would report one stage
+              twice in two different units.
+
+              NOT ALSO ADDED TO `problems`. The sentence is already there — `recordStageSent` writes it
+              into [StageSyncRecord.failure] ("this workshop's own sections no longer ask N questions
+              this phone still holds an answer for…"), and the `record.failure != null` arm below
+              prints it. What was missing was never the words; it was the number, without which
+              `isFullySynced` answered true over them.
+
+              AND THE "SAVE THAT COMES BACK CLEAN" IS NOW REACHABLE (2026-09-03). When this was written
+              it was a description of a thing that could not happen: the orphaned key was in every
+              payload, so every response carried it back and this sum never moved. The stage loop above
+              now builds with [dwWithheldCustomKeys], which is what makes the sentence in this comment
+              a mechanism rather than a hope.
+            */
+            droppedAnswers += record.refusal?.droppedCustomKeys?.size ?: 0
             if (record.failure != null) {
                 val spec = schema.stages.firstOrNull { it.key == key }
                 problems += "Stage ${spec?.number ?: "?"} (${spec?.title ?: key}): ${record.failure}"
@@ -1537,6 +1768,7 @@ object WorkshopSyncEngine {
             releasableBytes = releasableBytes,
             refusedAnswers = refusedAnswers,
             unsentDeletions = unsentDeletions,
+            droppedAnswers = droppedAnswers,
         )
     }
 
@@ -1643,13 +1875,35 @@ object WorkshopSyncEngine {
                           "Try again" can act on either: the remedy is to open the workshop once with a
                           connection so the definitions are re-read, which is what the sentence says.
 
-                          Worse than a lost sentence, because `statusOf` scores a dropped custom key as
-                          nothing at all: `failedStages` counts only `permanent` records and
-                          `refusedAnswers` sums only `refusedFields`, so with the sentence gone the row
-                          reads "Backed up to the server" over a question whose answer was never
-                          stored. That gap is pre-existing and deliberately left alone here (it needs a
-                          counter of its own on [WorkshopSyncStatus]); what is fixed is this button
-                          being the thing that closes the last window onto it.
+                          It was worse than a lost sentence, because `statusOf` scored a dropped custom
+                          key as nothing at all: `failedStages` counts only `permanent` records and
+                          `refusedAnswers` sums only `refusedFields`, so even with the sentence intact
+                          the row read "Backed up to the server" over a question whose answer was never
+                          stored. This comment ended "that gap is pre-existing and deliberately left
+                          alone here (it needs a counter of its own on [WorkshopSyncStatus])".
+
+                          IT HAS ONE NOW (2026-09-03): [WorkshopSyncStatus.droppedAnswers], summed in
+                          `statusOf` from `refusal.droppedCustomKeys` — the very record this arm is
+                          preserving — and a term of `isFullySynced`, of the summary's refused arm and
+                          of [dwDeviceSyncBanner]. So the two halves finally agree: this button keeps
+                          the sentence that says WHICH answers, and the status carries the number that
+                          stops the row claiming the workshop is backed up while it holds them. The
+                          reason this arm must still leave the record alone is unchanged and is the
+                          paragraph above — "Try again" cannot re-read a section definition, and the
+                          save that follows an online open is what clears both.
+
+                          THAT LAST CLAUSE IS TRUE OF THE CODE AS WELL AS OF THE INTENTION, AND FOR ONE
+                          RELEASE IT WAS ONLY THE INTENTION (2026-09-03). `buildStageBody` sent the
+                          whole stored custom bucket, so the dropped key was in every payload and the
+                          "save that follows an online open" came back carrying the identical refusal,
+                          which `recordStageSent` wrote down again. Nothing on the device — not this
+                          button, not an online open, not a thousand passes — could return
+                          [WorkshopSyncStatus.droppedAnswers] to zero. [dwWithheldCustomKeys] is what
+                          makes the online open discharge it: the re-read definition no longer declares
+                          the key, the next payload omits it, the response is clean and the refusal
+                          this arm is carefully preserving is written null by the same save. Preserving
+                          it here is therefore still right — it is evidence with a discharge now, not a
+                          permanent mark — and it is still not something THIS button can act on.
                         */
                         retriedStageRecord(record)
                     },
@@ -1787,10 +2041,16 @@ object WorkshopSyncEngine {
           fine and every other workshop on the device should still go. And it is said out loud on the
           status line, because "did not sync" and "up to date" are otherwise the same silence.
 
-          THE OTHER HALF OF THIS FINDING IS NOT HERE: the workshop LIST still draws A's drafts to B,
-          because `WorkshopDraftStore.list` enumerates every directory and its caller does not filter.
-          Sending is the half that files research under the wrong account and is fixed here; the
-          display half needs the list screen, which this change deliberately does not touch.
+          THE OTHER HALF OF THIS FINDING IS NOW CLOSED TOO (2026-09-03). It read: "the workshop LIST
+          still draws A's drafts to B, because `WorkshopDraftStore.list` enumerates every directory and
+          its caller does not filter… the display half needs the list screen, which this change
+          deliberately does not touch." `WorkshopListScreen` touches it now — it asks this same
+          function per local-only draft and draws the row LABELLED AND NOT OPENABLE
+          ([DW_DRAFT_OTHER_ACCOUNT_ROW]), rather than hiding it. Hiding was the tempting fix and is the
+          wrong one: a row that vanishes is indistinguishable from work that was deleted, on the one
+          screen a designer opens to check that a fortnight is still there, and the drafts stay on disk
+          either way. The null-owner rule is the same on both halves — a draft that predates the stamp
+          stays fully visible and fully openable.
         */
         if (dwDraftIsForAnotherAccount(draft.ownerUserId, repository.cachedUser()?.id)) {
             val note = "This workshop was captured on this phone by a different account, so it is " +
@@ -2484,6 +2744,9 @@ object WorkshopSyncEngine {
             val built = buildStageBody(
                 spec, stored, mediaById, isAuthoritative(stored, record),
                 customHeld = dwCustomHeldFor(definition, spec.key),
+                // The same three inputs `statusOf` used, so the signature it compared is the one
+                // actually sent here. See [dwWithheldCustomKeys]. (2026-09-03)
+                withheldCustomKeys = dwWithheldCustomKeys(definition, spec.key, record),
             )
             if (built.unresolved.isNotEmpty()) {
                 // HELD BACK, NOT TRIMMED. `save_stage` writes the cleaned entry WHOLESALE, so a
@@ -2616,14 +2879,21 @@ object WorkshopSyncEngine {
         val draft = WorkshopDraftStore.load(context, workshopId) ?: return StagePush.NothingToSend
         val remoteId = remoteIdOf(draft) ?: return StagePush.NoRemoteYet
         val stored = draft.stages[spec.key] ?: return StagePush.NothingToSend
+        val record = draft.sync.stages[spec.key]
+        // ONE READ, TWO QUESTIONS. `dwCustomHeldFor` and `dwWithheldCustomKeys` both consult the
+        // definition this device is holding, and loading it twice would spend two file reads on the
+        // debounced save path for one answer. (2026-09-03)
+        val definition = DwCustomSectionStore.load(context, workshopId)
         val built = buildStageBody(
             spec,
             stored,
             draft.media.associateBy { it.id },
-            isAuthoritative(stored, draft.sync.stages[spec.key]),
-            customHeld = dwCustomHeldFor(
-                DwCustomSectionStore.load(context, workshopId), spec.key,
-            ),
+            isAuthoritative(stored, record),
+            customHeld = dwCustomHeldFor(definition, spec.key),
+            // The screen's payload and the pass's must stay byte-identical — that identity is what
+            // lets this save's signature be honoured by `pushStages` instead of re-sent — so the
+            // withheld set is computed here from the same two inputs. See [dwWithheldCustomKeys].
+            withheldCustomKeys = dwWithheldCustomKeys(definition, spec.key, record),
         )
         // Held back rather than trimmed, for the reason spelled out in [pushStages]: a payload with
         // the media key missing does not merely omit the new photograph, it deletes the one the
@@ -2631,7 +2901,7 @@ object WorkshopSyncEngine {
         if (built.unresolved.isNotEmpty()) return StagePush.HeldBack(built.unresolved.size)
 
         val signature = signatureOf(built.body)
-        if (signature == draft.sync.stages[spec.key]?.signature) return StagePush.AlreadySent
+        if (signature == record?.signature) return StagePush.AlreadySent
 
         val result = try {
             repository.saveDesignWorkshopStage(remoteId, spec.key, built.body)
@@ -2722,7 +2992,26 @@ private fun remoteIdOf(draft: WorkshopDraft): String? =
         ?: draft.workshopId.takeIf { it.isNotBlank() && !isLocalOnlyWorkshop(it) }
 
 /** A stage's payload, plus the local media references that stopped it from being sendable. */
-internal data class BuiltStage(val body: StageSaveBody, val unresolved: List<String>)
+internal data class BuiltStage(
+    val body: StageSaveBody,
+    val unresolved: List<String>,
+    /**
+     * Custom keys this body deliberately LEFT OUT — see [dwWithheldCustomKeys]. (2026-09-03)
+     *
+     * CARRIED OUT OF THE BUILDER SO THE SAVE CAN REMEMBER IT, and that memory is what stops the fix
+     * turning into a two-payload loop. The withholding is evidence-led: it needs the server to have
+     * said "no home for this key". A clean response says nothing about the key at all — it is clean
+     * BECAUSE the key was withheld — so if the only record of the refusal were
+     * [DwStageRefusalRecord.droppedCustomKeys], the next pass would find no refusal, put the key back
+     * in the body, get it dropped again, and alternate between two payloads twice a minute for ever.
+     * [StageSyncRecord.withheldCustomKeys] is written from this and read back by the builder, so the
+     * second body is IDENTICAL to the first, its signature matches, and nothing is sent at all.
+     *
+     * NOT PART OF [body] AND THEREFORE NOT PART OF THE SIGNATURE, which is the point: it describes
+     * the payload rather than travelling in it, and no byte of it reaches the server.
+     */
+    val withheldCustom: List<String> = emptyList(),
+)
 
 /**
  * One stage as the server expects it, with every local media id translated to the server's.
@@ -2767,6 +3056,12 @@ internal fun buildStageBody(
      * anything at all on this stage. See the `_custom` arm below — it is the whole of the safety.
      */
     customHeld: Boolean = false,
+    /**
+     * Custom keys this payload must NOT carry, because the server has already said it has nowhere to
+     * put them and this device's own definition agrees — see [dwWithheldCustomKeys], which is the one
+     * place the rule is written and which both the status pass and the push pass ask. (2026-09-03)
+     */
+    withheldCustomKeys: Set<String> = emptySet(),
 ): BuiltStage {
     val unresolved = LinkedHashSet<String>()
     val entries = ArrayList<StageEntryBody>()
@@ -2909,7 +3204,38 @@ internal fun buildStageBody(
       when false because `ApiClient.retrofit` leaves `encodeDefaults` off — see [StageEntryBody.merge],
       which is also why a server predating the field does not 422 every save.
     */
-    val custom = stored?.custom.orEmpty().filterKeys { !it.startsWith("_") }
+    /*
+      ── THE THIRD CLAUSE OF THE STRIP: A KEY THE SERVER HAS ALREADY REFUSED A HOME (2026-09-03) ────
+
+      WITHOUT IT, `WorkshopSyncStatus.droppedAnswers` CAN NEVER RETURN TO ZERO, and the banner's own
+      remedy is a sentence nobody can carry out. The loop is four steps and every one of them is this
+      file's own code: this function sends the WHOLE stored bucket, so an orphaned key rides in every
+      payload; `plan_custom_write` drops it every time, because the definition genuinely no longer
+      carries it; `recordStageSent` re-records the identical refusal from that response; and
+      `statusOf` sums `refusal.droppedCustomKeys` on every pass. Signature stable, refusal restamped,
+      count restamped — for ever, on a workshop the designer was told to open with a connection.
+
+      THE WITHHOLDING IS TWO FACTS AND NEVER ONE, and [dwWithheldCustomKeys] is where they are asked:
+      the SERVER said it had nowhere to put this key, and THIS DEVICE's current definition does not
+      declare it either. The second half is what keeps this from being a client-side deletion of
+      evidence. A designer who re-adds the question on the web makes the key declared again the moment
+      the phone re-reads the sections — [dwCustomDefinition] on the workshop screen — and the very next
+      payload carries the answer again, unchanged, because it never left the draft.
+
+      NOTHING IS THROWN AWAY AND NOTHING IS DELETED SERVER-SIDE. The answer stays in
+      [StageDraft.custom] and stays on the report; what stops is the futile resend. The row on the
+      server is already exactly what it will be — the server has been dropping this key on every save
+      since the definition changed — so withholding it changes no stored value, only the response,
+      which now comes back clean and writes a null [StageSyncRecord.refusal].
+
+      IT IS A STRIP AND NOT AN EARLY RETURN, so a bucket holding one orphan beside six live answers
+      still sends the six. `customAnswered` is asked of the FILTERED map deliberately: a bucket whose
+      only content was the orphan has nothing left to say, and an unauthoritative draft then sends no
+      entry at all rather than an empty container — which is the same instruction the server was
+      already acting on, and the safe direction under the omission rule above.
+    */
+    val custom = stored?.custom.orEmpty()
+        .filterKeys { !it.startsWith("_") && it !in withheldCustomKeys }
     val customAnswered = custom.values.any { DwValues.isFilled(it) }
     val customAuthority = authoritative && stored?.customSeen == true
     if (customAnswered || (customAuthority && customHeld)) {
@@ -2936,6 +3262,10 @@ internal fun buildStageBody(
             submit = false,
         ),
         unresolved.toList(),
+        // Only the keys this stage's bucket ACTUALLY held. A key named in a stale refusal but no
+        // longer answered on the phone is nothing to remember: it is not in any payload, so nothing
+        // is being withheld from one. (2026-09-03)
+        withheldCustom = stored?.custom.orEmpty().keys.filter { it in withheldCustomKeys },
     )
 }
 
@@ -2961,6 +3291,67 @@ internal fun buildStageBody(
  */
 internal fun dwCustomHeldFor(definition: DwCustomCache?, stageKey: String): Boolean =
     definition.isHeld && customFieldsForStage(definition, stageKey).isNotEmpty()
+
+/**
+ * The custom keys this stage's next payload must NOT carry. (2026-09-03)
+ *
+ * TWO FACTS, BOTH REQUIRED, AND THEY COME FROM THE TWO DIFFERENT PARTIES:
+ *
+ *  1. **The server dropped it.** `record.refusal.droppedCustomKeys` is the repository's own answer to
+ *     the last payload — written by `recordStageSent` from the same response that produced
+ *     [StageSyncRecord.refusedFields] beside it — and it means `validate_custom_entry` found no field
+ *     of this stage under that key. It is evidence, not a guess.
+ *  2. **This device's definition does not declare it either.** Asked through [customFieldsForStage],
+ *     which is the port of the server's own `fields_for`: every field of every section anchored at
+ *     this stage, RETIRED ONES INCLUDED, because a retired field is still in the server's `by_key`
+ *     and its key is therefore still known. Mirroring the membership rule rather than re-inventing it
+ *     is what stops this withholding a key the server would in fact have stored.
+ *
+ * ── WHY BOTH, AND WHAT EACH ONE ALONE WOULD COST ─────────────────────────────────────────────────
+ *
+ * On (1) alone this would be a stale opinion that outlived its evidence: a designer who re-adds the
+ * question on the web would find the phone silently refusing to send an answer the repository is now
+ * asking for, with nothing on any screen saying so. On (2) alone it would be a client-side deletion
+ * of answers on every handset whose definition cache is merely BEHIND the server's — which is the
+ * ordinary state of a phone in a courtyard, and the exact case the `_custom` omission rule in
+ * [buildStageBody] exists to protect. Together they say only: *the repository has told this device it
+ * has nowhere to put this, and this device's own copy of the questions agrees.*
+ *
+ * THE REMEDY THE BANNER NAMES IS WHAT UNDOES IT, IN BOTH DIRECTIONS. Opening the workshop with a
+ * connection re-reads the sections ([dwCustomDefinition] on `StageIndexScreen`). If the question is
+ * gone, (2) becomes true, the key is withheld, the next save comes back clean, `recordStageSent`
+ * writes a null refusal and `droppedAnswers` drops to zero. If the question has RETURNED, (2) is
+ * false, the key is sent again from the draft that still holds it, and the answer lands. Before this
+ * existed, neither branch could happen and the count stood for ever.
+ *
+ * ASKED IN ONE PLACE BY BOTH PASSES, for the reason [dwStageSaysNothing] is: `statusOf` compares the
+ * signature a push WOULD send, so a status pass computing this differently would report every such
+ * stage pending for ever, or none of them at all.
+ *
+ * ── FACT (1) IS READ FROM TWO FIELDS, AND LEAVING OUT THE SECOND IS AN INFINITE LOOP ─────────────
+ *
+ * `refusal.droppedCustomKeys` is what the server said on the LAST save, and a clean save writes it
+ * null — which is what makes [WorkshopSyncStatus.droppedAnswers] able to reach zero, and what makes
+ * it useless as the builder's only memory. Reading it alone: pass 1 withholds the key, the save comes
+ * back clean and the refusal goes; pass 2 sees no refusal, puts the key back and gets it dropped;
+ * pass 3 withholds it again. Two payloads alternating twice a minute for ever.
+ * [StageSyncRecord.withheldCustomKeys] is the durable half — what the last payload actually left out
+ * — so the second body is identical to the first and the pass sends nothing. Both are unioned here:
+ * the first opens the case, the second keeps it open, and clause (2) is what closes it.
+ */
+internal fun dwWithheldCustomKeys(
+    definition: DwCustomCache?,
+    stageKey: String,
+    record: StageSyncRecord?,
+): Set<String> {
+    val claimed = record?.refusal?.droppedCustomKeys.orEmpty() + record?.withheldCustomKeys.orEmpty()
+    // The common case by a wide margin, and it costs nothing: no refusal on this stage, no walk of
+    // the definition, and — because the set is empty — a payload byte-identical to the one this
+    // build has always sent.
+    if (claimed.isEmpty()) return emptySet()
+    val declared: Set<String> = customFieldsForStage(definition, stageKey).mapTo(HashSet()) { it.key }
+    return claimed.filterNotTo(LinkedHashSet<String>()) { it in declared }
+}
 
 /**
  * Whether the draft may claim `replaceCollections`, and send its singleton as a replacement.
@@ -3198,6 +3589,25 @@ private suspend fun noteMediaFailure(
 }
 
 /**
+ * HOW MANY ANSWERS ONE SAVE RESPONSE REFUSED — the number [WorkshopSyncStatus.refusedAnswers] sums.
+ *
+ * `errors` is `{scope: {field: message}}`, so each scope contributes the size of its field map. The
+ * `?: 1` is the honesty valve: a scope whose payload is not an object at all — a bare string, a
+ * number — still contributed something the repository did not store, and counting it as nothing is
+ * how a refused save comes to score "Backed up to the server". It is the same rule the web totals
+ * with (`designWorkshopStore.countRefusedAnswers`, `Object.keys(fields).length || 1`), deliberately.
+ *
+ * A ROW-LEVEL REFUSAL COUNTS EXACTLY ONCE AND IS NOT SPECIAL-CASED HERE. `{"_row": "…"}` is a field
+ * map of size one; a row refused for both reasons at once — a typo of the designer's AND an edit
+ * somebody else made — is a map of size two, and both clients count it as two. See
+ * [DW_ROW_REFUSAL_KEY]. Lifted out of `recordStageSent` on 2026-09-03 so the rule is reachable from
+ * a JVM test: what it protects is the arithmetic that decides whether a stage may call itself
+ * synced, and that had never been pinned anywhere.
+ */
+internal fun dwRefusedAnswerCount(errors: Map<String, JsonElement>): Int =
+    errors.values.sumOf { entry -> (entry as? JsonObject)?.size ?: 1 }
+
+/**
  * Record that a stage landed, under the signature of what was actually sent.
  *
  * `droppedKeys` is kept as a NON-permanent note rather than swallowed. It is the only way a phone
@@ -3257,9 +3667,7 @@ private suspend fun recordStageSent(
       [dwDecodeStageRefusals] on the screen that has the payload to decode them against. The count is
       what this file needs; the addressing is what the form needs, and neither is a copy of the other.
     */
-    val refused = result.errors.values.sumOf { entry ->
-        (entry as? JsonObject)?.size ?: 1
-    }
+    val refused = dwRefusedAnswerCount(result.errors)
     val refusalNote = refused.takeIf { it > 0 }?.let { count ->
         "the repository refused $count of the answers in this stage and kept what it already held " +
             "for ${if (count == 1) "it" else "them"}. Everything else on the stage was saved, and " +
@@ -3336,6 +3744,22 @@ private suspend fun recordStageSent(
                 at = Instant.now().toString(),
                 droppedCustomKeys = result.droppedCustomKeys,
             ).takeIf { !it.isEmpty },
+            /*
+              AND WHAT THIS PAYLOAD LEFT OUT, WHICH THE RESPONSE CANNOT TELL US (2026-09-03).
+
+              The line above is deliberately null on a clean save, and this one deliberately is not.
+              A clean save is clean BECAUSE the orphaned key was withheld, so the response says
+              nothing whatever about it; recording only the response would lose the fact, the next
+              build would put the key back, the server would drop it again, and the stage would
+              alternate between two payloads twice a minute for ever. Written from the payload that
+              was actually sent — [BuiltStage.withheldCustom] — which is the only place the fact
+              exists. See [StageSyncRecord.withheldCustomKeys].
+
+              WRITTEN UNCONDITIONALLY, INCLUDING EMPTY, so it cannot outlive its reason: the save
+              carrying the key again (the question came back on the web) writes an empty list over
+              whatever was here, on the same disk write that records its signature.
+            */
+            withheldCustomKeys = built.withheldCustom,
             // These notes are the SERVER's, not "files are still on this device", so the stale-note
             // clear in `pushStages` must not sweep them away on the next pass. See [waitingOnFiles].
             waitingOnFiles = false,

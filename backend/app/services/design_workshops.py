@@ -45,7 +45,7 @@ from fastapi import HTTPException, status
 from prisma.errors import UniqueViolationError
 
 from app.core.db import db
-from app.core.deps import is_admin
+from app.core.deps import can_run_design_workshops, is_admin
 from app.services import (
     custom_sections,
     design_workshop_data,
@@ -71,6 +71,12 @@ from app.services.report_custom_sections import (
 )
 from app.services.report_docx import render_docx
 from app.services.report_model import ImageRef, PageSize, ReportMeta
+from app.services.questionnaire_forms import visible_questionnaire_where
+
+# ALIASED, and the alias is the point. `label_for` is a name half this module's neighbours could
+# also have claimed, and at the one call site — `REFERENCE_MODELS["Questionnaire"]`'s sublabel — the
+# reader has to be able to see WHICH vocabulary is being read without opening another file.
+from app.services.questionnaire_kinds import label_for as questionnaire_kind_label
 from app.services.report_pdf import render_pdf
 from app.services.report_questionnaires import attach_questionnaires, questionnaire_warnings
 
@@ -164,6 +170,36 @@ async def load_workshop_or_404(workshop_id: str, user: Any, *, for_edit: bool = 
     The grant is checked LAST and only when the two cheap comparisons have both failed, so the
     ordinary read — a designer opening their own workshop — costs exactly what it did before.
 
+    **AND THE GRANT IS ONLY HONOURED FOR AN ACCOUNT WHOSE ROLE CAN STILL RUN A WORKSHOP.** A
+    ``DesignWorkshopViewer`` row is a permanent object with no expiry and no status column —
+    deliberately, see that module — so it records who an admin trusted on the day they were asked,
+    and nothing about it notices the day that stops being true. ``design_workshop_viewers`` already
+    REFUSES to write one for an account outside ``deps.DESIGN_WORKSHOP_ROLES``, naming the role in
+    the refusal; until this clause the READ path did not ask, so the same rule held at grant time
+    and lapsed the moment the account changed. A designer demoted to RESEARCHER, or moved to
+    PROFESSOR, or promoted to INSPECTOR, went on holding every row an old grant named — and what
+    that buys is not merely read: fourteen write routes pair this helper with ``_require_designer``,
+    and ``for_edit=True`` performs no role check of its own. This is the half that fails CLOSED on a
+    role change nobody remembered to reconcile against the grant table. (2026-09-03)
+
+    IT COSTS NOTHING AND SAVES A ROUND TRIP. ``can_run_design_workshops`` is a set membership test
+    on a role string already in memory, and ``and`` short-circuits, so an account that cannot run a
+    workshop is now turned away WITHOUT the grant query it used to pay for.
+
+    **AN INSPECTOR IS NOT AFFECTED BY IT, AND THAT WAS CHECKED RATHER THAN ASSUMED.** INSPECTOR is
+    outside ``DESIGN_WORKSHOP_ROLES`` by construction, but an inspector has never reached this
+    function: their scope is a row in the inspector-assignment table, read by the inspector-scoped
+    loader in ``services/design_workshop_inspectors`` (neither the table's model nor the loader is
+    named here on purpose — that module's guard test sweeps this tree for its predicates' names,
+    and a comment counts), which is called from ``api/routes/design_workshop_inspections.py`` and
+    nowhere else and has no ``for_edit`` parameter at all. That module's header calls the separation the point of the tier and refuses,
+    by name, to put an inspector's predicate anywhere near this helper — and it also refuses to
+    appoint an inspector who holds a viewer row on the same workshop, so the one account this clause
+    could have caught cannot exist. Nothing here widens or narrows what an inspector may read.
+
+    Admins are unaffected for the ordinary reason and not by exemption: ADMIN and MASTER_ADMIN are
+    both inside the set, and the ``admin`` arm above short-circuits before this clause anyway.
+
     What a grant buys stops here, at the LOAD: read, and the stage writes that go through this same
     helper. It is not delete and it is not re-granting, both of which are gated separately and
     deliberately were not widened — see ``app/services/design_workshop_viewers.py``.
@@ -175,7 +211,15 @@ async def load_workshop_or_404(workshop_id: str, user: Any, *, for_edit: bool = 
     if (
         record.createdById != user.id
         and not admin
-        and not await has_viewer_grant(workshop_id, user.id)
+        and not (
+            # THE ROLE FIRST, THE ROW SECOND. See the docstring: a grant is not evidence about the
+            # account as it is TODAY, and the write path that issues one has always insisted on this
+            # same set. The creator arm above is deliberately NOT gated the same way — a demoted
+            # account losing sight of the fortnight of fieldwork it recorded is a different decision,
+            # with a different owner, and it is not made here.
+            can_run_design_workshops(user)
+            and await has_viewer_grant(workshop_id, user.id)
+        )
     ):
         # Still 404 and still the same detail string, deliberately. Widening WHO may enter must not
         # change what a stranger is told: a 403 here would confirm the id exists to exactly the
@@ -197,10 +241,12 @@ async def load_workshop_or_404(workshop_id: str, user: Any, *, for_edit: bool = 
     # what actually happened was unreachable.
     #
     # NOTHING IS DISCLOSED BY THE SWAP. The 409 is only reachable once the caller has already
-    # proved they are the creator, an admin, or the holder of a `DesignWorkshopViewer` grant —
-    # people who may see that this workshop exists. A stranger still gets the same 404 with the
-    # same detail string, and a REVOKED grantee gets it too, because the grant check above fails
-    # for them before this line. It costs one extra `has_viewer_grant` round trip in the deleted
+    # proved they are the creator, an admin, or the holder of a `DesignWorkshopViewer` grant HELD BY
+    # AN ACCOUNT THAT CAN STILL RUN A WORKSHOP — people who may see that this workshop exists. A
+    # stranger still gets the same 404 with the same detail string; a REVOKED grantee gets it too,
+    # because the grant check above fails for them before this line; and since 2026-09-03 so does a
+    # grantee whose ROLE has moved outside `DESIGN_WORKSHOP_ROLES`, whose row is still in the table
+    # and is no longer honoured. It costs one extra `has_viewer_grant` round trip in the deleted
     # case only, which is a case nobody is in twice.
     #
     # THE READ PATH IS UNCHANGED: `for_edit` is false there, so a deleted workshop still answers
@@ -1435,6 +1481,31 @@ class ReferenceModel:
     # None when the model has no notion of a workshop, in which case a WORKSHOP-scoped field
     # falls back to the whole table rather than to nothing.
     workshop_where: Callable[[str], dict[str, Any]] | None = None
+    # ── WHO IS ASKING, FOR THE ONE MODEL WHOSE ROWS ARE NOT POOLED (2026-09-03) ──────────────────
+    #
+    # Every other model here is served under `records.viewable_where`, which is EMPTY: the pooling
+    # philosophy its own docstring argues for is that every signed-in account may read every artisan,
+    # product, tool, process, craft and interview, because the whole point of pooling the fieldwork
+    # is that everyone can see the pool. `Questionnaire` is the exception in the schema, not in this
+    # file: it carries `ownerId`, a nullable `designWorkshopId` and an admin-set `isShared`, and
+    # `questionnaire_forms.visible_questionnaire_where` is the four-clause rule its own list endpoint
+    # is narrowed by. Serving that table through the unscoped path would put every designer in the
+    # country's private instruments in a picker whose chosen row is then CITED, permanently, in a
+    # ministry's report.
+    #
+    # A CLAUSE, NOT A POST-FILTER, for the reason every other clause here is one: `reference_options`
+    # takes `take + 1` rows to learn `truncated`, so filtering after the query would return a short
+    # page and call it complete — a picker that silently stops, which is the failure the whole
+    # `scoped`/`filtered`/`truncated` payload exists to prevent.
+    #
+    # IT NARROWS THE PICKER AND NOTHING ELSE, and that boundary is deliberate. `load_report_references`
+    # and `hydrate_entries` read BY ID, and what they are resolving is a row this workshop already
+    # cited — refusing it at render time would blank a name out of a document that was correct when it
+    # was written, which is the never-re-resolve rule this module is built on.
+    #
+    # `reference_options` REFUSES a viewer-scoped model when it was handed no viewer at all, rather
+    # than serving the table unnarrowed. See the guard there.
+    viewer_where: Callable[[Any], dict[str, Any]] | None = None
     # The column that narrows this model to one artisan, for the cascading pickers.
     #
     # THE VALUE ARRIVING IN `filterBy` MAY NOT BE AN ARTISAN ID AT ALL — at stage 13 the maker is
@@ -2368,6 +2439,72 @@ REFERENCE_MODELS: dict[str, ReferenceModel] = {
             "interviewDocumentedAtWorkshop": _rel(r, "workshop", "title"),
         },
     ),
+    # ── THE INSTRUMENT, WHICH IS NOT THE SITTING (2026-09-03) ─────────────────────────────────────
+    #
+    # `QuestionnaireInterview` above is a SITTING — one afternoon, one place, one language, a set of
+    # artisans and their answers. This is the FORM: a `Questionnaire`, its sections and its questions,
+    # the thing a designer uploads once and takes many sittings on. Stage 7 plans a survey, and until
+    # now the only thing it could say about the instrument it would use was PROSE — a RICH_TEXT box
+    # headed "Questionnaire" whose help says "The questions to be asked. One per line." So a designer
+    # who had already uploaded the questionnaire retyped its questions into a stage, and nothing
+    # anywhere connected the plan to the form the answers would arrive under. `surveyPlan
+    # .questionnaireRef` is that connection; the prose box is untouched and still prints.
+    #
+    # ── SCOPED BY THE ACCOUNT, WHICH IS THIS TABLE'S EXCEPTION AND NOT A NEW POLICY ──────────────
+    #
+    # `viewer_where` and NOT `workshop_where`, and the difference is what the rows ARE. Every other
+    # model here is pooled — every signed-in account may read every artisan — so the only question is
+    # which subset a field wants. A questionnaire is owned: `ownerId`, an optional `designWorkshopId`
+    # and an admin-set `isShared`. The rule is the list endpoint's own, imported rather than restated,
+    # so the picker offers exactly what `GET /questionnaires` offers: the designer's own forms, the
+    # forms of a design workshop they created or hold a viewer grant on, and the published default.
+    # A colleague's private instrument is not offerable and therefore not citable.
+    #
+    # `ref_scope=ALL` on the field, deliberately, and the account clause is what makes that safe: a
+    # questionnaire is written before it is attached (`designWorkshopId` is nullable precisely so a
+    # designer can build the form first), so WORKSHOP-scoping the picker would hide the instrument
+    # the designer uploaded this morning for the workshop they are planning right now.
+    #
+    # ── WHAT CROSSES, AND WHY IT IS ONE KEY ──────────────────────────────────────────────────────
+    #
+    # The TITLE, into `surveyPlan.questionnaireName`, and nothing else. The reasoning is
+    # `QuestionnaireInterview`'s, one model up, in its strongest form: the hierarchy is sections ->
+    # questions -> answers, a reference carries a FLAT dict, and every way of faking that shape ends
+    # with an entire instrument — or an entire set of respondents' answers — flattened into a stage
+    # entry that is a PERMANENT copy printed in a ministry's document. Nothing here loads a
+    # `QuestionnaireFormEntry` or a `QuestionnaireFormAnswer`; there is no `include` at all, so no
+    # respondent's answer is fetched into this process, let alone carried.
+    #
+    # The name box exists for the reason `finalProduct.artisanRef`'s absence names: a hydrated REF
+    # needs a readable box on the receiving entity, or the picker shows a chosen id with nothing
+    # beside it. It is also what the report prints if the questionnaire is later retired or deleted —
+    # the `FROM_REF` rule every other picker on this registry follows.
+    #
+    # NO `media_field` (a form has no photograph), no `artisan_field` and no `filter_field` (nothing
+    # cascades off an instrument), and no `status` column, so `_review_flag` adds no suffix.
+    "Questionnaire": ReferenceModel(
+        delegate="questionnaire",
+        order={"title": "asc"},
+        search_fields=("title", "description", "sourceFilename"),
+        viewer_where=visible_questionnaire_where,
+        label=lambda r: str(r.title or ""),
+        # THE SUBLABEL IS LIVE AND IS NEVER WRITTEN ONTO THE ENTRY, exactly as `_review_flag` is on
+        # the models that have one. `kind` is what decides which stage of the report a sitting is
+        # filed under and is the single most useful thing for telling two of a designer's forms
+        # apart; `isShared` says "this is the standard instrument, not yours", which is the other
+        # question a designer asks of a list they did not fully author. Both are mutable, both are
+        # composed at the moment of choosing, and neither crosses.
+        # `if r.kind` and NOT a bare call: `label_for(None)` answers "Not stated", which is right in
+        # a form that ASKED the question and wrong in a picker row, where it would append the same
+        # two words to every instrument in the list — every row in this table has a NULL `kind`
+        # today, by the deliberate no-backfill ruling on the column.
+        sublabel=lambda r: _joined(
+            questionnaire_kind_label(r.kind) if r.kind else "",
+            "Shared" if r.isShared else "",
+            r.sourceFilename,
+        ),
+        data=lambda r, _photo: {"name": r.title},
+    ),
 }
 
 
@@ -2451,7 +2588,11 @@ def validate_reference_carry() -> list[str]:
         model = spec.ref_model if spec else ""
         if model not in REFERENCE_MODELS:
             # A ref pointing at a Dw… entity inside the same workshop, or a path
-            # ``validate_registry`` has already reported. Not this function's business.
+            # ``validate_registry`` has already reported. Not this function's business — and since
+            # 2026-09-03 that is a DELEGATION rather than a gap: an internal mapping's source key
+            # names a field of an entity of the registry, so ``validate_registry`` checks it there,
+            # where no import of this module is needed. Both halves of the pair are guarded; they
+            # are guarded in the two different places the two kinds of source live.
             continue
         consumed[model].update(mapping)
         for source_key in mapping:
@@ -2482,6 +2623,37 @@ _CARRY_EXEMPT: dict[str, frozenset[str]] = {}
 def _dw_entity(model: str) -> EntitySpec | None:
     """The registry entity a ``Dw…`` ref_model names, if it is one."""
     return next((e for _s, e in all_entities() if e.name == model), None)
+
+
+def _internal_carry_keys(entity: EntitySpec) -> tuple[str, ...]:
+    """The keys of ``entity``'s rows that some hydration mapping reads, in declaration order.
+
+    THE PICKER PAYLOAD'S ALLOWLIST, DERIVED FROM THE TABLE RATHER THAN WRITTEN OUT. A reference
+    option's ``data`` is the hydration dictionary, so what belongs in it is exactly the SOURCE keys
+    of the mappings that could be applied to a row this entity fills in — and nothing else. Written
+    as a lookup over :data:`REFERENCE_HYDRATION` so that a mapping widened on the server reaches the
+    picker in the same change, which is the property that stopped the external half of this feature
+    from drifting: two declarations of "what crosses" is one too many.
+
+    A UNION ACROSS THE MAPPINGS AND NOT A PER-FIELD ANSWER, because the picker is addressed by MODEL
+    (``GET …/references/DwPrototype``) and does not know which of the entity's REF fields is asking.
+    Two fields point at ``DwPrototype`` today and their mappings overlap in the three dimensions, so
+    the union is nine keys rather than twelve. Erring wide here costs a few extra keys on a picker
+    response; erring narrow would leave a box unfilled at the keyboard and filled at save, which is
+    the disagreement between surfaces this file spends most of its comments avoiding.
+
+    DECLARATION ORDER, not set order, so a picker response is byte-stable between two calls — a
+    payload that reshuffles its keys defeats every cache comparison the clients make on it.
+    """
+    wanted = {
+        source
+        for path, mapping in REFERENCE_HYDRATION.items()
+        for source in mapping
+        if (owner := next((e for _s, e in all_entities() if e.key == path.partition(".")[0]), None))
+        and (ref := owner.field(path.rpartition(".")[2])) is not None
+        and ref.ref_model == entity.name
+    }
+    return tuple(f.key for f in entity.fields if f.key in wanted)
 
 
 async def reference_options(
@@ -2553,6 +2725,22 @@ async def reference_options(
     readable = await viewable_where(viewer)
     if readable:
         clauses.append(readable)
+
+    # AND THE ONE MODEL THAT IS NOT POOLED. `Questionnaire` rows belong to a designer, to a workshop
+    # or to everybody (`isShared`), and `viewable_where` — empty by design — says nothing about that.
+    # See `ReferenceModel.viewer_where` for why this is a clause and not a filter over the answer.
+    #
+    # REFUSED RATHER THAN SERVED WIDE when there is no viewer. The route always passes
+    # `current_user`, so this cannot happen through the API; what it stops is a future caller (or a
+    # test fake) reaching a private table through the default parameter and getting the whole of it
+    # back, which is the failure mode where nothing looks wrong until somebody reads the payload.
+    if spec.viewer_where is not None:
+        if viewer is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=f"{model} options are per-account and this request names no account",
+            )
+        clauses.append(spec.viewer_where(viewer))
 
     # SCOPE FALLS BACK RATHER THAN EMPTYING THE PICKER. A design workshop need not be linked to
     # a Workshop record — the link is optional and is frequently made days after the capture
@@ -3052,6 +3240,7 @@ async def _in_record_options(
     )
     term = (search or "").strip().casefold()
     tentative = _tentative_field(entity)
+    carried = _internal_carry_keys(entity)
 
     options: list[dict[str, Any]] = []
     for row in rows:
@@ -3060,21 +3249,45 @@ async def _in_record_options(
         sublabel = str(data.get(sub_key) or "").strip() if sub_key else ""
         if term and term not in label.casefold() and term not in sublabel.casefold():
             continue
-        option: dict[str, Any] = {"id": row.id, "label": label, "sublabel": sublabel, "data": {}}
+        option: dict[str, Any] = {
+            "id": row.id,
+            "label": label,
+            "sublabel": sublabel,
+            # ── THE HYDRATION DICTIONARY, AND ONLY THE KEYS A MAPPING ACTUALLY NAMES ────────────
+            #
+            # THIS USED TO BE UNCONDITIONALLY EMPTY and the sentence here read "`data` above stays
+            # EMPTY on this payload and this line does not begin filling it." That was correct while
+            # no internal ref hydrated; it stopped being correct on 2026-09-03, when
+            # `finalProduct.prototypeRef` and `prototypeValidation.prototypeRef` were added to
+            # `REFERENCE_HYDRATION`. The server fills those boxes at SAVE either way — that is where
+            # hydration is authoritative — but a designer who picks a prototype and watches nine
+            # empty boxes stay empty until they press Save has been handed a dropdown that looks
+            # broken, and starts typing, which is the behaviour this whole feature exists to end.
+            #
+            # THE NARROWING IS WHAT KEEPS THE ORIGINAL REFUSAL INTACT, so read it before widening
+            # this. `_internal_carry_keys` returns the union of the SOURCE keys of every hydration
+            # mapping whose REF field points at THIS entity — nine keys for `DwPrototype`, none at
+            # all for `DwSketch`, `DwParticipant`, `DwFinalProduct` and `DwCostSheet`. So the whole
+            # blob still never travels: a stage's answers are not a chooser's business, and a
+            # `DwSketch` row's dimensions, prices, notes and media ids would otherwise ride on every
+            # keystroke of a debounced search. And `isTentative` cannot appear here by construction
+            # — no mapping names it — which is the property the boolean below depends on.
+            "data": {k: data[k] for k in carried if data.get(k) not in (None, "", [])},
+        }
         if tentative is not None:
             # ── ONE BOOLEAN OUT OF `data`, AND DELIBERATELY NOT `data` ITSELF ────────────────────
             #
-            # `data` above stays EMPTY on this payload and this line does not begin filling it. A
-            # reference option's `data` is the HYDRATION dictionary — `DW_REFERENCE_HYDRATION` /
+            # A reference option's `data` is the HYDRATION dictionary — `DW_REFERENCE_HYDRATION` /
             # `FieldDto.refHydration` map its keys onto the fields of the entity being filled in —
             # so a `data` carrying `isTentative` would be a standing offer to copy one sketch's
             # working state onto another row. `sketch.supersedesSketch` is the picker where that
             # lands: the entity being filled IS `sketch`, it declares `isTentative` itself, and the
             # key matches. Choosing a tentative predecessor would tick the NEW sketch's box.
             #
-            # It is also not the whole blob for the reason the picker exists: a stage's answers are
-            # not a chooser's business, and `DwSketch` rows carry dimensions, prices, notes and
-            # media ids that would then travel on every keystroke of a debounced search.
+            # THE FLAG STAYS OUT WHATEVER THE TABLE GROWS TO. `carried` above is driven by
+            # `REFERENCE_HYDRATION`, so the day somebody maps `isTentative` the key would arrive
+            # here — which is why `validate_registry` is the place that refusal has to live if it is
+            # ever needed, and why this comment names the field rather than trusting the shape.
             #
             # `is True` AND NOTHING LOOSER, matching `isTentativeRow` in
             # `frontend/lib/sketchTentative.ts` exactly: `coerce_value` stores a real boolean for a
@@ -3161,6 +3374,19 @@ class PendingEntry:
     #: same string in ``data``, which is the whole reason field-level provenance was unanswerable
     #: on this table before. Reset per save, never persisted.
     hydrated: dict[str, "entry_provenance.HydrationSource"] = dataclass_field(default_factory=dict)
+    #: THE ``version`` THE ROW CARRIED IN THE READ THIS SAVE WAS PLANNED AGAINST, and 0 for a row
+    #: this save is creating. It is the predicate the UPDATE is written under — see
+    #: :class:`_RowUpdate` and ``DwStageEntry.version`` in schema.prisma — so it must come from the
+    #: SAME read that produced ``previous``, never from a fresher one: the whole point is to notice
+    #: that the row moved between the read this request reasoned about and the write it is about to
+    #: make. (2026-09-03)
+    seen_version: int = 0
+    #: THE KEY THIS ROW'S REFUSALS ARE REPORTED UNDER in the save response's ``errors`` map:
+    #: ``entity.key`` for a singleton, ``entity.key[index]`` for a collection row. Computed where
+    #: the validation errors are keyed and carried here so a refusal raised at WRITE time — a
+    #: concurrent-writer conflict — lands in the same bucket, under the same shape, as a refusal
+    #: raised at validation time. Both clients already render that map.
+    error_scope: str = ""
 
 
 def _clear_cascade_orphans(entries: list[PendingEntry]) -> None:
@@ -3287,7 +3513,7 @@ def _has_value(value: Any) -> bool:
     return True
 
 
-async def hydrate_entries(entries: list[PendingEntry]) -> None:
+async def hydrate_entries(entries: list[PendingEntry], *, workshop_id: str = "") -> None:
     """Copy each chosen reference's display fields onto the entry that names it.
 
     See the long note above :data:`REFERENCE_HYDRATION` for why the copy exists at all. This
@@ -3328,22 +3554,60 @@ async def hydrate_entries(entries: list[PendingEntry]) -> None:
     record's recorder rather than to the designer who chose it from the picker. It records only
     what is actually stored: a value ``coerce_value`` rejects is not written and is not stamped, so
     the provenance map can never claim authorship of a field that stayed blank.
+
+    ── TWO KINDS OF SOURCE, ONE SET OF RULES (``workshop_id``, 2026-09-03) ─────────────────────
+
+    A REF field names either an EXTERNAL model — an ``Artisan``, a ``ProductDocumentation``, loaded
+    through the Prisma delegate on :data:`REFERENCE_MODELS` — or an ENTITY OF THIS SAME REGISTRY,
+    whose rows are ``DwStageEntry`` rows of the workshop being saved. Both now hydrate, and only the
+    LOADING differs: everything below the two resolvers (only-fill-blanks, the clear-and-rewrite on
+    a re-pointed ref, ``coerce_value``, the provenance stamp) is one loop over one ``resolved`` map
+    and does not know which kind it is walking. That is deliberate — a second copy of the write
+    rules for internal refs would be a second answer to "what may a picked record overwrite", and
+    ``REFERENCE_HYDRATION``'s internal-carry section explains why the answer must stay one.
+
+    ``workshop_id`` IS WHAT THE INTERNAL RESOLVER NEEDS AND IT IS NOT OPTIONAL IN PRACTICE. An
+    internal ref resolves WITHIN ONE WORKSHOP — the prototype a stage-16 row names is a row of this
+    workshop and of no other — so without the id there is nothing to scope the read to, and reading
+    unscoped would let one workshop's catalogue be filled from another's prototypes. Defaulted to
+    "" rather than made positional so that the pure-Python callers which drive this function over
+    external refs alone keep working unchanged; when an internal ref is present and the id is not,
+    the carry is SKIPPED AND LOGGED by name rather than silently dropped, because a blank box whose
+    cause is not written anywhere is the failure this whole module is built around.
     """
     # FIRST, AND BEFORE THE EARLY RETURN BELOW — see :func:`_clear_cascade_orphans` for why the
     # order and the placement are both load-bearing.
     _clear_cascade_orphans(entries)
 
     wanted: dict[str, set[str]] = {}
+    #: ``Dw…`` model -> the ids named by hydrating REF fields pointing at it. Kept apart from
+    #: ``wanted`` only until the read; the two answers merge into one ``resolved`` map below.
+    wanted_internal: dict[str, set[str]] = {}
     for item in entries:
         for spec in item.entity.fields:
-            if spec.type is not FieldType.REF or spec.ref_model not in REFERENCE_MODELS:
+            if spec.type is not FieldType.REF:
                 continue
             if f"{item.entity.key}.{spec.key}" not in REFERENCE_HYDRATION:
                 continue
             ref_id = item.data.get(spec.key)
-            if ref_id:
+            if not ref_id:
+                continue
+            if spec.ref_model in REFERENCE_MODELS:
                 wanted.setdefault(spec.ref_model, set()).add(str(ref_id))
-    if not wanted:
+            elif _dw_entity(spec.ref_model) is not None:
+                wanted_internal.setdefault(spec.ref_model, set()).add(str(ref_id))
+    if wanted_internal and not workshop_id:
+        # NOT AN EXCEPTION, AND NOT SILENCE EITHER. Raising would fail a whole stage save — a
+        # designer's afternoon — over a caller that forgot a keyword; saying nothing would leave a
+        # blank catalogue box with no trace of why. The log names the mappings so the next reader of
+        # a support ticket can find this line.
+        logger.warning(
+            "Internal reference carry skipped: %s named a workshop row but hydrate_entries was "
+            "called without workshop_id, so there is nothing to scope the lookup to.",
+            ", ".join(sorted(wanted_internal)),
+        )
+        wanted_internal = {}
+    if not wanted and not wanted_internal:
         return
 
     resolved: dict[str, dict[str, dict[str, Any]]] = {}
@@ -3362,15 +3626,65 @@ async def hydrate_entries(entries: list[PendingEntry]) -> None:
         )
         return model, rows, await _reference_photos(model_spec, [r.id for r in rows])
 
+    async def _load_internal() -> list[Any]:
+        """Every workshop row a hydrating internal ref could be naming, in ONE query.
+
+        SCOPED TO THIS WORKSHOP AND TO LIVE ROWS, and both clauses are the feature rather than
+        hygiene. ``designWorkshopId`` is what makes "the prototype this row names" mean the
+        prototype the designer is looking at on stage 13 of THIS workshop — an id from another
+        workshop, arriving from a stale form or a replayed offline queue, matches nothing here and
+        hydrates nothing, which is the same refusal :func:`_artisan_id_behind` makes for the same
+        reason. ``deletedAt: None`` is the other half: a soft-deleted prototype is a row the
+        designer removed, and filling a catalogue entry from it would resurrect its values into a
+        submitted document through a row nobody can see any more. A blank ref and a deleted source
+        both hydrate nothing and leave whatever the row already holds — which is exactly what the
+        external path does for a deleted record, and for the reason
+        :data:`REFERENCE_HYDRATION` gives at length.
+
+        NARROWED BY ``entityKey`` RATHER THAN READING THE WHOLE WORKSHOP. A workshop's stage rows
+        run to hundreds — thirty participants, twenty sketches, a cost sheet's line items — and this
+        runs inside a save a designer is standing there waiting for. Two entity keys is what the two
+        mappings need.
+
+        THE ARGUMENT IS THE ROWS, NOT THE HOP, and this sentence originally rested on the wrong one
+        of the two: it cited "a link measured at 756ms a hop", and production moved to a co-located
+        database on 2026-09-02 (see ``app/services/concurrency.py``). What the narrowing saves is a
+        result set and the Python that walks it, on every save of a workshop that has ever been
+        worked on — which is the same cost whether the round trip is a second or a millisecond.
+        ``prisma/schema.prisma``'s own note on ``DwStageEntry.version`` makes the same correction and
+        declines to quote a replacement figure, for the same reason: a latency in the sentence
+        invites the reading that a fast link makes the cost go away. (2026-09-03)
+        """
+        keys = sorted(
+            {e.key for m in wanted_internal if (e := _dw_entity(m)) is not None}
+        )
+        if not keys:
+            return []
+        return await db.dwstageentry.find_many(
+            where={
+                "designWorkshopId": workshop_id,
+                "entityKey": {"in": keys},
+                "deletedAt": None,
+            }
+        )
+
     # THE MODELS ARE INDEPENDENT OF ONE ANOTHER, SO THEY OVERLAP. Each one is a genuine two-step —
     # the photographs are fetched by the ids the first read returns — but nothing in one model's
     # pair depends on another's, and awaiting them model by model made this 2 x (however many
     # reference models a workshop's entries name) sequential cross-region round trips. Run together
     # it is two waits deep whatever that number is. ``REFERENCE_MODELS`` is small and each entry
     # holds at most 2 reads in flight, so the fan-out stays inside ``pool_width()``.
-    for model, rows, photos in await gather_reads(
-        *(_load(model, ids) for model, ids in wanted.items())
-    ):
+    #
+    # THE INTERNAL READ JOINS THE SAME FAN-OUT. It is one query and it depends on nothing the
+    # others produce, so awaiting it separately would add a whole cross-region round trip to every
+    # stage-16 save for no reason. It is placed LAST in the argument list and unpacked by position
+    # below, which is why the results are sliced rather than zipped.
+    external_loads = [_load(model, ids) for model, ids in wanted.items()]
+    internal_loads = [_load_internal()] if wanted_internal else []
+    read_results = await gather_reads(*external_loads, *internal_loads)
+    internal_rows: list[Any] = read_results[len(external_loads)] if internal_loads else []
+
+    for model, rows, photos in read_results[: len(external_loads)]:
         model_spec = REFERENCE_MODELS[model]
         # `_reference_data` and NOT `model_spec.data`, matching the picker payload above — the
         # two must resolve a record identically or the boxes that fill in at the keyboard disagree
@@ -3379,6 +3693,40 @@ async def hydrate_entries(entries: list[PendingEntry]) -> None:
             row.id: _reference_data(model_spec, row, photos.get(row.id)) for row in rows
         }
         authors[model] = {row.id: getattr(row, "createdById", None) for row in rows}
+
+    # ── THE INTERNAL ROWS, FOLDED INTO THE SAME TWO MAPS ────────────────────────────────────────
+    #
+    # A workshop row's ``data`` IS its display projection: the keys are the source entity's own
+    # field keys, already coerced by ``validate_entry`` on the save that stored them, so there is no
+    # ``_reference_data`` equivalent to run and none is wanted — a second projection would be a
+    # second place for the two surfaces to disagree about what a prototype's length is.
+    #
+    # KEYED BY ``id`` AND BY ``clientKey`` BOTH, matching :func:`_in_record_options`'s own OR: the
+    # picker writes the server id, but a handset that created a prototype offline and printed its
+    # tag the same afternoon addresses the row by the key it generated, and an id-only map would
+    # hydrate nothing for exactly the fortnight-without-signal case this app is built for. The
+    # unique index is (designWorkshopId, entityKey, clientKey), so within one entity a key can name
+    # at most one row and the two spellings cannot collide into different rows.
+    #
+    # THE AUTHOR IS THE SOURCE ROW'S ``createdById``, matching the external path's one-author-per-
+    # record shape. The finer answer is available here and is deliberately not taken: the row's own
+    # ``fieldProvenance`` knows who set the length as distinct from who set the materials, and using
+    # it would make an internal stamp mean something subtly different from an external one for a
+    # gain nothing reads yet. If a provenance panel ever wants it, that is the change to make.
+    model_of_entity = {
+        e.key: m for m in wanted_internal if (e := _dw_entity(m)) is not None
+    }
+    for row in internal_rows:
+        model = model_of_entity.get(row.entityKey, "")
+        if not model:
+            continue
+        data = dict(row.data or {})
+        bucket = resolved.setdefault(model, {})
+        author_bucket = authors.setdefault(model, {})
+        for key in (row.id, getattr(row, "clientKey", None)):
+            if key:
+                bucket[str(key)] = data
+                author_bucket[str(key)] = getattr(row, "createdById", None)
 
     for item in entries:
         for spec in item.entity.fields:
@@ -3962,7 +4310,8 @@ async def seed_designer_prefill(
                     # the way out (designers.py:297, a branch that exists only for it), so a date
                     # does reach `values` above from the profile. What keeps the list complete is
                     # the OTHER end: `designerEmpanelmentDate` is not a promoted column at all, and
-                    # all 13 entries of `PROMOTED_COLUMNS` (services/stage_schema.py:841) are keyed
+                    # every entry of `PROMOTED_COLUMNS` (services/stage_schema.py; 14 as of
+                    # 2026-09-03, counted by its own guard test rather than here) is keyed
                     # `workshopSetup.*` — so `promoted_values` can never surface it and no ISO
                     # string of it can reach a Prisma DateTime column.
                     #
@@ -4115,6 +4464,110 @@ def refused_answer_count(errors: Mapping[str, Any]) -> int:
     return sum(len(fields) if isinstance(fields, Mapping) else 1 for fields in errors.values())
 
 
+@dataclass
+class _RowUpdate:
+    """One planned UPDATE of a ``DwStageEntry``, and the row version it was planned against.
+
+    IT REPLACED A ``(row_id, columns)`` TUPLE, and the two extra members are what turned a
+    last-write-wins write into one that can refuse. ``seen_version`` is the predicate; ``values`` is
+    the raw ``data`` dict behind ``columns["data"]``, kept so that a conflict can ask the question
+    that decides what to do about it — "did the writer that beat us store the same thing we were
+    going to?" — without unwrapping a ``prisma.Json``. ``scope`` is where a refusal is reported.
+    """
+
+    row_id: str
+    seen_version: int
+    #: Exactly what goes to Prisma as ``data=``. Everything else here is about DECIDING to send it.
+    columns: dict[str, Any]
+    #: The unwrapped values behind ``columns["data"]``, for the equality test in
+    #: :func:`_settle_version_conflicts`.
+    values: dict[str, Any]
+    #: The key a refusal on this row is reported under in the response's ``errors`` map.
+    scope: str
+    #: The registry entity this row belongs to, carried so that the workshop header can be built
+    #: from THE ROWS THAT SURVIVE TO BE WRITTEN rather than from the payload — see
+    #: :func:`_promotions_from_plan`. ``scope`` cannot stand in for it: it is ``entity.key`` for a
+    #: singleton but ``f"{entity.key}[{index}]"`` for a collection row, and a header built by
+    #: string-splitting an error key would be one refactor away from writing the wrong column.
+    #:
+    #: NO DEFAULT, DELIBERATELY. A future write site that forgot it would silently stop
+    #: contributing its promoted values — a blank cover page reported as a successful save — which
+    #: is the same class of silence this member was added to end. (2026-09-03)
+    entity_key: str
+
+
+@dataclass(frozen=True)
+class _CreatePlan:
+    """The two things an INSERT needs to carry that its Prisma ``data`` dict cannot.
+
+    A ``creates`` entry is handed to ``tx.dwstageentry.create(data=...)`` verbatim, so it may hold
+    nothing the table does not have a column for. When :func:`_absorb_key_collisions` rewrites one
+    into an UPDATE of the row that beat it, that UPDATE still needs a scope to report a later
+    refusal under and the unwrapped values to compare against a winner's — so they travel beside the
+    creates, keyed by the same ``(entityKey, clientKey)`` pair the absorber already looks rows up by.
+    Only KEYED creates are ever looked up, so the key cannot be ambiguous. (2026-09-03)
+    """
+
+    scope: str
+    values: dict[str, Any]
+
+
+class _StageVersionConflict(Exception):
+    """Raised INSIDE the stage transaction when a row's version predicate matched nothing.
+
+    RAISED RATHER THAN RETURNED, because the raise is what rolls the transaction back. A save that
+    found one of its rows moved has written the other twenty inside the same open transaction, and
+    committing those while re-planning this one would leave the stage half in each request's
+    picture — the exact "neither the old data nor the new" state the single transaction exists to
+    prevent. So the whole block is discarded and re-run, which is what its own comment says it was
+    built for. (2026-09-03)
+    """
+
+    def __init__(self, row_ids: list[str]) -> None:
+        self.row_ids = row_ids
+        super().__init__(f"{len(row_ids)} stage row(s) were written by another request")
+
+
+#: What a designer is told about a row another save reached first.
+#:
+#: ONE SENTENCE, STATE THEN ACTION, and it names the ROW rather than the stage because that is what
+#: was refused: the other twenty fields of the same save went in. It never says "try again" on its
+#: own, because re-sending the same stale answers would be refused identically — the next move is to
+#: look at what the other person wrote, which is a reload.
+#:
+#: It rides the ``errors`` map, which both clients already render and which
+#: ``refused_answer_count`` already totals, rather than a new response key: a fourth key is only
+#: worth its cost when a client renders it, and this needs to be visible on builds that shipped
+#: before it existed. (2026-09-03)
+STAGE_ROW_CONFLICT_MESSAGE = (
+    "Someone else saved this row first — reopen the stage to see the latest before saving again."
+)
+
+#: The reserved field key a row-level refusal is filed under inside its scope's error bucket.
+#:
+#: ``errors`` is ``{scope: {field: message}}`` and every other entry in it names a real field, which
+#: is how both clients mark the individual boxes. A conflict is not about a field — it is about the
+#: whole row — so it is filed under a key beginning with an underscore, which is this protocol's own
+#: mark for "not workshop data" (``_clientKey``, ``_entryId``, ``_ordinal``, ``_custom``). Android's
+#: ``unplaced`` valve exists precisely to show a refusal it cannot attach to a box.
+STAGE_ROW_CONFLICT_KEY = "_row"
+
+#: How many times the stage transaction may be re-run before a race is treated as a bug.
+#:
+#: HOW MANY SETTLED ATTEMPTS, NOT HOW MANY TRANSACTIONS. Attempts 1..N-1 settle each conflict on its
+#: merits; attempt N settles by SURRENDERING — refusing every contested row whether or not the
+#: winner stored the same answers — so the write that follows carries nothing which has already
+#: collided. That final write is the one that stores the rest of the designer's stage, and only a
+#: conflict AFTER it is raised, because only a writer arriving after the surrender can cause one.
+#:
+#: THREE, AND THE NUMBER IS DOING REAL WORK. A row whose answers genuinely diverged leaves the plan
+#: and cannot collide again, so that arm would terminate on its own; a row the winner stored
+#: identically is re-planned at the version the re-read found, and a third writer can move it again
+#: before the re-run lands. Left open that is a loop on a request a designer is waiting on. Three
+#: writers inside one round trip is not this race.
+_STAGE_WRITE_ATTEMPTS = 3
+
+
 async def save_stage(workshop_id: str, spec: StageSpec, payload: Any, user: Any) -> dict[str, Any]:
     """Write one stage, returning HOW MUCH was stored, what failed validation and what was dropped.
 
@@ -4216,10 +4669,11 @@ async def save_stage(workshop_id: str, spec: StageSpec, payload: Any, user: Any)
     # Client keys claimed by an earlier entry of THIS payload, so a client that generated the
     # same id twice collides here rather than inside the unique index as a 500.
     claimed_client_keys: set[tuple[str, str]] = set()
-    promoted: dict[str, Any] = {}
 
     creates: list[dict[str, Any]] = []
-    updates: list[tuple[str, dict[str, Any]]] = []
+    updates: list[_RowUpdate] = []
+    #: What each create needs if a collision turns it into an update. See :class:`_CreatePlan`.
+    create_plans: dict[tuple[str, str | None], _CreatePlan] = {}
     # Validation, then hydration, then the write — in that order and in three passes, not one.
     # Hydration reads the artisan and product tables, so doing it inside the loop would issue
     # one query per row of a thirty-row participant list. Promotion has to come after it,
@@ -4227,6 +4681,13 @@ async def save_stage(workshop_id: str, spec: StageSpec, payload: Any, user: Any)
     # copies onto the workshop header: computing the promoted values first wrote the pre-picker
     # blank into the column, and the workshop list showed no craft for a record whose stage 1
     # plainly named one.
+    #
+    # PROMOTION NOW HAPPENS LATER STILL — inside the transaction, from the PLAN rather than from
+    # the payload. It was accumulated in this loop, once, into a dict the header write then read on
+    # every attempt; a row the version guard REFUSED left `updates` but its contribution stayed in
+    # that dict, so the loser of a stage-1 race was told "someone else saved this row first" while
+    # its `craftName`, `state`, `district` and dates went onto the header anyway. See
+    # `_promotions_from_plan`. (2026-09-03)
     pending: list[PendingEntry] = []
     # The singleton entries this payload has already claimed, so a second entry for the same
     # singleton folds into the first rather than becoming a second row. See the fold below.
@@ -4313,13 +4774,16 @@ async def save_stage(workshop_id: str, spec: StageSpec, payload: Any, user: Any)
         )
 
         clean, entry_errors = validate_entry(entity, entry.data, enforce_required=payload.submit)
+        # COMPUTED WHETHER OR NOT THIS ENTRY HAS VALIDATION ERRORS, because a second kind of refusal
+        # now reports through the same map: a row another request wrote between this save's read and
+        # its write (see `_settle_version_conflicts`). That one is discovered at WRITE time, long
+        # after `index` has gone out of scope, so the key it will be filed under is decided here —
+        # once, in the one place that knows the shape — and carried on the `PendingEntry`.
+        error_scope = (
+            entity.key if entity.cardinality is Cardinality.SINGLETON else f"{entity.key}[{index}]"
+        )
         if entry_errors:
-            key = (
-                entity.key
-                if entity.cardinality is Cardinality.SINGLETON
-                else f"{entity.key}[{index}]"
-            )
-            errors[key] = entry_errors
+            errors[error_scope] = entry_errors
             # Keep going. A stage with one bad number still saves its other twenty fields; the
             # alternative loses everything the designer typed because of one typo.
 
@@ -4499,6 +4963,13 @@ async def save_stage(workshop_id: str, spec: StageSpec, payload: Any, user: Any)
                 if entity.cardinality is Cardinality.SINGLETON
                 else None
             ),
+            # OFF THE ROW THIS REQUEST MATCHED, from the read at the top of this function — the same
+            # read `previous` came from. `getattr` rather than `row.version` because this function's
+            # pure-Python tests drive it with hand-built row doubles; against the real client the
+            # column is NOT NULL with a default, so it is always there, and a client that predates
+            # it fails loudly at the WRITE rather than silently here.
+            seen_version=int(getattr(row, "version", 0) or 0) if row is not None else 0,
+            error_scope=error_scope,
         )
         pending.append(item)
         if entity.cardinality is Cardinality.SINGLETON:
@@ -4513,10 +4984,14 @@ async def save_stage(workshop_id: str, spec: StageSpec, payload: Any, user: Any)
     # NOTE THAT THE CLIENT DOES NOT SEE THE RESULT OF THIS until it reads the stage back: the
     # save response carries counts, not values (see the docstring). Hydration is exactly where
     # that costs something, because coercion can change what the client sent.
-    await hydrate_entries(pending)
+    #
+    # ``workshop_id`` IS WHAT LETS AN INTERNAL REF RESOLVE (2026-09-03). A ``prototypeRef`` names a
+    # row of THIS workshop's stage 13, and `existing` above holds only THIS stage's rows, so the
+    # internal resolver issues its own scoped read. Passing the id here rather than putting it on
+    # every `PendingEntry` keeps the dataclass about one entry.
+    await hydrate_entries(pending, workshop_id=workshop_id)
 
     for item in pending:
-        promoted.update(promoted_values(item.entity.key, item.data))
         # COMPUTED AFTER HYDRATION AND BEFORE THE WRITE, which is the only window in which both
         # halves of the answer exist: `item.hydrated` is populated by the pass above and `item.data`
         # is final. Doing it before hydration would attribute every copied field to the designer who
@@ -4550,9 +5025,10 @@ async def save_stage(workshop_id: str, spec: StageSpec, payload: Any, user: Any)
             # only when the row looked deleted would mean reading a value that another request
             # may have changed between the SELECT above and this UPDATE.
             updates.append(
-                (
-                    item.row_id,
-                    {
+                _RowUpdate(
+                    row_id=item.row_id,
+                    seen_version=item.seen_version,
+                    columns={
                         "data": _json(item.data),
                         "searchText": search_text,
                         "ordinal": item.ordinal,
@@ -4563,6 +5039,9 @@ async def save_stage(workshop_id: str, spec: StageSpec, payload: Any, user: Any)
                         # then not written at all.
                         **({"clientKey": item.adopt_client_key} if item.adopt_client_key else {}),
                     },
+                    values=item.data,
+                    scope=item.error_scope,
+                    entity_key=item.entity.key,
                 )
             )
         else:
@@ -4578,6 +5057,9 @@ async def save_stage(workshop_id: str, spec: StageSpec, payload: Any, user: Any)
                     "clientKey": item.client_key,
                     "createdById": user.id,
                 }
+            )
+            create_plans[(item.entity.key, item.client_key)] = _CreatePlan(
+                scope=item.error_scope, values=item.data
             )
 
     # THE CUSTOM ROW'S OWN WRITE, built exactly like a singleton's and deliberately reusing all
@@ -4628,9 +5110,14 @@ async def save_stage(workshop_id: str, spec: StageSpec, payload: Any, user: Any)
                 custom_row, custom_sections.CUSTOM_ENTITY_KEY, singleton_key, existing
             )
             updates.append(
-                (
-                    custom_row.id,
-                    {
+                _RowUpdate(
+                    row_id=custom_row.id,
+                    # THE CONTAINER IS GUARDED ON THE SAME RULE AS A REGISTRY SINGLETON, and it is
+                    # the row that most needs it: `_custom` holds every answer the designer wrote to
+                    # their OWN questions, one row per (workshop, stage), and two designers editing
+                    # a custom section are editing literally the same row.
+                    seen_version=int(getattr(custom_row, "version", 0) or 0),
+                    columns={
                         "data": _json(custom_to_store),
                         "searchText": custom_search_text,
                         "ordinal": 0,
@@ -4638,6 +5125,17 @@ async def save_stage(workshop_id: str, spec: StageSpec, payload: Any, user: Any)
                         "fieldProvenance": _json(custom_provenance),
                         **({"clientKey": custom_key_upgrade} if custom_key_upgrade else {}),
                     },
+                    values=custom_to_store,
+                    # The reserved key, which is the bucket `custom_write.errors` already uses, so a
+                    # conflict on the container is rendered by whatever renders a custom field's
+                    # refusal today.
+                    scope=custom_sections.CUSTOM_ENTITY_KEY,
+                    # The reserved literal, which is not a registry entity and therefore promotes
+                    # nothing: `PROMOTED_COLUMNS` is keyed `workshopSetup.*` throughout, so
+                    # `promoted_values` returns {} for it and `_coerce_promoted` never looks at it.
+                    # Carried anyway rather than blanked, so this row answers "which entity?" the
+                    # same way every other planned write does.
+                    entity_key=custom_sections.CUSTOM_ENTITY_KEY,
                 )
             )
         else:
@@ -4659,6 +5157,9 @@ async def save_stage(workshop_id: str, spec: StageSpec, payload: Any, user: Any)
                     "clientKey": singleton_key,
                     "createdById": user.id,
                 }
+            )
+            create_plans[(custom_sections.CUSTOM_ENTITY_KEY, singleton_key)] = _CreatePlan(
+                scope=custom_sections.CUSTOM_ENTITY_KEY, values=custom_to_store
             )
 
     # Rows the client no longer has, in the entities it actually sent. Restricting the sweep to
@@ -4742,16 +5243,90 @@ async def save_stage(workshop_id: str, spec: StageSpec, payload: Any, user: Any)
             # one inside the block is not possible without savepoints the driver does not expose.
             # `creates` and `updates` are read from the enclosing scope at call time, which is what
             # lets the recovery rewrite them between the two attempts.
-            for row_id, data in updates:
-                await tx.dwstageentry.update(where={"id": row_id}, data=data)
+            #
+            # ── EVERY UPDATE CARRIES THE VERSION IT WAS PLANNED AGAINST ─────────────────────────
+            #
+            # THIS WAS THE UNGUARDED HALF OF THE RACE `SINGLETON_CLIENT_KEY` CLOSED, AND IT WAS THE
+            # HALF THAT LOST DATA SILENTLY. The key closed the INSERT side — two saves each planning
+            # a singleton, the index refusing the second, `_absorb_key_collisions` below turning the
+            # refusal into an UPDATE of the winner's row. Nothing guarded that UPDATE, or any of the
+            # ordinary ones beside it: this function reads the stage's rows near the top, spends a
+            # validation pass, a `hydrate_entries` pass that issues its own queries, and a provenance
+            # merge on them, and then writes `data` WHOLESALE by row id. Whatever a second writer
+            # committed in that window was gone, with no index to refuse it, `updated: 1` reported to
+            # both designers, and only `updatedAt` to say that anything had happened at all.
+            #
+            # NO LATENCY IS QUOTED FOR THAT WINDOW, AND THAT IS DELIBERATE. This sentence used to
+            # call it "a database measured 756 ms away"; production moved to a co-located database on
+            # 2026-09-02 (`app/services/concurrency.py`), and `prisma/schema.prisma`'s note on
+            # `DwStageEntry.version` records the figure as history and refuses to replace it — because
+            # quoting any number here invites the reading the column exists to refuse, that a small
+            # window is an acceptable one. The gap is however many statements `hydrate_entries`
+            # issues wide, and two designers on one stage collide inside it at any speed. (2026-09-03)
+            #
+            # It is not a rare pairing. `DesignWorkshopViewer` exists so that two designers run one
+            # workshop over one set of rows, and a payload without `merge: true` carries EVERY key of
+            # the row — so the loser's stale-but-complete picture replaced the winner's edit to a
+            # field the loser had never opened.
+            #
+            # `update_many` AND NOT `update`, ONLY FOR THE COUNT. Addressing one row by primary key
+            # is what `update` is for, but `update` raises when it matches nothing and cannot tell
+            # "the version moved" from "no such row"; `update_many` returns how many rows it wrote,
+            # and here that number is the whole answer — 1 is success, 0 is somebody else.
+            #
+            # THE WHOLE BATCH IS ISSUED BEFORE ANYTHING IS RAISED, deliberately: the re-run wants
+            # EVERY row that moved, not the first one, so that one re-read settles all of them and a
+            # stage with three contested rows does not cost three round trips. The writes that did
+            # land are discarded with the transaction the raise rolls back.
+            conflicted: list[str] = []
+            for planned in updates:
+                written = await tx.dwstageentry.update_many(
+                    where={"id": planned.row_id, "version": planned.seen_version},
+                    data={**planned.columns, "version": {"increment": 1}},
+                )
+                if not written:
+                    conflicted.append(planned.row_id)
+            if conflicted:
+                raise _StageVersionConflict(conflicted)
+            # A CREATE NAMES NO VERSION, AND MUST NOT. `DwStageEntry.version` is `@default(0)`, so
+            # every new row starts where a re-read will find it; writing the column here would only
+            # be a way to get it wrong. The INSERT side of this race is guarded by the unique index
+            # on the reserved client key, not by a counter — see `_absorb_key_collisions` below.
             for data in creates:
                 await tx.dwstageentry.create(data=data)
             if removed:
+                # NOT VERSION-GUARDED, AND THAT IS A DECISION RATHER THAN AN OVERSIGHT. The sweep
+                # writes one timestamp onto rows the client no longer holds; it is idempotent, it
+                # destroys nothing (a soft delete is reversible and the row's `data` is untouched),
+                # and it carries none of this designer's answers. Guarding it would let a
+                # contested row in one collection refuse the deletion of an unrelated row in
+                # another — trading a real write for a race nobody has had. The rows it touches
+                # keep whatever version they had, so a concurrent save that resurrects one still
+                # sees the version it read.
                 await tx.dwstageentry.update_many(
                     where={"id": {"in": removed}}, data={"deletedAt": datetime.now(UTC)}
                 )
+            # ── THE HEADER IS BUILT FROM THIS ATTEMPT'S PLAN, NOT FROM THE PAYLOAD ──────────────
+            #
+            # A REFUSED ROW MUST CONTRIBUTE NOTHING. `promoted` used to be accumulated once, before
+            # the first attempt, over every `PendingEntry` — and this line read that same dict on
+            # every re-run. `_settle_version_conflicts` drops a contested row from `updates` and
+            # files a refusal sentence for it, but nothing withdrew its promoted values, so the
+            # loser of a stage-1 race got both halves at once: "Someone else saved this row first"
+            # in `errors`, and its own `craftName`, `clusterName`, `state`, `district`, `venue` and
+            # dates written over the winner's on `DesignWorkshop`. `workshopSetup` is a singleton
+            # and the source of all fourteen `PROMOTED_COLUMNS`, so that is the whole cover page of
+            # the report and every column the workshop list filters by.
+            #
+            # `touched_entities` CANNOT BE THE SECOND ARGUMENT EITHER, and substituting it was the
+            # subtler half of the same bug: `_coerce_promoted` nulls a column whose entity was in
+            # the save but whose value is now blank, so a refused stage-1 row would have BLANKED
+            # the winner's craft instead of overwriting it. Both arguments have to come from the
+            # rows that survive. `touched_entities` is left alone because the collection sweep
+            # above means something different by it — "the payload named this entity". (2026-09-03)
+            promoted, promoted_entities = _promotions_from_plan(creates, updates, create_plans)
             header: dict[str, Any] = {"schemaVersion": registry_version()}
-            header.update(_coerce_promoted(promoted, touched_entities))
+            header.update(_coerce_promoted(promoted, promoted_entities))
             # DRAFT is the ONLY status a stage save advances, and it advances it exactly once. The
             # record now has content, and a list that still calls it a draft after two weeks of
             # capture is misleading — but forcing IN_PROGRESS unconditionally silently demoted a
@@ -4762,31 +5337,87 @@ async def save_stage(workshop_id: str, spec: StageSpec, payload: Any, user: Any)
                 header["status"] = "IN_PROGRESS"
             await tx.designworkshop.update(where={"id": workshop_id}, data=header)
 
-    try:
-        await write_everything()
-    except UniqueViolationError:
-        # THE RACE THE SENTINEL TURNS FROM SILENT CORRUPTION INTO A RETRY.
-        #
-        # Two designers share a workshop — `DesignWorkshopViewer` exists so they can — and both save
-        # the same stage. Each read the rows, each found no singleton, and each planned an INSERT.
-        # Before `SINGLETON_CLIENT_KEY` both inserts succeeded (null keys are distinct under the
-        # index) and the workshop was left with two rows whose answers no read path chose between
-        # deterministically. Now the second INSERT is REFUSED, which is the outcome to want — but a
-        # refusal a designer sees as a 500 is not an improvement over the duplicate, because their
-        # answers are still not stored.
-        #
-        # So the loser re-reads and applies its work as an UPDATE to the row the winner just made.
-        # RE-RUNNING THE WHOLE TRANSACTION, not resuming the aborted one: a constraint violation
-        # puts a Postgres transaction into the aborted state where every further statement fails
-        # with 25P02, and the driver gives no savepoint to roll back to. The re-run is safe because
-        # every statement in it is idempotent by construction — the updates address rows by id, the
-        # sweep writes one timestamp, and the header write is a plain assignment.
-        #
-        # ONCE. A second violation is not this race — it means something is generating colliding
-        # keys — and swallowing it in a loop would turn a bug into a hang on the request a designer
-        # is waiting on. It is raised, and the route answers 500 as it did before.
-        creates, updates = await _absorb_key_collisions(workshop_id, spec.key, creates, updates)
-        await write_everything()
+    # ── THE WRITE, AND THE TWO RACES IT IS RE-RUN FOR ─────────────────────────────────────────────
+    #
+    # ONE LOOP FOR BOTH, because they are two halves of one thing: a second request wrote this
+    # stage's rows between this request's read and its write. The unique index catches it when the
+    # collision is an INSERT; the version predicate catches it when the collision is an UPDATE. Each
+    # recovery re-reads and REWRITES THE PLAN, and then the whole transaction is re-run — never
+    # resumed, because a constraint violation puts a Postgres transaction into the aborted state
+    # where every further statement fails with 25P02 and the driver exposes no savepoint to roll
+    # back to. Both recoveries are safe to re-run because every statement in the block is idempotent
+    # by construction: the updates address rows by id, the creates are re-planned, the sweep writes
+    # one timestamp, and the header write is a plain assignment. (2026-09-03)
+    absorbed_once = False
+    attempts = 0
+    while True:
+        attempts += 1
+        try:
+            await write_everything()
+            break
+        except UniqueViolationError:
+            # THE RACE THE SENTINEL TURNS FROM SILENT CORRUPTION INTO A RETRY.
+            #
+            # Two designers share a workshop — `DesignWorkshopViewer` exists so they can — and both
+            # save the same stage. Each read the rows, each found no singleton, and each planned an
+            # INSERT. Before `SINGLETON_CLIENT_KEY` both inserts succeeded (null keys are distinct
+            # under the index) and the workshop was left with two rows whose answers no read path
+            # chose between deterministically. Now the second INSERT is REFUSED, which is the
+            # outcome to want — but a refusal a designer sees as a 500 is not an improvement over
+            # the duplicate, because their answers are still not stored.
+            #
+            # So the loser re-reads and applies its work as an UPDATE to the row the winner just
+            # made.
+            #
+            # ONCE. A second violation is not this race — it means something is generating colliding
+            # keys — and swallowing it in a loop would turn a bug into a hang on the request a
+            # designer is waiting on. It is raised, and the route answers 500 as it did before.
+            if absorbed_once:
+                raise
+            absorbed_once = True
+            creates, updates = await _absorb_key_collisions(
+                workshop_id, spec.key, creates, updates, create_plans
+            )
+        except _StageVersionConflict as clash:
+            # THE OTHER HALF, AND THE ONE THAT USED TO BE SILENT. Every row named here was written
+            # by somebody else since this request read it. `_settle_version_conflicts` re-reads them
+            # and decides each on its own: a row the winner happened to store IDENTICALLY is simply
+            # re-planned at the fresh version (an offline replay must not raise a conflict against
+            # itself), and a row whose stored answers now differ is DROPPED from the plan and
+            # reported.
+            #
+            # WHAT ENDS THE LOOP. A dropped row cannot collide again, so a re-run following a
+            # DIVERGENT conflict is strictly smaller. A re-planned row can in principle be beaten a
+            # second time — the version it was refreshed to is only current until the next writer —
+            # so the LAST settled attempt surrenders: it refuses every contested row whether or not
+            # the answers matched, leaving a plan that has nothing in it which has already collided.
+            # Only then is a further conflict treated as a bug and raised, because at that point it
+            # can only have come from a writer that arrived after the surrender.
+            #
+            # THE SURRENDER IS WHAT KEEPS THE STAGE SAVED. Raising instead would answer 500 and store
+            # nothing — losing every other row the designer typed — which is precisely the outcome
+            # the unique-violation recovery above exists to avoid.
+            #
+            # THE REST OF THE SAVE STILL GOES IN, which is the same judgement the validation pass
+            # makes twenty lines up: a stage with one contested row still stores its other twenty,
+            # because losing a fortnight of typing to one collision is the worse failure.
+            if attempts > _STAGE_WRITE_ATTEMPTS:
+                raise
+            updates, refused = await _settle_version_conflicts(
+                workshop_id,
+                spec.key,
+                updates,
+                set(clash.row_ids),
+                surrender=attempts == _STAGE_WRITE_ATTEMPTS,
+            )
+            for lost in refused:
+                # Under the same scope the validation errors use, so both clients mark the same row
+                # they would mark for a bad value. `setdefault` because a row can be refused for
+                # BOTH reasons at once — a typo the designer must fix and an edit somebody else
+                # made — and the second must not erase the first.
+                errors.setdefault(lost.scope, {})[STAGE_ROW_CONFLICT_KEY] = (
+                    STAGE_ROW_CONFLICT_MESSAGE
+                )
 
     rows = await entry_rows(workshop_id, stage_key=spec.key)
     completeness = workshop_completeness(rows, definition=definition).get(spec.key)
@@ -4896,8 +5527,9 @@ async def _absorb_key_collisions(
     workshop_id: str,
     stage_key: str,
     creates: list[dict[str, Any]],
-    updates: list[tuple[str, dict[str, Any]]],
-) -> tuple[list[dict[str, Any]], list[tuple[str, dict[str, Any]]]]:
+    updates: list[_RowUpdate],
+    create_plans: Mapping[tuple[str, str | None], _CreatePlan] | None = None,
+) -> tuple[list[dict[str, Any]], list[_RowUpdate]]:
     """Turn every INSERT whose reserved key another request has just taken into an UPDATE of it.
 
     It also withdraws an UPDATE's *adoption* of the reserved key when the re-read shows that key now
@@ -4918,6 +5550,24 @@ async def _absorb_key_collisions(
     A create whose key is still free stays a create. That is the ordinary case for every collection
     row in the payload, which carries either its own client key or none, and which this must not
     disturb: the collision was one row's, and re-running the transaction re-runs all of them.
+
+    ── WHAT IT DOES WITH ``version``, AND WHY THE TWO ARMS ANSWER DIFFERENTLY ────────────────────
+
+    **AN ABSORBED CREATE TAKES THE VERSION FROM THE ROW JUST READ.** This request has no earlier
+    picture of that row to be stale about — it did not exist when the read at the top of
+    ``save_stage`` ran — so the only version it can be written against is the one the winner left,
+    and the re-read above is where it comes from.
+
+    **AN EXISTING UPDATE KEEPS THE VERSION IT ALREADY HELD, and that is deliberately NOT refreshed.**
+    Refreshing it here would be the very last-write-wins this whole mechanism removes, arriving
+    through the back door: the request that just lost an INSERT race has proved that somebody else
+    committed inside its read/write window, which is exactly the moment its other rows are most
+    likely to have moved too. Left alone, a row that did move fails its predicate on the re-run and
+    is settled honestly by :func:`_settle_version_conflicts`; a row that did not move passes and
+    costs nothing. (2026-09-03)
+
+    ``create_plans`` carries what an absorbed create's UPDATE needs and its Prisma ``data`` dict
+    cannot hold — see :class:`_CreatePlan`.
     """
     rows = await db.dwstageentry.find_many(
         where={"designWorkshopId": workshop_id, "stageKey": stage_key}
@@ -4940,36 +5590,141 @@ async def _absorb_key_collisions(
     # winner from the next save on, which is the same convergence the matcher gives every other
     # pre-existing duplicate.
     rows_by_id = {row.id: row for row in rows}
-    absorbed: list[tuple[str, dict[str, Any]]] = []
-    for row_id, planned in updates:
-        adopted = planned.get("clientKey")
-        row = rows_by_id.get(row_id)
+    plans = create_plans or {}
+    absorbed: list[_RowUpdate] = []
+    for planned in updates:
+        adopted = planned.columns.get("clientKey")
+        row = rows_by_id.get(planned.row_id)
         holder = taken.get((row.entityKey, adopted)) if adopted and row else None
         fields = (
-            {key: value for key, value in planned.items() if key != "clientKey"}
-            if holder is not None and holder != row_id
-            else planned
+            {key: value for key, value in planned.columns.items() if key != "clientKey"}
+            if holder is not None and holder != planned.row_id
+            else planned.columns
         )
-        absorbed.append((row_id, fields))
+        # `seen_version` rides across untouched — see the docstring.
+        absorbed.append(replace(planned, columns=fields))
 
     still_creates: list[dict[str, Any]] = []
     for data in creates:
-        row_id = taken.get((data["entityKey"], data.get("clientKey")))
+        key = (data["entityKey"], data.get("clientKey"))
+        row_id = taken.get(key)
         if row_id is None:
             still_creates.append(data)
             continue
+        winner = rows_by_id.get(row_id)
+        plan = plans.get(key)
         absorbed.append(
-            (
-                row_id,
-                {
+            _RowUpdate(
+                row_id=row_id,
+                # The row the winner just made, at the version this re-read found it at.
+                seen_version=int(getattr(winner, "version", 0) or 0) if winner else 0,
+                columns={
                     "data": data["data"],
+                    # WRITTEN HERE TOO, BECAUSE `data` IS. `DwStageEntry.searchText` is a rendering
+                    # of the same answers and the schema's own note on it is unambiguous: every
+                    # writer of `data` must write this column IN THE SAME STATEMENT, because the
+                    # failure mode of a second copy is not that it is missing but that it
+                    # DISAGREES — a search answering from a stale rendering is a wrong answer
+                    # dressed as a right one. This branch omitted it, so a create absorbed into an
+                    # update left the loser's answers under the winner's search text. (2026-09-03)
+                    "searchText": data["searchText"],
                     "ordinal": data["ordinal"],
                     "deletedAt": None,
                     "fieldProvenance": data["fieldProvenance"],
                 },
+                # The plan is present for every create the absorber can reach — `taken` holds only
+                # keyed rows, and a keyed create always registers one. The fallbacks are what a
+                # future caller that passes no plans would get: an empty picture matches only an
+                # empty row, so a later conflict on such a row is refused rather than silently
+                # re-applied, and the bare entity key is a scope both clients can at least show.
+                values=plan.values if plan is not None else {},
+                scope=plan.scope if plan is not None else data["entityKey"],
+                # Off the create dict, which always carries it — so an absorbed stage-1 singleton
+                # still promotes its craft onto the header after losing the INSERT race and being
+                # rewritten into an UPDATE of the winner's row. (2026-09-03)
+                entity_key=data["entityKey"],
             )
         )
     return still_creates, absorbed
+
+
+async def _settle_version_conflicts(
+    workshop_id: str,
+    stage_key: str,
+    updates: list[_RowUpdate],
+    conflicted: set[str],
+    *,
+    surrender: bool = False,
+) -> tuple[list[_RowUpdate], list[_RowUpdate]]:
+    """Decide what to do about each row whose version predicate matched nothing.
+
+    Returns ``(the plan to re-run, the rows this save is giving up on)``.
+
+    Called only after :class:`_StageVersionConflict` has rolled the write back, and it RE-READS
+    rather than reasoning from what was planned — for the reason :func:`_absorb_key_collisions`
+    gives for the same choice: the entire premise is that the stage's rows changed under this
+    request, so the pre-write picture is exactly the thing that cannot be trusted.
+
+    **TWO OUTCOMES, AND THE ONE THAT IS NOT A REFUSAL IS THE COMMON ONE.**
+
+    *The winner stored what this request was going to store.* Then there is nothing to argue about
+    and no one to tell: the update is re-planned at the fresh version and applied, which writes the
+    same answers a second time. That is the shape of an offline replay — a phone that never received
+    the acknowledgement for a sync and sent the queue again, two copies of one payload overlapping
+    in flight — and raising "somebody else got there first" at a designer whose own save is the
+    somebody else would be a false alarm on the most ordinary path this table has.
+
+    *The winner stored something else.* Then this request's picture of the row is genuinely stale,
+    and re-applying it would be precisely the silent overwrite ``version`` exists to prevent. The
+    update is DROPPED from the plan and handed back to the caller, which files one terse sentence in
+    the response's ``errors`` map under the same scope a validation refusal would use. Everything
+    else in the save still goes in.
+
+    *The row is gone entirely* — a hard delete, or the workshop cascaded away underneath this
+    request. Treated as a refusal, because it is one: there is nothing left to write to, and
+    inserting a replacement would resurrect a row somebody deleted while turning a concurrency
+    problem into a data problem.
+
+    **DROPPING IS ALSO HALF OF WHY THE RE-RUN LOOP ENDS.** A refused row leaves the plan and cannot
+    collide again, so a run of divergent conflicts shrinks to nothing on its own. A re-planned row
+    carries no such guarantee — the version it was refreshed to is current only until the next
+    writer — which is what ``surrender`` and ``_STAGE_WRITE_ATTEMPTS`` are for.
+
+    ``surrender`` IS THE LAST PASS, AND IT EXISTS SO THAT A PATHOLOGICAL RACE STILL SAVES THE STAGE.
+    With it set, every contested row is refused whether or not the winner stored the same answers —
+    so the plan that follows contains no row that has already collided, and the re-run can only fail
+    against a writer that has arrived since. That is what turns "three collisions in one request"
+    from a 500 into a 200 with three sentences in it, and a 500 here would lose the designer's whole
+    stage, which is the outcome ``_absorb_key_collisions`` was written to avoid in the first place.
+    The cost is a false conflict message in the one case the identity test would have absorbed, on a
+    request that has already been beaten twice. (2026-09-03)
+
+    ONE HONEST IMPRECISION IN THE FIRST OUTCOME, recorded rather than hidden: re-planning writes
+    THIS request's ``fieldProvenance``, which was merged against the picture this request read. The
+    stored ``data`` is identical by the test above, so no answer changes; what can differ is which
+    designer a field is attributed to when two people saved byte-identical values into one row
+    inside one window. That is a narrow enough case to accept, and far narrower than the false
+    conflict the test avoids. (2026-09-03)
+    """
+    rows = await db.dwstageentry.find_many(
+        where={"designWorkshopId": workshop_id, "stageKey": stage_key}
+    )
+    fresh = {row.id: row for row in rows}
+    kept: list[_RowUpdate] = []
+    refused: list[_RowUpdate] = []
+    for planned in updates:
+        if planned.row_id not in conflicted:
+            kept.append(planned)
+            continue
+        row = fresh.get(planned.row_id)
+        if row is None:
+            refused.append(planned)
+            continue
+        if not surrender and dict(row.data or {}) == planned.values:
+            kept.append(replace(planned, seen_version=int(getattr(row, "version", 0) or 0)))
+            continue
+        refused.append(planned)
+    return kept, refused
 
 
 def _json(data: dict[str, Any]) -> Any:
@@ -4983,17 +5738,68 @@ def _json(data: dict[str, Any]) -> Any:
     return Json(data)
 
 
-def _coerce_promoted(promoted: dict[str, Any], touched_entities: set[str]) -> dict[str, Any]:
+def _promotions_from_plan(
+    creates: list[dict[str, Any]],
+    updates: list[_RowUpdate],
+    create_plans: Mapping[tuple[str, str | None], _CreatePlan],
+) -> tuple[dict[str, Any], set[str]]:
+    """The promoted-column contribution of the rows an attempt is ACTUALLY ABOUT TO WRITE.
+
+    Returns ``(values by column, the entity keys that contributed)`` — exactly the two arguments
+    :func:`_coerce_promoted` takes, and both derived from the same source so they cannot disagree.
+
+    **WHY IT IS COMPUTED PER ATTEMPT RATHER THAN ONCE.** ``save_stage`` re-runs its whole
+    transaction after a race, and each recovery REWRITES THE PLAN: an INSERT the unique index
+    refused becomes an UPDATE of the winner's row (:func:`_absorb_key_collisions`), and a row a
+    second writer moved is DROPPED outright and reported (:func:`_settle_version_conflicts`). A
+    promoted dict built before the first attempt survives both rewrites unchanged, which is how a
+    row the server had just refused went on writing its values onto ``DesignWorkshop``. Reading the
+    plan at write time makes "refused" mean the same thing to the row and to the header.
+
+    **UPDATES BEFORE CREATES, AND THE ORDER CANNOT MATTER.** Every one of the fourteen
+    ``PROMOTED_COLUMNS`` is keyed ``workshopSetup.*``, ``workshopSetup`` is a SINGLETON, and a
+    payload's second entry for a singleton is folded into the first — so at most one planned write
+    per attempt can promote anything at all, and there is no second contribution for a traversal
+    order to choose between. The order is written down anyway, because a future promoted column on
+    a collection entity would make this a real question rather than a moot one.
+
+    A create with no registered plan contributes NOTHING — not even its entity key. Unreachable
+    today (every create registers a ``_CreatePlan``), and the arm is written this way on purpose:
+    with no values to promote, naming the entity would only tell :func:`_coerce_promoted` to NULL
+    that entity's columns, which is worse than leaving the header alone. (2026-09-03)
+    """
+    promoted: dict[str, Any] = {}
+    contributed: set[str] = set()
+    for planned in updates:
+        contributed.add(planned.entity_key)
+        promoted.update(promoted_values(planned.entity_key, planned.values))
+    for data in creates:
+        entity_key = str(data["entityKey"])
+        plan = create_plans.get((entity_key, data.get("clientKey")))
+        if plan is None:
+            continue
+        contributed.add(entity_key)
+        promoted.update(promoted_values(entity_key, plan.values))
+    return promoted, contributed
+
+
+def _coerce_promoted(promoted: dict[str, Any], contributing_entities: set[str]) -> dict[str, Any]:
     """Convert promoted values to the column types ``DesignWorkshop`` declares.
 
-    A column whose source entity was part of this save but whose value is now blank is set back
-    to NULL rather than skipped. Skipping it made a promoted column write-once: a designer who
-    typed the wrong sanction number, cleared the field and saved found the list still showing
-    the wrong number, with the JSON and the column permanently disagreeing about the same fact —
-    the exact drift the promoted columns' single-writer rule exists to prevent.
+    A column whose source entity is WRITING A ROW IN THIS TRANSACTION but whose value is now blank
+    is set back to NULL rather than skipped. Skipping it made a promoted column write-once: a
+    designer who typed the wrong sanction number, cleared the field and saved found the list still
+    showing the wrong number, with the JSON and the column permanently disagreeing about the same
+    fact — the exact drift the promoted columns' single-writer rule exists to prevent.
 
-    Columns whose entity was NOT in this payload are left alone entirely: saving stage 13 must
-    not blank the cover fields that stage 1 owns.
+    Columns whose entity is not writing a row are left alone entirely: saving stage 13 must not
+    blank the cover fields that stage 1 owns.
+
+    ``contributing_entities`` IS THE PLAN'S ANSWER, NOT THE PAYLOAD'S, and the distinction is the
+    whole of the 2026-09-03 fix. It comes from :func:`_promotions_from_plan`, over the rows this
+    attempt is about to write, so a row the version guard refused neither writes its values here
+    nor blanks the winner's. Handing it "every entity the payload named" instead is what let a
+    refused stage-1 save overwrite — and, when its own values were empty, NULL — the cover page.
 
     ``title`` IS THE ONE EXCEPTION, and not out of taste: it is the only promoted column
     ``DesignWorkshop`` declares NOT NULL, so nulling it is not a blank cell, it is a Prisma
@@ -5007,7 +5813,7 @@ def _coerce_promoted(promoted: dict[str, Any], touched_entities: set[str]) -> di
     out: dict[str, Any] = {}
     for path, column in PROMOTED_COLUMNS.items():
         entity_key = path.partition(".")[0]
-        if entity_key not in touched_entities:
+        if entity_key not in contributing_entities:
             continue
         value = promoted.get(column)
         if value in (None, ""):
@@ -5192,6 +5998,29 @@ def reference_ids(entries: list[Any]) -> dict[str, set[str]]:
     at another entry OF THIS SAME WORKSHOP — ``prototype.sketchRef`` at a sketch — and that record
     is already in ``entries``; looking it up as though it were an artisan would query a delegate
     that does not exist.
+
+    THAT IS STILL TRUE NOW THAT INTERNAL REFS HYDRATE (2026-09-03), and the reason is worth one
+    line so the exclusion does not read as an oversight. This function feeds
+    ``load_report_references``, which loads the CANONICAL RECORDS a report cites so the document can
+    print a live artisan's photograph beside the copy on the row. An internal ref has no canonical
+    record outside the workshop: what it names is a row this same report already renders, and what
+    a stage-16 catalogue entry carries from it was copied at save by ``hydrate_entries`` and is in
+    the entry's own ``data``. There is nothing here left to fetch.
+
+    ── A MULTI_ENUM MAY CITE RECORDS TOO, AND IT IS WALKED HERE FOR THE SAME REASON (2026-09-03) ─
+
+    ``processStep.toolsUsed`` and ``prototype.toolsUsed`` stopped being free-text TAGS and became a
+    multi-select over ``ToolDocumentation``. Their stored value is an ARRAY of the same ids a REF
+    holds one of, and ``ReportBuilder._value`` resolves each of them through the very
+    ``WorkshopData.references`` this function fills — so leaving the type out here would have left
+    every one of those tokens unresolvable and printed nothing where a tool's name belongs, which
+    is strictly worse than the TAGS list it replaced.
+
+    THE ARRAY ROUTINELY HOLDS PROSE AS WELL, and that is not a problem to solve here: a fielded
+    0.0.7 handset still draws the old tag box and writes ``"pit loom"``. Those strings are added to
+    the wanted set, miss every ``id`` in the table, and cost one row of a bounded ``IN`` clause;
+    ``_value`` then prints them verbatim. Filtering them out by shape would put a second opinion
+    about what an id looks like in a second file.
     """
     ref_keys: dict[str, dict[str, str]] = {}
     for spec in stages():
@@ -5199,7 +6028,8 @@ def reference_ids(entries: list[Any]) -> dict[str, set[str]]:
             keys = {
                 f.key: f.ref_model
                 for f in entity.fields
-                if f.type is FieldType.REF and f.ref_model in REFERENCE_MODELS
+                if f.type in (FieldType.REF, FieldType.MULTI_ENUM)
+                and f.ref_model in REFERENCE_MODELS
             }
             if keys:
                 ref_keys[entity.key] = keys
@@ -5214,6 +6044,13 @@ def reference_ids(entries: list[Any]) -> dict[str, set[str]]:
             value = data.get(key)
             if isinstance(value, str) and value:
                 found.setdefault(model, set()).add(value)
+            # The multi-select's shape. ``str`` is checked first because a string IS iterable and
+            # would otherwise be collected one CHARACTER at a time — 25 single-letter "ids" per
+            # citation, every one of them a miss, on the busiest read the report path makes.
+            elif isinstance(value, (list, tuple)):
+                for token in value:
+                    if isinstance(token, str) and token.strip():
+                        found.setdefault(model, set()).add(token.strip())
     return found
 
 
@@ -5459,6 +6296,29 @@ def _media_ids(entries: list[Any]) -> set[str]:
 REPORT_IMAGE_BUDGET_BYTES = 96 * 1024 * 1024
 REPORT_IMAGE_MAX_BYTES = 16 * 1024 * 1024
 
+#: How many photographs `MediaIndex.prefetch` has in flight at once.
+#:
+#: FOUR, AND THE NUMBER IS BOUNDED FROM BOTH ENDS BY SOMETHING REAL rather than picked for taste.
+#:
+#: From below: the loop it replaced was strictly serial, so a forty-photograph report paid forty
+#: round trips to another region END TO END, inside the single render worker thread, on a request a
+#: designer is standing there waiting for. The bytes were never the bottleneck; the latency was, and
+#: latency is the one cost a window removes without spending anything.
+#:
+#: From above: every downloaded-but-not-yet-committed photograph is bytes this process is holding
+#: BEYOND the budget the constants above exist to enforce, and this whole class was written because
+#: nothing bounded that. So the window is what caps the overshoot: at most this many undecided
+#: images, each of them bounded by `get_object_bytes(max_bytes=...)` to the per-image ceiling (or to
+#: the budget's remaining headroom, whichever is smaller). Four times 16 MiB is 64 MiB of transient
+#: peak on top of a 96 MiB budget — comfortable on the 1 GiB pilot box that `services/memory_budget`
+#: shrinks the budget for, and the shrunken budget shrinks this with it, because the per-image cap is
+#: `min(REPORT_IMAGE_MAX_BYTES, ceiling)`.
+#:
+#: A LARGER WINDOW BUYS LESS THAN IT LOOKS. The commit is strictly in `wanted` order (see
+#: `prefetch`), so a window wider than the tail of images that will actually fit only downloads
+#: pictures the budget is about to refuse. (2026-09-03)
+REPORT_IMAGE_FETCH_WORKERS = 4
+
 
 class MediaIndex:
     """Every image the record references, resolved once.
@@ -5513,8 +6373,11 @@ class MediaIndex:
         """Download the bytes of exactly the images the built document referenced, WITHIN A BUDGET.
 
         Synchronous, and called from inside ``asyncio.to_thread`` along with the render itself.
-        ``get_object_bytes`` is a blocking boto3 call, so running it on the worker thread is both
-        correct and what the rest of this codebase does with an S3 read it cannot stream.
+        ``get_object_bytes`` is a blocking boto3 call, so running it on threads is both correct and
+        what the rest of this codebase does with an S3 read it cannot stream — it is now a small
+        pool of them rather than the calling thread alone, for the reason the section on the window
+        below gives. Nothing about this method is async, and the render it belongs to still occupies
+        exactly one ``to_thread`` slot.
 
         **AND THIS ONE CANNOT BE STREAMED, WHICH IS WHY THE FIX IS A BUDGET AND NOT A TEMP FILE.**
         The renderers take the bytes through :meth:`blob`, synchronously, one dict read at a time —
@@ -5539,50 +6402,166 @@ class MediaIndex:
         a budget that runs out costs the LAST pictures in the report and never the first. Nothing is
         sorted, deliberately — sorting by size would fit more pictures in and would decide which
         page loses one on a criterion no reader could guess.
+
+        ── THE DOWNLOADS OVERLAP NOW; THE DECISIONS DO NOT ───────────────────────────────────────
+
+        **THIS LOOP WAS STRICTLY SERIAL AND THE LATENCY WAS THE WHOLE COST.** A forty-photograph
+        report paid forty round trips to another region END TO END, one after another, on the single
+        render worker thread, while a designer waited. The bytes were never the bottleneck: the
+        objects are megabytes and the link is not the problem; the problem was that nothing started
+        until the previous one had finished. So a :class:`~concurrent.futures.ThreadPoolExecutor` of
+        :data:`REPORT_IMAGE_FETCH_WORKERS` now runs AHEAD of the commit point, and
+        ``get_object_bytes`` stays exactly the blocking boto3 call it was — this is I/O waiting, so
+        threads are the right tool and no part of the render becomes async. (2026-09-03)
+
+        **EVERY DECISION IS STILL MADE ONE AT A TIME, IN ``wanted`` ORDER, ON THIS THREAD.** That is
+        not a stylistic preference, it is the entire priority contract above: a budget spent by a
+        thread that happened to finish first would cost whichever pictures were slowest to download,
+        which is a criterion no reader could guess and no page could predict. The pool returns bytes;
+        it decides nothing. ``_blobs``, ``oversize`` and ``budget_spent`` are touched only here, so
+        there is no shared mutable state for the workers to race over, and the observable results —
+        which photographs are embedded, which are listed as oversize, in what order, and what
+        ``budget_spent`` ends at — are what the serial loop produced for the same inputs.
+
+        **THE DECLARED-SIZE PRE-SKIP KEEPS BOTH OF ITS HALVES, SPLIT BY WHAT EACH ONE DEPENDS ON.**
+        "This row says it is bigger than any single picture may be" depends on nothing that changes
+        during the run, so it is answered while the plan is built and no fetch is ever started. "This
+        row says it will not fit in what is LEFT" depends on ``budget_spent``, which only moves as
+        pictures commit, so it is answered at the commit point with exactly the total the serial loop
+        would have had. The cost of that split is the honest one: an image refused by the second half
+        may already have been fetched by a worker running ahead of it, so "refused without a round
+        trip" is now a promise about the first half only, and about the whole tail once the budget is
+        genuinely exhausted (nothing further is submitted at all from that point).
+
+        **AND THE BYTES IN FLIGHT ARE BOUNDED, WHICH THE SERIAL LOOP'S NEVER WERE.** Each fetch is
+        given ``max_bytes`` — the per-image ceiling, or the budget's remaining headroom when that is
+        smaller — so a worker cannot pull a 668 MiB object into this process to have it rejected a
+        line later, which is what the serial loop did (it read the whole thing and then measured it).
+        That bound is looser than the check at the commit point, never tighter, so it can only refuse
+        pictures the commit point was going to refuse anyway. It costs one HEAD request per fetched
+        photograph and repays it by not moving the bytes of one that will not fit.
+
+        ONE DELIBERATE DIFFERENCE FROM THE SERIAL LOOP, and it is an improvement rather than a
+        rounding error: a ZERO-BYTE object reached with the budget exactly exhausted used to be
+        embedded (``0 > per_image`` is false and ``spent + 0 > ceiling`` is false), and is now listed
+        as oversize because nothing is submitted once ``budget_spent`` has reached the ceiling. Zero
+        bytes is not a photograph, ``render_pdf`` cannot place it, and a visible line in the warning
+        is better than a silently blank frame.
         """
+        from concurrent.futures import Future, ThreadPoolExecutor
+
         from app.services.memory_budget import budget_bytes
-        from app.services.s3 import get_object_bytes
+        from app.services.s3 import ObjectTooLarge, get_object_bytes
 
         # ONE READING OF FREE MEMORY FOR THE WHOLE LOOP, not one per image. The budget is a promise
         # about this render's total, and re-deriving it mid-loop would let the total drift with
         # whatever else the box happened to be doing between two photographs.
         ceiling = budget if budget is not None else budget_bytes(REPORT_IMAGE_BUDGET_BYTES)
         per_image = min(REPORT_IMAGE_MAX_BYTES, ceiling)
+
+        # THE PLAN: one entry per image this call has not already resolved, in `wanted` order, as
+        # `(source, object key or None, declared size, refuse-as-oversize)`. Built in full before
+        # anything is submitted, because the window has to be able to look AHEAD of the commit point
+        # and the commit point has to walk the same list in the same order.
+        #
+        # A key of None means "no fetch": either the lookup handed back no object key (the row is
+        # gone, or the caller is not entitled to that uploader's files — `withheld` already carries
+        # the count) or the row's own declared size is over the per-image ceiling. Only the second
+        # is an oversize refusal, which is what the last element records; the two must not be merged,
+        # because `render_report` turns them into different sentences.
+        plan: list[tuple[str, str | None, int, bool]] = []
+        planned: set[str] = set()
         for image in wanted:
-            if image.source in self._blobs:
+            if image.source in self._blobs or image.source in planned:
                 continue
+            planned.add(image.source)
             key = self._keys.get(image.source)
-            if not key:
-                self._blobs[image.source] = None
-                continue
             declared = self._sizes.get(image.source, 0)
-            if declared and (declared > per_image or self.budget_spent + declared > ceiling):
+            if not key:
+                plan.append((image.source, None, 0, False))
+            elif declared and declared > per_image:
                 # Refused without a round trip. The declared size is a claim, so it can only be
                 # trusted in this direction: a row that says it is too big is not worth fetching to
                 # find out, while a row that says it is small is checked against what arrives.
-                self._blobs[image.source] = None
-                self.oversize.append(image.source)
-                continue
-            try:
-                blob = get_object_bytes(key)
-            except Exception:  # noqa: BLE001 - one unreadable photo must not fail the export
-                # Boto3 raises a different class for a missing key, a permission problem and a
-                # timeout, and the answer to all three is the same: leave the picture out and
-                # let the caller report it as a warning. A designer waiting in a field for a
-                # report does not benefit from an exception naming the S3 error code.
-                self._blobs[image.source] = None
-                continue
-            size = len(blob)
-            if size > per_image or self.budget_spent + size > ceiling:
-                # THE REAL LENGTH, WHICH IS THE ONE THE BUDGET IS SPENT AGAINST. Dropping the
-                # reference before continuing so the bytes are collectable immediately rather than
-                # staying alive until the loop variable is rebound on the next photograph.
-                blob = None
-                self._blobs[image.source] = None
-                self.oversize.append(image.source)
-                continue
-            self.budget_spent += size
-            self._blobs[image.source] = blob
+                plan.append((image.source, None, declared, True))
+            else:
+                plan.append((image.source, key, declared, False))
+
+        with ThreadPoolExecutor(max_workers=REPORT_IMAGE_FETCH_WORKERS) as pool:
+            inflight: dict[int, Future[bytes]] = {}
+            submitted = 0
+
+            def submit_ahead() -> None:
+                """Fill the window from wherever it got to, without deciding anything."""
+                nonlocal submitted
+                while (
+                    submitted < len(plan)
+                    and len(inflight) < REPORT_IMAGE_FETCH_WORKERS
+                    # NOTHING IS STARTED ONCE THE BUDGET IS GONE. `budget_spent` never decreases, so
+                    # from this point every remaining picture is refused whatever it turns out to
+                    # weigh — and refusing it without a round trip is the guarantee the declared-size
+                    # skip above was written for, applied here to the whole tail.
+                    and self.budget_spent < ceiling
+                ):
+                    _source, key, _declared, _refused = plan[submitted]
+                    if key is not None:
+                        # THE HEADROOM, NOT JUST THE PER-IMAGE CAP. `budget_spent` can only have
+                        # grown by the time this future is committed, so this limit is never tighter
+                        # than the test that will be applied there — it cannot refuse a picture the
+                        # commit point would have kept, only stop moving bytes for one it would not.
+                        inflight[submitted] = pool.submit(
+                            get_object_bytes,
+                            key,
+                            max_bytes=min(per_image, ceiling - self.budget_spent),
+                        )
+                    submitted += 1
+
+            for index, (source, key, declared, refused) in enumerate(plan):
+                submit_ahead()
+                if key is None:
+                    self._blobs[source] = None
+                    if refused:
+                        self.oversize.append(source)
+                    continue
+                future = inflight.pop(index, None)
+                if future is None or (declared and self.budget_spent + declared > ceiling):
+                    # `future is None` is the exhausted tail; the second arm is the budget-dependent
+                    # half of the declared-size skip, asked here so it sees the same running total
+                    # the serial loop saw. A future that was started anyway is cancelled — which
+                    # only succeeds if no worker has picked it up, and when it does not, the bytes
+                    # are dropped unreferenced rather than kept.
+                    if future is not None:
+                        future.cancel()
+                    self._blobs[source] = None
+                    self.oversize.append(source)
+                    continue
+                try:
+                    blob = future.result()
+                except ObjectTooLarge:
+                    # The per-image ceiling, enforced during the transfer instead of after it. Same
+                    # verdict as the length check below and the same list, so a caller cannot tell
+                    # which layer refused the picture — only that it was left out and why.
+                    self._blobs[source] = None
+                    self.oversize.append(source)
+                    continue
+                except Exception:  # noqa: BLE001 - one unreadable photo must not fail the export
+                    # Boto3 raises a different class for a missing key, a permission problem and a
+                    # timeout, and the answer to all three is the same: leave the picture out and
+                    # let the caller report it as a warning. A designer waiting in a field for a
+                    # report does not benefit from an exception naming the S3 error code.
+                    self._blobs[source] = None
+                    continue
+                size = len(blob)
+                if size > per_image or self.budget_spent + size > ceiling:
+                    # THE REAL LENGTH, WHICH IS THE ONE THE BUDGET IS SPENT AGAINST. Dropping the
+                    # reference before continuing so the bytes are collectable immediately rather
+                    # than staying alive until the loop variable is rebound on the next photograph.
+                    blob = None
+                    self._blobs[source] = None
+                    self.oversize.append(source)
+                    continue
+                self.budget_spent += size
+                self._blobs[source] = blob
 
 
 async def media_resolver(

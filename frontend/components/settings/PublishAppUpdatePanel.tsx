@@ -100,7 +100,22 @@ export function PublishAppUpdatePanel() {
           versionName: versionName.trim(),
           objectKey: object.objectKey,
           url: object.publicUrl,
-          notes: notes.trim() || null
+          notes: notes.trim() || null,
+          /*
+            THE BYTE COUNT OF THE FILE THIS PANEL JUST UPLOADED, and this browser is the only party
+            that can state it (2026-09-03). `POST /app/release` stores `sizeBytes` exactly as sent
+            precisely because only the publisher holds the file; the server has the object key and no
+            way to measure what is behind it without a HEAD it makes nowhere else on the route. The
+            phone then compares it against the bytes it actually downloaded
+            (`android/…/data/AppUpdateIntegrity.kt`) — a truncated APK on a village connection
+            otherwise reaches the installer and fails there, with nothing saying why.
+
+            `file.size` and not the upload's own progress total: this is the measurement of the file
+            the designer chose, taken by the process that had it, which is the same measurement the
+            handset makes of what it received. The field is optional server-side and null records no
+            claim, so a browser that has not shipped this line publishes exactly as it did before.
+          */
+          sizeBytes: file.size
         })
       });
       setCurrent(published);

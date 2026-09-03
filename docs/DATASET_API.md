@@ -53,6 +53,12 @@ Notes:
   *because* it is narrower.
 - A non-admin is refused at **issue** time, not at first use.
 - Google ID tokens are refused: that flow needs a browser, and this credential is for a process.
+- **The failure budget on this door is per ACCOUNT, and it is shared with the interactive sign-in
+  door** (2026-09-03). Ten failed credential attempts for one account within five minutes, counted
+  across `POST /api/datasets/token` and `POST /api/auth/login` *together*, close both. A correct
+  password is refunded and never counts. The consequence is worth stating plainly because it is the
+  point of counting per account rather than per address: **a script guessing at an admin's password
+  closes that admin's own sign-in.** Waiting out the window is the only remedy; there is no unlock.
 
 All requests below carry `-H "Authorization: Bearer $TOKEN"`.
 
@@ -295,7 +301,16 @@ Bytes come **straight from S3**, never through the API — the web box is a sing
 | `404` | unknown dataset name — the message lists the real ones |
 | `422` | `.csv` on a dataset the field registry does not describe (`media`) |
 
-Tests: `backend/tests/test_dataset_api.py`.
+**Three more that only `POST /api/datasets/token` answers**, all of them reachable with a *correct*
+password — which is why they are tabulated separately rather than folded into the rows above:
+
+| status | when |
+|---|---|
+| `403` | A correct **ADMIN** credential whose allow-list row is `REJECTED` or `SUSPENDED`. The body carries the suspension's own sentence and the response carries the `X-Access-Status` header, the same pair the sign-in screens branch on. |
+| `503` | The account is an admin whose allow-list row is **missing or `PENDING`**, *and* the approval queue is already at `ACCESS_PENDING_MAX`, so the request could not even be recorded. **Driven by other people's traffic, not by anything about the caller's account** — a nightly mint can start failing 503 because unrelated strangers filled the queue. |
+| `429` | Ten failed credential attempts for **this account** within five minutes, counted across this route and `POST /api/auth/login` together. A correct password is refunded and never counts. Body: `{"detail": "Too many failed credential attempts for this account. Wait a few minutes and try again — a correct password does not count against this limit."}` Deliberately a 429 and not a 401, so the per-network budget does not charge the same refusal a second time. |
+
+Tests: `backend/tests/test_dataset_api.py`, `backend/tests/test_dataset_token_budget.py`.
 
 ---
 

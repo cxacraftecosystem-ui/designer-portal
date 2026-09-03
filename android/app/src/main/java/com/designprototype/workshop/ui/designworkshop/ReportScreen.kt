@@ -3461,13 +3461,21 @@ internal class DwRefLabels(
 }
 
 /**
- * Whether a resolved-to-nothing REF is holding an opaque record id or something a person typed.
+ * Whether a resolved-to-nothing reference is holding an opaque record id or something a person typed.
  *
  * Byte-for-byte `report_builder._OPAQUE_ID`. Deliberately broader than "is this a cuid", because the
  * question is not that — it is "would a reader recognise this as a name". "SK-01", "Runner v2" and
  * "प्रोटोटाइप 3" all fail it and are printed; "cmsik2jg8000eh8xc1lcy661a" passes it and is not.
+ *
+ * `internal` RATHER THAN `private` SINCE 2026-09-03, and one copy is the whole point. The record-
+ * backed MULTI_ENUM promotion gave the FORM the same question the report already had —
+ * `DwReferenceMultiSelectField` draws held values, and a promoted field's array holds record ids
+ * AND the free text its TAGS predecessor collected — so the two surfaces have to agree about which
+ * is which or the picker will draw a word as a link that the report prints as a word. Same module,
+ * same package, one regex. The browser's mirror is `FieldInput.tsx`'s `OPAQUE_ID`, which cannot
+ * share this one and says so.
  */
-private val OPAQUE_ID = Regex("^[a-z0-9]{16,}$")
+internal val OPAQUE_ID = Regex("^[a-z0-9]{16,}$")
 
 /**
  * The substitute an unfilled REQUIRED field prints — `_printable`'s "Not recorded."
@@ -4142,9 +4150,35 @@ private fun displayValue(field: FieldDto, value: JsonElement?, refs: DwRefLabels
         }
         DwFieldType.ENUM -> field.options.firstOrNull { it.value == DwValues.text(value) }?.label
             ?: DwValues.text(value)
-        DwFieldType.MULTI_ENUM -> DwValues.list(value).joinToString(", ") { token ->
-            field.options.firstOrNull { it.value == token }?.label ?: token
-        }
+        // TWO KINDS OF MULTI_ENUM, AND THE SECOND ONE ARRIVED ON 2026-09-03.
+        //
+        // A MULTI_ENUM draws its options either from an authored vocabulary — `field.options`,
+        // inlined by the server — or from the REPOSITORY, by naming a `refModel`. The second kind
+        // is `processStep.toolsUsed` and `prototype.toolsUsed`, promoted from free-text TAGS so a
+        // documented tool stops being retyped once per step. `field.options` is EMPTY for those, so
+        // the enum arm below would have fallen through to the raw token on every one of them and
+        // printed a column of cuids into an on-device report.
+        //
+        // THE RECORD ARM IS `ReportBuilder._value`'s, RULE FOR RULE, and it has to be: this file and
+        // that one are two copies of one workshop's report and a designer compares them. Resolve;
+        // an id that resolves prints its record's name, an id that does not prints NOTHING (the tool
+        // was deleted after this step cited it, and a bare cuid on a ministry's page is worse than a
+        // gap), and anything else prints ITSELF — because the array still holds, and on a handset
+        // running an older registry is still collecting, the tool names the TAGS box gathered.
+        DwFieldType.MULTI_ENUM -> DwValues.list(value)
+            .mapNotNull { token ->
+                if (field.options.isNotEmpty()) {
+                    field.options.firstOrNull { it.value == token }?.label ?: token
+                } else {
+                    val label = refs.label(token)
+                    when {
+                        label.isNotBlank() -> label
+                        OPAQUE_ID.matches(token) -> null
+                        else -> token
+                    }
+                }
+            }
+            .joinToString(", ")
         DwFieldType.TAGS -> DwValues.list(value).joinToString(", ")
 
         // A PICTURE NEVER PRINTS AS TEXT; it is placed by [imagesOf]. `format_value`'s own arm, and

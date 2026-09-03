@@ -3,6 +3,7 @@
 import { Download, ExternalLink, FileText, Headphones, Image as ImageIcon, Loader2, Maximize2, Video, X } from "lucide-react";
 import { useEffect, useRef, type ReactNode } from "react";
 
+import { useMediaUrl } from "@/components/hooks/useMediaUrl";
 import { Markdown } from "@/components/Markdown";
 import { AudioPlayer } from "@/components/ui/AudioPlayer";
 import { bytes } from "@/lib/format";
@@ -187,6 +188,11 @@ export function MediaPreviewTile({
   onRetry?: () => void;
 }) {
   const kind = resolvePreviewKind(item);
+  // The URL a media row carries can EXPIRE (the API signs read URLs once `MEDIA_PRESIGNED_READS` is
+  // on), and a tile is exactly where a stale one shows up: a gallery sits in a form for as long as
+  // the designer is typing. `useMediaUrl` re-reads the row once and never more than once — read its
+  // header before adding a second retry anywhere near this file.
+  const { src, onError } = useMediaUrl(item);
   const percent = progress === null ? null : Math.round(Math.min(1, Math.max(0, progress)) * 100);
   return (
     // The WHOLE card opens the lightbox; the remove button and caller-provided actions stop
@@ -205,11 +211,11 @@ export function MediaPreviewTile({
         }}
         aria-label={`Open preview for ${item.name}`}
       >
-        {kind === "IMAGE" && item.url ? (
+        {kind === "IMAGE" && src ? (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={item.url} alt={item.caption || item.name} className="h-full w-full object-cover" loading="lazy" />
-        ) : kind === "VIDEO" && item.url ? (
-          <video src={item.url} className="h-full w-full object-cover" muted playsInline />
+          <img src={src} onError={onError} alt={item.caption || item.name} className="h-full w-full object-cover" loading="lazy" />
+        ) : kind === "VIDEO" && src ? (
+          <video src={src} onError={onError} className="h-full w-full object-cover" muted playsInline />
         ) : kind === "AUDIO" ? (
           <div className="grid gap-2 text-center">
             <div className="mx-auto rounded-full bg-card p-3 text-field-700 shadow-sm">{iconForType(kind)}</div>
@@ -335,6 +341,10 @@ export function MediaLightbox({ item, onClose }: { item: PreviewMedia; onClose: 
   const downOnBackdrop = useRef(false);
   const panelRef = useRef<HTMLDivElement | null>(null);
   const kind = resolvePreviewKind(item);
+  // ONE URL FOR THE WHOLE DIALOG — the viewer, Save and Open all point at the same string, so a
+  // refreshed signature reaches the download controls too. Handing `item.url` to Save while the
+  // player used a refreshed one is the shape of "the picture is there and the download 403s".
+  const { src, onError } = useMediaUrl(item);
 
   /**
    * The three things `aria-modal="true"` PROMISES, none of which this dialog was keeping.
@@ -441,14 +451,14 @@ export function MediaLightbox({ item, onClose }: { item: PreviewMedia; onClose: 
             <p className="text-sm text-ink-muted">{mediaLabel(item)}</p>
           </div>
           <div className="flex items-center gap-2">
-            {item.url ? (
-              <button type="button" className="field-button-secondary" onClick={() => saveToDevice(item.url as string, item.name)}>
+            {src ? (
+              <button type="button" className="field-button-secondary" onClick={() => saveToDevice(src, item.name)}>
                 <Download className="h-4 w-4" aria-hidden />
                 Save
               </button>
             ) : null}
-            {item.url ? (
-              <a className="field-button-secondary" href={item.url} target="_blank" rel="noreferrer">
+            {src ? (
+              <a className="field-button-secondary" href={src} target="_blank" rel="noreferrer">
                 <ExternalLink className="h-4 w-4" aria-hidden />
                 Open
               </a>
@@ -459,16 +469,22 @@ export function MediaLightbox({ item, onClose }: { item: PreviewMedia; onClose: 
           </div>
         </div>
         <div className="grid max-h-[74vh] place-items-center overflow-auto rounded-md bg-card p-3">
-          {kind === "IMAGE" && item.url ? (
+          {kind === "IMAGE" && src ? (
             // eslint-disable-next-line @next/next/no-img-element
-            <img src={item.url} alt={item.caption || item.name} className="max-h-[70vh] max-w-full rounded-md object-contain" />
-          ) : kind === "VIDEO" && item.url ? (
-            <video src={item.url} controls className="max-h-[70vh] w-full rounded-md bg-black" />
-          ) : kind === "AUDIO" && item.url ? (
-            <AudioPlayer src={item.url} className="w-full" />
-          ) : kind === "PDF" && item.url ? (
-            <iframe src={item.url} title={item.name} className="h-[70vh] w-full rounded-md border border-line-200" />
-          ) : item.url ? (
+            <img src={src} onError={onError} alt={item.caption || item.name} className="max-h-[70vh] max-w-full rounded-md object-contain" />
+          ) : kind === "VIDEO" && src ? (
+            <video src={src} onError={onError} controls className="max-h-[70vh] w-full rounded-md bg-black" />
+          ) : kind === "AUDIO" && src ? (
+            // NO `onError` HERE, AND IT IS NOT AN OVERSIGHT. `AudioPlayer` owns its own `<audio>`
+            // element and exposes no error hook; adding one would be a prop threaded through a
+            // component this change has no business editing. The tile above the dialog carries the
+            // retry for the same file, so a clip whose signature expired is refreshed by the
+            // gallery it was opened from — through the SAME module ledger, which is what stops the
+            // two paths retrying independently. Named in the handoff notes.
+            <AudioPlayer src={src} className="w-full" />
+          ) : kind === "PDF" && src ? (
+            <iframe src={src} onError={onError} title={item.name} className="h-[70vh] w-full rounded-md border border-line-200" />
+          ) : src ? (
             <div className="grid w-full max-w-md justify-items-center gap-3 rounded-md border border-line-200 bg-field-50 p-6 text-center">
               <div className="rounded-full bg-card p-3 text-field-700 shadow-sm">{iconForType(kind)}</div>
               <div className="min-w-0 w-full">
@@ -477,11 +493,11 @@ export function MediaLightbox({ item, onClose }: { item: PreviewMedia; onClose: 
               </div>
               <p className="text-sm text-ink-muted">This file type cannot be rendered inline — download it to view.</p>
               <div className="flex flex-wrap justify-center gap-2">
-                <button type="button" className="field-button" onClick={() => saveToDevice(item.url as string, item.name)}>
+                <button type="button" className="field-button" onClick={() => saveToDevice(src, item.name)}>
                   <Download className="h-4 w-4" aria-hidden />
                   Download file
                 </button>
-                <a className="field-button-secondary" href={item.url} target="_blank" rel="noreferrer">
+                <a className="field-button-secondary" href={src} target="_blank" rel="noreferrer">
                   <ExternalLink className="h-4 w-4" aria-hidden />
                   Open in new tab
                 </a>

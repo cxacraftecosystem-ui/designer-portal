@@ -1,0 +1,252 @@
+name: Nightly database backup
+
+# ─── THE HIGHEST-CONSEQUENCE GAP THIS REPOSITORY HAD, AND WHY IT WAS INVISIBLE ────────────
+#
+# Nothing anywhere took a copy of the database. The EC2 box is stateless on purpose — see the
+# header of infra/terraform/main.tf, which says so proudly — and every fact in the product lives
+# in the managed Postgres named only by DATABASE_URL. That design is correct and it makes the
+# absence of a backup WORSE rather than better: rebuilding the box restores the API in minutes and
+# restores nothing at all of the 396 crafts, 1,229 artisans and 21,971 design workshops that field
+# researchers have spent a season entering. A dropped table, a bad migration, a deleted project on
+# the database provider's side, or an account lockout is unrecoverable and permanently so.
+#
+# The provider's own point-in-time recovery is a paid feature on this deployment and is not a
+# substitute anyway: it is a copy held by the same vendor whose failure it is supposed to survive.
+# This workflow puts a plain, portable `pg_dump` in a bucket in a different account boundary, on a
+# schedule, and FAILS LOUDLY when it does not. Restoring from it needs nothing but `psql`.
+#
+# ─── WHY 03:00 UTC ────────────────────────────────────────────────────────────────────────
+# Deliberately off 20:00, which is when keep-supabase-active.yml pings the database to stop the
+# free tier idling out. Two scheduled workflows opening session-mode connections to the same
+# pooler at the same minute is how a backup starts failing with EMAXCONNSESSION and gets read as a
+# database fault (deploy-backend.yml carries the same lesson from the migrate side). 03:00 UTC is
+# 08:30 IST — after the overnight lull, before the field day starts, so a red run is seen the same
+# morning rather than a day later.
+#
+# GitHub's cron is best-effort and drifts under load; a run that starts at 03:20 is normal and is
+# not a defect. Nothing here depends on the exact minute.
+#
+# ─── THE SECRETS, AND WHY TWO OF THEM ARE NEW ─────────────────────────────────────────────
+#   DATABASE_URL                the session-pooler DSN. The session pooler (not the transaction
+#                               pooler) because pg_dump holds one connection open across the whole
+#                               dump and sets session state — the same reason migrations need it,
+#                               written up in deploy-backend.yml's migrate step.
+#   AWS_MEDIA_ACCESS_KEY_ID     ─┐ THESE ARE NOT `AWS_ACCESS_KEY_ID`. That secret belongs to
+#   AWS_MEDIA_SECRET_ACCESS_KEY ─┘ `designrepo-ci-sg`, whose inline policy allows exactly two
+#                               security-group calls on one group ARN and NOTHING else in the
+#                               account — it cannot write an object and must not be widened to,
+#                               because it is handed to a step that opens a port. The media user
+#                               (`aws_iam_user.media` in infra/terraform/main.tf) is the right
+#                               identity here, and since 2026-09-03 its policy is scoped by prefix:
+#                               `PutObject` on `backups/*` and a prefix-conditioned `ListBucket`,
+#                               with the app's Put/Get/Delete confined to `media/*`.
+#
+#                               THIS KEY PAIR IS SHARED WITH THE PRODUCTION API BOX, which is the
+#                               reason that split matters to THIS file. The same credential is in
+#                               `BACKEND_ENV` on an internet-facing t3.micro, so anything this job
+#                               is granted is also granted to whatever compromises the API. It is
+#                               write-only over `backups/`: this workflow CANNOT read back a dump
+#                               and CANNOT delete one — see the verification step, which is written
+#                               the way it is precisely to avoid needing GetObject.
+#
+# ─── WHERE THE DUMPS GO, AND WHAT ACTUALLY KEEPS THEM PRIVATE ─────────────────────────────
+# s3://designrepo-media-626159998512/backups/designer-portal/YYYY-MM-DD.sql.gz
+#
+# TWO POLICIES DECIDE THIS, NOT ONE, AND THIS NOTE USED TO NAME ONLY THE FIRST:
+#
+#   1. The bucket's public-read policy (`aws_s3_bucket_policy.media_public_read`) grants anonymous
+#      s3:GetObject on `media/*` and nothing else, so an object under `backups/` is not public even
+#      though the bucket holds public objects. Do not move these under `media/`, and do not widen
+#      that policy to `*`: a full database dump answering an anonymous GET is the worst object this
+#      account could hold.
+#   2. `aws_iam_user_policy.media` — the credential THIS WORKFLOW USES, and the one that also lives
+#      on the production API box. Until 2026-09-03 it allowed Put/Get/DeleteObject on the whole
+#      bucket, which meant that from the day the first dump landed here, anything holding the API's
+#      `.env` could read and delete every backup. The prefix was never what made that safe; nobody
+#      had looked at the second policy. It is now split: Put/Get/Delete confined to `media/*`,
+#      `PutObject` alone on `backups/*`, and a `ListBucket` conditioned on the `backups/` prefix so
+#      the proof step below can measure an object it cannot read.
+#
+# The prefix is the SHAPE of the boundary; those two policies are the boundary. A third prefix in
+# this bucket is a change to both of them, not a change to a path string.
+#
+# RETENTION IS NOT SET HERE, AND CANNOT BE. A workflow can write an object; it cannot express
+# "expire it in thirty days" without deleting one, and this job holds no delete right anywhere in
+# the account — deliberately, since the same key pair sits on the production API box. (It can now
+# LIST `backups/`, for the proof step; listing is not deleting.) Expiry belongs to the bucket, and
+# it is declared in infra/terraform/main.tf as an
+# `aws_s3_bucket_lifecycle_configuration` scoped to the `backups/` prefix (~30 days). If that rule
+# is ever removed, this job keeps working and the bucket grows forever — which is a cost problem,
+# not a data-loss one, and is the right way round.
+#
+# ─── NO `|| true` ANYWHERE IN THIS FILE, DELIBERATELY ─────────────────────────────────────
+# A backup job that swallows its own errors is worse than no backup job: it manufactures a green
+# tick that a future incident will be planned around. Every step fails the run. The final step
+# re-reads the uploaded object's size FROM S3 rather than trusting the exit code of the upload,
+# because the failure this closes is not "the copy errored" but "the copy succeeded and wrote
+# nothing" — a `pg_dump` that authenticated and dumped an empty schema still exits 0 and still
+# gzips to a few hundred bytes.
+
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # Never two dumps at once. Each holds a session-mode connection for the length of the dump, and
+  # the second would fight the running app for the pooler's remaining client slots.
+  group: backup-db
+  cancel-in-progress: false
+
+jobs:
+  dump:
+    name: pg_dump to S3
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      AWS_DEFAULT_REGION: ap-south-1
+      BACKUP_BUCKET: designrepo-media-626159998512
+      BACKUP_PREFIX: backups/designer-portal
+
+    steps:
+      # NO CHECKOUT. Nothing in this job reads the repository, and a checkout on a job holding the
+      # production DSN is one more thing that can go wrong for no benefit.
+
+      - name: Install PostgreSQL client 17 from PGDG
+        # THE MAJOR VERSION IS A HARD REQUIREMENT, NOT A PREFERENCE. pg_dump refuses to dump a
+        # server newer than itself ("server version 17.x; pg_dump version 16.x" — it errors, it does
+        # not degrade), and ubuntu-latest ships whatever client the image was built with. Pinning
+        # the client to 17 means the runner image can move under us without silently ending the
+        # backups. If the managed database is ever upgraded past 17, this number moves with it.
+        run: |
+          set -euo pipefail
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSL --max-time 60 -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+            https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          . /etc/os-release
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt ${VERSION_CODENAME}-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list > /dev/null
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends postgresql-client-17
+          pg_dump --version
+          # Assert the major we actually got. `apt-get install postgresql-client-17` can succeed
+          # while `pg_dump` on PATH is still the older one from the image's postgresql-client-common
+          # alternatives, which would then fail mid-dump with a version error instead of here.
+          major="$(pg_dump --version | sed -E 's/.* ([0-9]+).*/\1/')"
+          if [ "${major:-0}" -lt 17 ]; then
+            echo "::error::pg_dump on PATH is major ${major}, but the managed database needs a client >= 17. The PGDG install did not take over the alternatives link."
+            exit 1
+          fi
+
+      - name: Dump the public schema
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          set -euo pipefail
+          if [ -z "${DATABASE_URL:-}" ]; then
+            echo "::error::the DATABASE_URL secret is not set on this repository. This job cannot back up a database it cannot name — create it (session-pooler DSN) in Settings → Secrets and variables → Actions."
+            exit 1
+          fi
+          stamp="$(date -u +%F)"
+          echo "stamp=${stamp}" >> "$GITHUB_ENV"
+          # --no-owner / --no-privileges: the dump has to be restorable into a DIFFERENT database
+          # whose roles do not exist. With ownership and grants in it, every `ALTER TABLE … OWNER TO`
+          # fails on restore against a fresh instance, which is exactly the instance a restore is
+          # being performed onto. --schema=public because that is the whole application schema; the
+          # provider's own `auth`, `storage` and `extensions` schemas belong to the platform, are not
+          # ours to restore, and dumping them produces errors a reader has to learn to ignore.
+          #
+          # `set -o pipefail` above is load-bearing: without it the exit status of this line is
+          # gzip's, and gzip is perfectly happy to compress a failed dump's partial output.
+          pg_dump "$DATABASE_URL" --no-owner --no-privileges --schema=public \
+            | gzip -9 > "backup-${stamp}.sql.gz"
+          ls -l "backup-${stamp}.sql.gz"
+          # A local floor before spending an upload on it. 100 KB is far below a real dump of this
+          # schema and far above an empty one — an authenticated connection to the WRONG (empty)
+          # database gzips to about a kilobyte of DDL and would otherwise upload happily.
+          bytes="$(stat -c %s "backup-${stamp}.sql.gz")"
+          if [ "${bytes}" -lt 102400 ]; then
+            echo "::error::the dump is only ${bytes} bytes. That is an empty or failed dump, not a backup of this repository's data. Check that DATABASE_URL names the production database and not a fresh one."
+            exit 1
+          fi
+
+      - name: Upload to S3
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_MEDIA_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_MEDIA_SECRET_ACCESS_KEY }}
+        run: |
+          set -euo pipefail
+          aws s3 cp "backup-${stamp}.sql.gz" \
+            "s3://${BACKUP_BUCKET}/${BACKUP_PREFIX}/${stamp}.sql.gz" \
+            --only-show-errors
+          echo "uploaded s3://${BACKUP_BUCKET}/${BACKUP_PREFIX}/${stamp}.sql.gz"
+
+      - name: Prove the object is really there, and is really a backup
+        # THE STEP THAT MAKES THE GREEN TICK MEAN SOMETHING. Everything above can succeed against a
+        # bucket that silently dropped the write (a policy change, a wrong prefix, an SSE-KMS key
+        # the media user cannot use) — `aws s3 cp` reports what it sent, not what S3 holds
+        # afterwards. This asks S3 a second, separate question and re-asserts the size, so "the
+        # backup exists" is measured rather than assumed.
+        #
+        # ─── list-objects-v2 AND NOT head-object, AND THE REASON IS THE CREDENTIAL ─────────────
+        # This used to be `s3api head-object --query ContentLength`, which is the obvious call and
+        # needs `s3:GetObject` ON THE KEY. There is no HEAD-only permission in S3 — granting the
+        # HEAD grants the GET — so the proof step was what forced "can read every database dump"
+        # onto a key that also sits in BACKEND_ENV on an internet-facing box. `list-objects-v2`
+        # needs `s3:ListBucket` instead, which `aws_iam_user_policy.media` now grants under a
+        # `StringLike s3:prefix = backups/*` condition: this job can learn the NAME and SIZE of the
+        # dumps it wrote and can read the bytes of none of them, its own included.
+        #
+        # It is not a weaker check. Size is the entire thing the assert ever used, and S3 LIST has
+        # been strongly read-after-write consistent since 2020 — an object PUT a second ago is in
+        # the listing, so no retry loop is needed here and none should be added.
+        #
+        # `--prefix` IS THE WHOLE KEY, not the directory, so at most one object can come back; the
+        # `?Key==` filter then makes a prefix collision impossible rather than unlikely. `Contents`
+        # is ABSENT (not empty) when nothing matches, so the query answers the literal string `None`
+        # and the digits check below is what turns "the object is not there" into a red run with a
+        # sentence on it, instead of a bare "integer expression expected".
+        #
+        # ─── ORDERING, AND THE ONE RED RUN TO EXPECT ──────────────────────────────────────────
+        # THE SPLIT POLICY IS DECLARED IN TERRAFORM AND WAS NOT APPLIED IN THE SAME CHANGE AS THIS
+        # FILE. The live inline policy is still the old one — Put/Get/DeleteObject on `${bucket}/*`
+        # — and it grants no `s3:ListBucket` at all, so until somebody runs the apply this step
+        # fails with AccessDenied. THE DUMP STILL UPLOADS (PutObject is covered either way); what
+        # goes red is the proof, which is the right way round for a check that must never be
+        # believed on trust. A red run here reading `AccessDenied` on ListObjectsV2 means "apply
+        # the IAM change in infra/terraform/main.tf", not "the backup is broken". Land the two
+        # together if you can.
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_MEDIA_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_MEDIA_SECRET_ACCESS_KEY }}
+        run: |
+          set -euo pipefail
+          key="${BACKUP_PREFIX}/${stamp}.sql.gz"
+          size="$(aws s3api list-objects-v2 \
+            --bucket "${BACKUP_BUCKET}" \
+            --prefix "${key}" \
+            --query "Contents[?Key=='${key}'].Size | [0]" --output text)"
+          case "${size}" in
+            ''|*[!0-9]*)
+              echo "::error::S3 does not list ${key} after an upload that reported success (it answered '${size}'). The object is not there — treat today as having NO backup, and check the media user's backups/ grant in infra/terraform/main.tf."
+              exit 1
+              ;;
+          esac
+          echo "S3 lists ${size} bytes for ${key}"
+          if [ "${size}" -lt 102400 ]; then
+            echo "::error::the uploaded object is ${size} bytes, below the 100 KB floor. Treat today as having NO backup."
+            exit 1
+          fi
+          {
+            echo "### Database backup"
+            echo ""
+            echo "\`s3://${BACKUP_BUCKET}/${key}\` — ${size} bytes"
+            echo ""
+            echo "Restore: \`aws s3 cp s3://${BACKUP_BUCKET}/${key} - | gunzip | psql \"\$TARGET_DSN\"\`"
+            echo ""
+            echo "Reading it back needs operator credentials, not this workflow's — the key it runs under can write to \`backups/\` and list it, and nothing else."
+          } >> "$GITHUB_STEP_SUMMARY"

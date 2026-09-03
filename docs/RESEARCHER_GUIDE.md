@@ -70,6 +70,13 @@ incomplete — see §11.3. Email and password always works regardless.
    four — capture and GPS tagging do not work without them.
 4. **After that, updates are automatic.** The master admin publishes a new signed release from inside
    the app, and every device picks it up on next launch. You only side-load once.
+5. **A download that arrives incomplete is refused before it reaches the installer** (2026-09-03).
+   If the connection drops halfway, you get *"Unable to download the update — check your connection
+   and try again."* rather than an installer failing on a truncated file, and **Update now** can
+   simply be tapped again. This only applies to builds published after 2026-09-03: earlier release
+   rows carry no declared size, so there is nothing to compare a finished download against and they
+   download exactly as before. **Android's own signature check remains what decides whether the file
+   may be installed at all** — this is a completeness check, not a security one.
 
 Requirements: **Android 8.0 (API 26) or newer**, and an internet connection at some point — not
 necessarily at the moment you are recording (§6).
@@ -171,7 +178,7 @@ the network returns. On the web a banner names every queued entry, says plainly 
 in this browser, and offers **Sync now** for the case where the phone claims to be online but nothing
 actually routes (hotel and airport Wi-Fi).
 
-Four things to know about the outbox:
+Five things to know about the outbox:
 
 1. **The attachments are the part that cannot be recreated.** By the time signal returns the artisan
    has gone home. That is why the files are stored and not just the form.
@@ -182,6 +189,9 @@ Four things to know about the outbox:
    an existing one — most often a duplicate Aadhaar number, or an interview that already exists for
    that exact set of artisans — the entry stays in the outbox with the reason on it, and you resolve
    it. Nothing is deleted behind your back.
+5. **The outbox belongs to whoever made it.** On a phone two designers share, records captured by the
+   other account are held rather than sent — the banner says how many and asks you to sign in as
+   them. Nothing is deleted, and they go up the moment that designer signs in.
 
 **Before you leave a signal area, open the app and let the outbox drain.** The banner tells you when
 it is empty.
@@ -383,4 +393,10 @@ surface.
 
 **Known unverified in this document:** §3's OTA update flow and §11.3's Google Cloud console state
 are both operational facts about a deployment, not properties of this repository. Neither can be
-confirmed from the code, and neither should be treated as confirmed here.
+confirmed from the code, and neither should be treated as confirmed here. **One half of §3 became
+checkable on 2026-09-03** and is therefore no longer covered by that caveat: the download-completeness
+refusal and its sentence are in
+`android/app/src/main/java/com/designprototype/workshop/data/AppUpdateIntegrity.kt`, and the
+"published after 2026-09-03" condition is `AppRelease.sizeBytes` being nullable
+([DATA_MODEL.md](DATA_MODEL.md)). Whether a *fielded handset* actually receives an update is still
+the operational half, and is still unverified.

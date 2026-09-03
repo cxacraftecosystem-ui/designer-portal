@@ -164,6 +164,33 @@ file picker on the web, sentences on the chooser on the handset. What they are t
 a fact neither client can change: `backend/app/services/report_builder.py` places media on the page by
 `IMAGE` and `IMAGE_LIST` only, so a `.glb` reaches an officer as a count and a noun.
 
+### What carries forward, and the asymmetry that is deliberate (added 2026-09-03)
+
+This page was silent on this and it is squarely its subject: **picking a PROTOTYPE at stage 16 fills
+nine boxes; picking a SKETCH at stage 13 deliberately fills none.** Both halves are argued in
+`backend/app/services/stage_schema.py`'s internal-carry section; the summary is here so a reader of
+this matrix does not read the asymmetry as a gap on one side.
+
+| Reference | Fills | Verdict |
+|---|---|---|
+| `finalProduct.prototypeRef` (stage 16 cites a stage-13 prototype) | **Nine** — `name`, `materials`, all three dimensions, `weightG`, `dimensionsNote`, `makingTimeDays`, and `processSummary → makingProcess` | Carries, on both clients — it is a server-side hydration, so neither client implements it |
+| `prototype.sketchRef` (stage 13 cites a stage-11 sketch) | **None**, on purpose | Neither client, and adding it would be a defect |
+
+**Why the sketch fills nothing.** A sketch is a DRAWING and a prototype is an OBJECT. Their
+`materials` and their three dimensions look symmetrical and are not: the sketch says what was
+*intended* and the prototype says what was *made*, **and the gap between the two is what stages 13–15
+exist to record.** Copying one into the other would put an intended number in a ministry report under
+a heading that claims it was measured. `prototype.productRef` carries the same refusal one source
+further back, and it is one pair — an attribution, not a mirror.
+
+**Two things that follow, worth knowing before quoting the nine.** A hydrated value is a permanent
+copy taken at save time, so correcting the prototype's length at stage 13 next week does **not**
+rewrite the boxes it filled at stage 16 — the divergence is visible as a `fieldProvenance` stamp
+naming the row and column it came from, but `entry_provenance.canonical_divergence` is gated on
+`model in REFERENCE_MODELS` and `DwPrototype` is not one, so an admin audit sees the stamp and not
+the comparison. And **media never crosses on an internal carry**: the prototype's photographs stay
+the prototype's.
+
 ---
 
 ## Matrix D — getting to stages 11 and 13

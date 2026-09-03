@@ -171,6 +171,7 @@ import {
   uploadMediaBatch
 } from "@/lib/media";
 import { isTransient } from "@/lib/offline";
+import { loadStageReferences } from "@/lib/referenceCache";
 import type { MediaFile, MediaType } from "@/lib/types";
 
 /**
@@ -2239,6 +2240,43 @@ function orphanRow(id: string): DropdownOption {
 }
 
 /**
+ * A GENERATED RECORD ID, as opposed to something a person typed into this box.
+ *
+ * ── WHY A THIRD CONTROL NEEDS TO ASK THIS AT ALL (2026-09-03) ─────────────────────────────────
+ * `processStep.toolsUsed` and `prototype.toolsUsed` were free-text TAGS until the registry promoted
+ * them to a record-backed MULTI_ENUM. Their stored arrays are therefore MIXED and will be for years:
+ * ids this picker wrote, and tool names a designer typed — including names being typed today, on a
+ * 0.0.7 handset that still draws the old tag box and has never heard of the promotion.
+ *
+ * Without this test every one of those names reaches {@link orphanRow} and is drawn as
+ * `Linked record pit loom` with a hint saying the repository did not return it. That is not a
+ * degraded label, it is the designer's own word for their own fieldwork REPLACED on screen by a
+ * sentence asserting something false about it — and the next tick would hand the array back with
+ * the word intact but the designer no longer able to see what they were keeping.
+ *
+ * `backend/app/services/report_builder.py`'s `_OPAQUE_ID` WORD FOR WORD, and the mirror is
+ * deliberate rather than shared: that rule decides what a REPORT prints and this one decides what a
+ * FORM draws, they must agree, and there is no runtime through which one can call the other. Same
+ * reasoning as the pattern's own comment — the question is not "is this a cuid" but "would a reader
+ * recognise this as a name". "pit loom" (a space), "SK-01" (capitals and a dash) and "बुनाई" all
+ * fail it and are shown as typed; `cmsik2jg8000eh8xc1lcy661a` passes and is shown as a link.
+ */
+const OPAQUE_ID = /^[a-z0-9]{16,}$/;
+
+/**
+ * A held value this browser cannot name, drawn as what it actually is.
+ *
+ * Two shapes, one row: a record id becomes {@link orphanRow}'s link, and anything else is the text
+ * itself, kept verbatim and still removable. The hint is what stops the second reading as the first
+ * — a designer looking at a picker needs to know which of their entries is a link to a documented
+ * tool and which is a word they typed before this box was a picker.
+ */
+export function heldRow(token: string): DropdownOption {
+  if (OPAQUE_ID.test(token.trim())) return orphanRow(token);
+  return { value: token, label: token, hint: "typed on this field, not a linked record" };
+}
+
+/**
  * THE ROWS THE PICKER DRAWS: the server's answer, plus every id ALREADY STORED that it lacks.
  *
  * ── WHY THE SECOND HALF IS NOT OPTIONAL ───────────────────────────────────────────────────────
@@ -2285,7 +2323,10 @@ export function referenceMultiOptions({
     rows.push(
       remembered
         ? { value: id, label: remembered.label, hint: remembered.sublabel || undefined }
-        : orphanRow(id)
+        : // NOT `orphanRow` DIRECTLY — see {@link heldRow}. A promoted field's array holds record
+          // ids AND the free text its TAGS predecessor collected, and drawing the second as
+          // "Linked record pit loom" replaces a designer's own word with a false claim about it.
+          heldRow(id)
     );
   }
   return rows;
@@ -2320,7 +2361,8 @@ export function referenceMultiNotice({
   payload,
   problem,
   loading,
-  query
+  query,
+  cachedAt
 }: {
   field: DwField;
   /** The label of the field named by `refFilterBy`, or "" where there is no cascade. */
@@ -2331,6 +2373,13 @@ export function referenceMultiNotice({
   problem: string | null;
   loading: boolean;
   query: string;
+  /**
+   * ISO-8601 when the payload on screen came off THIS DEVICE rather than the network — 2026-09-03.
+   *
+   * Handed straight to `scopeNoticeLines`, which owns the sentence. Optional and absent means live,
+   * so every existing caller and every existing assertion is unchanged.
+   */
+  cachedAt?: string | null;
 }): string {
   if (awaitingCascade) {
     return `Choose ${parentLabel || "the field above"} first — this list holds only the records that belong to it.`;
@@ -2345,7 +2394,7 @@ export function referenceMultiNotice({
     return `${problem} Nothing can be added until this list loads; what is already chosen is still listed and can be removed.`;
   }
   if (!payload) return loading ? "Loading the records this field can link to…" : "";
-  const lines = scopeNoticeLines(field, payload);
+  const lines = scopeNoticeLines(field, payload, cachedAt);
   if (!payload.options.length) {
     const term = query.trim();
     /*
@@ -2428,6 +2477,12 @@ const REF_SEARCH_DEBOUNCE_MS = 300;
  *
  * A GENERATION COUNTER AND NOT AN `AbortSignal`, because `apiFetch` takes none; the house
  * convention for this exact case is to count fetches and ignore the late answer.
+ *
+ * THE READ-THROUGH CACHE ARRIVED IN BOTH COPIES ON THE SAME DAY (2026-09-03), which is what the
+ * "must not drift" paragraph above is for. An un-searched, un-cascaded open is served from
+ * `lib/referenceCache.ts` first and refreshed from the network behind it; a search, a cascade and a
+ * by-id resolve are untouched and live-only. The argument for each of those three exclusions is
+ * written once, beside `loadStageReferences`, rather than twice here.
  */
 function useReferenceSearch({
   workshopId,
@@ -2441,12 +2496,14 @@ function useReferenceSearch({
   filterValue: string;
   query: string;
   active: boolean;
-}): { payload: DwReferencePayload | null; loading: boolean; problem: string | null } {
+}): { payload: DwReferencePayload | null; loading: boolean; problem: string | null; cachedAt: string | null } {
   const [state, setState] = useState<{
     payload: DwReferencePayload | null;
     loading: boolean;
     problem: string | null;
-  }>({ payload: null, loading: false, problem: null });
+    /** Set only while the payload on screen came off this device. Cleared by every live answer. */
+    cachedAt: string | null;
+  }>({ payload: null, loading: false, problem: null, cachedAt: null });
   const generation = useRef(0);
 
   useEffect(() => {
@@ -2459,35 +2516,67 @@ function useReferenceSearch({
         exists to prevent.
       */
       generation.current += 1;
-      setState({ payload: null, loading: false, problem: null });
+      setState({ payload: null, loading: false, problem: null, cachedAt: null });
       return;
     }
     const current = generation.current + 1;
     generation.current = current;
     setState((previous) => ({ ...previous, loading: true, problem: null }));
+    const model = field.refModel as string;
+    // Sent only when the descriptor asks for the cascade. An unasked-for `filterBy` on a model that
+    // cannot honour one is a 422 by design — the server refuses to silently serve the whole table to
+    // a picker the designer believes is narrowed.
+    const filterBy = field.refFilterBy ? filterValue || null : null;
+    const search = query.trim() || null;
+    const request = () => listStageReferences(workshopId, { model, scope: field.refScope, filterBy, search });
     const timer = window.setTimeout(
       () => {
-        listStageReferences(workshopId, {
-          model: field.refModel as string,
+        // A search or a cascade is the server's answer to ONE question and is never stored.
+        if (search || filterBy) {
+          request()
+            .then((payload) => {
+              if (generation.current !== current) return;
+              setState({ payload, loading: false, problem: null, cachedAt: null });
+            })
+            .catch((error) => {
+              if (generation.current !== current) return;
+              setState({
+                payload: null,
+                loading: false,
+                problem: error instanceof Error ? error.message : "The list could not be loaded.",
+                cachedAt: null
+              });
+            });
+          return;
+        }
+        void loadStageReferences<DwReferencePayload>({
+          workshopId,
+          model,
           scope: field.refScope,
-          // Sent only when the descriptor asks for the cascade. An unasked-for `filterBy` on a model
-          // that cannot honour one is a 422 by design — the server refuses to silently serve the
-          // whole table to a picker the designer believes is narrowed.
-          filterBy: field.refFilterBy ? filterValue || null : null,
-          search: query.trim() || null
-        })
-          .then((payload) => {
+          isEmpty: (payload) => payload.options.length === 0,
+          fetch: request,
+          onPayload: (payload, cachedAt) => {
             if (generation.current !== current) return;
-            setState({ payload, loading: false, problem: null });
-          })
-          .catch((error) => {
-            if (generation.current !== current) return;
+            // A cached answer leaves `loading` true: the refresh behind it is still out.
+            setState({ payload, loading: cachedAt !== null, problem: null, cachedAt });
+          }
+        }).then((outcome) => {
+          if (generation.current !== current) return;
+          if (outcome.source === "none") {
+            // Neither storage nor the network answered. The server's own sentence is what is shown,
+            // exactly as before this cache existed — `referenceMultiNotice` wraps it.
             setState({
               payload: null,
               loading: false,
-              problem: error instanceof Error ? error.message : "The list could not be loaded."
+              problem: outcome.error instanceof Error ? outcome.error.message : "The list could not be loaded.",
+              cachedAt: null
             });
-          });
+            return;
+          }
+          // A refresh that failed over a cached list says nothing: the rows are good and the stamp
+          // under them is what tells the designer how old they are.
+          setState((previous) => ({ ...previous, loading: false }));
+        });
       },
       // No debounce on the first, empty read: it is one request as the stage opens, and making a
       // designer wait 300 ms for the list they can already see the box for buys nothing.
@@ -2591,7 +2680,7 @@ function ReferenceMultiSelect({
     ? entity.fields.find((candidate) => candidate.key === field.refFilterBy)?.label ?? ""
     : "";
 
-  const { payload, loading, problem } = useReferenceSearch({
+  const { payload, loading, problem, cachedAt } = useReferenceSearch({
     workshopId,
     field,
     filterValue,
@@ -2623,7 +2712,8 @@ function ReferenceMultiSelect({
     payload,
     problem,
     loading,
-    query
+    query,
+    cachedAt
   });
   /** The name on the row, never the id: a CUID in a refusal sentence is not something to act on. */
   const labelOf = (token: string) => options.find((option) => option.value === token)?.label ?? token;
@@ -2709,26 +2799,37 @@ function ReferenceMultiSelect({
  * `designBrief.targetCategories` (stage 10) is MULTI_ENUM, BASIC and required, so `ref_model=…`
  * written beside its `enum=` is the whole of the edit.
  *
- * THE OBVIOUS CANDIDATES ARE NOT THE HAZARD, and it is worth naming them because the brief this
- * arm was asked for named them. `prototype.materials` (stage 13) and `finalProduct.materials`
- * (stage 16) are BASIC and required and they are TAGS — an open chip box, which no `ref_model`
- * can reach without changing the field TYPE, and which would then be a different change entirely.
- * Read on 2026-08-27; both halves are one command each:
- * `grep -n "MENUM" backend/app/services/stage_definitions.py` lists all five MULTI_ENUM fields,
- * and `grep -n materials backend/app/services/stage_definitions.py` shows the three TAGS ones.
+ * THE OBVIOUS CANDIDATES WERE NOT THE HAZARD, and it is worth keeping the reading because the brief
+ * this arm was asked for named them. `prototype.materials` (stage 13) and `finalProduct.materials`
+ * (stage 16) are BASIC and required and they are TAGS — an open chip box, which no `ref_model` can
+ * reach without changing the field TYPE. Read on 2026-08-27; re-read on 2026-09-03 and STILL TRUE of
+ * those two, which is why they are still TAGS: there is no material record type in the schema to
+ * back them with (`grep -n "^model " backend/prisma/schema.prisma` has no `Material`), and backing
+ * them with stage 5's in-workshop `DwRawMaterial` rows would make two BASIC required fields closed
+ * lists whose members a workshop that skipped stage 5 does not have — the permanently-unsubmittable
+ * stage this very paragraph warns about, arrived at from the other direction.
  *
- * ── WHAT THIS FILE CANNOT MAKE SAFE, BECAUSE IT IS THE SERVER'S HALF ──────────────────────────
- * DO NOT DECLARE `ref_model` ON A MULTI_ENUM UNTIL THESE TWO ARE FIXED WITH IT. Both read on
- * 2026-08-27, and both are one grep away:
- *  · `coerce_value` tests every token of a MULTI_ENUM against `ENUMS.get(spec.enum, {})`, which for
- *    a field declaring a ref model and no enum is the EMPTY map — so every record id comes back as
- *    "unknown option(s) …" and the field is refused on every save, with `save_stage` restoring the
- *    previous value. Check: `grep -n "unknown option" backend/app/services/stage_schema.py`.
- *  · `format_value` prints `enum_label(spec.enum, token)`, which falls back to the token itself, so
- *    the report would carry raw CUIDs where a roster of names belongs. Check:
+ * ── THE SERVER'S HALF LANDED ON 2026-09-03, AND THIS IS WHAT IT DOES ──────────────────────────
+ * This block said DO NOT DECLARE `ref_model` ON A MULTI_ENUM and named the two things that had to be
+ * fixed with it. Both are fixed, in the change that declared the first two such fields
+ * (`processStep.toolsUsed` and `prototype.toolsUsed`, promoted from TAGS to a multi-select over
+ * `ToolDocumentation`):
+ *  · `coerce_value` applies the `ENUMS` allow-list only to a MULTI_ENUM that names an ENUM. A
+ *    record-backed one stores its tokens unchecked, exactly as the REF branch beside it always has —
+ *    the table that would validate them is a table, and that function is pure and has no database.
+ *    Check: `grep -n "not spec.ref_model" backend/app/services/stage_schema.py`.
+ *  · `ReportBuilder._value` resolves each token through `_ref_label` and prints the record's name;
+ *    `format_value` — the answer for every caller that cannot reach the repository — joins the raw
+ *    tokens instead of running them through an enum table that is empty for such a field. Check:
  *    `grep -n "FieldType.MULTI_ENUM" backend/app/services/report_builder.py`.
- * The control below is the half a browser can hold. It does not make the declaration safe on its
- * own, and nothing here can: no client ever sees what the .docx said.
+ * `validate_registry` now REFUSES a MULTI_ENUM that names neither an enum nor a ref model, and one
+ * that names both.
+ *
+ * WHAT A PROMOTED FIELD'S ARRAY ACTUALLY HOLDS, because this control has to draw it: ids AND the
+ * free text its TAGS predecessor collected — including text arriving today from a 0.0.7 handset that
+ * still draws a tag box for these keys. Nothing is migrated and nothing needs to be; the stored
+ * shape is a JSON array of strings either way. {@link heldRow} is what keeps a typed word being
+ * drawn as a typed word rather than as a link nobody made.
  *
  * ── THE CEILING ───────────────────────────────────────────────────────────────────────────────
  * A WRAPPER RATHER THAN A BARE CALL TO `MultiSelectDropdown`, for one reason: `maxItems` governs

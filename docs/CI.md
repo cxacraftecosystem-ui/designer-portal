@@ -82,40 +82,67 @@ every secret it needs. Sister documents:
 
 ## 1. The pipeline
 
-Three workflows chained into a deploy pipeline, **plus one that is deliberately not in the chain.**
-One push to `main` walks the whole chain.
+Three workflows chained into a deploy pipeline, **plus a fourth upstream stage that both deploys now
+wait on.** One push to `main` walks the whole chain.
 
 ```mermaid
 flowchart LR
-    P([push to main]) --> B["<b>deploy-backend.yml</b><br/>Deploy backend to EC2"]
+    P([push to main]) --> C["<b>checks.yml</b><br/>Backend tests · Web typecheck,<br/>lint and unit specs · Docs check"]
+    P --> B["<b>deploy-backend.yml</b><br/>Deploy backend to EC2"]
+    C -.->|polled by<br/>wait-for-checks| B
     B -->|workflow_run:<br/>success only| F["<b>deploy-frontend.yml</b><br/>Deploy frontend to Vercel"]
+    C -.->|polled by<br/>wait-for-checks| F
     F -->|workflow_run:<br/>any outcome| A["<b>android-build.yml</b><br/>Android build"]
     A --> R([app-debug.apk artifact])
-    P -.->|starts alongside,<br/>NOT in front of| C["<b>checks.yml</b><br/>Backend tests · Web typecheck,<br/>lint and unit specs · Docs check"]
     PR([pull request]) --> C
 ```
 
-**The dotted arrow is the important one.** `checks.yml` also fires on `push: main`, but a GitHub
-workflow cannot `needs:` a job in another workflow file, so on `main` it RACES the deploy rather than
-blocking it: a commit that breaks the backend suite still ships. The only thing that makes Checks a
-real gate is adding its three job names as **required status checks** in branch protection, which is
-repository configuration and exists nowhere in this repository. Until somebody does that, treat the
-three as advisory on `main` and as a genuine gate on a pull request, where a human reads the red tick
-before pressing merge. §5 carries the same warning at the point a reader is deciding what to trust.
+**The two dotted arrows are new as of 2026-09-03, and they are a WAIT rather than a trigger.** A
+GitHub workflow still cannot `needs:` a job in another workflow file — that has not changed and
+cannot be worked around. What changed is that each deploy workflow now carries its own
+`wait-for-checks` job, which **polls the REST API for the `checks.yml` run at this exact SHA** and
+refuses to hand over to its `deploy` job until the gating jobs are green. Before this, a push started
+both and the deploy could reach the box before the suite had said anything at all about the commit it
+was shipping.
+
+Three properties of that wait are worth knowing before you rely on it:
+
+* **It waits on three named jobs, not on the whole run** — `Backend tests`, `Web typecheck, lint and
+  unit specs` and `Docs check`, spelled as a JSON list in each workflow's `GATING_JOBS`. That is
+  deliberate: `Backend integration tests` (§1's table below) is advisory, is the slowest job in the
+  file, and has no measured wall clock yet, so waiting on the whole run would let it gate a deploy by
+  timing out. Adding a job to `checks.yml` does **not** add it to the gate; adding its name to
+  `GATING_JOBS` in both deploy workflows does.
+* **`workflow_dispatch` skips the wait, and that is the documented emergency override.** Running
+  either deploy from the Actions tab ships without polling. The timeout message says so out loud, so
+  a person reading a red run at 2 a.m. does not have to find it here.
+* **Branch protection is still the only thing that stops a red commit from being MERGED.** These
+  waits stop a red commit from being DEPLOYED, which is a different question. Adding the three job
+  names as **required status checks** remains repository configuration that exists nowhere in this
+  repository. §5 carries the remaining gap at the point a reader is deciding what to trust.
 
 | # | Workflow | File | Trigger | What it does |
 |---|---|---|---|---|
-| 1 | Deploy backend to EC2 | `.github/workflows/deploy-backend.yml` | `push` to `main` | rsync → write `.env` → `prisma migrate deploy` → restart `fieldrepo` + `fieldrepo-queue` → poll `/health` |
-| 2 | Deploy frontend to Vercel | `.github/workflows/deploy-frontend.yml` | `workflow_run` on **1** completing | `vercel pull` → **assert the pulled env carries what the app needs** → `vercel build --prod` → **assert those values actually reached the bundle** → `vercel deploy --prebuilt --prod` → smoke-check the alias → **assert the bundle the CDN serves is the one that was verified** |
+| 1 | Deploy backend to EC2 | `.github/workflows/deploy-backend.yml` | `push` to `main` | `wait-for-checks` (§1.1) → rsync into `releases/<sha>` → write that release's `.env` → build or reuse a venv from `requirements.lock` → `prisma migrate deploy` → **flip the `current` symlink** → restart `fieldrepo` + `fieldrepo-queue` → poll `/health`. See §1.2 for the release layout and the rollback command. |
+| 2 | Deploy frontend to Vercel | `.github/workflows/deploy-frontend.yml` | `workflow_run` on **1** completing | gate → `wait-for-checks` (§1.1, and it runs exactly where **1**'s copy could not) → `vercel pull` → **assert the pulled env carries what the app needs** → `vercel build --prod` → **assert those values actually reached the bundle** → `vercel deploy --prebuilt --prod` → smoke-check the alias → **assert the bundle the CDN serves is the one that was verified** |
 | 3 | Android build | `.github/workflows/android-build.yml` | `workflow_run` on **2** completing, plus `pull_request` | JDK 17 → `compileDebugKotlin` → `testDebugUnitTest` → `lintDebug` (advisory) → `assembleDebug` → upload APK |
-| — | Checks | `.github/workflows/checks.yml` | **every** `pull_request`, `push` to `main`, `workflow_dispatch` — **no `paths:` filter, deliberately** | Three independent jobs: `Backend tests` (whole pytest suite, DSN `ci.invalid` so the database-backed modules skip — and, despite the job's name, a last step that runs `ruff check .` over `backend/` and can fail the build on its own; the dated baseline in `backend/pyproject.toml` is what keeps it green), `Web typecheck, lint and unit specs` (`tsc --noEmit`, `eslint . --max-warnings=0`, `npm run test:unit`), `Docs check` (`node docs/tools/check-docs.mjs`). Chained to nothing in either direction. |
+| — | Checks | `.github/workflows/checks.yml` | **every** `pull_request`, `push` to `main`, `workflow_dispatch` — **no `paths:` filter, deliberately** | Four independent jobs plus a packaging job. The three that gate: `Backend tests` (whole pytest suite, DSN `ci.invalid` so the database-backed modules skip — and, despite the job's name, a last step that runs `ruff check .` over `backend/` and can fail the build on its own; the dated baseline in `backend/pyproject.toml` is what keeps it green), `Web typecheck, lint and unit specs` (`tsc --noEmit`, `eslint . --max-warnings=0`, `npm run test:unit`), `Docs check` (`node docs/tools/check-docs.mjs`). **`Backend integration tests` is the fourth and is deliberately advisory** — a `postgres:16` service container, `prisma migrate deploy`, then the *whole* suite with a loopback DSN so the database-backed modules that skip in job 1 actually run. Its last step asserts that `conftest` reported a local database, because a job that silently ran the same DB-less suite would prove nothing while looking green. It is not in `GATING_JOBS` and must not be added to branch protection until somebody has watched a few runs and knows what it costs. |
 
-There is also `.github/workflows/keep-supabase-active.yml` — a nightly cron that pings Postgres so
-a free-tier project at the provider hosting production does not pause. **Dormant from 2026-08-22 to
-2026-09-02** (while production sat on a provider that woke idle compute by itself), **live again
-since**: the two `schedule:` lines are restored and the database secret is set. It asserts nothing
-about the code either way — a red run means the runner could not reach the production database.
-The file's header carries the story; the provider itself is named in `docs/ENVIRONMENT.md` only.
+**The other six workflows in this repository.** Naming them rather than counting them is the rule
+this document learned the hard way (§5); at 2026-09-03 there are **ten files** under
+`.github/workflows/`, and the four above are the pipeline.
+
+* `.github/workflows/keep-supabase-active.yml` — a nightly cron that pings Postgres so a free-tier
+  project at the provider hosting production does not pause. **Dormant from 2026-08-22 to
+  2026-09-02** (while production sat on a provider that woke idle compute by itself), **live again
+  since**: the two `schedule:` lines are restored and the database secret is set. It asserts nothing
+  about the code either way — a red run means the runner could not reach the production database.
+  The file's header carries the story; the provider itself is named in `docs/ENVIRONMENT.md` only.
+* `.github/workflows/publish-android.yml` — the release-signed APK publisher. §1.4 carries the
+  ordering constraint its request body now imposes on the backend deploy.
+* `.github/workflows/backup-db.yml`, `.github/workflows/monitor.yml`,
+  `.github/workflows/e2e-live.yml` and `.github/workflows/android-emulator.yml` — all four added
+  2026-09-03, all four described in §1.5. None of them is a gate.
 
 ### Why the order is a dependency, not a preference
 
@@ -148,12 +175,13 @@ their area is untouched.
 
 | Push touches | 1 · backend deploy | 2 · frontend deploy | 3 · Android build | — · Checks |
 |---|---|---|---|---|
-| `backend/**` only | **runs** | skipped (nothing to publish) | runs | **runs** |
-| `frontend/**` only | skipped (run still succeeds) | **runs** | runs | **runs** |
+| `backend/**` only | **runs**, after Checks is green on that SHA | skipped (nothing to publish) | runs | **runs** |
+| `frontend/**` only | skipped (run still succeeds) | **runs**, after Checks is green on that SHA | runs | **runs** |
 | `android/**` only | skipped | skipped | **runs** | **runs** |
-| several areas | **runs** | **runs**, after 1 is green | runs | **runs** |
+| several areas | **runs** | **runs**, after 1 is green *and* Checks is green | runs | **runs** |
 | docs only | skipped | skipped | runs | **runs** |
 | backend deploy **fails** | ❌ red | **refuses to deploy**, says why in the summary | still runs | unaffected — it is not in the chain |
+| **Checks red** | **refuses to deploy** *if `backend/` was touched* — its wait is scoped to that, so a push that changed no backend file skips the wait and deploys | **refuses to deploy**, whatever changed | still runs — `android-build.yml` chains on `workflow_run` with **no conclusion filter**, deliberately | ❌ red |
 
 The Checks column has no "skipped" cell and that is the design: it has no `paths:` filter, because a
 filter is exactly how `android-build.yml` ended up unreachable from a backend pull request. It also
@@ -161,8 +189,14 @@ runs on **pull requests with no path filter at all**, which is the gap it was wr
 and 2 have no `pull_request` trigger whatever; stage 3 does, but filtered to `android/**` and its own
 workflow file — **so before `checks.yml` a pull request touching only `backend/` and `frontend/` ran
 nothing**, which is the hole, stated the way `android-build.yml`'s own header states it rather than
-as "none of the three run on PRs". **Its result does not hold any of the other three back**; see the note under the pipeline
-diagram.
+as "none of the three run on PRs". **Its result now holds BOTH deploy stages back — corrected
+2026-09-03.** This sentence used to read *"Its result does not hold any of the other three back"*, and
+that was true until each deploy workflow grew a `wait-for-checks` job (§1.1). What has not changed is
+stage 3: `android-build.yml` chains on `workflow_run` with no conclusion filter and has no `needs:`,
+so a red Checks does not stop the APK being built — deliberately, because *"does the Android app
+still compile?"* is a question you want answered more urgently when something else is broken, not
+less. Nor does Checks hold a **merge** back; only branch protection does that, and no workflow file
+can prove it. See the note under the pipeline diagram.
 
 Anything the diff cannot be computed for — manual dispatch, the first push of a branch, a force-push
 that orphaned the previous head — is treated as "everything changed". The pipeline over-deploys
@@ -207,6 +241,262 @@ deployment. It is not in the workflow because it cannot be exercised from a chec
 credentials, and an untested hard gate on the production deploy path is a worse failure than the
 one it closes. Promote it the next time somebody has the token in hand.
 
+### 1.1 How `wait-for-checks` actually waits
+
+Both deploy workflows carry the same job, and the mechanics matter when you are reading a run that is
+sitting still.
+
+It polls `repos/<owner>/<repo>/actions/workflows/checks.yml/runs?head_sha=<sha>` — **the workflow by
+FILENAME, never by its display name**, because renaming `name:` at the top of `checks.yml` would
+otherwise return an empty list, and an empty list is indistinguishable from "has not started yet". It
+prefers the `push` run for that SHA and falls back to any run for it, so a re-run or a dispatch of
+Checks against the same commit is just as good an answer. Sixty attempts twenty seconds apart is a
+**twenty-minute budget**, roughly double the measured wall clock of the three gating jobs; the job's
+own `timeout-minutes: 25` sits a hair above it so the loop's error message — which names what it was
+still waiting for — is what a reader sees rather than a bare cancellation. The workflow needs
+`permissions: actions: read` for this; without it the poll gets a 404 that looks exactly like "not
+started yet" and waits out the full twenty minutes before failing.
+
+**When each copy runs.** The backend's is scoped to pushes where `backend/` actually changed
+(`needs.changes.outputs.backend == 'true'`) and skips on `workflow_dispatch`. The frontend's runs
+only when its gate has already decided to publish and did not record the emergency override — which
+is also why the second copy cannot double-red a failure the first already caught: on a push that
+touches `backend/`, a red Checks fails the backend's wait, the backend run concludes `failure`, and
+the frontend's gate never sets `should_deploy`. The frontend copy runs exactly where the backend's
+could not: a push whose backend deploy correctly did nothing and therefore correctly waited for
+nothing.
+
+**Both `deploy` jobs name the skip case explicitly** — `success` *or* `skipped` proceeds; `failure`
+or `cancelled` does not. A `needs:` on a job that skipped would otherwise skip the deploy with it,
+which would turn the emergency override into "nothing deploys ever".
+
+### 1.2 The release layout on the box, and how to roll back
+
+**This is the runbook to read during an incident.** As of 2026-09-03 the backend no longer deploys
+over itself in place.
+
+```
+/home/ubuntu/app/releases/<git-sha>/backend/     one directory per deployed commit, its own .venv inside
+/home/ubuntu/app/current -> releases/<git-sha>   the symlink both systemd units point through
+```
+
+Each release carries the `.env` it was deployed with, so the `.env` of the release that is currently
+serving is never touched by a deploy that may yet fail. **The last three releases are kept** — the
+live one, the obvious rollback target, and one more for the case where the obvious target is what
+caused the problem. `current` is never pruned whatever its age, because a deploy that failed its
+migration leaves it pointing at an older release than the three newest directories on disk.
+
+**Rollback**, over SSM (there is no standing SSH access to this box — §2 and
+[SECURITY.md](SECURITY.md) explain why):
+
+```bash
+aws ssm start-session --target i-0e091ca8e6b417b52
+ln -sfn /home/ubuntu/app/releases/<older-sha> /home/ubuntu/app/current
+sudo systemctl restart fieldrepo fieldrepo-queue
+```
+
+Seconds, no build, no network fetch. **The one thing a flip cannot undo is an applied migration.** If
+the release you are rolling back to predates a migration that has run, the old code meets a schema it
+was not written for, and the symlink will not save you — that is a restore, not a rollback.
+
+Which is exactly why **a failed `prisma migrate deploy` deliberately does not flip.** The box stays
+on the release it was already running, which is code that matches the schema the database actually
+has; nothing is left half-deployed, and the run goes red with that sentence in the log. The
+migration path also decides its own downtime: `prisma migrate status` is consulted first, and a
+deploy with **no pending migration takes the no-downtime path** — flip, then restart, sub-second.
+Only a pending migration stops the app first, and it now stops the **queue** as well, because the
+queue holds pooler sessions of its own and freeing only uvicorn's leaves the schema engine still
+waiting.
+
+**The units are installed as systemd drop-ins, not as replacement unit files.** The step named
+"Prepare the release layout and the systemd units" writes
+`/etc/systemd/system/fieldrepo{,-queue}.service.d/10-release-layout.conf` (working directory,
+`EnvironmentFile`, `ExecStart`, all pointed through `current`) and a second `memory.conf` per unit.
+The base units were laid down at first boot by `infra/terraform/user_data.sh` and may carry hand
+edits from the months this pipeline could not reach the box; overwriting them wholesale would discard
+that silently. Undoing the drop-ins is
+`rm -rf /etc/systemd/system/fieldrepo*.service.d && systemctl daemon-reload`. `user_data.sh` has been
+updated to bake the same paths and limits into the base units, so a **rebuilt** box matches a
+deployed one without this step ever having run; the two are deliberately redundant and are not
+allowed to disagree.
+
+**The memory limits, and why they are asymmetric.** This is a t3.micro — 1 GiB of RAM and a 2 GiB
+swap file — and the queue runs ffmpeg and AI transcription. Unbounded, the kernel's OOM killer picks
+by badness score, which on this box has meant **uvicorn dying because the queue was hungry**, with
+the API then 502-ing for a reason that appears nowhere in its own logs. So `fieldrepo` gets
+`MemoryHigh=500M` and deliberately **no** `MemoryMax`: killing the API to save memory is the outcome
+these limits exist to prevent. `fieldrepo-queue` gets `MemoryHigh=400M` and `MemoryMax=550M`, because
+the queue being killed is recoverable — `Restart=always`, and the job is retried. These are a first
+setting, not a measurement; if the queue thrashes on real transcription work, raise `MemoryHigh` and
+read the memory line in `systemctl status fieldrepo-queue` rather than guessing again.
+
+One more thing the drop-in restates: `Environment=MEDIA_QUEUE_WORKER_ENABLED=false` on `fieldrepo`.
+**This paragraph used to claim textual order decides the winner, and that was wrong** (corrected
+2026-09-03): systemd collects `Environment=` and `EnvironmentFile=` into two separate lists and
+merges the files LAST, whatever the order — `systemd.exec(5)` says so under `EnvironmentFile=` —
+so a `.env` that ever gained the variable would beat every `Environment=` line, drop-in or base
+unit alike. The restated `false` is documentation and a defence against a unit edit, not a
+guarantee. The guarantee is the deploy's refusal step: after writing `.env` on the box, the remote
+script greps for `^MEDIA_QUEUE_WORKER_ENABLED=true` and fails the deploy naming the two-drains
+incident class, so the one file that CAN override the flag is asserted never to.
+
+### 1.3 The backend dependency lock
+
+`backend/requirements.lock` is the pinned resolution every machine installs from: `checks.yml`'s two
+backend jobs, `e2e-live.yml`, and the EC2 deploy alike, all as
+
+```bash
+pip install -r requirements.lock
+pip install -e . --no-deps
+```
+
+`--no-deps` on the editable install is what keeps the lock authoritative — without it pip re-resolves
+the project's own declared ranges and can quietly lift a pin. What the lock buys is that CI, the box
+and a developer's venv resolve to the **same** versions; before it, three machines each took whatever
+the index offered that day, which is how an unpinned transitive dependency turns a green branch red
+overnight with no commit behind it.
+
+**It is compiled for Python 3.12 in a container**, because the Python that resolves it must be the
+Python that runs it — the local venv on the machine this was written from is 3.14, and a lock
+compiled there would carry that interpreter's environment markers into production. Refresh it
+deliberately, never as a side effect of something else:
+
+```bash
+docker run --rm -v "$PWD/backend:/w" -w /w python:3.12 sh -c \
+  "pip install -q pip-tools && pip-compile -q --strip-extras --extra dev \
+   --output-file requirements.lock pyproject.toml"
+```
+
+Two traps, both already sprung once:
+
+* **`--extra dev`, and NOT `--all-extras`.** The `ai-local` extra pulls `rembg` and `onnxruntime` —
+  roughly 400 MB of wheels that `backend/pyproject.toml` explicitly forbids on the t3.micro.
+  Measured on the way in on 2026-09-03: `--all-extras` produced a lock carrying `onnxruntime`,
+  `rembg`, `numpy` and `scipy`.
+* **Do not paste the command out of the lock's own `pip-compile` header.** That header records
+  `--no-index` to say no index URL was written into the file. Passing it for real tells pip to
+  resolve against no index at all, and the refresh fails.
+
+### 1.4 Publishing the Android release — one ordering constraint
+
+`publish-android.yml` posts its release body to `POST /api/app/release`, and as of 2026-09-03 that
+body is `{versionCode, versionName, objectKey, url, notes, sizeBytes}`. **The backend carrying
+`AppReleasePublishRequest.sizeBytes` must be deployed before the next run of that workflow.** If it
+is not, the request is rejected with a 422 and nothing is published — the run fails loudly and
+nothing is left half-done, which is the right failure, but it is still a failure a deploy ordering
+avoids entirely. See [DATA_MODEL.md](DATA_MODEL.md) for what the column means to a handset.
+
+### 1.5 The four workflows added on 2026-09-03
+
+None of them is a gate, and none of them may be added to branch protection.
+
+**`.github/workflows/backup-db.yml` — nightly database backup.** Daily at 03:00 UTC (08:30 IST:
+after the overnight lull, before the field day, so a red run is seen the same morning), plus manual
+dispatch. It installs PostgreSQL client 17 from PGDG — a hard requirement, because `pg_dump` refuses
+to dump a server newer than itself and the runner image ships whatever client it was built with —
+then `pg_dump --no-owner --no-privileges --schema=public`, gzipped, to:
+
+```
+s3://designrepo-media-626159998512/backups/designer-portal/YYYY-MM-DD.sql.gz
+```
+
+**Restore:** `aws s3 cp <key> - | gunzip | psql "$TARGET_DSN"`. That is the whole procedure; the dump
+carries no ownership or grants precisely so it restores into a fresh instance whose roles do not
+exist.
+
+Three things about it are deliberate and easy to undo by accident. **The `backups/` prefix is
+private** only because `aws_s3_bucket_policy.media_public_read` grants anonymous `GetObject` on
+`media/*` and on nothing else — do not move these objects under `media/`, and never widen that policy
+to `/*`. **Retention is not in the workflow**: a job that could expire objects would need delete
+rights over the bucket that also holds every photograph in the product, so ~30-day expiry is an
+`aws_s3_bucket_lifecycle_configuration` in `infra/terraform/main.tf` scoped to that prefix. If the
+rule is ever removed the job keeps working and the bucket grows forever, which is a cost problem
+rather than a data-loss one, and is the right way round. **There is no `|| true` anywhere in the
+file**: every step fails the run, and the last step re-reads the uploaded object's metadata from S3
+rather than trusting the upload's exit code, with a 100 KB floor asserted both locally and remotely —
+because the failure being closed is not "the copy errored" but "the copy succeeded and wrote
+nothing".
+
+**`.github/workflows/monitor.yml` — uptime probe.** Every 15 minutes it asserts `/health/ready`
+(**not** `/health`, which deliberately never touches the database and would report 200 through a
+total data outage) and that the web app serves `/login` (**not** `/`, which redirects happily from a
+build that cannot render anything). The readiness check parses the payload with `jq` and fails on
+three separate conditions: a non-200, `database` not true, and **`latencyMs >= 2000`**. That last one
+is the half that earns its keep — this deployment has a documented history of pool exhaustion whose
+first symptom is a probe that still succeeds and takes seconds, and 2000 ms is a ceiling on a healthy
+p99, not a target.
+
+**It is explicitly a floor, not the answer.** It runs on GitHub, so a GitHub Actions incident takes
+the monitor down together with the ability to notice it is down — and a monitor that is silent both
+when everything is fine and when it cannot run at all is a monitor whose silence means nothing.
+UptimeRobot's free tier or Better Stack, pointed at
+`https://d3ekigkotd1xa2.cloudfront.net/health/ready`, is strictly better and should replace it: an
+external checker probes from several regions and can page rather than email. Keep this file when that
+lands, or delete it — but do not keep it and believe it is the alerting.
+
+**`.github/workflows/e2e-live.yml` — the live browser suite.** Monday 04:00 UTC and on demand. It is
+[TESTING-E2E-LOCAL.md](TESTING-E2E-LOCAL.md)'s sequence, scripted: compose up, migrate, seed, start
+the API, `next build` then `next start`, `npm run test:e2e`. Until it landed, the only machine that
+had ever executed the non-`*-unit` specs was one developer laptop. It is a weekly signal and **must
+not** be added to branch protection — the stack takes minutes to stand up before the first assertion,
+and putting that on every pull request would triple the cost of a one-line change and go red for
+reasons unrelated to the diff. Retries stay at the config's zero, deliberately: a suite that runs
+once a week is exactly the one that must be believed.
+
+It brings the stack up with a **bare `docker compose up -d`**, which is a dependency on a promise
+[DOCKER.md](DOCKER.md) makes and `checks.yml`'s packaging job asserts: a profileless `up` starts
+exactly three services — postgres, minio, and the one-shot bucket creator. Adding a fourth service
+outside a profile breaks this suite as well as that job. Its header records **two departures from the
+document it scripts**, both forced by CI rather than chosen: the **host ports are pinned in the job's
+`env:`** (`55432` for Postgres, `9010` for MinIO) because 55442 is an override in a gitignored `.env`
+on one laptop and a runner has no such file, and it runs **`prisma migrate deploy`**, which the
+document does not mention because that laptop's database already had the schema.
+
+**`.github/workflows/android-emulator.yml` — instrumented tests.** `workflow_dispatch` only, and
+that is a cost decision rather than a taste. An emulator job needs KVM, boots a system image and
+takes fifteen to thirty minutes — an order of magnitude more runner time than everything else here
+put together, on a fleet whose entire infrastructure is one t3.micro. It runs the instrumented test
+classes under `android/app/src/androidTest/` — the ASR engine probes, the device-tier probe, the
+language-pack probe, the custom-section store and the stage-authority device tests — which
+`android-build.yml` cannot, because that workflow compiles, lints and assembles on a bare runner with
+no device attached. The count is in [REPO_FACTS.md](REPO_FACTS.md); the two worth caring about most
+are `DwCustomSectionStoreDeviceTest` and `DwStageAuthorityDeviceTest`, because they assert behaviour
+that only exists on a real Android runtime and that no JVM unit test can replace.
+
+```bash
+gh workflow run "Android instrumented tests" --ref <branch>
+```
+
+It takes one input, `api-level`, defaulting to **34**; the emulator is `google_apis` / `x86_64` on a
+`Nexus 6` profile with animations disabled, and the job runs `./gradlew :app:connectedDebugAndroidTest`
+under JDK 17 with an explicit KVM udev step.
+
+**It is not wired into branch protection and must not be**: a required check a human has to remember
+to trigger is a required check that blocks every pull request forever.
+
+### 1.6 Every action is pinned to a commit SHA
+
+As of 2026-09-03, every `uses:` in every workflow in this repository names a commit SHA with the
+human-readable tag in a trailing comment. A version tag is mutable — the owner of an action can
+repoint `v4`, and the next deploy then runs different code on the box holding this product's database
+credentials, with no change visible in any file here.
+
+**"Every" is literal — verified 2026-09-03 with `grep -n "uses:" .github/workflows/*.yml`, and it now
+includes `keep-supabase-active.yml` and `publish-android.yml`, which an earlier note recorded as the
+two files still on mutable tags.** `backup-db.yml` and `monitor.yml` have no `uses:` at all: neither
+checks the repository out, deliberately.
+
+Two things are *not* pinned and both are on the record. `deploy-frontend.yml` installs
+`vercel@latest` — deliberate, because the CLI must match a platform that changes under it — and the
+Android toolchain (Gradle, AGP) under `android/` is outside this rule.
+
+Pinning introduces its own failure mode, which is a pin that rots. `.github/dependabot.yml` is what
+closes it: **github-actions weekly** (Monday 04:00 Asia/Kolkata, at most 3 open PRs, `ci` commit
+prefix), plus **npm on `/frontend`** and **pip on `/backend`** monthly, minor-and-patch grouped and
+majors left individual. It does **not** refresh `backend/requirements.lock` — that is pip-compile
+output, so a pip PR moves the range in `pyproject.toml` and the lock has to be recompiled in the same
+PR (§1.3). `pip` also ignores **ruff** (minor and major) and **bcrypt** (entirely).
+
 ---
 
 ## 2. Required repository secrets
@@ -217,7 +507,7 @@ one it closes. Promote it the next time somebody has the token in hand.
 |---|---|---|
 | `EC2_HOST` | backend | Elastic IP of **this portal's** API box: `13.206.216.18` (instance `i-0e091ca8e6b417b52`, tagged `designrepo-api`). From the repository: `cd infra/terraform && terraform workspace show` — it must print `designrepo` — then `terraform output api_public_ip`. In the EC2 console pick the instance tagged **`designrepo-api`**, never `fieldrepo-api`: both exist in the same account and region. `15.207.145.174` is the field repository and must never appear here. |
 | `EC2_SSH_KEY` | backend | The **entire** private key file for that instance's key pair `designrepo-deploy`, `-----BEGIN…` through `-----END…` inclusive, with the trailing newline: `infra/terraform/designrepo-deploy.pem`. Paste the file contents, not the path. `*.pem` is gitignored — never commit it. The sibling `infra/terraform/fieldrepo-deploy.pem` opens the *other* product's box; pasting it together with the IP above is the pair that deploys successfully onto the wrong machine. |
-| `BACKEND_ENV` | backend | The full contents of the production `backend/.env`: `DATABASE_URL`, `JWT_SECRET`, `AWS_*`, `OPENAI_API_KEY`, `GEMINI_API_KEYS`, `ELEVENLABS_*`, `DEEPGRAM_*`, `BACKEND_CORS_ORIGINS`, … Every key and its meaning is in [ENVIRONMENT.md](ENVIRONMENT.md). Easiest source of truth: `ssh ubuntu@$EC2_HOST cat /home/ubuntu/app/backend/.env`. The workflow pipes it over the SSH tunnel; it is never on a command line. |
+| `BACKEND_ENV` | backend | The full contents of the production `backend/.env`: `DATABASE_URL`, `JWT_SECRET`, `AWS_*`, `OPENAI_API_KEY`, `GEMINI_API_KEYS`, `ELEVENLABS_*`, `DEEPGRAM_*`, `BACKEND_CORS_ORIGINS`, … Every key and its meaning is in [ENVIRONMENT.md](ENVIRONMENT.md). Easiest source of truth, over an SSM session on the box: `cat /home/ubuntu/app/current/backend/.env` — `current` is the symlink to the live release (§1.2), and each release carries the `.env` it was deployed with, so reading the path without `current/` reads whichever release happens to be there. The workflow pipes the value over the SSH tunnel; it is never on a command line. |
 | `VERCEL_TOKEN` | frontend | <https://vercel.com/account/tokens> → **Create Token**. Scope it to the **team that owns `designer-repository`**, not "Personal Account", or the CLI 403s. Set an expiry you will actually remember — the deploy starts failing with `Error: Not authorized` the day it lapses. This is the only genuinely sensitive value of the three Vercel ones. |
 | `VERCEL_ORG_ID` | frontend | `team_pcTf4Alb2DCIwq2IZcdu00dS`. Also at Vercel → Team Settings → General → **Team ID**, or in the `.vercel/project.json` that a local `vercel link` writes inside `frontend/` (`orgId`). An identifier, not a credential. Both products live in this one team, so it is the one Vercel value that is the same either way — and therefore the one that cannot warn you. |
 | `VERCEL_PROJECT_ID` | frontend | `prj_uRYcc64FRwcrkvMDZg9Gp7ZEtCoc` — Vercel → Project **`designer-repository`** → Settings → General → **Project ID**. CORRECTED 2026-08-23: this row said `designer-repository`, and the owner has confirmed the production target is **`designer-repository`** — measured, `designer-repository.vercel.app/login` answers 200 and `designer-repository.vercel.app/login` answers 404. A root-path probe returns 200 for both and proves nothing. WHETHER THE ID BELOW IS STILL THE RIGHT ONE IS UNVERIFIED: it was written by `vercel link`, whose `.vercel/project.json` records `projectName: designer-repository`. Read it off the `designer-repository` project before trusting it, or the same `.vercel/project.json` (`projectId`), which is what `vercel link` wrote in this checkout. An identifier, not a credential, but it is the **deploy target**: `prj_EzXN8hhGKpMciFBrZRdxpcgUUzN0` is the field repository's project, and publishing there succeeds — it replaces another product's live site with this one's build. `deploy-backend.yml` pins `BACKEND_CORS_ORIGINS` to `designer-repository.vercel.app`, so the correct target is also the only one the API will answer. |
@@ -314,7 +604,7 @@ same value in two places. Change one there and re-run this workflow (or push) to
 | Goal | How |
 |---|---|
 | Deploy the backend now | Actions → *Deploy backend to EC2* → **Run workflow**. Manual dispatch always deploys (it skips change detection). Stage 2 does **not** chain off a manual dispatch of stage 1 unless the run completes on `main`. |
-| Deploy the frontend now | Actions → *Deploy frontend to Vercel* → **Run workflow**. Leave `force` = true to deploy regardless of what changed. This bypasses the backend gate — that is the escape hatch, use it knowing why. |
+| Deploy the frontend now | Actions → *Deploy frontend to Vercel* → **Run workflow**. `force` **defaults to true**, and it now bypasses **two** gates, not one: it deploys regardless of what changed *and* it skips the wait for Checks on that SHA (§1.1). That is the documented emergency override — and because true is the default, the ordinary manual dispatch already takes it. **Untick `force` to get the gated path.** |
 | Build the APK now | Actions → *Android build* → **Run workflow**, or open a PR touching `android/**`. |
 | Re-deploy after changing a Vercel env var | Re-run *Deploy frontend to Vercel*. `NEXT_PUBLIC_*` values are baked at build time; changing them in the dashboard does nothing until something rebuilds. |
 | Get the APK | The run's **Artifacts** section → `app-debug-<sha>`. Debug-signed: sideload-only, and Android will refuse to install it over a release-signed build. |
@@ -330,10 +620,13 @@ same value in two places. Change one there and re-run this workflow (or push) to
   `cd backend && python -m pytest -q` that stage 1 `needs:`", and a `needs:` inside
   `deploy-backend.yml` was rejected on purpose — that workflow only fires on `push: main`, so the
   job would never have run on a pull request, which is where the drift it guards against is
-  introduced. A separate workflow runs on both. **What the bullet asked for that is still NOT true:
-  it does not block the deploy.** `deploy-backend.yml` fires on `push: main` independently and
-  cannot `needs:` across a workflow file, so on `main` the two race; only branch protection makes it
-  a gate. See §1.
+  introduced. A separate workflow runs on both. **The rest of what the bullet asked for landed on
+  2026-09-03: it now DOES block the deploy.** `deploy-backend.yml` still fires on `push: main`
+  independently and still cannot `needs:` across a workflow file — that constraint is real and did
+  not change. What closed the race is a `wait-for-checks` job inside each deploy workflow that polls
+  the Checks run at the same SHA and refuses to hand over until `Backend tests`, `Web typecheck, lint
+  and unit specs` and `Docs check` are green (§1.1). **It does not block a MERGE**, which is a
+  different question and still needs branch protection. See §1.
   **The description of the SUITE in the previous version of this bullet was also wrong twice, and
   both corrections are load-bearing.** It first described "294 cases passing in 8.7 s … with **no**
   database fixture, no test client and no secrets" (true on 2026-07-27; `backend/tests/` has since
@@ -346,8 +639,12 @@ same value in two places. Change one there and re-run this workflow (or push) to
   `test_reference_carry.py`, the entire carry-fidelity suite the workflow exists for. That is why
   the job exports deliberately unusable placeholders including an `.invalid` DSN; the DSN, not the
   absence of one, is what makes the ~28 modules skip. With them it is 2862 passed, 381 skipped, 0
-  failed, in four to five minutes. Standing up Postgres in that job would run the other ~28 as well
-  and is a second, larger decision — worth taking, but not this bullet's.
+  failed, in four to five minutes. **That "second, larger decision" was taken on 2026-09-03**, and
+  not by changing this job: `Backend integration tests` is a separate job in the same file, with a
+  `postgres:16` service container and a loopback DSN, running `prisma migrate deploy` and then the
+  whole suite so the modules that skip here actually execute. `Backend tests` is deliberately
+  unchanged — it is fast, needs no service, and it is the one that gates. The new job is advisory
+  until somebody has watched enough runs to know what it costs; see §1's table.
 - **The Playwright suite is HALF a gate — corrected 2026-08-20.** `checks.yml` runs
   `npm run test:unit`, the `*-unit.spec.ts` selection minus two files excluded by name: pure-function
   specs, no dev server, no browser download, seconds rather than minutes. **No count and no duration
@@ -389,8 +686,10 @@ same value in two places. Change one there and re-run this workflow (or push) to
   unit specs` job runs `npx tsc --noEmit` and `npx eslint . --max-warnings=0` on every pull request,
   so the answer arrives before the merge rather than as a `next build` failure after the backend has
   already deployed. `--max-warnings=0` is deliberate: this config's warnings are the accessibility
-  and hook rules, and a warning nobody fails on is a warning nobody reads. Same caveat as the backend
-  bullet — on `main` it does not hold the deploy back; only branch protection would.
+  and hook rules, and a warning nobody fails on is a warning nobody reads. Same correction as the
+  backend bullet, and the same date: since 2026-09-03 this job's result **does** hold both deploys
+  back, because it is one of the three names in each `wait-for-checks` (§1.1). It still does not hold
+  a merge back; only branch protection would.
 - **Don't chain a fourth stage.** GitHub caps how deep `workflow_run` chains can go (documented at
   three levels); this pipeline already uses two hops. A fourth stage should be a job with `needs:`
   inside an existing workflow, not another `workflow_run` link.
@@ -546,8 +845,8 @@ parts that are not are exactly the parts that were wrong before.
 
 | Claim class | Kept true by |
 |---|---|
-| The workflows, their triggers and their step order | `.github/workflows/*.yml`. `grep -n "^name:\|^on:\|    - name:" .github/workflows/deploy-frontend.yml` renders the shape of a workflow in one command. **This row said "the three workflows" and there are five**, named rather than counted because a count is what went stale: `android-build.yml`, `checks.yml`, `deploy-backend.yml`, `deploy-frontend.yml`, `keep-supabase-active.yml`. Re-derive them with `ls .github/workflows/` rather than from this sentence; the same stale count was just repaired in `checks.yml`'s own header, which now NAMES the workflows beside it for exactly this reason ("a count is the one fact in this header that a new file falsifies silently and nobody re-reads"). |
-| **"Runs" versus "gates"** | **Not checkable from a checkout, which is why §1 and §5 say it in words rather than leaving it implied.** A workflow file proves a job RUNS; nothing in `.github/` proves it BLOCKS anything, because required status checks live in the repository's branch-protection settings (`gh api repos/:owner/:repo/branches/main/protection`, or the Settings page). A reader who takes a green Checks tick as protection for `main` is wrong today. **The gap this row used to record is CLOSED and the row is kept for the rule, not the complaint:** `checks.yml` landed on 2026-08-20 with a long header about what it stops and no sentence about what it does not, and it now carries one — the `THIS WORKFLOW RUNS. IT DOES NOT, BY ITSELF, GATE ANYTHING` block, which names the two specific things it does not do (block a merge without the three job names set as required checks, and block a deploy, since `deploy-backend.yml` fires on its own `push: main` trigger and the two RACE). Whenever a bullet in §5 moves from "not a gate" to built, say which of the two it became — and say it in the workflow as well as here, because a reader who opens the YAML rarely opens this file. |
+| The workflows, their triggers and their step order | `.github/workflows/*.yml`. `grep -n "^name:\|^on:\|    - name:" .github/workflows/deploy-frontend.yml` renders the shape of a workflow in one command. **This row said "the three workflows"; then five; at 2026-09-03 there are TEN**, named rather than counted because the count is precisely what goes stale — twice now: `android-build.yml`, `android-emulator.yml`, `backup-db.yml`, `checks.yml`, `deploy-backend.yml`, `deploy-frontend.yml`, `e2e-live.yml`, `keep-supabase-active.yml`, `monitor.yml`, `publish-android.yml`. Re-derive them with `ls .github/workflows/` rather than from this sentence; the same stale count was just repaired in `checks.yml`'s own header, which now NAMES the workflows beside it for exactly this reason ("a count is the one fact in this header that a new file falsifies silently and nobody re-reads"). |
+| **"Runs" versus "gates"** | **Not checkable from a checkout, which is why §1 and §5 say it in words rather than leaving it implied.** A workflow file proves a job RUNS; nothing in `.github/` proves it BLOCKS anything, because required status checks live in the repository's branch-protection settings (`gh api repos/:owner/:repo/branches/main/protection`, or the Settings page). A reader who takes a green Checks tick as protection for `main` is wrong today. **The gap this row used to record is CLOSED and the row is kept for the rule, not the complaint:** `checks.yml` landed on 2026-08-20 with a long header about what it stops and no sentence about what it does not, and it now carries one — the `THIS WORKFLOW RUNS. IT DOES NOT, BY ITSELF, GATE ANYTHING` block, which names the two specific things it does not do (block a merge without the three job names set as required checks, and block a deploy, since `deploy-backend.yml` fires on its own `push: main` trigger and the two RACE). **The second of those two is no longer true, as of 2026-09-03**, and the correction is worth stating precisely rather than crossing the sentence out: both deploy workflows now carry a `wait-for-checks` job that polls the Checks run at the same SHA and refuses to hand over to `deploy` unless the three gating jobs are green (§1.1). **The remaining gap, stated so it is not mistaken for closed:** the backend's wait is scoped to pushes that touched `backend/`, so a frontend-only push is gated by the *frontend's* copy of the wait and by nothing in the backend run — and neither wait touches MERGING at all. A red Checks still merges to `main` until branch protection names the three jobs. Whenever a bullet in §5 moves from "not a gate" to built, say which of the two it became — and say it in the workflow as well as here, because a reader who opens the YAML rarely opens this file. |
 | The secrets **table** (names and purposes) | `grep -ho 'secrets\.[A-Z_]*' .github/workflows/*.yml \| sort -u` lists every secret the workflows read. Anything in that output missing from §2 is undocumented. |
 | Which secrets **exist** | **Not checkable from a checkout, and deliberately not stated.** `gh secret list`, or the Actions settings page. A previous version asserted an inventory here and it went stale within days. |
 | The §5 non-gates | The absence of a job. A row leaves that list when a workflow gains the step — so re-read §5 against the workflow files, not against memory. **This row is not enough on its own and 2026-08-19 proved it:** the Android bullet went stale not because a workflow changed but because the *tree* did — the step was already there, branching on whether `app/src/test` had sources, and the sources arrived. A non-gate bullet that describes the CODE as well as the workflow has two ways to rot, and only one of them is visible in `.github/`. |

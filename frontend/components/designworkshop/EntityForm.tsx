@@ -87,6 +87,76 @@ import {
 /** Per-field messages for one record, as the save response's `errors` map holds them. */
 export type FieldErrors = Record<string, string> | undefined;
 
+/**
+ * The reserved key a ROW-LEVEL refusal arrives under — `save_stage`'s `STAGE_ROW_CONFLICT_KEY`.
+ *
+ * Kept in step with `backend/app/services/design_workshops.py` and with Android's
+ * `DwStageRefusal.DW_ROW_REFUSAL_KEY` BY HAND: it is a wire constant on three sides and there is no
+ * generator between them. The underscore is this protocol's own mark for "not workshop data"
+ * (`_clientKey`, `_entryId`, `_ordinal`, `_custom`), and the server refuses a designer's own question
+ * any first character but a lower-case letter, so a custom key can never collide with it. (2026-09-03)
+ */
+export const ROW_REFUSAL_KEY = "_row";
+
+/**
+ * The row-level refusal in this record's error map, or null.
+ *
+ * WHY IT NEEDS ITS OWN RENDERER AND CANNOT RIDE THE BOX-MARKING PASS. Every other entry in an error
+ * map names a real field, and both grids draw one by looking the key up in the registry's field list
+ * — so a key that names no field is looked up, missed, and drawn nowhere. That was survivable while
+ * the only such key was hypothetical; it stopped being so when `save_stage` began filing a version
+ * conflict under `_row`. The count a designer is shown comes from `countRefusedAnswers`, which counts
+ * the map, so the stage said "1 answer was refused" and marked nothing at all — the refusal existed
+ * on the server, in the sentence, and on no box. It is not a field refusal wearing an odd key: it is
+ * about the WHOLE row, which is why it is drawn on the row's card and not inside its panel, where a
+ * closed disclosure would hide it again.
+ *
+ * THE SENTENCE IS PRINTED VERBATIM. It is the server's, it is one line, and it already names the
+ * state and the next move ("reopen the stage to see the latest before saving again") — so there is
+ * nothing for a client to add, and anything a client added would be a second voice on one refusal.
+ * The registry's own copy rule applies: the words that both clients show come from the server.
+ *
+ * EXPORTED SO IT CAN BE EXECUTED BY A TEST. There is no React renderer in devDependencies, so a rule
+ * left inside a component body can only ever be READ by a spec. See
+ * `e2e/stage-refusal-placement-unit.spec.ts`. (2026-09-03)
+ */
+export function rowRefusal(errors: FieldErrors): string | null {
+  const message = errors?.[ROW_REFUSAL_KEY];
+  return typeof message === "string" && message.length > 0 ? message : null;
+}
+
+/**
+ * The same map with the row-level refusal taken out, for a caller that draws it ITSELF, once.
+ *
+ * ONE CALLER, AND IT EARNS IT. `CustomSectionsForm` hands the single `_custom` bucket to an
+ * `EntityForm` per section, because the server files every custom answer under that one key — so a
+ * stage with three custom sections would print one row-level refusal three times, and a refusal about
+ * one stored row read as three. It is hoisted above the sections instead and each section is handed
+ * the field messages alone. Every other caller passes the map through unchanged.
+ */
+export function withoutRowRefusal(errors: FieldErrors): FieldErrors {
+  if (!errors || !(ROW_REFUSAL_KEY in errors)) return errors;
+  const rest = { ...errors };
+  delete rest[ROW_REFUSAL_KEY];
+  return rest;
+}
+
+/**
+ * The row-level refusal, drawn where the row is — a card band, not a field message.
+ *
+ * `role="alert"` for the same reason `FieldHint`'s error carries one: it appears in response to a
+ * Save the designer just pressed, so interrupting is what they asked for. `error-600` on `error-100`
+ * is the palette's literal error pair and deliberately does not invert — "somebody else got here
+ * first" must read identically in both themes.
+ */
+function RowRefusalLine({ message, className }: { message: string; className: string }) {
+  return (
+    <p role="alert" className={className}>
+      {message}
+    </p>
+  );
+}
+
 /* ────────────────────────────────────────────────────────────────────────────
  * The field grid, shared by both shapes
  * ──────────────────────────────────────────────────────────────────────────── */
@@ -785,6 +855,7 @@ export function EntityForm({
    * does today. Null for every other singleton, which then renders exactly as it always has.
    */
   const mirror = useMemo(() => mirrorFor(entity), [entity]);
+  const refusedRow = rowRefusal(errors);
 
   return (
     <section className="panel p-4">
@@ -792,6 +863,16 @@ export function EntityForm({
         <h2 className="font-display text-lg font-bold text-ink-900">{entity.title}</h2>
         {entity.description ? <p className="mt-1 text-sm leading-6 text-ink-muted">{entity.description}</p> : null}
       </header>
+      {/* ABOVE THE BOXES, NOT AMONG THEM. A singleton files its refusals under the bare entity key,
+          so this map is the same one the grids read — and a row-level refusal belongs to the record
+          rather than to any field in it. Drawn before the fields so it is read before the designer
+          starts hunting for a marked box that does not exist. */}
+      {refusedRow ? (
+        <RowRefusalLine
+          message={refusedRow}
+          className="mb-4 rounded-md bg-error-100 px-3 py-2 text-sm font-medium leading-5 text-error-600"
+        />
+      ) : null}
       {mirror ? (
         <MirroredEntityBody
           entity={entity}
@@ -1352,11 +1433,22 @@ export function CollectionTable({
   /** The least it could carry. Equal to `stageTotal` whenever the budget is exact. */
   const stageFloor = stageEntries.rows + stageEntries.otherCertain;
   const stageExact = stageEntries.other === stageEntries.otherCertain;
-  /** An en dash, not a hyphen: this is a range between two numbers, not a compound word. */
+  /**
+   * An en dash, not a hyphen: this is a range between two numbers, not a compound word.
+   *
+   * WHY IT IS SOMETIMES A RANGE, AND WHY THAT EXPLANATION IS NO LONGER PRINTED — 2026-09-03. The
+   * width is at most two entries and it is always the same two: a blank singleton and a keyed-but-
+   * blank custom container are sent by a stage this browser has already downloaded and withheld by
+   * one it has never read, and nothing on this screen distinguishes those two stages. A `rangeWhy`
+   * clause used to append that whole paragraph to every cap sentence — an appendix about the
+   * component's own bookkeeping, printed at a designer who has one thing to do about it: delete a
+   * row. The uncertainty is still honest (the range is still shown, and every THRESHOLD still uses
+   * the upper bound, so the notice is never late); the essay explaining it lives here, where the
+   * next person to read `stageHeld` is, rather than over the stage form.
+   */
   const stageHeld = stageExact ? `${stageTotal}` : `${stageFloor}–${stageTotal}`;
   /** Rows that certainly fit. Derived from the upper bound, so it never promises room that is not there. */
   const stageRoom = Math.max(0, STAGE_ROW_CAP - stageTotal);
-  const blankEntries = stageEntries.other - stageEntries.otherCertain;
 
   /**
    * A bulk add this list could not take in full — the fact, in the designer's words.
@@ -1421,21 +1513,25 @@ export function CollectionTable({
     // Deliberately NOT opened: thirty freshly expanded panels is not a form, it is a wall. Each row
     // already shows its name and its required-field count, which is what a designer checks next.
     setOpenKey(null);
+    /*
+      THE SAME COPY RULE AS THE CAP NOTICE ABOVE — 2026-09-03. This sentence used to spend three
+      clauses re-teaching that the budget is the stage's and that nothing was recorded for the
+      refused rows. What a designer needs is the count, the NAMES (they cannot go and look: the
+      picker cleared its ticks and closed itself before this ran) and the act. The stage's own total
+      is on screen in the cap notice directly above this one, in the same box, so repeating it here
+      was the same fact printed twice.
+    */
     setBulkRefusal(
       refused === 0
         ? null
-        : `Added ${taken.length} of the ${options.length} records you chose. ` +
-            `${refused === 1 ? "The other one was" : `The other ${refused} were`} not added: this stage was already ` +
-            `holding ${stageHeld} of the ${STAGE_ROW_CAP} entries one save can carry — counted across every list on ` +
-            `it together — so there was room for ${stageRoom} more. Not added: ` +
+        : `Added ${taken.length} of ${options.length} — room for ${stageRoom} on this stage. Not added: ` +
             `${dropped
               .slice(0, DROPPED_NAMES_SHOWN)
               .map((option) => option.label)
               .join(", ")}` +
-            `${refused > DROPPED_NAMES_SHOWN ? ` and ${refused - DROPPED_NAMES_SHOWN} more` : ""}. Nothing has been ` +
-            `recorded for ${refused === 1 ? "it" : "them"} — choose ${refused === 1 ? "it" : "them"} again after ` +
-            `deleting rows here or in another of this stage's lists, or record ${refused === 1 ? "it" : "them"} on ` +
-            `another stage.`
+            `${refused > DROPPED_NAMES_SHOWN ? ` and ${refused - DROPPED_NAMES_SHOWN} more` : ""}. Delete rows on ` +
+            `this stage and choose ${refused === 1 ? "it" : "them"} again, or record ${refused === 1 ? "it" : "them"} ` +
+            `on another stage.`
     );
   }
 
@@ -1663,8 +1759,9 @@ export function CollectionTable({
    *
    * WHERE THE OTHER ROWS ARE IS PART OF THE SENTENCE. "This list holds 470" is not actionable when the
    * remedy — delete rows, or move some of this to another stage — may belong to a different list
-   * entirely; "470 of the 500 one save can carry — 200 in this list, 269 in this stage's other lists and
-   * 1 for this stage's own fields" tells the designer where to go.
+   * entirely; "470 of 500 entries on this stage — 200 in this list, 269 in this stage's other lists and
+   * 1 for this stage's own fields" tells the designer where to go. That breakdown survived the copy
+   * rewrite of 2026-09-03 for exactly this reason while the paragraphs around it did not.
    */
   const capState: "over" | "full" | "near" | null =
     stageTotal > STAGE_ROW_CAP
@@ -1685,38 +1782,45 @@ export function CollectionTable({
     .reduce((sentence, part, index, parts) =>
       index === 0 ? part : index === parts.length - 1 ? `${sentence} and ${part}` : `${sentence}, ${part}`
     );
-  /*
-    THE WIDTH OF THE RANGE IS EXPLAINED WHERE THE RANGE IS PRINTED, or it reads as a component that
-    cannot count. It is never more than two entries and it is always the same two: a blank singleton
-    and a keyed-but-blank custom container are sent by a stage this browser has downloaded and withheld
-    by one it has not, and nothing on this screen distinguishes those two stages.
-  */
-  const rangeWhy = stageExact
-    ? ""
-    : ` A range because ${blankEntries} of those entries ${blankEntries === 1 ? "is" : "are"} blank: a blank one is ` +
-      `sent by a stage this browser has already downloaded and withheld by one it has never read, and which of the two ` +
-      `this is cannot be seen from the form.`;
+  /**
+   * The sentence, in the shape the owner's copy rule asks for — 2026-09-03.
+   *
+   * ── WHAT WAS HERE, AND WHY IT WENT ─────────────────────────────────────────────────────────────
+   *
+   * Three branches of 50 to 127 words each, printed in amber over a stage form. They taught the
+   * server's refusal shape ("a 422 over the stage, not over the row that crossed the line"), the
+   * consequence for other lists, and — via `rangeWhy` — a paragraph about which of two IndexedDB
+   * states this browser is in. Every clause of it was TRUE, and none of it changed what the designer
+   * does next, which is delete a row or move work to another stage. The owner's standing rule for
+   * both clients is one line: state the fact, name the act. The mechanism belongs here.
+   *
+   * ── THE MECHANISM, KEPT, BECAUSE THE NEXT EDITOR NEEDS IT ─────────────────────────────────────
+   *
+   * `StageSaveIn._bound_rows` refuses on the length of the WHOLE stage payload, not on one list, and
+   * it refuses the save as a unit: a 422 over the stage means answers typed into every other list on
+   * it are unsendable too. That is why the threshold is `stageTotal` and why `rowsAtCap` closes Add
+   * on a three-row roster whose stage has spent the budget — and it is why the sentence names where
+   * the other rows are (`capBreakdown`), which is the only part of the old essay a designer could
+   * act on: the remedy may belong to a list they are not looking at.
+   *
+   * `over` and `full` are different facts and must stay different sentences: at exactly the cap the
+   * stage still saves and one more row does not, while over it nothing saves at all. The `over` arm
+   * still splits on `stageFloor` because a stage whose blank-entry range straddles the cap MAY be
+   * refused rather than IS — claiming certainty there would be this component asserting something it
+   * cannot see (see `stageHeld`).
+   */
   const capNotice =
     capState === null
       ? null
       : capState === "over"
-        ? `This stage holds ${stageHeld} of the ${STAGE_ROW_CAP} entries one save can carry — ${capBreakdown}. ` +
-          `${
-            stageFloor > STAGE_ROW_CAP
-              ? "It is over that cap, so every save of this stage is being refused as a whole"
-              : "It may already be over that cap, and if it is, every save of this stage is refused as a whole"
-          }: a 422 over the stage, not over the row that crossed the line, so nothing on it can be sent — including ` +
-          `answers typed into other lists. Adding is closed on every list of this stage. Nothing already recorded is ` +
-          `lost: delete rows from this stage's lists, or record the rest on another stage.${rangeWhy}`
+        ? `Stage over the ${STAGE_ROW_CAP}-entry save limit — ${stageHeld} held: ${capBreakdown}. ` +
+          `${stageFloor > STAGE_ROW_CAP ? "Saves are refused" : "Saves may be refused"} until rows here or on this ` +
+          `stage's other lists are deleted, or moved to another stage. Nothing recorded is lost.`
         : capState === "full"
-          ? `This stage holds ${stageHeld} of the ${STAGE_ROW_CAP} entries one save can carry — ${capBreakdown}. That ` +
-            `is the cap exactly: this stage still saves, and one more row does not, so adding is closed on every list ` +
-            `of it. Delete a row here or in another of this stage's lists to make room, or record the rest on another ` +
-            `stage.${rangeWhy}`
-          : `This stage holds ${stageHeld} of the ${STAGE_ROW_CAP} entries one save can carry, counted across every ` +
-            `list on it together — ${capBreakdown}. There is room for ${stageRoom} more row` +
-            `${stageRoom === 1 ? "" : "s"} anywhere on this stage, this list included. Over the cap the stage refuses ` +
-            `to save as a whole, not just the list that crossed the line.${rangeWhy}`;
+          ? `Stage full — ${stageHeld} of ${STAGE_ROW_CAP} entries: ${capBreakdown}. It still saves; one more row does ` +
+            `not. Delete a row on this stage, or record the rest on another.`
+          : `${stageHeld} of ${STAGE_ROW_CAP} entries on this stage — ${capBreakdown}. Room for ${stageRoom} more ` +
+            `row${stageRoom === 1 ? "" : "s"} anywhere on it; over the limit the whole stage stops saving.`;
 
   /**
    * The two sentences this table's status region carries, newest fact first.
@@ -1844,6 +1948,7 @@ export function CollectionTable({
             const panelId = `row-${entity.key}-${rowKey}`;
             const progress = rowProgress(entity, row);
             const rowErrors = errorsByIndex?.[index];
+            const rowRefused = rowRefusal(rowErrors);
             const rowShift = drag.shiftFor(rowKey);
             const rowDragging = drag.draggingKey === rowKey;
             return (
@@ -1995,6 +2100,20 @@ export function CollectionTable({
                     </button>
                   </div>
                 </div>
+                {/*
+                  ON THE CARD, AND NOT INSIDE THE PANEL. A row-level refusal is about the whole row —
+                  today that is a version conflict, somebody else having saved this row first — so
+                  there is no box to mark, and the panel it would otherwise sit in is CLOSED on
+                  arrival. Left there, the "N to fix" chip beside it would be a count with nothing
+                  marked anywhere: exactly the failure the chip exists to prevent. Drawn here it is
+                  visible in the collapsed list, next to the count it explains. (2026-09-03)
+                */}
+                {rowRefused ? (
+                  <RowRefusalLine
+                    message={rowRefused}
+                    className="border-t border-line-200 bg-error-100 px-3 py-2 text-sm font-medium leading-5 text-error-600"
+                  />
+                ) : null}
                 {open ? (
                   <div id={panelId} className="border-t border-line-200 p-3">
                     {mirror ? (

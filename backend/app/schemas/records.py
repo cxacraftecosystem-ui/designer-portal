@@ -273,6 +273,26 @@ class ArtisanUpdate(APIModel):
     recordedTimezone: str | None = None
     location: LocationInput | None = None
     extraMetadata: dict[str, Any] | None = None
+    # ── THE VERSION THIS EDIT WAS COMPOSED AGAINST — OPTIONAL, AND A REFUSAL WHEN IT IS STALE ────
+    #
+    # NOT A COLUMN. It is a QUESTION the caller asks about the row before writing to it, popped from
+    # the body by ``records.take_expected_updated_at`` and answered by
+    # ``records.assert_expected_updated_at``, which carries the whole argument: why a timestamp here
+    # when ``DwStageEntry`` was deliberately given a counter, how big the comparison tolerance is and
+    # which of the two possible mistakes it chooses to make.
+    #
+    # WHAT IT CLOSES. A queued correction replays a whole create-shaped body through this route with
+    # no precondition, so it overwrites anything anybody else changed while it sat in an outbox —
+    # field for field, under a 200, with nobody told. Android's ``offlineSavedMessage`` documents the
+    # gap and names this as the fix: *"Closing it properly needs the record's version as the queued
+    # write's precondition."*
+    #
+    # OMITTED MEANS "NO PRECONDITION", WHICH IS TODAY'S BEHAVIOUR EXACTLY, and that is what makes the
+    # field safe to ship ahead of any client. Every build in the field sends nothing here and is
+    # unrefusable by it; only a caller that opts in by sending the value can ever meet the 409. There
+    # is deliberately no server-side default — a precondition the server invents is one the caller
+    # never agreed to, and it would start refusing edits nobody asked to have guarded.
+    expectedUpdatedAt: datetime | None = None
 
     # Omit it to keep the stored one (which is how a record that predates the rule stays
     # editable); send one to replace it; you may not send null. See forbid_clearing_location.
@@ -335,6 +355,9 @@ class CraftUpdate(APIModel):
     recordedAt: datetime | None = None
     recordedTimezone: str | None = None
     extraMetadata: dict[str, Any] | None = None
+    # The version this edit was composed against. Optional; omitted is today's behaviour exactly. See
+    # ``ArtisanUpdate.expectedUpdatedAt`` and ``records.assert_expected_updated_at``.
+    expectedUpdatedAt: datetime | None = None
 
 
 #: Mirrored from the `WorkshopType` enum in schema.prisma. Validated here rather than left to the
@@ -365,6 +388,22 @@ class WorkshopCreate(APIModel):
     recordedTimezone: str = "Asia/Kolkata"
     location: LocationInput | None = None
     extraMetadata: dict[str, Any] | None = None
+    # ── THE CREATE-IDEMPOTENCY KEY, AND WHY IT IS OPTIONAL RATHER THAN REQUIRED ──────────────────
+    #
+    # A v4 UUID minted by the client at QUEUE time, so that a replayed create lands once however many
+    # times it is sent. ``services/records.client_key_replay`` carries the whole argument, including
+    # why the caller cannot tell a replay from a first landing and why that is the point.
+    #
+    # OPTIONAL, AND ABSENT MEANS TODAY'S BEHAVIOUR EXACTLY. ``APIModel`` is ``extra="forbid"``, so
+    # this key had to be DECLARED before either client could send it — but the reverse rule is what
+    # makes the field safe to add: an omitted key writes no column, takes no read, and is answered
+    # precisely as it was before. That covers every fielded 0.0.7 APK, every cached web bundle, and
+    # every script; none of them has ever heard of this field and none of them needs to.
+    #
+    # DEFAULTED TO ``None`` AND NOT TO A SERVER-MINTED UUID, which was considered and is worse than
+    # useless: a key the SERVER invents is different on every request, so it would make every replay
+    # a fresh create while looking, in the schema, exactly like a guard.
+    clientKey: str | None = Field(default=None, max_length=200)
 
     # Mandatory on create. See services/common.require_location for what that does and does not
     # mean — and note it is the ONLY half of the pair the clients cannot omit, because create is
@@ -402,6 +441,9 @@ class WorkshopUpdate(APIModel):
     recordedTimezone: str | None = None
     location: LocationInput | None = None
     extraMetadata: dict[str, Any] | None = None
+    # The version this edit was composed against. Optional; omitted is today's behaviour exactly. See
+    # ``ArtisanUpdate.expectedUpdatedAt`` and ``records.assert_expected_updated_at``.
+    expectedUpdatedAt: datetime | None = None
 
     # Omit it to keep the stored one (which is how a record that predates the rule stays
     # editable); send one to replace it; you may not send null. See forbid_clearing_location.
@@ -573,6 +615,10 @@ class ProductCreate(APIModel):
     recordedTimezone: str = "Asia/Kolkata"
     location: LocationInput | None = None
     extraMetadata: dict[str, Any] | None = None
+    # The create-idempotency key. Optional; absent is today's behaviour exactly. See
+    # ``WorkshopCreate.clientKey`` for the argument and ``services/records.client_key_replay`` for
+    # what a key that IS sent buys.
+    clientKey: str | None = Field(default=None, max_length=200)
 
     # Mandatory on create. See services/common.require_location for what that does and does not
     # mean — and note it is the ONLY half of the pair the clients cannot omit, because create is
@@ -620,6 +666,9 @@ class ProductUpdate(APIModel):
     recordedTimezone: str | None = None
     location: LocationInput | None = None
     extraMetadata: dict[str, Any] | None = None
+    # The version this edit was composed against. Optional; omitted is today's behaviour exactly. See
+    # ``ArtisanUpdate.expectedUpdatedAt`` and ``records.assert_expected_updated_at``.
+    expectedUpdatedAt: datetime | None = None
 
     # Omit it to keep the stored one (which is how a record that predates the rule stays
     # editable); send one to replace it; you may not send null. See forbid_clearing_location.
@@ -650,6 +699,14 @@ class ProcessCreate(APIModel):
     recordedAt: datetime | None = None
     recordedTimezone: str = "Asia/Kolkata"
     extraMetadata: dict[str, Any] | None = None
+    # The create-idempotency key. Optional; absent is today's behaviour exactly. See
+    # ``WorkshopCreate.clientKey``.
+    #
+    # IT MATTERS MOST ON THIS MODEL, because a replayed process is the only one of the four that
+    # duplicates CHILDREN as well as itself: ``create_process`` writes its ``ProcessStep`` rows after
+    # the row, so a second landing used to produce a second process carrying a second full copy of
+    # every step. The replay branch answers from the stored row and writes no steps at all.
+    clientKey: str | None = Field(default=None, max_length=200)
 
 
 class ProcessUpdate(APIModel):
@@ -665,6 +722,9 @@ class ProcessUpdate(APIModel):
     recordedAt: datetime | None = None
     recordedTimezone: str | None = None
     extraMetadata: dict[str, Any] | None = None
+    # The version this edit was composed against. Optional; omitted is today's behaviour exactly. See
+    # ``ArtisanUpdate.expectedUpdatedAt`` and ``records.assert_expected_updated_at``.
+    expectedUpdatedAt: datetime | None = None
 
 
 class ToolCreate(APIModel):
@@ -711,6 +771,9 @@ class ToolCreate(APIModel):
     recordedTimezone: str = "Asia/Kolkata"
     location: LocationInput | None = None
     extraMetadata: dict[str, Any] | None = None
+    # The create-idempotency key. Optional; absent is today's behaviour exactly. See
+    # ``WorkshopCreate.clientKey``.
+    clientKey: str | None = Field(default=None, max_length=200)
 
     # Mandatory on create. See services/common.require_location for what that does and does not
     # mean — and note it is the ONLY half of the pair the clients cannot omit, because create is
@@ -762,6 +825,9 @@ class ToolUpdate(APIModel):
     recordedTimezone: str | None = None
     location: LocationInput | None = None
     extraMetadata: dict[str, Any] | None = None
+    # The version this edit was composed against. Optional; omitted is today's behaviour exactly. See
+    # ``ArtisanUpdate.expectedUpdatedAt`` and ``records.assert_expected_updated_at``.
+    expectedUpdatedAt: datetime | None = None
 
     # Omit it to keep the stored one (which is how a record that predates the rule stays
     # editable); send one to replace it; you may not send null. See forbid_clearing_location.

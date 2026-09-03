@@ -1488,6 +1488,61 @@ def test_a_plain_string_under_a_promoted_field_still_prints():
     assert "Written before the field was promoted." in text
 
 
+def test_a_promoted_tools_box_prints_names_for_ids_and_keeps_what_was_typed():
+    """``toolsUsed`` was TAGS until 2026-09-03, so one stored array holds BOTH shapes.
+
+    ── THE THREE ANSWERS, AND EACH OF THEM HAS A READER ──────────────────────────────────────────
+
+    An id that RESOLVES prints the tool record's name, which is the entire point of promoting a
+    retyped free-text box into a picker. An id that does NOT resolve prints nothing — the record was
+    deleted after this step cited it, and a bare cuid in a ministry's table is worse than a visible
+    gap, which is the REF branch's own long-standing ruling applied to a list. Anything else prints
+    ITSELF: "pit loom" is a designer's own word for their own fieldwork, and every value stored under
+    these two keys before the promotion is one of those — as is every value a fielded 0.0.7 handset
+    is writing today, because it still draws the old tag box.
+
+    ORDER IS THE STORED ORDER, because a list of tools is not sorted anywhere else and re-ordering
+    it here would make the table disagree with the form the designer filled in.
+
+    ``format_value`` IS ASSERTED SEPARATELY because it is the answer for every caller that CANNOT
+    reach the repository — completeness, search text, the on-device mirror. Running those tokens
+    through ``enum_label`` (an empty table for this field) is what would have printed cuids there.
+    """
+    from app.services.report_builder import ReferencedRecord, format_value
+    from app.services.stage_schema import Cardinality, EntitySpec, FieldSpec, FieldType
+
+    tools = FieldSpec(
+        key="toolsUsed", label="Tools used", type=FieldType.MULTI_ENUM,
+        ref_model="ToolDocumentation",
+    )
+    entity = EntitySpec(
+        key="processStep", name="DwProcessStep", cardinality=Cardinality.COLLECTION,
+        title="Process steps", fields=(tools,),
+    )
+    data = _data(references={
+        "cmsik2jg8000eh8xc1lcy661a": ReferencedRecord(
+            model="ToolDocumentation", label="Pit loom",
+        ),
+    })
+    builder = ReportBuilder(data, template("DETAILED_TECHNICAL"), _resolver, meta=_meta())
+
+    row = {"toolsUsed": [
+        "cmsik2jg8000eh8xc1lcy661a",   # resolves
+        "pit loom",                    # typed before the promotion
+        "cmsjb6qaq01ar4otfh1p0hm1a",   # an id whose record is gone
+        "SK-01",                       # typed, and not remotely id-shaped
+    ]}
+    assert builder._value(tools, row) == "Pit loom, pit loom, SK-01"
+
+    # The repository-free answer: every token, joined, and nothing dressed up as an enum label.
+    assert format_value(tools, row["toolsUsed"]) == (
+        "cmsik2jg8000eh8xc1lcy661a, pit loom, cmsjb6qaq01ar4otfh1p0hm1a, SK-01"
+    )
+    # And an entity built round it still renders, so the arm is reachable from a real render pass
+    # rather than only from a direct call.
+    assert entity.field("toolsUsed") is tools
+
+
 # --------------------------------------------------------------------------------------
 # Finding the records a report REFERENCES, without a database
 # --------------------------------------------------------------------------------------
@@ -1518,6 +1573,48 @@ def test_reference_ids_of_an_empty_record_is_empty():
     from app.services.design_workshops import reference_ids
 
     assert reference_ids([]) == {}
+
+
+def test_reference_ids_follows_a_record_backed_multi_enum_as_well_as_a_ref():
+    """``toolsUsed`` holds an ARRAY of the ids a REF holds one of — and prose beside them.
+
+    ── WHY THE WALK HAD TO LEARN A SECOND TYPE (2026-09-03) ──────────────────────────────────────
+
+    This function is what fills ``WorkshopData.references``, and ``ReportBuilder._value`` resolves a
+    promoted field's tokens through exactly that map. Left as a REF-only walk, every tool id would
+    have been unresolvable and the report would have printed NOTHING where a tool's name belongs —
+    strictly worse than the free-text TAGS list the promotion replaced.
+
+    ── AND WHY THE PROSE IS COLLECTED TOO, RATHER THAN FILTERED OUT BY SHAPE ─────────────────────
+
+    A fielded 0.0.7 handset still draws a tag box for these keys and writes ``"pit loom"``. Those
+    strings join the wanted set, miss every id in the table and cost one row of a bounded ``IN``
+    clause; ``_value`` then prints them verbatim. Deciding here which tokens "look like ids" would
+    put a second opinion about that in a second file, and the two would disagree eventually.
+
+    THE STRING CHECK COMES FIRST IN THE IMPLEMENTATION, and this is the case that proves why: a
+    ``str`` is iterable, so a REF whose value fell into the list arm would be collected one
+    CHARACTER at a time — 25 single-letter misses per citation on the report path's busiest read.
+    """
+    from app.services.design_workshops import reference_ids
+
+    class _Row:
+        def __init__(self, entity_key, data):
+            self.entityKey, self.data = entity_key, data
+
+    found = reference_ids([
+        _Row("processStep", {"toolsUsed": ["tool-1", "pit loom"], "processRef": "process-1"}),
+        _Row("prototype", {"toolsUsed": ["tool-1", "tool-2", "  "], "productRef": "product-1"}),
+        # A BARE STRING UNDER A MULTI KEY, which the scalar arm catches and is right to catch:
+        # `hydrate_entries` wraps a scalar into a list for a multi field, so a row written before a
+        # promotion — or by a client that misread the type — can legitimately hold one. Collecting
+        # it costs one row of an `IN` clause and lets the report resolve a name it would otherwise
+        # print as an id.
+        _Row("prototype", {"toolsUsed": "tool-3"}),
+    ])
+    assert found["ToolDocumentation"] == {"tool-1", "pit loom", "tool-2", "tool-3"}
+    assert found["Process"] == {"process-1"}
+    assert found["ProductDocumentation"] == {"product-1"}
 
 
 def test_a_referenced_record_states_its_village_before_its_free_text_place():

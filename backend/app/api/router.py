@@ -93,9 +93,13 @@ api_router.include_router(design_workshop_access.router)
 # here the second one is the whole feature rather than a filing preference: every caller of the
 # inspector routes is BY DEFINITION somebody load_workshop_or_404 turns away (an inspector is not
 # in DESIGN_WORKSHOP_ROLES), and a route sharing the /design-workshops prefix invites the next
-# reader to widen that shared loader to fit. Widening it grants STAGE WRITES, because
-# load_workshop_or_404(for_edit=True) performs no role check at all. See
-# app/services/design_workshop_inspectors.py, whose header sets out why read-only here has to be
+# reader to widen that shared loader to fit. Widening it grants STAGE WRITES: since 2026-09-03 that
+# loader role-gates its GRANT arm — a viewer row is honoured only for an account inside
+# DESIGN_WORKSHOP_ROLES — but for_edit=True still carries no role check of its own, so an INSPECTOR
+# added to that set, or admitted through a fourth arm, would be writing stages and not reading them.
+# (This line used to say the loader "performs no role check at all", which was true when it was
+# written and is now the opposite of what it does; the reason for the separate prefix is unchanged.)
+# See app/services/design_workshop_inspectors.py, whose header sets out why read-only here has to be
 # structural rather than a flag on a row.
 api_router.include_router(design_workshop_inspections.router)
 # The empanelment roster that gates a designer's sign-in, and the profile their reports are

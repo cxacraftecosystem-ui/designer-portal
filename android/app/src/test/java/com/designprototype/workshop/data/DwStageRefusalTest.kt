@@ -341,6 +341,118 @@ class DwStageRefusalTest {
         assertEquals(DwHeldState.UNRECORDED, moved.refusals.single().held.state)
     }
 
+    // ── A refusal about the whole row, not about a question ──────────────────────────────────────
+    //
+    // `save_stage` gained a version guard on 2026-09-03: a row somebody else saved while this
+    // payload was in flight is left alone and reported under `_row` INSIDE that row's scope, beside
+    // the per-field messages. Every reader of this map takes an entry for a field key, and read that
+    // way the bullet came out as "_row: Someone else saved this row first… this copy of the app has
+    // no box for that question" — a question no designer has ever seen, followed by this build
+    // apologising for not drawing it. Both halves invented, on the one refusal whose remedy is not
+    // the designer's to carry out.
+
+    /** The sentence the API sends, verbatim. `STAGE_ROW_CONFLICT_MESSAGE`, and it arrives complete. */
+    private val conflict =
+        "Someone else saved this row first — reopen the stage to see the latest before saving again."
+
+    @Test
+    fun `a row-level refusal lands on the row, in the repository's own words`() {
+        val report = dwDecodeStageRefusals(
+            spec, entries(rows = 2),
+            errors("costLine[1]" to mapOf(DW_ROW_REFUSAL_KEY to conflict)),
+        )
+        val refusal = report.refusals.single()
+
+        assertTrue(refusal.isRowLevel)
+        // Placed by the same walk of the sent array as any other refusal: entry index 1 is the FIRST
+        // cost line, because the singleton occupies index 0.
+        assertEquals(0, refusal.rowIndex)
+        assertEquals("costLine[0]", refusal.address)
+        // Named by the entity as the form titles it — never by the protocol key.
+        assertEquals("Cost line", refusal.label)
+        assertEquals("Cost line (row 1): $conflict", refusal.sentence)
+        assertFalse("the reserved key is not a question", refusal.sentence.contains("_row"))
+        assertFalse(
+            "there is no box for a row, so this build must not apologise for lacking one",
+            refusal.sentence.contains("has no box for that question"),
+        )
+        assertFalse(
+            "and nothing is held under a key no row carries",
+            refusal.sentence.contains("UNRECORDED"),
+        )
+    }
+
+    @Test
+    fun `a row-level refusal marks no box and asks for no read`() {
+        val report = dwDecodeStageRefusals(
+            spec, entries(rows = 2),
+            errors("costLine[1]" to mapOf(DW_ROW_REFUSAL_KEY to conflict)),
+        )
+        // Nothing on any form is keyed `_row`. Handed to the section it would be looked up, not
+        // found, and dropped in silence — the same defect this module exists to end, one level in.
+        assertEquals(emptyMap<String, Map<String, String>>(), report.byAddress)
+        // And there is nothing for a stage read to answer, so a contested row must not spend one
+        // request per debounced save to be told the same thing.
+        assertFalse(report.needsRead)
+
+        // Measured anyway, the read must not invent a fact: `_row` is absent from every row, and
+        // resolving that absence to NOTHING would print "The repository holds no answer to this
+        // question." under a conflict about a row somebody else has just filled in.
+        val measured = dwHoldingsFrom(report, StageBucketDto())
+        assertEquals(DwHeldState.UNRECORDED, measured.refusals.single().held.state)
+        assertEquals("Cost line (row 1): $conflict", measured.refusals.single().sentence)
+    }
+
+    @Test
+    fun `a row-level refusal counts once, on both counters that decide what the app claims`() {
+        val wire = errors("costLine[1]" to mapOf(DW_ROW_REFUSAL_KEY to conflict))
+
+        // The sync count. It is what `WorkshopSyncStatus.refusedAnswers` sums and therefore what
+        // stops `isFullySynced` scoring a contested row as "Backed up to the server".
+        assertEquals(1, dwRefusedAnswerCount(wire))
+        // The card's count, printed by the stage header as "1 refused".
+        assertEquals(1, dwDecodeStageRefusals(spec, entries(rows = 2), wire).count)
+    }
+
+    @Test
+    fun `a row refused for a bad value AND for a conflict keeps both, and only the value marks a box`() {
+        // `save_stage` uses `setdefault` precisely so the two can coexist: a typo the designer must
+        // fix, and an edit somebody else made. Neither may erase the other.
+        val wire = errors(
+            "costLine[1]" to mapOf(
+                "amount" to "Amount must be a number",
+                DW_ROW_REFUSAL_KEY to conflict,
+            ),
+        )
+        val report = dwDecodeStageRefusals(spec, entries(rows = 2), wire)
+
+        assertEquals(2, report.count)
+        assertEquals(2, dwRefusedAnswerCount(wire))
+        assertEquals(
+            mapOf("amount" to false, DW_ROW_REFUSAL_KEY to true),
+            report.refusals.associate { it.fieldKey to it.isRowLevel },
+        )
+        assertEquals(
+            mapOf("costLine[0]" to mapOf("amount" to "Amount must be a number")),
+            report.byAddress,
+        )
+        assertTrue("the field half is still worth measuring", report.needsRead)
+    }
+
+    @Test
+    fun `a row-level refusal on the custom container names the section, not the reserved key`() {
+        // `_custom` is not a registry entity and carries no title anywhere in the schema, so the
+        // fallback would have printed the reserved key at a designer.
+        val report = dwDecodeStageRefusals(
+            spec, entries(custom = true),
+            errors(CUSTOM_ENTITY_KEY to mapOf(DW_ROW_REFUSAL_KEY to conflict)),
+        )
+        val refusal = report.refusals.single()
+        assertTrue(refusal.isRowLevel)
+        assertEquals(null, refusal.rowIndex)
+        assertEquals("This workshop's own questions: $conflict", refusal.sentence)
+    }
+
     @Test
     fun `the addressing the form marks its boxes by`() {
         val report = dwDecodeStageRefusals(

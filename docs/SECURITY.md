@@ -222,6 +222,45 @@ Default encryption already covers them.
 object key (`media/<user-id>/<uuid>/<filename>`) is the only secret. Encryption at rest does not
 change this; SSE-S3 protects the physical disks, not URL holders. See risk P0.
 
+**Objects under `backups/` are NOT world-readable, and that is a property of how narrow the policy
+is.** `aws_s3_bucket_policy.media_public_read` grants anonymous `GetObject` on `media/*` and on
+nothing else, so the nightly database dumps ([CI.md](CI.md) §1.5) and the Terraform state under
+`tfstate/` sit in the same bucket and answer nobody. **Widening that policy to `/*` would publish a
+full database dump and a state file containing a live IAM secret access key.** It is the single most
+consequential edit available in `infra/terraform/main.tf`, and the file says so at the resource.
+
+#### The type an object is stored with is now validated (2026-09-03)
+
+`POST /media/presign` puts the caller's `mimeType` into the object's **signed `Content-Type`**, which
+is the type the storage host later *serves* it with. Until 2026-09-03 it accepted any string of up to
+180 characters and signed it verbatim, so a `text/html` upload became a stored, world-readable
+document that a browser **executes** when opened — a phishing page or a credential-harvesting form
+living at a URL on the organisation's own storage host, reachable through `GET
+/data/media/{id}/download`'s 307 and through the media lightbox's "Open" control.
+
+Both `POST /media/presign` and `POST /media/multipart/create` now check the declared type against an
+allow-list before signing anything. The shape is **broad prefix families with a deny-list in front of
+them**, because an allow-list narrower than what the fleet actually uploads is not a control but an
+outage: Android's `saveOrQueue` does not queue a 4xx, so a refused presign *loses* the recording. The
+deny-list carries `text/html` and its XHTML/JavaScript spellings, which is the whole of what made the
+stored object a document.
+
+Two types are accepted deliberately, and the reasons are worth keeping because both look like
+oversights:
+
+* **`application/octet-stream`** — the audit asked for it to be refused. It is not, because both
+  shipped clients emit it as their fallback for a file the platform will not type
+  (`frontend/lib/media.ts`, and Android's `contentResolver.getType(uri) ?: …`), so refusing it would
+  422 a declared registry field from every device. It is also the **inert** type: a browser downloads
+  it and never renders it, which is not the case this control was about.
+* **`image/svg+xml`** — the one genuinely scriptable type on the list, and the registry asks for it
+  by name (`sketch.lineArtFile`). The argument for keeping it is that the storage host is a
+  **different origin** from the app, so what executes can read neither this app's storage nor its
+  cookies. **The mitigation is now the only remaining control for SVG** and it lives on the
+  distribution, not in this code: a `Content-Disposition: attachment` or
+  `Content-Security-Policy: sandbox` response header on the bucket/CDN, as named in
+  `frontend/components/forms/MediaCaptureField.tsx`. That rule is not yet in place.
+
 ### 2.2 The database
 
 Nothing in this section depends on which provider hosts it, with one exception, which is called out
@@ -255,7 +294,7 @@ first because it is the one that changed under this document's feet.
 | Media object keys / public URLs | `MediaFile.url` in Postgres, and in every client | Plaintext, and the URL alone grants read access |
 | Auth token (web) | `localStorage["field_repo_token"]` | Plaintext, readable by any script on the origin |
 | Auth token (Android) | `SharedPreferences("field_repository_auth")`, `MODE_PRIVATE` | Plaintext file in app-private storage; readable on a rooted device, and `android:allowBackup="true"` means it can leave the device in a backup |
-| `.env` on EC2 | `/home/ubuntu/app/backend/.env`, `EnvironmentFile=` | Plaintext on an unencrypted-by-default EBS volume; holds `DATABASE_URL`, `JWT_SECRET`, AWS keys, every AI provider key |
+| `.env` on EC2 | `/home/ubuntu/app/current/backend/.env`, `EnvironmentFile=` | Plaintext on an unencrypted-by-default EBS volume; holds `DATABASE_URL`, `JWT_SECRET`, AWS keys, every AI provider key. `current` is a symlink to the live release ([CI.md](CI.md) §1.2), and **each retained release keeps the `.env` it was deployed with** — so up to three plaintext copies exist on the volume at once, not one |
 | Temporary media during processing | `tempfile` on the EC2 disk (ffmpeg/transcription) | Plaintext; removed after the job |
 | CSV / dataset exports | Streamed to the downloader | Plaintext; once downloaded the data is outside every control in this document |
 
@@ -295,14 +334,44 @@ python -c "import secrets; print(secrets.token_urlsafe(48))"
   the token and impersonates the user for up to 7 days. `HttpOnly; Secure; SameSite` cookies would
   make the token unreadable to script, at the cost of a CSRF defence and a change to both clients.
   The strict CSP on API responses does not help here — the risk lives on the *frontend* origin.
-- **No refresh tokens and no revocation.** A token is valid until `exp`. Deleting or demoting a
-  user does not invalidate their existing token for role checks embedded in the token; note that
-  `get_current_user` re-loads the user row on every request, so a *deleted* user is rejected
-  immediately and a *demoted* user loses privileges immediately — the role in the token is not
-  trusted for authorisation. Rotating `JWT_SECRET` invalidates every token at once and is the
-  break-glass response to a suspected theft.
-- **7-day lifetime** is long for a token that cannot be revoked. It is a deliberate trade for field
-  work with intermittent connectivity.
+- **No refresh tokens, and revocation is narrow rather than absent.** *Rewritten 2026-09-03; this
+  bullet used to read "no refresh tokens and no revocation", and that had been half wrong for a
+  while and wholly wrong since that date.* A token is valid until `exp` unless one of two things has
+  happened.
+
+  First, `get_current_user` re-loads the user row on **every** request, so a *deleted* user is
+  rejected immediately and a *demoted* user loses privileges immediately — the role in the token is
+  never trusted for authorisation (§4.1).
+
+  Second, `User.sessionsValidFrom` is a **per-account revocation watermark**: `deps._user_from_bearer`
+  refuses any token whose `iat` predates it. Nothing new is read on the hot path to do it — the `User`
+  row is loaded to authenticate the request regardless. Four acts write it: redeeming an
+  admin-issued password link (`routes/auth.set_password`, the original writer), and, since
+  2026-09-03, barring the address on the platform allow-list — `DELETE /api/access/roster/{id}` and
+  the REJECT arm of `POST /api/access/roster/{id}/decision` — and ending an empanelment on the
+  designer roster (`PATCH` and `DELETE /api/designers/roster/{id}`, which stamp only when the
+  empanelment was actually carrying admissions). Before that date, suspending an account stopped the
+  next sign-in and left the session the person was already in running for the rest of the token's
+  lifetime: an administrator suspended a departing colleague at 10am, watched the row go SUSPENDED,
+  and that colleague's phone went on creating records for up to seven days.
+
+  **What is still NOT revoked, named so nobody infers otherwise.** Rows barred *before* 2026-09-03
+  were never stamped and nothing backfills them on its own. And when the Gmail-alias sweep that finds
+  every spelling of one mailbox is cut by its own limit
+  (`access_roster.GMAIL_ACCOUNT_SWEEP_LIMIT`), the barring door logs at ERROR and returns without
+  stamping — it cannot stamp accounts it could not read. That is the unsafe direction and it is
+  deliberately loud rather than silent. (The narrower gap this bullet carried earlier in the day —
+  that an account filed under `a.b@gmail.com` was missed when its roster row was filed under
+  `ab@gmail.com` — was closed the same day: the lookup is now
+  `access_roster.accounts_on_the_mailbox`, which canonicalises both sides and stamps every spelling.)
+
+  A **role change** deliberately signs nobody out: losing a tier is not losing access, and the
+  identity-cache invalidation is what makes a demotion take effect on the next request.
+
+  Rotating `JWT_SECRET` still invalidates every token at once and remains the break-glass response
+  to a suspected theft.
+- **7-day lifetime** is long for a token that can only be revoked by the writers named above. It is a
+  deliberate trade for field work with intermittent connectivity.
 - **Android backup.** `android:allowBackup="true"` lets the auth token and preferences travel
   through Google's backup. Excluding them needs a `dataExtractionRules` / `fullBackupContent`
   resource, or moving the token to `EncryptedSharedPreferences`.
@@ -424,7 +493,11 @@ Record-level rules layered on top of the ladder:
 - Object keys are namespaced `media/<user-id>/…` and a user may only manage their own staged uploads;
   `DELETE /media/object` additionally 409s on an object a record already points at.
 - Cross-researcher access is tiered (download / comment / edit) with request+grant flows and an
-  append-only `RecordRevision` audit trail recording `{field: {old, new}}` per edit.
+  append-only `RecordRevision` audit trail recording `{field: {old, new}}` per edit. **Since
+  2026-09-03 the revision and the row it describes are written in ONE transaction**
+  (`access.record_revision` takes the caller's `client`), so the ledger can never record an edit that
+  did not land. The failure mode it replaces is specific: a revision committed one statement before
+  an `update` that died, naming an editor as the author of a value no row holds.
 - A record submitted outside its workshop's dates is stamped by the **server** (a
   `workshopSubmission` key arriving from the client is replaced, never trusted), pinned to `PENDING`,
   and approvable only by an admin. The stamp survives an edit and survives a re-link to an in-window
@@ -436,17 +509,33 @@ Authorisation is **entirely application-side** (see §2.2 on RLS).
 
 `create_access_token` puts `email` and `role` into the JWT, and **neither is trusted for
 authorisation**. `get_current_user` re-reads the user row and every rank check reads *that*. This is
-the revocation mechanism: tokens live seven days and cannot be revoked, so a role claim minted before
-a demotion would otherwise stay valid for a week.
+the revocation mechanism: tokens live seven days and are revoked only by the writers of
+`sessionsValidFrom` (§3.2), so a role claim minted before a demotion would otherwise stay valid for a
+week.
 
 The identity cache (`AUTH_USER_CACHE_*`) shortens that revocation window; it does not remove it.
 Five seconds by default, sized to collapse the burst of parallel requests one page load makes.
 Explicit invalidation runs on every write that changes a user's authority — `users.py` create/update/
-delete, the Google sign-in upsert in `auth.py`, and `scripts/seed_admin.py` — so in-process a
-demotion takes effect on the very next request. A **miss is never cached**, so a deleted account 401s
-every time rather than for a TTL. An epoch counter is bumped by every invalidation and compared
-before the result is stored, so a query already in flight when a role was revoked cannot write the
-pre-revocation row back.
+delete, the Google sign-in upsert in `auth.py`, `scripts/seed_admin.py`, and, since 2026-09-03, the
+two barring doors in `routes/access.py`, the empanelment-ending doors in `routes/designers.py`, and
+`set_password`'s session revocation in `auth.py` — so in-process a demotion or a bar takes effect on
+the very next request. A **miss is never cached**, so a deleted account 401s every time rather than
+for a TTL. An epoch counter is bumped by every invalidation and compared before the result is stored,
+so a query already in flight when a role was revoked cannot write the pre-revocation row back.
+
+**The cache was re-justified when the database was co-located on 2026-09-02, and the honest reading
+of its TTL changed with it.** The 200–400 ms cross-region round trip it was traded against is gone —
+a keyed `find_unique` is now on the order of 1–2 ms — so what the cache buys today is **burst
+dedupe**, single-flighting one token across the parallel requests of a page load, not latency. And
+the TTL is now a window on *session* revocation as well as on role and existence:
+`_user_from_bearer` reads `sessionsValidFrom` off the row `resolve_user` hands it, so a cached row
+carries the pre-revocation value. That only bites on writes no application process made — a `psql`
+session, `scripts/seed_admin.py`, a future second replica — because every revocation writer calls
+`invalidate_cached_user` and the deployment runs one worker on one replica. Cutting
+`AUTH_USER_CACHE_TTL_SECONDS` to 1–2 seconds, or to 0 with `AUTH_USER_CACHE_ENABLED=false`, is a
+cheaper trade than it was and is **recommended for the next deployment review**. It was deliberately
+not changed here as a silent constant edit: the number is a security parameter and moving it belongs
+in a decision somebody made, not in a docs wave.
 
 `AUTH_USER_CACHE_ENABLED=false` restores one-query-per-request with a restart and no deploy. That
 kill switch is the point of the flag: if the cache is ever suspected of serving a stale role during an
@@ -623,6 +712,77 @@ public.
 downloads and is used by `app_release.py`. The remaining work is switching `public_url_for_key`'s
 callers on the media paths and deciding the URL lifetime the clients need, not writing the primitive.
 
+#### The server half is BUILT and shipped OFF — 2026-09-03
+
+`MEDIA_PRESIGNED_READS` (default `false`) makes `public_encode` emit a 15-minute signed URL instead of
+the permanent CDN one, at `records._sign_media_url` — the one door every read payload leaves by.
+**Off is exactly today's behaviour, byte for byte.** The stored `MediaFile.url` column is never
+rewritten either way, which is what makes the flip reversible.
+
+The two moves this risk needs **must happen in this order and cannot happen together**: the server
+stops emitting permanent URLs, and only then does a human remove `PublicReadMedia` from the bucket
+policy. Doing the bucket first and the flag never is the one ordering that is unambiguously wrong.
+
+#### THE OPERATOR RUNBOOK FOR THE MEDIA FLIP
+
+`backend/app/core/config.py` and both `.env.example` files point readers here. Six steps; each names
+its own rollback.
+
+**1 · SHIP THE SERVER AND THE CLIENTS.** Deploy `main` with `MEDIA_PRESIGNED_READS` unset or
+`false`, and publish **Android 0.0.8** and the web bundle carrying the URL-refresh tolerance. Nothing
+changes for anybody. *Verify:* a `GET /api/media` row still returns the permanent CDN url.
+*Rollback:* none needed — the flag is off.
+
+**2 · THE FLEET ADOPTION GATE.** Do not proceed until effectively every active handset is on **≥
+0.0.8**. Check it from the telemetry the fleet already reports — `GET /api/app-releases` and the
+installed-version signal `WorkshopRepository.installedVersionCode` sends — and cross-check against
+recent uploads per client version. **This is the step that cannot be undone by a server change.** A
+0.0.7 handset caches `url` offline and renders photographs from the cached string with no network at
+all: flipping ahead of adoption loses images on a phone that may not see a network for a week, and
+nothing you deploy can reach it. *Rollback:* this step has no action to roll back — it is a wait.
+
+**3 · SET THE FLAG.** Add `MEDIA_PRESIGNED_READS=true` to `BACKEND_ENV` and deploy. Leave
+`MEDIA_PRESIGNED_READ_TTL_SECONDS` at `900`. *Rollback:* set it back to `false` and redeploy. **That
+is the WHOLE rollback**, because the stored `MediaFile.url` column was never rewritten.
+
+**4 · VERIFY.** `GET /api/media?pageSize=1` as an entitled account: `url` must now carry
+`X-Amz-Signature`, `X-Amz-Expires=900` and `response-content-disposition=inline`. Fetch it — 200.
+Wait sixteen minutes and fetch again — **403**. Open a PDF in the web lightbox and on the handset: it
+must **preview, not download** (that is what `disposition=inline` is for). Confirm an unentitled
+account still receives **no `url` at all**. Confirm `/export/dataset` and `/data` still return
+manifests that download. *Rollback:* step 3's.
+
+**5 · REMOVE `PublicReadMedia` FROM THE BUCKET POLICY.** Console; the statement is the one documented
+in §2.1 above. *Rollback:* put the statement back — it is a policy edit, effective in seconds, and
+every permanent URL starts working again.
+
+**6 · VERIFY THE CLOSURE.** Take a media URL captured **before step 3** — the permanent CDN form —
+and fetch it anonymously: it must now **403**. That is this risk closed. Then re-walk step 4, plus:
+
+- `/data/media/{id}/download` must still serve. Its 307 target now 403s, so it falls through to
+  streaming the bytes — **this is the step where that fallback is first load-bearing.**
+- `/export/dataset` and the `/data` manifests must still download; they carry `export.py`'s six-hour
+  signing fallback.
+- `/data/report.xlsx`'s URL column is **dead by design** at this point. See the two deferred items in
+  the decision table below; both are pre-flip work.
+
+**WATCH FOR:** broken thumbnails reported after step 5 mean one of two things — a client without the
+tolerance, or a deployment that cannot **sign**. The encoder falls back to the stored URL rather than
+500ing, and that stored URL now 403s, so check the AWS credentials on the API box first.
+
+#### Which surface gets what, and why (`records._sign_media_url`, 2026-09-03)
+
+| Surface | What it emits | Why |
+|---|---|---|
+| Every `public_encode` payload — `/media`, `/search`, the record lists, review, dashboard, data-access, questionnaire, tasks | **SIGNED, 15 min, `inline`** | One door, 103 call sites across fifteen route modules; changing it anywhere else would be a partial fix wearing a complete one's clothes |
+| The consolidated questionnaire | **SIGNED, same TTL**, at its own call site | It hand-builds its nodes and has no `objectKey`, so the encoder's walk never sees them |
+| The generated report (docx/pdf), both clients | **UNCHANGED** | It already embeds image **bytes** server-side via `MediaIndex.prefetch`, so nothing in it can expire. **This is the pattern the other exports should copy** — it is the only one that makes a file still readable in a year |
+| `/export/dataset` | **UNCHANGED** — keeps its existing six-hour signing fallback | Narrowing it to 15 minutes produces a corrupt archive with no error |
+| `/data` tree + manifest | **PUBLIC UNTIL THE FLIP**, then owes the same six-hour answer | `data_browser.py` can sign nothing today — it imports neither presigner. **Pre-flip work** |
+| `/data/report.xlsx`'s URL cell | **NEEDS `mediaId` + the download route, not a URL of any lifetime** | A 15-minute URL in a spreadsheet cell is a column of dead links; a six-hour one is a column that dies by Friday. **Pre-flip work, deliberately not changed with the flag** |
+| `/data/media/{id}/download` | **UNCHANGED** | Authenticated per request; after the flip its 307 target 403s and the streaming fallback carries it |
+| The APK presign | **UNCHANGED** | Not media — different bucket prefix, different lifecycle, already signed |
+
 ### P1 — CloudFront → EC2 origin hop is plaintext HTTP
 
 The viewer's TLS ends at CloudFront; the request then crosses the AWS network to nginx on port 80 in
@@ -647,8 +807,11 @@ served to another. This is a data-leak class bug, not a performance one.
 
 ### P3 — `.env` and EBS at rest on EC2
 
-`/home/ubuntu/app/backend/.env` holds `DATABASE_URL`, `JWT_SECRET` and every provider key in
-plaintext, on a volume that AWS does not encrypt unless asked.
+`/home/ubuntu/app/current/backend/.env` holds `DATABASE_URL`, `JWT_SECRET` and every provider key in
+plaintext, on a volume that AWS does not encrypt unless asked. **Since the release layout landed on
+2026-09-03 there is more than one copy**: every retained release under `/home/ubuntu/app/releases/`
+carries the `.env` it was deployed with, and three releases are kept. A rotation therefore has to
+reach the older copies too, or a rollback restores the old credential along with the old code.
 
 **Actions:**
 1. **EC2 console → Volumes:** check *Encrypted*. If `Not encrypted`, snapshot → copy snapshot with
@@ -656,7 +819,9 @@ plaintext, on a volume that AWS does not encrypt unless asked.
    *Account attributes → EBS encryption by default* so future volumes are covered.
 2. Move secrets to **AWS Systems Manager Parameter Store (SecureString)** or Secrets Manager and
    have the deploy fetch them at start, rather than writing a plaintext `.env`.
-3. `chmod 600 /home/ubuntu/app/backend/.env` (systemd `EnvironmentFile=` reads it as root).
+3. `chmod 600 /home/ubuntu/app/releases/*/backend/.env` (systemd `EnvironmentFile=` reads it as
+   root). The glob rather than the `current/` path on purpose: the deploy writes each release's copy
+   `chmod 600` already, and this is the sweep that catches a release written before it did.
 
 ### P4 — Web token in `localStorage`
 
@@ -682,6 +847,35 @@ create new key, update `BACKEND_ENV`, deploy, delete the old key) on a schedule;
 access logging** or CloudTrail data events on the bucket so an object-URL leak is at least
 detectable; enable **MFA** on the AWS root account and on the database provider's account.
 
+**Terraform state moved to S3 on 2026-09-03**, and the bullet above is now half stale in a way that
+matters. The backend is `s3://designrepo-media-626159998512/tfstate/designer-portal.tfstate`. The
+state file still contains the media IAM user's **plaintext secret access key** — that is a property
+of Terraform, not of where it is kept — and it is private for exactly one reason:
+`aws_s3_bucket_policy.media_public_read` grants anonymous `GetObject` on `media/*` and on nothing
+else. **Widening that policy to `/*` publishes this state file's IAM secret and every database dump
+under `backups/` in the same edit.** Keep the local `terraform.tfstate` gitignored regardless; a
+stale local copy is still a copy.
+
+### Refuted — IMDSv2 was already required (2026-09-03)
+
+Recorded here rather than deleted, because an audit finding that was checked and did not survive is
+worth more written down than absent. An audit reported the EC2 instance metadata service as exposed
+to SSRF on the grounds that `metadata_options` was absent from `aws_instance.api`. **It was not
+exposed:** Canonical publishes the Ubuntu 24.04 AMIs with `ImdsSupport: v2.0`, so an instance
+launched from that image defaults to `HttpTokens = required`. The finding was reasoning from the
+absence of a block rather than from the AMI.
+
+`metadata_options` was pinned anyway, and the reason is not the finding. "It defaults correctly" is a
+property of **the image**, and the image is selected by `most_recent = true` over a name pattern — so
+the instance's metadata posture was decided by whichever AMI Canonical published most recently, which
+nothing here controls or reviews. Pinning makes it a property of the configuration, where it cannot
+regress. The half that genuinely changed something is `http_put_response_hop_limit = 1`: AWS defaults
+to 2 so a container on the instance can reach the endpoint through the docker bridge, and nothing on
+this box runs in a container — uvicorn and the queue are plain systemd units. The instance profile it
+protects is `designrepo-ssm`, carrying `AmazonSSMManagedInstanceCore`, which is enough to open a
+shell on this box. Verify with `aws ec2 describe-instances --instance-ids i-0e091ca8e6b417b52 --query
+'Reservations[].Instances[].MetadataOptions'`.
+
 ---
 
 ## 6. Configuration reference (security-relevant environment variables)
@@ -689,7 +883,7 @@ detectable; enable **MFA** on the AWS root account and on the database provider'
 | Variable | Default | Effect |
 |---|---|---|
 | `JWT_SECRET` | — (required) | HMAC signing key. Must be ≥ 32 chars and not the placeholder, or the API refuses to start. |
-| `JWT_EXPIRES_MINUTES` | `10080` (7 days) | Token lifetime. There is no revocation, so shorter is safer. |
+| `JWT_EXPIRES_MINUTES` | `10080` (7 days) | Token lifetime. Revocation is limited to password-link redemption, allow-list barring and empanelment-ending (see §3.2), so shorter is still safer. |
 | `JWT_ALGORITHM` | `HS256` | Restricted to HS256/384/512. |
 | `ALLOW_WEAK_JWT_SECRET` | `false` | Development-only override for the startup secret guard. |
 | `DATABASE_REQUIRE_SSL` | unset (auto) | `true`/`false` forces or disables `sslmode=require`; auto = require for remote hosts only. |

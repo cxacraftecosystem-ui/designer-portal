@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 
+import { ROW_REFUSAL_KEY, rowRefusal, withoutRowRefusal } from "@/components/designworkshop/EntityForm";
 import {
   countRefusedAnswers,
   placeStageErrors,
@@ -377,4 +378,85 @@ test("the server's count wins where counting locally would return a character co
   const stringScope = { costing: "required" } as unknown as Record<string, Record<string, string>>;
   expect(countRefusedAnswers(stringScope)).toBe(8);
   expect(refusedAnswersToShow(1, stringScope)).toBe(1);
+});
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * rowRefusal — the refusal that names no field, and the box-marking pass cannot place
+ *
+ * `save_stage` files a version conflict under the reserved key `_row` INSIDE the scope's ordinary
+ * error bucket, deliberately: `errors` is a surface both clients already draw and already count, so
+ * the refusal reaches a fielded 0.0.7 rather than needing a new response key nothing renders. What it
+ * does NOT reach is a box — every other entry in that map names a real field, and both grids draw one
+ * by looking its key up in the registry. So the count said "1 answer was refused", the banner said
+ * the marked boxes were below, and there was nothing marked anywhere on the stage.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/** The server's sentence, verbatim — `design_workshops.STAGE_ROW_CONFLICT_MESSAGE`. */
+const ROW_CONFLICT = "Someone else saved this row first — reopen the stage to see the latest before saving again.";
+
+test("the reserved key is the wire constant, spelled the same on all three clients", () => {
+  // Kept in step by hand with `STAGE_ROW_CONFLICT_KEY` and Android's `DW_ROW_REFUSAL_KEY`. A rename on
+  // one side alone is a refusal that arrives and is drawn nowhere, which is the whole defect here.
+  expect(ROW_REFUSAL_KEY).toBe("_row");
+});
+
+test("a row-level refusal is read out of the row's own error map", () => {
+  expect(rowRefusal({ [ROW_REFUSAL_KEY]: ROW_CONFLICT })).toBe(ROW_CONFLICT);
+  // Beside real field messages, which is the ordinary shape: `setdefault` on the server means a row
+  // can be refused for BOTH reasons at once — a typo to fix and an edit somebody else made.
+  expect(rowRefusal({ name: "This field is required", [ROW_REFUSAL_KEY]: ROW_CONFLICT })).toBe(ROW_CONFLICT);
+});
+
+test("no row-level refusal is null, so a field-only refusal draws no card band", () => {
+  expect(rowRefusal(undefined)).toBeNull();
+  expect(rowRefusal({})).toBeNull();
+  expect(rowRefusal({ name: "This field is required" })).toBeNull();
+  // An empty string is not a sentence. Drawing an empty red band would be a mark with nothing in it.
+  expect(rowRefusal({ [ROW_REFUSAL_KEY]: "" })).toBeNull();
+});
+
+test("the sentence is passed through verbatim and never rewritten", () => {
+  /*
+    THE WORDS ARE THE SERVER'S. It is one line, it already states what happened and what to do next,
+    and both clients show it — so a client that prefixed or paraphrased it would put a second voice on
+    one refusal and the two apps would describe one conflict differently. Pinned as an identity so a
+    "friendlier" wrapper has to delete this assertion to land.
+  */
+  expect(rowRefusal({ [ROW_REFUSAL_KEY]: ROW_CONFLICT })).toBe(ROW_CONFLICT);
+});
+
+test("stripping the row refusal leaves the field messages exactly as they were", () => {
+  /*
+    `CustomSectionsForm` is the one caller: the server files every custom answer under the single
+    `_custom` scope and that one bucket is handed to an `EntityForm` per section, so a row refusal
+    passed down would be printed once per section — one stored row's conflict read as three.
+  */
+  const errors = { dyesrc: "Too long", [ROW_REFUSAL_KEY]: ROW_CONFLICT };
+  expect(withoutRowRefusal(errors)).toEqual({ dyesrc: "Too long" });
+  // The input is not mutated: the same map is still the one the hoisted line reads its sentence from.
+  expect(errors[ROW_REFUSAL_KEY]).toBe(ROW_CONFLICT);
+  // A map with nothing to strip is returned as-is, so the common case allocates nothing.
+  const untouched = { dyesrc: "Too long" };
+  expect(withoutRowRefusal(untouched)).toBe(untouched);
+  expect(withoutRowRefusal(undefined)).toBeUndefined();
+});
+
+test("a row refusal is counted as an answer, and now has somewhere to be drawn", () => {
+  /*
+    THE TWO HALVES THAT HAD TO MEET. `countRefusedAnswers` has always counted `_row` — it walks the
+    field map and cannot tell a reserved key from a real one — and `strandedRefusals` has always
+    treated a scope whose row is on screen as DRAWN, so the banner did not list it either. Both are
+    correct; what was missing was the drawing. The pin is that all three still agree.
+  */
+  const errors = { "tool[1]": { [ROW_REFUSAL_KEY]: ROW_CONFLICT } };
+  expect(countRefusedAnswers(errors)).toBe(1);
+  expect(strandedRefusals(errors, ENTITIES, ROWS)).toEqual([]);
+  expect(rowRefusal(errors["tool[1]"])).toBe(ROW_CONFLICT);
+});
+
+test("a row refusal against a row that is NOT on screen is still stranded, not swallowed", () => {
+  // The complement holds for the reserved key exactly as it does for a field: delete the row and the
+  // card band goes with it, so the banner has to pick the refusal up.
+  const errors = { "tool[7]": { [ROW_REFUSAL_KEY]: ROW_CONFLICT } };
+  expect(strandedRefusals(errors, ENTITIES, ROWS)).toEqual([`tool[7]._row: ${ROW_CONFLICT}`]);
 });

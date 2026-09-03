@@ -44,7 +44,7 @@
 import { useMemo } from "react";
 import { Archive, HelpCircle } from "lucide-react";
 
-import { EntityForm } from "@/components/designworkshop/EntityForm";
+import { EntityForm, rowRefusal, withoutRowRefusal } from "@/components/designworkshop/EntityForm";
 import {
   customAnswerText,
   customSectionEntity,
@@ -153,9 +153,32 @@ export function CustomSectionsForm({
   const hasRetired = retired.some((entry) => entry.fields.length > 0);
   const hasLive = entities.some((entry) => entry.entity.fields.length > 0);
 
+  /*
+    THE ROW-LEVEL REFUSAL IS HOISTED, BECAUSE `_custom` IS ONE ROW BEHIND SEVERAL FORMS.
+
+    Every section below is handed the same `_custom` bucket, which is correct for field messages —
+    each section draws the ones belonging to the boxes it renders. A refusal filed under `_row` names
+    no box and belongs to the stored row itself, so passing it down would print one refusal once per
+    section and read as three. It is said once here, and each section is handed the field messages
+    alone. (2026-09-03)
+  */
+  const refusedRow = rowRefusal(errors);
+  const fieldErrors = withoutRowRefusal(errors);
+
   if (source === "unknown") {
     return (
       <section className="panel p-4">
+        {/* A save can be refused at the row on a stage whose questions this browser has never read —
+            the refusal is about the stored row, not about a box — so it is said here too rather than
+            being lost behind the early return. */}
+        {refusedRow ? (
+          <p
+            role="alert"
+            className="mb-3 rounded-md bg-error-100 px-3 py-2 text-sm font-medium leading-5 text-error-600"
+          >
+            {refusedRow}
+          </p>
+        ) : null}
         <div className="flex items-start gap-2 rounded-md bg-amber-100 p-3 text-amber-800">
           {/* Colour never carries this on its own — the icon is decorative and the sentence says it. */}
           <HelpCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
@@ -183,10 +206,19 @@ export function CustomSectionsForm({
     saying so. That is the silent-emptiness class of failure this repository keeps meeting, and the digest
     is the one thing that can see it.
   */
-  if (!hasLive && !hasRetired && !stale) return null;
+  // `!refusedRow` JOINS THE GUARD, or the one state that has nothing to draw would also be the state
+  // that silently swallows a refusal: `strandedRefusals` treats `_custom` as always drawn, so a row
+  // refusal returned from here would be counted in the sentence and printed nowhere.
+  if (!hasLive && !hasRetired && !stale && !refusedRow) return null;
 
   return (
     <>
+      {refusedRow ? (
+        <p role="alert" className="rounded-md bg-error-100 px-3 py-2 text-sm font-medium leading-5 text-error-600">
+          {refusedRow}
+        </p>
+      ) : null}
+
       {stale ? (
         <div className="rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-sm text-amber-800">
           This workshop&apos;s own questions have been edited since this browser last read them, so what is
@@ -224,7 +256,7 @@ export function CustomSectionsForm({
                   stage and each one shows the messages for the fields it draws. It cannot collide with a
                   core field's errors, which are filed under the registry entity's key.
                 */
-                errors={errors}
+                errors={fieldErrors}
                 disabled={disabled}
                 stageKey={stageKey}
                 focus={focus}

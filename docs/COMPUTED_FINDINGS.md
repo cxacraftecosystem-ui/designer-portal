@@ -221,6 +221,14 @@ where `NaN` is truthy in Python and falsy in JavaScript.
 > divergence has to be noticed by a human.** The cheapest fix is to run `dw-analysis-cases.json`
 > through the TypeScript and diff it against `dw-analysis-expected.json`; the golden is already
 > language-neutral JSON.
+>
+> **CLOSED 2026-09-03, by exactly that fix.** `frontend/e2e/market-analysis-port-unit.spec.ts` runs
+> the shared case table through `frontend/lib/marketAnalysis.ts` and diffs the whole payload against
+> the goldens, path by path so a failure names the key that moved. It found two real divergences on
+> its first run — Unicode decimal digits, and U+0085 in `strip()` — and both were closed the same day.
+> **The prediction in this paragraph was right about the shape and wrong about who would notice**: a
+> human never did, in the months the gap was open; the diff did, in one run. See
+> [OPEN_FINDINGS.md](OPEN_FINDINGS.md) for what each one cost.
 
 ---
 
@@ -379,12 +387,24 @@ BUILT on 2026-08-20, and it withdrew, in the reader's last line, the exact repai
 had just landed. **Both computations are surfaced on both surfaces: market analysis and cost
 integrity each have a browser panel and an Android card.**
 
-**The asymmetry that actually remains is not a SURFACE but a PROOF.** `frontend/lib/costIntegrity.ts`
-is held to the Python case for case by `frontend/e2e/cost-integrity-port-unit.spec.ts`;
-`frontend/lib/marketAnalysis.ts` is not held to it by anything, and only `pySum` is pinned. §2.7's
-**TYPESCRIPT ↔ PYTHON: STILL UNVERIFIED** paragraph is the authority on what that leaves open and
-names the cheapest way to close it. Before quoting either paragraph onward, re-read both — this
-section has now stated the surface asymmetry wrong in both directions.
+~~**The asymmetry that actually remains is not a SURFACE but a PROOF.**~~ **CLOSED 2026-09-03, and
+the paragraph is corrected rather than deleted because what it found is the whole argument for the
+spec that closed it.** It read: `frontend/lib/costIntegrity.ts` is held to the Python case for case
+by `frontend/e2e/cost-integrity-port-unit.spec.ts`, while `frontend/lib/marketAnalysis.ts` is held to
+it by nothing and only `pySum` is pinned. Both ports are now held to the Python by value:
+`frontend/e2e/market-analysis-port-unit.spec.ts` walks the same twenty-nine-case table the handset
+reads and compares the whole payload against goldens regenerated from
+`backend/app/services/market_analysis.py`.
+
+**Its first run found two live divergences, which is what an unproved port is for.** Unicode decimal
+digits (`float("୧୨୩")` is 123.0 in Python and `NaN` in the browser) shifted a measured case's median
+from ₹545 to ₹670 — the panel and the .docx disagreeing about one workshop — and U+0085, which
+`str.strip()` removes and `String.prototype.trim()` does not, silently dropped a price, a competitor
+and a whole category distribution. Both were closed the same day; the full write-up is in
+[OPEN_FINDINGS.md](OPEN_FINDINGS.md), and the spec's `KNOWN_PORT_DIVERGENCES` set is kept, empty, for
+the next one. §2.7's **TYPESCRIPT ↔ PYTHON** paragraph should be read with that date beside it.
+Before quoting either paragraph onward, re-read both — this section has now stated the asymmetry
+wrong in both directions and then had it closed underneath it.
 
 ---
 

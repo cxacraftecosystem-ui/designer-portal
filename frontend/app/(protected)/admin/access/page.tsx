@@ -452,7 +452,12 @@ function PlatformAccessScreen() {
   async function reject(entry: AccessRosterEntry) {
     const ok = await confirm({
       title: `Refuse ${entry.email}?`,
-      body: "They will be told their request was reviewed and not approved, and whom to contact.",
+      // The second sentence became true on 2026-09-03: REJECTED is one of the two BARRED states, so
+      // this arm runs the same `end_live_sessions` stamp the suspend arm does. An admin barring
+      // somebody who is signed in at that moment needs to know it takes effect now and not at their
+      // next attempt — that is the difference between a refusal and a note for later.
+      body:
+        "They will be told their request was reviewed and not approved, and whom to contact. Any session they are in now ends with it.",
       // The tone is danger and the note has to correct what it implies twice over: nothing is
       // deleted, AND the refusal does not expire. An admin using this as "not now" would never see
       // the person again, because a rejected person's next attempt bumps a counter instead of
@@ -476,7 +481,11 @@ function PlatformAccessScreen() {
   async function suspend(entry: AccessRosterEntry) {
     const ok = await confirm({
       title: `Suspend ${entry.fullName || entry.email}?`,
-      body: "They will be refused at their next sign-in, and told that their access to this application was ended.",
+      // "At their next sign-in" was the whole of the truth until `end_live_sessions` stamped
+      // `User.sessionsValidFrom` here (2026-09-03), and on its own it now understates the act: an
+      // admin suspending somebody mid-shift would have read it as taking effect tomorrow.
+      body:
+        "They will be refused at their next sign-in, and told that their access to this application was ended. Any session they are in now ends immediately.",
       note:
         "The entry is kept — it records when they joined, and that record outlives their access. Approving them again here restores it, and their joining date is not moved by the round trip.",
       confirmLabel: "Suspend",
@@ -542,15 +551,22 @@ function PlatformAccessScreen() {
     return (
       <>
         {header}
+        {/*
+          ONE LINE — 2026-09-03. The body used to open with a justification (why deciding who may
+          sign in is admin work, that the queue is a list of named individuals) and then repeat the
+          refusal twice, once for the client and once for the API. A reader who has just been told
+          they cannot open a page does not need the argument for the rule; they need their own tier
+          named, so they know it is a standing state and not a glitch, and the one act available.
+          The reason this surface is gated at all is documented in `lib/permissions.ts` beside
+          `canManageAccessRoster` and in the comment directly above this branch.
+        */}
         <RestrictedPanel
           title="Admin access required"
           body={
-            `Deciding who may sign in — and reading the queue of people waiting, which is a list of named individuals who tried to get in — is admin work: ` +
             // `roleLabel` answers "" for an absent user; AppShell never renders a protected page
-            // without one, but a sentence reading "  does not open it" is a worse way to discover
+            // without one, but a sentence reading "  does not open this" is a worse way to discover
             // that than a fallback nobody will see.
-            `${roleLabel(user?.role) || "your tier"} does not open it, and the API refuses the same request for the same reason. ` +
-            `An admin or the master admin can approve, refuse, suspend and restore people here.`
+            `${roleLabel(user?.role) || "Your tier"} does not open this. Ask an admin or the master admin.`
           }
         />
       </>

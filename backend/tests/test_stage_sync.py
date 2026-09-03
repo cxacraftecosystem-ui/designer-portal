@@ -1303,8 +1303,13 @@ def test_two_concurrent_saves_of_one_singleton_leave_one_row(
     # STILL ``async def``, AND STILL AWAITING ``db`` — the loop rule above is not violated here.
     # This body is the injected competitor, called by `save_stage` from INSIDE the request, which
     # runs in the portal loop that owns the connection. It is the test body that must not await.
-    async def hydrate_then_lose_the_race(entries):
-        await original(entries)
+    #
+    # `**kwargs` AND NOT A NAMED `workshop_id`, so this stays a pass-through rather than a second
+    # declaration of the real signature: `hydrate_entries` grew that keyword on 2026-09-03 for the
+    # internal carry, and a wrapper that enumerated its parameters would have to be edited again on
+    # the next one. What this double is FOR is the race, not the arguments.
+    async def hydrate_then_lose_the_race(entries, **kwargs):
+        await original(entries, **kwargs)
         if injected:
             return
         row = await db.dwstageentry.create(data={

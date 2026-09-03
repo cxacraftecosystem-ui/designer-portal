@@ -213,7 +213,18 @@ def test_no_carried_field_is_a_metric(entity_key, target, source):
 #: columns changes documents already submitted to a ministry, and that is an editorial change
 #: somebody should make deliberately; listed rather than ignored so that the OTHER receiving
 #: entities cannot quietly join them. Reported to the backend lane.
-_WIDTHS_ALREADY_INERT = frozenset({"prototype"})
+#:
+#: TWO OF THE FIVE JOINED THE SET ON 2026-09-03 WITHOUT ONE WIDTH CHANGING, and the distinction is
+#: the whole reason this constant is a set of names and not a rule. ``finalProduct`` (120) and
+#: ``prototypeValidation`` (86) were already named in the paragraph above as pre-existing; what
+#: changed is that they became RECEIVING entities when the internal carry landed, so
+#: ``CARRIED`` now includes them and this test began looking at them for the first time. Nothing was
+#: introduced — a test simply started measuring two tables that were already inert, which is the
+#: paragraph above happening rather than an exception to it. Re-balancing them is still the
+#: editorial change it always was, and it is still nobody's to make in passing: `finalProduct`'s six
+#: drawn columns are 12+24+18+22+24+20 and `prototypeValidation`'s are 20+14+13+13+13+13, so
+#: bringing either to 100 moves every column of a table that is already inside submitted documents.
+_WIDTHS_ALREADY_INERT = frozenset({"prototype", "finalProduct", "prototypeValidation"})
 
 
 @pytest.mark.parametrize("entity_key", sorted(CARRIED))
@@ -599,6 +610,14 @@ def _source_rows() -> dict[str, _SourceRow]:
         # The sixth model, and the first whose carry is COUNTS rather than columns. Filled so that
         # all three counts come out DIFFERENT and none of them zero: a fixture where "sections" and
         # "questions" happened to agree could not tell a swapped pair of lambdas apart.
+        # The stage-7 instrument link (spec §22, 2026-09-03): the model's ``data`` lambda reads one
+        # column — ``title`` — and carries it as ``name`` for the ``questionnaireName`` box. The row
+        # stays this thin ON PURPOSE: `_SourceRow` raises on any column no fixture supplies, so a
+        # widened lambda that starts carrying descriptions or filenames fails here by name.
+        "Questionnaire": _SourceRow(
+            id="questionnaire-1",
+            title="Barpali cluster intake survey",
+        ),
         "QuestionnaireInterview": _SourceRow(
             id="interview-1",
             title="Barpali weavers, group 2",
@@ -660,14 +679,69 @@ PHOTO_ID = "media-photo-1"
 PHOTO_CAPTION = "The saree on the loom, three days before it was cut down."
 
 
+#: A WORKSHOP ROW, AS AN INTERNAL CARRY READS ONE (2026-09-03).
+#:
+#: There is no ``data`` lambda on this side and there deliberately is not one: an internal source is
+#: a ``DwStageEntry`` whose ``data`` IS its display projection, already coerced by ``validate_entry``
+#: on the save that stored it, so ``hydrate_entries`` reads the stored keys directly. That makes this
+#: fixture the stored row rather than a source record — decimals as numbers, TAGS as a list,
+#: rich text as the prose a designer typed — which is exactly what the internal resolver hands the
+#: copy loop.
+#:
+#: THE COMPLETENESS GUARD BELOW IS THIS FIXTURE'S VERSION OF ``_SourceRow.__getattr__``. That class
+#: RAISES on an unknown column so a widened lambda cannot quietly carry nothing; here the equivalent
+#: mistake is a mapping that names a source key nobody put in this dict, which would leave the box
+#: empty and pass every assertion that only looks at what did arrive.
+_INTERNAL_SOURCE_ROWS: dict[str, dict[str, Any]] = {
+    "DwPrototype": {
+        "name": "Ikat table runner, wide border",
+        "materials": ["Cotton", "Natural indigo"],
+        "lengthCm": 180.0,
+        "widthCm": 45.0,
+        "heightCm": 2.0,
+        "weightG": 640.0,
+        "dimensionsNote": "180 x 45, fringe 6 cm either end",
+        "makingTimeDays": 4.5,
+        "processSummary": "Warped on the pit loom; four tie-and-dye bands across the width.",
+    },
+}
+
+
+def _internal_source_models() -> dict[str, set[str]]:
+    """``Dw…`` model -> every source key some hydration mapping reads off it."""
+    wanted: dict[str, set[str]] = {}
+    models = {e.name for e in _ENTITIES.values()}
+    for path, mapping in REFERENCE_HYDRATION.items():
+        entity_key, _, ref_field = path.partition(".")
+        model = _spec(entity_key, ref_field).ref_model
+        if model in models:
+            wanted.setdefault(model, set()).update(mapping)
+    return wanted
+
+
 def _reference_data() -> dict[str, dict[str, Any]]:
-    """Each model's carried payload, produced by the REAL ``data`` lambda."""
+    """Each model's carried payload — the REAL ``data`` lambda for an external source, the stored
+    row for an internal one."""
     rows = _source_rows()
     photo = ReferencePhoto(id=PHOTO_ID, caption=PHOTO_CAPTION)
-    return {
+    produced: dict[str, dict[str, Any]] = {
         model: REFERENCE_MODELS[model].data(rows[model], photo)
         for model in rows
     }
+    for model, keys in _internal_source_models().items():
+        fixture = _INTERNAL_SOURCE_ROWS.get(model)
+        assert fixture is not None, (
+            f"{model} is now an internal hydration source and this file has no fixture row for it. "
+            f"Add one to _INTERNAL_SOURCE_ROWS holding every key the mapping reads, or the carry "
+            f"will be asserted against an empty record and pass while printing nothing."
+        )
+        missing = sorted(keys - set(fixture))
+        assert not missing, (
+            f"_INTERNAL_SOURCE_ROWS[{model!r}] is missing {missing}, which some mapping reads. A "
+            f"blank source is indistinguishable here from a carry that does not work."
+        )
+        produced[model] = dict(fixture)
+    return produced
 
 
 def _hydrated_rows() -> dict[str, dict[str, Any]]:
@@ -696,7 +770,15 @@ def _hydrated_rows() -> dict[str, dict[str, Any]]:
             if value in (None, ""):
                 continue
             spec = _spec(entity_key, target_key)
-            row[target_key] = [value] if spec.type.is_multi else value
+            # `and not isinstance(value, list)` IS `hydrate_entries`' OWN CONDITION, restated: "if
+            # target.type.is_multi and not isinstance(value, (list, tuple)): value = [value]". It
+            # was safe to leave out while every source was an external lambda, because those produce
+            # SCALARS — one photograph seeding a gallery. An internal source is a stored row, so a
+            # TAGS box arrives as the list it already is, and wrapping it again would put
+            # `[["Cotton", …]]` into `materials` and assert against a shape hydration never writes.
+            row[target_key] = (
+                [value] if spec.type.is_multi and not isinstance(value, list) else value
+            )
     return out
 
 
@@ -716,6 +798,17 @@ def _workshop_data() -> WorkshopData:
     # sections render as they would in a real workshop.
     data.collections["PROTOTYPE_DEVELOPMENT"]["prototype"][0].update(
         prototypeCode="PT-01", name="Ikat table runner", materials=["Cotton"],
+    )
+    # THE TWO INTERNAL RECEIVERS, 2026-09-03, AND ONLY THE BOXES THE CARRY DOES NOT ANSWER.
+    # `finalProduct` gets its `name` and `materials` from the prototype and its `productCode` from
+    # nowhere — a catalogue code is the designer's own (see the field's note in `stage_definitions`);
+    # `prototypeValidation` gets three measurements from the prototype and its `decision` from the
+    # reviewer. Filling anything the mapping DOES answer would mask a carry that stopped working.
+    data.collections["FINAL_PROTOTYPE_DOCUMENTATION"]["finalProduct"][0].setdefault(
+        "productCode", "FP-01"
+    )
+    data.collections["PROTOTYPE_VALIDATION"]["prototypeValidation"][0].setdefault(
+        "decision", "APPROVED"
     )
     data.collections["TRADITIONAL_PROCESS_BASELINE"]["processStep"][0]["stepNumber"] = 1
     # Every referenced record's photograph, exactly as ``load_report_references`` supplies it.

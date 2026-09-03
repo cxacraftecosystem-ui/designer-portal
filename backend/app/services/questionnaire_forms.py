@@ -108,6 +108,62 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
+def visible_questionnaire_where(user: Any) -> dict[str, Any]:
+    """The row filter for "questionnaires this designer may see".
+
+    AND-COMPOSED BY THE CALLER, NEVER ASSIGNED TO ``where["OR"]``. The list endpoint already spends
+    ``OR`` on its search box, so writing this as a top-level ``OR`` would silently replace the
+    search and widen the result set — the identical trap the design-workshop list hit when viewer
+    grants were added there. Returning a fragment for ``where["AND"]`` makes that mistake impossible
+    to make.
+
+    ── IT LIVES HERE, IN THE SERVICE, BECAUSE IT NOW HAS A SECOND SURFACE (2026-09-03) ────────────
+
+    It was ``routes/questionnaire_forms._visible_questionnaire_where`` and is still reachable under
+    that name — the route keeps a one-line alias, so its three call sites and everything that reads
+    them are unchanged. What moved it is ``REFERENCE_MODELS["Questionnaire"]``: stage 7's survey plan
+    now cites the instrument it will use through a picker, and a picker over this table has to be
+    narrowed by exactly the rule the LIST is narrowed by, or a designer would be offered a colleague's
+    private form to cite in a ministry's report. ``design_workshops`` cannot import a route module
+    (that route imports it, so the cycle is real), and the alternative to moving it was a second copy
+    of a four-clause visibility rule in a second file — two rules that can disagree, where the one
+    that wins is the one nobody notices is wider.
+
+    ITS SIBLING DELIBERATELY DID NOT MOVE. The attach-to-workshop dropdown in that route composes
+    ``ownerId == me OR isShared`` BY HAND and says why in as many words: it offers what a designer may
+    ATTACH, which is narrower than what they may SEE. That is a different question and it keeps its
+    own answer.
+    """
+    return {
+        "OR": [
+            {"ownerId": user.id},
+            {"designWorkshop": {"is": {"createdById": user.id, "deletedAt": None}}},
+            {"designWorkshop": {"is": {"deletedAt": None, "viewers": {"some": {"userId": user.id}}}}},
+            # ── THE FOURTH CLAUSE: THE PUBLISHED DEFAULT, added 2026-08-28 ──────────────────────
+            #
+            # An administrator's standard instrument, marked ``isShared``. The other three clauses
+            # are all "yours, or your workshop's", so a form that belongs to EVERY workshop matched
+            # none of them and was invisible to every designer while sitting in the table — which is
+            # what the owner reported. See ``Questionnaire.isShared`` in schema.prisma for why this
+            # is a column somebody SET rather than a convention inferred from the owner's role or
+            # from the absence of a workshop.
+            #
+            # ``isActive`` IS PART OF THE CLAUSE AND NOT LEFT TO THE CALLER. Two of this function's
+            # three callers pass ``activeOnly=True`` and one does not, and a retired instrument must
+            # stop appearing in everybody's picker the moment it is retired — a shared form is the
+            # one row where "still listed after retirement" is wrong for every designer at once
+            # rather than for its author. The pair is indexed together for the same reason.
+            #
+            # IT ADMITS THE FORM AND NOTHING ELSE. ``read_questionnaire`` still narrows ``entries``
+            # to the caller's own sittings unless they own the form, are an admin, or work on its
+            # workshop; that check reads ``ownerId`` / ``_works_on_this_questionnaires_workshop``
+            # and does NOT consult this flag, deliberately. Adding it there would turn one published
+            # instrument into a window onto every respondent's name and answers in the repository.
+            {"isShared": True, "isActive": True},
+        ]
+    }
+
+
 # --- Reading ------------------------------------------------------------------------------------
 
 

@@ -27,6 +27,11 @@ from app.core.deps import (
 from app.core.security import hash_password
 from app.schemas.users import UserCreate, UserUpdate
 from app.services import access_roster
+
+# THE ONE IMPLEMENTATION OF "AN ADMITTED DESIGNER IS AN EMPANELLED DESIGNER", imported from the
+# service rather than from ``routes/access``'s private helper: that module imports ``assert_role``
+# from this one, so reaching the other way would close an import cycle. See ``create_user``.
+from app.services.designers import ensure_empanelled
 from app.services.pagination import normalize_pagination, page_payload
 from app.services.records import clean_data, contains, count_and_page, with_id_tiebreak
 
@@ -246,13 +251,51 @@ async def create_user(
     # screen — for a request they themselves caused. The gate fails closed, deliberately (see
     # `auth.assert_access_admits`), so every path that mints an account has to admit it, and this is
     # the only other one besides Google sign-in.
-    await access_roster.admit(
+    admitted = await access_roster.admit(
         user.email,
         admit_role=role,
         actor_id=current_user.id,
         full_name=user.name,
         note=f"Admitted with the account, created here by {current_user.email}.",
     )
+    # ── AND AN ADMIN CREATING A DESIGNER HAS EMPANELLED THEM, 2026-09-03 ────────────────────────
+    #
+    # **THE FOURTH DOORWAY.** Three paths already treat "admitted as a DESIGNER" and "empanelled" as
+    # one act — ``auth.login`` on the way in, and ``access._empanel_an_admitted_designer`` from the
+    # approval and the roster edit — and this one, which is the path an admin uses when they have the
+    # person in front of them, did not. It called ``admit`` and stopped. The consequence is the
+    # incident the whole feature exists for, reached through the door most likely to be used: the
+    # admin types somebody in AS A DESIGNER, ``/admin/designers`` shows nothing, and the person
+    # themselves reads *"Your designer access has been suspended"* at the sign-in page about an
+    # empanelment nobody ever granted — until their first sign-in silently derives one, at which
+    # point the row exists but says it was derived rather than granted by the admin who granted it.
+    #
+    # THE TWO CONDITIONS ARE ``_empanel_an_admitted_designer``'S, ASKED OF THE STORED ROW, and they
+    # are re-spelled here rather than imported for one reason only: ``routes/access`` imports
+    # ``assert_role`` from THIS module (see the note at that import), so calling back into it would
+    # close an import cycle. If a third caller ever needs this pair, the function moves to
+    # ``app/services`` — it does not get copied a third time.
+    #
+    #   * ACTIVE, not merely "there is a row". ``admit`` returns an ACTIVE row on every path today,
+    #     so this is belt-and-braces — it is here so it stays true if that ever changes, exactly as
+    #     the sign-in path's ``access_roster.admits`` test is.
+    #   * ``role_of(admitted)`` and not ``role``, because the roster row is what the other three
+    #     paths read and a row that already carried a role is the row the gate will consult. Asking
+    #     the stored row is the one formulation that cannot drift from what was actually written.
+    #
+    # THE STORED ADDRESS AND NOT ``user.email``. The roster stores the canonical mailbox and
+    # ``User.email`` is deliberately not canonicalised, so for a Gmail alias the two differ — and the
+    # empanelment has to land on the key the OTHER roster and the sign-in gate are keyed on.
+    #
+    # ``actor_id`` IS THE ADMIN, unlike the sign-in path's ``None``: an administrator really did take
+    # this action, and ``addedById`` is how ``/admin/designers`` says who. Nothing here revives a
+    # suspended empanelment — ``ensure_empanelled`` only ever creates, which is the one rule in that
+    # function that must not be got wrong.
+    if (
+        access_roster.status_of(admitted) == access_roster.ACTIVE
+        and access_roster.role_of(admitted) == "DESIGNER"
+    ):
+        await ensure_empanelled(admitted.email, actor_id=current_user.id)
     return serialize_user(user)
 
 

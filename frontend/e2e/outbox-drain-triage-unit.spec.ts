@@ -8,18 +8,25 @@ import { ApiError } from "@/lib/api";
 import { MediaBatchError, MULTIPART_THRESHOLD, sweepStagedObjects, uploadMediaBatch } from "@/lib/media";
 import {
   acknowledgeOutboxTrouble,
+  entryAlreadyCreated,
   getOutboxHealth,
   isCredentialExpiry,
   isSchemaRefusal,
   isTransient,
   isUnreachable,
+  outboxEntriesForAnotherAccount,
+  outboxEntryIsForAnotherAccount,
   outboxIsAnswering,
+  outboxOtherAccountLine,
+  outboxSessionUser,
   outstandingFiles,
   refusedFileNames,
+  setOutboxSessionUser,
   splitUnsendableFiles,
   syncOutbox,
   underlyingError,
-  underlyingIsTransient
+  underlyingIsTransient,
+  type OutboxEntry
 } from "@/lib/offline";
 
 /**
@@ -542,6 +549,77 @@ test("a declined pass says a tab is busy, not that there is no connection", () =
   expect(outcome.description, "and the count is still honest").toContain("3");
 });
 
+/* ────────────────────────────────────────────────────────────────────────────
+ * 4b. An entry that already holds a created id is never POSTed a second time
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+test("a stored createdId counts as created, so a queued create is not replayed over its own record", () => {
+  /*
+    THE PAIR THE DRAIN USED TO READ AS "NOT CREATED YET". `persistProgress` writes `created` and
+    `createdId` in one `updateEntry`, so nothing writes the pair on purpose — and two ordinary field
+    shapes produce it anyway: a pass interrupted between the server's commit and IndexedDB's
+    `oncomplete` (a lidded laptop, a killed browser), and a second tab advancing an entry underneath
+    a snapshot this pass took at the top of `refreshOutbox` on a browser with no Web Locks. Both put
+    an id on the row with no flag beside it, the old `if (!progress.created)` re-POSTed the body, and
+    the repository held two records for one save.
+
+    The id is PROOF rather than a guess: the drain writes it only from a non-empty `id` on a 2xx the
+    server sent, and a 2xx with no readable id is refused as a captive portal instead of recorded.
+  */
+  expect(entryAlreadyCreated({ method: "POST", created: true, createdId: null })).toBe(true);
+  expect(entryAlreadyCreated({ method: "POST", createdId: "art_9" })).toBe(true);
+  expect(entryAlreadyCreated({ method: "POST" })).toBe(false);
+  // An empty string is not an identity, the same rule the cost port applies to a sheet's `_entryId`:
+  // a row carrying `""` has proof of nothing and must replay, or a real save is silently skipped.
+  expect(entryAlreadyCreated({ method: "POST", createdId: "" })).toBe(false);
+  expect(entryAlreadyCreated({ method: "POST", createdId: null })).toBe(false);
+
+  /*
+    PATCH IS DELIBERATELY OUTSIDE THE GUARD, and the asymmetry is the reason. Skipping a POST that
+    already landed prevents a duplicate record; skipping a PATCH that already landed prevents
+    nothing — a correction replayed twice is the same correction — while skipping one WRONGLY drops
+    a researcher's edit in silence. The two mistakes are not the same size.
+  */
+  expect(entryAlreadyCreated({ method: "PATCH", createdId: "art_9" })).toBe(false);
+  // …but an explicit flag still means what it says on either method: it is the drain's own record.
+  expect(entryAlreadyCreated({ method: "PATCH", created: true })).toBe(true);
+});
+
+test("the drain consults the guard before the create branch, and writes the repair back", () => {
+  // The predicate above is pure and provable; that the LOOP asks it is only observable against a
+  // real store and a real server, so it is pinned on the source in the style of the lease above.
+  const loop = OFFLINE_SOURCE.slice(OFFLINE_SOURCE.indexOf("const progress: OutboxEntry = { ...entry };"));
+  const beforeCreate = loop.slice(0, loop.indexOf("if (!progress.created) {"));
+  expect(beforeCreate, "the guard must run BEFORE the create branch, or it guards nothing").toContain(
+    "if (!progress.created && entryAlreadyCreated(progress)) {"
+  );
+  // Written back, not merely fixed in the loop's copy: `created` is the flag every later test in the
+  // pass is spelled against, and a row left disagreeing with itself would be re-interpreted on every
+  // future pass and by every other tab.
+  expect(beforeCreate, "the repair is persisted").toContain("progress.created = true;");
+  expect(beforeCreate, "and a vanished entry stops the pass working on it").toContain(
+    "if (!(await persistProgress(progress))) continue;"
+  );
+});
+
+test("the guard is named as a down payment, not as the end of the duplicate problem", () => {
+  /*
+    IT CLOSES THE DUPLICATES WHOSE EVIDENCE IS ON THIS DEVICE, and it cannot close the two whose
+    evidence never got here: a create that committed while its answer was lost on the way back, and
+    the same work queued on a SECOND device. Those need a client-minted key travelling with the
+    request and a server that recognises a replay of it. Asserted rather than merely written down,
+    because a guard that reads as complete is how the remaining half stops being scheduled.
+  */
+  const guard = OFFLINE_SOURCE.slice(OFFLINE_SOURCE.indexOf("export function entryAlreadyCreated("));
+  const doc = OFFLINE_SOURCE.slice(
+    OFFLINE_SOURCE.lastIndexOf("/**", OFFLINE_SOURCE.indexOf("export function entryAlreadyCreated(")),
+    OFFLINE_SOURCE.indexOf("export function entryAlreadyCreated(")
+  );
+  expect(guard, "the predicate is still exported and pure").toContain("entry.method !== \"POST\"");
+  expect(doc, "the residual case is named where the guard is").toMatch(/clientKey/);
+  expect(doc, "and so is the fact that it is a later phase").toMatch(/later phase/);
+});
+
 test("a mid-pass write goes through the store, not around it", () => {
   // The resurrection: `put` on a deleted key does not fail in IndexedDB, IT RE-CREATES THE ROW. So
   // the loser of a two-tab race put back the entry the winner had just filed and deleted, using an
@@ -652,4 +730,190 @@ test("the 'saved on this device' confirmation counts saves, not rows", () => {
 
 test("and an empty queue is allowed to be an empty queue", () => {
   expect(outboxOutcome(NOTHING_HAPPENED)).toMatchObject({ kind: "idle", title: "Nothing to send", tone: "info" });
+});
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * 7. A SHARED BROWSER PROFILE DRAINED ONE DESIGNER'S QUEUE UNDER ANOTHER'S ACCOUNT
+ *
+ * The browser twin of the guard `DwDraft.ownerUserId` already enforces one queue along, and of
+ * Android's `PendingEntry.ownerUserId`, which landed the same day. A field laptop is shared:
+ * designer A saves a fortnight of artisans and photographs in a courtyard with no signal; A signs
+ * out, and `AuthProvider.logout` clears the token and the user and deliberately nothing else,
+ * because A's fortnight has to survive the handover; B signs in, `OutboxBanner` drains on mount, and
+ * every one of A's records is created under B's token — B is `createdById`, the rows land in B's
+ * lists, and A has to be granted access to their own fieldwork.
+ *
+ * IT IS WORSE THAN THE DRAFT CASE IN ONE RESPECT: a queued entry is DELETED the moment it syncs,
+ * taking its staged captures with it, so by the time anybody notices the attribution the only copy
+ * of the evidence is a row in somebody else's list.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/** One entry, only as far as the ownership rules can see it. */
+function owned(ownerUserId: string | null | undefined, failure: string | null = null): OutboxEntry {
+  return {
+    label: "Artisan · Giriraj Prasad",
+    createdAt: 0,
+    endpoint: "/artisans",
+    method: "POST",
+    body: "{}",
+    media: [],
+    attempts: 0,
+    failure,
+    ownerUserId
+  };
+}
+
+test("a null owner passes, because an entry queued before the stamp must replay as it was queued", () => {
+  /*
+    THE HALF THAT DECIDES WHETHER THE FIX IS SAFE TO SHIP. A laptop out of coverage for a fortnight
+    holds entries written by the build installed a fortnight ago, and none of them carries an owner.
+    Refusing those would be a silent, total drain stop on every browser upgraded into this build —
+    stranding real fieldwork rather than merely misfiling it. The same rule, for the same reason, as
+    `draftBelongsToSession`'s null arm and Android's.
+  */
+  expect(outboxEntryIsForAnotherAccount(null, "designer-a")).toBe(false);
+  expect(outboxEntryIsForAnotherAccount(undefined, "designer-a")).toBe(false);
+});
+
+test("a null session passes too, because nobody being signed in is not somebody else", () => {
+  // `runSync` returns `credentialExpired` before the loop when there is no token, so nothing can be
+  // sent in this state anyway. Classifying against nobody would only put "sign in as them" in front
+  // of a person who is not signed in at all.
+  expect(outboxEntryIsForAnotherAccount("designer-a", null)).toBe(false);
+});
+
+test("one designer's entry is not another's to send", () => {
+  expect(outboxEntryIsForAnotherAccount("designer-a", "designer-a")).toBe(false);
+  expect(outboxEntryIsForAnotherAccount("designer-a", "designer-b")).toBe(true);
+});
+
+test("a refusal is counted as a refusal whoever captured it", () => {
+  /*
+    THE PARTITION, AND IT MATTERS BECAUSE THE BANNER SUBTRACTS BOTH FROM ONE TOTAL. An entry that has
+    been refused is listed below the banner with its reason and its two controls, and a person can
+    act on it. Counting it here as well would put one record inside two sentences and make the
+    banner's arithmetic larger than the queue.
+  */
+  const entries = [owned("designer-a"), owned("designer-a", "The server refused this."), owned("designer-b"), owned(null)];
+  // Signed in as B: A's plain entry is the one that will not send. A's REFUSED entry is A's too, and
+  // is deliberately not here — without that exclusion this would answer 2 and the banner's three
+  // numbers would sum to more than the four rows on screen.
+  expect(outboxEntriesForAnotherAccount(entries, "designer-b")).toBe(1);
+  // Signed in as A: the mirror image, and the unowned entry passes for both of them.
+  expect(outboxEntriesForAnotherAccount(entries, "designer-a")).toBe(1);
+  expect(outboxEntriesForAnotherAccount(entries, null)).toBe(0);
+  expect(outboxEntriesForAnotherAccount([owned(null), owned(null)], "designer-b")).toBe(0);
+});
+
+test("the banner's line is one sentence, states the remedy, and counts in words", () => {
+  // TERSE: state then action, on its own line. It is neither the waiting sentence (which would
+  // promise a send that cannot happen) nor the refusal sentence (which would send a designer to a
+  // row that was never refused).
+  expect(outboxOtherAccountLine(1)).toBe("1 entry was captured by another account — sign in as them to send.");
+  expect(outboxOtherAccountLine(4)).toBe("4 entries were captured by another account — sign in as them to send.");
+  expect(outboxOtherAccountLine(2)).not.toContain("deleted");
+});
+
+test("the session the queue answers for is told to it, and signing out is a real answer", () => {
+  const before = outboxSessionUser();
+  try {
+    setOutboxSessionUser("designer-a");
+    expect(outboxSessionUser()).toBe("designer-a");
+    // Signed out. It clears the classification and deletes nothing — the other designer's fortnight
+    // has to survive the handover, which is the whole premise of the stamp.
+    setOutboxSessionUser(null);
+    expect(outboxSessionUser()).toBeNull();
+  } finally {
+    setOutboxSessionUser(before);
+  }
+});
+
+test("the drain steps over another account's entry, and neither marks nor deletes it", () => {
+  /*
+    Pinned on the source for this file's standing reason: the alternative is two accounts, a real
+    store and a handover. Three things are asserted, and the third is the one that matters most —
+    everything below that line either sends the entry or writes a failure onto it, and this is
+    somebody's only copy of a fortnight of fieldwork.
+  */
+  const loop = OFFLINE_SOURCE.slice(OFFLINE_SOURCE.indexOf("  for (const entry of entries) {"));
+  const skip = "if (outboxEntryIsForAnotherAccount(entry.ownerUserId, sessionUserId)) {";
+  expect(loop, "the drain asks the shared predicate rather than comparing ids itself").toContain(skip);
+  expect(
+    loop.indexOf(skip),
+    "after the refusal test, so a refused entry is still reported as a refusal"
+  ).toBeGreaterThan(loop.indexOf("if (blocksRetry("));
+  expect(
+    loop.slice(loop.indexOf(skip), loop.indexOf(skip) + 140),
+    "counted and stepped over — no markFailure, no delete"
+  ).toContain("otherAccount += 1;");
+  // Read ONCE at the top of the pass: a drain takes minutes on a village connection, and a sign-out
+  // in another tab mid-pass would otherwise classify one queue against two accounts.
+  expect(OFFLINE_SOURCE).toContain("const sessionUserId = outboxSessionUserId;");
+});
+
+test("the stamp is written by the queue and not by the six forms that reach it", () => {
+  /*
+    A stamp any call site could forget is a stamp one of them eventually does, and the forgotten one
+    is an unowned entry that any account may drain — this hole, reintroduced by omission on one form.
+    So `ownerUserId` is excluded from `queueOffline`'s parameter type and written from module state.
+  */
+  const queue = OFFLINE_SOURCE.slice(OFFLINE_SOURCE.indexOf("export async function queueOffline("));
+  const head = queue.slice(0, queue.indexOf("{\n  // Not awaited"));
+  expect(head, "a caller cannot pass one, so a caller cannot omit one").toContain('"ownerUserId"');
+  expect(queue.slice(0, queue.indexOf("\n}")), "and the write takes it from the session").toContain(
+    "ownerUserId: outboxSessionUserId"
+  );
+});
+
+test("another account's entries leave the WAITING count, or the banner promises a send that cannot happen", () => {
+  /*
+    THE DEFECT THIS WHOLE BANNER EXISTS TO END, REACHED BY A THIRD DOOR. Such an entry carries no
+    `failure` — nothing was sent and nothing was refused — so it fell into `waiting` and was drawn
+    under a cloud-off icon inside "they send themselves when the connection returns". No amount of
+    signal will move it. Android's `outboxCountsOf` closed the identical door on the handset.
+  */
+  expect(BANNER_SOURCE).toContain("const waiting = entries.length - rejected.length - otherAccount;");
+  expect(BANNER_SOURCE, "and the sentence is the library's, so it is pinned above rather than typed in JSX").toContain(
+    "outboxOtherAccountLine(otherAccount)"
+  );
+  // "Sync now" is gated on `waiting`, so it disappears when the only thing left is another account's
+  // — a button whose press can achieve nothing is the dead end this queue keeps refusing to offer.
+  expect(BANNER_SOURCE).toContain("{waiting ? (");
+});
+
+test("the cloud-off icon is gated on the same count, or the picture gives the instruction the words refuse to", () => {
+  /*
+    2026-09-03. The two tests above stop the WORDS telling a designer to go and find a signal for
+    something a signal cannot move; the icon above those words went on saying it anyway, because it
+    drew unconditionally. On a refusal-only or another-account-only queue that is the whole of the
+    remedy a reader takes from a glance, and it is wrong.
+
+    Android is the reference and had it right: `OfflineBanner.outboxDeviceBanner` returns
+    `showCloudOff = counts.waiting > 0` with a KDoc naming this defect, and `MainActivity` draws
+    `CloudOff` or `ErrorOutline` off that one boolean. The web has no `showCloudOff` field because it
+    has no banner model — the count is computed in the component — so the gate is pinned by source,
+    as the two guards at the top of this file are.
+  */
+  const panel = BANNER_SOURCE.slice(BANNER_SOURCE.indexOf('className="mb-4 grid gap-3 rounded-lg border border-amber-500/40'));
+  const icons = panel.slice(0, panel.indexOf("<h2"));
+  expect(icons, "the cloud is drawn on a branch, not unconditionally").toContain("{waiting ? (");
+  expect(icons, "and the branch is the cloud").toContain("<CloudOff");
+  expect(icons, "with a different glyph on the other arm rather than nothing at all").toContain("<CircleAlert");
+  // Not the trouble panel's triangle: that one means the store has stopped answering, and a reader
+  // meets both panels on one screen.
+  expect(icons, "the amber panel does not borrow the red panel's glyph").not.toContain("<TriangleAlert");
+  // ONE COUNT BEHIND ALL FOUR. `waiting` already has refusals and another account's entries taken
+  // out of it, so the icon, the heading, the body sentence and "Sync now" cannot disagree.
+  expect(BANNER_SOURCE).toContain("const waiting = entries.length - rejected.length - otherAccount;");
+});
+
+test("a pass that moved nothing because everything belongs to somebody else says which", () => {
+  // Reachable only through a pass somebody else started, since the button is gated above — the belt
+  // rather than the surface. "Nothing to send" alone is accurate about this session and useless
+  // about the device.
+  const outcome = outboxOutcome({ ...NOTHING_HAPPENED, remaining: 3, otherAccount: 3 });
+  expect(outcome.kind).toBe("idle");
+  expect(outcome.description).toBe(outboxOtherAccountLine(3));
+  // And a genuinely empty queue is still allowed to be one: the field is optional and absent is zero.
+  expect(outboxOutcome(NOTHING_HAPPENED).description).toBeUndefined();
 });

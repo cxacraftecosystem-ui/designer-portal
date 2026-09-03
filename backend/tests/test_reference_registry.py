@@ -347,12 +347,69 @@ def test_the_roster_picker_is_the_one_artisan_field_that_is_not_scoped():
         ("processStep", "productRef", "ProductDocumentation"),
         # The sixth external reference model, on stage 6's new artisan-baseline singleton.
         ("artisanBaseline", "interviewRef", "QuestionnaireInterview"),
+        # The seventh, on stage 7's survey plan (2026-09-03). The INSTRUMENT, not a sitting on it:
+        # the plan could previously say nothing about the questionnaire the app already held except
+        # by retyping its questions into the prose box beside this one.
+        ("surveyPlan", "questionnaireRef", "Questionnaire"),
     ],
 )
 def test_the_records_the_requirement_named_are_selectable(entity_key, field_key, model):
     spec = _field(entity_key, field_key)
     assert spec.type is FieldType.REF
     assert spec.ref_model == model
+
+
+def test_the_survey_plan_links_the_instrument_without_disturbing_the_prose_beside_it():
+    """Stage 7's questionnaire link is ADDITIVE, and that is the whole of why it is safe.
+
+    ── WHAT RE-TYPING THE PROSE FIELD WOULD HAVE COST ────────────────────────────────────────────
+
+    ``surveyPlan.questionnaire`` is RICH_TEXT, BASIC and required, and every workshop that has
+    reached stage 7 has a ``{"blocks": […]}`` document stored under it. Re-typing that key as a REF
+    would hand ``coerce_value`` that dict on a branch that calls ``clean_text`` — the stored plan
+    stringified into a report as literal JSON, which is the exact defect ``format_value``'s
+    RICH_TEXT arm exists to record having shipped once. So the link is a NEW key, the prose is
+    untouched, and a plan may legitimately carry both: the prose is the plan and the link is the
+    instrument.
+
+    THE LINK IS OPTIONAL AND STANDARD, deliberately. A designer who has uploaded no questionnaire —
+    the ordinary case for a workshop planned in a courtyard — must not be blocked from submitting a
+    stage by a picker over a table they have nothing in.
+    """
+    ref = _field("surveyPlan", "questionnaireRef")
+    prose = _field("surveyPlan", "questionnaire")
+
+    assert prose.type is FieldType.RICH_TEXT and prose.required and prose.tier is Tier.BASIC
+    assert ref.ref_scope == REF_SCOPE_ALL
+    assert not ref.required and ref.tier is not Tier.BASIC
+    # HIDDEN, like every other picker in the registry: the id is a join key and the report prints
+    # the name box the pick fills in.
+    assert ref.report_role is ReportRole.HIDDEN
+    assert field_to_dict(ref, "surveyPlan")["refHydration"] == {"name": "questionnaireName"}
+    assert _field("surveyPlan", "questionnaireName").type is FieldType.TEXT
+
+
+def test_a_record_backed_multi_enum_declares_a_picker_the_wire_can_carry():
+    """``field_to_dict`` publishes the picker for a MULTI_ENUM exactly as it does for a REF.
+
+    THE HALF THAT COULD HAVE BEEN MISSED. `field_to_dict` keys ``refModel``/``refScope`` off
+    ``f.ref_model`` and never off the field TYPE, so this worked the day the registry first declared
+    one — but nothing asserted it, and a "tidy" that moved those two lines inside a
+    ``type is FieldType.REF`` guard would have left both clients rendering a closed dropdown with no
+    options and no way to know why. The clients dispatch on the type and read the model; the wire
+    has to carry both or the promotion is invisible.
+    """
+    for entity_key in ("processStep", "prototype"):
+        out = field_to_dict(_field(entity_key, "toolsUsed"), entity_key)
+        assert out["type"] == "MULTI_ENUM", entity_key
+        assert out["refModel"] == "ToolDocumentation", entity_key
+        assert out["refScope"] == REF_SCOPE_ALL, entity_key
+        # NO `options` AND NO `enum`, which is what tells a client to draw the record arm rather
+        # than the vocabulary one — Android branches on `refModel`, and its hydration coercion
+        # skips the allow-list precisely because `options` is empty here.
+        assert "options" not in out and "enum" not in out, entity_key
+        # Nothing hydrates from a multi-select: five tools have five names and the row has one box.
+        assert "refHydration" not in out, entity_key
 
 
 def test_the_two_artisan_fed_product_pickers_cascade_from_the_artisan_on_their_own_row():

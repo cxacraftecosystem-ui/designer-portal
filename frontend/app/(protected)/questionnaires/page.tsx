@@ -469,6 +469,8 @@ export default function QuestionnairesPage() {
             setApplied(query);
             setPage(1);
           }}
+          // The placeholder names the columns; this names the corpus, which the page alone carries.
+          ariaLabel="Search questionnaires"
           placeholder="Search by title or description"
         />
         {/*

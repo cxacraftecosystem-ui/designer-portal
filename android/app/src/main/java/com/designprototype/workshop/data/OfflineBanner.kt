@@ -46,8 +46,89 @@ data class OutboxCounts(
     val waiting: Int,
     /** Entries the server has refused for good. A sync pass will not touch these again. */
     val refused: Int,
+    /**
+     * Entries captured on this phone by a DIFFERENT ACCOUNT, which this session will not send.
+     *
+     * ── THE THIRD THING A CONNECTION DOES NOT MOVE, AND IT ARRIVED AS "WAITING" ───────────────
+     *
+     * `syncOutbox` steps over an entry whose [PendingEntry.ownerUserId] is not the signed-in
+     * account, because sending it would file another designer's fieldwork under this one's name (see
+     * that field). Nothing is refused on such an entry and nothing has failed, so it carried a null
+     * `failure` and landed in [waiting] — inside the sentence "sending now" under a cloud-off icon,
+     * for an entry no amount of signal will ever move. That is the defect this whole file exists to
+     * end, reaching the banner by a third door; `dwDeviceSyncBanner` had already closed the same one
+     * on the design-workshop side, twice, and its `waiting` flag is the pattern followed here.
+     *
+     * COUNTED RATHER THAN HIDDEN, exactly as [refused] is. The entries are real fieldwork sitting on
+     * the flash storage of a shared handset, and a designer looking for a fortnight they captured
+     * yesterday needs the number to be visible while the wrong person is signed in — a queue that
+     * silently drops to zero is how somebody concludes the work was lost and stops looking.
+     *
+     * DEFAULTED, so every existing construction and every pinned sentence is unchanged.
+     */
+    val otherAccount: Int = 0,
 ) {
-    val isEmpty: Boolean get() = waiting == 0 && refused == 0
+    val isEmpty: Boolean get() = waiting == 0 && refused == 0 && otherAccount == 0
+}
+
+/**
+ * The queue split into the three things a designer can do about it, from the entries themselves.
+ *
+ * PURE, AND SEPARATE FROM [OfflineOutbox.counts] FOR THIS FILE'S STANDING REASON: the numbers decide
+ * which of three incompatible stories the banner tells about one phone, and a decision in this
+ * repository is checkable on a desktop JVM. `counts` keeps the read and the lock — the part that
+ * needs a Context — and this keeps the classification, so `OutboxOwnerAccountTest` can assert the
+ * partition against hand-written entries instead of against a handset with two accounts on it.
+ *
+ * THE THREE ARE A PARTITION AND NOT THREE FILTERS. Every entry lands in exactly one, and the order
+ * of the tests is the order of what a person has to deal with first: a refusal is reported as a
+ * refusal whoever captured it, because that is the one a person can act on and because the tray
+ * lists it. Overlapping counts would put one record inside two sentences and make the total larger
+ * than the queue, which is the arithmetic [OfflineOutbox.counts] already refuses to let two separate
+ * reads produce.
+ *
+ * [signedInUserId] null means nobody is signed in, and then nothing is another account's — the same
+ * answer [dwDraftIsForAnotherAccount] gives, asked rather than re-spelled so this and the drain
+ * cannot form two opinions about one entry.
+ */
+internal fun outboxCountsOf(entries: List<PendingEntry>, signedInUserId: String?): OutboxCounts {
+    var waiting = 0
+    var refused = 0
+    var elsewhere = 0
+    entries.forEach { entry ->
+        when {
+            entry.failure != null -> refused++
+            dwDraftIsForAnotherAccount(entry.ownerUserId, signedInUserId) -> elsewhere++
+            else -> waiting++
+        }
+    }
+    return OutboxCounts(waiting = waiting, refused = refused, otherAccount = elsewhere)
+}
+
+/**
+ * The refused entries THIS SESSION may actually try again. (2026-09-03)
+ *
+ * ONE OWNER FOR A TEST TWO CALLERS HAVE TO AGREE ON, and they used to have none: `clearAllFailures`
+ * decided which refusals to unmark, and `WorkshopRepository.retryAllOutboxFailures` decided which
+ * ones to COUNT as tried, from two separate walks of the same queue. That is the shape of defect this
+ * package has already paid for twice ([OfflineOutbox.count] against [outboxCountsOf]); the copy that
+ * is not updated is always the one on the surface somebody is looking at.
+ *
+ * BOTH TERMS ARE LOAD-BEARING. `failure != null` is what makes it a refusal; the owner test is what
+ * keeps the bulk button from doing the one thing that cannot be undone. `syncOutbox` skips an entry
+ * another account captured, so unmarking it sends nothing and merely deletes the server's own
+ * sentence — after which `outboxFailureRows` stops listing the entry at all, because it lists a row
+ * only while it carries a refusal, and a fortnight of somebody else's fieldwork goes back to being
+ * invisible work no pass will ever move.
+ *
+ * Asked with [dwDraftIsForAnotherAccount] rather than a test spelled out here, for [outboxCountsOf]'s
+ * reason: the drain, the banner, the tray and this must not form four opinions about one boundary.
+ */
+internal fun outboxRetryableFailures(
+    entries: List<PendingEntry>,
+    signedInUserId: String?,
+): List<PendingEntry> = entries.filter {
+    it.failure != null && !dwDraftIsForAnotherAccount(it.ownerUserId, signedInUserId)
 }
 
 /** One line of the banner, and whether it is the amber one. */
@@ -110,10 +191,30 @@ fun outboxDeviceBanner(counts: OutboxCounts, online: Boolean): OutboxBanner? {
             )
         )
     }
+    // ITS OWN LINE, AND NOT A CLAUSE ON EITHER OF THE TWO ABOVE. The remedy is neither a signal nor
+    // a correction: it is a different person signing in. Folded into the waiting line it would
+    // promise a send that cannot happen; folded into the refusal line it would send a designer to a
+    // tray that does not list it, because nothing about it was refused. See
+    // [OutboxCounts.otherAccount].
+    if (counts.otherAccount > 0) {
+        lines.add(
+            OutboxBannerLine(
+                text = "${outboxEntryCount(counts.otherAccount)} captured on this phone by another " +
+                    "account. Sign in as them to send ${if (counts.otherAccount == 1) "it" else "them"} " +
+                    "— nothing has been deleted.",
+                warn = true,
+            )
+        )
+    }
     return OutboxBanner(
         // The icon follows the WAITING half only. This is the gate `dwDeviceSyncBanner` computes for
         // the same reason, and getting it wrong in the other direction is what shipped here.
         showCloudOff = counts.waiting > 0,
+        // REFUSALS ALONE, and another account's entries deliberately do NOT make this true. Tapping
+        // opens the tray, and the tray lists refusals (`outboxFailureRows` filters on `failure`); a
+        // banner that invited a tap and then showed an empty screen would be one more dead end
+        // wearing the costume of a remedy, which is the phrase this queue already uses about the two
+        // buttons it had to stop offering.
         actionable = counts.refused > 0,
         lines = lines,
     )
@@ -142,7 +243,7 @@ data class OutboxFailureRow(
      * ON THE ROW AND NOT IN A SECOND STRUCTURE BESIDE IT. The tray needs the flag everywhere it
      * draws a row, and a parallel `Set<String>` of ids read alongside this list is one more thing
      * that can be taken from a different moment than the rows it describes — the argument
-     * [OfflineOutbox.counts] makes about its own two numbers. One projection, one read, one moment.
+     * [OfflineOutbox.counts] makes about its own numbers. One projection, one read, one moment.
      *
      * MUTUALLY EXCLUSIVE WITH [awaitingUpdate] by construction: one is a 409 and the other a 422
      * carrying `extra_forbidden`. A skew clears when either build is updated; a clash clears only
@@ -188,6 +289,31 @@ data class OutboxFailureRow(
      * picker, which would be a second dead end wearing the costume of a remedy.
      */
     val repickKeys: List<String> = emptyList(),
+    /**
+     * CAPTURED ON THIS PHONE BY A DIFFERENT ACCOUNT — this session may look at it and may not act on
+     * it. (2026-09-03)
+     *
+     * ── WHAT THE TRAY DID WITHOUT IT, WHICH WAS WORSE THAN OFFERING A BUTTON THAT FAILED ─────────
+     *
+     * [outboxFailureRows] filtered on `failure != null` and asked nothing about ownership, so a
+     * refusal recorded against designer A's entry was listed to designer B under the same three
+     * buttons as B's own. Tapping *Try again* ran `clearFailure`, which sets `failure`, `failedAt`,
+     * `skewRun`, `conflict` and `danglingField` all to null — and `syncOutbox` then SKIPS the entry
+     * on the owner check, so nothing was sent. The row simply vanished from the tray (no failure, no
+     * row) taking the server's own sentence with it, and the entry went back to being invisible work
+     * that no pass will ever move. A destroyed a reason, sent nothing, and could no longer see the
+     * entry that had it. *Try all again* did the same thing to every such row at once.
+     *
+     * NOT HIDDEN, FOR [OutboxCounts.otherAccount]'S REASON. It is real fieldwork on the flash storage
+     * of a shared handset, and a row that disappears is how somebody concludes their work was lost.
+     * It is listed, with the server's reason still under it and [DW_DRAFT_OTHER_ACCOUNT_ROW] saying
+     * whose it is and what moves it — the same one line the workshop list already uses, reused rather
+     * than re-worded so one app does not describe one boundary two ways.
+     *
+     * DEFAULTED FALSE, so every existing construction and every pinned row is unchanged, and so a
+     * caller with nobody signed in gets the behaviour it has always had.
+     */
+    val otherAccount: Boolean = false,
 )
 
 /**
@@ -334,8 +460,21 @@ fun outboxRetryAllMessage(result: OutboxRetryResult): String {
     }
 }
 
-/** The rows for the tray, most recently refused first, projected from the queue. */
-fun outboxFailureRows(entries: List<PendingEntry>): List<OutboxFailureRow> =
+/**
+ * The rows for the tray, most recently refused first, projected from the queue.
+ *
+ * [signedInUserId] IS WHAT DECIDES WHETHER A ROW MAY BE ACTED ON (2026-09-03), and it is threaded in
+ * exactly as [outboxCountsOf] already takes it — through `WorkshopRepository`'s `cachedUser()`, which
+ * is the same token store the drain itself reads, so the tray and the pass cannot form two opinions
+ * about who is signed in. Null means nobody is, and then nothing is another account's; see
+ * [OutboxFailureRow.otherAccount] for what listing one as actionable destroyed.
+ *
+ * DEFAULTED, so every existing caller and every pinned row is unchanged.
+ */
+fun outboxFailureRows(
+    entries: List<PendingEntry>,
+    signedInUserId: String? = null,
+): List<OutboxFailureRow> =
     entries
         .filter { it.failure != null }
         .sortedByDescending { it.failedAt ?: it.createdAt }
@@ -368,5 +507,11 @@ fun outboxFailureRows(entries: List<PendingEntry>): List<OutboxFailureRow> =
                     referenceFieldNoun(key, recordNoun = outboxRecordNoun(entry.type))
                 },
                 repickKeys = entry.danglingKeys.filter { it in WORKSHOP_LINK_KEYS },
+                // ASKED WITH THE DRAIN'S OWN FUNCTION, never with a test written here. `syncOutbox`
+                // decides whether to send this entry with `dwDraftIsForAnotherAccount`, and a tray
+                // that reached the answer any other way would sooner or later offer a button for an
+                // entry the pass had already decided to skip — which is precisely the state this
+                // flag was added to end. See [OutboxFailureRow.otherAccount]. (2026-09-03)
+                otherAccount = dwDraftIsForAnotherAccount(entry.ownerUserId, signedInUserId),
             )
         }

@@ -25,6 +25,7 @@ import uuid
 from types import SimpleNamespace
 
 import pytest
+from fastapi import HTTPException
 
 import app.services.stage_definitions  # noqa: F401  - installs the registry
 from app.core.db import db
@@ -1230,3 +1231,89 @@ async def test_an_external_reference_model_makes_no_claim_about_tentativeness(mo
     assert payload["tentativeFirst"] is False
     assert payload["tentativeLabel"] == ""
     assert all("tentative" not in o for o in payload["options"])
+
+
+# --------------------------------------------------------------------------------------
+# The one model whose rows are not pooled: `Questionnaire`, added 2026-09-03
+# --------------------------------------------------------------------------------------
+#
+# Every other model this endpoint serves is readable by every signed-in account — the pooling
+# philosophy `records.viewable_where` is written under, which is why that predicate is empty and adds
+# nothing to the query. A `Questionnaire` is owned: `ownerId`, an optional `designWorkshopId` and an
+# admin-set `isShared`, and its own list endpoint narrows on all four. Stage 7's survey plan now
+# CITES one, permanently, in a document a ministry reads, so the picker has to be narrowed by exactly
+# the rule the list is narrowed by.
+#
+# THE CLAUSE IS ASSERTED AND NOT THE RESULT SET, deliberately. Two of the four arms are nested
+# relation filters (`designWorkshop.is.viewers.some.userId`) that `_matches` above cannot evaluate
+# and would raise on — which is that fake doing its job rather than a gap. What matters here is
+# whether `reference_options` COMPOSES the account clause at all, and for which account; whether
+# Postgres then applies a relation filter correctly is Prisma's business. `test_process_product_
+# cascade.py` makes the same split for the same reason.
+
+
+class _CapturingDelegate:
+    def __init__(self, sink):
+        self._sink = sink
+
+    async def find_many(self, where=None, order=None, take=None, include=None):
+        self._sink.append(where or {})
+        return []
+
+    async def find_unique(self, where=None):
+        return None
+
+
+class _CapturingDb:
+    def __init__(self, sink):
+        self._sink = sink
+
+    def __getattr__(self, _name):
+        return _CapturingDelegate(self._sink)
+
+    async def query_raw(self, _sql, _ids, *_binds):
+        return []
+
+
+async def test_the_questionnaire_picker_carries_the_asking_account_into_the_query(monkeypatch):
+    """The four-clause visibility rule, composed from the account and not from the workshop."""
+    seen: list[dict] = []
+    monkeypatch.setattr(dw, "db", _CapturingDb(seen))
+
+    await dw.reference_options(
+        _ASKING, "Questionnaire", scope="ALL", viewer=SimpleNamespace(id="usr_2")
+    )
+
+    assert len(seen) == 1
+    clauses = seen[0]["AND"]
+    account = next(c for c in clauses if "OR" in c)
+    assert {"ownerId": "usr_2"} in account["OR"]
+    # The published default, which is the clause a designer who has uploaded nothing depends on.
+    assert {"isShared": True, "isActive": True} in account["OR"]
+    # AND NO WORKSHOP CLAUSE. `Questionnaire` declares no `workshop_where`, on purpose: a form is
+    # built before it is attached, so `designWorkshopId` is null on exactly the instrument the
+    # designer is about to cite. Scoping to the workshop would hide it.
+    assert not any("designWorkshopId" in c for c in clauses)
+
+
+async def test_an_account_scoped_model_is_refused_rather_than_served_wide(monkeypatch):
+    """No viewer, no options — and a refusal rather than the whole table.
+
+    `viewer` carries a default of None so that the many tests which fake this function out need not
+    invent an account. That default is harmless for six of the seven models, because their rows are
+    pooled. On the seventh it would be the difference between a picker and a listing of every
+    designer in the country's private instruments, so the model's own declaration decides: a
+    `viewer_where` with nothing to apply it to raises instead of being skipped.
+    """
+    seen: list[dict] = []
+    monkeypatch.setattr(dw, "db", _CapturingDb(seen))
+
+    with pytest.raises(HTTPException) as refused:
+        await dw.reference_options(_ASKING, "Questionnaire", scope="ALL")
+    assert refused.value.status_code == 401
+    assert seen == [], "the table was queried before the refusal"
+
+    # And the six pooled models are unaffected by the guard, which is what keeps it from being a
+    # behaviour change for every other picker in the registry.
+    await dw.reference_options(_ASKING, "ToolDocumentation", scope="ALL")
+    assert len(seen) == 1

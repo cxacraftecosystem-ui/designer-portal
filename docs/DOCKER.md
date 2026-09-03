@@ -397,7 +397,7 @@ docker compose config | sed -n '/^  api:/,/^  [a-z]/p' | grep -oE '^      [A-Z_0
 
 | Claim class | Kept true by |
 |---|---|
-| The default stack is three services | `docker compose config --services`, run by the **Container and manifest packaging** job in `.github/workflows/checks.yml` on every push. Added 2026-08-24. |
+| The default stack is three services | `docker compose config --services`, run by the **Container and manifest packaging** job in `.github/workflows/checks.yml` on every push. Added 2026-08-24. **A second consumer of that promise arrived 2026-09-03:** `.github/workflows/e2e-live.yml` runs a bare `docker compose up -d` and expects exactly postgres, minio and the one-shot bucket creator — so a fourth service outside a profile breaks the weekly browser suite as well as the packaging job, and it breaks it slowly, in a run nobody is watching. |
 | The compose file parses, and every `dockerfile:` path exists | The same job's `docker compose config --quiet` step. A `dockerfile:` pointing at a deleted path is otherwise invisible until somebody runs `--profile api up`. |
 | Both images actually build | The same job, **on a manual run only** (`gh workflow run Checks`). Two image builds per push is CI time nobody asked for, and nothing deploys these images. |
 | Environment defaults | `docker-compose.yml`'s `${VAR:-default}` interpolation, and `backend/app/core/config.py` behind it. [ENVIRONMENT.md](ENVIRONMENT.md) is the index of the names. |

@@ -55,6 +55,15 @@ import kotlinx.serialization.json.JsonPrimitive
  * to see (the question they added themselves, this morning, on the web) is the one that vanishes.
  * [DwStageRefusal.drawn] carries the distinction and the sentence changes rather than the message
  * being swallowed.
+ *
+ * ── AND ONE KEY IN THE MAP IS NOT A QUESTION AT ALL ──────────────────────────────────────────────
+ *
+ * `save_stage` gained a version guard on 2026-09-03, and with it a refusal about the WHOLE ROW:
+ * somebody else saved that row while this payload was in flight, so the row was left alone and the
+ * repository has one sentence about it. It rides the same `errors` map — under [DW_ROW_REFUSAL_KEY],
+ * which every other reader of this map would take for a field key. Read that way the bullet named a
+ * question no designer has ever seen and then blamed this build for having no box for it. See
+ * [DwStageRefusal.isRowLevel] for the four places that branch on it.
  */
 data class DwStageRefusal(
     /** The registry entity, or [CUSTOM_ENTITY_KEY] for the designer's own questions. */
@@ -72,11 +81,21 @@ data class DwStageRefusal(
      */
     val rowKey: String? = null,
     val fieldKey: String,
-    /** The question as this build names it, or the bare key when it has no control for it. */
+    /**
+     * The question as this build names it, or the bare key when it has no control for it.
+     *
+     * For a row-level refusal ([isRowLevel]) it is the ENTITY as the form titles it, because there
+     * is no question — see `dwRowRefusalLabel`.
+     */
     val label: String,
     /** The server's own sentence. Never rewritten — this repository's errors are sentences, not codes. */
     val message: String,
-    /** Whether this build can draw a control for this question at all. */
+    /**
+     * Whether this build can draw a control for this question at all.
+     *
+     * For a row-level refusal it answers the same thing one rung up — whether this build knows the
+     * entity — and nothing reads it, because [sentence] stops before the clause it decides.
+     */
     val drawn: Boolean,
     /** What the repository holds under this key now. [DwHeld.UNRECORDED] until a read says. */
     val held: DwHeld = DwHeld.unrecorded(),
@@ -84,6 +103,28 @@ data class DwStageRefusal(
     /** Where the message belongs on screen. Singletons and `_custom` have no row. */
     val address: String
         get() = if (rowIndex == null) entityKey else "$entityKey[$rowIndex]"
+
+    /**
+     * THE REPOSITORY REFUSED THE WHOLE ROW, NOT ONE OF ITS QUESTIONS — see [DW_ROW_REFUSAL_KEY].
+     *
+     * Four things branch on it, and each of them is a sentence that is otherwise false:
+     *
+     *  * [sentence] stops on the repository's own words. The two clauses that normally follow are
+     *    both about a FIELD — what is held under the key, and which box the typed text sits in — and
+     *    neither has anything to refer to here.
+     *  * [DwStageRefusalReport.byAddress] leaves it out, because no form draws a box keyed `_row`
+     *    and a message handed to the form that the form cannot draw is a message that was dropped.
+     *  * [dwHoldingsFrom] does not measure it: no row carries `_row`, so a stage read's silence
+     *    about it is not a fact about an answer, and [DwHeldState.NOTHING] would be a fabrication.
+     *  * [DwStageRefusalReport.needsRead] therefore does not ask for that read at all.
+     *
+     * IT IS STILL ONE REFUSAL AND IT IS STILL COUNTED. [DwStageRefusalReport.count] includes it, and
+     * `recordStageSent` sums the same bucket at one — the row was not stored, and a stage that said
+     * "saved" over a row somebody else won is the exact failure this whole file exists to end.
+     * (2026-09-03)
+     */
+    val isRowLevel: Boolean
+        get() = fieldKey == DW_ROW_REFUSAL_KEY
 
     /**
      * THE IDENTITY A MEASURED HOLDING MAY BE CARRIED ON — see [dwCarryHoldings].
@@ -131,6 +172,15 @@ data class DwStageRefusal(
             append(": ")
             append(message.trim())
             if (!message.trim().endsWith('.')) append('.')
+            // A ROW-LEVEL REFUSAL ENDS ON THE REPOSITORY'S OWN SENTENCE, ADDRESSED TO THE ROW.
+            //
+            // It arrives complete — one line that names the state and the next move — and is
+            // rendered verbatim rather than wrapped, because the two clauses below are both about a
+            // FIELD. "What it holds under this question" has no question to be about, and "still in
+            // the box above" would point at a box that does not exist. The card's heading already
+            // promises nothing typed was thrown away, which is the reassurance those clauses carry.
+            // See [isRowLevel]. (2026-09-03)
+            if (isRowLevel) return@buildString
             append(' ')
             append(held.sentence)
             append(" What you typed is still on this phone")
@@ -145,6 +195,25 @@ data class DwStageRefusal(
             }
         }
 }
+
+/**
+ * THE RESERVED KEY A ROW-LEVEL REFUSAL ARRIVES UNDER — `save_stage`'s `STAGE_ROW_CONFLICT_KEY`.
+ *
+ * WHY IT RIDES THE ERROR MAP AT ALL, which is the decision this constant inherits. A version
+ * conflict could have been a new key on the save response, and a new response key is only worth its
+ * cost when a client renders it — which no build already in a cluster does. Filed inside `errors` it
+ * reaches the handsets that shipped before it existed, on a surface both clients already draw and
+ * both already count, so a fielded 0.0.7 shows it as an unnamed refusal rather than as nothing.
+ *
+ * WHY AN UNDERSCORE. `errors` is `{scope: {field: message}}` and every other entry in it names a
+ * real field. The underscore is this protocol's own mark for "not workshop data" — `_clientKey`,
+ * `_entryId`, `_ordinal`, `_custom` — and [CUSTOM_KEY_PATTERN] refuses a designer's own question any
+ * first character but a lower-case letter, so a custom key can never collide with it.
+ *
+ * Kept in step with `backend/app/services/design_workshops.py:STAGE_ROW_CONFLICT_KEY` BY HAND: it is
+ * a wire constant on both sides and there is no generator between them. (2026-09-03)
+ */
+const val DW_ROW_REFUSAL_KEY: String = "_row"
 
 /**
  * WHAT THE REPOSITORY HOLDS UNDER A REFUSED KEY — three states, and the first is a word.
@@ -223,12 +292,29 @@ data class DwStageRefusalReport(
 
     val count: Int get() = refusals.size + unplaced.size
 
-    /** Whether anything here would be answered by reading the stage back. See [dwCarryHoldings]. */
-    val needsRead: Boolean get() = refusals.any { it.held.state == DwHeldState.UNRECORDED }
+    /**
+     * Whether anything here would be answered by reading the stage back. See [dwCarryHoldings].
+     *
+     * A ROW-LEVEL REFUSAL NEVER ASKS FOR THE READ. There is no key for the read to answer about, so
+     * a contested row would spend one request per debounced save — the exact cost [dwCarryHoldings]
+     * exists to avoid — to come back with nothing to fill in. See [DwStageRefusal.isRowLevel].
+     * (2026-09-03)
+     */
+    val needsRead: Boolean
+        get() = refusals.any { !it.isRowLevel && it.held.state == DwHeldState.UNRECORDED }
 
-    /** Per-address, per-field, for the form to mark the boxes. `address` is `entity` or `entity[row]`. */
+    /**
+     * Per-address, per-field, for the form to mark the boxes. `address` is `entity` or `entity[row]`.
+     *
+     * ROW-LEVEL REFUSALS ARE DELIBERATELY NOT IN HERE. Every consumer of this map looks a message up
+     * BY FIELD KEY to mark one control, and nothing on any form is keyed `_row` — so a message
+     * handed over here would be silently dropped by the surface that received it, which is the same
+     * defect this module was built to end, one level in. They are drawn from [refusals] instead: on
+     * the card, and by the row card itself. See [DwStageRefusal.isRowLevel]. (2026-09-03)
+     */
     val byAddress: Map<String, Map<String, String>>
-        get() = refusals.groupBy { it.address }
+        get() = refusals.filterNot { it.isRowLevel }
+            .groupBy { it.address }
             .mapValues { (_, list) -> list.associate { it.fieldKey to it.message } }
 
     /**
@@ -378,29 +464,72 @@ fun dwDecodeStageRefusalsFromSent(
 
         val entity = spec?.entity(entityKey)
         fields.forEach { (fieldKey, message) ->
-            val registryField = entity?.fields?.firstOrNull { it.key == fieldKey }
-            val customField = customByKey[fieldKey]?.takeIf { entityKey == CUSTOM_ENTITY_KEY }
-            val label = registryField?.label?.takeIf { it.isNotBlank() }
-                ?: customField?.label?.takeIf { it.isNotBlank() }
-                ?: fieldKey
-            val drawn = when {
-                registryField != null -> !registryField.deprecated
-                customField != null -> dwCustomFieldDrawable(customField.type) && !customField.retired
-                else -> false
+            if (fieldKey == DW_ROW_REFUSAL_KEY) {
+                /*
+                  THE WHOLE ROW WAS REFUSED, AND THIS IS THE ONE KEY IN THE MAP THAT NAMES NO
+                  QUESTION — so it is placed against the ROW and never labelled as a field.
+
+                  Fall through to the field path and the bullet read "_row: Someone else saved this
+                  row first… this copy of the app has no box for that question": a protocol key
+                  presented to a designer as a question they have never seen, followed by this build
+                  apologising for not drawing it. Both halves invented, on the one refusal whose
+                  remedy is not theirs to carry out. See [DW_ROW_REFUSAL_KEY]. (2026-09-03)
+                */
+                refusals += DwStageRefusal(
+                    entityKey = entityKey,
+                    rowIndex = rowIndex,
+                    rowKey = rowKey,
+                    fieldKey = fieldKey,
+                    label = dwRowRefusalLabel(entityKey, entity),
+                    message = message,
+                    // Whether this build can show the thing at all, which for a row is whether it
+                    // knows the entity. Read by nothing today — [DwStageRefusal.sentence] stops
+                    // before the clause `drawn` decides — and answered honestly rather than left at
+                    // the `false` the field path would have produced for a key it cannot label.
+                    drawn = entity != null || entityKey == CUSTOM_ENTITY_KEY,
+                )
+            } else {
+                val registryField = entity?.fields?.firstOrNull { it.key == fieldKey }
+                val customField = customByKey[fieldKey]?.takeIf { entityKey == CUSTOM_ENTITY_KEY }
+                val label = registryField?.label?.takeIf { it.isNotBlank() }
+                    ?: customField?.label?.takeIf { it.isNotBlank() }
+                    ?: fieldKey
+                val drawn = when {
+                    registryField != null -> !registryField.deprecated
+                    customField != null -> dwCustomFieldDrawable(customField.type) && !customField.retired
+                    else -> false
+                }
+                refusals += DwStageRefusal(
+                    entityKey = entityKey,
+                    rowIndex = rowIndex,
+                    rowKey = rowKey,
+                    fieldKey = fieldKey,
+                    label = label,
+                    message = message,
+                    drawn = drawn,
+                )
             }
-            refusals += DwStageRefusal(
-                entityKey = entityKey,
-                rowIndex = rowIndex,
-                rowKey = rowKey,
-                fieldKey = fieldKey,
-                label = label,
-                message = message,
-                drawn = drawn,
-            )
         }
     }
 
     return DwStageRefusalReport(refusals = refusals, unplaced = unplaced)
+}
+
+/**
+ * What to call the thing a row-level refusal is about: the entity, as the form titles it.
+ *
+ * `entity.title` and not `entity.name`, because `title` is what `CollectionRowCard` prints at the
+ * head of every row ("3. Cost line") and what `EntitySection` heads the singleton with — so the
+ * bullet names the row using the same words as the thing the designer then scrolls to.
+ *
+ * `_custom` is not a registry entity and carries no title anywhere in the schema, so it is named the
+ * way the form names it rather than by its reserved key. An entity this build's registry does not
+ * declare falls back to the key, which is the same answer the field path gives for a key it has no
+ * label for — a bare key is ugly and it is true. (2026-09-03)
+ */
+private fun dwRowRefusalLabel(entityKey: String, entity: EntityDto?): String = when {
+    entityKey == CUSTOM_ENTITY_KEY -> "This workshop's own questions"
+    else -> entity?.title?.takeIf { it.isNotBlank() } ?: entityKey
 }
 
 /**
@@ -418,6 +547,12 @@ fun dwDecodeStageRefusalsFromSent(
 fun dwHoldingsFrom(report: DwStageRefusalReport, bucket: StageBucketDto): DwStageRefusalReport =
     report.copy(
         refusals = report.refusals.map { refusal ->
+            // NOTHING TO MEASURE FOR A ROW-LEVEL REFUSAL. No row carries `_row`, so the bucket's
+            // silence about it is not a measurement of an answer — resolving it here would write
+            // [DwHeldState.NOTHING] and put "The repository holds no answer to this question." under
+            // a conflict about a row somebody else has just filled in. See [DwStageRefusal.isRowLevel].
+            // (2026-09-03)
+            if (refusal.isRowLevel) return@map refusal
             val value: JsonElement? = when {
                 refusal.entityKey == CUSTOM_ENTITY_KEY -> bucket.custom[refusal.fieldKey]
                 refusal.rowIndex == null -> bucket.singleton[refusal.fieldKey]

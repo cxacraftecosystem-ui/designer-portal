@@ -433,7 +433,25 @@ data class AppReleaseDto(
     val versionName: String = "",
     val url: String? = null,
     val notes: String? = null,
-    val objectKey: String? = null
+    val objectKey: String? = null,
+    /**
+     * HOW MANY BYTES THE PUBLISHED APK IS, so a download can tell "finished" from "stopped".
+     *
+     * `WorkshopRepository.downloadApk` accepted any 2xx and handed whatever arrived to the system
+     * installer; a body that stopped part-way through 66 MB is a successful response with a
+     * truncated file behind it. See `data/AppUpdateIntegrity.kt` for the whole argument, including
+     * why this is a length rather than a hash.
+     *
+     * NULLABLE, AND NULL IS THE ORDINARY CASE ON THIS FLEET. The column arrived with this change, so
+     * every release row published before it carries null, and a phone offered one of those must
+     * download it exactly as it always did — the alternative is a fleet that cannot update off the
+     * build it is on. `Long` and not `Int`: an APK is already 67 MB and the column is a `BigInt?`.
+     *
+     * ADDITIVE ON THE WIRE. `ApiClient.json` ignores unknown keys, so an older APK reading a payload
+     * that carries this is unaffected; a newer APK reading an older server's payload gets null,
+     * which is the same "no claim" this field's absence has always meant.
+     */
+    val sizeBytes: Long? = null
 )
 
 @Serializable
@@ -442,7 +460,18 @@ data class AppReleasePublishRequest(
     val versionName: String,
     val objectKey: String,
     val url: String? = null,
-    val notes: String? = null
+    val notes: String? = null,
+    /**
+     * The byte count of the APK being published — see [AppReleaseDto.sizeBytes] for what reads it.
+     *
+     * OPTIONAL, and that is a wire-compatibility requirement rather than a convenience: three
+     * publishers exist (this app, `frontend/components/settings/PublishAppUpdatePanel.tsx`, and
+     * `.github/workflows/publish-android.yml`), they ship independently, and the schema on the other
+     * end is `extra="forbid"` in one direction and would be a 422 on a missing REQUIRED field in the
+     * other. A publisher that has not learned this key yet must go on publishing releases; those
+     * rows simply carry no size claim, exactly as every existing row does.
+     */
+    val sizeBytes: Long? = null
 )
 
 // --- In-app feedback (quantitative rating + qualitative comment) ---
@@ -996,7 +1025,51 @@ data class WorkshopCreateRequest(
     val status: String = "PENDING",
     val recordedAt: String? = null,
     val recordedTimezone: String = "Asia/Kolkata",
-    val location: LocationRequest? = null
+    val location: LocationRequest? = null,
+    /**
+     * THE IDEMPOTENCY KEY OF ONE QUEUED CREATE — minted once at queue time, sent on every replay, so
+     * a create whose answer was lost lands exactly once.
+     *
+     * ── WHAT IT CLOSES, AND WHY [PendingEntry.createdId] COULD NOT ─────────────────────────────
+     *
+     * `createdId` is proof this handset RECEIVED an answer, so `replayEntry` skips the create when it
+     * is set. The case it cannot see is the one where the answer never arrived: the POST landed, the
+     * row was written, and the reply died in a tunnel. Nothing was learned, the entry is still
+     * queued, and the next pass files a second government record for one save. The web outbox names
+     * the missing piece exactly — *"a few milliseconds of IndexedDB is as small as that window gets
+     * without idempotency keys on the API"* (`frontend/lib/offline.ts`, `persistProgress`) — and this
+     * is it, on both clients, against the same four server routes.
+     *
+     * ── NULL, NOT ABSENT-BY-DEFAULT-VALUE, AND WHY THAT IS THE WHOLE COMPATIBILITY STORY ───────
+     *
+     * `ApiClient.json` is built with `explicitNulls = false`, so a null key is DROPPED from the
+     * encoded body rather than sent as `"clientKey": null`. Three consequences, and all three are
+     * load-bearing:
+     *
+     *   1. AN ONLINE SAVE SENDS NOTHING. The forms construct this request without a key, so a save
+     *      made with a signal is byte-identical to what this build has always sent. Only the outbox
+     *      fills it in ([WorkshopRepository.createFromEntry]).
+     *   2. A CORRECTION SENDS NOTHING, WHICH IS THE SHARP ONE. This same class is the PATCH body —
+     *      `patchBodyWithClearances` encodes it whole — and the SERVER'S UPDATE SCHEMAS DO NOT
+     *      DECLARE `clientKey`. `APIModel` is `extra="forbid"`, so a correction carrying a key would
+     *      be `extra_forbidden`: a 422 read by this queue as a disagreement between BUILDS and
+     *      re-attempted once per app run, for ever, on a prepaid connection. It cannot happen,
+     *      because the key is never written into a correction's payload and a null is dropped — but
+     *      it is the reason this field must never gain a non-null default.
+     *   3. AN ENTRY QUEUED BY AN EARLIER BUILD DECODES WITH NULL and replays exactly as it always
+     *      did, which is the rule every field in [PendingEntry] follows.
+     *
+     * ── THE DEPLOY ORDER THIS DEPENDS ON, STATED BECAUSE IT IS THE ONLY RISK ───────────────────
+     *
+     * A key sent to a server whose `WorkshopCreate` does not declare one is a 422 on the whole save.
+     * That cannot happen in this release train and the reason is structural rather than a promise:
+     * the server half ships FIRST and independently (`deploy-backend.yml` on a push to main), and no
+     * APK carrying this field exists until 0.0.8 is cut and published afterwards. Every handset in
+     * the field today runs 0.0.7, which has never heard of this key. Same shape as
+     * [AppReleasePublishRequest.sizeBytes], which states the same rule for three publishers that ship
+     * independently.
+     */
+    val clientKey: String? = null
 )
 
 @OptIn(ExperimentalSerializationApi::class)
@@ -1181,7 +1254,13 @@ data class ProductCreateRequest(
     val status: String = "PENDING",
     val recordedAt: String? = null,
     val recordedTimezone: String = "Asia/Kolkata",
-    val location: LocationRequest? = null
+    val location: LocationRequest? = null,
+    /**
+     * The idempotency key of one queued create. Null on an online save and on every correction; the
+     * outbox fills it in. See [WorkshopCreateRequest.clientKey] for what it closes, why a null must
+     * be dropped rather than sent, and the deploy order the whole change rests on.
+     */
+    val clientKey: String? = null
 )
 
 @OptIn(ExperimentalSerializationApi::class)
@@ -1260,7 +1339,12 @@ data class ToolCreateRequest(
     val status: String = "PENDING",
     val recordedAt: String? = null,
     val recordedTimezone: String = "Asia/Kolkata",
-    val location: LocationRequest? = null
+    val location: LocationRequest? = null,
+    /**
+     * The idempotency key of one queued create. Null on an online save and on every correction; the
+     * outbox fills it in. See [WorkshopCreateRequest.clientKey].
+     */
+    val clientKey: String? = null
 )
 
 @Serializable
@@ -1819,7 +1903,19 @@ data class ProcessCreateRequest(
     /** The design & prototype workshop this record is filed under. See [ArtisanCreateRequest]. */
     val designWorkshopId: String? = null,
     val recordedAt: String? = null,
-    val recordedTimezone: String = "Asia/Kolkata"
+    val recordedTimezone: String = "Asia/Kolkata",
+    /**
+     * The idempotency key of one queued create. Null on an online save and on every correction; the
+     * outbox fills it in. See [WorkshopCreateRequest.clientKey].
+     *
+     * IT MATTERS MOST ON THIS REQUEST, because a replayed process duplicates its CHILDREN too: the
+     * server writes `ProcessStep` rows after the row itself, so a second landing produced a second
+     * process carrying a second full copy of every step of a making sequence. The server's replay
+     * branch answers from the stored row with its existing step ids — which
+     * [WorkshopRepository.linkTargetFor] needs, since a queued step photograph is addressed by index
+     * into `createdStepIds`.
+     */
+    val clientKey: String? = null
 )
 
 @Serializable

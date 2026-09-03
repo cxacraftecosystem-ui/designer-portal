@@ -44,7 +44,7 @@ class OfflineQueueMessageTest {
             "a queued correction must not read as though the fix has landed:\n$text",
             text.contains("the office still sees the earlier version"),
         )
-        assertTrue(text.contains("saved on this device"))
+        assertTrue(text, text.contains("saved on this device"))
         // AND WHO WINS, which the sentence used to leave out. `writeFromEntry` replays a correction as
         // a whole create-shaped body with no version and no If-Match, so when it finally goes it
         // overwrites every change anyone else made in between — silently, on both sides. The trade is
@@ -54,6 +54,12 @@ class OfflineQueueMessageTest {
             text.contains("your version wins"),
         )
         assertTrue(text, text.contains("replaces the whole record"))
+        // THREE FACTS, NOT FIVE (2026-09-03). This closed with "Tell them if that matters" — an
+        // instruction naming nobody, on a toast that is gone in five seconds, addressed to a designer
+        // who has already put the phone in their pocket. Every fact above survives; the ceiling is
+        // what stops the paragraph growing back one clause at a time.
+        assertTrue("it is ${text.length} characters:\n$text", text.length <= 230)
+        assertFalse(text, text.contains("Tell them"))
     }
 
     @Test
@@ -84,6 +90,24 @@ class OfflineQueueMessageTest {
         val text = offlineSavedMessage(result(files = 1, unreadable = listOf("x.jpg")), isCorrection = true)
         assertTrue(text.contains("the office still sees the earlier version"))
         assertTrue(text.contains("x.jpg"))
+    }
+
+    /**
+     * THE CLEAN SAVE IS THE MEASURE THE OTHERS ARE HELD TO.
+     *
+     * "Saved on this device. It will be sent when you have a signal." is the sentence this whole file
+     * is about — one state, one promise, nine words — and it has never needed changing. Pinned as an
+     * upper bound on its neighbours so that "terse" is a property of the surface rather than of
+     * whichever string somebody looked at last.
+     */
+    @Test
+    fun `the correction sentence is not many times the length of the clean one`() {
+        val clean = offlineSavedMessage(result(files = 0), isCorrection = false)
+        val correction = offlineSavedMessage(result(files = 0), isCorrection = true)
+        assertTrue(
+            "the correction is ${correction.length} characters against the clean save's ${clean.length}",
+            correction.length <= clean.length * 4,
+        )
     }
 
     @Test

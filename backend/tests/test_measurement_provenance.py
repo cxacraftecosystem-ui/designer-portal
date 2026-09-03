@@ -598,6 +598,12 @@ class _DatabaseTouched(Exception):
 
 
 class _Tripwire:
+    """``db.tx()`` needs no special case here, checked and not assumed (2026-09-03): ``tx`` is an
+    attribute like any other, so the transactions the record PATCHes and the review writes grew that
+    day raise the same ``_DatabaseTouched`` from the same lookup. The routes this fixture drives are
+    ``app.api.routes.media``'s, none of which opens a transaction at all — but the rebind below is
+    app-wide by identity, so the statement is worth making where the class is."""
+
     def __getattr__(self, name: str):
         raise _DatabaseTouched(name)
 
