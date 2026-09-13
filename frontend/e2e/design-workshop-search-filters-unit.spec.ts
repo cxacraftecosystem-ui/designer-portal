@@ -63,6 +63,9 @@ const EVERY_ROLE: UserRole[] = [
   "DESIGNER",
   "INSPECTOR",
   "PROFESSOR",
+  "ASSISTANT_DIRECTOR",
+  "REGIONAL_DIRECTOR",
+  "MINISTRY_ADMIN",
   "ADMIN",
   "MASTER_ADMIN"
 ];
@@ -160,9 +163,20 @@ test("empty types still means every bucket, including the sixth", () => {
 
 /* ── the two permission sets ──────────────────────────────────────────────── */
 
-test("viewing design-workshop data is professor and above", () => {
+test("viewing design-workshop data is professor and above, which since 2026-09-13 includes the three directorate tiers", () => {
   for (const role of EVERY_ROLE) {
-    const expected = ["PROFESSOR", "ADMIN", "MASTER_ADMIN"].includes(role);
+    // NOT `hasRank(role, "PROFESSOR")` spelled as a literal — the gate is a SET on both sides of the
+    // wire, and INSPECTOR (37) sitting just under the floor is the reason it is one. The three
+    // directorate tiers were added to the set by a person on 2026-09-13; a floor would have added
+    // them silently and would add whoever lands at 38 next.
+    const expected = [
+      "PROFESSOR",
+      "ASSISTANT_DIRECTOR",
+      "REGIONAL_DIRECTOR",
+      "MINISTRY_ADMIN",
+      "ADMIN",
+      "MASTER_ADMIN"
+    ].includes(role);
     expect(canViewDesignWorkshopData(asUser(role)), role).toBe(expected);
   }
   expect(canViewDesignWorkshopData(null)).toBe(false);

@@ -50,6 +50,9 @@ const HUB = "/sketches-and-prototypes";
 const ROLES: UserRole[] = [
   "MASTER_ADMIN",
   "ADMIN",
+  "MINISTRY_ADMIN",
+  "REGIONAL_DIRECTOR",
+  "ASSISTANT_DIRECTOR",
   "PROFESSOR",
   "INSPECTOR",
   "DESIGNER",

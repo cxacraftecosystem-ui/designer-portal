@@ -1,5 +1,5 @@
 /**
- * The eight tiers, highest first. THE ROW THAT MATTERS MOST in the whole mirror set: every
+ * The eleven tiers, highest first. THE ROW THAT MATTERS MOST in the whole mirror set: every
  * `Record<UserRole, …>` in this client is exhaustive against THIS union and nothing else, so a tier
  * missing here silently un-enforces four self-enforcing mirrors at once — `tsc` keeps passing, the
  * records stay "complete", and all of them are complete against the wrong ladder.
@@ -12,6 +12,15 @@
 export type UserRole =
   | "MASTER_ADMIN"
   | "ADMIN"
+  // The three DIRECTORATE tiers, added 2026-09-13 at 48/45/42 — above PROFESSOR and below ADMIN.
+  // `MINISTRY_ADMIN` IS NOT AN ADMIN: `isAdmin` in `lib/permissions.ts` is `role === "MASTER_ADMIN"
+  // || role === "ADMIN"`, set membership and not a rank test, so no arithmetic reaches it. What rank
+  // 42 and up DOES buy on this client is `canManageUsers`, `canManageCrafts`, `canManageWorkshops`,
+  // `canManageQuestionnaire`, `canDownloadDataset` and `canSeeDataTile` — every `hasRank(…,
+  // "PROFESSOR")` predicate in `lib/permissions.ts` at once.
+  | "MINISTRY_ADMIN"
+  | "REGIONAL_DIRECTOR"
+  | "ASSISTANT_DIRECTOR"
   | "PROFESSOR"
   | "INSPECTOR"
   | "DESIGNER"

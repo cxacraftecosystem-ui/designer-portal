@@ -12,13 +12,13 @@ import org.junit.Test
  * WHY THIS FILE EXISTS. [FieldPermissions.canRunDesignWorkshops] is the ONE rule in `deps.py` that is
  * not a rank threshold — it is the set {DESIGNER, ADMIN, MASTER_ADMIN}, so a PROFESSOR is outside it
  * despite outranking a designer. Written on the phone as `rank(role) >= RANK_DESIGNER` it gives the
- * same answer for six of the eight roles in [everyRole], which is precisely why nobody caught it by
+ * same answer for six of the eleven roles in [everyRole], which is precisely why nobody caught it by
  * reading. Counted by evaluating both spellings over [everyRole]: the six that AGREE are
  * CROWDSOURCE_VOLUNTEER, FIELD_CONTRIBUTOR, RESEARCHER (both say no), DESIGNER, ADMIN, MASTER_ADMIN
  * (both say yes). When the ladder was seven tiers the two differed in exactly ONE cell, PROFESSOR,
- * which is what made it invisible; INSPECTOR at rank 37 (added 2026-08-27) made it TWO, because
- * 37 >= 35 admits an inspector as well and an inspector does not sign a report either. A test that
- * walks every role is the only form of verification a non-monotonic rule admits.
+ * which is what made it invisible; INSPECTOR at 37 made it TWO, and the three directorate tiers at
+ * 42/45/48 (added 2026-09-13) make it FIVE — every one of them clears 35 and none signs a report.
+ * A test that walks every role is the only form of verification a non-monotonic rule admits.
  *
  * Every expectation below was reproduced against the running API before it was written down:
  *
@@ -42,6 +42,9 @@ class FieldPermissionsTest {
         "DESIGNER",
         "INSPECTOR",
         "PROFESSOR",
+        "ASSISTANT_DIRECTOR",
+        "REGIONAL_DIRECTOR",
+        "MINISTRY_ADMIN",
         "ADMIN",
         "MASTER_ADMIN",
     )
@@ -137,7 +140,7 @@ class FieldPermissionsTest {
         // Guards the constants the rest of the table is built on. A role missing from RANKS scores 0,
         // which is below a crowdsource volunteer, and the menu then hides every destination from it.
         assertEquals(
-            listOf(10, 20, 30, 35, 37, 40, 50, 60),
+            listOf(10, 20, 30, 35, 37, 40, 42, 45, 48, 50, 60),
             everyRole.map { FieldPermissions.rank(it) }
         )
         assertEquals(0, FieldPermissions.rank("SOMETHING_NEW"))

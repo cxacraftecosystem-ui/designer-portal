@@ -155,7 +155,9 @@ write path described in §5.5 is therefore **exercised by tests, not by producti
 
 Two of the six tiers measured have no production occupant. The ladder is implemented and enforced
 (§10) but only four tiers are exercised by real accounts — and on the eight-tier ladder that is four
-of eight, because the two tiers added since are pre-launch and unoccupied as well.
+of eight, because the two tiers added since are pre-launch and unoccupied as well. (Eight-tier as of
+that reading; eleven since 2026-09-13, and the three directorate tiers are unoccupied as well, so the
+finding itself is unchanged and only the denominator moved.)
 
 **This table is a snapshot of a six-tier ladder, and the ladder is now eight.** Two tiers were added
 after the 2026-07-27 measurement above: `DESIGNER` (rank 35) on **2026-08-07** by
@@ -770,7 +772,7 @@ from keyterm boosting would be unsupported and should not appear in a paper base
 
 ## 9. Result 5 — access control and a regulated national identifier
 
-### 9.1 An eight-tier ladder, mirrored exactly in three clients
+### 9.1 An eleven-tier ladder, mirrored exactly in three clients
 
 ```mermaid
 flowchart LR

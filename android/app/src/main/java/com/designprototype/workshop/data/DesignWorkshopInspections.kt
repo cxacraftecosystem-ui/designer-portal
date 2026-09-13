@@ -49,7 +49,7 @@ import java.util.Locale
  * is set membership on INSPECTOR alone, and it is the ONLY route rule on this handset whose refusal
  * is **not monotonic in rank**: a MASTER_ADMIN is refused where an INSPECTOR is admitted. Reading the
  * ladder for this row gives the wrong answer every single time — which is why the predicate is a set
- * and why `InspectionGateTest` walks all eight tiers rather than sampling.
+ * and why `InspectionGateTest` walks all eleven tiers rather than sampling.
  *
  * What an admin gets INSTEAD is the appointment screen, and the refusal copy names it.
  *

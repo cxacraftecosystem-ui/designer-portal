@@ -168,7 +168,7 @@ DESIGNER_STANDING_TOKENS: frozenset[str] = frozenset({"active", "suspended"})
 #: reserved token asks the question this table can actually answer.
 ROLE_NEVER_SIGNED_IN = "never-signed-in"
 
-#: The eight-tier role ladder plus :data:`ROLE_NEVER_SIGNED_IN`. Built from ``ROLE_RANK`` rather than
+#: The eleven-tier role ladder plus :data:`ROLE_NEVER_SIGNED_IN`. Built from ``ROLE_RANK`` rather than
 #: written out a second time — matching ``access.ACCESS_ROLE_FILTER_TOKENS`` — so a tier inserted
 #: into or removed from the ladder changes this filter's vocabulary for free and the two roster
 #: routes cannot quietly disagree about how many tiers exist. Pinned against drift by the same

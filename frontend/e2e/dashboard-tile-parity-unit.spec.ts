@@ -76,6 +76,9 @@ const user = (role: UserRole): User => ({ id: "u1", email: "a@b.c", name: "A", r
 const ROLES: UserRole[] = [
   "MASTER_ADMIN",
   "ADMIN",
+  "MINISTRY_ADMIN",
+  "REGIONAL_DIRECTOR",
+  "ASSISTANT_DIRECTOR",
   "PROFESSOR",
   "INSPECTOR",
   "DESIGNER",
@@ -100,6 +103,12 @@ const OFFERED: Record<UserRole, boolean> = {
   // leads to running a workshop, and `canRunDesignWorkshops` is a SET that INSPECTOR is not in.
   // Outranking a designer buys review authority over their records, not the ability to run one.
   INSPECTOR: false,
+  // FALSE, all three, for INSPECTOR's reason one band higher: the tile leads to RUNNING a workshop
+  // and `canRunDesignWorkshops` is a SET. Outranking a designer buys review authority over their
+  // records, not the ability to produce one — and these three outrank a professor as well.
+  MINISTRY_ADMIN: false,
+  REGIONAL_DIRECTOR: false,
+  ASSISTANT_DIRECTOR: false,
   PROFESSOR: false,
   RESEARCHER: false,
   FIELD_CONTRIBUTOR: false,

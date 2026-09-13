@@ -114,7 +114,7 @@ FILTERABLE = frozenset(
     {access_roster.ACTIVE, access_roster.PENDING, access_roster.REJECTED, access_roster.SUSPENDED}
 )
 
-#: The eight-tier role ladder plus the reserved ``default`` token, which a caller ticks to mean
+#: The eleven-tier role ladder plus the reserved ``default`` token, which a caller ticks to mean
 #: "rows admitted at the platform default" — ``AccessRoster.admitRole IS NULL``
 #: (``prisma/schema.prisma:4255-4263``: NULL is documented there as meaning
 #: ``DEFAULT_SIGNUP_ROLE``, the lowest rung, not "unset"). BUILT FROM ``ROLE_RANK`` RATHER THAN

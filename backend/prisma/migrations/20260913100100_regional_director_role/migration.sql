@@ -1,0 +1,45 @@
+-- The REGIONAL_DIRECTOR tier: rank 45, the middle of three directorate tiers that sit between
+-- PROFESSOR (40) and ADMIN (50).
+--
+-- A director responsible for a region's clusters: senior to an assistant director, junior to an
+-- administrator. As with every tier before it, the authority this token carries is decided entirely
+-- in application code (`app/core/deps.py::ROLE_RANK` and the predicates around it); this migration
+-- does one thing, which is teach the database that the value exists so a row may hold it.
+--
+-- WHY THREE MIGRATIONS AND NOT ONE, WHEN `20260724120000_six_tier_roles` PROVES ONE WOULD WORK.
+-- That file carries three `ALTER TYPE ... ADD VALUE` statements and deployed without incident,
+-- because Postgres 12+ allows ADD VALUE inside a transaction block and forbids only USING the new
+-- value there. So one file is correct, and one file per tier is the rule anyway: a file holding a
+-- single statement cannot acquire a second one later, and each tier's argument stays beside its own
+-- token instead of three arguments sharing one header. The rule removes the class of mistake rather
+-- than this instance of it. `20260827140000_inspector_role/migration.sql:27` states the rule in as
+-- many words — "this file must stay a single statement".
+--
+-- WHY THE ENUM VALUE IS ADDED IN ITS OWN STATEMENT, AND WHY IT IS THE ONLY ONE. Copied from
+-- `20260827140000_inspector_role`, whose header records the trap in full. Prisma sends a migration
+-- file as ONE multi-statement query, which Postgres wraps in an implicit transaction, so any later
+-- statement in this file that mentioned 'REGIONAL_DIRECTOR' would fail the deploy with
+-- `unsafe use of new value "REGIONAL_DIRECTOR" of enum type "UserRole"`. Nothing below does, and
+-- nothing below should. If a future change genuinely needs to WRITE the value — a backfill, a CHECK
+-- constraint, a partial index with the literal in its predicate — it belongs in a SEPARATE
+-- migration directory that runs after this one, never appended here.
+--
+-- WHAT RANK 45 MEANS. Everything ASSISTANT_DIRECTOR (42) holds, one tier wider: the review pair in
+-- `app/core/deps.py` is a STRICTLY-BELOW comparison, so an assistant director's records come under
+-- this tier's review and correction too, and an assistant director may do neither to this one's.
+-- Neither tier reaches a peer's records, and neither reaches ADMIN (50) or MASTER_ADMIN (60).
+--
+-- ADDITIVE AND FORWARD-ONLY. Postgres cannot remove an enum value, so there is no down migration and
+-- there does not need to be one: an unused value is inert. Nothing existing is altered, nothing is
+-- dropped, no row is rewritten, and no account changes tier because of this file. Promotion into
+-- the tier is an ordinary `PATCH /api/users/{id}` afterwards, gated by `users.assert_role`.
+--
+-- IF YOU ARE LOOKING FOR THE RANK, IT IS NOT HERE. Postgres orders an enum by the order its values
+-- were CREATED, so this token sorts after ASSISTANT_DIRECTOR and below CROWDSOURCE_VOLUNTEER in the
+-- database whatever `schema.prisma`'s declaration block says. That is harmless because nothing in
+-- this application orders or compares by the enum — every comparison goes through `deps.ROLE_RANK`,
+-- a dict in Python — but a query written by hand with `ORDER BY "role"` or
+-- `WHERE "role" > 'ASSISTANT_DIRECTOR'` will get an answer that has nothing to do with the ladder.
+
+-- AlterEnum
+ALTER TYPE "UserRole" ADD VALUE IF NOT EXISTS 'REGIONAL_DIRECTOR';

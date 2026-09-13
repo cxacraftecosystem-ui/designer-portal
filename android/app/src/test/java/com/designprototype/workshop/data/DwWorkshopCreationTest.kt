@@ -41,6 +41,12 @@ class DwWorkshopCreationTest {
         assertFalse("the whole point of the rule", canCreateDesignWorkshops("DESIGNER"))
         assertFalse("outranks a designer and is still refused", canCreateDesignWorkshops("INSPECTOR"))
         assertFalse("outranks a designer and is still refused", canCreateDesignWorkshops("PROFESSOR"))
+        assertFalse("outranks a professor and is still refused", canCreateDesignWorkshops("ASSISTANT_DIRECTOR"))
+        assertFalse("outranks a professor and is still refused", canCreateDesignWorkshops("REGIONAL_DIRECTOR"))
+        assertFalse(
+            "the token says admin; `is_admin` is a set and does not contain it",
+            canCreateDesignWorkshops("MINISTRY_ADMIN")
+        )
         assertFalse(canCreateDesignWorkshops("RESEARCHER"))
         assertFalse(canCreateDesignWorkshops("FIELD_CONTRIBUTOR"))
         assertFalse(canCreateDesignWorkshops("CROWDSOURCE_VOLUNTEER"))

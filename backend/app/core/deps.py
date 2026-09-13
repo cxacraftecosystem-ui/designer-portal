@@ -39,16 +39,25 @@ def role_value(user: Any) -> str:
     return str(getattr(role, "value", role))
 
 
-# The EIGHT-tier role ladder, strictly ordered. Higher rank inherits every power of the ranks below
+# The ELEVEN-tier role ladder, strictly ordered. Higher rank inherits every power of the ranks below
 # it; grantable capability booleans can additionally lift a specific power for a lower tier.
 #
-# EIGHT, AND THIS COMMENT SAID SIX FOR AS LONG AS DESIGNER HAS EXISTED, then seven until INSPECTOR
-# landed. The tiers are right there below, each with its own explanation of its number. Miscounting
-# here is not a typo with no consequence: this is the file every permission question in the
-# repository is answered from, and the same off-by-one had already propagated into README.md's role
-# table (six rows, no DESIGNER row, in a product whose primary user is a designer) and into
-# docs/PERMISSIONS.md, which records having been corrected for exactly this once already. Nothing
-# mechanical counts prose — ``tests/test_role_ladder_parity.py`` counts the MAPS.
+# ELEVEN, AND THIS COMMENT SAID SIX FOR AS LONG AS DESIGNER HAD EXISTED, then seven until INSPECTOR,
+# then eight until the three directorate tiers landed on 2026-09-13. The tiers are right there below,
+# each with its own explanation of its number. Miscounting here is not a typo with no consequence:
+# this is the file every permission question in the repository is answered from, and the same
+# off-by-one had already propagated into README.md's role table (six rows, no DESIGNER row, in a
+# product whose primary user is a designer) and into docs/PERMISSIONS.md, which records having been
+# corrected for exactly this twice already. Nothing mechanical counts prose —
+# ``tests/test_role_ladder_parity.py`` counts the MAPS.
+#
+# THE INCLUSIVE SENTENCE AT THE TOP IS NOW LOAD-BEARING IN A WAY IT WAS NOT BEFORE 2026-09-13. Every
+# tier added until then went in BELOW the professor floor, so an insert bought review authority and
+# nothing else. A tier above 40 clears every Professor floor in this file at once — crafts,
+# workshops, the questionnaire builder, dataset download, the user table — AND both halves of the
+# review pair, which is the authority to REWRITE another person's record. That is the owner's
+# decision, taken deliberately; it is recorded per tier below and pinned in
+# ``tests/test_directorate_tiers.py`` so it cannot be re-acquired by accident.
 ROLE_RANK: dict[str, int] = {
     "CROWDSOURCE_VOLUNTEER": 10,
     "FIELD_CONTRIBUTOR": 20,
@@ -91,6 +100,122 @@ ROLE_RANK: dict[str, int] = {
     # ``DwAccessRequest``, NOT by this dict. Do not "fix" that by adding INSPECTOR to the set.
     "INSPECTOR": 37,
     "PROFESSOR": 40,
+    # 42 — the first of three DIRECTORATE tiers, all above PROFESSOR. Added 2026-09-13.
+    #
+    # WHY 42 AND NOT 41 OR 44. The free band between PROFESSOR (40) and ADMIN (50) is 41-49: nine
+    # slots for three tiers. 42/45/48 is the unique arrangement that leaves a gap on BOTH sides of
+    # every one of them — 41 below this tier, 43-44 above it — and keeps every adjacent pair at least
+    # two apart. Were only ONE tier being inserted here it would be 45, the exact midpoint, for the
+    # reason INSPECTOR is 37 rather than 36; three tiers cannot all be midpoints, so this is the
+    # closest expression of the same principle. Nothing was renumbered, so every stored role and
+    # every comparison in this file goes on meaning exactly what it meant before.
+    #
+    # WHAT THE RANK BUYS, AND IT IS STRICTLY MORE THAN THE INSPECTOR INSERT BOUGHT. 42 > 40 clears
+    # BOTH halves of the review pair rather than one. ``can_review_record`` is `strictly below me`,
+    # so this tier may approve, reject and send back every PROFESSOR, INSPECTOR, DESIGNER,
+    # RESEARCHER, FIELD_CONTRIBUTOR and CROWDSOURCE_VOLUNTEER record — and ``can_edit_others_record``
+    # is ``has_rank(user, PROFESSOR) and can_review_record(...)``, which 42 satisfies on both sides,
+    # so it may REWRITE them too. INSPECTOR at 37 cleared the review half only, because 37 < 40; this
+    # tier clears the edit half as well. That is the owner's decision and not an accident of
+    # arithmetic, which is why it is written here rather than left to be discovered.
+    #
+    # AND IT PICKS UP EVERY PROFESSOR FLOOR IN THIS FILE AT ONCE, none of which names a tier:
+    # ``can_manage_crafts`` (the taxonomy everyone else records against), ``can_manage_workshops``,
+    # ``can_manage_questionnaire``, ``can_download_dataset``, and ``require_professor``, which is the
+    # user table with promotion and demotion. ``records.apply_status_policy_update`` composes the
+    # Professor floor with ``can_review_record``, so this tier may also set a record's status.
+    #
+    # AND FIVE MORE PROFESSOR FLOORS THAT LIVE OUTSIDE THIS FILE, WHICH IS THE HALF NOBODY GREPS FOR.
+    # Each is a bare ``has_rank(user, PROFESSOR)`` in a service or a route, so all three tiers
+    # cleared it on 2026-09-13 with no line of code naming any of them and no test going red:
+    # ``api/routes/artisans.py::_may_read_full_aadhaar`` (an artisan's UNMASKED Aadhaar number, which
+    # that function's own docstring calls regulated personal data), ``services/records.py``'s
+    # ``public_encode`` (identity numbers de-masked on every encoded record, and every uploader's
+    # media URLs resolved to ``ALL_MEDIA_URLS``), ``services/records.py::media_url_owners`` (the same
+    # answer again on the transcript, annexure and export paths), ``owned_or_granted_where`` (an
+    # empty DOWNLOAD filter — reading the repository was already open to every signed-in account
+    # through ``viewable_where``, so what this floor decides is what LEAVES), and
+    # ``apply_status_policy_create`` (this tier's own fieldwork lands APPROVED rather than PENDING).
+    # ``tests/test_directorate_tiers.py`` pins all of them as DECISIONS rather than side effects. If
+    # the institution does not want a directorate account reading regulated PII, the answer is a NEW
+    # named predicate in ``artisans.py`` and never a rank change here, which would take the same
+    # capability away from every professor and admin at the same time.
+    #
+    # WHAT IT DELIBERATELY DOES NOT BUY. ``is_admin`` is SET MEMBERSHIP on MASTER_ADMIN and ADMIN and
+    # not a rank floor, so 42 is not an admin and cannot become one by moving: no record deletes, no
+    # account creation or deletion, no task assignment, no workshop-access grants, no viewer or
+    # inspector appointment, no usage aggregates, no design-workshop export, no /admin route tree and
+    # no managed API keys. Every design-workshop gate is set membership too, so this tier neither
+    # runs a workshop nor starts one — exactly PROFESSOR's position. Do NOT `fix` that by adding a
+    # directorate tier to ``DESIGN_WORKSHOP_ROLES``: membership there confers stage WRITES through
+    # ``load_workshop_or_404(..., for_edit=True)``, which performs no role check of its own. What
+    # this tier DOES get is READ of design-workshop stage data, granted separately and deliberately
+    # through ``DESIGN_WORKSHOP_DATA_VIEW_ROLES`` below, where the argument is written down.
+    "ASSISTANT_DIRECTOR": 42,
+    # 45 — the middle directorate tier, and the exact midpoint of the free 41-49 band.
+    #
+    # WHY 45. It is the number a SINGLE insert between PROFESSOR and ADMIN would have taken on
+    # INSPECTOR's own argument, and it keeps 43-44 free below it and 46-47 free above it. The three
+    # tiers were written in one wave, so the spacing was chosen for the wave rather than one tier at
+    # a time.
+    #
+    # THE THREE RANKS MUST STAY DISTINCT, AND THAT IS NOT A STYLE PREFERENCE.
+    # ``tasks.assignable_or_refuse`` refuses when ``role_rank(assignee) >= role_rank(assigner)``, so
+    # two tiers sharing a number would be mutually unable to act on each other; and the web's
+    # ``ROLES_BY_RANK`` sorts on the values, so a tie makes every role picker's order undefined
+    # between processes. If the product ever wants PEERS — regional directors of different regions —
+    # the ladder cannot express that and must not be bent into it: the precedent is a scope TABLE —
+    # the per-workshop inspection and viewer rows an admin writes — and not a tier.
+    #
+    # THE TWO MODEL NAMES ARE DELIBERATELY NOT SPELLED IN THIS COMMENT.
+    # ``tests/test_dw_inspector_scope_gate.py::test_no_other_module_names_the_inspection_predicates``
+    # sweeps every file under ``app/`` outside a three-file allow-list for the literal string of the
+    # inspection Prisma delegate, case-insensitively, and a COMMENT trips it exactly as a query would.
+    # That is the test working: its argument is that the inspection scope must be reachable from one
+    # place only, and it cannot tell a mention from a use. ``services/design_workshop_inspectors.py``
+    # is where those tables are named and argued about.
+    #
+    # WHAT THE RANK BUYS. Everything ASSISTANT_DIRECTOR has, plus ASSISTANT_DIRECTOR itself: 45 > 42,
+    # so both halves of the review pair reach one tier further down. A regional director reviews and
+    # may rewrite an assistant director's records; an assistant director may do neither to a regional
+    # director's; and neither may touch a peer's, because the comparison is strict.
+    #
+    # WHAT IT DELIBERATELY DOES NOT BUY. Identical to the tier below — see there. A title that reads
+    # as more senior than `admin` in English while ranking below it in this dict is exactly the shape
+    # somebody will try to tidy. The ladder answers `how much may this account do to the repository`,
+    # and creating accounts, deleting records and appointing inspectors are administrative acts this
+    # institution assigns to its administrators regardless of grade.
+    "REGIONAL_DIRECTOR": 45,
+    # 48 — the senior directorate tier, and the last of the three. NOT AN ADMIN, despite the name.
+    #
+    # WHY 48. It leaves 46-47 free below it and 49 free above it, so a tier can still be inserted on
+    # either side of it without renumbering. The number is the easy half.
+    #
+    # THE HARD HALF IS THE NAME, AND IT IS THE ONE THING TO READ TWICE. This token contains the word
+    # ADMIN and ``is_admin`` is SET MEMBERSHIP on MASTER_ADMIN and ADMIN — so a ministry admin is not
+    # an admin anywhere in this codebase and no arithmetic will make it one. Widening ``is_admin`` to
+    # a rank floor at 48 would hand this tier record deletion, account creation and deletion, task
+    # assignment, workshop-access grants, viewer and inspector appointment, the usage aggregates,
+    # design-workshop export, the whole /admin route tree and the managed-API-key neighbourhood in
+    # ONE edit — which is precisely the objection ``can_read_usage``'s docstring makes about widening
+    # ``is_admin`` to answer a single question. If the institution wants any of those for this tier,
+    # each is a separate named predicate and a separate written decision. The same sentence is
+    # written in the tier's migration header, on README.md's row and in docs/PERMISSIONS.md, because
+    # it is the one place in this product where a token's English reading and its meaning in the code
+    # point in opposite directions.
+    #
+    # WHAT THE RANK BUYS. Everything REGIONAL_DIRECTOR has, plus REGIONAL_DIRECTOR itself, by the
+    # same strictly-below comparison. It is the widest review and edit authority on the ladder short
+    # of ADMIN, and it stops there: ADMIN (50) and MASTER_ADMIN (60) outrank it, so it reviews
+    # neither and rewrites neither, and ``users.assert_role`` refuses it the minting of both.
+    #
+    # WHAT IT DELIBERATELY DOES NOT BUY, BEYOND THE ABOVE. No ``DesignerRoster`` row is required of
+    # it and none can suspend it — ``auth.assert_roster_admits`` gates accounts whose role is DESIGNER
+    # and no others — so the institution's record of this person's standing is the platform allow-list
+    # alone. That is PROFESSOR's and ADMIN's position too. It is written down because `a ministry
+    # admin ought to be on a roster` is a plausible product request and would be a NEW gate rather
+    # than a discovery about this one.
+    "MINISTRY_ADMIN": 48,
     "ADMIN": 50,
     "MASTER_ADMIN": 60,
 }
@@ -106,6 +231,18 @@ ROLE_LABELS: dict[str, str] = {
     # tests/test_role_ladder_parity.py holds all five to this one.
     "INSPECTOR": "Inspector / Reviewer",
     "PROFESSOR": "Professor",
+    # THE THREE DIRECTORATE LABELS, added 2026-09-13. Plain title case, no slash and no second word,
+    # unlike INSPECTOR above: these are job titles an officer already holds on paper, so the label a
+    # picker shows is the title itself and there is no vocabulary collision to disambiguate. Copied
+    # BYTE FOR BYTE into frontend/lib/permissions.ts and three Kotlin tables, and
+    # tests/test_role_ladder_parity.py holds all five copies to this one.
+    #
+    # `Ministry Admin` IS A LABEL AND NOT A CAPABILITY. It is the owner's wording and it stays; the
+    # sentence a reader needs is in the rank comment above, and README's row and
+    # docs/PERMISSIONS.md's matrix both say it where a non-engineer will meet it.
+    "ASSISTANT_DIRECTOR": "Assistant Director",
+    "REGIONAL_DIRECTOR": "Regional Director",
+    "MINISTRY_ADMIN": "Ministry Admin",
     "ADMIN": "Admin",
     "MASTER_ADMIN": "Master Admin",
 }
@@ -308,7 +445,29 @@ def assert_can_create_design_workshops(user: Any) -> None:
 #: Owner ruling, 2026-08-30: "professor can view data for design workshops as well, admins and
 #: master admins can download and view it too." Implemented as stated; see
 #: ``docs/DECISION-design-workshop-data-in-view-data.md`` for the argument.
-DESIGN_WORKSHOP_DATA_VIEW_ROLES = frozenset({"PROFESSOR", "ADMIN", "MASTER_ADMIN"})
+DESIGN_WORKSHOP_DATA_VIEW_ROLES = frozenset(
+    {
+        "PROFESSOR",
+        # THE THREE DIRECTORATE TIERS JOIN, AND THE SET DID NOT SIMPLY BECOME A FLOOR. It is still a
+        # set, and the reason is unchanged: the tier sitting just BELOW professor is INSPECTOR (37),
+        # who inspects one workshop under a grant and must never acquire every workshop in the
+        # repository because a rank moved. A floor at PROFESSOR would hand it to nobody new today and
+        # to whoever lands at 38 tomorrow. What changed is that three tiers now sit ABOVE professor,
+        # and a tier above the floor that reads LESS than the floor makes this file's own opening
+        # sentence false. Added by a person who meant to, which is what a set is for.
+        #
+        # THE VIEW/EXPORT SPLIT IS THE POINT AND IT SURVIVES THIS EDIT.
+        # ``DESIGN_WORKSHOP_DATA_EXPORT_ROLES`` below is UNCHANGED, so a directorate tier reads
+        # design-workshop stage data on screen and cannot take it out of the product — exactly a
+        # professor's position, which is the shape the owner ruled for on 2026-08-30 and the ruling
+        # of 2026-09-13 widened by three tiers rather than redrew.
+        "ASSISTANT_DIRECTOR",
+        "REGIONAL_DIRECTOR",
+        "MINISTRY_ADMIN",
+        "ADMIN",
+        "MASTER_ADMIN",
+    }
+)
 
 #: Who may take design-workshop stage data OUT — the .xlsx workbook, a CSV, the whole-repo archive.
 #: Admin and Master Admin, and a professor is deliberately NOT in it.

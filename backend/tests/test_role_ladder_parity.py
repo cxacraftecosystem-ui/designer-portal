@@ -313,7 +313,7 @@ MIRRORS: tuple[Mirror, ...] = (
             "a wrongly-admitted account is offered a menu entry and an open URL that 403s.\n"
             "REGISTERED BECAUSE THE SWEEP BELOW FOUND IT, in the same way and for the same reason "
             "`DashboardTileParityTest.kt` was: the spec was written by the web lane of the Inspector "
-            "wave hours before the handset lane ran this suite, and it named all eight tiers with no "
+            "wave hours before the handset lane ran this suite, and it named all eleven tiers with no "
             "row here. Its Kotlin counterpart, `InspectionGateTest.kt`, is registered above."
         ),
     ),
@@ -431,7 +431,11 @@ MIRRORS: tuple[Mirror, ...] = (
         why=(
             "The dropdown that lets a field researcher onto the platform at all. A tier absent from "
             "it cannot be admitted from the phone; a tier wrongly present is an accidental tap away "
-            "from creating somebody who can lock the institution out."
+            "from creating somebody who can lock the institution out.\n"
+            "The three directorate tiers were added to the OFFERED side on 2026-09-13, on "
+            "INSPECTOR's own argument — none of them can create an account, edit the roster or grant "
+            "workshop access, which is the line this list draws. MINISTRY_ADMIN is offered despite "
+            "its token, because `is_admin` is a SET and the token is not in it."
         ),
     ),
     Mirror(
@@ -565,6 +569,34 @@ MIRRORS: tuple[Mirror, ...] = (
             "predicate admits each one. Coverage only: a tier absent from the literal is not a false "
             "claim about the ladder, it is a tier this test forgot to prove is still let in, which a "
             "future `can` predicate tightened elsewhere could then take away from silently."
+        ),
+    ),
+    # ── the two per-tier decision files added with the directorate wave, 2026-09-13 ───────────
+    Mirror(
+        path="frontend/e2e/directorate-tiers-unit.spec.ts",
+        binding="ALL_ROLES",
+        kind="closed",
+        pattern=r"const ALL_ROLES: UserRole\[\] = \[([\s\S]*?)\n\];",
+        why=(
+            "The web's record of what the three directorate tiers (42/45/48) may and may not do. It "
+            "is registered rather than left to the sweep because its whole subject is a ladder "
+            "insert: the file asserts that a rank above 40 clears every `hasRank(user, PROFESSOR)` "
+            "predicate in `lib/permissions.ts` at once and that `isAdmin` -- set membership -- still "
+            "refuses all three. A tier missing from this tuple is a tier the decision file does not "
+            "count, on the one surface whose reason for existing is counting them."
+        ),
+    ),
+    Mirror(
+        path=f"{_ANDROID_TEST}/ui/DirectorateTiersTest.kt",
+        binding="everyRole",
+        kind="closed",
+        pattern=r"private val everyRole = listOf\(([\s\S]*?)\n[ \t]*\)",
+        why=(
+            "The handset twin of `frontend/e2e/directorate-tiers-unit.spec.ts`, and the copy that "
+            "costs a tagged release to fix. `FieldPermissions.isAdmin` is a rank FLOOR at 50 where "
+            "the server is a SET, so the two agree today only because 42/45/48 are all below 50; "
+            "this file asserts that agreement rather than assuming it, and a tier missing from the "
+            "tuple is a tier it stops asserting anything about."
         ),
     ),
     # ── the repository's front door ─────────────────────────────────────────────────────────────
@@ -875,19 +907,22 @@ LADDER_SHAPED = 5
 #: inconvenient". Anything that DOES enumerate belongs in ``MIRRORS``, not here.
 KNOWN_NON_MIRRORS: dict[str, str] = {
     "android/app/src/test/java/com/designprototype/workshop/ui/designworkshop/DwAdoptOfferScopeTest.kt": (
-        "Five tiers named in individual assertions, and NOT an enumeration -- there is no tuple, no "
+        "Eight tiers named in individual assertions, and NOT an enumeration -- there is no tuple, no "
         "map and no loop. It pins one boolean, `dwOfferDraftMove`, at the four points where its two "
         "inputs disagree: a DESIGNER is offered 'Move into a workshop', an ADMIN and a MASTER ADMIN "
         "are not (they may create, so their draft creates itself on the next sync and the control "
         "could only lose work by mis-tap), and a PROFESSOR and an INSPECTOR are not (they may "
-        "neither create nor run one). Those five are the interesting cases; the three tiers below "
+        "neither create nor run one), and neither are the three directorate tiers added 2026-09-13, "
+        "which sit in PROFESSOR's cell because every design-workshop gate is set membership and no "
+        "rank above 40 reaches one. Those eight are the interesting cases; the three tiers below "
         "DESIGNER are uninteresting because they fail the same clause a PROFESSOR fails.\n"
         "A NEW TIER GENUINELY DOES WANT A LINE HERE, and this row is not a claim otherwise -- it is "
         "the statement that the file asserts a predicate rather than mirroring the ladder, so the "
         "sweep should not demand the shape a Mirror row has."
     ),
     "frontend/e2e/identity-ocr-unit.spec.ts": (
-        "Two SEPARATE partial loops asserting two different predicates — {RESEARCHER, PROFESSOR} may "
+        "Two SEPARATE partial loops asserting two different predicates — the first loop "
+        "{RESEARCHER, INSPECTOR, PROFESSOR and, since 2026-09-13, the three directorate tiers} may "
         "open the artisan form and are refused the card reader, {DESIGNER, ADMIN, MASTER_ADMIN} are "
         "in the set the endpoint admits. Neither loop claims to be the ladder, and the two bottom "
         "tiers are outside both on purpose. A new tier does want a line here, but the assertion is "

@@ -386,9 +386,17 @@ admin elevates it.
 
 ---
 
-## 4. Authorisation: the eight-tier ladder
+## 4. Authorisation: the eleven-tier ladder
 
 Defined in `backend/app/core/deps.py`. Higher ranks inherit everything below them.
+
+**ELEVEN since 2026-09-13**, when `ASSISTANT_DIRECTOR` (42), `REGIONAL_DIRECTOR` (45) and
+`MINISTRY_ADMIN` (48) were inserted into the free 41-49 band. The heading, the count and the
+table were widened in the same wave as the enum, which is the discipline the paragraph below
+exists to enforce. **These are the first tiers ever added above the `PROFESSOR` floor**, and that
+is the security-relevant part: every earlier insert bought review authority and nothing else,
+while a rank above 40 clears every `has_rank(user, "PROFESSOR")` gate in the codebase at once —
+including five outside `app/core/deps.py`, listed under the table.
 
 **EIGHT since 2026-08-27**, when `INSPECTOR` was inserted at rank 37 — see the row in the table and
 the two notes under it, and [PERMISSIONS.md](PERMISSIONS.md) §1 for the reasoning. The heading, the
@@ -414,6 +422,9 @@ that the matrix has exactly one home and cannot disagree with itself.
 |---|---|---|
 | 60 | `MASTER_ADMIN` | Everything, **plus the three nobody else has**: read/set provider key values, repository settings, publish OTA releases. The only account that may act on a peer. |
 | 50 | `ADMIN` | Delete records, create/delete accounts, grant workshop access, approve **late** submissions |
+| 48 | `MINISTRY_ADMIN` | **NOT AN ADMIN.** `is_admin` is set membership on `{MASTER_ADMIN, ADMIN}`, so this tier passes no admin gate: no deletes, no account creation, no workshop-access grants, no key store, no `/admin` tree. What it does hold is the widest review **and rewrite** authority short of admin — everyone at `REGIONAL_DIRECTOR` and below, a professor included — plus every Professor-floor read (see the two notes under this table). |
+| 45 | `REGIONAL_DIRECTOR` | Everything an assistant director holds, one tier wider: an assistant director's records come under review and correction too. Reviews and rewrites nothing at `ADMIN` or above. |
+| 42 | `ASSISTANT_DIRECTOR` | The first tier above `PROFESSOR`, and the first that clears **both** halves of the review pair — `can_review_record` (strictly below) **and** `can_edit_others_record` (that comparison narrowed to a Professor floor). So it may rewrite a professor's, an inspector's and a designer's records. Outside `can_run_design_workshops`, like every rank. |
 | 40 | `PROFESSOR` | Manage crafts/workshops/questionnaire, download the dataset, view and promote users |
 | 37 | `INSPECTOR` (labelled **"Inspector / Reviewer"**) | Everything a researcher may do, **plus reviewing a `DESIGNER`'s records** and reading a design workshop it has been scoped to. **Read-only in the workshop tree, and only where scoped** — it is outside `can_run_design_workshops`, exactly as a professor is, so it cannot run, stage-write, submit or sign a workshop. See both notes under this table. |
 | 35 | `DESIGNER` | Everything a researcher may do, plus running a design & prototype workshop — the stage writes, the custom sections, the AI layers, the consent record (`can_run_design_workshops`). **Not reachable by outranking it** — see the note under this table. |
@@ -452,6 +463,25 @@ docstring and asserted in `backend/tests/test_inspector_tier.py` in both directi
 may reject a designer's record and may **not** rewrite it, because `can_edit_others_record` narrows
 the same comparison to rank 40. True as of 2026-08-27; re-check with
 `grep -n "def can_review_record" -A 30 backend/app/core/deps.py`.
+
+**The directorate insert conferred more than the inspector insert did, in the same silent way, and a
+security reader needs both halves.** `can_review_record` is "strictly below me" and
+`can_edit_others_record` is that comparison narrowed to rank 40; a tier at 42 satisfies both, so all
+three directorate tiers may **rewrite** the records they may reject, where an inspector at 37 may
+only reject. That is intended and is why the ranks are above 40. **The half that is easy to miss is
+not in `deps.py` at all.** Five bare `has_rank(user, "PROFESSOR")` calls live in services and routes,
+and all three tiers clear all five the moment the numbers exist, with nothing naming a tier and no
+test going red: `api/routes/artisans.py`'s `_may_read_full_aadhaar` (an artisan's **unmasked Aadhaar
+number**, which that function's own docstring calls regulated personal data),
+`services/records.py`'s `public_encode` (identity numbers de-masked in every encoded record payload,
+and every uploader's presigned media URLs), `services/records.py`'s `media_url_owners` (the same
+answer again on the transcript, annexure and export paths), `services/records.py`'s
+`owned_or_granted_where` (an empty **download** filter — every row leaves in an export, rather than
+only the caller's own and those granted to them; note this is *not* about reading, which
+`viewable_where` opens to every signed-in account already), and `services/records.py`'s
+`apply_status_policy_create` (a record the tier creates is APPROVED on arrival rather than PENDING).
+Asserted in `backend/tests/test_directorate_tiers.py`. True as of 2026-09-13; re-check with
+`grep -rn 'has_rank(' backend/app --include=*.py | grep -v core/deps.py`.
 
 **What this predicate does NOT gate, because the rank row above is easy to read as though it did.**
 Running a workshop is not the same act as generating its report, and two file headers in `backend/`

@@ -49,6 +49,9 @@ class SearchRecordRoutingTest {
         "DESIGNER",
         "INSPECTOR",
         "PROFESSOR",
+        "ASSISTANT_DIRECTOR",
+        "REGIONAL_DIRECTOR",
+        "MINISTRY_ADMIN",
         "ADMIN",
         "MASTER_ADMIN",
     )

@@ -1,11 +1,13 @@
 import type { User, UserRole } from "@/lib/types";
 
 /**
- * The EIGHT-tier role ladder, mirroring the backend exactly (app/core/deps.py).
+ * The ELEVEN-tier role ladder, mirroring the backend exactly (app/core/deps.py).
  * Higher rank inherits every power of the ranks below it; the grantable can*
  * booleans additionally lift a single capability for a lower tier.
  *
- * EIGHT SINCE 2026-08-27, when INSPECTOR (37) was inserted between DESIGNER and PROFESSOR. The
+ * ELEVEN SINCE 2026-09-13, when ASSISTANT_DIRECTOR (42), REGIONAL_DIRECTOR (45) and
+ * MINISTRY_ADMIN (48) were inserted between PROFESSOR and ADMIN; EIGHT since 2026-08-27, when
+ * INSPECTOR (37) was inserted between DESIGNER and PROFESSOR. The
  * count in this sentence is now the ONLY hand-kept count left in this client: `AccessLadder.tsx`
  * derives its heading from `ROLES_BY_RANK.length`, and `backend/tests/test_role_ladder_parity.py`
  * holds the MAPS below to the server. Nothing counts this paragraph.
@@ -35,11 +37,19 @@ import type { User, UserRole } from "@/lib/types";
  * ("Professors and above can move a user along the six-tier ladder"), which was the worst of the
  * lot because a user read it, and once in the comment above the role dropdown on that same card,
  * whose options are built from `ROLE_RANK` and so already listed eight. Both were corrected to
- * "eight-tier" on 2026-08-27, the comment carrying the count's source with it.
- * `ui/AppNavigation.kt` ("The EIGHT-tier ladder"),
- * `backend/.env.example` ("eight tiers as of 2026-08-27") and the frontend skill file agents load,
- * `.claude/skills/field-repo-frontend/SKILL.md` ("**Eight**-tier ladder"), were all on this list
- * and are off it — each was corrected in the INSPECTOR wave. `backend/app/core/config.py` was on it
+ * "eight-tier" on 2026-08-27, the comment carrying the count's source with it, and to
+ * "eleven-tier" on 2026-09-13.
+ * `ui/AppNavigation.kt` (now "The ELEVEN-tier ladder"),
+ * `backend/.env.example` and the frontend skill file agents load,
+ * `.claude/skills/field-repo-frontend/SKILL.md`, were all on this list
+ * and were each corrected in the INSPECTOR wave.
+ *
+ * TWO OF THOSE THREE ARE BACK ON THE LIST AS OF 2026-09-13, and they are named rather than silently
+ * quoted, because this paragraph is the only place that tracks them: `backend/.env.example:184`
+ * still reads "eight tiers as of 2026-08-27" and
+ * `.claude/skills/field-repo-frontend/SKILL.md` still reads "**Eight**-tier ladder". Neither is read
+ * by any check and neither belonged to the workstream that added the directorate tiers; both are one
+ * word each. `backend/app/core/config.py` was on it
  * and should not have been: its "pre-six-tier behavior" dates an ERA, not the present ladder.
  * Counted 2026-08-27 by grepping `six-tier|seven-tier|six tiers|seven tiers` over the tree, and
  * RE-COUNTED the same day with `git grep` after the Android correction landed: every surviving
@@ -68,7 +78,7 @@ import type { User, UserRole } from "@/lib/types";
  * trio being "hand-kept, correct when last read, and nothing would say if it stopped being".
  *
  * DECLARATION ORDER IS A CONVENTION HERE, NOT A BEHAVIOUR, and an earlier draft of this note said
- * the opposite. `ROLES_BY_RANK` below sorts on the VALUES, and all eight ranks are distinct, so the
+ * the opposite. `ROLES_BY_RANK` below sorts on the VALUES, and all eleven ranks are distinct, so the
  * array it produces is identical whatever order these keys are written in — nothing in the client
  * reads the declaration order at all (`ROLES_BY_RANK` and `ROLE_RANK` are read only by
  * `AssignmentBuilder.tsx` and `activity/page.tsx`, both by value). The order is kept in step with
@@ -97,6 +107,19 @@ export const ROLE_RANK: Record<UserRole, number> = {
   // `backend/tests/test_inspector_tier.py` pins the answer. Hiding a control is not the rule.
   INSPECTOR: 37,
   PROFESSOR: 40,
+  // The three DIRECTORATE tiers, added 2026-09-13 into the free 41-49 band between PROFESSOR and
+  // ADMIN. 42/45/48 is the one arrangement of three that leaves a gap on both sides of each and
+  // keeps every adjacent pair two apart; the server's `ROLE_RANK` carries the full argument.
+  //
+  // WHAT THEY CHANGE IN THIS CLIENT. Every `hasRank(user, "PROFESSOR")` predicate below answers true
+  // for all three at once — canManageUsers, canManageCrafts, canManageWorkshops,
+  // canManageQuestionnaire, canDownloadDataset and canSeeDataTile. `isAdmin` and `isMasterAdmin` are
+  // set membership and answer false, so nothing in the /admin tree opens, and every design-workshop
+  // control stays shut because those are SETS. The one set they were added to deliberately is
+  // DESIGN_WORKSHOP_DATA_VIEW_ROLES further down, which is read-on-screen and not export.
+  ASSISTANT_DIRECTOR: 42,
+  REGIONAL_DIRECTOR: 45,
+  MINISTRY_ADMIN: 48,
   ADMIN: 50,
   MASTER_ADMIN: 60
 };
@@ -112,6 +135,11 @@ export const ROLE_LABELS: Record<UserRole, string> = {
   // ROLE_LABELS["INSPECTOR"] — `frontend/e2e/role-ladder-parity-unit.spec.ts` diffs the spelling.
   INSPECTOR: "Inspector / Reviewer",
   PROFESSOR: "Professor",
+  // Byte for byte the server's ROLE_LABELS; `frontend/e2e/role-ladder-parity-unit.spec.ts` diffs the
+  // spelling. Plain titles, no slash — unlike INSPECTOR, there is no vocabulary collision here.
+  ASSISTANT_DIRECTOR: "Assistant Director",
+  REGIONAL_DIRECTOR: "Regional Director",
+  MINISTRY_ADMIN: "Ministry Admin",
   ADMIN: "Admin",
   MASTER_ADMIN: "Master Admin"
 };
@@ -155,7 +183,16 @@ export function canManageUsers(user: User | null | undefined) {
   return hasRank(user, "PROFESSOR");
 }
 
-/** Only admins and the master admin may assign tasks to other users. */
+/**
+ * Only admins and the master admin may assign tasks to other users.
+ *
+ * A FLOOR WHERE THE SERVER IS A SET. `deps.require_admin` is `is_admin`, which is set membership on
+ * MASTER_ADMIN and ADMIN; this is `rank >= 50`. The two agree for every tier that exists, because
+ * the three directorate tiers added 2026-09-13 are 42/45/48 and all below 50. A tier added ABOVE 50
+ * would make them disagree and would hand it the whole task-assignment surface on this client alone,
+ * where the API would then refuse it — the exact "UI offers what the API refuses" failure this file
+ * is written against. If that day comes, this becomes a set.
+ */
 export function canAssignTasks(user: User | null | undefined) {
   return hasRank(user, "ADMIN");
 }
@@ -838,6 +875,18 @@ export function canCreateDesignWorkshops(user: User | null | undefined) {
  */
 export const DESIGN_WORKSHOP_DATA_VIEW_ROLES: readonly UserRole[] = [
   "PROFESSOR",
+  // The three directorate tiers, added 2026-09-13. STILL A SET and not a floor: the tier just BELOW
+  // professor is INSPECTOR (37), who reaches one workshop under a grant and must never acquire every
+  // workshop in the repository because a number moved. What changed is that three tiers now sit
+  // ABOVE professor, and a tier above the floor that reads less than the floor makes the ladder's own
+  // inclusive claim false. `backend/app/core/deps.py::DESIGN_WORKSHOP_DATA_VIEW_ROLES` is the twin.
+  //
+  // THE EXPORT SET BELOW IS UNCHANGED, which is the half that keeps this honest: a directorate tier
+  // reads these rows on screen and cannot take them out of the product, exactly as a professor
+  // cannot.
+  "ASSISTANT_DIRECTOR",
+  "REGIONAL_DIRECTOR",
+  "MINISTRY_ADMIN",
   "ADMIN",
   "MASTER_ADMIN"
 ];

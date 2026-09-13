@@ -10,12 +10,13 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-/// Eight-tier role ladder, strictly ordered by privilege:
-/// MASTER_ADMIN > ADMIN > PROFESSOR > INSPECTOR > DESIGNER > RESEARCHER > FIELD_CONTRIBUTOR >
-/// CROWDSOURCE_VOLUNTEER. Each tier inherits everything below it; grantable can* booleans lift
-/// single capabilities. "Ordered by privilege" means the RANK numbers in
-/// app/core/deps.py::ROLE_RANK — 60/50/40/37/35/30/20/10, eight of them, counted off that dict —
-/// and not the declaration order below; see the paragraph immediately above `enum UserRole`.
+/// Eleven-tier role ladder, strictly ordered by privilege:
+/// MASTER_ADMIN > ADMIN > MINISTRY_ADMIN > REGIONAL_DIRECTOR > ASSISTANT_DIRECTOR > PROFESSOR >
+/// INSPECTOR > DESIGNER > RESEARCHER > FIELD_CONTRIBUTOR > CROWDSOURCE_VOLUNTEER. Each tier inherits
+/// everything below it; grantable can* booleans lift single capabilities. "Ordered by privilege"
+/// means the RANK numbers in app/core/deps.py::ROLE_RANK — 60/50/48/45/42/40/37/35/30/20/10, eleven
+/// of them, counted off that dict — and not the declaration order below; see the paragraph
+/// immediately above `enum UserRole`.
 ///
 /// DESIGNER sits between PROFESSOR and RESEARCHER because a designer runs a workshop and signs the
 /// report that comes out of it — strictly more than a researcher who documents what they find, and
@@ -28,6 +29,13 @@ datasource db {
 /// (`can_review_record`) and is deliberately OUTSIDE `deps.DESIGN_WORKSHOP_ROLES`, so it can never
 /// run a workshop or sign a report — that set is membership, not a threshold.
 ///
+/// ASSISTANT_DIRECTOR (42), REGIONAL_DIRECTOR (45) and MINISTRY_ADMIN (48) landed 2026-09-13 in the
+/// free 41-49 band, again renumbering nothing. All three sit ABOVE PROFESSOR, which is strictly
+/// larger than the INSPECTOR insert was: 42 clears both `can_review_record` (strictly-below) and
+/// `can_edit_others_record` (that same comparison narrowed to a Professor floor), so a directorate
+/// tier may REWRITE a professor's, an inspector's and a designer's records. MINISTRY_ADMIN is NOT
+/// an admin — `deps.is_admin` is set membership on MASTER_ADMIN and ADMIN and no number reaches it.
+///
 /// A DESIGNER must also appear on the DesignerRoster to sign in — see that model. The role says
 /// what somebody may do; the roster says whether the institution still recognises them.
 ///
@@ -38,6 +46,15 @@ datasource db {
 enum UserRole {
   MASTER_ADMIN
   ADMIN
+  /// Rank 48 — the senior directorate tier. NOT an admin: `deps.is_admin` is set membership on
+  /// MASTER_ADMIN and ADMIN, so this value passes no admin gate. See
+  /// `migrations/20260913100200_ministry_admin_role/migration.sql`.
+  MINISTRY_ADMIN
+  /// Rank 45 — reviews and may rewrite the records of everyone at ASSISTANT_DIRECTOR and below.
+  REGIONAL_DIRECTOR
+  /// Rank 42 — the first tier above PROFESSOR, and therefore the first that may rewrite a
+  /// professor's record (`deps.can_edit_others_record`). Outside every design-workshop set.
+  ASSISTANT_DIRECTOR
   PROFESSOR
   /// Rank 37 — inspects and reviews a designer's work without running workshops. NOT in
   /// `deps.DESIGN_WORKSHOP_ROLES`: an inspector never signs a report. See

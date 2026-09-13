@@ -88,6 +88,14 @@ const TIER_COPY: Record<UserRole, string> = {
   INSPECTOR:
     "Inspect and review a designer's records — approve, reject, send back. Does not run workshops and does not rewrite a designer's record.",
   PROFESSOR: "Crafts, workshops, the questionnaire builder, promotions, full dataset download.",
+  // The three directorate rows. Each says what the tier ADDS over the one below it, because on a
+  // public page a reader scanning eleven rows needs the delta and not a restatement.
+  ASSISTANT_DIRECTOR:
+    "Everything a professor can do, and review or correct a professor's records as well as an inspector's and a designer's.",
+  REGIONAL_DIRECTOR:
+    "The same reach, one tier wider: an assistant director's work comes under review too. Reads design-workshop data on screen.",
+  MINISTRY_ADMIN:
+    "The widest review and correction authority short of admin. Not an admin: no account creation, no deletes, no access grants.",
   ADMIN: "Settings hub, task assignment, workshop access grants, accounts.",
   MASTER_ADMIN: "Everything, plus managed API keys and global app settings."
 };

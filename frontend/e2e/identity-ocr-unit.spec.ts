@@ -117,7 +117,18 @@ test("the form's guard and the reader's guard are different rules, and they do n
   // `canCreateRecords` at the Researcher floor, so the artisan form opens for it — and the card
   // reader must not, or an inspector photographs somebody's Aadhaar card and ships it to a vision
   // model before the 403 comes back.
-  for (const role of ["RESEARCHER", "INSPECTOR", "PROFESSOR"]) {
+  // The three directorate tiers (42/45/48, added 2026-09-13) are in this loop for PROFESSOR's
+  // reason, one band higher: they clear the record-creator floor and sit outside
+  // `DESIGN_WORKSHOP_ROLES`, which is a SET no rank reaches. Outranking a professor buys them the
+  // artisan form and not the card reader.
+  for (const role of [
+    "RESEARCHER",
+    "INSPECTOR",
+    "PROFESSOR",
+    "ASSISTANT_DIRECTOR",
+    "REGIONAL_DIRECTOR",
+    "MINISTRY_ADMIN"
+  ]) {
     expect(canCreateRecords(as(role)), `${role} may open the artisan form`).toBe(true);
     expect(canRunDesignWorkshops(as(role)), `${role} must NOT be offered the card reader`).toBe(false);
   }
