@@ -99,6 +99,9 @@ someone deployed from a branch.
 - `DESIGNER` — rank **35**
 - `INSPECTOR` — rank **37**
 - `PROFESSOR` — rank **40**
+- `ASSISTANT_DIRECTOR` — rank **42**
+- `REGIONAL_DIRECTOR` — rank **45**
+- `MINISTRY_ADMIN` — rank **48**
 - `ADMIN` — rank **50**
 - `MASTER_ADMIN` — rank **60**
 
@@ -115,9 +118,9 @@ no key is skipped wherever it sits.
 
 | Surface | Files | Cases | Runner |
 |---|---|---|---|
-| Backend unit (`backend/tests/`) | 189 | 3819 `def test_` | `python -m pytest -q` from `backend/` |
-| Web end-to-end (`frontend/e2e/`) | 183 | 2151 `test(` | Playwright, `frontend/playwright.config.ts` |
-| Android unit (`android/app/src/test/`) | 223 | 2955 `@Test` | `./gradlew :app:testDebugUnitTest` from `android/` |
+| Backend unit (`backend/tests/`) | 190 | 3837 `def test_` | `python -m pytest -q` from `backend/` |
+| Web end-to-end (`frontend/e2e/`) | 184 | 2157 `test(` | Playwright, `frontend/playwright.config.ts` |
+| Android unit (`android/app/src/test/`) | 224 | 2961 `@Test` | `./gradlew :app:testDebugUnitTest` from `android/` |
 | Android instrumented (`android/app/src/androidTest/`) | 8 | 24 `@Test` | needs a device; not run in CI |
 
 The backend case count is `def test_` occurrences; pytest reports a larger number because
@@ -134,11 +137,11 @@ and this one asserted an absence it had never looked for.
 
 | Area | Tracked files | Tracked lines | Tree files | Tree lines |
 |---|---|---|---|---|
-| `backend/app` | 184 | 130,931 | 184 | 130,931 |
+| `backend/app` | 184 | 131,092 | 184 | 131,092 |
 | `frontend/app` | 75 | 40,313 | 75 | 40,313 |
-| `frontend/components` | 286 | 122,591 | 286 | 122,591 |
-| `frontend/lib` | 121 | 63,995 | 121 | 63,995 |
-| `android/app/src/main/java` | 257 | 222,351 | 257 | 222,351 |
+| `frontend/components` | 286 | 122,599 | 286 | 122,599 |
+| `frontend/lib` | 121 | 64,053 | 121 | 64,053 |
+| `android/app/src/main/java` | 257 | 222,445 | 257 | 222,445 |
 
 Two columns because the two numbers get quoted interchangeably and disagree by however much work is
 uncommitted. **Tracked** is `git ls-files`, which is the figure to use in a write-up — it is
