@@ -1237,9 +1237,26 @@ jobs:
           # App startup connects to a remote database, possibly cross-region, so poll rather than sleep.
           # This runs on the rollback path too: whichever release the units came back on, the deploy
           # does not finish until something is answering.
-          for i in $(seq 1 40); do
-            if curl -fsS http://127.0.0.1:8000/health >/dev/null 2>&1; then echo "healthy after ${i} tries"; break; fi
-            if [ "$i" = "40" ]; then echo "service did not become healthy:"; sudo journalctl -u fieldrepo -n 80 --no-pager; exit 1; fi
+          # 150 x 2s = FIVE MINUTES, RAISED FROM 40 x 2s ON 2026-09-15, AND THE OLD NUMBER WAS THE
+          # BUG RATHER THAN THE BOX BEING SLOW ON ONE BAD DAY. Measured on the deploy that restored
+          # service: the unit restarted at 20:58:13 and the probe gave up at 21:00:06 -- about 113
+          # seconds, comfortably past the old ceiling of roughly 80. This is a t3.micro that starts
+          # uvicorn, imports a client whose models.py is megabytes, and launches the query engine
+          # subprocess before /health can answer.
+          #
+          # WHAT THE OLD CEILING ACTUALLY COST, which is worse than a red tick: the flip happens
+          # BEFORE this loop on the no-downtime path, so a deploy that was entirely successful
+          # ended red, dumped a journal, and returned a non-zero exit -- while the box went on
+          # serving the new release perfectly well. A deploy that lies in the failing direction
+          # trains people to ignore it, and it did: three consecutive "failures" this evening were
+          # this loop, not the release.
+          #
+          # `--max-time 5` BOUNDS EACH ATTEMPT. Without it a hung connect makes one iteration take
+          # far longer than the 2s the arithmetic above assumes, so the real ceiling was never the
+          # number written here.
+          for i in $(seq 1 150); do
+            if curl -fsS --max-time 5 http://127.0.0.1:8000/health >/dev/null 2>&1; then echo "healthy after ${i} tries"; break; fi
+            if [ "$i" = "150" ]; then echo "service did not become healthy:"; sudo journalctl -u fieldrepo -n 80 --no-pager; exit 1; fi
             sleep 2
           done
           curl -fsS http://127.0.0.1:8000/health
