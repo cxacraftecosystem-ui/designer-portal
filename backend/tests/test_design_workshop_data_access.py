@@ -83,11 +83,20 @@ EVERY_ROLE = (
     "DESIGNER",
     "INSPECTOR",
     "PROFESSOR",
+    "ASSISTANT_DIRECTOR",
+    "REGIONAL_DIRECTOR",
+    "MINISTRY_ADMIN",
     "ADMIN",
     "MASTER_ADMIN",
 )
 
-MAY_VIEW = ("PROFESSOR", "ADMIN", "MASTER_ADMIN")
+# THE THREE DIRECTORATE TIERS JOIN `MAY_VIEW` AND NOT `MAY_EXPORT`, and the split is the point.
+# `DESIGN_WORKSHOP_DATA_VIEW_ROLES` gained them (deps.py:448) because reading the repository is what
+# an inspecting officer is for; `DESIGN_WORKSHOP_DATA_EXPORT_ROLES` did not, because carrying every
+# workshop's data off the platform stays with the two admin tiers. Both are SETS, so neither follows
+# from a rank — adding a tier to one says nothing about the other, which is why this file asserts
+# the pair separately rather than deriving one from a floor.
+MAY_VIEW = ("PROFESSOR", "ASSISTANT_DIRECTOR", "REGIONAL_DIRECTOR", "MINISTRY_ADMIN", "ADMIN", "MASTER_ADMIN")
 MAY_EXPORT = ("ADMIN", "MASTER_ADMIN")
 
 
@@ -148,14 +157,35 @@ def test_a_granted_researcher_reaches_data_and_not_design_workshops() -> None:
 
 
 def test_the_new_capability_does_not_widen_the_designer_set() -> None:
-    """``DESIGN_WORKSHOP_ROLES`` is who may WRITE inside a workshop, and it is untouched.
+    """THE VIEW CAPABILITY STILL DOES NOT CARRY A WRITE, which is what this test is for.
 
-    The two sets are almost opposites — that one holds DESIGNER and refuses PROFESSOR, this one the
-    reverse — and that is not a contradiction: reading a table of what a corpus recorded is not
-    writing inside somebody's fortnight of work.
+    ``DESIGN_WORKSHOP_ROLES`` is who may WRITE inside a workshop; ``DESIGN_WORKSHOP_DATA_VIEW_ROLES``
+    is who may read every workshop's stage data. Reading a table of what a corpus recorded is not
+    writing inside somebody's fortnight of work, and the two sets are still not the same set.
+
+    ⚠ THE WRITE SET DID LATER WIDEN, AND NOT BY THIS CAPABILITY. On 2026-09-14 the owner ruled that
+    the three directorate tiers may write inside a workshop — the gap that forced it was a
+    MINISTRY_ADMIN who could promote an annual-plan row into a design workshop and then not save a
+    stage in the workshop they had just created. So this test no longer pins a literal frozenset,
+    which would only re-break on every deliberate change. It pins the PROPERTY it was written for:
+
+      * PROFESSOR reads and cannot write — the original case, and still the cleanest proof that the
+        write gate is set membership rather than a rank floor, since three tiers ABOVE professor now
+        write and professor does not;
+      * INSPECTOR neither — it was asked for in the same breath as the directorate tiers and
+        deliberately excluded, because an inspector in the write set would author the stages it
+        later reviews;
+      * and no tier is in the write set without being in the view set, because writing what you
+        cannot read is not a coherent position for this product to take.
     """
-    assert frozenset({"DESIGNER", "ADMIN", "MASTER_ADMIN"}) == DESIGN_WORKSHOP_ROLES
     assert "PROFESSOR" not in DESIGN_WORKSHOP_ROLES
+    assert "INSPECTOR" not in DESIGN_WORKSHOP_ROLES, (
+        "an inspector may not write inside a workshop it reviews; it reaches one by grant"
+    )
+    assert DESIGN_WORKSHOP_ROLES - {"DESIGNER"} <= DESIGN_WORKSHOP_DATA_VIEW_ROLES, (
+        "a tier may write inside every workshop and cannot read the stage data — DESIGNER is the "
+        "one exception and reaches its OWN workshops by grant rather than by this predicate"
+    )
     assert not can_run_design_workshops(_User("PROFESSOR")), (
         "a professor must gain READ of research data and nothing at all inside a workshop"
     )

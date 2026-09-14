@@ -24,6 +24,20 @@
  * There is likewise no Save, no stage form, no delete, no submit and no report button on this page,
  * and none of them is missing: there is no route on this prefix that would accept any of them.
  *
+ * ── **THAT LAST SENTENCE IS CORRECTED, NOT DELETED (2026-09-13)** ──────────────────────────────
+ *
+ * There are now exactly two routes on this prefix that accept a write, and both of them write a
+ * NOTE: `POST /{id}/feedback` files one correction suggestion, and `POST /{id}/send-back` files one
+ * and moves the report to Needs revision. Everything above stays true of the workshop's CONTENT —
+ * no stage form, no Save, no delete, no report — because the server refuses all of it before the
+ * database and the write plan behind these two refuses every table but three by construction.
+ *
+ * `readOnly` STAYS TRUE ON THIS PAYLOAD AND THE BOX IS GATED ON A SECOND KEY. `mayRecordFeedback`
+ * is that key, and `dwMayRecordFeedback` fails CLOSED on its absence. Reusing `readOnly` for this
+ * would have been the obvious shortcut and it is the bug: the handset's own helper is
+ * `readOnly != false`, so setting it false to "enable" the box would offer a Save button on every
+ * stage form and open nine designer screens that answer 404.
+ *
  * ── WHY IT IS NOT `FieldInput` WITH `disabled` PASSED DOWN ────────────────────────────────────
  *
  * The argument is at {@link inspectionFieldReading} in full. The short version is that mounting the
@@ -57,10 +71,11 @@
 
 import Link from "next/link";
 import { use, useEffect, useMemo, useState } from "react";
-import { FileSearch, Lock } from "lucide-react";
+import { FileSearch, Loader2, Lock } from "lucide-react";
 
 import { useAuth } from "@/components/AuthProvider";
 import { FieldProvenance } from "@/components/designworkshop/FieldProvenance";
+import { useConfirm } from "@/components/dialogs/ConfirmDialog";
 import { PageHeader } from "@/components/PageHeader";
 import { StatusBadge } from "@/components/StatusBadge";
 import { ApiError } from "@/lib/api";
@@ -72,16 +87,21 @@ import {
   type DwInspectionDetail
 } from "@/lib/designWorkshopInspections";
 import {
+  dwFeedbackRounds,
+  dwMayRecordFeedback,
   fetchStageRegistry,
   formFields,
   isFilled,
   overallPercent,
+  recordInspectionFeedback,
   rowTitle,
+  sendWorkshopBackForRevision,
   type DwEntity,
   type DwEntryData,
   type DwField,
   type DwFieldStamp,
   type DwRegistry,
+  type DwInspectionFeedbackKeys,
   type DwRow,
   type DwStage,
   type DwStageCompleteness,
@@ -327,11 +347,246 @@ function ReadStage({
   );
 }
 
+/**
+ * THE FEEDBACK BOX — the whole of what an inspection can WRITE, and the register it writes into.
+ *
+ * ── TWO BUTTONS, BECAUSE THEY ARE TWO ACTS ────────────────────────────────────────────────────
+ *
+ * *File a suggestion* adds a sentence to the open round and moves nothing. *Send the report back*
+ * does the same and moves the report to Needs revision, which puts a fortnight of somebody's work
+ * back on their desk and tells them to do it again. One control with a tick box would make the
+ * second happen by accident — the record page's own rule, "one button per status, never one button
+ * per intention" — so the second one is a separate button behind a confirmation.
+ *
+ * ── THE NOTE IS MANDATORY ON BOTH AND THE SERVER IS THE AUTHORITY ─────────────────────────────
+ *
+ * A send-back with no sentence tells a designer only that a fortnight of work is wrong. The button
+ * is disabled while the box is empty, which is an affordance and not the rule: the server answers
+ * 422 with the same sentence the six repository record types get, and whitespace is caught there.
+ *
+ * ── IT IS ONLINE-ONLY, AND SAYS SO WHEN IT FAILS ──────────────────────────────────────────────
+ *
+ * There is no outbox on this surface at all — an inspection is a read of the server's copy — so a
+ * suggestion written with no signal is not queued anywhere. The failure sentence says that rather
+ * than letting an officer believe it was filed.
+ */
+function FeedbackPanel({
+  workshopId,
+  detail,
+  stages,
+  onAnswer
+}: {
+  workshopId: string;
+  detail: (DwInspectionDetail & DwInspectionFeedbackKeys) | null;
+  stages: DwStage[];
+  onAnswer: (answer: DwInspectionFeedbackKeys & { status?: string }) => void;
+}) {
+  const confirm = useConfirm();
+  const [note, setNote] = useState("");
+  const [stageKey, setStageKey] = useState("");
+  const [busy, setBusy] = useState<"file" | "send" | null>(null);
+  const [problem, setProblem] = useState<string | null>(null);
+  const [outcome, setOutcome] = useState<string | null>(null);
+
+  const rows = detail?.inspectionFeedback ?? [];
+  const rounds = dwFeedbackRounds(rows);
+  /*
+    FAILS CLOSED ON AN ABSENT KEY. A server that predates this feature sends no `mayRecordFeedback`,
+    and the dangerous default is the permissive one: a box that posts to a route that is not there.
+  */
+  const mayRecord = dwMayRecordFeedback(detail);
+  const status = (detail?.status ?? "").trim().toUpperCase();
+  const underReview = status === "PRE_SUBMISSION" || status === "NEEDS_REVISION";
+
+  async function file(kind: "file" | "send") {
+    const text = note.trim();
+    if (!text) return;
+    if (kind === "send") {
+      const agreed = await confirm({
+        title: "Send this report back to its designers?",
+        tone: "warning",
+        confirmLabel: "Send it back",
+        body: (
+          <>
+            <span className="block">
+              The report moves to Needs revision and its designers are the ones who act on it next. Your suggestion is
+              recorded with your name against this submission round, and it stays on the record afterwards.
+            </span>
+            <span className="mt-2 block">
+              They hand it back in by correcting the stages — saving a stage with a change does it — at which point it
+              returns to Pre-submission for a fresh pass.
+            </span>
+          </>
+        ),
+        note: "Suggestions cannot be edited or withdrawn afterwards. An officer who changes their mind files another one."
+      });
+      if (!agreed) return;
+    }
+    setBusy(kind);
+    setProblem(null);
+    setOutcome(null);
+    try {
+      const body = { note: text, stageKey: stageKey || null };
+      const answer =
+        kind === "send"
+          ? await sendWorkshopBackForRevision(workshopId, body)
+          : await recordInspectionFeedback(workshopId, body);
+      onAnswer(answer);
+      setNote("");
+      setStageKey("");
+      setOutcome(
+        kind === "send"
+          ? "Sent back. The report now reads Needs revision and your suggestion is on the record."
+          : "Filed. Your suggestion is on the record against this submission round."
+      );
+    } catch (err) {
+      if (isUnreachable(err)) {
+        setProblem(
+          "The repository could not be reached, so nothing was filed. There is no offline queue on an " +
+            "inspection — what you have typed is still in the box; try again when you have signal."
+        );
+      } else {
+        setProblem(
+          err instanceof Error && err.message.trim()
+            ? `Nothing was filed: ${err.message}`
+            : "Nothing was filed, and the repository did not say why."
+        );
+      }
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  if (!detail) return null;
+
+  return (
+    <section className="panel mb-4 grid gap-3 p-4">
+      <div className="flex flex-wrap items-center gap-3">
+        <h2 className="text-sm font-medium text-ink-900">Correction suggestions</h2>
+        <span className="text-xs text-ink-500">
+          {rows.length} on record{detail.inspectionFeedbackTruncated ? " (older ones not shown)" : ""}
+        </span>
+      </div>
+
+      {rounds.map((group) => (
+        <div className="grid gap-2" key={group.round}>
+          <h3 className="field-label">Round {group.round}</h3>
+          <ul className="grid gap-2">
+            {group.rows.map((row) => (
+              <li className="rounded-md border border-line-200 bg-field-50 px-3 py-2" key={row.id}>
+                <p className="whitespace-pre-wrap text-sm leading-6 text-ink-900">{row.note}</p>
+                <p className="mt-1 text-xs leading-5 text-ink-500">
+                  {/* NEVER A GUESS AT A NAME. The account cannot have been deleted — the relation is
+                      Restrict — but a name column can be blank, and attributing an instruction to
+                      the wrong officer is worse than not naming one. */}
+                  {row.actorName?.trim() || "An officer no longer named"}
+                  {row.stageKey ? ` · about ${row.stageKey}` : " · about the report as a whole"}
+                  {row.sentBack ? " · sent the report back" : ""}
+                </p>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ))}
+
+      {!mayRecord ? (
+        /* SAID, NOT DRAWN GREY. A disabled box refuses a press without saying why, which is how
+           somebody concludes the app is broken. */
+        <p className="text-sm leading-6 text-ink-700">
+          This build cannot file a suggestion about this workshop. Either the repository is older than this page, or
+          this inspection is not yours to write on.
+        </p>
+      ) : !underReview ? (
+        /* THE SERVER'S OWN REFUSAL, SAID BEFORE THE PRESS. `POST /feedback` answers 422 on a report
+           nobody has handed in, because a suggestion belongs to a submission cycle and there is not
+           one yet. Printing it here saves the officer typing a paragraph into a box that cannot
+           take it. */
+        <p className="rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-sm leading-6 text-amber-800">
+          This report has not been handed in for inspection yet, so there is nothing to comment on. Its designers hand
+          it in from the workshop&apos;s own screen; the box opens then.
+        </p>
+      ) : (
+        <div className="grid gap-2">
+          <label className="field-label" htmlFor="dw-inspection-note">
+            What should be corrected?
+          </label>
+          <textarea
+            className="field-input min-h-24"
+            id="dw-inspection-note"
+            onChange={(event) => setNote(event.target.value)}
+            placeholder="Name what is wrong and what it should say. This goes to the designers as written."
+            value={note}
+          />
+          <label className="field-label" htmlFor="dw-inspection-stage">
+            Which stage is it about?
+          </label>
+          <select
+            className="field-input"
+            id="dw-inspection-stage"
+            onChange={(event) => setStageKey(event.target.value)}
+            value={stageKey}
+          >
+            {/* THE EMPTY OPTION IS A REAL ANSWER AND IS FIRST, because most suggestions are about the
+                report as a whole and the server stores null for exactly that. */}
+            <option value="">The report as a whole</option>
+            {stages.map((stage) => (
+              <option key={stage.key} value={stage.key}>
+                {stage.title}
+              </option>
+            ))}
+          </select>
+          <div className="flex flex-wrap gap-2">
+            <button
+              className="field-button-secondary"
+              disabled={busy !== null || note.trim().length === 0}
+              onClick={() => void file("file")}
+              type="button"
+            >
+              {busy === "file" ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : null}
+              File a suggestion
+            </button>
+            <button
+              className="field-button"
+              disabled={busy !== null || note.trim().length === 0}
+              onClick={() => void file("send")}
+              type="button"
+            >
+              {busy === "send" ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : null}
+              Send the report back
+            </button>
+          </div>
+          <p className="text-xs leading-5 text-ink-500">
+            Filing a suggestion leaves the report where it is. Sending it back moves it to Needs revision, which is what
+            puts it on its designers&apos; desks. Neither can be edited or withdrawn afterwards.
+          </p>
+        </div>
+      )}
+
+      {problem ? (
+        <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm leading-6 text-red-700">{problem}</p>
+      ) : null}
+      {outcome ? (
+        <p className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm leading-6 text-emerald-800">
+          {outcome}
+        </p>
+      ) : null}
+    </section>
+  );
+}
+
 export default function WorkshopUnderInspectionPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const { user, loading } = useAuth();
 
-  const [detail, setDetail] = useState<DwInspectionDetail | null>(null);
+  /*
+    THE REGISTER RIDES ON THE SAME PAYLOAD, and the type says so by intersection rather than by a
+    second fetch: `read_workshop_under_inspection` adds `inspectionFeedback`,
+    `inspectionFeedbackTruncated` and `mayRecordFeedback` to the summary it already returned.
+    `DwInspectionDetail` itself is declared in `lib/designWorkshopInspections.ts`, which this wave
+    does not edit — so the three keys are spread in here from the module that owns them, which is
+    also the module both screens decode the register with.
+  */
+  const [detail, setDetail] = useState<(DwInspectionDetail & DwInspectionFeedbackKeys) | null>(null);
   const [registry, setRegistry] = useState<DwRegistry | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [registryError, setRegistryError] = useState<string | null>(null);
@@ -429,6 +684,9 @@ export default function WorkshopUnderInspectionPage({ params }: { params: Promis
 
   return (
     <div>
+      {/* ABOVE THE STAGES, NOT BELOW THEM. An officer reads the report and then says something about
+          it — but a panel under twenty-two stages is one they scroll past on the way in and never
+          find on the way out, and what they have to say is the entire point of the tier. */}
       <PageHeader
         title={detail?.title?.trim() || "Workshop under inspection"}
         description={
@@ -500,6 +758,21 @@ export default function WorkshopUnderInspectionPage({ params }: { params: Promis
               </Link>
             </p>
           ) : null}
+
+          <FeedbackPanel
+            detail={detail}
+            onAnswer={(answer) =>
+              /*
+                THE SERVER'S ANSWER REPLACES THE REGISTER, NOT A LOCAL APPEND. Both write routes
+                return the whole register plus the header as it now stands, so the panel redraws from
+                what the repository holds — including the status, which a send-back has just moved.
+                Appending the row we sent would show an officer their own guess at what was stored.
+              */
+              setDetail((held) => (held ? { ...held, ...answer } : held))
+            }
+            stages={stages}
+            workshopId={id}
+          />
 
           {registry === null ? (
             registryError ? null : (

@@ -40,7 +40,30 @@ from app.services.stage_schema import ENUMS
 # The DesignWorkshopStatus enum, mirrored from schema.prisma. Kept as a frozenset here
 # rather than imported from the generated Prisma client so validating a request body does
 # not require the client to have been generated.
-DESIGN_WORKSHOP_STATUSES = frozenset({"DRAFT", "IN_PROGRESS", "COMPLETE", "SUBMITTED", "ARCHIVED"})
+#
+# THREE TOKENS ADDED 2026-09-13 FOR THE PRE-SUBMISSION LOOP, and this set is the FIRST of the three
+# places they had to land. A token in schema.prisma and not here is 422'd by the validator below
+# with a message listing the values it does not include — the database never sees it, and the
+# refusal reads as though the server does not have the feature. A token here and not in
+# `schemas/design_workshop_review_loop.LEGAL_TRANSITIONS` is worse in the other direction: it
+# validates, reaches the graph, and is refused as an unrecognised status.
+# `test_design_workshop_review_loop.py` checks this set against the graph and against the .prisma
+# file itself, in both directions.
+#
+# WHICH VALUE MAY FOLLOW WHICH IS NOT HERE. This is membership only — the vocabulary. The graph is
+# `schemas/design_workshop_review_loop.py::LEGAL_TRANSITIONS`, enforced in the PATCH route.
+DESIGN_WORKSHOP_STATUSES = frozenset(
+    {
+        "DRAFT",
+        "IN_PROGRESS",
+        "COMPLETE",
+        "PRE_SUBMISSION",
+        "NEEDS_REVISION",
+        "SUBMITTED",
+        "APPROVED",
+        "ARCHIVED",
+    }
+)
 REPORT_TEMPLATE_IDS = frozenset(t.id for t in TEMPLATES)
 
 #: The kinds a design workshop may be, READ OFF THE REGISTRY rather than restated here.

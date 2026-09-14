@@ -22,6 +22,7 @@ report-builder tests above still run on a laptop with no Docker — which is whe
 file's value has always been.
 """
 
+import inspect
 import uuid
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -883,14 +884,22 @@ def test_every_key_the_header_serialises_is_either_writable_or_refused_by_name()
     """A client that reads ``workshop_summary`` and posts it back must be TOLD, key by key.
 
     That is not a strawman client, it is the obvious one: an edit form hydrates from the summary, and
-    the cheapest way to submit is to send back the object it was given. Fourteen of those
-    twenty-three keys are not editable, and the difference between "Extra inputs are not permitted"
-    and a sentence naming ``designerName`` and pointing at stage 1 is the difference between a
-    developer reading this module and a developer guessing.
+    the cheapest way to submit is to send back the object it was given. Eighteen of those thirty keys
+    are not editable, and the difference between "Extra inputs are not permitted" and a sentence
+    naming ``designerName`` and pointing at stage 1 is the difference between a developer reading
+    this module and a developer guessing.
+
+    THE TWO COUNTS IN THIS DOCSTRING MOVED ON 2026-09-13 AND WERE ALREADY INCONSISTENT WITH EACH
+    OTHER BEFORE THEY DID. It said "fourteen of those twenty-three keys" in one sentence and "which
+    of the twenty-four keys" in the next, while the dict actually returned 26 — 23 named keys plus
+    the three-key consent spread — of which 12 were writable and 14 refused. The pre-submission loop
+    adds four more (the decision cache and the submission counter), so it is now 30 keys, 12 writable
+    and 18 refused. Both sentences are rewritten rather than one, and the numbers were taken by
+    running this test rather than by counting in a comment.
 
     THE TEST IS OVER ``workshop_summary`` ITSELF rather than over a list of key names, because the
     trap is a column ADDED to that dict later: it would reach every client, be posted back by this
-    one, and answer ``extra_forbidden`` with no clue which of the twenty-four keys was the problem.
+    one, and answer ``extra_forbidden`` with no clue which of the thirty keys was the problem.
     """
     from app.services.design_workshops import workshop_summary
 
@@ -923,6 +932,14 @@ def test_every_key_the_header_serialises_is_either_writable_or_refused_by_name()
         dictationConsent="NOT_RECORDED",
         dictationConsentAt=None,
         dictationConsentById=None,
+        # THE FOUR THE PRE-SUBMISSION LOOP ADDED. Without them this test fails on an
+        # ``AttributeError`` inside ``workshop_summary`` — before it reaches its own assertion, and
+        # with a traceback that reads as an unrelated breakage rather than as "the fixture is one
+        # column behind the dict".
+        reviewNotes=None,
+        reviewedById=None,
+        reviewedAt=None,
+        submissionRound=0,
     )
     writable = set(routes._HEADER_TEXT_COLUMNS) | set(routes._HEADER_DATE_COLUMNS)
     unexplained = set(workshop_summary(record)) - writable - set(routes._NEVER_PATCHABLE)
@@ -934,6 +951,53 @@ def test_every_key_the_header_serialises_is_either_writable_or_refused_by_name()
     # The single-record read adds one more key that no column stands behind. It is refused by name
     # for the same reason: a form that hydrated from GET /{id} sends it too.
     assert "dictationConsentByName" in routes._NEVER_PATCHABLE
+    # AND THE FOUR THIS WAVE ADDED, BY NAME. The subtraction above would also be satisfied by
+    # deleting them from ``workshop_summary``, which would make the whole loop invisible on every
+    # screen — the failure that dict's own docstring calls the trap.
+    assert {"reviewNotes", "reviewedById", "reviewedAt", "submissionRound"} <= set(
+        routes._NEVER_PATCHABLE
+    )
+    assert len(workshop_summary(record)) == 30, (
+        "the header dict changed size; the counts in this test's docstring are the two sentences a "
+        "reader trusts, and they are wrong the moment this number moves"
+    )
+
+
+def test_a_header_patch_cannot_make_a_decision_edge():
+    """**THE FOUR EDGES A HEADER EDIT MAY NOT MAKE**, asserted over the pure graph the route calls.
+
+    A decision is taken on a route that writes its ``ReviewLog`` row in the same transaction. A
+    status change with no audit entry is a decision that appears to have made itself — and the PATCH
+    route admits every designer on the workshop and every admin in the deployment, so "appears to
+    have made itself" is not a figure of speech.
+
+    The handler's own line is ``transition_refusal(record.status, data["status"])`` with no
+    ``by_decision_route``, so what is asserted here is exactly what it asks.
+    """
+    from app.schemas import design_workshop_review_loop as loop
+
+    routes = _routes()
+    assert "design_workshop_review_loop" in inspect.getsource(routes.update_design_workshop), (
+        "the PATCH handler no longer consults the transition graph; any status may follow any other "
+        "again, which is the state this repository was in before 2026-09-13"
+    )
+    for current, nxt in loop.DECISION_EDGES:
+        assert loop.transition_refusal(current, nxt), f"{current} -> {nxt} is patchable"
+
+
+def test_a_header_patch_cannot_archive_an_approved_report():
+    """The two-hop laundering path, named where a reader of the PATCH route will find it.
+
+    ``APPROVED -> ARCHIVED`` and ``ARCHIVED -> PRE_SUBMISSION`` were both ordinary edges in the
+    first draft of the graph, and together they let any designer move an approved report back into
+    the loop in two header edits — spending a round, with no audit entry, and with the decision cache
+    still naming the officer who approved it.
+    """
+    from app.schemas import design_workshop_review_loop as loop
+
+    refusal = loop.transition_refusal("APPROVED", "ARCHIVED")
+    assert refusal, "an approved report can be archived by a header edit again"
+    assert "hand-on" in refusal and "revise" in refusal
 
 
 # --------------------------------------------------------------------------------------
@@ -1425,6 +1489,14 @@ def _dw_row(rid: str, *, created_at: datetime | None = None) -> Any:
         dictationConsent="NOT_RECORDED",
         dictationConsentAt=None,
         dictationConsentById=None,
+        # THE FOUR THE PRE-SUBMISSION LOOP ADDED (2026-09-13). This double stands in for a real row
+        # in a test with no database, so every column `workshop_summary` reads has to be here —
+        # otherwise the paging walk above fails with an AttributeError from inside the serialiser
+        # and reads as a broken tiebreak rather than as a fixture one column behind.
+        reviewNotes=None,
+        reviewedById=None,
+        reviewedAt=None,
+        submissionRound=0,
     )
 
 

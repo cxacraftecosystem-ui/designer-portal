@@ -30,8 +30,10 @@ import org.junit.Test
  * by "everything" turns this prefix into a second full read of the archive.
  *
  * So the ONE predicate a reader reaches for by habit — `rank(role) >= RANK_INSPECTOR` — is wrong for
- * THREE of the eight tiers, and every one of those three is an account that would be OFFERED the menu
- * row and then landed on a 403. It is not a hypothesis that somebody reaches for it: the brief this
+ * SIX of the eleven tiers, and every one of those six is an account that would be OFFERED the menu
+ * row and then landed on a 403. It was three of eight until 2026-09-13; the three directorate tiers
+ * at 42/45/48 all clear 37 and are all refused, which is the same non-monotonicity arriving three
+ * more times rather than a new defect. It is not a hypothesis that somebody reaches for it: the brief this
  * work was commissioned from said "for INSPECTOR and above" in exactly those words, and the web lane
  * had to correct it against the source before shipping.
  *
@@ -66,6 +68,9 @@ class InspectionGateTest {
         "DESIGNER",
         "INSPECTOR",
         "PROFESSOR",
+        "ASSISTANT_DIRECTOR",
+        "REGIONAL_DIRECTOR",
+        "MINISTRY_ADMIN",
         "ADMIN",
         "MASTER_ADMIN",
     )
@@ -97,18 +102,28 @@ class InspectionGateTest {
     }
 
     @Test
-    fun `the ladder gives the wrong answer for three of the eight tiers`() {
+    fun `the ladder gives the wrong answer for six of the eleven tiers`() {
         // THE COUNTER-ASSERTION, so the equality above is not merely true but non-obvious. This is
         // the predicate somebody will write instead; the cells it disagrees on are named here so
         // that a reader who deletes the set can see exactly what they are buying.
         val byRank = everyRole.filter { FieldPermissions.rank(it) >= FieldPermissions.RANK_INSPECTOR }
         val bySet = everyRole.filter { canInspectDesignWorkshops(it) }
         assertEquals(
-            "a rank floor at 37 would admit the professor and both admin tiers",
-            listOf("INSPECTOR", "PROFESSOR", "ADMIN", "MASTER_ADMIN"),
+            "a rank floor at 37 would admit the professor, all three directorate tiers and both "
+                + "admin tiers",
+            listOf(
+                "INSPECTOR", "PROFESSOR", "ASSISTANT_DIRECTOR", "REGIONAL_DIRECTOR",
+                "MINISTRY_ADMIN", "ADMIN", "MASTER_ADMIN"
+            ),
             byRank
         )
-        assertEquals(listOf("PROFESSOR", "ADMIN", "MASTER_ADMIN"), byRank - bySet.toSet())
+        assertEquals(
+            listOf(
+                "PROFESSOR", "ASSISTANT_DIRECTOR", "REGIONAL_DIRECTOR", "MINISTRY_ADMIN",
+                "ADMIN", "MASTER_ADMIN"
+            ),
+            byRank - bySet.toSet()
+        )
     }
 
     @Test

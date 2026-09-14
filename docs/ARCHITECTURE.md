@@ -209,7 +209,7 @@ deployment convention rather than a guard; the lock is the guard. See
 ```mermaid
 flowchart TD
   routes["backend/app/api/routes/*.py<br/>one module per resource"]
-  deps["core/deps.py<br/>auth + the eight-tier ladder<br/>+ the identity cache"]
+  deps["core/deps.py<br/>auth + the eleven-tier ladder<br/>+ the identity cache"]
   schemas["schemas/*.py<br/>Pydantic, extra=forbid"]
   svc["services/*.py"]
   prisma[Prisma Python client]

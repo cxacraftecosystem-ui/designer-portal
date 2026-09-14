@@ -5860,6 +5860,19 @@ private val ROLE_RANK = mapOf(
     // scope is the right one.
     "INSPECTOR" to 37,
     "PROFESSOR" to 40,
+    // The three DIRECTORATE tiers, 2026-09-13, in the free 41-49 band. 42/45/48 keeps a gap on both
+    // sides of each and two ranks between neighbours; `deps.ROLE_RANK` carries the argument.
+    //
+    // WHAT THEY CHANGE ON THIS HANDSET. `canSetRecordStatus` below is a RANK_PROFESSOR floor, so all
+    // three may pick any status on create and on edit. The user-admin role picker is BUILT from this
+    // map, so a missing entry here would make a tier unassignable from the phone while the web
+    // offered it. None of them is an admin: `FieldPermissions.isAdmin` is a floor at RANK_ADMIN (50)
+    // and 48 is below it, which agrees with the server's SET by arithmetic rather than by
+    // construction — a tier added above 50 would make the two disagree and this app would offer an
+    // admin-only destination to somebody the API refuses.
+    "ASSISTANT_DIRECTOR" to 42,
+    "REGIONAL_DIRECTOR" to 45,
+    "MINISTRY_ADMIN" to 48,
     "ADMIN" to 50,
     "MASTER_ADMIN" to 60
 )
@@ -5887,6 +5900,9 @@ private val ROLE_LABELS = mapOf(
     // token is INSPECTOR because `canReview` already owns "review" in its relational sense.
     "INSPECTOR" to "Inspector / Reviewer",
     "PROFESSOR" to "Professor",
+    "ASSISTANT_DIRECTOR" to "Assistant Director",
+    "REGIONAL_DIRECTOR" to "Regional Director",
+    "MINISTRY_ADMIN" to "Ministry Admin",
     "ADMIN" to "Admin",
     "MASTER_ADMIN" to "Master Admin"
 )
@@ -17016,7 +17032,7 @@ private fun UserManagementForm(
 
     RecordCard(title = "Users and access") {
         Text(
-            "Professors and above can move a user along the eight-tier ladder (never above their own " +
+            "Professors and above can move a user along the eleven-tier ladder (never above their own " +
                 "tier); admins can additionally grant or revoke questionnaire-builder, record " +
                 "review & approval, view-provenance and dataset-download access. Craft and workshop " +
                 "creation are not grantable — they come with Professor, so promote instead. Tap a " +
@@ -17099,9 +17115,9 @@ private fun UserManagementForm(
                     }
                     if (expanded) {
                         HorizontalDivider()
-                        // The eight-tier ladder (EIGHT since INSPECTOR landed on 2026-08-27; the
-                        // count is ROLE_RANK.size, and the sentence on the card above says the same
-                        // number by hand), not an admin/researcher switch: the previous two-state
+                        // The eleven-tier ladder (ELEVEN since the three directorate tiers landed
+                        // on 2026-09-13; the count is ROLE_RANK.size, and the sentence on the card
+                        // above says the same number by hand), not an admin/researcher switch: the previous two-state
                         // button could neither reach Crowdsource Volunteer, Field Contributor or
                         // Professor nor be used by a professor at all, and demoting an admin dropped
                         // them straight past Professor to Researcher.

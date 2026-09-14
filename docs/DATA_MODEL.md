@@ -434,6 +434,213 @@ roster masked to their last four digits — so the alternative that was declined
 Nothing about `REVISION_REDACTED_FIELDS` itself changed; what changed is that the reason for
 refusing to widen it is spent.
 
+### 5.1 `SanctionOrder` — the ministry's instrument, and the one row that writes both rosters
+
+Added 2026-09-13 (migration `20260913110000_sanction_orders`). A sanction order is the document that
+authorises a design & prototype workshop and names its budget. A ministry officer records five facts
+through `POST /api/sanction-orders` — order number, order date, sanctioned amount, and the designer's
+name and Gmail address — and that one request writes **seven rows in one transaction**: an
+`AccessRoster` admission, a `DesignerRoster` empanelment, a `User` (only where the mailbox has none),
+a `DesignerProfile`, a `DesignWorkshop`, the designer's `DesignWorkshopViewer` row on it, and the
+`SanctionOrder` itself. `backend/app/services/sanction_orders.py` is where the order of those writes
+and the transaction boundary are argued.
+
+| Column | Type | Why it is shaped this way |
+|---|---|---|
+| `sanctionOrderNo` | `String @unique` | the ministry's own spelling, trimmed and whitespace-collapsed and nothing else — it is what an auditor holding the paper will search for |
+| `sanctionOrderKey` | `String @unique` | the same number upper-cased with every non-alphanumeric removed. **This is the constraint that actually bites**: `SO/2026/42`, `SO-2026-42` and `so 2026 42` are three house styles for one instrument and Postgres calls them three values. NOT NULL, unlike `DesignerProfile.empanelmentKey`, because that column was backfilled over rows that had already collided and this table starts empty |
+| `sanctionOrderDate` | `DateTime` | a DATE in meaning; a timestamp because this schema has no date-only type. Always written midnight UTC |
+| `sanctionAmount` | `Decimal @db.Decimal(14, 2)` | `NUMERIC(14,2)` with a `CHECK (> 0)`. **Never a float** — see §2.3, and see the migration header for why 14 digits rather than the 12 the product money columns use, and why there is no currency column |
+| `designerUserId` | FK → `User`, **Restrict** | the designer the order NAMES. Part of what the order says, not a grant that can be withdrawn |
+| `designerEmail` | `String` | the **canonical** mailbox (`designers.canonical_email`), which for an aliased Gmail is deliberately NOT `designerUser.email` — see below |
+| `designWorkshopId` | FK → `DesignWorkshop`, `@unique`, **Restrict** | one order, one workshop, both directions. Restrict because the API's delete is a SOFT delete, so this fires only on a hard purge — and a hard purge of a workshop the ministry funded must be refused by the database rather than discouraged by a route |
+| `createdById` | FK → `User`, **Restrict** | the officer. Who authorised the spend outlives their employment |
+| `accountCreated` | `Boolean` | did this order mint the account, or did the designer already have one? It is what decides whether a sign-in link is offered at all |
+| `notes` | `String?` | admin-typed only, like `AccessRoster.notes`. The machine-written provenance goes on the ROSTER rows instead |
+
+**THE MONEY HAS EXACTLY ONE HOME AND NO REPORT COPY, AND THAT IS THE WHOLE REASON THIS IS A TABLE.**
+`sanctionOrderNo` and `sanctionOrderDate` already existed as stage-1 registry fields living inside
+`DwStageEntry.data` JSON, and there was no sanctioned-amount field anywhere in the registry at all.
+Promoting the three onto `DesignWorkshop` was the obvious-looking fix and is wrong in the way that
+matters: a promoted column's single writer is `promoted_values`, i.e. the DESIGNER saving stage 1, so
+an officer's sanction figure would be overwritable by typing in a box — and `_coerce_promoted` NULLs a
+promoted column whose entity was touched with a blank value, which would delete a ministry figure
+under a 200 reading "Stage saved". The stage fields keep their copy of the NUMBER and the DATE,
+seeded once at creation, because a report is a historical document and an order amended in 2028 must
+not rewrite the cover of a report submitted in 2026. **The amount has no copy and must never get
+one**; `backend/tests/test_sanction_order_gate.py` fails the day a FieldSpec named for one appears.
+Drift between the register and the cover is REPORTED — `reportCopyMatches` on the wire — and never
+blocked, because a designer correcting a mistyped number on their own cover is doing something
+legitimate and blocking it would make the cover unfixable without a ministry officer, offline, in a
+village.
+
+**`User.email` AND `SanctionOrder.designerEmail` DIFFER FOR AN ALIASED GMAIL, ON PURPOSE.** Both
+sign-in doors look `User.email` up LITERALLY, so the account is written under the literal lower-cased
+address; both rosters and this column are written under `canonical_email`, because that is the key
+the gates read. Getting either backwards is silent at write time and locks somebody out days later —
+a canonical `User.email` 401s a password sign-in and is missed by Google sign-in, which then mints a
+second account.
+
+**Both `User` foreign keys are `Restrict`, so a sanction order makes TWO people undeletable** — the
+officer who recorded it and the designer it names. `backend/app/api/routes/users.py` carries two
+relation lists rather than one for that reason: `_CREATOR_RELATIONS` renders "This account created …"
+and `_NAMED_ON_RELATIONS` renders a second sentence, because a designer named on an order created
+nothing and the first sentence would be false about the one account it is describing.
+
+**There is no `cancelledAt`, no `supersededById` and no delete.** The first time the ministry
+withdraws an order, the product's only answer today is "edit the notes". That is an open question for
+the owner rather than an oversight.
+
+### 5.2 `DesignWorkshopOversight` and `DwArtisanImport` — the sixth access system, and its ledger
+
+Added 2026-09-13 (migrations `20260913120000_dw_workshop_oversight` and
+`20260913120100_dw_artisan_import`).
+
+`DesignWorkshopOversight` says WHO IS ACCOUNTABLE for one design & prototype workshop: exactly one
+Assistant Director and exactly one Regional Director. Its primary key is
+`(designWorkshopId, capacity)`, where `capacity` is the Postgres enum `DwOversightCapacity` with two
+members — **the pair IS the identity**, so re-assigning a capacity to a different person is an UPDATE
+of the same row rather than a second row, and a `@@unique([designWorkshopId, userId, capacity])`
+would have admitted two Assistant Directors where the requirement and the line on the report have
+room for one.
+
+**AN ENUM AND NOT TEXT, which is the OPPOSITE of the choice `workshopKind` and `FeedbackReport`
+made**, so the reason has to be stated rather than assumed. Those two are closed lists a product
+decision widens and a typo'd value prints oddly and does nothing else. This column is HALF THE
+PRIMARY KEY: a typo'd capacity is a third row on a workshop that neither the AD lookup nor the RD
+lookup finds — an officer assigned to a workshop nobody can see they were assigned to, which is
+`DwAccessRequestStatus`'s argument rather than `workshopKind`'s.
+
+**DESIGNER IS DELIBERATELY NOT A MEMBER OF THE ENUM.** Who a workshop is FOR already has an owner —
+the promoted `DesignWorkshop.designerName` column, the `DesignWorkshopViewer` row, and the stage 1 /
+stage 3 copy the designer prefill makes. A capacity row saying "the designer is X" beside a column
+saying "the designer is Y" would be two answers to one question, and the report prints the column.
+`services/design_workshop_oversight.reassign_designer` drives that machinery instead of duplicating
+it.
+
+**It is NOT a `capacity` column on `DesignWorkshopInspector` and NOT a `DesignWorkshopViewer` row.**
+Six reasons for the first, in the header of `backend/app/services/design_workshop_oversight.py`; the
+second is the one that would be silent, because a viewer row confers every stage save.
+`docs/PERMISSIONS.md` §4.6 is the argument in full.
+
+`assignedAt` is a column of its own rather than a reading of `createdAt`, and the difference is the
+question each answers: `createdAt` says "since when has this workshop had an AD", where the question
+anybody asks is "since when has THIS PERSON been its AD". A re-assignment restamps the first and not
+the second.
+
+`DwArtisanImport` is the LEDGER of the artisan-list upload: one row per accepted `.xlsx`, carrying
+the filename, the sheet, five counts and the per-row problem list as JSONB. It is modelled on
+`DwReportExport` — a per-event row, actor `SetNull`, indexed `(designWorkshopId, createdAt)`.
+
+**The workbook itself is never stored, only its filename, and that is a PII decision rather than a
+size one.** An artisan list carries Aadhaar numbers; keeping the bytes would turn one regulated
+COLUMN into a regulated FILE with its own retention question, its own access rule and its own
+deletion story. The parse is transient. Every identity number inside `problems` is already MASKED by
+the importer at the one place the number is read — nothing on the read path re-masks it, because a
+mask applied in two places is a mask that can be forgotten in one.
+
+**The ledger row is written BEFORE any artisan and updated at the end**, which is why partial success
+is legible: a failure halfway leaves a row saying what had happened by then, and a deployment whose
+migration has not run fails on the importer's first write with nothing created.
+
+**Every `Location` an import creates carries the WORKSHOP'S venue coordinate as PROVENANCE and a NULL
+subject pin**, and the upload is refused outright when the workshop has no venue location on stage 1.
+That is §2.4's finding applied: a coordinate invented for fifteen artisans in four states is exactly
+what the split columns exist to end. `extraMetadata` carries
+`{source: "ARTISAN_XLSX_IMPORT", designWorkshopId, importId}` — three keys chosen so that none of
+them collides with `common._stated_district`'s fallback read of `extraMetadata["district"]`.
+
+### 5.3 `AnnualPlanEntry` — the ministry's directory, and the one table that is not a workshop
+
+Added 2026-09-13 (migration `20260913140000_annual_plan_directory`).
+
+**A ROW HERE IS A LINE IN A DOCUMENT.** Somebody at the ministry intends that a workshop happen: a
+number, a date, a state, a district, a venue. Two hundred to three hundred rows a year arrive as one
+Excel sheet and are corrected by uploading the same sheet again. The row holds **no fieldwork** — no
+stages, no viewers, no inspectors, no media, no dictation consent, no completeness score, no report
+— and it **confers access on nobody**.
+
+It is in §5 with the access systems and it is not one of them, which is the whole reason it has a
+section here rather than a line in §2. `DesignWorkshop` is the container a fortnight of work lives
+in. Conflating the two is how a ministry is shown "287 workshops held this year" when 284 of them
+have not happened, and the leak does not arrive as a union: it arrives as a helpful-looking change to
+ONE query — a dashboard tile that "should include planned workshops too", a dataset that "should show
+what is coming" — each a one-line edit in a file that has nothing to do with this feature.
+`backend/tests/test_annual_plan_is_not_a_workshop.py` is a **census** for that reason: exactly two
+modules in `backend/app/` may name the table on a Prisma client, and a third fails the suite.
+
+**THE NATURAL KEY IS `(planYear, workshopNoKey)`, AND THE SECOND HALF IS A FOLDED COPY.** The
+ministry's workshop number is the only thing in the row that is stable across two versions of one
+spreadsheet — the correction is usually to the venue, the district or the date. But the number AS
+TYPED is not a key: the same reference arrives as `DPW/2026/017`, `dpw/2026/017 ` and
+`DPW/2026/<NBSP>017` across three saves of one file. So it is stored twice — `workshopNo` exactly as
+the sheet spells it, because that is what a person reads and what becomes the workshop's code, and
+`workshopNoKey` folded (NFKC, whitespace runs collapsed, trimmed, upper-cased) for matching. That is
+the split `DesignerProfile.phoneKey`/`empanelmentKey` made, for the same stated reason.
+
+**Punctuation is KEPT by the fold**: `DPW/2026/017` and `DPW-2026-017` stay two references, because
+they are two strings in the ministry's own document and merging them would merge two plan rows on a
+guess. And there is **no SQL twin of the folding rule** — unlike migration `20260830170000`, which
+had to spell its normalisations in SQL as well because it BACKFILLED existing rows. This table is new
+and has no history, so `annual_plan_xlsx.fold_workshop_no` in Python is the only writer and there is
+no second copy to drift from. Do not add one.
+
+**`planYear` IS ONE INTEGER AND THE LABEL IS RENDERED.** 2026 means FY 2026-27. An integer sorts,
+indexes and compares with no normalisation rule, and a normalisation rule spelled in Python and again
+in SQL is exactly the trap the identity keys above carry. `annual_plan.plan_year_label` owns the
+printable form and nothing stores it.
+
+**THERE IS NO `status` COLUMN AND NO `AnnualPlanEntryStatus` ENUM.** Standing is PLANNED / PROMOTED /
+WITHDRAWN and all three are readable off `withdrawnAt` and `designWorkshopId`, so
+`annual_plan.standing_of` derives it in one place. A stored status beside those two columns would be
+a second source for a fact they already carry, and the two would disagree the first time a promotion
+failed halfway. `workshopKind` is TEXT for the reason `DesignWorkshop.workshopKind` is: the
+vocabulary lives in `stage_schema.ENUMS["WORKSHOP_KIND"]`, and a second list in the database would be
+the copy that refuses a write for a member the registry already offers.
+
+**`designWorkshopId` IS `@unique`, AND THAT IS THE PROMOTION RULE MADE STRUCTURAL.** A planned row
+becomes at most one workshop and a workshop comes out of at most one planned row. The route refuses a
+second promotion with a sentence naming the workshop that already exists — a constraint violation
+cannot say WHICH — but a route is one door and this is the kind of rule a second door gets added to.
+**The foreign key sits on THIS table** rather than as a column on `DesignWorkshop` because that table
+is read by forty-odd routes and is the subject of `stage_schema.PROMOTED_COLUMNS`; a new column there
+invites the next reader to promote it out of a stage, which is a registry change and an Android
+release. `onDelete: SetNull` and not Cascade: a workshop is soft-deleted and never removed, so this
+fires only if somebody removes one by hand, and losing the ministry's plan row because a workshop was
+cleaned up would be the wrong end of the leash.
+
+**NOTHING IS EVER DELETED.** A row absent from a later sheet is WITHDRAWN — a stamp and the account
+that made it — and a withdrawn row that reappears in a later sheet is reinstated. A row that has
+already become a workshop is **never** withdrawn by an upload, whatever the checkbox says: a designer
+may be standing in the courtyard, and taking the line out of the directory while the workshop, its
+viewers, its media and its report went on existing would leave nothing anywhere saying why the two
+disagree.
+
+**`revision`, `sheetRow` AND `sourceFilename` ARE THE PER-ROW PROVENANCE, AND THERE IS NO UPLOAD
+HISTORY TABLE.** The upload report is the HTTP RESPONSE and is not persisted, which is what the
+questionnaire upload does too. `revision` counts the uploads that CHANGED this row: an upload that
+re-states a row byte for byte writes nothing at all — not a column, not `updatedAt`, not `revision` —
+and that no-write is the whole of what makes "re-upload the corrected sheet" safe to do twice.
+
+⚠ **`sheetRow` GOES STALE ON PURPOSE, and it is the visible price of the paragraph above.** After a
+re-SORTED sheet that changed no data, every `sheetRow` still holds its old position, because no row
+differed and therefore no row was written. That drift is asserted rather than tolerated in silence:
+`test_annual_plan_upload.py::test_a_re_sorted_sheet_that_changes_nothing_writes_nothing` fails if
+somebody "fixes" it by writing the column on every row.
+
+**The four `User` pointers are all `SetNull` and all indexed** — for the DELETE each is on the wrong
+end of, not for any read, which is the reasoning `DwStageEntry.createdById` and
+`DesignWorkshop.dictationConsentById` both record. None of them makes an account undeletable and none
+belongs in `routes/users.py`'s `_NAMED_ON_RELATIONS`.
+
+**THE ONE LEGITIMATE JOIN IS `designWorkshopId`**, in either direction, and it is written by exactly
+one function: `annual_plan.promote_entry`, which calls `design_workshops.open_design_workshop` — the
+shared opener that runs the eligibility check, the create, the viewer rows and
+`seed_designer_prefill` in that order. A second copy of those four steps is a second place that can
+forget the fourth, and forgetting the fourth is not a visible failure: it is a workshop whose
+promoted columns have no stage entry behind them, which the designer's FIRST stage-1 save nulls out
+under a 200 reading "Stage saved".
+
 ---
 
 ## 6. Operations
@@ -511,7 +718,7 @@ Every enum, and the thing to know about each. The list of names is generated int
 
 | Enum | Values | Note |
 |---|---|---|
-| `UserRole` | the eight tiers, `DESIGNER` at 35 and `INSPECTOR` at 37 | strictly ordered by rank, but **`can_run_design_workshops` is a SET** (Designer/Admin/Master Admin), so both a Professor and an Inspector outrank a Designer and still cannot run a design workshop. `INSPECTOR` reaches a workshop only through the read-only per-workshop scope — see [PERMISSIONS.md](PERMISSIONS.md) §1 and §4.5 |
+| `UserRole` | the eleven tiers, `DESIGNER` at 35, `INSPECTOR` at 37 and the three directorate tiers at 42/45/48 | strictly ordered by rank, but **`can_run_design_workshops` is a SET** (Designer/Admin/Master Admin), so both a Professor and an Inspector outrank a Designer and still cannot run a design workshop. `INSPECTOR` reaches a workshop only through the read-only per-workshop scope — see [PERMISSIONS.md](PERMISSIONS.md) §1 and §4.5 |
 | `AuthProvider` | `LOCAL`, `GOOGLE` | a Google account has no password hash at all |
 | `RecordStatus` | `DRAFT`, `PENDING`, `APPROVED`, `REJECTED`, `NEEDS_REVISION` | `NEEDS_REVISION` is the "sent back with comments" state |
 | `ReviewRecordType` | artisan, workshop, product, tool, process, questionnaire, media | processes and interviews are reviewable because the late-submission gate can pin them `PENDING` |

@@ -75,6 +75,15 @@ class DwAdoptOfferScopeTest {
     fun `an account that does not run workshops is not offered the move`() {
         assertFalse(dwOfferDraftMove(mayCreate = mayCreate("PROFESSOR"), mayRunWorkshops = false))
         assertFalse(dwOfferDraftMove(mayCreate = mayCreate("INSPECTOR"), mayRunWorkshops = false))
+        // The three directorate tiers (42/45/48, 2026-09-13) land in the same cell as PROFESSOR and
+        // INSPECTOR and for the same reason: every design-workshop gate is set membership, so no
+        // rank above 40 admits them either. `MINISTRY_ADMIN` is named explicitly because its token
+        // says admin, and the admins in the test above are refused this control for a DIFFERENT
+        // reason — they may create, so their draft creates itself on the next sync. This one cannot
+        // create at all.
+        assertFalse(dwOfferDraftMove(mayCreate = mayCreate("ASSISTANT_DIRECTOR"), mayRunWorkshops = false))
+        assertFalse(dwOfferDraftMove(mayCreate = mayCreate("REGIONAL_DIRECTOR"), mayRunWorkshops = false))
+        assertFalse(dwOfferDraftMove(mayCreate = mayCreate("MINISTRY_ADMIN"), mayRunWorkshops = false))
     }
 
     /**

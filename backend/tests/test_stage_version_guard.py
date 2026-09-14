@@ -93,12 +93,20 @@ def _planned(
     seen: int,
     scope: str,
     entity_key: str = "sketch",
+    changed: bool = True,
 ) -> service._RowUpdate:
     """One planned UPDATE.
 
     ``entity_key`` DEFAULTS BECAUSE THE SETTLING TESTS DO NOT CARE WHICH ENTITY A ROW BELONGS TO —
     they decide kept-versus-refused from the version and the stored answers alone. The promotion
     tests below pass it, because for them it is the whole question.
+
+    ``changed`` DEFAULTS FOR THE SAME REASON AND ONLY HERE. The dataclass itself gives it no default,
+    deliberately — a write site that forgot it would silently stop resubmitting a sent-back report,
+    or silently resubmit one on every offline replay — but a settling test is about versions, not
+    about whether a designer changed a value, and a mandatory argument in every one of them would be
+    noise around the question each is actually asking. The resubmission tests below pass it
+    explicitly, because for them it is the whole question. (2026-09-13)
     """
     return service._RowUpdate(
         row_id=row_id,
@@ -107,6 +115,7 @@ def _planned(
         values=values,
         scope=scope,
         entity_key=entity_key,
+        changed=changed,
     )
 
 
@@ -354,6 +363,109 @@ def test_a_create_with_no_plan_promotes_nothing_and_blanks_nothing():
     creates = [{"entityKey": "workshopSetup", "clientKey": None, "data": object()}]
     promoted, entities = service._promotions_from_plan(creates, [], {})
     assert promoted == {} and entities == set()
+
+
+# --------------------------------------------------------------------------------------
+# Half one and a half: WHICH SAVES RESUBMIT A REPORT THAT WAS SENT BACK
+#
+# **`updates` IS NOT A CHANGE LIST, AND IT READS EXACTLY LIKE ONE.** The planner appends a
+# `_RowUpdate` for EVERY row the payload names, with no value comparison anywhere — which was
+# harmless until a save could MEAN something. A resubmission gate written as
+# `bool(creates or updates or removed)` fires on a form opened and saved, on an offline outbox
+# replaying a byte-identical body, and on a save that only dropped unknown keys; each would spend a
+# submission round, tell every officer the report had been handed back in, and permanently
+# mis-number every correction suggestion filed afterwards, because `DwInspectionFeedback.round` is
+# copied at write time and never recomputed. Nothing would fail. The designer would simply be told
+# the wrong thing, for ever.
+#
+# So the answer is per ROW, computed where the old and new values are both in hand, and read back
+# off the plan that SURVIVES — inside the transaction, after `_settle_version_conflicts` has dropped
+# every contested row. These are the pure half of that; the database half (a real replay through
+# HTTP) is in `test_dw_inspector_scope`.
+# --------------------------------------------------------------------------------------
+
+
+def test_every_row_update_declares_whether_it_changed():
+    """``changed`` EXISTS AND HAS NO DEFAULT, which is the whole of why it can be trusted.
+
+    ``entity_key`` carries the same rule and the same sentence: a future write site that forgot this
+    field would default to one answer and be wrong silently in that direction — never resubmitting a
+    sent-back report, or resubmitting it on every replay.
+    """
+    import dataclasses
+
+    fields = {f.name: f for f in dataclasses.fields(service._RowUpdate)}
+    assert "changed" in fields, "the per-row change flag has gone; the resubmission gate is blind"
+    assert fields["changed"].default is dataclasses.MISSING
+    assert fields["changed"].default_factory is dataclasses.MISSING
+
+
+def test_a_save_that_planned_nothing_does_not_resubmit():
+    """The empty plan. A request that wrote no row is not a designer answering an officer."""
+    assert service._content_changed([], [], []) is False
+
+
+def test_a_replayed_identical_payload_does_not_resubmit():
+    """**THE CASE THAT WOULD HAVE SHIPPED BROKEN.**
+
+    A phone that never received the acknowledgement for a sync sends the queue again. Every row of
+    that payload is in ``updates`` — the planner puts it there unconditionally — and not one of them
+    is different. A gate over the LENGTH of that list spends a submission round on a replay.
+    """
+    replay = [
+        _planned("r1", {"name": "Runner"}, 3, "sketch[0]", changed=False),
+        _planned("r2", {"name": "Stole"}, 4, "sketch[1]", changed=False),
+    ]
+    assert service._content_changed([], replay, []) is False
+
+
+def test_one_changed_row_among_many_unchanged_resubmits():
+    """The ordinary correction: a designer opens the stage the officer named and fixes one box."""
+    plan = [
+        _planned("r1", {"name": "Runner"}, 3, "sketch[0]", changed=False),
+        _planned("r2", {"name": "Stole, 180cm"}, 4, "sketch[1]", changed=True),
+    ]
+    assert service._content_changed([], plan, []) is True
+
+
+def test_a_new_row_and_a_removed_row_each_resubmit():
+    """Both arms that are not the per-row flag.
+
+    A new row is content that was not in the report, and a swept row is content that was. Neither
+    has a "same values" case to consider, which is why neither consults the flag.
+    """
+    assert service._content_changed([{"entityKey": "sketch"}], [], []) is True
+    assert service._content_changed([], [], ["r9"]) is True
+
+
+async def test_a_save_whose_every_row_was_refused_does_not_resubmit(monkeypatch):
+    """A REFUSED ROW CONTRIBUTES NOTHING — the same rule ``_promotions_from_plan`` had to be taught.
+
+    ``_settle_version_conflicts`` drops every contested row from the plan and files a refusal
+    sentence for each. The plan the transaction then applies is empty, so the save wrote nothing —
+    and a report that was sent back must not be handed back in on the strength of a save that stored
+    none of the corrections. This is why the gate is computed INSIDE ``write_everything``, from the
+    surviving plan, rather than beside the planning loop.
+    """
+    _install(monkeypatch, [_row("r1", {"name": "Somebody else's answer"}, 9)])
+    contested = [_planned("r1", {"name": "Runner"}, 1, "sketch[0]", changed=True)]
+    kept, refused = await service._settle_version_conflicts("dw-1", "SKETCH", contested, {"r1"})
+    assert [r.row_id for r in refused] == ["r1"]
+    assert service._content_changed([], kept, []) is False
+
+
+def test_a_re_planned_row_keeps_its_own_verdict_across_the_settling():
+    """``replace()`` carries the flag, so a re-planned row does not silently become a no-op.
+
+    The winner stored the same answers this request was about to store, so the update is re-planned
+    at the fresh version — but what THIS request is doing is still writing the values it planned. The
+    flag describes this save's own picture of the row, and the settling refreshes a version, not an
+    intention.
+    """
+    planned = _planned("r1", {"name": "Runner"}, 4, "sketch[0]", changed=True)
+    from dataclasses import replace
+
+    assert replace(planned, seen_version=7).changed is True
 
 
 def test_the_retry_bound_is_small_and_finite():

@@ -79,8 +79,11 @@ data class DwReadinessAddress(
  * THIS SAID "one thing that will 422 a submit" UNTIL 2026-08-28, AND THAT IS NOT TRUE OF EVERY ITEM
  * IN THE LIST ANY MORE. A field short of its declared [FieldDto.minItems] is now a blocking item —
  * both motif galleries at twenty-five each — and a minimum is SCORED and never validated: no save
- * path refuses it, and `PATCH /design-workshops/{id}` writes `status: "SUBMITTED"` behind an enum
- * check with no completeness test anywhere. What such an item really costs is what this screen, the
+ * path refuses it, and `PATCH /design-workshops/{id}` writes the forward status behind an enum check
+ * with no completeness test anywhere. (That clause named `status: "SUBMITTED"` until 2026-09-14; the
+ * designer's forward act has written `PRE_SUBMISSION` since 2026-09-13, and SUBMITTED now means the
+ * approved report has reached the office. The point is unaltered — neither transition consults a
+ * scorer — and only the token moved.) What such an item really costs is what this screen, the
  * report's `X-Report-Warnings` line and the completeness annexure all say about it, which is what
  * the wording now claims and no more. The ordinary `required` items are unchanged: they are what
  * `validate_entry` refuses, and that refusal is real.

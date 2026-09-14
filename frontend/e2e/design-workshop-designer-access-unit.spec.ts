@@ -73,7 +73,20 @@ test("administering who is on a workshop is admin-only, because every viewer rou
   */
   expect(isAdmin(user("ADMIN"))).toBe(true);
   expect(isAdmin(user("MASTER_ADMIN"))).toBe(true);
-  for (const role of ["DESIGNER", "INSPECTOR", "PROFESSOR", "RESEARCHER", "FIELD_CONTRIBUTOR", "CROWDSOURCE_VOLUNTEER"] as UserRole[]) {
+  // MINISTRY_ADMIN belongs in this loop more than any other tier: it is the one whose NAME suggests
+  // it may administer a workshop's viewers, and `isAdmin` — set membership on MASTER_ADMIN and ADMIN
+  // — says no. Added with the other two directorate tiers on 2026-09-13.
+  for (const role of [
+    "MINISTRY_ADMIN",
+    "REGIONAL_DIRECTOR",
+    "ASSISTANT_DIRECTOR",
+    "DESIGNER",
+    "INSPECTOR",
+    "PROFESSOR",
+    "RESEARCHER",
+    "FIELD_CONTRIBUTOR",
+    "CROWDSOURCE_VOLUNTEER"
+  ] as UserRole[]) {
     expect(`${role} may not administer viewers=${isAdmin(user(role))}`).toBe(`${role} may not administer viewers=false`);
   }
 });

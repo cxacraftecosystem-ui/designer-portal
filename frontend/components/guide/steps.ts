@@ -1206,8 +1206,10 @@ export const GUIDE_STEPS: GuideStep[] = [
       // both things. (That correction used to be cited as "two cards down". Counting cards is the
       // same defect as counting steps: three have been inserted into this array since, and a reader
       // who follows the count lands on the wrong card and concludes the note is stale.) Authority:
-      // `readiness/page.tsx`'s `WORKSHOP_STATUS_IS` — the workshop's own "Mark complete" and "Submit"
-      // consult no scorer and are "never refused for an empty field" — and its `STAGE_CHECK_IS`, which
+      // `readiness/page.tsx`'s `WORKSHOP_STATUS_IS` — the workshop's own status buttons ("Mark
+      // complete", "Hand in for inspection"; this comment said "Submit" until the review loop
+      // renamed that control on 2026-09-14) consult no scorer and are "never refused for an empty
+      // field" — and its `STAGE_CHECK_IS`, which
       // names the only act an empty required field does refuse: "Save and check required fields", the
       // second button at the foot of ONE stage, which saves either way and then refuses that stage
       // alone. Both constants are rendered verbatim on the readiness screen and the Submission card;
@@ -1328,7 +1330,13 @@ export const GUIDE_STEPS: GuideStep[] = [
       "A link straight into the stage that holds each gap"
     ],
     watch: [
-      "A WORKSHOP MAY BE SUBMITTED PART-FILLED, and this is the fact to trust: “Mark complete” and “Submit”, on the workshop’s own Submission card, record where the whole workshop stands and are never refused for an empty field.",
+      // Kept in step with `WORKSHOP_STATUS_IS` BY HAND, and that is the whole hazard: this bullet is
+      // rendered prose on a screen with no Submission card in view, so a control named here that does
+      // not exist cannot be corrected by anything the reader can see. It said “Submit” until
+      // 2026-09-14, one release after that button became “Hand in for inspection”. Name the buttons as
+      // examples, never as a complete list — `actionsFor` offers a different pair from NEEDS_REVISION
+      // and one button alone from PRE_SUBMISSION.
+      "A REPORT MAY BE HANDED IN PART-FILLED, and this is the fact to trust: the status buttons on the workshop’s own Submission card — “Mark complete” and “Hand in for inspection” among them — record where the whole workshop stands and are never refused for an empty field.",
       "One act in the app IS refused by an empty required field, and it is not that one: “Save and check required fields”, the second button at the foot of any stage. It saves the stage either way, then refuses THAT ONE STAGE while any of its Basic fields is empty, and names the ones it is waiting for. This list is what that button will ask you about.",
       "Use it on the FIRST afternoon as well as the last. It is a plan for the fortnight, not only a check at the end.",
       "Standard and Advanced counts never block anything. They are there so a thin stage is a decision rather than an oversight."

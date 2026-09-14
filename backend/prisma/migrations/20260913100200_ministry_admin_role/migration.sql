@@ -1,0 +1,53 @@
+-- The MINISTRY_ADMIN tier: rank 48, the senior of three directorate tiers that sit between
+-- PROFESSOR (40) and ADMIN (50).
+--
+-- The ministry-facing end of the directorate line: senior to a regional director, junior to an
+-- administrator. As with every tier before it, the authority this token carries is decided entirely
+-- in application code (`app/core/deps.py::ROLE_RANK` and the predicates around it); this migration
+-- does one thing, which is teach the database that the value exists so a row may hold it.
+--
+-- THE TOKEN CONTAINS THE WORD ADMIN AND THIS IS NOT AN ADMIN. `deps.is_admin` is SET MEMBERSHIP on
+-- {MASTER_ADMIN, ADMIN} and not a rank floor, so a MINISTRY_ADMIN row passes no admin gate anywhere
+-- in this product: no record deletion, no account creation, no task assignment, no workshop-access
+-- grant, no viewer or inspector appointment, no usage aggregate, no design-workshop export, no
+-- /admin route tree, no managed API keys. Anyone reading this value in a `psql` session and
+-- inferring administrator rights from the name will be wrong. `app/core/deps.py`'s rank comment for
+-- this tier carries the full argument; this paragraph exists so the database tells the same story.
+--
+-- WHY THREE MIGRATIONS AND NOT ONE, WHEN `20260724120000_six_tier_roles` PROVES ONE WOULD WORK.
+-- That file carries three `ALTER TYPE ... ADD VALUE` statements and deployed without incident,
+-- because Postgres 12+ allows ADD VALUE inside a transaction block and forbids only USING the new
+-- value there. So one file is correct, and one file per tier is the rule anyway: a file holding a
+-- single statement cannot acquire a second one later, and each tier's argument stays beside its own
+-- token instead of three arguments sharing one header. The rule removes the class of mistake rather
+-- than this instance of it. `20260827140000_inspector_role/migration.sql:27` states the rule in as
+-- many words — "this file must stay a single statement".
+--
+-- WHY THE ENUM VALUE IS ADDED IN ITS OWN STATEMENT, AND WHY IT IS THE ONLY ONE. Copied from
+-- `20260827140000_inspector_role`, whose header records the trap in full. Prisma sends a migration
+-- file as ONE multi-statement query, which Postgres wraps in an implicit transaction, so any later
+-- statement in this file that mentioned 'MINISTRY_ADMIN' would fail the deploy with
+-- `unsafe use of new value "MINISTRY_ADMIN" of enum type "UserRole"`. Nothing below does, and
+-- nothing below should. If a future change genuinely needs to WRITE the value — a backfill, a CHECK
+-- constraint, a partial index with the literal in its predicate — it belongs in a SEPARATE
+-- migration directory that runs after this one, never appended here.
+--
+-- WHAT RANK 48 MEANS. Everything REGIONAL_DIRECTOR (45) holds, one tier wider, by the same
+-- strictly-below comparison: the widest review and correction authority on the ladder short of
+-- ADMIN. It stops there — ADMIN (50) and MASTER_ADMIN (60) outrank it, so it reviews neither and
+-- rewrites neither, and `users.assert_role` refuses it the minting of both.
+--
+-- ADDITIVE AND FORWARD-ONLY. Postgres cannot remove an enum value, so there is no down migration and
+-- there does not need to be one: an unused value is inert. Nothing existing is altered, nothing is
+-- dropped, no row is rewritten, and no account changes tier because of this file. Promotion into
+-- the tier is an ordinary `PATCH /api/users/{id}` afterwards, gated by `users.assert_role`.
+--
+-- IF YOU ARE LOOKING FOR THE RANK, IT IS NOT HERE. Postgres orders an enum by the order its values
+-- were CREATED, so this token sorts after REGIONAL_DIRECTOR and below CROWDSOURCE_VOLUNTEER in the
+-- database whatever `schema.prisma`'s declaration block says. That is harmless because nothing in
+-- this application orders or compares by the enum — every comparison goes through `deps.ROLE_RANK`,
+-- a dict in Python — but a query written by hand with `ORDER BY "role"` or
+-- `WHERE "role" > 'REGIONAL_DIRECTOR'` will get an answer that has nothing to do with the ladder.
+
+-- AlterEnum
+ALTER TYPE "UserRole" ADD VALUE IF NOT EXISTS 'MINISTRY_ADMIN';

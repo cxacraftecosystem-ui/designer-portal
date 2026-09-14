@@ -323,3 +323,127 @@ def test_a_remedy_stays_one_short_line(remedy: str):
     with pytest.raises(HTTPException) as excinfo:
         _read(_CountingFile(b"x" * (20 * MB)), 6 * MB, purpose="dictated clip", remedy=remedy)
     assert len(excinfo.value.detail) < 200
+
+
+# --------------------------------------------------------------------------------------
+# 6. The workbook door — `read_workbook_upload`
+# --------------------------------------------------------------------------------------
+#
+# ``questionnaire_forms._read_upload``'s own docstring predicted this helper: "this is the second
+# door with this shape and there will be a third: the bound belongs beside the other upload rules in
+# `services/uploads`, where one fix reaches every route". The annual-plan directory is the third
+# door, and the helper was lifted on 2026-09-13.
+#
+# THE TWO EXISTING DOORS ARE NOT YET RE-POINTED AT IT. Both live in route modules owned by other
+# changes in flight, and re-pointing them is a one-line edit in each. The last test in this section
+# pins the questionnaire door's two sentences BYTE FOR BYTE so that whoever does the rewire finds
+# out immediately if the lift changed a word of what an uploader is told.
+
+
+def _read_workbook(file, max_bytes: int, **kwargs):
+    return asyncio.run(uploads.read_workbook_upload(file, max_bytes, **kwargs))
+
+
+WRONG_TYPE = "That is not an Excel workbook. Download the annual plan pro-forma."
+EMPTY = "The upload was empty. Attach the filled-in annual plan pro-forma."
+
+
+class _NamedFile(_CountingFile):
+    """A counting file that also carries a multipart ``filename``, which the extension gate reads."""
+
+    def __init__(self, payload: bytes, filename: str | None) -> None:
+        super().__init__(payload)
+        self.filename = filename
+
+
+def test_the_workbook_door_refuses_a_wrong_extension_before_reading_a_byte():
+    """THE CHEAPEST OF THE THREE REFUSALS ANSWERS FIRST, and ``reads == 0`` is the proof.
+
+    The extension is a string on the multipart part. A .docx attached by mistake must cost nothing at
+    all — not a copy into the heap, and not an openpyxl stack trace.
+    """
+    file = _NamedFile(b"x" * MB, "quarterly-report.docx")
+    with pytest.raises(HTTPException) as excinfo:
+        _read_workbook(file, 4 * MB, purpose="annual plan workbook",
+                       wrong_type_detail=WRONG_TYPE, empty_detail=EMPTY)
+    assert excinfo.value.status_code == 415
+    assert file.reads == [], "the body must not be touched"
+    assert file.bytes_read == 0
+
+
+def test_the_workbook_door_passes_its_callers_sentence_through_verbatim():
+    """"That is not a workbook" is one FACT at two doors with two different NEXT ACTIONS.
+
+    One helper with a generic sentence would have made both doors vaguer than either was on its own;
+    one helper per door would be the copy this function exists to end. So the sentence is the
+    caller's, and nothing in the helper may decorate it.
+    """
+    with pytest.raises(HTTPException) as excinfo:
+        _read_workbook(_NamedFile(b"x", "notes.txt"), 4 * MB, purpose="annual plan workbook",
+                       wrong_type_detail=WRONG_TYPE, empty_detail=EMPTY)
+    assert excinfo.value.detail == WRONG_TYPE
+
+    with pytest.raises(HTTPException) as empty:
+        _read_workbook(_NamedFile(b"", "plan.xlsx"), 4 * MB, purpose="annual plan workbook",
+                       wrong_type_detail=WRONG_TYPE, empty_detail=EMPTY)
+    assert empty.value.status_code == 422
+    assert empty.value.detail == EMPTY
+
+
+@pytest.mark.parametrize("name", ["plan.xlsx", "PLAN.XLSX", "macro.xlsm", "template.xltx"])
+def test_the_workbook_door_accepts_every_extension_openpyxl_can_open(name: str):
+    """Three extensions, case-insensitively. A ministry office that saved as .xlsm because their
+    template carries a macro must not be turned away by a filter that only knows one spelling."""
+    payload = b"PK\x03\x04" + b"z" * 100
+    got = _read_workbook(_NamedFile(payload, name), 4 * MB, purpose="annual plan workbook",
+                         wrong_type_detail=WRONG_TYPE, empty_detail=EMPTY)
+    assert got == payload
+
+
+def test_a_part_with_no_filename_reaches_the_parser():
+    """THE EXTENSION GATE IS NOT TOTAL AND NEVER WAS, and this pins it rather than fixing it.
+
+    Several HTTP clients send a multipart part with no filename for a perfectly ordinary file. Such
+    a part skips the extension gate entirely and falls through to the parser's MAGIC-BYTE check,
+    which is the real type check. "Tightening" this to refuse a nameless part would turn a working
+    upload into a 415 for a file that was fine.
+    """
+    payload = b"PK\x03\x04" + b"y" * 32
+    assert _read_workbook(_NamedFile(payload, None), 4 * MB, purpose="annual plan workbook",
+                          wrong_type_detail=WRONG_TYPE, empty_detail=EMPTY) == payload
+    assert _read_workbook(_NamedFile(payload, ""), 4 * MB, purpose="annual plan workbook",
+                          wrong_type_detail=WRONG_TYPE, empty_detail=EMPTY) == payload
+
+
+def test_the_workbook_door_still_bounds_the_body():
+    """The size bound is the SAME one, not a second copy — ``read_upload_bounded`` is called, and the
+    413 is its own, remedy and all."""
+    with pytest.raises(HTTPException) as excinfo:
+        _read_workbook(_NamedFile(b"x" * (6 * MB), "plan.xlsx"), 4 * MB,
+                       purpose="annual plan workbook", wrong_type_detail=WRONG_TYPE,
+                       empty_detail=EMPTY, remedy=CARD_REMEDY)
+    assert excinfo.value.status_code == 413
+    assert CARD_REMEDY in excinfo.value.detail
+
+
+def test_the_questionnaire_doors_two_sentences_did_not_change():
+    """BYTE-IDENTICAL, HARD-CODED HERE, so the pending rewire cannot quietly reword them.
+
+    ``questionnaire_forms._read_upload`` is not yet re-pointed at ``read_workbook_upload`` — its
+    route module was owned by another change in flight. When somebody does the rewire, these two
+    strings are what they must pass as ``wrong_type_detail`` and ``empty_detail``, and this test is
+    what tells them if they did not.
+    """
+    import inspect
+
+    from app.api.routes import questionnaire_forms
+
+    squeezed = " ".join(inspect.getsource(questionnaire_forms._read_upload).split())
+    assert (
+        "is not an Excel workbook. Fill in the .xlsx pro-forma and \" \"upload that, or use "
+        "File > Save As and choose 'Excel Workbook (.xlsx)'." in squeezed
+    )
+    assert "The upload was empty. Attach the filled-in pro-forma." in squeezed
+    # And the suffix tuple that door filters on now has ONE home, so the rewire is a deletion rather
+    # than a second list to keep in step.
+    assert uploads.WORKBOOK_SUFFIXES == (".xlsx", ".xlsm", ".xltx")

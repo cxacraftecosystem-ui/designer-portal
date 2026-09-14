@@ -926,3 +926,333 @@ async def test_the_literal_picker_path_is_not_swallowed_by_the_workshop_id_route
     )
     assert response.status_code == 200, response.text
     assert "users" in response.json()
+
+
+# ------------------------------------------------------------------------------------------
+# 6. THE FIRST WRITE THIS SCOPE HAS EVER HAD: a note, and never the report
+#
+# Added 2026-09-13 with the pre-submission loop. Everything below is a fact about a DATABASE — a row
+# written or not written, a status moved or not moved — which is why it is here and not in the gate
+# module. What the gate module asserts instead is that these are the ONLY two write doors on the
+# router and that neither can reach a `DwStageEntry`.
+#
+# **THE STATUS PRECONDITION IS THE ONE THAT WOULD OTHERWISE BE A 500.** The inspection scope is a
+# row plus a soft-delete test and carries no status term, so an officer holding a row on a workshop
+# nobody has handed in reaches the write with `submissionRound == 0` — and the CHECK constraint
+# refuses the INSERT. The parametrised case below asserts a 422 AND that no row was written, which
+# is the difference between "refused before the database" and "refused by the database".
+# ------------------------------------------------------------------------------------------
+
+
+def _hand_in(world: dict[str, Any], workshop_id: str, *, as_slug: str = "creator"):
+    """Hand the report in for inspection — the designer's own forward act, through the API.
+
+    PATCH rather than a Prisma update, so the transition graph is exercised on the way past: if
+    `IN_PROGRESS -> PRE_SUBMISSION` is ever refused, every test below fails on its first line rather
+    than on an assertion about feedback.
+    """
+    return world["client"].patch(
+        f"/api/design-workshops/{workshop_id}",
+        json={"status": "PRE_SUBMISSION"},
+        headers=_headers(world, as_slug),
+    )
+
+
+def _set_status(world: dict[str, Any], workshop_id: str, status: str):
+    return world["client"].patch(
+        f"/api/design-workshops/{workshop_id}",
+        json={"status": status},
+        headers=_headers(world, "creator"),
+    )
+
+
+def _feedback(world: dict[str, Any], workshop_id: str, slug: str, **body):
+    return world["client"].post(
+        f"/api/design-workshop-inspections/{workshop_id}/feedback",
+        json=body,
+        headers=_headers(world, slug),
+    )
+
+
+def _send_back(world: dict[str, Any], workshop_id: str, slug: str, **body):
+    return world["client"].post(
+        f"/api/design-workshop-inspections/{workshop_id}/send-back",
+        json=body,
+        headers=_headers(world, slug),
+    )
+
+
+def _register(world: dict[str, Any], workshop_id: str, slug: str = "inspector") -> list[dict]:
+    """The suggestions as the officer's own detail read carries them."""
+    response = world["client"].get(
+        f"/api/design-workshop-inspections/{workshop_id}", headers=_headers(world, slug)
+    )
+    assert response.status_code == 200, response.text
+    return response.json()["inspectionFeedback"]
+
+
+async def test_an_assigned_inspector_files_a_correction_suggestion_and_it_reads_back(world, client):
+    """**THE FEATURE, END TO END: an inspection is now a read AND A NOTE.**
+
+    Until this landed an inspector could record nothing at all, which made the tier a viewer with
+    extra steps. The 201 carries the whole register rather than the one row just written, because
+    the officer is looking at a list of suggestions and a client that had to re-read the workshop to
+    redraw its own screen would disagree with itself for as long as that took.
+
+    `actorName` IS THE ASSERTION THAT CATCHES A MISSING `include={"actor": True}`. The payload
+    builder reads the name off the row and returns None rather than raising when the relation was
+    not fetched — quiet, and quiet in the direction where every correction is attributed to nobody.
+    """
+    workshop_id = _make_workshop(world, "Ikat, with a note from its inspector")
+    assert _assign(world, workshop_id, ["inspector"]).status_code == 200
+    assert _hand_in(world, workshop_id).status_code == 200
+
+    response = _feedback(
+        world, workshop_id, "inspector", note="Stage 14's cost sheet does not add up."
+    )
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["readOnly"] is True
+    assert body["mayRecordFeedback"] is True
+    assert body["inspectionFeedbackTruncated"] is False
+    # THE STATUS DOES NOT MOVE. Filing a suggestion and sending the report back are two acts.
+    assert body["status"] == "PRE_SUBMISSION"
+    assert body["submissionRound"] == 1
+    [row] = body["inspectionFeedback"]
+    assert row["note"] == "Stage 14's cost sheet does not add up."
+    assert row["round"] == 1, "a suggestion is filed against the cycle the report is in"
+    assert row["sentBack"] is False
+    assert row["actorId"] == world["people"]["inspector"].id
+    assert row["actorName"] == "Assigned Inspector", (
+        "the officer's name is missing from the register, which is what a forgotten "
+        "include={'actor': True} looks like on screen"
+    )
+
+
+async def test_an_inspector_without_a_row_is_404_on_both_write_doors(world, client):
+    """404 AND NEVER 403, exactly as every read on this router answers.
+
+    A 403 would confirm the id exists to precisely the people being turned away, and the two write
+    doors must not become the one place an unassigned officer can enumerate the repository.
+    """
+    workshop_id = _make_workshop(world, "Ikat, closed to an unassigned officer")
+    assert _assign(world, workshop_id, ["inspector"]).status_code == 200
+    assert _hand_in(world, workshop_id).status_code == 200
+
+    assert _feedback(world, workshop_id, "idle", note="I was not asked.").status_code == 404
+    assert _send_back(world, workshop_id, "idle", note="I was not asked.").status_code == 404
+    assert _register(world, workshop_id) == [], "a refused write must write nothing"
+
+
+@pytest.mark.parametrize("status_token", ["DRAFT", "IN_PROGRESS", "COMPLETE", "ARCHIVED"])
+async def test_a_suggestion_on_a_report_nobody_handed_in_is_refused_and_writes_no_row(
+    world, client, status_token
+):
+    """**A 422 WITH A SENTENCE, NOT A 500 FROM A CHECK CONSTRAINT.**
+
+    `submissionRound` is 0 for every one of these, so without the status guard the INSERT is refused
+    by Postgres, the driver raises, and an officer who did nothing wrong is told the server is
+    broken. The row count before and after is what separates "refused" from "refused after writing".
+    """
+    workshop_id = _make_workshop(world, f"Ikat, not yet handed in ({status_token})")
+    assert _assign(world, workshop_id, ["inspector"]).status_code == 200
+    if status_token != "DRAFT":
+        assert _set_status(world, workshop_id, status_token).status_code == 200
+    before = _register(world, workshop_id)
+
+    response = _feedback(world, workshop_id, "inspector", note="This is premature.")
+    assert response.status_code == 422, response.text
+    assert "has not been handed in" in response.json()["detail"]
+    assert _register(world, workshop_id) == before, "a refused suggestion left a row behind"
+
+    sent_back = _send_back(world, workshop_id, "inspector", note="This is premature.")
+    assert sent_back.status_code == 422, sent_back.text
+    assert _register(world, workshop_id) == before
+
+
+async def test_a_send_back_moves_the_status_writes_the_row_and_names_the_officer(world, client):
+    """THE DECISION: one suggestion marked `sentBack`, the status moved, the cache filled.
+
+    The ReviewLog row it also writes has no reader anywhere in this repository — a pre-existing
+    defect this wave adds a writer to rather than creating — so what is asserted here is the half a
+    designer can actually see.
+    """
+    workshop_id = _make_workshop(world, "Ikat, sent back to its designers")
+    assert _assign(world, workshop_id, ["inspector"]).status_code == 200
+    assert _hand_in(world, workshop_id).status_code == 200
+
+    response = _send_back(
+        world, workshop_id, "inspector", note="The cost sheet and the cover date disagree."
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["status"] == "NEEDS_REVISION"
+    assert body["submissionRound"] == 1, "a send-back does not spend a round; handing in does"
+    assert body["reviewNotes"] == "The cost sheet and the cover date disagree."
+    assert body["reviewedById"] == world["people"]["inspector"].id
+    assert body["reviewedAt"]
+    [row] = body["inspectionFeedback"]
+    assert row["sentBack"] is True
+    assert row["actorName"] == "Assigned Inspector"
+
+
+async def test_a_second_officer_sending_back_files_a_row_and_does_not_move_the_status(world, client):
+    """Two officers reading one report at the same time is the ordinary case.
+
+    Refusing the second would lose their correction to a race, and the transition is a no-op —
+    NEEDS_REVISION to NEEDS_REVISION — so nothing moves and the register gains a sentence.
+    """
+    workshop_id = _make_workshop(world, "Ikat, sent back twice")
+    assert _assign(world, workshop_id, ["inspector", "elsewhere"]).status_code == 200
+    assert _hand_in(world, workshop_id).status_code == 200
+    assert _send_back(world, workshop_id, "inspector", note="First officer.").status_code == 200
+
+    second = _send_back(world, workshop_id, "elsewhere", note="Second officer, same round.")
+    assert second.status_code == 200, second.text
+    body = second.json()
+    assert body["status"] == "NEEDS_REVISION"
+    assert body["submissionRound"] == 1
+    assert len(body["inspectionFeedback"]) == 2
+    assert {row["round"] for row in body["inspectionFeedback"]} == {1}
+
+
+async def test_a_blank_note_is_refused_on_both_write_doors(world, client):
+    """A send-back with no sentence tells a designer only that a fortnight of work is wrong.
+
+    Whitespace is the case the wire model's ``min_length=1`` does not catch, which is why the plan
+    strips and refuses it with ``review.py``'s own sentence.
+    """
+    workshop_id = _make_workshop(world, "Ikat, refused a blank note")
+    assert _assign(world, workshop_id, ["inspector"]).status_code == 200
+    assert _hand_in(world, workshop_id).status_code == 200
+
+    assert _feedback(world, workshop_id, "inspector", note="   ").status_code == 422
+    blank = _send_back(world, workshop_id, "inspector", note="   ")
+    assert blank.status_code == 422, blank.text
+    assert "Comments are required" in blank.json()["detail"]
+    assert _register(world, workshop_id) == []
+
+
+async def test_a_designers_edit_is_the_resubmission_and_a_replay_is_not(world, client):
+    """**THE LOOP CLOSES HERE, AND SO DOES THE TRAP.**
+
+    A designer answering an officer does not press a button: they fix the stage, and the save is the
+    resubmission. The second half is the one that would have shipped broken — the planner appends an
+    update for EVERY row the payload names, so a byte-identical replay of that same body looks
+    exactly like an edit unless the plan is asked what actually MOVED. A replay that spent a round
+    would tell every officer the report had been handed back in and would mis-number every
+    suggestion filed afterwards.
+
+    THE EDITOR IS A DESIGNER HOLDING A VIEWER ROW, never the creator: a design workshop's
+    `createdById` is the ADMIN who opened it, so a `createdById == user.id` test — the shape
+    `records.resubmit_status` uses for the six record types — would mean a designer's corrections
+    never resubmitted and an admin's typo fix always did.
+    """
+    workshop_id = _make_workshop(world, "Ikat, corrected and handed back in")
+    assert _assign(world, workshop_id, ["inspector"]).status_code == 200
+    assert _grant_viewer(world, workshop_id, ["colleague"]).status_code == 200
+    assert _hand_in(world, workshop_id).status_code == 200
+    assert _send_back(world, workshop_id, "inspector", note="Name the venue.").status_code == 200
+
+    body = {
+        "entries": [
+            {"entityKey": "workshopSetup", "data": {"venue": "Weavers' Service Centre, Bargarh"}}
+        ]
+    }
+    saved = client.put(
+        f"/api/design-workshops/{workshop_id}/stages/{STAGE_1}",
+        json=body,
+        headers=_headers(world, "colleague"),
+    )
+    assert saved.status_code == 200, saved.text
+
+    detail = client.get(
+        f"/api/design-workshops/{workshop_id}", headers=_headers(world, "colleague")
+    ).json()
+    assert detail["status"] == "PRE_SUBMISSION", "the edit did not hand the report back in"
+    assert detail["submissionRound"] == 2
+    # THE CACHE IS CLEARED: a report waiting for a decision must not name an officer who has not
+    # taken one. The register is untouched, which is what makes that safe.
+    assert detail["reviewNotes"] is None
+    assert detail["reviewedById"] is None
+    assert len(detail["inspectionFeedback"]) == 1
+
+    # ── AND NOW THE REPLAY, WHICH MUST COST NOTHING ──────────────────────────────────────────────
+    assert _send_back(world, workshop_id, "inspector", note="And the date.").status_code == 200
+    replay = client.put(
+        f"/api/design-workshops/{workshop_id}/stages/{STAGE_1}",
+        json=body,
+        headers=_headers(world, "colleague"),
+    )
+    assert replay.status_code == 200, replay.text
+    after = client.get(
+        f"/api/design-workshops/{workshop_id}", headers=_headers(world, "colleague")
+    ).json()
+    assert after["status"] == "NEEDS_REVISION", (
+        "a byte-identical replay of the previous body handed the report back in; `updates` was "
+        "read as a change list, which it is not"
+    )
+    assert after["submissionRound"] == 2, "the replay spent a submission round"
+
+    # One real change, and it resubmits.
+    changed = client.put(
+        f"/api/design-workshops/{workshop_id}/stages/{STAGE_1}",
+        json={
+            "entries": [
+                {"entityKey": "workshopSetup", "data": {"venue": "Weavers' Service Centre, Barpali"}}
+            ]
+        },
+        headers=_headers(world, "colleague"),
+    )
+    assert changed.status_code == 200, changed.text
+    final = client.get(
+        f"/api/design-workshops/{workshop_id}", headers=_headers(world, "colleague")
+    ).json()
+    assert final["status"] == "PRE_SUBMISSION"
+    assert final["submissionRound"] == 3
+
+
+async def test_the_designers_own_read_carries_the_register_and_refuses_the_box(world, client):
+    """Both detail reads carry the same rows in the same shape, and say who may add to them.
+
+    `mayRecordFeedback` is False here and True on the inspection route. It is a SECOND key beside
+    `readOnly` rather than a reuse of it: `readOnly` is about the workshop's CONTENT and fails closed
+    on the handset, so flipping it to enable a feedback box would offer a Save button on every stage
+    form that this API answers 404 to.
+    """
+    workshop_id = _make_workshop(world, "Ikat, read by its designer")
+    assert _assign(world, workshop_id, ["inspector"]).status_code == 200
+    assert _hand_in(world, workshop_id).status_code == 200
+    assert _feedback(world, workshop_id, "inspector", note="Check the cover.").status_code == 201
+
+    detail = client.get(
+        f"/api/design-workshops/{workshop_id}", headers=_headers(world, "creator")
+    ).json()
+    assert detail["mayRecordFeedback"] is False
+    assert detail["inspectionFeedbackTruncated"] is False
+    [row] = detail["inspectionFeedback"]
+    assert row["note"] == "Check the cover."
+    assert row["actorName"] == "Assigned Inspector"
+
+
+def test_no_route_anywhere_updates_or_deletes_a_correction_suggestion():
+    """**APPEND-ONLY, ENFORCED BY THE ABSENCE OF ROUTES.**
+
+    An officer who changes their mind files another suggestion; a correction the designer has already
+    acted on is not editable out of the record afterwards. There is no `resolvedAt` either —
+    resolution is the report entering its next submission round.
+
+    Needs no database, and is here rather than in the gate module because it is about THIS feature's
+    surface. It walks the whole application router, not one prefix, because the second place such a
+    route would be added is the designer's own.
+    """
+    from app.api.router import api_router
+
+    for route in api_router.routes:
+        path = getattr(route, "path", "")
+        if "feedback" not in path:
+            continue
+        assert not (set(getattr(route, "methods", set())) & {"PATCH", "PUT", "DELETE"}), (
+            f"{path} can edit or delete a correction suggestion. The register is append-only: an "
+            f"officer who changes their mind files another row."
+        )

@@ -354,6 +354,7 @@ async def admit(
     full_name: str | None = None,
     note: str | None = None,
     decided: bool = True,
+    client: Any = None,
 ) -> Any:
     """Put an address on the allow-list, or return an already-ACTIVE row to ACTIVE.
 
@@ -380,7 +381,17 @@ async def admit(
     the address on somebody's row as a side effect of an unrelated approval changes what an admin
     sees on the screen with nothing to say why, and moving an address between rows is
     :func:`follow_email_change`'s job, where it is the thing being asked for.
+
+    ``client`` IS THE TRANSACTION THIS WRITE BELONGS TO, and ``None`` means the module singleton —
+    the convention `routes/questionnaire.py` established and `services/access.py` follows. It exists
+    because ``db.tx()`` HANDS BACK A DIFFERENT CLIENT: a callee that goes on writing through the
+    module ``db`` while its caller believes it is inside a transaction is outside it, the writes
+    commit independently, and a rollback leaves exactly the half-state the transaction was opened to
+    make impossible. Nothing about that failure is loud — the happy path passes every test — so the
+    parameter is threaded rather than assumed. See ``services/sanction_orders.create_from_sanction``,
+    which is the caller that needs it.
     """
+    writer = db if client is None else client
     keys = email_match_keys(email)
     if not keys:
         raise ValueError("an allow-list row needs an email address")
@@ -397,9 +408,11 @@ async def admit(
         grant["decidedAt"] = now
         grant["decidedById"] = actor_id
 
-    matched = await db.accessroster.find_many(where={"email": {"in": keys}})
+    matched = await writer.accessroster.find_many(where={"email": {"in": keys}})
     if not matched:
-        return await db.accessroster.create(data={**grant, "email": address, "addedById": actor_id})
+        return await writer.accessroster.create(
+            data={**grant, "email": address, "addedById": actor_id}
+        )
     # THE ROW THE GATE WILL READ, and not merely the first row the index hands back. Where a mailbox
     # somehow has rows under both spellings, :func:`access_row` answers with the barred one, so an
     # admin who admitted the OTHER one would watch this call succeed and the person be refused
@@ -410,7 +423,7 @@ async def admit(
     # Written once; see the docstring. The read-then-write is safe here because both branches are
     # admin actions on one row, not a contended login path.
     update["joinedAt"] = existing.joinedAt or now
-    return await db.accessroster.update(where={"id": existing.id}, data=update)
+    return await writer.accessroster.update(where={"id": existing.id}, data=update)
 
 
 async def follow_email_change(old_email: Any, new_email: Any, *, actor_id: str | None) -> None:

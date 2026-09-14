@@ -195,7 +195,12 @@ def test_inspector_is_outside_the_workshop_role_set_by_construction():
     start honouring viewer rows for them — which is the write grant that module refuses by name.
     """
     assert "INSPECTOR" not in DESIGN_WORKSHOP_ROLES
-    assert sorted(DESIGN_WORKSHOP_ROLES) == ["ADMIN", "DESIGNER", "MASTER_ADMIN"]
+    # THE CLAIM AND NOT THE LITERAL. This read `sorted(...) == ["ADMIN", "DESIGNER",
+    # "MASTER_ADMIN"]` until 2026-09-14, when three directorate tiers joined the set on the owner's
+    # ruling — and a literal list re-breaks on every deliberate change while asserting nothing this
+    # module is about. What these tests rest on is that INSPECTOR is outside it, which is the line
+    # above; this one pins the other half of the premise, that the set is not simply everybody.
+    assert "PROFESSOR" not in DESIGN_WORKSHOP_ROLES
 
 
 async def test_an_inspector_reaches_the_workshop_through_their_own_loader(monkeypatch):

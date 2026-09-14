@@ -1,0 +1,22 @@
+-- ONE NEW VALUE ON "ReviewRecordType", AND IT IS THE FILE'S ONLY STATEMENT.
+--
+-- Same trap as the migration before it: Prisma sends a file as one implicit transaction and a value
+-- added by ADD VALUE cannot be USED in it. "ReviewLog"."recordType" is this type, so any statement
+-- here that inserted or filtered on 'DESIGN_WORKSHOP' would fail the deploy.
+--
+-- WHAT THIS VALUE IS FOR, AND WHAT IT IS NOT FOR. It is for the ReviewLog rows the pre-submission
+-- loop writes, so that "who sent this report back, when, and on what note" is answered from the ONE
+-- audit ledger this product has rather than from a second one built beside it. It is NOT an entry
+-- in `api/routes/review.py::_REVIEW_TYPES`, and adding it there produces a queue that is
+-- permanently empty for the tier the feature exists for: `set_review_status` gates on
+-- `can_review_record(reviewer, creator.role)`, a strictly-greater rank comparison, and a design
+-- workshop's creator is always an ADMIN or MASTER_ADMIN because the create gate admits nobody else.
+-- An INSPECTOR at rank 37 would be refused every design workshop in the database. The enum's own
+-- doc comment in schema.prisma carries the argument in full.
+--
+-- IT IS A SEPARATE FILE FROM 20260913130000 BECAUSE IT IS A DIFFERENT TYPE. One file per type is
+-- the line this repository draws, so that a reader grepping for either token finds a file whose
+-- whole content is the answer.
+
+-- AlterEnum
+ALTER TYPE "ReviewRecordType" ADD VALUE IF NOT EXISTS 'DESIGN_WORKSHOP';

@@ -130,11 +130,38 @@ export const STAGE_CHECK_IS =
  * with this one, because a designer standing at those buttons is asking "does this stop me?", and
  * this screen leads with the stage check, because a designer reading a list of empty boxes is asking
  * "what are these for?". Same words, same order inside each sentence, opposite order on the page.
+ *
+ * ── IT NAMED A BUTTON THAT NO LONGER EXISTS, AND HERE IS THE RULE THAT STOPS IT AGAIN ─────────────
+ *
+ * Until 2026-09-14 this sentence read ““Mark complete” and “Submit”, on the Submission card”. The
+ * review loop renamed that control: `SEND_FOR_REVIEW` in `design-workshops/[id]/page.tsx:355` is
+ * labelled “Hand in for inspection” and writes PRE_SUBMISSION, because SUBMITTED now means the
+ * approved report has gone to the office and only the sanctioning authority's route can write it.
+ * Nothing in this client is labelled “Submit” any more. This screen was not touched in that wave, so
+ * a paragraph three lines long told a designer to press a button that is not on the page — and on
+ * THIS screen the buttons are not in view at all to correct the impression.
+ *
+ * **SO THE SENTENCE NOW NAMES THE CARD AND GIVES THE BUTTON WORDS AS EXAMPLES, NOT AS A LIST.** It
+ * renders in three places against a card whose buttons DEPEND ON THE STATUS — `actionsFor`
+ * (`[id]/page.tsx:427`) offers [Mark complete, Hand in for inspection] from DRAFT and IN_PROGRESS,
+ * [Hand it back in, Withdraw from inspection] from NEEDS_REVISION, [Withdraw from inspection] alone
+ * from PRE_SUBMISSION — while this paragraph is gated only on `outstanding > 0` and knows nothing
+ * about the status. An exhaustive pair was therefore wrong in two of those states even before the
+ * rename, and an exhaustive TRIPLE would be wrong in a third. The record page already prints the
+ * real, complete list beside the real buttons (the `<dl>` of `{action.label}: {action.meaning}`,
+ * `[id]/page.tsx:944`), so this sentence's job is to say WHICH ACT is never refused, not to be a
+ * second register of controls that has to be kept in step by hand.
+ *
+ * If you are about to hard-code the labels again: derive them from the `SubmissionAction` constants
+ * instead, which means moving those constants down here (or into `lib/`) so both screens read one
+ * declaration. That is the durable repair and nothing resists it — see the import-direction note
+ * above {@link STAGE_CHECK_IS} for why the move goes this way round and not the other.
  */
 export const WORKSHOP_STATUS_IS =
-  "The workshop’s status — “Mark complete” and “Submit”, on the Submission card of the workshop itself — " +
-  "records where the whole workshop stands and is never refused for an empty field: requirement 12 is explicit " +
-  "that a workshop may be submitted part-filled.";
+  "The workshop’s status — what the buttons on the Submission card of the workshop itself write, " +
+  "“Mark complete” and “Hand in for inspection” among them — records where the whole workshop stands " +
+  "and is never refused for an empty field: requirement 12 is explicit that a report may be handed in " +
+  "part-filled.";
 
 /** The outstanding fields of one stage, under one heading a designer can recognise. */
 function StageGroup({ stageNumber, stageTitle, items }: { stageNumber: number; stageTitle: string; items: ReadinessItem[] }) {

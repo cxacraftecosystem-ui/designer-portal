@@ -27,18 +27,24 @@ flowchart BT
   D["DESIGNER · 35<br/><i>run design and prototype workshops</i>"]
   I["INSPECTOR · 37<br/><i>read a designer's work — read-only,<br/>and only where scoped (§4.5)</i>"]
   P["PROFESSOR · 40<br/><i>taxonomy + dataset + edit below</i>"]
+  AD["ASSISTANT_DIRECTOR · 42<br/><i>first tier above professor —<br/>reviews and rewrites one</i>"]
+  RD["REGIONAL_DIRECTOR · 45<br/><i>the same, one tier wider</i>"]
+  MA["MINISTRY_ADMIN · 48<br/><i>widest review short of admin —<br/>NOT an admin (§2, is_admin)</i>"]
   A["ADMIN · 50<br/><i>delete + users + late approvals</i>"]
   M["MASTER_ADMIN · 60<br/><i>secrets + settings + releases</i>"]
 
-  V --> F --> R --> D --> I --> P --> A --> M
+  V --> F --> R --> D --> I --> P --> AD --> RD --> MA --> A --> M
 
   style V fill:#f6f6f6,stroke:#999,color:#222
   style F fill:#eef4ff,stroke:#6b8fd6,color:#222
-  style R fill:#e6f0ff,stroke:#4a7fd6,color:#222
-  style D fill:#e4eeff,stroke:#4276d3,color:#222
-  style I fill:#e3edff,stroke:#3e72d1,color:#222
-  style P fill:#e2ecff,stroke:#3a6fd0,color:#222
-  style A fill:#dbe6ff,stroke:#2a5fc8,color:#222
+  style R fill:#e8f1ff,stroke:#4f84d8,color:#222
+  style D fill:#e5efff,stroke:#4679d4,color:#222
+  style I fill:#e3edff,stroke:#4074d2,color:#222
+  style P fill:#e1ebff,stroke:#3b70d0,color:#222
+  style AD fill:#dfe9ff,stroke:#356bce,color:#222
+  style RD fill:#dde7ff,stroke:#3066cc,color:#222
+  style MA fill:#dae4ff,stroke:#2a61ca,color:#222
+  style A fill:#d6e1ff,stroke:#2358c6,color:#222
   style M fill:#d2dfff,stroke:#1a4fbe,color:#222
 ```
 
@@ -46,6 +52,17 @@ flowchart BT
 rather than renumbered is that every stored role value and every `has_rank` comparison in
 `deps.py` goes on meaning exactly what it meant before. A designer runs a workshop and signs the
 report; a researcher documents what they find.
+
+**The three directorate tiers are 42, 45 and 48**, inserted 2026-09-13 into the free 41-49 band with
+nothing renumbered. They are the first tiers ever added **above** `PROFESSOR`, and that is a
+different kind of insert: `can_review_record` is "strictly below me" and `can_edit_others_record` is
+that same comparison narrowed to a Professor floor, so all three clear **both** — a directorate tier
+may reject a professor's record *and* rewrite it, where an inspector at 37 may only reject a
+designer's. They also pick up every Professor-floor capability at once: crafts, workshops, the
+questionnaire builder, dataset download, and the user table. **`MINISTRY_ADMIN` is not an admin.**
+`is_admin` is set membership on `{MASTER_ADMIN, ADMIN}`, so rank 48 opens no part of the admin
+surface — no deletes, no account creation, no access grants, no key store. See
+`backend/tests/test_directorate_tiers.py`.
 
 > **Rank is not the whole answer for a designer.** `can_run_design_workshops` is the one predicate in
 > `deps.py` that is a **SET** — `DESIGNER`, `ADMIN`, `MASTER_ADMIN` — and not a threshold, so a
@@ -232,47 +249,70 @@ clause back in each function.
 Read across: ✅ allowed, ⬜ refused, and a note where the rule is conditional. This is the whole
 gate list; each row names the function in `deps.py` that decides it.
 
-| Capability | Gate | VOL 10 | FIELD 20 | RESEARCH 30 | DESIGN 35 | INSPECT 37 | PROF 40 | ADMIN 50 | MASTER 60 |
-|---|---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
-| Sign in, read lists and search | `get_current_user` | ✅ | ✅ | ✅ | ✅³ | ✅ | ✅ | ✅ | ✅ |
-| Upload media, answer an open interview, comment | `get_current_user` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| **Create** artisan / product / tool / process / interview | `require_record_creator` | ⬜ | ⬜ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Edit **own** record | ownership | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Fill an **empty** field on someone else's record | `assert_can_contribute_fields` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Change or clear a **populated** field on someone else's record | `assert_can_contribute_fields` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜¹ | ✅ | ✅ |
-| Edit a record created by someone **ranked below** | `can_edit_others_record` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ✅ | ✅ | ✅ |
-| Open the **review queue** | `require_reviewer` | grant | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Approve / reject / send back a **specific** record | `can_review_record` | ⬜ | vol only | below only | below only | below only⁴ | below only | below only | ✅ everyone |
-| Approve a **late** (out-of-window) submission | `set_review_status` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ✅ | ✅ |
-| Create or edit a **craft** | `require_craft_manager` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ✅ | ✅ | ✅ |
-| Create or edit a **workshop** | `require_workshop_manager` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ✅ | ✅ | ✅ |
-| Edit the **questionnaire structure** | `require_questionnaire_manager` | grant | grant | grant | grant | grant | ✅ | ✅ | ✅ |
-| **Download the dataset** / Data Browser | `require_dataset_downloader` | grant | grant | grant | grant | grant | ✅ | ✅ | ✅ |
-| View the **user table**, promote / demote | `require_professor` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ✅ | ✅ | ✅ |
-| **Create** or **delete** a user account | `require_admin` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ✅ | ✅ |
-| **Delete** any record | `assert_can_delete` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ✅ | ✅ |
-| Delete **media you uploaded** | route-local | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Grant / decide **workshop access** | `require_admin` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ✅ | ✅ |
-| **Run a design & prototype workshop** | `can_run_design_workshops` | ⬜ | ⬜ | ⬜ | **✅** | **⬜²** | **⬜²** | ✅ | ✅ |
-| **Download the offline speech model** | `can_run_design_workshops` | ⬜ | ⬜ | ⬜ | **✅** | **⬜²** | **⬜²** | ✅ | ✅ |
-| Decide a design workshop's **viewers** (§4.4) | `require_admin` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ✅ | ✅ |
-| Decide a design workshop's **inspectors** (§4.5) | `require_admin` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜⁵ | ⬜ | ✅ | ✅ |
-| Assign **tasks** to other users | `require_admin` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ✅ | ✅ |
-| Rank the **transcription providers** | `require_admin` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ✅ | ✅ |
-| Read / set **API key values** | `require_master_admin` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ✅ |
-| Repository **app settings** | `require_master_admin` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ✅ |
-| Publish an **Android OTA release** | `require_master_admin` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ✅ |
+| Capability | Gate | VOL 10 | FIELD 20 | RESEARCH 30 | DESIGN 35 | INSPECT 37 | PROF 40 | ASST 42 | REGIONAL 45 | MINISTRY 48 | ADMIN 50 | MASTER 60 |
+|---|---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
+| Sign in, read lists and search | `get_current_user` | ✅ | ✅ | ✅ | ✅³ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Upload media, answer an open interview, comment | `get_current_user` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **Create** artisan / product / tool / process / interview | `require_record_creator` | ⬜ | ⬜ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Edit **own** record | ownership | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Fill an **empty** field on someone else's record | `assert_can_contribute_fields` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Change or clear a **populated** field on someone else's record | `assert_can_contribute_fields` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜¹ | ⬜¹ | ⬜¹ | ⬜¹ | ✅ | ✅ |
+| Edit a record created by someone **ranked below** | `can_edit_others_record` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Open the **review queue** | `require_reviewer` | grant | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Approve / reject / send back a **specific** record | `can_review_record` | ⬜ | vol only | below only | below only | below only⁴ | below only | below only⁶ | below only⁶ | below only⁶ | below only | ✅ everyone |
+| Approve a **late** (out-of-window) submission | `set_review_status` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ✅ | ✅ |
+| Create or edit a **craft** | `require_craft_manager` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Create or edit a **workshop** | `require_workshop_manager` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Edit the **questionnaire structure** | `require_questionnaire_manager` | grant | grant | grant | grant | grant | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **Download the dataset** / Data Browser | `require_dataset_downloader` | grant | grant | grant | grant | grant | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **View** design-workshop stage data on screen | `can_view_design_workshop_data` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **Export** design-workshop stage data | `can_export_design_workshop_data` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ✅ | ✅ |
+| Read an artisan's **unmasked Aadhaar number** | `artisans._may_read_full_aadhaar` | ⬜⁸ | ⬜⁸ | ⬜⁸ | ⬜⁸ | ⬜⁸ | ✅⁸ | ✅⁸ | ✅⁸ | ✅⁸ | ✅⁸ | ✅⁸ |
+| See **de-masked identity numbers** and **every uploader's media** on an encoded record | `records.public_encode` / `media_url_owners` | ⬜⁸ | ⬜⁸ | ⬜⁸ | ⬜⁸ | ⬜⁸ | ✅⁸ | ✅⁸ | ✅⁸ | ✅⁸ | ✅⁸ | ✅⁸ |
+| **Take every row out** in a download or export, not only your own | `records.owned_or_granted_where` | ⬜⁸ | ⬜⁸ | ⬜⁸ | ⬜⁸ | ⬜⁸ | ✅⁸ | ✅⁸ | ✅⁸ | ✅⁸ | ✅⁸ | ✅⁸ |
+| A record you create arrives **APPROVED** rather than PENDING | `records.apply_status_policy_create` | ⬜⁸ | ⬜⁸ | ⬜⁸ | ⬜⁸ | ⬜⁸ | ✅⁸ | ✅⁸ | ✅⁸ | ✅⁸ | ✅⁸ | ✅⁸ |
+| View the **user table**, promote / demote | `require_professor` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **Create** or **delete** a user account | `require_admin` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜⁷ | ⬜⁷ | ⬜⁷ | ✅ | ✅ |
+| **Delete** any record | `assert_can_delete` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜⁷ | ⬜⁷ | ⬜⁷ | ✅ | ✅ |
+| Delete **media you uploaded** | route-local | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Grant / decide **workshop access** | `require_admin` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜⁷ | ⬜⁷ | ⬜⁷ | ✅ | ✅ |
+| **Run a design & prototype workshop** | `can_run_design_workshops` | ⬜ | ⬜ | ⬜ | **✅** | **⬜²** | **⬜²** | **⬜²** | **⬜²** | **⬜²** | ✅ | ✅ |
+| **Download the offline speech model** | `can_run_design_workshops` | ⬜ | ⬜ | ⬜ | **✅** | **⬜²** | **⬜²** | **⬜²** | **⬜²** | **⬜²** | ✅ | ✅ |
+| Decide a design workshop's **viewers** (§4.4) | `require_admin` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜⁷ | ⬜⁷ | ⬜⁷ | ✅ | ✅ |
+| Decide a design workshop's **inspectors** (§4.5) | `require_admin` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜⁵ | ⬜ | ⬜⁷ | ⬜⁷ | ⬜⁷ | ✅ | ✅ |
+| Decide a design workshop's **AD and RD** (§4.6) | `assert_may_assign_oversight` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | **⬜⁹** | **⬜⁹** | **✅** | ✅ | ✅ |
+| **Read a workshop I monitor** (§4.6) | `assert_oversight_surface` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | **✅¹⁰** | **✅¹⁰** | **✅¹⁰** | **⬜¹⁰** | **⬜¹⁰** |
+| **File a correction suggestion / send a report back** (§4.5) | `require_inspector` + the row | ⬜ | ⬜ | ⬜ | ⬜ | **✅¹¹** | ⬜ | ⬜ | ⬜ | ⬜ | **⬜¹¹** | **⬜¹¹** |
+| **Upload a workshop's artisan list** | `assert_may_assign_oversight` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | **⬜⁹** | **⬜⁹** | **✅** | ✅ | ✅ |
+| Assign **tasks** to other users | `require_admin` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜⁷ | ⬜⁷ | ⬜⁷ | ✅ | ✅ |
+| Rank the **transcription providers** | `require_admin` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜⁷ | ⬜⁷ | ⬜⁷ | ✅ | ✅ |
+| Read / set **API key values** | `require_master_admin` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ✅ |
+| Repository **app settings** | `require_master_admin` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ✅ |
+| Publish an **Android OTA release** | `require_master_admin` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ✅ |
 
-¹ A Professor may change a populated field on a record created by someone **ranked strictly below**
-them, via `can_edit_others_record`. On a peer's or a superior's record they are refused like anyone
-else. "grant" = refused by rank, allowed if the matching `can*` column is set.
+¹¹ **The inspector's only write, added 2026-09-13, and the two ⬜s on the right are not an
+oversight.** `require_inspector` is `INSPECTION_ROLES` membership — a set of one — so an ADMIN and
+the MASTER_ADMIN are refused this door exactly as a designer is, and are told which route they
+actually want. An admin decides WHO inspects (the row above but two); an inspector decides WHAT the
+report should say. The write is two routes on the inspection surface —
+`POST /api/design-workshop-inspections/{id}/feedback`, which files a suggestion and moves nothing,
+and `POST /api/design-workshop-inspections/{id}/send-back`, which files one and moves the report to
+`NEEDS_REVISION` — and both are refused with a sentence unless the report is in `PRE_SUBMISSION` or
+`NEEDS_REVISION`, because a suggestion belongs to a submission cycle and a report nobody has handed
+in has none. Neither can touch a stage: see §4.5. True as of «2026-09-13»; check
+`grep -n "router.post" backend/app/api/routes/design_workshop_inspections.py`.
+
+¹ A Professor **or any directorate tier** may change a populated field on a record created by
+someone **ranked strictly below** them, via `can_edit_others_record`. On a peer's or a superior's
+record they are refused like anyone else. "grant" = refused by rank, allowed if the matching `can*`
+column is set.
 
 ² **Not a threshold.** `can_run_design_workshops` is a SET — see §1. These are the only ⬜s in the
 table that a *higher* rank does not clear, and the only rows where reading down a column tells you the
-wrong thing. **Two ranks now sit above `DESIGNER` and are refused here, not one** — `INSPECTOR` (37)
-and `PROFESSOR` (40) — which is worth noticing because it is the shape of the rule and not a
-coincidence about professors: the set is "the people who sign the report", and no number gets an
-account into it. The speech-model row reuses that predicate rather than inventing one: the model is a
+wrong thing. **Five ranks now sit above `DESIGNER` and are refused here** — `INSPECTOR` (37),
+`PROFESSOR` (40) and the three directorate tiers (42/45/48) — which is worth noticing because it is
+the shape of the rule and not a coincidence about professors: the set is "the people who sign the
+report", and no number gets an account into it. The speech-model row reuses that predicate rather than inventing one: the model is a
 workshop capture aid, and a laxer gate would make the offline half of dictation reachable by accounts
 the online half is not. It is entitlement only — the artifact is **not** behind the daily dictation cap
 or the Tier 3 consent gate, because neither applies to a file travelling *to* the phone
@@ -282,7 +322,9 @@ or the Tier 3 consent gate, because neither applies to a file travelling *to* th
 itself, before any gate in this table is reached. See §1. **The marker is on the `DESIGNER` cell
 only.** `roster_allows` gates designer accounts and no others, so an `INSPECTOR` needs no
 `DesignerRoster` row and cannot be suspended by one — it is admitted, like every other tier, by the
-platform allow-list alone.
+platform allow-list alone. The three directorate tiers need no `DesignerRoster` row either, for the
+same reason — `roster_allows` gates designer accounts and no others, so nothing on this table can
+suspend them except the platform allow-list.
 
 ⁴ **The one authority rank 37 confers by itself, and the only cell where an inspector's column is
 wider than a designer's.** `can_review_record` is "strictly below me", so an inspector's "below" is
@@ -290,7 +332,9 @@ one tier deeper than a designer's: it reaches **`DESIGNER` as well**, over the r
 in this table, with no §4.5 scope and no grant of any kind involved. Everything else in the column is
 inherited from below or refused. It is deliberate — it is why the tier is at 37 and not at 34 — and
 `backend/tests/test_inspector_tier.py` asserts it in both directions, including that an inspector
-may **not** rewrite the record it just rejected. See §1.
+may **not** rewrite the record it just rejected. See §1. Footnote ⁶ is the directorate version of
+this cell, and it differs in the half that matters: those three tiers clear `can_edit_others_record`
+as well.
 
 ⁵ **The inspected does not choose the inspector, and the ⬜ in the `INSPECT` cell is the sharpest
 instance of that rule.** An inspector cannot put themselves — or anybody else — on a workshop, so the
@@ -300,6 +344,39 @@ make the inspection worth nothing. `replace_inspectors` sits behind `require_adm
 workshop's own creator gets no say at all — not even a “suggest an inspector” route, because a
 suggestion an admin rubber-stamps is the same thing wearing a queue. §4.5 has the argument and the
 route list.
+
+⁶ **"Below only" is wider here than anywhere else on the ladder, and it is the point of these three
+tiers.** `can_review_record` is "strictly below me", so an assistant director's "below" reaches
+`PROFESSOR`; a regional director's reaches `ASSISTANT_DIRECTOR`; a ministry admin's reaches
+`REGIONAL_DIRECTOR`. None reviews a peer, and none reaches `ADMIN` or `MASTER_ADMIN`. **Unlike
+footnote ⁴'s inspector, all three also clear `can_edit_others_record`** — the same comparison narrowed
+to a Professor floor — so they may *rewrite* what they may send back. That is deliberate: the
+directorate corrects work rather than only returning it. `backend/tests/test_directorate_tiers.py`
+asserts both halves for all three, in both directions.
+
+⁷ **Every ⬜ in the three directorate columns on an `is_admin` row is the same refusal, and
+`MINISTRY_ADMIN` is the cell to read twice.** `deps.is_admin` is `role_value(user) in
+{"MASTER_ADMIN", "ADMIN"}` — set membership, not a rank floor — so no number below 50 reaches it and
+48 is not close. A token containing the word ADMIN that passes no admin gate is the most misreadable
+fact in this document; it is stated in `deps.ROLE_RANK`'s comment, in the tier's migration header, on
+`README.md`'s row and here. Widening `is_admin` would grant every row carrying this footnote at once,
+which is the objection `can_read_usage`'s docstring makes in full. **Read it beside footnote ⁸**:
+"not an admin" is not the same sentence as "reads nothing sensitive".
+
+⁸ **Five Professor floors live outside `deps.py`, and the three directorate tiers clear all five
+without a line of code naming any of them.** They are `artisans._may_read_full_aadhaar` (the
+function's own docstring calls Aadhaar *"regulated personal data"* and draws the line at *"the
+researcher who recorded the artisan, and professor-and-above"*), `records.public_encode` (which
+passes `unmasked=` into `_redact_sensitive`, and which resolves media URLs to `ALL_MEDIA_URLS`),
+`records.media_url_owners` (the same answer on the transcript, annexure and export paths),
+`records.owned_or_granted_where` (an empty **download** filter — reading the repository is already
+open to every signed-in account through `viewable_where`, which narrows for nobody, so what this
+floor decides is what *leaves*), and `records.apply_status_policy_create` (APPROVED rather than
+PENDING on create; `workshop_access.pin_pending_if_late` still overrides it for a late workshop
+submission). **None of these had a row in this table before 2026-09-13**, which is why three tiers
+could inherit regulated-PII access from a rank number with nothing to read that said so.
+`backend/tests/test_directorate_tiers.py` pins each as an intention. Re-check the list with
+`grep -rn 'has_rank(' backend/app --include=*.py | grep -v core/deps.py`.
 
 Two asymmetries in that table are deliberate and easy to misread:
 
@@ -367,6 +444,23 @@ empty values and let anyone blank a field out.
 
 ---
 
+⁹ **An Assistant Director and a Regional Director are refused although a MINISTRY ADMIN above them is
+not, and this is the second place in this document where reading down a column tells you the wrong
+thing.** `OVERSIGHT_ASSIGNER_ROLES` is a SET, `{MINISTRY_ADMIN, ADMIN, MASTER_ADMIN}`, and a REGIONAL
+DIRECTOR (45) is outside it even though they outrank the Assistant Director (42) they might be asked
+to name. THE SUPERVISED MUST NOT CHOOSE THE SUPERVISOR — the same rule §4.5 states one rung down as
+"the inspected must not choose the inspector". An RD who should be able to assign is a MINISTRY_ADMIN,
+which is a role change an admin makes on `/users` and not a widening of this set.
+
+¹⁰ **An ADMIN and the MASTER ADMIN are refused this row, by name, on a READ surface.** The only other
+row in this table that does that is §4.5's, and the reason is identical: scoped by their own oversight
+rows an admin sees an empty page and reads it as a broken deployment, and scoped by "everything,
+because they are an admin" this becomes a second full read of every workshop in the archive — the
+"two places to look when somebody has access they should not" that `services/design_workshop_access`
+refuses in its header. An admin's half of this feature is the ASSIGNMENT row above. A MINISTRY_ADMIN
+is the one account in both rows, which is not an accident: they choose who supervises a workshop AND
+may be assigned one.
+
 ## 3. The review and approval state machine
 
 Every record type except `Craft` carries a `status`. `Craft` has none — it is shared vocabulary, not
@@ -400,6 +494,76 @@ stateDiagram-v2
     to any qualified reviewer.
   end note
 ```
+
+**AND THERE IS A SECOND STATE MACHINE, WHICH IS NOT THIS ONE (added 2026-09-13).** A design &
+prototype workshop carries `DesignWorkshopStatus`, not `RecordStatus`, and the two are different
+vocabularies over different tables: the diagram above is a REVIEW QUEUE for the six repository record
+types, and the one below is the life of one 22-stage report. They share two token SPELLINGS —
+`NEEDS_REVISION` and `APPROVED` — and that is deliberate rather than coincidental: it is what lets
+`services/records.review_update` write a workshop's decision with the same four-key dict it writes
+for the other six, instead of a seventh copy that can drift. **A `DesignWorkshop` never appears in
+`/review/pending`**, and adding `DESIGN_WORKSHOP` to `api/routes/review.py::_REVIEW_TYPES` would
+produce a queue that is permanently empty for the tier the feature exists for — `can_review_record`
+compares against the record's CREATOR, and a design workshop's creator is always an admin.
+
+Until 2026-09-13 this machine had **no transitions at all**: `PATCH /design-workshops/{id}` copied
+`status` through a plain field loop and any value could follow any other. The graph is
+`backend/app/schemas/design_workshop_review_loop.py::LEGAL_TRANSITIONS` and it is enforced in
+`update_design_workshop`. Dotted edges are **decisions**: they are refused to a header edit entirely,
+and are taken on a route that writes its `ReviewLog` row in the same transaction, because a status
+change with no audit entry is a decision that appears to have made itself.
+
+```mermaid
+stateDiagram-v2
+  direction LR
+  [*] --> DRAFT: an admin opens the workshop
+  DRAFT --> IN_PROGRESS: any stage save
+  DRAFT --> COMPLETE: the designer marks it
+  IN_PROGRESS --> COMPLETE: the designer marks it
+  COMPLETE --> IN_PROGRESS: reopen for editing
+
+  DRAFT --> PRE_SUBMISSION: hand in for inspection
+  IN_PROGRESS --> PRE_SUBMISSION: hand in for inspection
+  COMPLETE --> PRE_SUBMISSION: hand in for inspection
+  PRE_SUBMISSION --> IN_PROGRESS: withdraw
+
+  PRE_SUBMISSION --> NEEDS_REVISION: an inspector sends it back<br/><b>comments mandatory</b>
+  NEEDS_REVISION --> PRE_SUBMISSION: <b>the designer edits a stage</b><br/>the edit IS the resubmission
+  NEEDS_REVISION --> IN_PROGRESS: withdraw
+
+  PRE_SUBMISSION --> APPROVED: the sanctioning authority approves
+  APPROVED --> NEEDS_REVISION: the approval is withdrawn
+  APPROVED --> SUBMITTED: handed on to the office
+
+  SUBMITTED --> IN_PROGRESS: reopen for editing
+  SUBMITTED --> PRE_SUBMISSION: hand in again
+  ARCHIVED --> IN_PROGRESS: reopen for editing
+  ARCHIVED --> PRE_SUBMISSION: hand in again
+  IN_PROGRESS --> ARCHIVED: archive
+  COMPLETE --> ARCHIVED: archive
+  SUBMITTED --> ARCHIVED: archive
+
+  note right of APPROVED
+    The three edges out of PRE_SUBMISSION
+    and APPROVED marked as decisions are
+    the ONLY four a header edit may not
+    make. APPROVED has no other outward
+    edge at all, which is why the record
+    page prints whose move it is instead
+    of an empty button row.
+    An approved report cannot be archived
+    until it is handed on or the approval
+    is withdrawn: with ARCHIVED --> PRE_SUBMISSION
+    open, that pair was a two-hop path back
+    into the loop with no audit entry.
+  end note
+```
+
+**`SUBMITTED` HAS BEEN REDEFINED AND NOTHING WAS BACKFILLED.** It used to be the designer's own
+forward act; it now means the approved report has gone to the office. Rows that carry the old meaning
+keep the word — nobody approved them, and relabelling them would be a lie in an audit trail — and the
+graph gives them a way into the loop. True as of «2026-09-13»; check
+`grep -n "LEGAL_TRANSITIONS" backend/app/schemas/design_workshop_review_loop.py`.
 
 ### 3.1 Who may move a record, and how status changes actually work
 
@@ -886,6 +1050,43 @@ same warning in its own docstring.
 
 ## 4.5 The inspector scope — the fifth access system, and the only read-only one
 
+> **TWO WRITES SHIPPED FOR THIS TIER ON 2026-09-13, AND THEY ARE ON THIS ROUTER. THE PARAGRAPH
+> THAT PLANNED THEM ELSEWHERE IS CORRECTED RATHER THAN DELETED, BECAUSE ITS ARGUMENT IS STILL THE
+> ONE THAT MATTERS.** It read: *"One write is planned for this tier … `POST
+> /api/design-workshop-presubmission/{id}/suggestions`, gated by
+> `design_workshop_inspectors.assert_may_suggest_corrections` … mounted on a different prefix so that
+> `/api/design-workshop-inspections` stays structurally GET-only and
+> `test_dw_inspector_scope_gate.py::test_the_inspection_surface_offers_no_write_door_of_its_own`
+> needs no amendment."*
+>
+> **What shipped instead, and why.** The routes are
+> `POST /api/design-workshop-inspections/{id}/feedback` and
+> `POST /api/design-workshop-inspections/{id}/send-back`, both `Depends(require_inspector)` and both
+> loaded through the same read-only loader the GETs use. A THIRD PREFIX WOULD HAVE BOUGHT A GREEN
+> TEST AND NOTHING ELSE: the property that test defends is not "this router has no POST", it is that
+> **an inspector cannot touch the designer's content** — and a second router gated by the same
+> dependency, reading the same scope row, defends exactly as much of it while making "which prefix is
+> an inspector's?" a two-answer question. The test was amended deliberately instead, to an allow-list
+> of two named doors with the reason beside each
+> (`test_the_inspection_surface_offers_only_the_two_write_doors_it_is_allowed`), and a third entry in
+> that list is a permission decision rather than a refactor.
+>
+> **Everything the superseded paragraph claimed is still true of what shipped.** Suggesting a
+> *correction to the work* and suggesting *who examines the work* are different acts, and the second
+> remains impossible. A suggestion is not an edit — `can_edit_others_record` is a Professor floor and
+> 37 is below it — so the inspector still cannot rewrite what it is commenting on; the write plan
+> refuses every table but `DwInspectionFeedback`, `DesignWorkshop` and `ReviewLog` by construction,
+> and `DwStageEntry` is not one of them. **And no directorate tier reaches this door either**: the
+> gate is `INSPECTION_ROLES` membership, which is a set of one, so ranks 42, 45 and 48 are refused it
+> exactly as an admin is.
+>
+> **One thing the plan did not say and the shipped routes must.** Both are refused with a sentence —
+> not a 500 — unless the report is in `PRE_SUBMISSION` or `NEEDS_REVISION`. The inspection scope
+> carries no status term, so an officer holding a row on a workshop nobody has handed in reaches the
+> write with `submissionRound` still 0, and the `round >= 1` CHECK constraint would otherwise be the
+> thing that answered them. True as of «2026-09-13»; check
+> `grep -n "NOT_UNDER_REVIEW_REFUSAL" backend/app/schemas/design_workshop_review_loop.py`.
+
 `INSPECTOR` (rank 37, §1) reaches a design workshop **through a row in `DesignWorkshopInspector` and
 never through its rank**. The sentence is meant literally: an inspector with no row sees exactly what
 rank 37 buys in the design-workshop tree, which is nothing at all.
@@ -1038,7 +1239,7 @@ ask for a restore, and an inspector has nothing pending and no restore button.
 > `InspectionListScreen.kt` and `InspectionDetailScreen.kt` behind
 > `NavDestination.DESIGN_WORKSHOP_INSPECTIONS`. The client mirror of the door is
 > `FieldPermissions.canInspectDesignWorkshops`, delegating to `data.canInspectDesignWorkshops`, and
-> `android/…/test/ui/designworkshop/InspectionGateTest.kt` walks all eight tiers over both doors —
+> `android/…/test/ui/designworkshop/InspectionGateTest.kt` walks all eleven tiers over both doors —
 > it is registered in `backend/tests/test_role_ladder_parity.py`, as its web twin now is.
 >
 > **THE ONE PLACE THE TWO CLIENTS DIFFER, AND IT IS DELIBERATE.** The web mounts the appointment
@@ -1071,13 +1272,97 @@ ask for a restore, and an inspector has nothing pending and no restore button.
 
 ---
 
+---
+
+## 4.6 The oversight scope — the sixth access system, and the second read-only one
+
+`DesignWorkshopOversight` says WHO IS ACCOUNTABLE for one design & prototype workshop: exactly one
+Assistant Director and exactly one Regional Director, named per workshop by a Ministry Admin or an
+admin. The primary key is `(designWorkshopId, capacity)` and the capacity is a Postgres enum
+`DwOversightCapacity` with two members.
+
+**What a row confers, and it is the whole list.** The account may READ the workshop through
+`GET /api/design-workshop-oversight/assigned/{id}` — every stage, every entity, the completeness
+scores, and the per-field provenance names — and it appears in their own list at
+`GET /api/design-workshop-oversight/assigned`. That is all.
+
+**What it deliberately does not confer.** No stage write. No report generation. No dictation consent.
+No AI-layer verb. No delete and no restore. No re-granting — an officer cannot put another officer on
+anything. **No media**: `transcripts` is absent from the read, and the photographs, recordings and
+attachments are counted on screen and not carried, because the media predicates are keyed on
+`DesignWorkshopViewer` and `createdById` and an officer holds neither. Whether an officer SHOULD see
+them is an owner's decision that has not been made; today the answer is no, stated in one place,
+rather than yes by inheritance from a predicate written for co-designers — the identical
+non-decision §4.5 records one scope over.
+
+None of that is enforced by a check anybody could forget. It is enforced by the table not being
+consulted from any of those paths, and by `load_overseen_workshop_or_404` having **no `for_edit`
+parameter** — there is no argument an officer's request could carry that turns the read into a write,
+because there is no such argument. `backend/tests/test_workshop_oversight_unit.py` asserts both: the
+loader's signature, and that every route behind `require_officer` is a GET, walked over the real
+dependency tree rather than read off the source.
+
+**WHY IT IS NOT A `capacity` COLUMN ON THE INSPECTOR TABLE.** Six reasons, written out in full in the
+header of `backend/app/services/design_workshop_oversight.py`. The decisive one for a reader of this
+document: `INSPECTION_ROLES` is a frozenset of ONE and the import-time guard that protects it compares
+that set against `DESIGN_WORKSHOP_ROLES` — which neither ASSISTANT_DIRECTOR nor REGIONAL_DIRECTOR is
+in. So adding them to it leaves the assert green and the API booting, while every officer silently
+acquires the whole inspector read surface. A passing assert that does not cover the change is worse
+than no assert at all, which is why the answer is a different table.
+
+**AND IT IS NOT A `DesignWorkshopViewer` ROW, WHICH IS THE ONE MISTAKE THAT WOULD BE SILENT.**
+`load_workshop_or_404(for_edit=True)` carries no role check of its own beyond the grant arm's role
+gate; a viewer row confers every stage save, the AI-layer accept/withdraw, the dictation consent and
+the export ledger. Everything would appear to work and the officer would simply hold more power than
+anyone intended. The one place the oversight service writes a viewer row is `reassign_designer`, and
+the account it names there is a DESIGNER.
+
+**WHICH WORKSHOPS AN OFFICER MAY READ IS DECIDED PER REQUEST, AND IS NOT A ROUTE GUARD.** §5's
+`/officers/monitored` row answers only "may this account open this SURFACE"; which workshops appear on
+it is `oversight_by_clause` on the list and `load_overseen_workshop_or_404` on the detail, and an
+officer with no row sees an empty page with a sentence saying so. A scope honoured by the list but not
+the detail route — or the reverse — tells its holder simultaneously that a workshop exists and that it
+does not.
+
+**WHO MAY ASSIGN, AND WHY IT IS NOT "THE MOST SENIOR OFFICER".** `OVERSIGHT_ASSIGNER_ROLES` is
+`{MINISTRY_ADMIN, ADMIN, MASTER_ADMIN}`. A REGIONAL DIRECTOR is deliberately outside it even though
+they outrank an Assistant Director: THE SUPERVISED MUST NOT CHOOSE THE SUPERVISOR. See §2's footnote ⁹.
+
+**THERE IS NO `OfficerRoster`, AND THE ABSENCE IS A DECISION.** An officer has exactly two facts —
+may they sign in at all (`AccessRoster`, whose `admitRole` column can admit an address straight to
+`REGIONAL_DIRECTOR`) and what may they do (`User.role`). `DesignerRoster` exists because empanelment
+is a fact about an EMAIL that outlives an account and because it confers a role LIFT `AccessRoster`
+could not express at the time; neither transfers. The one genuinely officer-shaped fact — which
+workshop an AD or RD covers — is not an email fact at all: it is per-workshop, it changes when the
+officer transfers, and it must not retroactively re-attribute a workshop that has already been
+submitted. That is this table.
+
+**THE ARTISAN IMPORT SITS ON THIS PREFIX AND IS GATED ON THE ASSIGNER, NOT THE OFFICER.**
+`POST /api/design-workshop-oversight/{id}/artisans/upload` takes the .xlsx pro-forma an office fills
+in and creates `Artisan` records plus stage-3 participant rows. It is a WRITE, so it is behind
+`require_workshop_assigner` and not `require_officer` — which is what keeps every route an officer
+can reach a GET. Three rules worth knowing here: an artisan already in the repository is LINKED to the
+workshop and never duplicated or overwritten; every imported `Location` carries the workshop's own
+venue coordinate as PROVENANCE with a null subject pin, and the upload is refused outright when the
+workshop has none; and every Aadhaar the report mentions is masked before it leaves the parser.
+
+### How this section is kept true
+
+Re-check the shape with `ls backend/app/services/design_workshop_oversight.py` and
+`grep -n "designworkshopoversight" backend/app/services/*.py backend/app/api/routes/*.py` — the
+table should be read from exactly one service. `backend/tests/test_dw_inspector_scope_gate.py`
+asserts the two scopes cannot see each other in both directions, and its `THE_NAMES` sweep asserts
+that nothing outside the inspector feature names that feature's predicates. The route surface is
+`grep -c "@router" backend/app/api/routes/design_workshop_oversight.py`.
+
+
 ## 5. Route guards on the web client
 
 The client's half of gating is declared **once**, in `ROUTE_GUARDS` in `frontend/lib/permissions.ts`,
 and enforced by `AppShell` for the entire `(protected)` tree. A hidden nav entry is not a guard —
 every one of these routes is reachable by typing the URL.
 
-**All nineteen rules, in the order they are declared, as seventeen rows.** Every one of them,
+**All twenty-four rules, in the order they are declared, as twenty-two rows.** Every one of them,
 deliberately — see the note under the table about why a partial list here is worse than no list at
 all.
 
@@ -1086,8 +1371,15 @@ whether something is missing: `/artisans/new`, `/products/new` and `/tools/new` 
 `ROUTE_GUARDS` entries with identical gates, and they share the last row. Nothing else is collapsed.
 This sentence said "all fourteen rules" for as long as there were sixteen — it was counting rows and
 calling them rules — which is a small error to make in the one section of this document whose entire
-argument is that an incomplete list here is worse than no list at all. If you add a rule, the count
-to update is the number of `path:` values; `docs/tools/check-docs.mjs` reports it on every run.
+argument is that an incomplete list here is worse than no list at all. It then said "nineteen rules …
+seventeen rows" while there were twenty and eighteen, which is the same error arriving the same way:
+`checkRouteGuardTable` diffs the path LIST in both directions and has no opinion whatsoever about a
+number written out in words, so nothing went red for as long as the sentence was wrong. Both numbers
+were corrected on 2026-09-13 in the change that added `/sanction-orders`, which is why they moved by
+two rather than by one — and moved again the same day, to twenty-three and twenty-one, when
+`/officers` and `/officers/monitored` landed, and once more to twenty-four and twenty-two when
+`/annual-plan` did. If you add a rule, the count to update is the number of
+`path:` values; `docs/tools/check-docs.mjs` reports it on every run.
 
 | Route | Client gate | Backend dependency it mirrors |
 |---|---|---|
@@ -1096,6 +1388,7 @@ to update is the number of `path:` values; `docs/tools/check-docs.mjs` reports i
 | `/admin/analytics` | `isAdmin` — a **designer is refused**, because this aggregates clusters and workshops beyond their own | `require_admin` |
 | `/admin/designers` | `canManageDesignerRoster` | `require_designer_roster_manager` |
 | `/admin/access` | `canManageAccessRoster` — **admin and above**, deliberately not master-admin-only: the master-admin exemption in the sign-in gate is the break-glass, and a queue only one account can clear would make that exemption a single point of failure | `require_access_manager` |
+| `/annual-plan` | `canManageAnnualPlan` — a **rank floor at Ministry Admin (48)**, deliberately not `isAdmin`, which is set membership `{ADMIN, MASTER_ADMIN}` and would refuse the very tier the page exists for. That is also why the route is TOP-LEVEL and not nested under `/admin`: a rule WIDER than `/admin` sitting beneath it is refused twice over, once by the longest-match guard and once by the hub page's own `isAdmin` check. Regional Director (45) and Assistant Director (42) are below the floor because the annual plan is a national instrument and this table carries no per-region column an edit could be narrowed to — regional editing is a scope table, not a rank change. Read is gated with write: the plan is a list of named places and dates the ministry has not announced yet | `require_annual_plan_manager` (declared in `app/api/routes/annual_plan.py` over `annual_plan.can_manage_annual_plan`, not in `deps.py` — see §"How this document is kept true") |
 | `/design-workshops/:id/provenance` | `isAdmin` — the per-field authorship on each stage stays open to every designer on the workshop; this is the CANONICAL COMPARISON, which crosses into the shared record tables and reports one account's data beside another's | `require_admin` (`GET /design-workshops/{id}/provenance`) |
 | `/settings/api-keys` | `isAdmin` (key **values** are master-admin inside the page) | `require_admin` / `require_master_admin` |
 | `/settings/tasks` | `canAssignTasks` | `require_admin` |
@@ -1105,18 +1398,25 @@ to update is the number of `path:` values; `docs/tools/check-docs.mjs` reports i
 | `/design-review` | `canRunDesignWorkshops` — the same **set**, so a **professor is refused**. A sibling of the workshop tree and not a child, because the pool round reaches ACROSS workshops: a designer ranks work from rounds they were never added to. No prefix rule covered it, so until this row existed the URL was open to every signed-in account | `can_run_design_workshops` (`load_ratable_workshop_or_404`) |
 | `/sketches-and-prototypes` | `canRunDesignWorkshops` — the same **set**, so a **professor is refused**. A sibling of the workshop tree and not a child because the page is CHOSEN-WORKSHOP-FIRST: the designer arrives from the menu with nothing chosen and picks the workshop on the page, so there is no id to nest the path under. Nothing covered it — `routeMatches` compares whole segments — so until this row existed the URL was open to every signed-in account | `can_run_design_workshops` (`load_workshop_or_404` once a workshop is chosen; the picker's own list is `get_current_user` filtered by `visible_to_clause`) |
 | `/design-workshop-inspections` | `canInspectDesignWorkshops` — a **set with ONE member**, so an **ADMIN is refused** as well as a professor and a designer. A sibling of the workshop tree and not a child, mirroring the API's own separate prefix: every caller of every route on it is somebody `load_workshop_or_404` turns away, and a shared prefix invites widening that loader, which grants stage WRITES | `assert_inspection_surface` (`INSPECTION_ROLES` in `services/design_workshop_inspectors.py`) |
+| `/officers` | `canAssignWorkshopOversight` — a **set**, `{MINISTRY_ADMIN, ADMIN, MASTER_ADMIN}`, and the second rule in this table whose refusal is **not monotonic in rank**: a **REGIONAL DIRECTOR (45) is refused** although an Assistant Director (42) they may be asked to name is not. The supervised do not choose the supervisor — the same rule the row above states one rung down. A designer is refused for the same reason one rung the other way. A sibling of the workshop tree and not a child, mirroring the API's own separate prefix | `assert_may_assign_oversight` (`OVERSIGHT_ASSIGNER_ROLES` in `services/design_workshop_oversight.py`) |
+| `/officers/monitored` | `canReadWorkshopOversight` — a **set with three members**, so an **ADMIN is refused** and so is a master admin: `assert_oversight_surface` answers them a 403 by name, because an admin scoped by their own oversight rows sees an empty page and reads it as a broken deployment. Declared AFTER `/officers` and the order does not matter — `routeGuardFor` picks the LONGEST matching path, and the two gate disjoint audiences | `assert_oversight_surface` (`OFFICER_ROLES` in `services/design_workshop_oversight.py`) |
+| `/sanction-orders` | `canRecordSanctionOrders` — a **rank floor at 42**, and the only one in this table: Assistant Director, Regional Director, Ministry Admin, Admin, Master Admin. A **designer is refused**, and so is a professor (40) and an inspector (37) — the person who does the work does not authorise their own budget. A sibling of the workshop tree and deliberately NOT a child of `/admin`, whose `isAdmin` set is NARROWER than this rule: a wider rule nested under a narrower prefix would win the longest match and leave a ministry officer a page the hub itself refuses to link to | `require_sanction_recorder` (`can_record_sanction_orders` in `app/services/sanction_orders.py`) |
 | `/design-workshops` | `canRunDesignWorkshops` — a **set**, not a rank threshold: Designer, Admin, Master Admin, so a **professor is refused** | `can_run_design_workshops` |
 | `/questionnaires` (**plural** — see below) | `canRunDesignWorkshops` — the same set, so a **professor is refused** | `can_run_design_workshops` (`_require_designer`) |
 | `/designers/profile` | `canRunDesignWorkshops` | `require_designer` |
 | `/artisans/new`, `/products/new`, `/tools/new` | `canCreateRecords` | `require_record_creator` |
 
-**Every row above that says "a professor is refused" refuses an `INSPECTOR` too.** The five
-design-workshop-family rules gate on `canRunDesignWorkshops`, which is the SET and not the rank — so
-rank 37 clears none of them, and no rule had to be tightened to keep an inspector out. Two rows move
-for a different reason and both move the same way: the user table is `canManageUsers`
-(`require_professor`, rank 40), so an inspector at 37 is refused it, and the review queue is
-`canReview` (`require_reviewer`, Field Contributor and above), so an inspector opens it — and then
-sees a designer's records in it, which is §2's ⁴ arriving on a screen.
+**Every row above that says "a professor is refused" refuses an `INSPECTOR` and all three
+directorate tiers too.** The five design-workshop-family rules gate on `canRunDesignWorkshops`, which
+is the SET and not the rank, so ranks 37, 42, 45 and 48 clear none of them and no rule had to be
+tightened to keep any of them out. **Three** rows move for a different reason: the user table is
+`canManageUsers` (`require_professor`, rank 40), so an inspector at 37 is refused it and **every
+directorate tier reaches it**; `/data` is `canDownloadDataset` (a Professor floor with a grantable
+escape), so all three reach that as well — and reach it with an empty row filter, which is §2's ⁸ and
+not the same thing as an inspector's grant; and the review queue is `canReview` (Field Contributor
+and above), so an inspector opens it and sees a **designer's** records in it, which is §2's ⁴ arriving
+on a screen, while a directorate account opens it and sees a **professor's**, which is §2's ⁶
+arriving on the same screen.
 
 **WHAT DID CHANGE IS THE ROW ABOVE, AND THIS PARAGRAPH SAID THE OPPOSITE UNTIL THE WEB CLIENT GREW A
 SCREEN.** It read "the inspector's read-only workshop scope (§4.5) is per-workshop and is therefore
@@ -1128,7 +1428,16 @@ guard and cannot become one**: WHICH workshops an inspector may read is decided 
 `load_inspectable_workshop_or_404` on each request, the way §4.4's grant is. The rule above answers
 only whether the account may reach the surface at all.
 
-Note that this is the first row in the table whose refusal is **not** monotonic in rank — an admin is
+`/sanction-orders` is the second row in this table that §2's ladder cannot be reasoned down to, and
+it is the OPPOSITE SHAPE to the one below it. `/design-workshop-inspections` refuses an admin a page
+a rank-37 account may open; `/sanction-orders` admits three tiers **below** admin and refuses a
+professor. §2's ladder gives the right answer for this one, because unlike every other
+design-workshop-family rule it **is** a rank comparison rather than set membership — which is exactly
+why it must be read as such and not "tidied" into a set alongside its neighbours. The reasoning is at
+`can_record_sanction_orders`, and the three surfaces that say its refusal are held byte-for-byte equal
+by `backend/tests/test_sanction_order_gate.py`.
+
+Note that the inspections row is the first row in the table whose refusal is **not** monotonic in rank — an admin is
 refused a page a rank-37 account may open. Nothing else here behaves that way, and `§2`'s ladder will
 give the wrong answer for it every time; the reasoning is at `canInspectDesignWorkshops` and in
 `assert_inspection_surface`, and `frontend/e2e/design-workshop-inspections-unit.spec.ts` pins it.
@@ -1209,9 +1518,11 @@ mechanical standing behind it.
 
 | Claim class | Kept true by |
 |---|---|
-| Role names and ranks | Generated into [REPO_FACTS.md](REPO_FACTS.md), and `docs/tools/check-docs.mjs` **fails** if `ROLE_RANK` in `backend/app/core/deps.py` and `frontend/lib/permissions.ts` ever disagree. That check compares the KEYS and the NUMBERS of **two** copies and nothing else; `frontend/e2e/role-ladder-parity-unit.spec.ts` adds the other two properties the web mirror's header claims — the LABELS and the declaration ORDER — by reading both files off disk rather than hard-coding an expectation, which is why “Inspector / Reviewer” cannot drift on the client that renders it; and `backend/tests/test_role_ladder_parity.py` covers every remaining copy — see the Android row below. True as of 2026-08-27. |
-| Every hand-kept COPY of the ladder, in all three trees | `backend/tests/test_role_ladder_parity.py`, added 2026-08-27. It holds a registry of **twenty-three** mirrors — nine in `frontend/` (`lib/types.ts`, two in `lib/permissions.ts`, `components/hero/AccessLadder.tsx` and five role tuples in `e2e/`), **seven Kotlin literals across four Android source files** (`MainActivity.kt` ranks and labels, `ui/AppNavigation.kt`'s `FieldPermissions.RANKS` and `LABELS`, `ui/TaskAdminScreen.kt`'s display order and labels, `ui/AccessRosterScreen.kt`'s deliberately partial grant list), six role tuples in the Android tests, and **README.md's own Tier / Rank / Powers table** — each held to `ROLE_RANK` by reading it as text (counts true as of 2026-08-27; re-check with `grep -c "    Mirror(" backend/tests/test_role_ladder_parity.py`), and sweeps both client trees for any file naming five or more tiers that the registry has never heard of. Its own header states which mirrors were already self-enforcing and which were not, and one assertion re-derives that claim from the source so it cannot become a comment that used to be true. **When one of these fails, the expectation is `deps.py`** — find the mirror that lagged. |
+| Role names and ranks | Generated into [REPO_FACTS.md](REPO_FACTS.md), and `docs/tools/check-docs.mjs` **fails** if `ROLE_RANK` in `backend/app/core/deps.py` and `frontend/lib/permissions.ts` ever disagree. That check compares the KEYS and the NUMBERS of **two** copies and nothing else; `frontend/e2e/role-ladder-parity-unit.spec.ts` adds the other two properties the web mirror's header claims — the LABELS and the declaration ORDER — by reading both files off disk rather than hard-coding an expectation, which is why “Inspector / Reviewer” cannot drift on the client that renders it; and `backend/tests/test_role_ladder_parity.py` covers every remaining copy — see the Android row below. True as of 2026-09-13. |
+| Every hand-kept COPY of the ladder, in all three trees | `backend/tests/test_role_ladder_parity.py`, added 2026-08-27. It holds a registry of **thirty-two** mirrors — thirteen in `frontend/` (`lib/types.ts`, two in `lib/permissions.ts`, `components/hero/AccessLadder.tsx` and nine role tuples across eight `e2e/` specs), **eight Kotlin literals across five Android source files** (`MainActivity.kt` ranks and labels, `ui/AppNavigation.kt`'s `FieldPermissions.RANKS` and `LABELS`, `ui/TaskAdminScreen.kt`'s display order and labels, `ui/RosterFilters.kt`'s `ROSTER_ROLE_LADDER`, `ui/AccessRosterScreen.kt`'s deliberately partial grant list), ten role tuples across ten Android test files, and **README.md's own Tier / Rank / Powers table** — each held to `ROLE_RANK` by reading it as text (counts true as of 2026-09-13; re-check with `grep -c "    Mirror(" backend/tests/test_role_ladder_parity.py`), and sweeps both client trees for any file naming five or more tiers that the registry has never heard of. Its own header states which mirrors were already self-enforcing and which were not, and one assertion re-derives that claim from the source so it cannot become a comment that used to be true. **When one of these fails, the expectation is `deps.py`** — find the mirror that lagged. |
 | The `INSPECTOR` tier (§1, §2's ⁴) | The rank and the label ride on the two rows above. The **review** half — that an inspector may reject a designer's record and may not rewrite it, that a professor reviews an inspector, that an inspector does not review a peer — is `backend/tests/test_inspector_tier.py`, and `can_review_record`'s docstring is where the decision itself is written down. |
+| The three directorate tiers (§1, §2's ⁶ and ⁷) | The ranks and the labels ride on the two rows above. What each tier may and may not do — that all three review AND rewrite everyone strictly below them including a professor, that none of them is an `is_admin`, that none reaches any design-workshop set except the read-on-screen one (the 2026-09-13 ruling), and that `users.assert_role` bounds what each may mint — is `backend/tests/test_directorate_tiers.py`, and `deps.ROLE_RANK`'s per-tier comments are where the decisions themselves are written down. Added 2026-09-13. |
+| The five Professor floors OUTSIDE `deps.py` (§2's ⁸) | `backend/tests/test_directorate_tiers.py`'s last four tests, which call `artisans._may_read_full_aadhaar`, `records.apply_status_policy_create`, `records.owned_or_granted_where` and `records.media_url_owners` directly. Nothing else watches them: `test_role_ladder_parity`'s sweep stops at `frontend/` and `android/`, and no route test parametrises a directorate tier over an artisan detail read. **The tell that this row has rotted is `grep -rn 'has_rank(' backend/app --include=*.py \| grep -v core/deps.py` returning a site that is not in §2's ⁸.** Added 2026-09-13. |
 | The inspector scope (§4.5) | **Two modules, split along what needs a database, and §4.5's status note says why.** `backend/tests/test_dw_inspector_scope_gate.py` (632 lines) replaces `db` with a tripwire and asserts what is true of the SOURCE — which doors exist, that everybody outside the tier including an admin is refused the read surface, that only an admin reads or writes the roster, that the literal `/eligible-inspectors` path is not swallowed by the `/{workshop_id}` route, that every stage-write door refuses an inspector **before** the database, that the read-only loader has no `for_edit` parameter, that a viewer row and an inspection row cannot satisfy each other's predicate, that `INSPECTION_ROLES` and `DESIGN_WORKSHOP_ROLES` stay disjoint, and that no module outside the feature names its predicates. `backend/tests/test_dw_inspector_scope.py` (928 lines) asserts what only a database can show — the zero state against a deliberately non-empty database, the 404 on the detail route that must agree with it, the three write doors that call `load_workshop_or_404` before they gate, the absent `transcripts`, the two rows' mutual invisibility, and the roster refusals (the creator, a co-designer, a designer, a barred account, an unknown id). **This row read “the service header, and nothing else yet” for part of 2026-08-27**, then named the zero state as the one unasserted property; both were overtaken within the day — see §4.5's status note, which keeps the superseded sentences as the worked example. The single thing to re-check before trusting §4.5 is that `load_inspectable_workshop_or_404` still has **no `for_edit` parameter**: `grep -n "for_edit" backend/app/services/design_workshop_inspectors.py` should find it only in prose. The day it is a parameter, §4.5 is describing a write grant. The RANK half (§2's ⁴) is `backend/tests/test_inspector_tier.py`, including `test_an_inspector_has_no_design_workshop_authority`. |
 | The §2 capability matrix | `backend/tests/test_permission_matrix.py`. Run `python -m pytest -q backend/tests/test_permission_matrix.py`. Every ⬜/✅ should correspond to a case there; a row with no test is a row to distrust. |
 | The gate named in each matrix row | Re-derive with §6's step 1 across `backend/app/api/routes/*.py`. A route whose dependency changed but whose row did not is the failure mode this column exists to catch. |
@@ -1221,6 +1532,7 @@ mechanical standing behind it.
 | The **media** half of a grant (§4.4.1's `MediaFile` row, added 2026-08-27) | `_design_workshop_media_ids` in `backend/app/services/records.py`, which is deliberately the ONE spelling of "the design workshops this account may open": the download filter (`_design_workshop_media_branches`) and the `url` gate (`media_url_scope`) both read it, and the defect that produced this row was those two answering differently. `backend/tests/test_media_entitlement.py` asserts both directions — a grantee is shown this workshop's recordings, a designer with no grant is refused the very same file. The day those two gates stop sharing that helper, this row and §4.4.1 are the first things to distrust |
 | The questionnaire visibility that follows (§4.4.4) | `_works_on_this_questionnaires_workshop` and `_visible_questionnaire_where` in `backend/app/api/routes/questionnaire_forms.py`. The three boundaries are each pinned by a test; the `/options` asymmetry is not, and is the row of §4.4.4 most likely to change |
 | The offline speech-model download row | `_require_entitlement` in `backend/app/api/routes/asr_models.py`, and `backend/tests/test_asr_model_download.py`, which parametrises every role on the ladder and asserts PROFESSOR is **refused** (`INSPECTOR` is refused by the same set, and for the same reason) on the manifest, the bytes and the HEAD. A separate test in that file reads the route's own import lines and asserts the dictation cap and consent gate are absent, which is the half of the rule a role matrix cannot express |
+| The annual-plan gate (§5's `/annual-plan` row) | `backend/tests/test_annual_plan_gate.py`, added 2026-09-13. It parametrises **every tier below 48 out of `ROLE_RANK` itself**, so a tier added later is covered without anybody remembering; asserts that `can_manage_annual_plan` admits a MINISTRY_ADMIN whom `deps.is_admin` refuses — the exact confusion a "simplification" to `require_admin` would introduce; and holds the refusal sentence to one short line naming the tier. `backend/tests/test_annual_plan_routes.py` asserts the other half: that **all ten** arms of `/api/annual-plan` carry the dependency, the GETs included. **The predicate does not live in `deps.py`.** `can_manage_annual_plan` and `ANNUAL_PLAN_REFUSAL` are in `app/services/annual_plan.py` and the dependency is declared in `app/api/routes/annual_plan.py`, for the same reason `sanction_orders.can_record_sanction_orders` is where it is: `deps.py` was owned by another change in flight when this landed. Moving both into `deps.py` is a welcome follow-up, and `test_annual_plan_gate.py`'s last test is the marker that the position is known and deliberate — it asserts `deps` does NOT carry the name, so the move has to delete it. |
 | The route-guard table (§5) | `docs/tools/check-docs.mjs` **fails** when the `path` values in `ROUTE_GUARDS` (`frontend/lib/permissions.ts`) and the routes in §5's table disagree, in either direction. This used to read "diff it against the table" — a human instruction, and the table sat at 7 of 14 rules until an audit counted them. The gate NAMES in the middle column are still a human read; only the completeness of the route list is mechanical. |
 
 **Review triggers** — this document needs a human read whenever any of these change:
@@ -1230,6 +1542,9 @@ mechanical standing behind it.
 `backend/app/services/records.py` (`owned_or_granted_where`, `media_url_owners`, `media_url_scope` —
 these decide the media half of §4.4.1, and are not reachable from any of the gate names above),
 `backend/app/api/routes/questionnaire_forms.py`,
+`backend/app/services/annual_plan.py` and `backend/app/api/routes/annual_plan.py` (the annual-plan
+gate lives in those two rather than in `deps.py` — see the row above, so `deps.py` changing is NOT
+the trigger for it),
 `frontend/lib/permissions.ts`, or the `UserRole` / `RecordStatus` / `DataAccessTier` enums.
 
 **A row that has already gone stale once, as a warning about the failure mode.** `DESIGNER` was

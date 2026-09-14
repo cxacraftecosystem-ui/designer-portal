@@ -62,6 +62,9 @@ const user = (role: UserRole): User => ({ id: "u1", email: "a@b.c", name: "A", r
 const ROLES: UserRole[] = [
   "MASTER_ADMIN",
   "ADMIN",
+  "MINISTRY_ADMIN",
+  "REGIONAL_DIRECTOR",
+  "ASSISTANT_DIRECTOR",
   "PROFESSOR",
   "INSPECTOR",
   "DESIGNER",
@@ -502,6 +505,12 @@ test("the free-text boxes have the microphone the rest of the app has", () => {
 const TILE_OFFERED: Record<UserRole, boolean> = {
   MASTER_ADMIN: true,
   ADMIN: true,
+  // TRUE, and derived rather than decided: `canSeeDataTile` is a PROFESSOR floor with one carve-out,
+  // written that way precisely so a new senior tier is picked up by construction. All three
+  // directorate tiers clear 40, and none of them is an admin.
+  MINISTRY_ADMIN: true,
+  REGIONAL_DIRECTOR: true,
+  ASSISTANT_DIRECTOR: true,
   PROFESSOR: true,
   RESEARCHER: true,
   // FALSE. The owner's instruction names four tiers and neither of these is among them: a designer
@@ -538,7 +547,19 @@ test.describe("the View Data tile", () => {
       red and names both tiers it would have let in.
     */
     const wrongByAFloor = ROLES.filter(
-      (role) => !canSeeDataTile(user(role)) && ["RESEARCHER", "PROFESSOR", "ADMIN", "MASTER_ADMIN", "DESIGNER", "INSPECTOR"].includes(role)
+      (role) =>
+        !canSeeDataTile(user(role)) &&
+        [
+          "RESEARCHER",
+          "PROFESSOR",
+          "ASSISTANT_DIRECTOR",
+          "REGIONAL_DIRECTOR",
+          "MINISTRY_ADMIN",
+          "ADMIN",
+          "MASTER_ADMIN",
+          "DESIGNER",
+          "INSPECTOR"
+        ].includes(role)
     );
     expect(wrongByAFloor.sort()).toEqual(["DESIGNER", "INSPECTOR"]);
   });

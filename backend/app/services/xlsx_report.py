@@ -46,6 +46,7 @@ from io import BytesIO
 from math import ceil
 from typing import Any
 
+from fastapi import Response
 from openpyxl import Workbook
 from openpyxl.cell.cell import Cell
 from openpyxl.cell.rich_text import CellRichText, TextBlock
@@ -56,6 +57,34 @@ from openpyxl.worksheet.hyperlink import Hyperlink
 from openpyxl.worksheet.worksheet import Worksheet
 
 XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+
+def xlsx_response(payload: bytes, filename: str) -> Response:
+    """Finished workbook bytes as a download, with the name the browser should save it under.
+
+    THREE ROUTERS NOW SERVE .xlsx DOWNLOADS AND THE THIRD IS WHY THIS IS PUBLIC. It began as
+    ``_xlsx_response`` inside ``api/routes/questionnaire_forms``, which was the right place while
+    there was one door. It is beside :data:`XLSX_MIME` now because the second and third doors would
+    otherwise either restate the header — and the MIME type for an .xlsx is a 73-character string
+    nobody proof-reads, so a typo in one copy is a download the browser saves as ``.zip`` — or reach
+    into another ROUTE module for a private name, which is the coupling
+    ``design_workshop_inspections`` had to argue for at length when it imported ``_stages_payload``.
+
+    ``Content-Disposition: attachment`` AND NOT ``inline``, deliberately. An .xlsx rendered inline is
+    a browser download prompt on most machines and a blank tab on the rest, and the filename is the
+    only thing standing between a researcher and fourteen files called ``download``.
+
+    THE FILENAME IS THE CALLER'S AND IS NOT SANITISED HERE. Every caller passes a constant or a
+    value that has been through ``_filename_stem``; a header-injecting filename would have to come
+    from a route that built one out of user input, which is a decision that belongs at that route
+    rather than a silent rewrite here.
+    """
+    return Response(
+        content=payload,
+        media_type=XLSX_MIME,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
 
 # Excel's hard per-cell character ceiling; longer values corrupt the file.
 _MAX_CELL_CHARS = 32767

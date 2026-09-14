@@ -628,12 +628,12 @@ class RosterFilterWireTest {
         // simply has no row: the people holding it cannot be filtered for and nothing on screen reads
         // as broken. A token here the ladder does not know ranks 0, below a crowdsource volunteer.
         val ranks = ROSTER_ROLE_LADDER.map { FieldPermissions.rank(it) }
-        assertEquals(8, ROSTER_ROLE_LADDER.size)
+        assertEquals(11, ROSTER_ROLE_LADDER.size)
         assertEquals("every token must be one the ladder knows", ranks.sortedDescending(), ranks)
         assertFalse("a rank of 0 is a token this platform has never heard of", ranks.contains(0))
         ROSTER_ROLE_LADDER.forEach { role ->
             assertNotEquals(
-                "an unlabelled tier renders as its UPPER_SNAKE token beside seven English ones",
+                "an unlabelled tier renders as its UPPER_SNAKE token beside ten English ones",
                 role,
                 FieldPermissions.label(role)
             )
@@ -649,7 +649,7 @@ class RosterFilterWireTest {
         RosterKind.entries.forEach { kind ->
             val values = roleOptions(kind).map { it.value }
             assertTrue("$kind must offer the top of the ladder", values.contains("MASTER_ADMIN"))
-            assertEquals("the ladder plus exactly one reserved row", 9, values.size)
+            assertEquals("the ladder plus exactly one reserved row", 12, values.size)
             assertEquals(
                 "and the reserved row is LAST — it is the absence of a tier, not one of them",
                 if (kind == RosterKind.ACCESS) ADMIT_ROLE_DEFAULT else ROLE_NEVER_SIGNED_IN,

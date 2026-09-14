@@ -142,9 +142,10 @@ import com.designprototype.workshop.data.UserDto
 // ---------------------------------------------------------------------------------------------
 
 /**
- * The EIGHT-tier ladder and the capability predicates the nav gates on.
+ * The ELEVEN-tier ladder and the capability predicates the nav gates on.
  *
- * It said "six-tier" through the whole life of DESIGNER and until INSPECTOR landed on 2026-08-27.
+ * It said "six-tier" through the whole life of DESIGNER and until INSPECTOR landed on 2026-08-27,
+ * and "eight-tier" until the three directorate tiers landed on 2026-09-13.
  * Nothing counts a comment; `backend/tests/test_role_ladder_parity.py` counts the two maps below.
  *
  * Wrapped in an object rather than left as top-level functions on purpose: `MainActivity.kt` already
@@ -188,6 +189,34 @@ object FieldPermissions {
      */
     const val RANK_INSPECTOR = 37
     const val RANK_PROFESSOR = 40
+
+    /**
+     * 42 — the first DIRECTORATE tier, added 2026-09-13, and the first rank ever inserted ABOVE
+     * PROFESSOR on this ladder.
+     *
+     * WHY THAT MATTERS HERE RATHER THAN BEING ONE MORE NUMBER. Every earlier insert
+     * ([RANK_DESIGNER] 35, [RANK_INSPECTOR] 37) went in below 40, so it bought review authority and
+     * nothing else. 42 clears every `>= RANK_PROFESSOR` predicate in this object at once —
+     * [canManageCrafts], [canManageWorkshops], [canManageUsers] — and `MainActivity`'s
+     * `canSetRecordStatus`. The server's `deps.ROLE_RANK` carries the full argument for the number;
+     * this constant exists so the phone agrees rather than approximates.
+     */
+    const val RANK_ASSISTANT_DIRECTOR = 42
+
+    /** 45 — the middle directorate tier. See [RANK_ASSISTANT_DIRECTOR]. */
+    const val RANK_REGIONAL_DIRECTOR = 45
+
+    /**
+     * 48 — the senior directorate tier, and NOT AN ADMIN.
+     *
+     * [isAdmin] below is `rank(user.role) >= RANK_ADMIN`, i.e. 50, so this tier fails it — which
+     * matches the server, where `is_admin` is set membership on MASTER_ADMIN and ADMIN and this
+     * token is in neither. The two agree by arithmetic here and by construction there; a tier added
+     * above 50 would break that agreement silently, and this drawer would offer an admin-only
+     * destination to somebody the API refuses.
+     */
+    const val RANK_MINISTRY_ADMIN = 48
+
     const val RANK_ADMIN = 50
     const val RANK_MASTER_ADMIN = 60
 
@@ -198,6 +227,9 @@ object FieldPermissions {
         "DESIGNER" to RANK_DESIGNER,
         "INSPECTOR" to RANK_INSPECTOR,
         "PROFESSOR" to RANK_PROFESSOR,
+        "ASSISTANT_DIRECTOR" to RANK_ASSISTANT_DIRECTOR,
+        "REGIONAL_DIRECTOR" to RANK_REGIONAL_DIRECTOR,
+        "MINISTRY_ADMIN" to RANK_MINISTRY_ADMIN,
         "ADMIN" to RANK_ADMIN,
         "MASTER_ADMIN" to RANK_MASTER_ADMIN
     )
@@ -220,6 +252,9 @@ object FieldPermissions {
         // its relational sense. Byte for byte the server's ROLE_LABELS["INSPECTOR"].
         "INSPECTOR" to "Inspector / Reviewer",
         "PROFESSOR" to "Professor",
+        "ASSISTANT_DIRECTOR" to "Assistant Director",
+        "REGIONAL_DIRECTOR" to "Regional Director",
+        "MINISTRY_ADMIN" to "Ministry Admin",
         "ADMIN" to "Admin",
         "MASTER_ADMIN" to "Master Admin"
     )
@@ -227,7 +262,15 @@ object FieldPermissions {
     fun rank(role: String?): Int = RANKS[role] ?: 0
     fun label(role: String?): String = LABELS[role] ?: role.orEmpty()
 
-    /** `is_admin` — admin and master admin. */
+    /**
+     * `is_admin` — admin and master admin.
+     *
+     * A FLOOR WHERE THE SERVER IS A SET. `deps.is_admin` is membership of {MASTER_ADMIN, ADMIN};
+     * this is `rank >= 50`. The two agree for every tier that exists, because the three directorate
+     * tiers added 2026-09-13 are 42/45/48 and all below 50 — MINISTRY_ADMIN included, whose token
+     * says admin and which is not one. A tier added ABOVE 50 would make these two disagree and would
+     * hand it the whole admin surface on this client alone. If that day comes, this becomes a set.
+     */
     fun isAdmin(user: UserDto): Boolean = rank(user.role) >= RANK_ADMIN
 
     /** `is_master_admin`. */
@@ -265,7 +308,20 @@ object FieldPermissions {
      *
      * Byte-for-byte `deps.DESIGN_WORKSHOP_ROLES` and the web's own set.
      */
-    private val DESIGN_WORKSHOP_ROLES = setOf("DESIGNER", "ADMIN", "MASTER_ADMIN")
+    private val DESIGN_WORKSHOP_ROLES = setOf(
+        "DESIGNER",
+        // The three directorate tiers, added 2026-09-14 on the owner's ruling. They already read
+        // every workshop; this is the WRITE. STILL A SET AND NOT A FLOOR — PROFESSOR sits between
+        // them and DESIGNER and is deliberately still out.
+        //
+        // INSPECTOR IS DELIBERATELY ABSENT: asked for alongside these three and excluded, because an
+        // inspector in the write set would author the stages it later reviews.
+        "MINISTRY_ADMIN",
+        "REGIONAL_DIRECTOR",
+        "ASSISTANT_DIRECTOR",
+        "ADMIN",
+        "MASTER_ADMIN",
+    )
 
     /**
      * `can_run_design_workshops` — create and edit a design & prototype workshop, generate its
@@ -279,8 +335,9 @@ object FieldPermissions {
      * their name, and being senior to a designer is not the same thing as being one.
      *
      * IT WAS WRITTEN HERE AS `rank(user.role) >= RANK_DESIGNER`, which is the same answer for six of
-     * the EIGHT roles in [RANKS] and the wrong one for TWO of them: INSPECTOR (37) and PROFESSOR
-     * (40) both clear the 35 threshold and are both outside [DESIGN_WORKSHOP_ROLES]. Counted
+     * the ELEVEN roles in [RANKS] and the wrong one for FIVE of them: INSPECTOR (37), PROFESSOR
+     * (40) and the three directorate tiers (42/45/48), all of which clear the 35 threshold and are
+     * all outside [DESIGN_WORKSHOP_ROLES]. Counted
      * 2026-08-27 by evaluating `rank(role) >= RANK_DESIGNER` and `role in DESIGN_WORKSHOP_ROLES`
      * over every key of [RANKS]; it said "six of the seven" while the ladder was seven tiers and
      * PROFESSOR was the only wrong cell. A professor signing in on the phone was
@@ -330,7 +387,17 @@ object FieldPermissions {
      *
      * Byte-for-byte `deps.DESIGN_WORKSHOP_DATA_VIEW_ROLES`.
      */
-    private val DESIGN_WORKSHOP_DATA_VIEW_ROLES = setOf("PROFESSOR", "ADMIN", "MASTER_ADMIN")
+    private val DESIGN_WORKSHOP_DATA_VIEW_ROLES =
+        setOf(
+            "PROFESSOR",
+            // The three directorate tiers joined on 2026-09-13. Still a SET and not a floor: the
+            // tier just below professor is INSPECTOR (37), who reaches one workshop under a grant.
+            "ASSISTANT_DIRECTOR",
+            "REGIONAL_DIRECTOR",
+            "MINISTRY_ADMIN",
+            "ADMIN",
+            "MASTER_ADMIN",
+        )
 
     /**
      * `can_create_design_workshops` — START a new design & prototype workshop. ADMIN AND ABOVE ONLY.
@@ -371,8 +438,9 @@ object FieldPermissions {
      * not.
      *
      * So reading the ladder for this row gives the wrong answer every time, and `rank(user.role) >=
-     * RANK_INSPECTOR` would be wrong for THREE of the eight tiers in [RANKS] — PROFESSOR, ADMIN and
-     * MASTER_ADMIN all clear 37 and are all refused. Getting it wrong that way would offer the menu
+     * RANK_INSPECTOR` would be wrong for SIX of the eleven tiers in [RANKS] — PROFESSOR,
+     * ASSISTANT_DIRECTOR, REGIONAL_DIRECTOR, MINISTRY_ADMIN, ADMIN and MASTER_ADMIN all clear 37 and
+     * are all refused. Getting it wrong that way would offer the menu
      * entry to every admin in the repository and land all of them on a 403; the web hit the same
      * fork and made the same call, and `docs/PERMISSIONS.md` §5 says so explicitly because §2's
      * ladder gives the wrong answer for this row.
@@ -776,8 +844,9 @@ val FIELD_NAV_ITEMS: List<NavEntry> = listOf(
     // WORKSHOPS TO INSPECT — the fifth scope, and THE ONE ROW IN THIS LIST A MASTER ADMIN CANNOT
     // REACH. `assert_inspection_surface` is set membership on {INSPECTOR} and 403s an ADMIN and a
     // MASTER_ADMIN by name, so the predicate is deliberately NOT a rank floor: `>= RANK_INSPECTOR`
-    // would be the wrong answer for THREE of the eight tiers (professor, admin, master admin all
-    // clear 37 and are all refused) and would put this entry in every admin's menu in front of a
+    // would be the wrong answer for SIX of the eleven tiers (professor, the three directorate tiers,
+    // admin and master admin all clear 37 and are all refused) and would put this entry in every
+    // admin's menu in front of a
     // 403. What an admin gets instead is the appointment screen off a workshop's stage index.
     //
     // `Icons.Filled.FindInPage` appears nowhere else in this list, so the one-glyph-per-meaning rule

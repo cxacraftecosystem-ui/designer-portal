@@ -1539,6 +1539,56 @@ data class ReportTemplateDto(
     val description: String = "",
 )
 
+/**
+ * ONE CORRECTION SUGGESTION FILED BY AN INSPECTING OFFICER — `feedback_payload`, eleven keys.
+ *
+ * The TypeScript mirror is `DwInspectionFeedback` in `frontend/lib/designWorkshops.ts` and the
+ * server asserts this exact key set in its own test, so a key added on one side and not the others
+ * is caught there rather than by a screen that silently renders nothing.
+ *
+ * ── IT IS THE REGISTER, AND [DesignWorkshopDto.reviewNotes] IS ONLY A CACHE ──────────────────
+ *
+ * `reviewNotes` holds the LATEST sentence and the server NULLS it the moment the report is handed
+ * back in, so a "what was sent back" panel built from that column shows one line during a review and
+ * nothing at all afterwards — which is precisely when the designer is working through the
+ * corrections. These rows are the answer, every suggestion ever filed, each carrying the round it
+ * was filed against, so "what were the four corrections in round 2" is still answerable after round
+ * five. Clearing the cache costs nothing BECAUSE this register exists.
+ *
+ * ── NULL [actorName] IS A REAL STATE AND NOT A LOADING ONE ────────────────────────────
+ *
+ * The account relation is Restrict so the officer cannot have been deleted, but a name column can
+ * legitimately be blank. Print "an officer no longer named" — never the workshop's own designer,
+ * who did not write it, and never a blank where a name belongs.
+ *
+ * BOTH MOMENTS ARE CARRIED, and the pair is the point rather than a duplication: [recordedAt] is
+ * what the DEVICE said and is null when the suggestion was filed straight against the server;
+ * [createdAt] is when the server heard it. On this fleet those can be a fortnight apart.
+ *
+ * EVERY FIELD DEFAULTS, the convention [DwInspectionDetailDto] states: a handset a fortnight behind
+ * the server still decodes a payload that has grown a key.
+ */
+@Serializable
+data class DwInspectionFeedbackDto(
+    val id: String = "",
+    val designWorkshopId: String = "",
+    /** The submission cycle this was filed against. Copied at write time and never recomputed. */
+    val round: Int = 0,
+    /** A `StageSpec.key`, or null for a suggestion about the report as a whole — which is the common
+     *  case and a real answer, not a missing one. */
+    val stageKey: String? = null,
+    /** A `FieldSpec.key` inside that stage, or null. NOT validated by the server: an officer may name
+     *  a field a client one release ahead is showing, so a screen must tolerate an unknown key. */
+    val fieldKey: String? = null,
+    val note: String = "",
+    /** True for the one suggestion that moved the report to Needs revision. */
+    val sentBack: Boolean = false,
+    val actorId: String = "",
+    val actorName: String? = null,
+    val recordedAt: String? = null,
+    val createdAt: String? = null,
+)
+
 /** The workshop header, as `workshop_summary` serves it. */
 @Serializable
 data class DesignWorkshopDto(
@@ -1583,6 +1633,42 @@ data class DesignWorkshopDto(
     /** When the ARTISAN answered, which on this fleet can be a fortnight before the server heard it. */
     val dictationConsentAt: String? = null,
     val dictationConsentById: String? = null,
+    /*
+      WHERE THIS REPORT STANDS IN THE PRE-SUBMISSION LOOP — four keys `workshop_summary` has carried
+      since 2026-09-13 and that this handset decoded for one day: nowhere.
+
+      THIS IS WHY IT MATTERED. `ApiClient.json` sets `ignoreUnknownKeys = true`, so a key nobody
+      declares is not an error and not a warning — it is silence. An inspector sends a report back
+      (status NEEDS_REVISION, `reviewNotes` set, a `DwInspectionFeedback` row per correction) and the
+      handset syncs and shows the workshop EXACTLY as before. The designer then edits an unrelated
+      stage; `PUT /design-workshops/{id}/stages/{key}` is the only design-workshop write this client
+      declares and `WorkshopSync` pushes any stage whose signature differs, so an unattended
+      background sync is enough — and the server reads that edit as the resubmission
+      (`design_workshops.py:5614`: NEEDS_REVISION plus changed content re-enters PRE_SUBMISSION),
+      spending a submission round and clearing the decision cache. The officers get the report back
+      unchanged, the round is gone, and nothing errored anywhere. Declaring these four is what lets a
+      screen say a review cycle happened.
+
+      READ THEM AS A CACHE, NOT AS THE RECORD. [reviewNotes] is the LATEST sentence and the server
+      NULLS all three of it, [reviewedById] and [reviewedAt] on every hand-back;
+      [DwInspectionFeedbackDto] on the detail payload is the durable register. A panel built from
+      [reviewNotes] shows one line during a review and nothing afterwards.
+
+      [reviewedById] IS AN ID AND NOT A NAME. The list resolves no accounts, exactly as it resolves
+      no `dictationConsentByName` and for the same reason — a lookup per row on a paged endpoint to
+      print something the list does not show. The feedback rows carry `actorName`; that is where a
+      screen gets a name.
+    */
+    val reviewNotes: String? = null,
+    val reviewedById: String? = null,
+    val reviewedAt: String? = null,
+    /**
+     * How many times this report has been handed in. ZERO MEANS NEVER, and it is true of every
+     * workshop that predates the column as well as of every draft — the two are indistinguishable
+     * here on purpose, because neither has been read by an officer. Never sent by a client: the
+     * server counts it, and nothing anywhere decrements it.
+     */
+    val submissionRound: Int = 0,
 )
 
 @Serializable
@@ -2063,6 +2149,49 @@ data class DesignWorkshopDetailDto(
      * put somebody else's name against it.
      */
     val dictationConsentByName: String? = null,
+    /*
+      THE REVIEW-LOOP HEADER, the same four keys as [DesignWorkshopDto] and for the same reason: this
+      payload is `workshop_summary` with the stages folded in. Decoded HERE as well as on the list row
+      because this is the payload the workshop's own screen reads, and that screen is where a designer
+      would learn that officers have asked for corrections.
+    */
+    val reviewNotes: String? = null,
+    val reviewedById: String? = null,
+    val reviewedAt: String? = null,
+    val submissionRound: Int = 0,
+    /**
+     * EVERY CORRECTION SUGGESTION EVER FILED against this report, newest first — the SINGLE-RECORD
+     * read only, never the list, because it is a second query per workshop to print something a paged
+     * list does not show. The same rule [dictationConsentByName] follows one field up.
+     *
+     * Empty is the ordinary answer and not a failure: most reports have never been sent back.
+     */
+    val inspectionFeedback: List<DwInspectionFeedbackDto> = emptyList(),
+    /**
+     * TRUE WHEN THE REGISTER HELD MORE ROWS THAN THIS READ CARRIES. Bounded rather than paged, so
+     * this flag is the whole of the truncation story and a screen that draws the list owes the reader
+     * a sentence when it is set: a long correspondence must not be allowed to look like a short one.
+     *
+     * Absent reads as false, which is the safe direction HERE and the opposite of
+     * [DwInspectionDetailDto.readOnly]'s rule — an unknown flag must not cry truncation at a complete
+     * list. Same asymmetry, same reasoning, as [DwEligibleInspectorListDto]'s own `truncated`.
+     */
+    val inspectionFeedbackTruncated: Boolean = false,
+    /**
+     * MAY THIS ACCOUNT FILE A SUGGESTION ABOUT THIS REPORT? **Absent means no**, and the default
+     * below is what says so.
+     *
+     * FALSE ON THIS PAYLOAD ALWAYS — a designer does not file corrections about their own report, and
+     * the server states that on the wire (`routes/design_workshops.py` sets it False here and True on
+     * the inspection route) rather than letting each client infer it from which URL it called. It is
+     * declared on this type all the same, because both clients render this payload and the
+     * inspector's through screens that share components, and a component reading one key cannot be
+     * wrong about which of the two it was handed.
+     *
+     * The dangerous default is the other one: a screen that offered the box on a payload with no flag
+     * would offer it to the designer being inspected, who would then be refused by the route.
+     */
+    val mayRecordFeedback: Boolean = false,
 )
 
 @Serializable

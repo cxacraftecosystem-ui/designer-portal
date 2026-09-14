@@ -536,7 +536,71 @@ export type DwStageData = {
  * The workshop header
  * ──────────────────────────────────────────────────────────────────────────── */
 
-export type DwStatus = "DRAFT" | "IN_PROGRESS" | "COMPLETE" | "SUBMITTED" | "ARCHIVED";
+export type DwStatus =
+  | "DRAFT"
+  | "IN_PROGRESS"
+  | "COMPLETE"
+  | "PRE_SUBMISSION"
+  | "NEEDS_REVISION"
+  | "SUBMITTED"
+  | "APPROVED"
+  | "ARCHIVED";
+
+/**
+ * **THE TRANSITION GRAPH, MIRRORED FROM THE SERVER — and the server is the authority.**
+ *
+ * `backend/app/schemas/design_workshop_review_loop.py::LEGAL_TRANSITIONS` is the same table and
+ * `update_design_workshop` enforces it; this copy exists so the record page can DERIVE its buttons
+ * instead of listing them. A button offering a status the server refuses, and a status the server
+ * allows with no button for it, are the two halves of the same bug, and a hand-written list of
+ * controls produces one or the other within a release.
+ *
+ * **THE CONSUMER IS `actionsFor` IN `app/(protected)/design-workshops/[id]/page.tsx`, AND IT ONLY
+ * BECAME ONE ON 2026-09-14.** For one day these three exports were dead: the record page's own
+ * docstring said every button was checked against them while `actionsFor` was a hand-written switch,
+ * so the sentence that made this table worth maintaining was the sentence that was false. If a
+ * future change makes this the only reference to them again, that is not tidiness — it is the mirror
+ * going back to being a promise, and the claim in that docstring has to come out in the same edit.
+ *
+ * Until 2026-09-13 there was nothing to mirror: any status could follow any other, and the
+ * confirmation dialog on the record page said so out loud.
+ */
+export const DW_LEGAL_TRANSITIONS: Record<DwStatus, DwStatus[]> = {
+  DRAFT: ["IN_PROGRESS", "COMPLETE", "PRE_SUBMISSION", "ARCHIVED"],
+  IN_PROGRESS: ["COMPLETE", "PRE_SUBMISSION", "ARCHIVED"],
+  COMPLETE: ["IN_PROGRESS", "PRE_SUBMISSION", "ARCHIVED"],
+  PRE_SUBMISSION: ["IN_PROGRESS", "NEEDS_REVISION", "APPROVED"],
+  NEEDS_REVISION: ["IN_PROGRESS", "PRE_SUBMISSION"],
+  SUBMITTED: ["IN_PROGRESS", "PRE_SUBMISSION", "ARCHIVED"],
+  // Both of APPROVED's edges are decisions, so a header edit may make neither. That is why
+  // `noActionsReason` on the record page exists: an empty button row reads as a broken page.
+  APPROVED: ["SUBMITTED", "NEEDS_REVISION"],
+  ARCHIVED: ["IN_PROGRESS", "PRE_SUBMISSION"]
+};
+
+/**
+ * The four edges a DECISION ROUTE owns, which `PATCH /design-workshops/{id}` answers 422 to.
+ *
+ * Sending a report back, approving it, withdrawing an approval and handing it on each write an
+ * audit row in the same transaction as the status. A status change with no audit entry is a
+ * decision that appears to have made itself, so none of these is a button on the designer's card —
+ * not even a disabled one, which would be a control that cannot ever work.
+ */
+export const DW_DECISION_EDGES: ReadonlyArray<readonly [DwStatus, DwStatus]> = [
+  ["PRE_SUBMISSION", "NEEDS_REVISION"],
+  ["PRE_SUBMISSION", "APPROVED"],
+  ["APPROVED", "NEEDS_REVISION"],
+  ["APPROVED", "SUBMITTED"]
+];
+
+/** The statuses a HEADER EDIT may set from here — the graph less the decision edges. */
+export function dwPatchableFrom(status: string): DwStatus[] {
+  const from = DW_LEGAL_TRANSITIONS[status as DwStatus];
+  if (!from) return [];
+  return from.filter(
+    (next) => !DW_DECISION_EDGES.some(([a, b]) => a === (status as DwStatus) && b === next)
+  );
+}
 
 /**
  * The list row. Everything from `workshopCode` down is DENORMALISED from stage 1 by
@@ -598,6 +662,41 @@ export type DwSummary = {
   updatedAt: string | null;
   deletedAt: string | null;
   /**
+   * THE PRE-SUBMISSION LOOP: THE CACHE OF THE LATEST DECISION, and the count of hand-ins.
+   *
+   * **OPTIONAL HERE AND REQUIRED ON `DwDetail`, AND THE ASYMMETRY IS A FACT ABOUT THIS TYPE RATHER
+   * THAN A HEDGE.** `workshop_summary` always sends all four, on the list row as well as the single
+   * read — so on anything that came off the wire they are always present, which is why `DwDetail`
+   * below re-declares them as required and why a screen reading a server payload can rely on them.
+   *
+   * But `DwSummary` is ALSO the shape two local constructions produce: `draftSummary` in
+   * `lib/designWorkshopStore.ts` and `draftHeader` on the record page both build one out of the
+   * IndexedDB draft, whose header record holds ten columns and has never held these. A required key
+   * here would therefore not mean "the server always sends it" — it would mean "the offline store
+   * must invent it", and the value it would have to invent is exactly the misleading one: a
+   * `submissionRound: 0` on a report that has been handed in three times, written by a device that
+   * simply does not know.
+   *
+   * SO THE RULE FOR A READER IS: absent means THIS VALUE CAME FROM THIS DEVICE'S DRAFT, not "never
+   * handed in". Anything that needs the answer reads it from the single-record payload, where it is
+   * required.
+   *
+   * `reviewNotes` IS A CACHE AND NOT THE RECORD. It is the LATEST sentence and it is CLEARED the
+   * moment the report is handed back in, so a "what was sent back" panel built from it shows one
+   * line during a review and nothing at all afterwards. The register is
+   * {@link DwDetail.inspectionFeedback}, which the two detail reads carry and the list deliberately
+   * does not.
+   *
+   * `reviewedById` IS AN ID AND NOT A NAME. The list resolves no accounts; the feedback rows carry
+   * `actorName`, which is where a screen gets a name from.
+   */
+  reviewNotes?: string | null;
+  reviewedById?: string | null;
+  reviewedAt?: string | null;
+  /** How many times this report has been handed in. Zero means never — true of every workshop that
+   *  predates the column, and never sent by a client: the server counts it. */
+  submissionRound?: number;
+  /**
    * WHO DELETED IT — **on the trash listing alone**, and optional for that reason rather than as a
    * hedge against an older server.
    *
@@ -615,7 +714,103 @@ export type DwSummary = {
   deletedByName?: string | null;
 };
 
-export type DwDetail = DwSummary & {
+/**
+ * ONE CORRECTION SUGGESTION, as `feedback_payload` sends it — eleven keys, and they are the contract.
+ *
+ * The Kotlin mirror is `DwInspectionFeedbackDto`, and the server's own test asserts this exact key
+ * set, so a field added on one side and not the others is caught there rather than by a screen that
+ * renders nothing.
+ *
+ * `actorName` CAN BE NULL AND THAT IS A REAL STATE, not a loading one: the account relation is
+ * Restrict so the officer cannot have been deleted, but a name column can be blank. Print "an
+ * officer no longer named" — never the workshop's own designer, who did not write it.
+ *
+ * BOTH MOMENTS ARE CARRIED. `recordedAt` is what the DEVICE said and is null when the suggestion
+ * was filed straight against the server; `createdAt` is when the server heard it.
+ */
+export type DwInspectionFeedback = {
+  id: string;
+  designWorkshopId: string;
+  /** The submission cycle this suggestion was filed against. Copied at write time, never recomputed,
+   *  so "what was asked for in round 2" is still answerable after round 5. */
+  round: number;
+  /** A `StageSpec.key`, or null for a suggestion about the report as a whole — which is the common
+   *  case and is a real answer rather than a missing one. */
+  stageKey: string | null;
+  /** A `FieldSpec.key` inside that stage, or null. NOT validated by the server: an officer may name
+   *  a field a client one release ahead is showing. */
+  fieldKey: string | null;
+  note: string;
+  /** True for the one suggestion that moved the report to Needs revision. */
+  sentBack: boolean;
+  actorId: string;
+  actorName: string | null;
+  recordedAt: string | null;
+  createdAt: string | null;
+};
+
+/**
+ * The three keys BOTH detail reads add — the designer's and the inspector's.
+ *
+ * Spelled once and spread into both types, because the two screens render the same register and a
+ * second declaration is how they come to disagree about whether a key exists.
+ *
+ * OPTIONAL, for `dictationConsentByName`'s stated reason: a server predating them reads as absent
+ * rather than as a type error at a boundary the compiler cannot police. Absence must therefore be
+ * treated as "no" and never as "unknown, assume yes" — see {@link dwMayRecordFeedback}.
+ */
+export type DwInspectionFeedbackKeys = {
+  inspectionFeedback?: DwInspectionFeedback[];
+  /** True when the register held more rows than the read carries. Say so; a long history must not
+   *  look like a short one. */
+  inspectionFeedbackTruncated?: boolean;
+  /** May THIS account file a correction suggestion about this report? False on the designer's own
+   *  read, true on the inspector's. */
+  mayRecordFeedback?: boolean;
+};
+
+/**
+ * MAY THIS ACCOUNT FILE A SUGGESTION? **Absent means no.**
+ *
+ * The dangerous default is the other one: a screen that offered the box on a payload with no flag
+ * would offer it to the designer being inspected, on a route that answers 404. This is the twin of
+ * `inspectionIsReadOnly`, which fails closed for the same reason in the opposite direction, and the
+ * two answer DIFFERENT questions — `readOnly` is about the workshop's CONTENT and must stay true on
+ * an inspection even while the feedback box is offered.
+ */
+export function dwMayRecordFeedback(detail: DwInspectionFeedbackKeys | null | undefined): boolean {
+  return detail?.mayRecordFeedback === true;
+}
+
+/** The register newest-first, grouped by the submission cycle each suggestion was filed against. */
+export function dwFeedbackRounds(
+  rows: DwInspectionFeedback[] | undefined | null
+): Array<{ round: number; rows: DwInspectionFeedback[] }> {
+  const byRound = new Map<number, DwInspectionFeedback[]>();
+  for (const row of rows ?? []) {
+    const bucket = byRound.get(row.round) ?? [];
+    bucket.push(row);
+    byRound.set(row.round, bucket);
+  }
+  return [...byRound.entries()]
+    .sort((a, b) => b[0] - a[0])
+    .map(([round, group]) => ({ round, rows: group }));
+}
+
+export type DwDetail = DwSummary &
+  DwInspectionFeedbackKeys & {
+    /**
+     * THE FOUR THE SINGLE READ ALWAYS CARRIES, narrowed from optional to required.
+     *
+     * `DwSummary` leaves them optional because it is also the shape the offline draft store builds
+     * (see the note there). A `DwDetail` is only ever a payload this server answered with, and
+     * `workshop_summary` writes all four every time — so on this type they are facts, and a screen
+     * that reads `detail.submissionRound` is not reading a maybe.
+     */
+    reviewNotes: string | null;
+    reviewedById: string | null;
+    reviewedAt: string | null;
+    submissionRound: number;
   /**
    * Who recorded the current answer, resolved. **The single-record read only**, deliberately:
    * `consent_keys` leaves it out of the list because serialising it there would be a name lookup per
@@ -1454,6 +1649,64 @@ export function getDesignWorkshop(id: string) {
 
 export function patchDesignWorkshop(id: string, body: DwUpdateBody) {
   return apiFetch<DwSummary>(`/design-workshops/${id}`, { method: "PATCH", body: JSON.stringify(body) });
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * The inspector's two write doors
+ *
+ * THEY ARE DECLARED HERE, BESIDE THE TYPE THEY ANSWER WITH, and not in
+ * `lib/designWorkshopInspections.ts` where the inspection READS live. The register is decoded by
+ * BOTH screens — the officer's and the designer's — so its type belongs to the module that owns the
+ * workshop wire shapes, and a call declared away from the type it returns is how a second, subtly
+ * different shape comes to exist. (The reads stay where they are: this is an addition, not a move.)
+ *
+ * ONLINE-ONLY, LIKE THE STATUS PATCH AND FOR THE SAME REASON. The web outbox sends a fixed 10-key
+ * header PATCH with no `status` in it; routing either of these through it would never send them and
+ * would leave `headerDirtyAt` set, which makes the store refuse to refresh that workshop's header
+ * for as long as it stands. Every caller must say so in its failure sentence.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+export type DwFeedbackBody = {
+  note: string;
+  /** A stage key the registry declares, or omitted for the report as a whole. */
+  stageKey?: string | null;
+  fieldKey?: string | null;
+  /** The device's own moment, ISO-8601. Omitted when filing straight against the server — a copy of
+   *  `createdAt` here would later read as "a device reported this", which would be false. */
+  recordedAt?: string | null;
+};
+
+/** What both write doors answer with: the header, plus the register as it now stands. */
+export type DwFeedbackAnswer = DwSummary &
+  DwInspectionFeedbackKeys & {
+    readOnly?: boolean;
+  };
+
+/**
+ * File one correction suggestion. **The report's status does not move.**
+ *
+ * 201. Filing a suggestion and sending the report back are two acts with two buttons, because the
+ * second one moves a status, writes an audit row and puts a fortnight of somebody's work back on
+ * their desk.
+ */
+export function recordInspectionFeedback(workshopId: string, body: DwFeedbackBody) {
+  return apiFetch<DwFeedbackAnswer>(`/design-workshop-inspections/${workshopId}/feedback`, {
+    method: "POST",
+    body: JSON.stringify(body)
+  });
+}
+
+/**
+ * Send the report back to its designers with mandatory comments (status becomes Needs revision).
+ *
+ * A blank note is refused by the server with the same sentence the six repository record types get:
+ * a send-back with no sentence tells a designer only that a fortnight of work is wrong.
+ */
+export function sendWorkshopBackForRevision(workshopId: string, body: DwFeedbackBody) {
+  return apiFetch<DwFeedbackAnswer>(`/design-workshop-inspections/${workshopId}/send-back`, {
+    method: "POST",
+    body: JSON.stringify(body)
+  });
 }
 
 /**

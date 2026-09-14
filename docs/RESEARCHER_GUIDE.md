@@ -85,11 +85,13 @@ The web app needs nothing installed. Open the URL, sign in.
 
 ---
 
-## 4. What the eight roles actually mean
+## 4. What the eleven roles actually mean
 
 Roles are a ladder. Each rung includes everything below it — with exactly one exception, named
-under the table, and it is the one that concerns designers. (Eight since 2026-08-27, when
-**Inspector / Reviewer** was added between Designer and Professor.)
+under the table, and it is the one that concerns designers. (Eleven since 2026-09-13, when
+**Assistant Director**, **Regional Director** and **Ministry Admin** were added between Professor and
+Admin. Eight since 2026-08-27, when **Inspector / Reviewer** was added between Designer and
+Professor.)
 
 | Role | In practice |
 |---|---|
@@ -99,10 +101,20 @@ under the table, and it is the one that concerns designers. (Eight since 2026-08
 | **Designer** | Everything a researcher does, plus the one thing this portal exists for: running a design & prototype workshop end to end — its stages, its custom sections, its AI layers — and signing the report that goes out under your name. A designer account can only sign in while the designer roster still lists it. |
 | **Inspector / Reviewer** | For somebody who **examines a designer's work without running workshops themselves** — an examiner, an external assessor, a funder's reviewer. Everything a researcher does, plus you can review, reject and send back a **designer's** records, plus **read-only** sight of the stage data of any design workshop an admin has put you on. You **cannot** run a workshop, change a single stage of one, generate its report, or sign anything — outranking a designer does not get you that (see the first rule below). Nor does being put on a workshop hand you its recordings, photographs or transcripts: that was left as a decision for the owners to make rather than something the tier quietly came with. |
 | **Professor** | Everything a researcher does, plus: manage the craft and workshop vocabularies, edit the questionnaire itself, download the full dataset, review anyone below you, and edit records created by anyone below you. |
+| **Assistant Director** | Everything a professor does, plus one thing no tier below has: you can **correct a professor's records**, not only send them back. Craft and workshop vocabularies, the questionnaire, the full dataset, the user table. You **cannot** run a design & prototype workshop — that belongs to designers, admins and the master admin, and no amount of seniority reaches it. |
+| **Regional Director** | The same, one rung wider: an assistant director's work comes under your review and correction too. |
+| **Ministry Admin** | The widest review and correction authority below Admin. **Despite the name, this is not an admin account.** You cannot create or delete a user, delete a record, grant workshop access, appoint an inspector, or open the Settings hub — every one of those is reserved to Admin and Master Admin by name rather than by rank. What you do hold is everything a professor holds, over everyone below you. |
 | **Admin** | Plus: create and delete user accounts, **delete records**, grant workshop access, assign tasks, and approve late submissions. |
 | **Master Admin** | Plus: provider API keys, repository settings, publishing app updates. One account. |
 
-Three rules that catch people out:
+Everyone at Professor and above — which now includes the three directorate roles — sees an artisan's
+**full Aadhaar number** rather than the masked `XXXX XXXX 9012` everyone else sees, sees every
+colleague's photographs, audio and transcripts rather than only their own, and takes the whole
+archive rather than only their own rows when they download it. If that is not what your institution
+intends for a role, say so before somebody is promoted into it — it follows from the rank and not
+from a setting anybody can turn off per person.
+
+Four rules that catch people out:
 
 - **Being senior to a designer does not make you one.** Running a design & prototype workshop is
   the only power on this list that is not inherited upwards: it belongs to designers, admins and
@@ -121,6 +133,11 @@ Three rules that catch people out:
 - **Only admins delete.** Everyone else's mistake is fixed by editing or by rejecting, not removing.
   The exception: you may always delete **media you uploaded yourself**, from the record's edit
   screen, without holding any delete rights.
+- **"Ministry Admin" is not an administrator here.** It is the one role name in this product whose
+  everyday English meaning and its meaning in the software point in different directions. The three
+  directorate tiers are senior to a professor for **reviewing and correcting work**; they are not
+  administrators of the system. If somebody in a directorate role needs to create accounts or delete
+  records, they need an Admin account, and that is a separate decision somebody makes deliberately.
 
 The complete matrix, if you need to settle an argument, is [PERMISSIONS.md](PERMISSIONS.md).
 

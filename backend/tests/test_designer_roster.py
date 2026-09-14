@@ -741,9 +741,19 @@ async def test_the_directory_cap_is_spent_on_designers_the_roster_still_admits(
     roster read's cap. With the cap at one, the suspended probe is the row the take lands on: the
     old code returned NOTHING here, having spent its only row on an account it then discarded.
     """
-    from app.api.routes import designers as designers_route
+    # PATCHED ON THE SERVICE, NOT ON THE ROUTE, and app/api/routes/designers.py:146 says why in as
+    # many words: the constant moved to app.services.designers because the query that SPENDS it is
+    # shared with the officer's designer picker, and it was deliberately not re-imported into the
+    # route module — "a binding nothing reads is a binding a test will patch, and patching it here
+    # would change nothing while LOOKING like it shrank the cap."
+    #
+    # This test patched the route anyway. `monkeypatch.setattr` with no `raising=False` then failed
+    # outright — AttributeError, on CI only, since this suite needs a database — which is a better
+    # outcome than the silent pass that note was warning about: the cap was never shrunk, so the
+    # assertion below was never really testing a cap at all.
+    from app.services import designers as designers_service
 
-    monkeypatch.setattr(designers_route, "DIRECTORY_TAKE", 1)
+    monkeypatch.setattr(designers_service, "DIRECTORY_TAKE", 1)
     probe = f"Cap Probe {world['stamp']}"
 
     admitted = directory_rows(client, world, search=probe)

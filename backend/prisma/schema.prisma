@@ -10,12 +10,13 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-/// Eight-tier role ladder, strictly ordered by privilege:
-/// MASTER_ADMIN > ADMIN > PROFESSOR > INSPECTOR > DESIGNER > RESEARCHER > FIELD_CONTRIBUTOR >
-/// CROWDSOURCE_VOLUNTEER. Each tier inherits everything below it; grantable can* booleans lift
-/// single capabilities. "Ordered by privilege" means the RANK numbers in
-/// app/core/deps.py::ROLE_RANK — 60/50/40/37/35/30/20/10, eight of them, counted off that dict —
-/// and not the declaration order below; see the paragraph immediately above `enum UserRole`.
+/// Eleven-tier role ladder, strictly ordered by privilege:
+/// MASTER_ADMIN > ADMIN > MINISTRY_ADMIN > REGIONAL_DIRECTOR > ASSISTANT_DIRECTOR > PROFESSOR >
+/// INSPECTOR > DESIGNER > RESEARCHER > FIELD_CONTRIBUTOR > CROWDSOURCE_VOLUNTEER. Each tier inherits
+/// everything below it; grantable can* booleans lift single capabilities. "Ordered by privilege"
+/// means the RANK numbers in app/core/deps.py::ROLE_RANK — 60/50/48/45/42/40/37/35/30/20/10, eleven
+/// of them, counted off that dict — and not the declaration order below; see the paragraph
+/// immediately above `enum UserRole`.
 ///
 /// DESIGNER sits between PROFESSOR and RESEARCHER because a designer runs a workshop and signs the
 /// report that comes out of it — strictly more than a researcher who documents what they find, and
@@ -28,6 +29,13 @@ datasource db {
 /// (`can_review_record`) and is deliberately OUTSIDE `deps.DESIGN_WORKSHOP_ROLES`, so it can never
 /// run a workshop or sign a report — that set is membership, not a threshold.
 ///
+/// ASSISTANT_DIRECTOR (42), REGIONAL_DIRECTOR (45) and MINISTRY_ADMIN (48) landed 2026-09-13 in the
+/// free 41-49 band, again renumbering nothing. All three sit ABOVE PROFESSOR, which is strictly
+/// larger than the INSPECTOR insert was: 42 clears both `can_review_record` (strictly-below) and
+/// `can_edit_others_record` (that same comparison narrowed to a Professor floor), so a directorate
+/// tier may REWRITE a professor's, an inspector's and a designer's records. MINISTRY_ADMIN is NOT
+/// an admin — `deps.is_admin` is set membership on MASTER_ADMIN and ADMIN and no number reaches it.
+///
 /// A DESIGNER must also appear on the DesignerRoster to sign in — see that model. The role says
 /// what somebody may do; the roster says whether the institution still recognises them.
 ///
@@ -38,6 +46,15 @@ datasource db {
 enum UserRole {
   MASTER_ADMIN
   ADMIN
+  /// Rank 48 — the senior directorate tier. NOT an admin: `deps.is_admin` is set membership on
+  /// MASTER_ADMIN and ADMIN, so this value passes no admin gate. See
+  /// `migrations/20260913100200_ministry_admin_role/migration.sql`.
+  MINISTRY_ADMIN
+  /// Rank 45 — reviews and may rewrite the records of everyone at ASSISTANT_DIRECTOR and below.
+  REGIONAL_DIRECTOR
+  /// Rank 42 — the first tier above PROFESSOR, and therefore the first that may rewrite a
+  /// professor's record (`deps.can_edit_others_record`). Outside every design-workshop set.
+  ASSISTANT_DIRECTOR
   PROFESSOR
   /// Rank 37 — inspects and reviews a designer's work without running workshops. NOT in
   /// `deps.DESIGN_WORKSHOP_ROLES`: an inspector never signs a report. See
@@ -131,6 +148,19 @@ enum ReviewRecordType {
   PROCESS
   QUESTIONNAIRE
   MEDIA
+  /// A DESIGN & PROTOTYPE WORKSHOP, ADDED 2026-09-13 FOR THE PRE-SUBMISSION LOOP — and it is here
+  /// so that the loop writes its audit rows into the ONE ledger this product has, not so that
+  /// `/review/{record_type}/…` grows a seventh entry. It deliberately does NOT appear in
+  /// `api/routes/review.py::_REVIEW_TYPES`, and a reader who adds it there will produce a queue
+  /// that is permanently empty for the tier the feature exists for:
+  ///
+  ///   `set_review_status` gates on `can_review_record(reviewer, creator.role)`, which is a
+  ///   STRICTLY-GREATER rank comparison against the record's CREATOR. A design workshop's creator
+  ///   is always an ADMIN or a MASTER_ADMIN, because the create gate admits nobody else — so an
+  ///   INSPECTOR at rank 37 is refused every one of them, and only the master admin could ever
+  ///   act. The decision is taken on `/design-workshop-inspections`, with a per-workshop scope a
+  ///   rank cannot express, and it writes a ReviewLog row carrying THIS value.
+  DESIGN_WORKSHOP
 }
 
 enum MediaProcessingJobType {
@@ -273,6 +303,20 @@ model User {
   /// A READ-ONLY scope — see `DesignWorkshopInspector`, which enumerates what it does not carry.
   designWorkshopsInspected      DesignWorkshopInspector[] @relation("DesignWorkshopInspectorUser")
   designWorkshopInspectionsSet  DesignWorkshopInspector[] @relation("DesignWorkshopInspectorAssignedBy")
+  /// ── THE SIXTH SCOPE, AND THE SECOND READ-ONLY ONE ──────────────────────────────────────────
+  ///
+  /// Design workshops this account SUPERVISES as their Assistant Director or Regional Director,
+  /// and the assignments it has made as a Ministry Admin. The same Cascade/SetNull pairing as the
+  /// two viewer relations above and for the same two reasons; `DesignWorkshopOversight` states in
+  /// full what the Cascade costs, which is that deleting an officer's account erases the record
+  /// that they supervised the workshop.
+  designWorkshopsOverseen         DesignWorkshopOversight[] @relation("DesignWorkshopOversightUser")
+  designWorkshopOversightAssigned DesignWorkshopOversight[] @relation("DesignWorkshopOversightAssignedBy")
+  /// Artisan lists this account has uploaded into a design workshop. SetNull on the far side: the
+  /// ledger row outlives the officer who pressed the button, because the question it answers —
+  /// "where did these fourteen artisans come from" — is asked months later by somebody reading a
+  /// ministry document.
+  artisanImportsUploaded          DwArtisanImport[]         @relation("DwArtisanImportUploadedBy")
   /// Design workshops this account has ASKED to be let into, and the requests it has answered as an
   /// admin. Cascade on the first (a request is not authorship and must not hold up an account
   /// deletion) and SetNull on the second (the decision outlives the admin who made it) — the same
@@ -314,6 +358,12 @@ model User {
   /// DwWorkshopConsentDecision.
   dwDictationConsentsRecorded DesignWorkshop[]            @relation("DesignWorkshopDictationConsentBy")
   dwDictationConsentDecisions DwWorkshopConsentDecision[] @relation("DwWorkshopConsentDecisionActor")
+  /// The pre-submission loop: the workshops whose LATEST decision this account took (SetNull — a
+  /// cache of the act) and the append-only suggestions themselves (Restrict — this account told a
+  /// named designer to change a ministry document, and that must outlive the account). Exactly the
+  /// pairing the two consent relations above are.
+  dwWorkshopsReviewed         DesignWorkshop[]            @relation("DesignWorkshopReviewedBy")
+  dwInspectionFeedback        DwInspectionFeedback[]      @relation("DwInspectionFeedbackActor")
   /// The sketches and prototypes this account has rated. RESTRICT on the far side, joining the two
   /// relations above rather than the meters below: a rating is a named judgement of a colleague's
   /// work that is shown to admins with the name on it and counted into a ranking the maker sees, so
@@ -391,12 +441,29 @@ model User {
   usageConsentDecisions UsageConsentDecision[] @relation("UsageConsentDecisionUser")
   designerRosterEntries  DesignerRoster[] @relation("DesignerRosterAddedBy")
   designerProfile        DesignerProfile? @relation("DesignerProfileUser")
+  /// Sanction orders this account is NAMED ON — the designer the ministry issued the order to.
+  /// Restrict, so the account cannot be deleted while one stands; `routes/users.py`'s
+  /// `_NAMED_ON_RELATIONS` is what turns that refusal into a sentence naming how many there are.
+  sanctionOrdersNamed    SanctionOrder[]  @relation("SanctionOrderDesigner")
+  /// Sanction orders this account RECORDED — the ministry officer's authorship trail, and the
+  /// reason an officer who has recorded one is as undeletable as anyone who has created a record.
+  sanctionOrdersRecorded SanctionOrder[]  @relation("SanctionOrderCreatedBy")
   // Custom questionnaires this designer built from the .xlsx pro-forma, and the answer sheets they
   // filled in. Deliberately separate from `questionnaireInterviews` above: that relation is the ONE
   // global artisan questionnaire, this one is a form the designer authored themselves.
   questionnairesOwned        Questionnaire[]             @relation("QuestionnaireOwner")
   questionnaireFormEntries   QuestionnaireFormEntry[]    @relation("QuestionnaireFormEntryCreatedBy")
   questionnaireFormAnswers   QuestionnaireFormAnswer[]   @relation("QuestionnaireFormAnsweredBy")
+  /// The ministry's annual plan of workshops: the rows this account withdrew, promoted, created and
+  /// last corrected. FOUR RELATIONS AND NOT ONE `annualPlanEntries`, because the four columns behind
+  /// them answer four different questions an administrator actually asks ("who took this out of the
+  /// plan?", "who opened it?"), and Prisma requires a named back-relation per foreign key anyway.
+  /// Every one is ON DELETE SET NULL — see the model — so none of them makes an account undeletable
+  /// and none belongs in `routes/users.py`'s `_NAMED_ON_RELATIONS`.
+  annualPlanEntriesWithdrawn AnnualPlanEntry[]           @relation("AnnualPlanEntryWithdrawnBy")
+  annualPlanEntriesPromoted  AnnualPlanEntry[]           @relation("AnnualPlanEntryPromotedBy")
+  annualPlanEntriesCreated   AnnualPlanEntry[]           @relation("AnnualPlanEntryCreatedBy")
+  annualPlanEntriesUpdated   AnnualPlanEntry[]           @relation("AnnualPlanEntryUpdatedBy")
 
   @@index([role])
 }
@@ -2214,11 +2281,51 @@ model RecordRevision {
 /// Where a design workshop is in its life. Deliberately NOT `RecordStatus`: that enum models a
 /// review queue (PENDING -> APPROVED/REJECTED), and a workshop is not reviewed, it is run. A
 /// workshop can also be ARCHIVED long after it is COMPLETE, which the review enum cannot say.
+///
+/// ⚠ THAT PARAGRAPH IS STILL TRUE AND IS NO LONGER THE WHOLE STORY (extended 2026-09-13). A
+/// workshop is run AND THEN inspected: the owner's requirement is a dedicated Pre-submission
+/// stage in which an Inspecting Officer files correction suggestions, the designer edits and
+/// resubmits, and a sanctioning authority finally approves. Three tokens are added for that, and
+/// they are added HERE rather than as a second `RecordStatus` column on the same row, because two
+/// status columns on one row is two writers with no arbitration — the defect
+/// `api/routes/design_workshops.py`'s PATCH docstring already pays for on the six promoted columns.
+///
+/// THE TOKENS ARE SPELLED AS `RecordStatus` SPELLS THEM ON PURPOSE. `NEEDS_REVISION` and
+/// `APPROVED` are character-for-character the repository's own, so `services/records.review_update`
+/// — which returns {status, reviewNotes, reviewedById, reviewedAt} — is reused UNCHANGED for a
+/// workshop. A third spelling ("SENT_BACK", "SIGNED_OFF") would have meant a second implementation
+/// of the same four-key write and a second vocabulary for one idea.
+///
+/// THIS ENUM NOW HAS A TRANSITION GRAPH, WHICH IT HAS NEVER HAD BEFORE. Until 2026-09-13 `PATCH
+/// /design-workshops/{id}` copied `status` through a plain field loop and any value could follow
+/// any other. `app/schemas/design_workshop_review_loop.py::LEGAL_TRANSITIONS` is the graph and
+/// `api/routes/design_workshops.py::update_design_workshop` is where it is enforced. Adding a
+/// token here without adding it there makes the token unreachable, not free.
+///
+/// **`SUBMITTED` HAS BEEN REDEFINED AND EXISTING ROWS ARE NOT BACKFILLED.** It used to be the
+/// designer's own forward act — "this is the version being handed on" — and it is now the state
+/// AFTER approval: the approved report has gone to the office. A workshop somebody submitted last
+/// month was not approved by anybody, so the migration writes no UPDATE; those rows keep the word
+/// and the graph gives them a way into the loop (`SUBMITTED -> PRE_SUBMISSION`).
+///
+/// DECLARATION ORDER IS COSMETIC. Postgres orders an enum by creation sequence, so the three new
+/// tokens sort LAST in the database whatever this block says. Never `ORDER BY "status"`.
 enum DesignWorkshopStatus {
   DRAFT
   IN_PROGRESS
   COMPLETE
+  /// The designer has handed the report to the inspecting officers and is waiting. The ONLY state
+  /// from which a send-back or an approval may be taken.
+  PRE_SUBMISSION
+  /// An inspecting officer sent it back with comments. The comments are `DwInspectionFeedback`
+  /// rows; `reviewNotes` caches the latest one. THE NEXT STAGE SAVE THAT CHANGES SOMETHING PUTS
+  /// THE WORKSHOP BACK INTO PRE_SUBMISSION — the edit IS the resubmission, which is the rule
+  /// `services/records.resubmit_status` has run over six record types since it was written.
+  NEEDS_REVISION
   SUBMITTED
+  /// The sanctioning authority is satisfied. Reachable ONLY through the approvals route, never
+  /// through PATCH — see `DECISION_EDGES` in the review-loop module.
+  APPROVED
   ARCHIVED
 }
 
@@ -2289,6 +2396,61 @@ model DesignWorkshop {
   /// a draft written under an older registry is detectable here, which is what lets a migration
   /// run once rather than being guessed at on every read.
   schemaVersion String?
+
+  /// ==================================================================================
+  /// THE PRE-SUBMISSION LOOP: THE CACHE OF THE LATEST DECISION. Added 2026-09-13.
+  /// ==================================================================================
+  ///
+  /// THREE COLUMNS AND A LOG, exactly as the Tier-3 consent below it is, and for the same reason
+  /// stated there at length: the columns are the CURRENT answer every list and every screen reads
+  /// without walking a log, and `DwInspectionFeedback` is what has BEEN said, which is the only way
+  /// "sent back on the 3rd with four corrections, handed back in on the 5th" is answerable at all.
+  ///
+  /// THE NAMES ARE THE REPOSITORY'S, BYTE FOR BYTE. `Artisan`, `ProductDocumentation`,
+  /// `ToolDocumentation`, `Process`, `QuestionnaireInterview` and `MediaFile` all carry this exact
+  /// trio, and `services/records.review_update(status, notes, reviewer_id)` builds it. Reusing the
+  /// spelling is what lets that one function write a workshop's decision as well, rather than a
+  /// seventh hand-written dict that can disagree with the other six.
+  ///
+  /// `reviewNotes` IS A CACHE AND NOT THE RECORD. The next decision overwrites it, and entering
+  /// PRE_SUBMISSION CLEARS all three — a workshop waiting for a decision must not name an officer
+  /// who has not taken one. Anything that needs the history — and the designer's "what was sent
+  /// back" panel does — reads `inspectionFeedback`, which loses nothing when the cache is cleared.
+  reviewNotes String?
+
+  /// WHO took the last decision. Nullable so the relation below can be SetNull — the same
+  /// reasoning as `dictationConsentById`: the ACT is recorded in the append-only log with a
+  /// RESTRICT actor, so this pointer going null loses a name on a cache and not a record of
+  /// responsibility.
+  reviewedById String?
+
+  /// WHEN the last decision was taken, on the SERVER's clock. There is deliberately no device
+  /// clock here: a decision is taken against this server by a signed-in officer on a screen, and
+  /// `DwInspectionFeedback.recordedAt` is where an offline capture's own moment goes.
+  reviewedAt DateTime?
+
+  /// HOW MANY TIMES THIS WORKSHOP HAS BEEN HANDED IN — incremented by exactly one on every
+  /// entry into PRE_SUBMISSION, and never by a client.
+  ///
+  /// **THIS IS NOT `DwReviewRound`, AND THE TWO MUST NEVER BE CONFLATED.** `DwReviewRound` is
+  /// {PEER, POOL} and means an AUDIENCE — the people who were in the room, versus every designer
+  /// on the platform once `peerRoundClosedAt` is set on one sketch or prototype row. It says
+  /// nothing about submission cycles, three clients already match exhaustively over its two
+  /// tokens, and a cycle number pushed into it would break all three at once. This is a plain
+  /// counter of submission cycles and it is an `Int` for that reason.
+  ///
+  /// ZERO MEANS "NEVER HANDED IN", which is true of every workshop in the database on the day
+  /// this column lands, so the default needs no backfill and asserts nothing that is not already
+  /// the case. `DwInspectionFeedback.round` copies the value the workshop held when the row was
+  /// written, so a suggestion filed in round 2 stays in round 2 for ever.
+  ///
+  /// ONE WRITER-RULE, TWO WRITE SITES. `PATCH /{id}` and `save_stage`'s in-transaction header
+  /// write both move a workshop into PRE_SUBMISSION, so both call
+  /// `schemas/design_workshop_review_loop.presubmission_header(current_status)` and neither builds
+  /// the dict itself. A second hand-written `{"increment": 1}` is how the two come to disagree,
+  /// and every feedback row written after the drift names the wrong cycle FOR EVER, because
+  /// `round` is copied and never recomputed.
+  submissionRound Int @default(0)
 
   /// ==================================================================================
   /// TIER 3 CONSENT: may THIS workshop's recordings leave the device? Plan §6 answer 3.
@@ -2364,6 +2526,15 @@ model DesignWorkshop {
   /// The two must never be merged, and no read that decides a WRITE may consult this relation.
   /// See `DesignWorkshopInspector`.
   inspectors DesignWorkshopInspector[] @relation("DesignWorkshopInspectors")
+  /// THE SIXTH SCOPE: who is ACCOUNTABLE for this workshop — its Assistant Director and its
+  /// Regional Director, one of each. Not a variant of `inspectors` above however alike the rows
+  /// look: that table is an ACCESS grant whose removal is a delete, this one is a statement of who
+  /// supervises a piece of work and it outlives the monitoring. And emphatically not `viewers`,
+  /// which confers every stage write. See `DesignWorkshopOversight`.
+  oversight DesignWorkshopOversight[] @relation("DesignWorkshopOversight")
+  /// Every accepted upload of an artisan list into this workshop, and what each one did. A ledger
+  /// and not an access table — see `DwArtisanImport`.
+  artisanImports DwArtisanImport[] @relation("DesignWorkshopArtisanImports")
   /// The people who have ASKED to be let in and have not been, plus the settled history of every
   /// ask ever answered. A separate table from `viewers` on purpose — a grant is current fact and is
   /// deleted when it ends, an ask and its refusal are history and are kept. See
@@ -2418,9 +2589,39 @@ model DesignWorkshop {
   /// answer IS; this says what it has BEEN, which is the only way "granted on the 3rd, withdrawn on
   /// the 9th" is answerable at all.
   dictationConsents DwWorkshopConsentDecision[] @relation("DesignWorkshopDictationConsents")
+
+  /// SetNull, exactly as `dictationConsentBy` above is and for that column's stated reason: the
+  /// review trio is a CACHE of the latest decision, and the record of the ACT is
+  /// `DwInspectionFeedback`, whose actor is Restrict. An officer deleted out from under this
+  /// leaves a workshop that says "sent back, by somebody no longer on record" rather than a failed
+  /// delete or a silently un-sent-back report.
+  reviewedBy User? @relation("DesignWorkshopReviewedBy", fields: [reviewedById], references: [id], onDelete: SetNull)
+
+  /// Every correction suggestion ever filed against this workshop, in order. The columns above say
+  /// what the last decision WAS; this says what has been ASKED FOR, round by round, and it is the
+  /// only thing the designer's "what was sent back" screen can be built from.
+  inspectionFeedback DwInspectionFeedback[] @relation("DesignWorkshopInspectionFeedback")
   /// Every peer- and pool-round rating filed against this workshop's sketches and prototypes.
   /// Denormalised onto the rating so the level-1 review page needs no join; see DwReviewRating.
   reviewRatings     DwReviewRating[]            @relation("DesignWorkshopReviewRatings")
+
+  /// The ministry instrument that authorised this workshop, when one did. NULL for every workshop
+  /// an admin opened by hand through POST /design-workshops, which stays exactly as it was. The
+  /// relation is OPTIONAL on this side and NOT NULL on the other, which is the shape that says
+  /// "a sanction order always has a workshop; a workshop does not always have a sanction order".
+  sanctionOrder     SanctionOrder?              @relation("DesignWorkshopSanctionOrder")
+
+  /// The ministry PLAN ROW this workshop was promoted from, when it came from one. NULL for every
+  /// workshop opened by hand and for every workshop a sanction order opened, and that is not a
+  /// defect: the annual directory is a second, later door onto the same table, and the by-hand door
+  /// was here first (true as of 2026-09-13; check `grep -rn "open_design_workshop" backend/app`).
+  ///
+  /// THE FOREIGN KEY IS ON THE OTHER SIDE AND MUST STAY THERE. A `annualPlanEntryId` column on THIS
+  /// model would be a new column on the table `stage_schema.PROMOTED_COLUMNS` governs and that 40+
+  /// routes read, which is an invitation to the next reader to promote it out of a stage — a
+  /// registry change and an Android release. The plan row is the side that cares which workshop it
+  /// became; the workshop does not care that somebody once wrote it down.
+  annualPlanEntry   AnnualPlanEntry?            @relation("AnnualPlanEntryWorkshop")
 
   // The list's default order, and the two filters a researcher reaches for first.
   @@index([createdAt])
@@ -2442,6 +2643,17 @@ model DesignWorkshop {
   /// without this that is a sequential scan of the workshop table inside a request an admin is
   /// waiting on. The same reasoning as `DwAiLayer`'s three account indexes.
   @@index([dictationConsentById])
+  /// THE APPROVALS QUEUE, INDEXED FOR THE QUERY THAT IS ACTUALLY MADE and not for the one a
+  /// description of the feature suggests. The queue reads "every workshop that has been handed in
+  /// at least once and is not deleted" — `{deletedAt: null, submissionRound: {gt: 0}}` — and it
+  /// carries NO status term, because a queue narrowed by status could not show a report that has
+  /// been sent back. An earlier draft of this wave argued a `@@index([status, deletedAt])` from a
+  /// clause that does not name `status`; the index below is the one the predicate can use.
+  @@index([deletedAt, submissionRound])
+  /// Indexed for the WRITE it is on the wrong end of rather than for a read: `reviewedById` is ON
+  /// DELETE SET NULL, so deleting a user makes Postgres find every workshop naming them. Same
+  /// reasoning as `@@index([dictationConsentById])` above.
+  @@index([reviewedById])
   /// The account pointer, indexed for the onDelete action it is on the wrong end of rather than
   /// for a read. See the long note on `DwStageEntry.createdById` for the decision this follows.
   @@index([deletedById])
@@ -2639,6 +2851,167 @@ model DesignWorkshopInspector {
   /// The account pointer, indexed for the onDelete action it is on the wrong end of rather than
   /// for a read. See the long note on `DwStageEntry.createdById` for the decision this follows.
   @@index([assignedById])
+}
+
+/// WHICH CAPACITY AN OFFICER HOLDS ON ONE WORKSHOP — and there are exactly two.
+///
+/// AN ENUM AND NOT TEXT, which is the OPPOSITE of the choice `workshopKind` and `FeedbackReport`
+/// made, so the reason has to be stated rather than assumed. Those two are closed lists a product
+/// decision widens; a typo'd value there prints oddly and nothing else. This column is HALF THE
+/// PRIMARY KEY. A typo'd capacity is a third row on a workshop that neither the AD lookup nor the
+/// RD lookup can find — an officer assigned to a workshop nobody can see they were assigned to,
+/// which is exactly the failure `DwAccessRequestStatus` states its own enum argument for. Postgres
+/// refuses the typo; TEXT would store it.
+///
+/// DESIGNER IS DELIBERATELY NOT A MEMBER. Who a workshop is FOR already has an owner — the promoted
+/// `DesignWorkshop.designerName` column, the `DesignWorkshopViewer` row `attach_the_named_designer`
+/// writes, and the stage 1 / stage 3 copy `seed_designer_prefill` makes. A capacity row saying "the
+/// designer is X" beside a column saying "the designer is Y" is two answers to one question, and
+/// the report prints the column. See `services/design_workshop_oversight.reassign_designer`, which
+/// drives that machinery instead of duplicating it.
+///
+/// A THIRD CAPACITY IS AN `ALTER TYPE … ADD VALUE`, WHICH MUST BE ITS OWN MIGRATION AND MUST NOT
+/// WRITE THE NEW TOKEN IN THE SAME FILE. Prisma runs a migration in one implicit transaction and a
+/// value added by ADD VALUE cannot be USED in that transaction — the same two-step this schema
+/// states for `DwAiLayerKind`.
+enum DwOversightCapacity {
+  ASSISTANT_DIRECTOR
+  REGIONAL_DIRECTOR
+}
+
+/// WHO IS ACCOUNTABLE FOR THIS WORKSHOP — the sixth access system, and the second read-only one.
+///
+/// Written by a Ministry Admin or an admin through `PUT /design-workshop-oversight/{id}`; there is
+/// no route by which a designer can name, suggest or remove their own AD or RD, for the reason
+/// `design_workshop_inspectors` gives one rung up: THE SUPERVISED MUST NOT CHOOSE THE SUPERVISOR.
+/// A REGIONAL DIRECTOR IS ALSO REFUSED THAT DOOR even though they outrank an Assistant Director,
+/// and that is the same rule one rung further out rather than an inconsistency.
+///
+/// -- WHY THIS IS A TABLE AND NOT A `capacity` COLUMN ON THE INSPECTOR TABLE -------------------
+///
+/// Six reasons, each sufficient, set out in full in the header of
+/// `services/design_workshop_oversight.py`. The decisive three, in the order they bite:
+///
+///  1. `INSPECTION_ROLES` is a frozenset of ONE whose every invariant is written for one member,
+///     and the import-time `RuntimeError` that guards it compares that set against
+///     `DESIGN_WORKSHOP_ROLES` — which neither ASSISTANT_DIRECTOR nor REGIONAL_DIRECTOR is in. So
+///     widening it hands the whole inspector read surface to every officer WITH NO TEST GOING RED.
+///  2. That table's primary key IS its identity — one inspection per person per workshop — and the
+///     one lookup it exists for is a `find_unique` on the compound key. Adding a capacity to the
+///     key renames that compound key and breaks the lookup.
+///  3. The two tables answer different questions with different lifetimes. An inspection row is an
+///     ACCESS grant whose removal is a DELETE ("a tombstone would record only that an admin changed
+///     their mind"). This is an ACCOUNTABILITY fact: revoking an RD's monitoring must not erase who
+///     supervised the workshop.
+///
+/// -- AND IT IS NOT A `DesignWorkshopViewer` ROW, WHICH IS THE ONE MISTAKE THAT WOULD BE SILENT --
+///
+/// `load_workshop_or_404(for_edit=True)` carries no role check of its own; a viewer row confers
+/// every stage save, the AI-layer accept/withdraw, the dictation consent and the export ledger.
+/// An officer written into that table would have more power than anyone intended and every screen
+/// would look correct. See the note on `DesignWorkshopViewer.user`.
+model DesignWorkshopOversight {
+  designWorkshopId String
+  capacity         DwOversightCapacity
+  userId           String
+
+  /// WHO MADE THE ASSIGNMENT. Nullable so the relation below can be SetNull, and named `assignedBy`
+  /// rather than `grantedBy` for the reason `DesignWorkshopInspector.assignedById` gives: nothing
+  /// was granted to anybody here.
+  assignedById String?
+
+  /// WHEN. A column of its own rather than reading `createdAt`, because a re-assignment of the same
+  /// capacity to a DIFFERENT person is an UPDATE of this row (the key is the pair below), and
+  /// `createdAt` would then answer "since when has this workshop had an AD" where the question
+  /// anybody asks is "since when has THIS PERSON been its AD".
+  assignedAt DateTime @default(now())
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  designWorkshop DesignWorkshop @relation("DesignWorkshopOversight", fields: [designWorkshopId], references: [id], onDelete: Cascade)
+
+  /// Cascade, matching `DesignWorkshopInspector.user` and for its reason: an access row is not
+  /// authorship, and Restrict would invent a new, unclearable reason an account cannot be deleted
+  /// (`_undeletable_detail` in api/routes/users.py).
+  ///
+  /// WHAT THAT COSTS, SAID PLAINLY: deleting an officer's account erases the record that they
+  /// supervised this workshop. That is accepted here and NOT closed by a name copy on this row,
+  /// because the durable copy belongs on the report — a stage field — and adding one moves
+  /// `registry_version()`, stales every handset's bundled schema asset and forces a tagged Android
+  /// release. It is named as out of scope in the workstream spec rather than left for a reader to
+  /// discover.
+  user User @relation("DesignWorkshopOversightUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  /// SetNull, matching every other actor pointer in this family: losing the officer who made the
+  /// assignment must not end the assignment.
+  assignedBy User? @relation("DesignWorkshopOversightAssignedBy", fields: [assignedById], references: [id], onDelete: SetNull)
+
+  /// THE PAIR IS THE IDENTITY — one Assistant Director and one Regional Director per workshop, and
+  /// the key is what enforces it. A `@@unique([designWorkshopId, userId, capacity])` would admit two
+  /// Assistant Directors, and the requirement — and the line on a report that prints it — has room
+  /// for one. Re-assigning a capacity collides on this key and becomes an UPDATE rather than
+  /// stacking a second row.
+  @@id([designWorkshopId, capacity])
+
+  /// The other direction: "which workshops does this officer monitor", which is the oversight
+  /// list's scope clause. Not covered by the key above — `userId` is not in it at all.
+  ///
+  /// NO `@@index([userId, capacity])`. "Which workshops do I monitor AS AN RD" is not a query any
+  /// route issues: an officer holds one role, so the capacity is implied by who is asking. An index
+  /// is never added ahead of its query.
+  @@index([userId])
+
+  /// The account pointer, indexed for the onDelete action it is on the wrong end of rather than for
+  /// a read — the rule stated at `DwStageEntry.createdById` and applied by
+  /// `20260822093000_index_the_account_pointers`.
+  @@index([assignedById])
+}
+
+/// ONE ACCEPTED UPLOAD OF AN ARTISAN LIST, AND WHAT IT DID.
+///
+/// The upload's own response carries the same report and is read once, by the officer who pressed
+/// the button. "Where did these fourteen artisans come from" is asked months later by somebody
+/// reading a ministry document, and there is no other record: the artisan rows carry `createdById`
+/// and nothing about the spreadsheet. This is the ledger, and it is modelled on `DwReportExport` —
+/// a per-event row, the actor SetNull, ordered by (workshop, createdAt).
+///
+/// THE WORKBOOK ITSELF IS NEVER STORED, ONLY ITS FILENAME. It carries Aadhaar numbers; keeping the
+/// bytes would turn one regulated COLUMN into a regulated FILE with its own retention question, its
+/// own access rule and its own deletion story. The parse is transient, exactly as
+/// `parse_questionnaire_workbook`'s is.
+///
+/// `problems` HOLDS THE SAME `ParseProblem.payload()` SHAPE THE RESPONSE DOES — {sheet, row,
+/// severity, reason, value} — and `value` is ALREADY MASKED by the importer for any identity
+/// number. Nothing here re-masks; a mask applied twice is a mask that can be forgotten once.
+///
+/// NO INDEX ON `problems` AND NONE ON `sourceFilename`. Nothing queries either; the one read is
+/// this workshop's imports newest-first, which is the composite below.
+model DwArtisanImport {
+  id               String  @id @default(cuid())
+  designWorkshopId String
+  uploadedById     String?
+
+  sourceFilename String?
+  sheetName      String?
+
+  rowsRead            Int @default(0)
+  artisansCreated     Int @default(0)
+  artisansLinked      Int @default(0)
+  rowsRefused         Int @default(0)
+  participantsCreated Int @default(0)
+
+  problems Json
+
+  createdAt DateTime @default(now())
+
+  designWorkshop DesignWorkshop @relation("DesignWorkshopArtisanImports", fields: [designWorkshopId], references: [id], onDelete: Cascade)
+  uploadedBy     User?          @relation("DwArtisanImportUploadedBy", fields: [uploadedById], references: [id], onDelete: SetNull)
+
+  /// The one read: this workshop's imports, newest first.
+  @@index([designWorkshopId, createdAt])
+  /// The account pointer, indexed for its onDelete action. See DwStageEntry.createdById.
+  @@index([uploadedById])
 }
 
 /// WHAT A REQUEST CAN BE — the three states one can be in, and there is no fourth.
@@ -4026,6 +4399,137 @@ model DwWorkshopConsentDecision {
   @@index([actorId])
 }
 
+/// ONE CORRECTION SUGGESTION, FILED BY ONE OFFICER, AGAINST ONE SUBMISSION ROUND OF ONE WORKSHOP.
+///
+/// The owner's requirement: *"Inspecting Officers can review them and submit correction suggestions
+/// directly in a feedback box. The designer will edit the files based on these suggestions and
+/// resubmit them. This iterative review loop continues until the sanctioning authority is satisfied
+/// and clicks 'approve'."*
+///
+/// ── WHY A TABLE AND NOT `DesignWorkshop.reviewNotes` ────────────────────────────────────────────
+///
+/// `reviewNotes` is ONE column and the next decision overwrites it, so round three's suggestion
+/// would destroy round one's. `Feedback`'s own docstring already names that failure — "a grievance
+/// register whose second entry destroys the first is not a register" — and here it is worse,
+/// because what is destroyed is the instruction the designer is being measured against. The column
+/// stays, as the CACHE of the latest decision; this is the register. It is also why clearing that
+/// cache on re-entry into PRE_SUBMISSION costs nothing: every sentence is still a row here.
+///
+/// ── WHY NOT `EntryComment`, WHICH IS THE ONLY GENERIC COMMENT TABLE ─────────────────────────────
+///
+/// Its authorisation is `DataAccessTier.COMMENT` held against the RECORD'S OWNER — an ACCOUNT-level
+/// grant across every record that owner has — which is a far wider thing than a per-workshop
+/// inspection row, and nothing in the design-workshop family consults it. Filing an officer's
+/// correction there would make it visible to, and writable by, every EDIT-tier grantee of the
+/// workshop's creator.
+///
+/// ── WHY NOT `DwReviewRating` ────────────────────────────────────────────────────────────────────
+///
+/// Three independent refusals, any one sufficient. `design_ratings.access_for` returns
+/// everything-false for any account outside `can_run_design_workshops`, and INSPECTOR is outside
+/// it. Its unique triple is (stageEntryId, reviewerId, round), so a suggestion about the WHOLE
+/// report has no `stageEntryId` to hang on. And its subject loader refuses any entityKey outside
+/// {sketch, prototype}.
+///
+/// ── WHY NOT A STAGE FIELD ───────────────────────────────────────────────────────────────────────
+///
+/// A stage field CANNOT CARRY WHO AND WHEN, which is the entire content of this row.
+/// `save_stage`'s UPDATE branch writes exactly {data, searchText, ordinal, deletedAt,
+/// fieldProvenance}; `createdById` is set on CREATE alone; `updatedAt` is `@updatedAt` and moves
+/// whenever ANY field in that stage changes. A suggestion stored there would be attributed to
+/// whoever first saved the stage and dated to the last edit of any of its forty fields.
+/// `DwWorkshopConsentDecision` and `DwAiLayerDecision` both carry this argument.
+///
+/// ── APPEND-ONLY, AND THAT IS ENFORCED BY THE ABSENCE OF ROUTES ─────────────────────────────────
+///
+/// There is no PATCH and no DELETE anywhere for this table, and there must never be one. An
+/// officer who changes their mind files another row; a suggestion the designer has already acted on
+/// is not editable out of the record afterwards. There is no `resolvedAt` either: resolution is
+/// expressed by the workshop entering the next submission round, which is what `round` records.
+///
+/// ── IT IS READ BACK, AND THAT IS NOT OPTIONAL ───────────────────────────────────────────────────
+///
+/// This repository already carries three write-only tables (ReviewLog, DwAiLayerDecision,
+/// DwWorkshopConsentDecision) and `tests/test_review_rating_ledger.py` records that a fourth is
+/// indefensible. Both detail reads — the designer's `GET /design-workshops/{id}` and the
+/// inspector's `GET /design-workshop-inspections/{id}` — carry these rows, and
+/// `tests/test_design_workshop_review_loop.py` pins the biconditional.
+model DwInspectionFeedback {
+  id               String @id @default(cuid())
+  designWorkshopId String
+
+  /// WHICH SUBMISSION CYCLE this suggestion belongs to — copied from
+  /// `DesignWorkshop.submissionRound` at the moment the row is written, never sent by a client.
+  ///
+  /// NOT `DwReviewRound`. That enum is {PEER, POOL} and means an AUDIENCE — this workshop's own
+  /// people, versus every designer on the platform once `peerRoundClosedAt` is set on a subject
+  /// row. A submission cycle is a different quantity entirely, three clients already match
+  /// exhaustively over those two tokens, and pushing a cycle number into them breaks all three.
+  ///
+  /// COPIED AND NOT JOINED, deliberately: the workshop's counter goes on moving and this row must
+  /// keep saying which hand-in it was about. Two inspectors filing in the same second both read
+  /// the same counter and both are right.
+  ///
+  /// A CHECK CONSTRAINT ENFORCES `>= 1` IN THE MIGRATION — Prisma has no syntax for it, so the
+  /// constraint lives only in `20260913130200_dw_inspection_feedback/migration.sql` and a
+  /// `prisma migrate dev` regeneration would silently drop it. The same exposure
+  /// `DwReviewRating`'s score range already carries.
+  round Int
+
+  /// The stage the suggestion is about, as a `StageSpec.key` — validated against `stages()` before
+  /// the write, exactly as `DwCustomSection.stageKey` is. NULL means "about the report as a whole",
+  /// which is a real and common answer and not a missing one.
+  ///
+  /// IT IS A STRING AND NOT A FOREIGN KEY. The registry lives in Python; there is no stage table to
+  /// point at. A key the registry has since dropped must still read back — a suggestion filed in
+  /// March is a historical fact about what was asked for, not a live pointer.
+  stageKey String?
+
+  /// The field inside that stage, as a `FieldSpec.key`. NULL for a suggestion about the stage as a
+  /// whole. NOT validated against the registry: an officer legitimately names a field a client one
+  /// release ahead is showing, and refusing the row would lose the suggestion rather than the typo.
+  fieldKey String?
+
+  /// WHAT TO CHANGE. Required and never blank — a send-back with no sentence is the defect
+  /// `api/routes/review.py` already refuses for the six record types, with a 422.
+  note String
+
+  /// True when this row is the one that moved the workshop to NEEDS_REVISION, false when it is a
+  /// suggestion added to an open round without sending anything back.
+  ///
+  /// A COLUMN AND NOT A JOIN TO ReviewLog, because ReviewLog carries no pointer to this table and
+  /// has no reader. One boolean makes "which of these four suggestions was the one that sent it
+  /// back" answerable on the screen the designer is standing in front of.
+  sentBack Boolean @default(false)
+
+  /// WHO said it.
+  actorId String
+
+  /// WHAT THE DEVICE SAID, as distinct from when this server heard it. Null when the suggestion
+  /// was filed straight against the server, in which case `createdAt` is the same moment and
+  /// repeating it here would later read as "a device reported this", which would be false. The same
+  /// column, the same rule and the same refusal of a clock more than the shared skew in the future
+  /// as `DwWorkshopConsentDecision.recordedAt`.
+  recordedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  designWorkshop DesignWorkshop @relation("DesignWorkshopInspectionFeedback", fields: [designWorkshopId], references: [id], onDelete: Cascade)
+
+  /// RESTRICT, exactly as `DwWorkshopConsentDecision.actor` and `ReviewLog.reviewer` are: this row
+  /// says A NAMED OFFICER TOLD A NAMED DESIGNER TO CHANGE A MINISTRY DOCUMENT. An account deleted
+  /// out from under it would leave the record saying a report was sent back by nobody.
+  actor User @relation("DwInspectionFeedbackActor", fields: [actorId], references: [id], onDelete: Restrict)
+
+  /// The history of one workshop's feedback, in order — the read both detail routes make.
+  @@index([designWorkshopId, createdAt])
+  /// One round's suggestions, which is what the designer's "what was sent back" panel groups by and
+  /// what a round selector on the inspector's screen narrows to.
+  @@index([designWorkshopId, round])
+  /// The actor, indexed for the Restrict above rather than for a read: deleting a user makes
+  /// Postgres look for a row naming them, on every account deletion.
+  @@index([actorId])
+}
+
 /// One designer's server-dictation spend on one India-time calendar day. Plan §6.1's cap, counted.
 ///
 /// **AUTHORITATIVE HERE AND NOWHERE ELSE.** A client-side counter is a client-side counter: process
@@ -4685,6 +5189,155 @@ model DesignerProfile {
   location Location? @relation(fields: [locationId], references: [id], onDelete: SetNull)
 }
 
+/// ══ THE SANCTION ORDER: THE MINISTRY'S INSTRUMENT, AND THE ONE ANSWER ABOUT IT ═══════════════
+///
+/// A sanction order is the document that authorises a design & prototype workshop, names its
+/// budget, and — through this table — names the designer it was issued for. It is entered by a
+/// ministry officer in five fields and it creates everything else: the allow-list admission, the
+/// empanelment, the account, the profile, the workshop and the designer's viewer row. See
+/// `app/services/sanction_orders.py::create_from_sanction` for the order those writes happen in
+/// and for the transaction boundary.
+///
+/// ── WHY THIS IS A TABLE AND NOT THREE MORE PROMOTED COLUMNS ───────────────────────────────────
+///
+/// `sanctionOrderNo` and `sanctionOrderDate` already exist — as stage-1 registry FieldSpecs
+/// (app/services/stage_definitions.py, entity `workshopSetup`), living only inside
+/// `DwStageEntry.data` JSON, absent from `PROMOTED_COLUMNS` (app/services/stage_schema.py). There
+/// is no sanctioned AMOUNT field anywhere in the registry at all. So today a sanction number is:
+/// not unique, not indexed, not queryable, editable by any designer on the workshop, and carrying
+/// no money.
+///
+/// Promoting the three onto `DesignWorkshop` was the obvious-looking fix and it is wrong in the way
+/// that matters: a promoted column's SINGLE WRITER is `promoted_values` in
+/// app/services/stage_schema.py, i.e. the DESIGNER saving stage 1. An officer's sanction figure
+/// that a designer can overwrite by typing in a box is not a register, it is a rumour with an index
+/// on it. And `_coerce_promoted` NULLS a promoted column whose entity was touched with a blank
+/// value — which would silently delete a ministry sanction figure under a 200 reading
+/// "Stage saved".
+///
+/// ── SO WHICH IS THE ONE ANSWER? THIS TABLE IS. ────────────────────────────────────────────────
+///
+/// THE REGISTER is here: `sanctionOrderNo`, `sanctionOrderDate`, `sanctionAmount`, the officer who
+/// recorded it, the designer it names, the workshop it produced. Officers read it, audits read it,
+/// and nothing inside a workshop can write it.
+///
+/// THE REPORT'S COPY is the stage-1 JSON, seeded ONCE from this row at creation through
+/// `seed_designer_prefill`'s `extra` (app/services/design_workshops.py). It is a COPY for exactly
+/// the reason `PREFILL_MAP` is a copy: a report is a historical document, and a sanction order
+/// amended in 2028 must not rewrite the cover of the report submitted in 2026.
+///
+/// THE AMOUNT HAS NO COPY AND MUST NEVER GET ONE. There is no `sanctionAmount` FieldSpec, no report
+/// slot and no template that prints one. That is what makes "one answer" true of the money rather
+/// than merely asserted about it, and
+/// `tests/test_sanction_orders.py::test_the_registry_never_grows_a_second_sanction_amount` fails
+/// the day somebody adds one.
+///
+/// DRIFT IS REPORTED, NOT PREVENTED. `GET /api/sanction-orders` carries `reportCopyMatches`,
+/// computed by reading the workshop's `workshopSetup` entry. A designer who corrects a mistyped
+/// sanction number on the cover is doing something legitimate; an officer needs to SEE that the
+/// document about to be printed says something the register does not. Blocking the edit would make
+/// the cover unfixable without a ministry officer, offline, in a village.
+model SanctionOrder {
+  id String @id @default(cuid())
+
+  /// THE NUMBER AS THE OFFICER TYPED IT, trimmed and with runs of internal whitespace collapsed,
+  /// and nothing else — the ministry's own spelling is what an auditor will search for. UNIQUE,
+  /// because a sanction number identifies one instrument. A second row with the same number answers
+  /// 409 naming the existing order, its workshop and its designer; it never overwrites, exactly as
+  /// `POST /designers/roster` refuses a duplicate rather than clobbering the row that records how
+  /// long somebody has been waiting.
+  sanctionOrderNo String @unique
+
+  /// THE SAME NUMBER WITH ITS PUNCTUATION AND CASE REMOVED — `normalise_sanction_order_no` in
+  /// app/services/sanction_orders.py. UNIQUE TOO, and this is the constraint that actually works:
+  /// `SO/2026/42`, `SO-2026-42`, `so 2026 42` and `SO/2026/042` are four spellings of the same
+  /// order and the column above admits all four. Two officers in two states entering the same order
+  /// under two house styles is not a hypothetical — it is what the empanelment number already does
+  /// on `DesignerProfile.empanelmentKey`, which is the normalisation this one is copied from.
+  ///
+  /// NOT NULLABLE, unlike `empanelmentKey`. That column is nullable because it was BACKFILLED over
+  /// rows that already collided; this table starts empty, so every row can carry a key and the
+  /// unique index can be trusted from the first insert.
+  sanctionOrderKey String @unique
+
+  /// The date printed on the order. A DATE in meaning; stored as a timestamp because Prisma has no
+  /// date-only type on this schema and every other date column here is one (`startDate`, `endDate`,
+  /// `empanelmentDate`). Always written midnight UTC by the service.
+  sanctionOrderDate DateTime
+
+  /// ── THE MONEY ──────────────────────────────────────────────────────────────────────────────
+  /// See the argument in the migration header. NUMERIC(14,2), never a float, never a string column.
+  /// INR is assumed and NOT stored — see the migration for why a currency column that reads 'INR'
+  /// on every row is worse than no column.
+  sanctionAmount Decimal @db.Decimal(14, 2)
+
+  /// THE DESIGNER THE ORDER NAMES. RESTRICT, matching `DesignWorkshop.createdBy`: a sanction order
+  /// is a financial instrument of record and it must not lose the name it was issued for because
+  /// somebody tidied an account. `routes/users.py`'s `_NAMED_ON_RELATIONS` gains a row for this so
+  /// the 409 an admin gets says which sanction orders are in the way instead of "something is" —
+  /// and it is a SECOND list rather than an entry in `_CREATOR_RELATIONS`, because that list's
+  /// sentence is "This account created …" and a designer named on an order created nothing.
+  designerUserId String
+  designerUser   User   @relation("SanctionOrderDesigner", fields: [designerUserId], references: [id], onDelete: Restrict)
+
+  /// THE ADDRESS THE ORDER WAS ENTERED AGAINST, canonicalised (`designers.canonical_email`). NOT
+  /// derivable from `designerUser.email`, because `User.email` is deliberately NOT canonicalised
+  /// while both rosters ARE — `User.email` is the address the two sign-in doors look up LITERALLY
+  /// (`identity.resolve_identifier`, `auth.login_with_google`), so canonicalising it would lock a
+  /// dotted-Gmail designer out of their own account and split them into a second row at their next
+  /// Google sign-in. For such an address the two columns therefore differ ON PURPOSE, and THIS is
+  /// the key the allow-list and the empanelment were written under. An audit asking "which mailbox
+  /// was admitted by this order" must be able to answer without guessing at Gmail's dot rules.
+  designerEmail String
+
+  /// THE WORKSHOP THIS ORDER BROUGHT INTO EXISTENCE. One order, one workshop, both directions:
+  /// UNIQUE so a second order cannot claim a workshop somebody else's budget paid for, and NOT NULL
+  /// because the row is written in the same transaction as the workshop it names (there is no
+  /// moment at which a sanction order exists without one).
+  ///
+  /// RESTRICT AND NOT CASCADE. The API's delete is a SOFT delete (`deletedAt`), so this fires only
+  /// on a hard purge — and a hard purge of a workshop the ministry funded must be refused at the
+  /// database, not merely discouraged in a route. The sanction order is the one row that proves the
+  /// money was spent on something.
+  designWorkshopId String         @unique
+  designWorkshop   DesignWorkshop @relation("DesignWorkshopSanctionOrder", fields: [designWorkshopId], references: [id], onDelete: Restrict)
+
+  /// THE OFFICER. RESTRICT for the same reason `DesignWorkshop.createdById` is: who authorised the
+  /// spend is not a fact worth losing, and an officer who has recorded anything becomes undeletable
+  /// exactly as anyone who has created a record already is (`_CREATOR_RELATIONS`, routes/users.py).
+  createdById String
+  createdBy   User   @relation("SanctionOrderCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+
+  /// DID THIS ORDER MINT THE ACCOUNT, or did the designer already have one? Three-quarters of
+  /// sanctions in a running programme will name a designer who is already here. A boolean is honest
+  /// here where it is not elsewhere in this schema, because there is no third state: the row is
+  /// written in the same transaction as the account or it is not, and the writer knows. It is what
+  /// decides whether a credential link is offered on the officer's screen at all.
+  accountCreated Boolean @default(false)
+
+  /// ADMIN-TYPED ONLY, like `AccessRoster.notes` and `DesignerRoster.notes`. Never machine-written —
+  /// the machine-written provenance is `SANCTION_ADMISSION_NOTE` and it goes on the ROSTER rows,
+  /// where `DERIVED_EMPANELMENT_NOTE` in app/services/designers.py set the precedent.
+  notes String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  /// ── INDEXES, EACH NAMING THE QUERY IT SERVES ───────────────────────────────────────────────
+  /// The three uniques above already serve "is this number taken" and "does this workshop have an
+  /// order", which are the two hot lookups. These three serve the officer's list.
+
+  /// The default sort of GET /api/sanction-orders — newest first, which is what an officer who has
+  /// just entered one wants to see at the top.
+  @@index([sanctionOrderDate])
+  /// "every order I have recorded" — the officer's own filter on their own list, and the scan
+  /// Postgres runs for the RESTRICT when an admin tries to delete an account.
+  @@index([createdById])
+  /// "every order issued to this designer" — the designer column on the officer's list, and the
+  /// other `ON DELETE RESTRICT` scan.
+  @@index([designerUserId])
+}
+
 // ======================================================================================
 // Password reset / first-password links
 // ======================================================================================
@@ -5307,4 +5960,194 @@ model UsageConsentDecision {
   /// probes for the CASCADE above. Equality column first, range last, the same shape and the same
   /// reason as `UsageEvent`'s two.
   @@index([userId, createdAt])
+}
+
+/// ══════════════════════════════════════════════════════════════════════════════════════════════
+/// THE MINISTRY'S ANNUAL DIRECTORY OF PLANNED WORKSHOPS — AND IT IS NOT A LIST OF WORKSHOPS.
+/// ══════════════════════════════════════════════════════════════════════════════════════════════
+///
+/// Owner's requirement, verbatim: "An annual directory of 200-300 planned workshops - containing
+/// details like workshop number, date, state, district, and venue - will be uploaded via an Excel
+/// sheet." The source document marks that requirement “Phase 2” — a QUOTATION out of the owner's
+/// paper, and therefore evidence rather than a claim about this repository. What is true as of
+/// 2026-09-13: the directory uploads, lists, exports and promotes, and there is no Android screen
+/// and no per-region scope — check `grep -rn "annual-plan" backend/app/api/routes/ android/`.
+///
+/// ── A ROW HERE IS A LINE IN A DOCUMENT, NOT A `DesignWorkshop` ────────────────────────────────
+///
+/// This is the single most important sentence in this file about this table. A row here is a PLAN:
+/// somebody at the ministry intends that a workshop happen. It holds NO fieldwork. It has no
+/// stages, no viewers, no inspectors, no media, no dictation consent, no completeness score, no
+/// report, and it confers no access on anybody. It is not soft-deleted the way a workshop is,
+/// because there is nothing in it that a mis-tap could destroy which a re-upload does not restore.
+///
+/// A `DesignWorkshop` is the container a fortnight of fieldwork lives in. Conflating the two is how
+/// a ministry is shown "287 workshops held this year" when 284 of them have not happened. EVERY
+/// query that counts, lists, exports, scopes or reports on workshops reads `DesignWorkshop` and
+/// must never union this table into it — the boundary is enumerated in
+/// `backend/app/services/annual_plan.py`'s module docstring and asserted, surface by surface, in
+/// `backend/tests/test_annual_plan_is_not_a_workshop.py`.
+///
+/// ── HOW A PLANNED ROW BECOMES A REAL WORKSHOP ─────────────────────────────────────────────────
+///
+/// Exactly one way: `POST /api/annual-plan/{id}/promote`, which calls
+/// `design_workshops.open_design_workshop` — the shared opener that runs the eligibility check, the
+/// create, the viewer rows and `seed_designer_prefill` in that order. A second copy of those four
+/// steps is a second place that can forget the fourth, and forgetting the fourth is not a visible
+/// failure: it is a workshop whose promoted columns the designer's FIRST stage-1 save nulls out
+/// under a 200 reading "Stage saved" — the defect `seed_designer_prefill`'s own docstring argues at
+/// length in `backend/app/services/design_workshops.py`.
+///
+/// `designWorkshopId` RECORDS THAT PROMOTION AND IS THE ONLY LINK BETWEEN THE TWO TABLES. It is
+/// `@unique` because a plan row becomes at most one workshop and a workshop comes out of at most
+/// one plan row; a second promotion of the same row must be refused by the DATABASE and not only by
+/// the route, because a route is one door and this is the kind of rule a second door gets added to.
+model AnnualPlanEntry {
+  id String @id @default(cuid())
+
+  /// THE FINANCIAL YEAR THIS DIRECTORY IS FOR, AS THE STARTING CALENDAR YEAR. 2026 means FY
+  /// 2026-27. One integer rather than the string "2026-27" because it sorts, indexes and compares
+  /// with no normalisation rule — and a normalisation rule spelled in Python and again in SQL is
+  /// the trap `DesignerProfile.phoneKey`/`empanelmentKey` carry. The printable label is rendered by
+  /// `annual_plan.plan_year_label` and is stored nowhere.
+  planYear Int
+
+  /// THE MINISTRY'S OWN REFERENCE FOR THIS PLANNED WORKSHOP, EXACTLY AS THE SHEET SPELLS IT.
+  /// Shown to people; never matched on. Matching is `workshopNoKey` below.
+  workshopNo String
+
+  /// THE SAME REFERENCE, FOLDED FOR MATCHING — NFKC-normalised, every run of whitespace collapsed
+  /// to one space, trimmed, upper-cased. It exists for the reason `DesignerProfile.phoneKey`
+  /// exists: a corrected sheet re-typed with a trailing space, a non-breaking space pasted out of
+  /// Word, or "dpw/2026/017" in lower case must land on the row it already wrote, not beside it.
+  /// `@@unique([planYear, workshopNoKey])` below is the natural key and the whole of idempotency.
+  ///
+  /// PUNCTUATION IS KEPT BY THE FOLD. "DPW/2026/017" and "DPW-2026-017" stay two references,
+  /// because they are two strings in the ministry's own document and merging them would merge two
+  /// plan rows on a guess.
+  ///
+  /// NOT NULLABLE, unlike `phoneKey`/`empanelmentKey`. Those are nullable because they were
+  /// backfilled from data that already existed and could collide; this table is new, has no
+  /// history, and a row with no workshop number is refused by the parser before it reaches here.
+  workshopNoKey String
+
+  /// What the sheet calls the workshop, when it says. Optional: many ministry directories carry
+  /// only a number, a place and a date. `annual_plan.promotion_title` builds a title when this is
+  /// blank, because `DesignWorkshop.title` is NOT NULL and is the one promoted column
+  /// `_coerce_promoted` refuses to blank.
+  plannedTitle String?
+
+  /// A token from `stage_schema.ENUMS["WORKSHOP_KIND"]`, or NULL for "the sheet did not say".
+  /// A `String?` and not a Postgres enum, for the reason `DesignWorkshop.workshopKind` gives at
+  /// length: the vocabulary lives in the registry, and a second copy in the database would be the
+  /// copy that refuses the write. A token the registry does not know is NOT stored — it is reported
+  /// as a warning against its Excel row and left NULL, because an unrecognised kind promoted into a
+  /// workshop would print on a ministry cover page.
+  workshopKind String?
+
+  craftName   String?
+  clusterName String?
+
+  /// Resolved through `services/address.normalize_state`, so "up" and "Uttar Pradesh" are one
+  /// value. An unrecognised name is STORED AS TYPED and reported as a warning, never dropped — the
+  /// decision `normalize_state`'s own docstring argues: a ministry sheet's spelling is evidence, and
+  /// silently blanking it loses the only copy anybody has.
+  state    String?
+  district String?
+
+  /// Where it is to be held, as one line. Promoted verbatim into the registry's stage-1 `venue`,
+  /// which is why the parser clips it at 220 characters and not at a number of its own choosing —
+  /// see `annual_plan_xlsx._CAP_MIRRORS` and the test that pins the pair.
+  venue String?
+
+  /// THE DATE THE REQUIREMENT ASKS FOR, AND ITS PARTNER. A directory usually carries one date and a
+  /// workshop is a fortnight, so the single date in the sheet is the START. `plannedEndDate` is
+  /// read when the sheet has a second date column and is otherwise NULL — NEVER derived, because a
+  /// fabricated end date reaches `DesignWorkshop.endDate` on promotion and then the report cover.
+  plannedStartDate DateTime?
+  plannedEndDate   DateTime?
+
+  implementingAgency String?
+  sponsor            String?
+
+  /// Free text off the sheet's Remarks column, and the ONE field `PATCH /annual-plan/{id}` may
+  /// correct without re-uploading the workbook. Machine-written provenance never goes here — see
+  /// `revision`, `sheetRow` and `sourceFilename`, which are its own columns for exactly that reason.
+  notes String?
+
+  /// The 1-based Excel gutter row this entry was last WRITTEN from, so an administrator looking at
+  /// a changed row can press Ctrl+G in the workbook they still have open.
+  ///
+  /// IT GOES STALE ON PURPOSE. An upload that changes nothing writes nothing at all — not this
+  /// column, not `updatedAt`, not `revision` — because that no-write is what makes "re-upload the
+  /// corrected sheet" safe to do twice. So after a re-SORTED sheet that changed no data, every
+  /// `sheetRow` still holds its old position. That drift is the price of idempotency and it is
+  /// asserted rather than tolerated in silence:
+  /// `test_annual_plan_upload.py::test_a_re_sorted_sheet_that_changes_nothing_writes_nothing`
+  /// fails if somebody "fixes" it by writing this column on every row.
+  sheetRow Int?
+
+  /// The name of the workbook this row was last written from. Provenance, shown on the row.
+  sourceFilename String?
+
+  /// How many uploads have CHANGED this row. Starts at 1 on the insert and is incremented only when
+  /// a compared field actually differs. See `sheetRow` above for why that matters.
+  revision Int @default(1)
+
+  /// Set when a later upload of the same plan year did not contain this row AND the administrator
+  /// ticked "withdraw the workshops missing from this sheet". NOTHING HERE IS EVER DELETED: a plan
+  /// row may already have become a workshop, and the directory is the record of what WAS intended
+  /// as much as of what is intended now. A withdrawn row that reappears in a later sheet is
+  /// reinstated (this goes back to NULL) and the reinstatement is reported.
+  ///
+  /// A PROMOTED ROW IS NEVER WITHDRAWN BY AN UPLOAD, whatever the checkbox says: a designer may be
+  /// standing in the courtyard. `apply_parsed_plan` lists those rows under `absentPromoted` instead.
+  withdrawnAt   DateTime?
+  withdrawnById String?
+
+  /// ── THE PROMOTION ───────────────────────────────────────────────────────────────────────────
+  ///
+  /// NULL for a row that is still only a plan. Set, with the two stamps beside it, the moment
+  /// `POST /annual-plan/{id}/promote` succeeds.
+  ///
+  /// `onDelete: SetNull` and not Cascade: a `DesignWorkshop` is soft-deleted and never removed, so
+  /// this fires only if somebody removes one by hand — and losing the ministry's plan row because a
+  /// workshop was cleaned up would be the wrong end of the leash.
+  designWorkshopId String?   @unique
+  promotedAt       DateTime?
+  promotedById     String?
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  createdById String?
+  updatedById String?
+
+  designWorkshop DesignWorkshop? @relation("AnnualPlanEntryWorkshop", fields: [designWorkshopId], references: [id], onDelete: SetNull)
+  withdrawnBy    User?           @relation("AnnualPlanEntryWithdrawnBy", fields: [withdrawnById], references: [id], onDelete: SetNull)
+  promotedBy     User?           @relation("AnnualPlanEntryPromotedBy", fields: [promotedById], references: [id], onDelete: SetNull)
+  createdBy      User?           @relation("AnnualPlanEntryCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  updatedBy      User?           @relation("AnnualPlanEntryUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+
+  /// THE NATURAL KEY, AND THE WHOLE OF IDEMPOTENCY. A re-uploaded corrected sheet finds its rows
+  /// through this index or creates them; it can do neither thing twice.
+  @@unique([planYear, workshopNoKey])
+
+  /// The directory screen's default read: one year, standing rows first. Composite with
+  /// `withdrawnAt` rather than bare, because EVERY default read filters it — exactly as
+  /// `DesignWorkshop.@@index([workshopKind, deletedAt])` argues one model up.
+  @@index([planYear, withdrawnAt])
+  /// The same screen's date sort, and the only ordering the list offers by default.
+  @@index([planYear, plannedStartDate])
+  /// The two filters on the directory screen. Mirrors `DesignWorkshop.@@index([state, district])`.
+  @@index([state, district])
+  /// The year picker: `GET /api/annual-plan/years` groups by this column.
+  @@index([planYear])
+  /// The four account pointers, indexed for the ON DELETE SET NULL they are on the wrong end of
+  /// rather than for any read — the decision `DesignWorkshop.@@index([dictationConsentById])`
+  /// records. Deleting a user otherwise makes Postgres scan this whole table four times inside a
+  /// request an admin is waiting on.
+  @@index([withdrawnById])
+  @@index([promotedById])
+  @@index([createdById])
+  @@index([updatedById])
 }

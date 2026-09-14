@@ -17,7 +17,7 @@ unique email, so it also serves as "I have forgotten the test password again".
 
 NOT FOR PRODUCTION, and it refuses to run against one. The guard is the same one the DB-backed test
 modules use — a DATABASE_URL that does not point at localhost is refused outright, because seeding
-seven known-password accounts into a live repository would be handing out seven ways in.
+ten known-password accounts into a live repository would be handing out ten ways in.
 """
 
 import asyncio
@@ -37,6 +37,16 @@ PASSWORD = "LocalDev123!"
 #: reaches by promotion but a set member (see ``can_run_design_workshops``), and is therefore the
 #: one role whose absence hides the most. INSPECTOR is here for the mirror-image reason: it is a
 #: rung, it outranks the set member, and it is refused by the same set.
+#:
+#: THE THREE DIRECTORATE TIERS (42/45/48) ARE HERE FOR A THIRD REASON, AND IT IS THE STRONGEST
+#: YET. DESIGNER is here because it is a set member rather than a rung; INSPECTOR because it
+#: outranks the set member and is refused by the same set. These three are the first tiers ever
+#: added ABOVE the Professor floor, so each of them SILENTLY acquired the authority to rewrite a
+#: professor's, an inspector's and a designer's records, plus the craft taxonomy, the workshop
+#: table, the questionnaire builder, the dataset download and the user table — through code that
+#: names no tier. "Sign in as one and watch what is on screen" is the only cheap check that the
+#: widening is the one that was intended. None of the three needs a roster row: ``roster_allows``
+#: gates DESIGNER only.
 #: ``@example.org`` and NOT ``@test.local``. The login body is validated by pydantic's EmailStr,
 #: which runs ``email-validator`` and refuses ``.local`` — it is not a public TLD. The first
 #: version of this script used it and produced six accounts that were created successfully and
@@ -53,6 +63,14 @@ ACCOUNTS: tuple[tuple[str, str, str], ...] = (
     # become a rank floor. It needs no roster row — ``roster_allows`` gates DESIGNER only.
     ("inspector@example.org", "INSPECTOR", "Test Inspector"),
     ("professor@example.org", "PROFESSOR", "Test Professor"),
+    ("assistantdirector@example.org", "ASSISTANT_DIRECTOR", "Test Assistant Director"),
+    ("regionaldirector@example.org", "REGIONAL_DIRECTOR", "Test Regional Director"),
+    # The account whose NAME is the test. ``is_admin`` is set membership on MASTER_ADMIN and ADMIN,
+    # so this account must find the /admin tree, the user create/delete arms, the access roster, the
+    # key store and every design-workshop control CLOSED — while finding crafts, workshops, the
+    # questionnaire builder, the dataset and the review queue open. If any of the first list opens,
+    # somebody has widened ``is_admin``.
+    ("ministryadmin@example.org", "MINISTRY_ADMIN", "Test Ministry Admin"),
     ("admin2@example.org", "ADMIN", "Test Admin"),
 )
 
@@ -70,7 +88,7 @@ async def main() -> None:
         raise SystemExit(
             "REFUSED: DATABASE_URL does not point at a local database.\n"
             "This script seeds accounts with a known, shared password. Running it against a "
-            "deployed repository would create six ways in."
+            "deployed repository would create ten ways in."
         )
 
     await connect_db()
@@ -93,13 +111,13 @@ async def main() -> None:
             # TTL would otherwise check the OLD role's permissions and quietly report a pass.
             if row is not None:
                 invalidate_cached_user(row.id)
-            # AND THE PLATFORM ALLOW-LIST, or none of these six can sign in at all.
+            # AND THE PLATFORM ALLOW-LIST, or none of these ten can sign in at all.
             #
             # Same class of trap as the designer roster row below, one level up: since the
             # allow-list arrived, `auth.assert_access_admits` refuses any account with no ACTIVE row
             # — it fails closed on purpose — and an account written straight into the User table has
             # taken neither of the two paths that admit somebody. Without this, running this script
-            # produces six accounts that look perfect in Settings > Users and answer every sign-in
+            # produces ten accounts that look perfect in Settings > Users and answer every sign-in
             # with "your access request is awaiting administrator approval", which is the single
             # most misleading state a test bench can be in.
             await access_roster.admit(
@@ -132,7 +150,7 @@ async def main() -> None:
     finally:
         await disconnect_db()
 
-    print(f"\nAll six share the password: {PASSWORD}")
+    print(f"\nAll ten share the password: {PASSWORD}")
     print("Sign in as each to check that a REFUSED page is actually refused, not merely unlinked.")
 
 

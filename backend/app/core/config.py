@@ -326,7 +326,9 @@ class Settings(BaseSettings):
     master_admin_name: str = Field(default="Ankit Kumar", alias="MASTER_ADMIN_NAME")
     # Role given to brand-new self-registered Google accounts. Defaults to the lowest tier so an
     # unknown account cannot read/write as a researcher until an admin elevates it. Set to
-    # RESEARCHER to restore the pre-six-tier behavior.
+    # RESEARCHER to restore the pre-six-tier behavior. (The ladder has eleven tiers as of
+    # 2026-09-13; this default is unaffected by that and has never been anything but the
+    # lowest rung. The authority is ``deps.ROLE_RANK``, never this comment.)
     default_signup_role: str = Field(default="CROWDSOURCE_VOLUNTEER", alias="DEFAULT_SIGNUP_ROLE")
 
     # THE CEILING ON A QUEUE FED BY UNAUTHENTICATED REQUESTS. A refused sign-in by a proven identity

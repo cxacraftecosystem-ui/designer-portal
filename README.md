@@ -262,7 +262,7 @@ The Android app keeps the web OAuth client ID in `android/app/build.gradle.kts` 
 
 ## Roles And Permissions
 
-Eight-tier role ladder, strictly ordered by privilege. Each tier inherits everything below it;
+Eleven-tier role ladder, strictly ordered by privilege. Each tier inherits everything below it;
 per-user grantable booleans (`canManageQuestionnaire`, `canReview`, `canViewProvenance`,
 `canDownloadDataset`) can additionally lift a single capability for a lower tier.
 
@@ -270,6 +270,9 @@ per-user grantable booleans (`canManageQuestionnaire`, `canReview`, `canViewProv
 | --- | --- | --- |
 | `MASTER_ADMIN` | 60 | Reserved for `MASTER_ADMIN_EMAIL`. Everything, plus the three nobody else has: provider key values, repository settings, OTA releases. The only account that may act on a peer. |
 | `ADMIN` | 50 | Create/delete accounts; **delete records**; grant workshop access; assign tasks; approve **late** submissions. |
+| `MINISTRY_ADMIN` | 48 | **Not an admin** — `is_admin` is a SET (`{ADMIN, MASTER_ADMIN}`), so no account creation, no deletes, no access grants, no key store. The widest review and correction authority short of admin: approve, reject, send back **and rewrite** records created by anyone at Regional Director and below, plus everything a professor can do — which includes reading an artisan's **unmasked Aadhaar number** and taking every row out in an export. |
+| `REGIONAL_DIRECTOR` | 45 | Everything an assistant director can do, one tier wider: an assistant director's records come under review and correction too. Reads design-workshop stage data on screen; cannot export it. |
+| `ASSISTANT_DIRECTOR` | 42 | The first tier above Professor, and therefore the first that may **rewrite** a professor's record as well as review it (`can_edit_others_record`). Craft/workshop/questionnaire management, dataset download, the user table, and the Professor-floor PII reads. **Does not run workshops** — that is a set, not a rank. |
 | `PROFESSOR` | 40 | Everything a researcher can do, plus craft/workshop/questionnaire management, dataset download, viewing and promoting users, and editing records created by anyone below them. No account creation, no deletes. |
 | `INSPECTOR` | 37 | Labelled **Inspector / Reviewer**. Inspects and reviews a designer's work: may approve, reject and send back records created by anyone at Designer and below. **Does not run workshops and does not sign reports** — outranking a designer is not the same as being one. May not *rewrite* another person's record either; that floor is Professor. |
 | `DESIGNER` | 35 | Run design & prototype workshops and sign the report: the 22 stages, the custom sections, the AI layers, the report exports. Everything a researcher can do. **NOT a rank threshold** — see the third rule below. |
@@ -277,7 +280,7 @@ per-user grantable booleans (`canManageQuestionnaire`, `canReview`, `canViewProv
 | `FIELD_CONTRIBUTOR` | 20 | Populate existing records — media, answers, comments — and review volunteers. **Cannot create records.** |
 | `CROWDSOURCE_VOLUNTEER` | 10 | Lowest tier and the default for new self-registered Google accounts (`DEFAULT_SIGNUP_ROLE`). Upload media, answer questionnaires, comment. |
 
-Three rules people get wrong:
+Four rules people get wrong:
 
 - **A Field Contributor cannot create records.** `can_create_records` requires Researcher. The two
   tiers below *populate* records rather than open them — that is the reason they exist.
@@ -301,6 +304,20 @@ Three rules people get wrong:
   only through a read-only, per-workshop assignment an **admin** makes — the inspected does not
   choose the inspector — and never through the ladder. See
   [docs/PERMISSIONS.md](docs/PERMISSIONS.md) §1 and §4.5.
+
+- **`MINISTRY_ADMIN` is not an admin, and neither are the other two directorate tiers.** `is_admin`
+  is `role in {MASTER_ADMIN, ADMIN}` — set membership, not a rank floor — so a tier at 48 passes no
+  admin gate anywhere in this product. It is the one place in this table where a token's English
+  reading and its meaning in the code point in opposite directions, which is why it is written down
+  in four places: here, `deps.ROLE_RANK`'s comment, the tier's migration header, and
+  [docs/PERMISSIONS.md](docs/PERMISSIONS.md) §2's footnote ⁷.
+
+  **And "not an admin" is not "reads nothing sensitive".** All three directorate tiers clear every
+  `has_rank(user, "PROFESSOR")` floor in the codebase, including five that live outside
+  `app/core/deps.py` where nobody greps for them: an artisan's unmasked Aadhaar number, de-masked
+  identity numbers on every encoded record, every uploader's media URLs, an empty download filter,
+  and APPROVED-on-create. [docs/PERMISSIONS.md](docs/PERMISSIONS.md) §2's footnote ⁸ names each with
+  its call site.
 
 Live grantable capability booleans are `canManageQuestionnaire`, `canReview`, `canViewProvenance` and
 `canDownloadDataset`. `canManageCrafts` and `canManageWorkshops` still exist as columns but are

@@ -144,6 +144,11 @@ from app.core.deps import (
     is_admin,
     require_admin,
 )
+# THE STATUS GRAPH AND THE ONE FUNCTION THAT ENTERS PRE_SUBMISSION. In `app/schemas` rather than
+# `app/services` because it touches no database — see that module's header — which is what lets the
+# stage save import it too, so the two writers of that transition cannot disagree about what it
+# writes.
+from app.schemas import design_workshop_review_loop
 from app.schemas.design_workshops import (
     DESIGN_WORKSHOP_STATUSES,
     WORKSHOP_KINDS,
@@ -392,6 +397,13 @@ _CONSENT_HAS_ITS_OWN_ROUTE = (
     "consent that could be manufactured"
 )
 
+_DECISION_HAS_ITS_OWN_ROUTE = (
+    "the last decision is recorded by POST /design-workshop-inspections/{id}/send-back or by the "
+    "sanctioning authority's approve route, each of which also writes the audit entry in the same "
+    "transaction. A decision that could be set from a header edit would be a decision that could "
+    "be manufactured"
+)
+
 
 #: Every key this endpoint refuses BY NAME, with the sentence the client is told.
 #:
@@ -487,6 +499,26 @@ _NEVER_PATCHABLE: dict[str, str] = {
     "dictationConsentByName": (
         "a display name resolved for the single-record read, not a stored column. See "
         "dictationConsentById"
+    ),
+    # ── THE PRE-SUBMISSION DECISION ──────────────────────────────────────────────────────────────
+    # Added 2026-09-13 IN THE SAME COMMIT as the four keys in `workshop_summary`, and not one commit
+    # later: `test_every_key_the_header_serialises_is_either_writable_or_refused_by_name` computes
+    # `set(workshop_summary(record)) - writable - set(_NEVER_PATCHABLE)` and asserts it is empty, so
+    # a column that reaches a client and is named in neither table turns the build red with a
+    # message about a key nobody has heard of yet.
+    #
+    # `status` ITSELF STAYS WRITABLE and is deliberately not here. What a header edit may no longer
+    # do is make a DECISION with it — the four edges in
+    # `schemas/design_workshop_review_loop.DECISION_EDGES` are refused inside the handler below,
+    # with a sentence naming the route that owns each one.
+    "reviewNotes": _DECISION_HAS_ITS_OWN_ROUTE,
+    "reviewedById": _DECISION_HAS_ITS_OWN_ROUTE,
+    "reviewedAt": _DECISION_HAS_ITS_OWN_ROUTE,
+    "submissionRound": (
+        "the submission cycle is counted by the server on every entry into Pre-submission and never "
+        "sent by a client. Hand the report in by setting status to PRE_SUBMISSION, or save a stage "
+        "on a report that was sent back — the counter moves once either way, and every correction "
+        "suggestion filed afterwards is filed against the number it moved to"
     ),
 }
 
@@ -2114,7 +2146,61 @@ async def get_design_workshop(
     summary["dictationConsentByName"] = await dictation_consent.actor_name(
         getattr(record, "dictationConsentById", None)
     )
+    # ── WHAT WAS SENT BACK, AND BY WHOM ──────────────────────────────────────────────────────────
+    #
+    # THE DESIGNER'S HALF OF THE PRE-SUBMISSION LOOP. `reviewNotes` on the header is the LATEST
+    # sentence and is CLEARED the moment the report is handed back in, so a "what was sent back"
+    # panel built from it would show one line during a review and nothing at all afterwards — and
+    # nothing anywhere would answer "what were the four corrections in round 2". These rows are that
+    # answer, and they are why clearing the cache costs nothing.
+    #
+    # THE SINGLE READ ONLY, never the list: this is a second query per workshop, to print something
+    # a paged list does not show — the same rule `dictationConsentByName` above follows.
+    #
+    # BOUNDED RATHER THAN PAGED, with the flag saying so out loud. A report goes through a handful
+    # of rounds; a separate paged route would need its own scope decision for a screen that shows
+    # everything it holds anyway.
+    summary["inspectionFeedback"], summary["inspectionFeedbackTruncated"] = (
+        await _inspection_feedback_payload(workshop_id)
+    )
+    # A DESIGNER DOES NOT FILE SUGGESTIONS ABOUT THEIR OWN REPORT, said on the wire rather than
+    # inferred from the URL, because both clients render this payload and the inspector's through
+    # screens that share components. False here and True on the inspection route; the two are read
+    # by the same key so a screen cannot be wrong about which one it is showing.
+    summary["mayRecordFeedback"] = False
     return summary
+
+
+async def _inspection_feedback_payload(workshop_id: str) -> tuple[list[dict[str, Any]], bool]:
+    """Every correction suggestion filed against one workshop, newest first, and whether it was cut.
+
+    SHARED BY BOTH DETAIL READS — this module's and the inspection router's — rather than written
+    twice, for the reason that router already gives about importing `_stages_payload`: two readers
+    of one register that can disagree about its shape is a bug shipped to two screens at once. It is
+    a private name in a route module, which is a smell worth stating rather than quietly living
+    with; the clean fix is to promote it beside `workshop_summary`, and this wave does not do that
+    because that service module is being edited by another workstream.
+
+    ``include={"actor": True}`` IS THE WHOLE REASON THE NAME IS ON THE WIRE. `feedback_payload` is
+    synchronous and pure — it reads the name off the row rather than issuing a lookup per suggestion
+    — so a caller that forgets this include gets a panel of suggestions attributed to nobody, with
+    no error anywhere. The route tests assert a non-null `actorName` for exactly that reason.
+
+    IT TAKES ONE MORE ROW THAN IT RETURNS. That is how the truncation flag is answered without a
+    second COUNT query: if the extra row came back, there is more history than this payload carries
+    and the screen must say so rather than letting a long history look like a short one.
+    """
+    limit = design_workshop_review_loop.DESIGN_WORKSHOP_FEEDBACK_READ_LIMIT
+    rows = await db.dwinspectionfeedback.find_many(
+        where={"designWorkshopId": workshop_id},
+        order={"createdAt": "desc"},
+        take=limit + 1,
+        include={"actor": True},
+    )
+    return (
+        [design_workshop_review_loop.feedback_payload(row) for row in rows[:limit]],
+        len(rows) > limit,
+    )
 
 
 @router.patch("/{workshop_id}")
@@ -2236,12 +2322,76 @@ async def update_design_workshop(
     ``workshopSetup.workshopTitle``, so a title set here stands until somebody types a different one
     into stage 1, and then stage 1 wins. Two writers, no arbitration, and the honest thing to do
     with that is print it beside the boxes rather than hide it.
+
+    ── 5. THE STATUS IS NOW A GRAPH, AND THIS IS WHERE IT IS ENFORCED (2026-09-13) ───────────────
+
+    Until this date ``status`` was copied through the field loop above with no ordering rule at all:
+    any of the five values could follow any other, and the web record page printed a named constant
+    — ``SUBMISSION_IS_REVERSIBLE`` — saying so out loud in its confirmation dialog. There are now
+    eight values and a graph, ``schemas/design_workshop_review_loop.LEGAL_TRANSITIONS``, and that
+    web constant changed in the same commit, because an irreversible act presented as reversible is
+    the worse error.
+
+    WHAT A HEADER EDIT MAY NO LONGER DO:
+
+    * **Move INTO ``DRAFT``.** It means "nobody has typed into this yet", which a workshop with 22
+      filled stages cannot truthfully claim; the next stage save re-advanced it anyway.
+    * **Go straight to ``SUBMITTED``.** That word now means THE APPROVED REPORT HAS BEEN HANDED ON.
+      The designer's forward act is ``PRE_SUBMISSION``, which consults no scorer exactly as
+      ``SUBMITTED`` did not — requirement 12 is untouched.
+    * **Make any of the four DECISION edges** in ``DECISION_EDGES``: sending a report back, approving
+      it, withdrawing an approval, handing it on. Each is taken on a route that writes its
+      ``ReviewLog`` row in the same transaction, and each refusal here names that route. A status
+      change with no audit entry is a decision that appears to have made itself.
+    * **Archive a report that is in ``PRE_SUBMISSION``** (it hides it from the officers holding it)
+      **or one that is ``APPROVED``** (with ``ARCHIVED -> PRE_SUBMISSION`` legal, that pair was a
+      two-hop path back into the loop with no audit entry and a stale decision cache).
+
+    ENTERING ``PRE_SUBMISSION`` ALSO SPENDS A SUBMISSION ROUND AND CLEARS THE DECISION CACHE, in the
+    same statement, through ``presubmission_header`` — the one function both writers of that
+    transition call. The other writer is the stage save: on a workshop that was sent back, an edit
+    that actually changes something IS the resubmission.
     """
     _require_designer(current_user)
     record = await load_workshop_or_404(workshop_id, current_user, for_edit=True)
     data = _header_patch_data(payload.model_dump(exclude_unset=True))
     if not data:
         return workshop_summary(record)
+    # ── THE FIRST TRANSITION CHECK THIS ROUTE HAS EVER CARRIED (2026-09-13) ───────────────────────
+    #
+    # Section 5 of this handler's docstring is where the argument lives. Placed AFTER
+    # `_header_patch_data` so that a body which never mentions `status` costs nothing, and BEFORE
+    # the write so that a refused move writes nothing at all.
+    if "status" in data:
+        current_status = str(getattr(record, "status", "") or "")
+        refusal = design_workshop_review_loop.transition_refusal(current_status, str(data["status"]))
+        if refusal:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=refusal)
+        # THE ROUND COUNTER MOVES WITH THE STATUS, IN ONE STATEMENT, AND THE DICT IS NOT BUILT HERE.
+        # See `presubmission_header` for why this is a shared function and not two copies of
+        # `{"increment": 1}`: the other caller is `save_stage`'s in-transaction header write, and two
+        # hand-written increments is how the counter comes to say 4 on one path and 3 on the other —
+        # after which every correction suggestion names the wrong cycle, permanently and silently.
+        if data["status"] == design_workshop_review_loop.PRE_SUBMISSION:
+            data.update(design_workshop_review_loop.presubmission_header(current_status))
+            # ⚠ ONE EXPOSURE, STATED RATHER THAN HIDDEN: this write is a plain `update` by id, so two
+            # requests that BOTH read a pre-PRE_SUBMISSION status and both arrive would each apply
+            # `{"increment": 1}` and the counter would move by two for one act. The stage-save path
+            # closes exactly this with an `update_many` predicated on the status it is leaving,
+            # because an offline outbox replays there ROUTINELY. **THAT PREDICATE COVERS THE FOUR
+            # TRANSITION KEYS AND NOTHING ELSE**, as of 2026-09-14: it used to carry the promoted
+            # columns with it, and a losing request's corrected craft name was "dropped in silence"
+            # over there in precisely the way the next sentence refuses to accept here. This path
+            # has no outbox at all
+            # (the web's header PATCH sends a fixed ten keys with no `status` in it and says so in
+            # its own failure sentence), it is behind a confirmation dialog that disables its
+            # buttons while the request is in flight, and the same predicate here would mean a
+            # concurrent title edit in the losing request was dropped in silence. The harm if it
+            # ever happens is a round counter that reads one too high: every suggestion filed
+            # afterwards is still filed against the number it reached, so the register stays
+            # internally consistent and nothing is mis-attributed. If that stops being acceptable,
+            # the fix is an `update_many` here plus a re-read for the response — not a second
+            # hand-written increment.
     # AFTER the emptiness check and before the write, so a body that never mentions the link costs
     # nothing. A link being CLEARED needs no lookup either — there is no row to find.
     if data.get("workshopId") is not None:
@@ -2488,7 +2638,21 @@ async def save_stage_data(
     if spec is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown stage")
 
-    result = await save_stage(workshop_id, spec, payload, current_user)
+    # ── `resubmits=True` IS THIS ROUTE'S CLAIM, AND IT IS THE ONLY CALL SITE ENTITLED TO MAKE IT ──
+    #
+    # "When a workshop has been sent back, the edit IS the resubmission" is a rule about WHO edited,
+    # and `save_stage` cannot see who: it takes `user` for provenance and has no gate of its own. It
+    # used to infer the answer from the fact that it had been reached at all, on the strength of a
+    # comment asserting that every caller paired the designer gate with `for_edit=True`. Two
+    # officer-driven service callers landed in the same wave and falsified that — an artisan-roster
+    # upload and a designer reassignment, both MINISTRY_ADMIN-gated — and each of them silently
+    # spent a submission round and cleared the send-back off the header before the designer had read
+    # what was asked for. So the claim is made HERE, by the two lines above this one: `_require_designer`
+    # says the account may run design workshops at all, and `load_workshop_or_404(..., for_edit=True)`
+    # says it is one of THIS workshop's editing party — creator, admin, or a `DesignWorkshopViewer`
+    # row. Nothing else in the backend holds both, which is what the call-site census in
+    # `tests/test_design_workshop_review_loop.py` pins. Do not pass this flag from a service.
+    result = await save_stage(workshop_id, spec, payload, current_user, resubmits=True)
     if result["errors"] and payload.submit:
         # THE WHOLE RESULT TRAVELS UNDER THE 422, AND NOT ONLY THE ERRORS.
         #

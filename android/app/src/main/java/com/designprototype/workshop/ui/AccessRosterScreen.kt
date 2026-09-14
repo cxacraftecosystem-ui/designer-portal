@@ -1147,4 +1147,19 @@ private val ACCESS_GRANTABLE_ROLES = listOf(
     // an inspector can do neither — no account creation, no roster edit, no workshop authority.
     "INSPECTOR",
     "PROFESSOR",
+    // THE THREE DIRECTORATE TIERS ARE OFFERED, 2026-09-13, ON THE INSPECTOR'S ARGUMENT ABOVE AND NOT
+    // BY DEFAULT. The line this list draws is "can this tier lock the institution out", and the
+    // answer for all three is no: `is_admin` is set membership on MASTER_ADMIN and ADMIN and none of
+    // them is in it, so none can create or delete an account, edit the access roster, or grant
+    // workshop access. They CAN review and rewrite the records of everyone ranked below them, which
+    // is a real power — but it is not the power held back here, and an officer admitted to a
+    // programme is exactly the kind of person an admin admits from this dialog rather than promoting
+    // afterwards.
+    //
+    // `MINISTRY_ADMIN` IS THE ROW TO READ TWICE. The token says admin and the tier is not one. An
+    // admin who taps it is admitting somebody who may correct a professor's fieldwork and may not
+    // touch this screen, the user table's create/delete arms, or the key store.
+    "ASSISTANT_DIRECTOR",
+    "REGIONAL_DIRECTOR",
+    "MINISTRY_ADMIN",
 )

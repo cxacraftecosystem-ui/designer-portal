@@ -148,7 +148,8 @@ private val TASK_STATUS_LABELS = mapOf(
 // MEMBERSHIP, so a tier missing from this list simply has no chip: the assignees are still reachable
 // through "Everyone below me" and nothing on screen reads as broken.
 private val ROLES_BY_RANK = listOf(
-    "MASTER_ADMIN", "ADMIN", "PROFESSOR", "INSPECTOR", "DESIGNER", "RESEARCHER",
+    "MASTER_ADMIN", "ADMIN", "MINISTRY_ADMIN", "REGIONAL_DIRECTOR", "ASSISTANT_DIRECTOR",
+    "PROFESSOR", "INSPECTOR", "DESIGNER", "RESEARCHER",
     "FIELD_CONTRIBUTOR", "CROWDSOURCE_VOLUNTEER"
 )
 
@@ -159,6 +160,9 @@ private val ROLE_LABELS = mapOf(
     "DESIGNER" to "Designer",
     "INSPECTOR" to "Inspector / Reviewer",
     "PROFESSOR" to "Professor",
+    "ASSISTANT_DIRECTOR" to "Assistant Director",
+    "REGIONAL_DIRECTOR" to "Regional Director",
+    "MINISTRY_ADMIN" to "Ministry Admin",
     "ADMIN" to "Admin",
     "MASTER_ADMIN" to "Master Admin"
 )

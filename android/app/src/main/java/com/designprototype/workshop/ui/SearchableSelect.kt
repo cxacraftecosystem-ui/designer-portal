@@ -747,7 +747,7 @@ fun SearchableMultiSelectField(
      * be about the box inside it. `null` therefore means the same thing on both: "this control's
      * own long-standing rule", which happens to be the count on one and "always" on the other.
      *
-     * Pass `false` for a closed ladder short enough to read at a glance — eight roles, five
+     * Pass `false` for a closed ladder short enough to read at a glance — eleven roles, five
      * statuses — where a filter box is a row of chrome and a keyboard above a list nobody needs to
      * filter. Pass it for the same reason a single-select does: so that the day a tier is added or
      * removed, the control does not change shape underneath a reader who had learnt it.

@@ -161,17 +161,26 @@ import {
 import { LINKED_WORKSHOP_KIND_GAP } from "@/components/designworkshop/linkedWorkshopPicker";
 
 /**
- * The five statuses `DesignWorkshopStatus` declares, plus the reserved empty option.
+ * The eight statuses `DesignWorkshopStatus` declares, plus the reserved empty option.
  *
  * Empty means EVERYTHING, by absence — the same rule the workshop-scope picker and the record
  * filters follow, and the reason `buildQuery` drops "" exactly as it drops null. Listing every
  * status instead would silently exclude any status added to the enum after this page was written.
+ *
+ * **THE THREE ADDED 2026-09-13 ARE THE ONES A DESIGNER FILTERS BY MOST.** "Needs revision" is the
+ * queue somebody works through on a Monday morning, and a status the server can produce with no row
+ * in this list is a filter that silently cannot find the workshops it is about — the same defect
+ * this page's own history records, where COMPLETE, SUBMITTED and ARCHIVED were filterable and
+ * nothing on any surface could produce them.
  */
 const STATUS_OPTIONS = [
   { value: "", label: "Any status" },
   { value: "DRAFT", label: "Draft" },
   { value: "IN_PROGRESS", label: "In progress" },
   { value: "COMPLETE", label: "Complete" },
+  { value: "PRE_SUBMISSION", label: "Pre-submission" },
+  { value: "NEEDS_REVISION", label: "Needs revision" },
+  { value: "APPROVED", label: "Approved" },
   { value: "SUBMITTED", label: "Submitted" },
   { value: "ARCHIVED", label: "Archived" }
 ];

@@ -933,6 +933,14 @@ report generation, no dictation consent, no AI verbs, no media and no questionna
 the fifth access system; [PERMISSIONS.md](PERMISSIONS.md) §4.5 is the whole of it, including which
 parts are asserted and which are not yet.
 
+**SINCE 2026-09-13 THAT TIER ALSO WRITES EXACTLY ONE THING: A NOTE.** The sentence above stays
+true of the workshop's CONTENT — no stage write, no report, no consent, no AI verb, no media — and
+the two new routes at the foot of this table write one row of `DwInspectionFeedback` plus, for a
+send-back, the workshop's three decision-cache columns and one `ReviewLog` entry, in a single
+transaction. An inspector still cannot reach a `DwStageEntry`: the write plan refuses every table
+but those three by construction, and the loader they use is the read-only one, which has no
+`for_edit` parameter and may not grow one.
+
 | Method | Path | Returns |
 |---|---|---|
 | `GET` | `/design-workshops/schema` | the registry — `{version, enums, stages[]}` |
@@ -960,6 +968,8 @@ parts are asserted and which are not yet.
 | `POST` | `/design-workshops/dictate` | transcribe a spoken passage into a field |
 | `GET` | `/design-workshops/eligible-viewers` | **admin** — the accounts that may be given access ([PERMISSIONS.md](PERMISSIONS.md) §4.4) |
 | `GET` · `PUT` | `/design-workshops/{id}/viewers` | **admin** — read and replace the viewer set |
+| `POST` | `/design-workshop-inspections/{id}/feedback` | **inspector** — `201`, one correction suggestion; the status does not move |
+| `POST` | `/design-workshop-inspections/{id}/send-back` | **inspector** — the suggestion that moves the report to `NEEDS_REVISION`; comments mandatory |
 
 Every path above except the last three answers for a caller who may read the workshop, which since
 the viewer grant landed means the creator, an admin, **or** somebody an admin has granted a
@@ -979,6 +989,49 @@ save; a field may narrow the first for itself with `max_items` (see `maxItems` i
 `min_items` floor is deliberately **not** applied here — `enforce_required` does not reach it and
 neither does `coerce_value`, so a gallery below its floor still saves. See `minItems` in §4 for why
 a floor on this path would drop the record on Android and revert the gallery on a `submit=true`.
+
+### 9.1 The pre-submission loop, and the one sentence a designer has to be told
+
+A designer hands the report in by moving it to `PRE_SUBMISSION` — the forward act the record page
+used to spell `SUBMITTED`, which now means *the approved report has gone to the office*. Inspecting
+officers holding a row on that workshop read it, file correction suggestions, and send it back with
+comments; the suggestions are rows in `DwInspectionFeedback`, each carrying the submission cycle it
+was filed against, and both detail reads serialise them with the officer's name.
+
+**THE EDIT IS THE RESUBMISSION, AND NOTHING ON ANY SCREEN IS THE BUTTON FOR IT.** When a report is
+in `NEEDS_REVISION`, the next `PUT …/stages/{stageKey}` **that actually changes something** moves it
+back to `PRE_SUBMISSION` and spends one submission round. That is the rule
+`services/records.resubmit_status` has run over six record types since it was written, applied to a
+record whose content is rows rather than columns — so the decision is made inside `save_stage`'s own
+transaction, from the plan it is about to apply, and never from a route.
+
+*"That actually changes something"* is load-bearing and is the subtlest part of this feature. The
+stage planner appends an update for EVERY row a payload names, with no value comparison anywhere —
+so a form opened and saved, an offline outbox replaying a byte-identical body, and a save that only
+dropped unknown keys are all indistinguishable from an edit unless the plan is asked what MOVED.
+Each carries a per-row `changed` flag with no default; `_content_changed` reads them back from the
+plan that survives the version settling, so a save whose every row was refused resubmits nothing.
+Without it, a replay would tell every officer the report had been handed back in and would
+permanently mis-number every suggestion filed afterwards, because a suggestion's `round` is copied
+at write time and never recomputed.
+
+Two consequences worth stating:
+
+* **A workshop's `createdById` is the wrong test for "the designer".** It is the ADMIN who opened the
+  workshop — the create gate admits nobody else — so the `createdById == user.id` test the six record
+  types use would mean a designer's corrections never resubmitted and an admin's typo fix always did.
+  The editing party is already settled by the route's own two gates.
+* **Entering `PRE_SUBMISSION` clears `reviewNotes`, `reviewedById` and `reviewedAt`.** A report
+  waiting for a decision must not name an officer who has not taken one. Nothing is lost: every
+  sentence those columns ever held is a row in the register, which is what the designer's panel is
+  built from.
+
+Approving is the sanctioning authority's act on its own route and is **not** part of this table yet —
+`PRE_SUBMISSION → APPROVED`, `APPROVED → NEEDS_REVISION` and `APPROVED → SUBMITTED` are declared as
+decision edges, so a header edit is refused all three with a sentence naming the route, and until
+that router lands `APPROVED` is simply unreachable. That is the safe direction: nothing can be
+approved by accident and no header edit can manufacture an approval in the meantime. True as of
+«2026-09-13»; check `grep -rn "design-workshop-approvals" backend/app/api/`.
 
 Operation counts for the whole API are generated into [REPO_FACTS.md](REPO_FACTS.md).
 

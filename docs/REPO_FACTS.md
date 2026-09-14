@@ -16,19 +16,19 @@ API lags the tree by however many commits have not been deployed; see
 
 | | Count |
 |---|---|
-| Prisma models | **63** |
-| Prisma enums | **30** |
-| `@@index` declarations | 194 |
-| `@@unique` declarations | 20 |
+| Prisma models | **68** |
+| Prisma enums | **31** |
+| `@@index` declarations | 220 |
+| `@@unique` declarations | 23 |
 
-Models: `User`, `AssignedTask`, `Feedback`, `FeedbackReport`, `UserPreference`, `AppRelease`, `Craft`, `Location`, `Artisan`, `Workshop`, `WorkshopArtisan`, `WorkshopCraft`, `ProductDocumentation`, `ToolDocumentation`, `ToolArtisan`, `MediaFile`, `MediaProcessingJob`, `QuestionnaireSection`, `QuestionnaireSectionStatus`, `QuestionnaireQuestion`, `QuestionnaireInterview`, `QuestionnaireInterviewArtisan`, `QuestionnaireResponse`, `Questionnaire`, `QuestionnaireFormSection`, `QuestionnaireFormQuestion`, `QuestionnaireFormEntry`, `QuestionnaireFormAnswer`, `Process`, `ProcessStep`, `ReviewLog`, `AppSetting`, `WorkshopAssignment`, `ManagedSecret`, `UserAiCredential`, `SecretTestResult`, `DataAccessGrant`, `DataAccessScopeItem`, `EntryComment`, `RecordRevision`, `DesignWorkshop`, `DesignWorkshopViewer`, `DesignWorkshopInspector`, `DesignWorkshopAccessRequest`, `RecordAccessToken`, `RecordAccessTokenRedemption`, `DesignWorkshopProvisionalMember`, `DwStageEntry`, `DwCustomSection`, `DwCustomField`, `DwReportExport`, `DwAiLayer`, `DwAiLayerDecision`, `DwWorkshopConsentDecision`, `DwDictationDailyUsage`, `DwAiVerbDailyUsage`, `DwReviewRating`, `DesignerRoster`, `DesignerProfile`, `PasswordResetToken`, `AccessRoster`, `UsageEvent`, `UsageConsentDecision`.
+Models: `User`, `AssignedTask`, `Feedback`, `FeedbackReport`, `UserPreference`, `AppRelease`, `Craft`, `Location`, `Artisan`, `Workshop`, `WorkshopArtisan`, `WorkshopCraft`, `ProductDocumentation`, `ToolDocumentation`, `ToolArtisan`, `MediaFile`, `MediaProcessingJob`, `QuestionnaireSection`, `QuestionnaireSectionStatus`, `QuestionnaireQuestion`, `QuestionnaireInterview`, `QuestionnaireInterviewArtisan`, `QuestionnaireResponse`, `Questionnaire`, `QuestionnaireFormSection`, `QuestionnaireFormQuestion`, `QuestionnaireFormEntry`, `QuestionnaireFormAnswer`, `Process`, `ProcessStep`, `ReviewLog`, `AppSetting`, `WorkshopAssignment`, `ManagedSecret`, `UserAiCredential`, `SecretTestResult`, `DataAccessGrant`, `DataAccessScopeItem`, `EntryComment`, `RecordRevision`, `DesignWorkshop`, `DesignWorkshopViewer`, `DesignWorkshopInspector`, `DesignWorkshopOversight`, `DwArtisanImport`, `DesignWorkshopAccessRequest`, `RecordAccessToken`, `RecordAccessTokenRedemption`, `DesignWorkshopProvisionalMember`, `DwStageEntry`, `DwCustomSection`, `DwCustomField`, `DwReportExport`, `DwAiLayer`, `DwAiLayerDecision`, `DwWorkshopConsentDecision`, `DwInspectionFeedback`, `DwDictationDailyUsage`, `DwAiVerbDailyUsage`, `DwReviewRating`, `DesignerRoster`, `DesignerProfile`, `SanctionOrder`, `PasswordResetToken`, `AccessRoster`, `UsageEvent`, `UsageConsentDecision`, `AnnualPlanEntry`.
 
-Enums: `UserRole`, `AuthProvider`, `RecordStatus`, `WorkshopType`, `MediaType`, `ProductType`, `MarketDemand`, `MakerType`, `TraditionType`, `ReviewRecordType`, `MediaProcessingJobType`, `MediaProcessingJobStatus`, `ProcessStepType`, `DataAccessTier`, `DataAccessStatus`, `DesignWorkshopStatus`, `DwDictationConsent`, `DwAccessRequestStatus`, `DwAccessRequestSource`, `DwCodeRecordType`, `DwTokenRedemptionOutcome`, `DwTokenRedemptionReason`, `DwAiLayerKind`, `DwAiTier`, `DwAiDecision`, `DwReviewRound`, `CredentialLinkPurpose`, `AccessStatus`, `UsageConsent`, `UsageConsentBasis`.
+Enums: `UserRole`, `AuthProvider`, `RecordStatus`, `WorkshopType`, `MediaType`, `ProductType`, `MarketDemand`, `MakerType`, `TraditionType`, `ReviewRecordType`, `MediaProcessingJobType`, `MediaProcessingJobStatus`, `ProcessStepType`, `DataAccessTier`, `DataAccessStatus`, `DesignWorkshopStatus`, `DwDictationConsent`, `DwOversightCapacity`, `DwAccessRequestStatus`, `DwAccessRequestSource`, `DwCodeRecordType`, `DwTokenRedemptionOutcome`, `DwTokenRedemptionReason`, `DwAiLayerKind`, `DwAiTier`, `DwAiDecision`, `DwReviewRound`, `CredentialLinkPurpose`, `AccessStatus`, `UsageConsent`, `UsageConsentBasis`.
 
 ## API surface
 
-**295 operations** in the working tree — 142 GET, 92 POST, 26 DELETE,
-20 PATCH, 15 PUT. 2 of them (`/health`, `/health/ready`) are declared
+**325 operations** in the working tree — 158 GET, 102 POST, 26 DELETE,
+22 PATCH, 17 PUT. 2 of them (`/health`, `/health/ready`) are declared
 on the app rather than on a router; the rest are spread across `backend/app/api/routes/`:
 
 | Route module | Operations |
@@ -40,6 +40,8 @@ on the app rather than on a router; the rest are spread across `backend/app/api/
 | `questionnaire_forms.py` | 19 |
 | `usage.py` | 13 |
 | `data_access.py` | 12 |
+| `design_workshop_oversight.py` | 11 |
+| `annual_plan.py` | 10 |
 | `designers.py` | 10 |
 | `tasks.py` | 10 |
 | `feedback.py` | 9 |
@@ -47,12 +49,13 @@ on the app rather than on a router; the rest are spread across `backend/app/api/
 | `tools.py` | 8 |
 | `artisans.py` | 7 |
 | `design_workshop_access.py` | 7 |
+| `design_workshop_inspections.py` | 7 |
+| `sanction_orders.py` | 7 |
 | `access.py` | 6 |
 | `ai_keys.py` | 5 |
 | `crafts.py` | 5 |
 | `data_browser.py` | 5 |
 | `datasets.py` | 5 |
-| `design_workshop_inspections.py` | 5 |
 | `processes.py` | 5 |
 | `products.py` | 5 |
 | `review.py` | 5 |
@@ -99,6 +102,9 @@ someone deployed from a branch.
 - `DESIGNER` — rank **35**
 - `INSPECTOR` — rank **37**
 - `PROFESSOR` — rank **40**
+- `ASSISTANT_DIRECTOR` — rank **42**
+- `REGIONAL_DIRECTOR` — rank **45**
+- `MINISTRY_ADMIN` — rank **48**
 - `ADMIN` — rank **50**
 - `MASTER_ADMIN` — rank **60**
 
@@ -115,9 +121,9 @@ no key is skipped wherever it sits.
 
 | Surface | Files | Cases | Runner |
 |---|---|---|---|
-| Backend unit (`backend/tests/`) | 189 | 3819 `def test_` | `python -m pytest -q` from `backend/` |
-| Web end-to-end (`frontend/e2e/`) | 183 | 2151 `test(` | Playwright, `frontend/playwright.config.ts` |
-| Android unit (`android/app/src/test/`) | 223 | 2955 `@Test` | `./gradlew :app:testDebugUnitTest` from `android/` |
+| Backend unit (`backend/tests/`) | 210 | 4253 `def test_` | `python -m pytest -q` from `backend/` |
+| Web end-to-end (`frontend/e2e/`) | 185 | 2166 `test(` | Playwright, `frontend/playwright.config.ts` |
+| Android unit (`android/app/src/test/`) | 224 | 2963 `@Test` | `./gradlew :app:testDebugUnitTest` from `android/` |
 | Android instrumented (`android/app/src/androidTest/`) | 8 | 24 `@Test` | needs a device; not run in CI |
 
 The backend case count is `def test_` occurrences; pytest reports a larger number because
@@ -134,11 +140,11 @@ and this one asserted an absence it had never looked for.
 
 | Area | Tracked files | Tracked lines | Tree files | Tree lines |
 |---|---|---|---|---|
-| `backend/app` | 184 | 130,931 | 184 | 130,931 |
-| `frontend/app` | 75 | 40,313 | 75 | 40,313 |
-| `frontend/components` | 286 | 122,591 | 286 | 122,591 |
-| `frontend/lib` | 121 | 63,995 | 121 | 63,995 |
-| `android/app/src/main/java` | 257 | 222,351 | 257 | 222,351 |
+| `backend/app` | 198 | 142,339 | 198 | 142,339 |
+| `frontend/app` | 87 | 44,922 | 87 | 44,922 |
+| `frontend/components` | 286 | 122,750 | 286 | 122,750 |
+| `frontend/lib` | 122 | 64,849 | 122 | 64,849 |
+| `android/app/src/main/java` | 257 | 222,669 | 257 | 222,669 |
 
 Two columns because the two numbers get quoted interchangeably and disagree by however much work is
 uncommitted. **Tracked** is `git ls-files`, which is the figure to use in a write-up — it is

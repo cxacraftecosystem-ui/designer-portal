@@ -49,7 +49,7 @@ import java.util.Locale
  * is set membership on INSPECTOR alone, and it is the ONLY route rule on this handset whose refusal
  * is **not monotonic in rank**: a MASTER_ADMIN is refused where an INSPECTOR is admitted. Reading the
  * ladder for this row gives the wrong answer every single time — which is why the predicate is a set
- * and why `InspectionGateTest` walks all eight tiers rather than sampling.
+ * and why `InspectionGateTest` walks all eleven tiers rather than sampling.
  *
  * What an admin gets INSTEAD is the appointment screen, and the refusal copy names it.
  *
@@ -667,6 +667,40 @@ data class DwInspectionDetailDto(
      * treated as `true`.
      */
     val readOnly: Boolean? = null,
+    /*
+      THE REVIEW-LOOP HEADER, carried because this payload IS `workshop_summary` with the stages
+      folded in — `routes/design_workshop_inspections.py` builds it from the same helper the
+      designer's read uses and then adds `readOnly`, the feedback register and `mayRecordFeedback` on
+      top. Undeclared until 2026-09-14, so an inspector's handset could not see the decision its own
+      officers had recorded, nor the round it was looking at.
+
+      [reviewNotes] IS THE LATEST SENTENCE AND IS CLEARED ON EVERY HAND-BACK. It is a cache; the
+      register is [inspectionFeedback]. An inspector reading "what did we ask for last time" must
+      read the rows, never this column, or the answer disappears the moment the designer answers it.
+    */
+    val reviewNotes: String? = null,
+    val reviewedById: String? = null,
+    val reviewedAt: String? = null,
+    /** Which hand-in this is. The queue is ordered by `reviewedAt`; this is what tells an officer
+     *  whether they are reading a first submission or a fifth. Zero means never handed in. */
+    val submissionRound: Int = 0,
+    /** Every suggestion ever filed against this report, newest first. Shared shape with the
+     *  designer's read — see [DwInspectionFeedbackDto], declared once in `StageSchema.kt`. */
+    val inspectionFeedback: List<DwInspectionFeedbackDto> = emptyList(),
+    /** True when the register held more rows than this read carries. Say so on screen: a bounded
+     *  read that quietly cut the history makes a long correspondence look like a short one. */
+    val inspectionFeedbackTruncated: Boolean = false,
+    /**
+     * MAY THIS ACCOUNT FILE A SUGGESTION? **Absent means no**, which is why the default is false.
+     *
+     * TRUE ON THIS ROUTE AND FALSE ON THE DESIGNER'S, decided by the server and stated on the wire
+     * rather than inferred from the URL. It is NOT [readOnly] in different words and the two must not
+     * be conflated: [readOnly] is about the workshop's CONTENT and stays true here — an inspector
+     * never writes a stage — while this key is about the feedback register, which an inspector
+     * writes and a designer does not. Flipping [readOnly] to enable a feedback box would offer a Save
+     * button on stages that have no write route at all.
+     */
+    val mayRecordFeedback: Boolean = false,
 )
 
 /**

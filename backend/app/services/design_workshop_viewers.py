@@ -37,6 +37,18 @@ from the sibling table's "nothing is ever deleted". A grant here carries no deci
 never refused anybody and was never asked for, so a tombstone would record only that an admin
 changed their mind about a colleague.
 
+**THERE ARE TWO REMOVERS AND THAT IS DELIBERATE**, mirroring the two WRITERS this table has always
+had. :func:`replace_viewers` is the whole-set PUT the admin screen uses, and
+:func:`remove_one_viewer` is its singular counterpart — the mirror of ``add_one_viewer`` — for a
+caller that has an opinion about exactly one account and none about anybody else's membership.
+Using the whole-set replace to remove one person deletes whatever it did not read, which is the
+hazard ``add_one_viewer``'s docstring refuses to widen for; and the whole-set route is behind
+``require_admin`` = {ADMIN, MASTER_ADMIN}, which the MINISTRY_ADMIN who reassigns a workshop's
+designer (``design_workshop_oversight.reassign_designer``) is outside. Before the singular remover
+existed, that officer's "name a different designer" was really "name an additional one": the
+outgoing designer kept a viewer row, kept every stage write it confers, and there was no route in
+the product the officer could reach that would take it away.
+
 **ELIGIBILITY IS A SET, NOT A RANK, AND SOMEBODY WHO CANNOT SIGN IN IS THE TRAP.**
 ``DESIGN_WORKSHOP_ROLES`` is Designer/Admin/Master Admin — a PROFESSOR cannot run a workshop despite
 outranking a designer — and on top of that TWO SEPARATE TABLES can stop an otherwise eligible
@@ -480,6 +492,44 @@ async def replace_viewers(
             skip_duplicates=True,
         )
     return await viewer_rows(workshop_id)
+
+
+async def remove_one_viewer(workshop_id: str, user_id: str) -> bool:
+    """Take exactly this one account off the workshop. Answers whether a row was actually deleted.
+
+    **THE SINGULAR MIRROR OF ``add_one_viewer``, AND IT EXISTS FOR THE SAME REASON THAT ONE DOES.**
+    Until this function was written, ``replace_viewers`` was the ONLY delete of a
+    ``DesignWorkshopViewer`` row anywhere in the backend, and it is a whole-set replace behind
+    ``require_admin``. Two consequences, both of which cost something:
+
+    * A caller that wants to remove ONE person had to send the whole surviving set — which deletes
+      whatever it did not read, so a viewer row a concurrent join-card redemption created in the
+      same second is destroyed by a call that had no opinion about them. That is the exact hazard
+      ``add_one_viewer``'s docstring refuses to widen for, and the remove side needed the same
+      refusal rather than the same hazard twice.
+    * ``require_admin`` is the set {ADMIN, MASTER_ADMIN}. A MINISTRY_ADMIN is outside it and is
+      nonetheless the role that reassigns a workshop's designer
+      (``design_workshop_oversight.reassign_designer``), so before this existed the officer who
+      performed a replacement had no route anywhere that could take the replaced designer's access
+      away, and no screen that would even have shown it to them.
+
+    ``delete_many`` AND NOT ``delete``. The pair is the primary key, so this either removes the one
+    row or removes nothing; ``delete`` raises ``RecordNotFoundError`` on a row a concurrent admin
+    save has already taken off, and a 500 for "the thing you asked me to remove is already gone" is
+    a worse answer than ``False``.
+
+    NO TOMBSTONE, exactly as ``replace_viewers`` argues: a grant here carries no decision to audit,
+    and a revocation row would record only that somebody changed their mind about who is working on
+    a workshop. The ACT is recorded where it belongs — by the caller, in whatever it answers with.
+
+    ⚠ **ELIGIBILITY IS NOT ASKED AND MUST NOT BE.** ``_assert_every_id_may_be_granted`` guards the
+    ADD side; refusing to REMOVE somebody because their empanelment has lapsed would strand access
+    precisely on the accounts it is most urgent to take it away from.
+    """
+    removed = await db.designworkshopviewer.delete_many(
+        where={"designWorkshopId": workshop_id, "userId": user_id}
+    )
+    return bool(removed)
 
 
 def _deduplicate(user_ids: list[str], creator_id: str) -> set[str]:

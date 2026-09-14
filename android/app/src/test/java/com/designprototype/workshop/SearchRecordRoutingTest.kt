@@ -49,6 +49,9 @@ class SearchRecordRoutingTest {
         "DESIGNER",
         "INSPECTOR",
         "PROFESSOR",
+        "ASSISTANT_DIRECTOR",
+        "REGIONAL_DIRECTOR",
+        "MINISTRY_ADMIN",
         "ADMIN",
         "MASTER_ADMIN",
     )
@@ -62,7 +65,11 @@ class SearchRecordRoutingTest {
         val offered = everyRole.filter { SearchDesignWorkshopRoute.offeredTo(user(it)) }.toSet()
         assertEquals(
             "a tap onto a design workshop must equal deps.DESIGN_WORKSHOP_ROLES exactly",
-            setOf("DESIGNER", "ADMIN", "MASTER_ADMIN"),
+            setOf(
+                "DESIGNER",
+                "MINISTRY_ADMIN", "REGIONAL_DIRECTOR", "ASSISTANT_DIRECTOR",
+                "ADMIN", "MASTER_ADMIN"
+            ),
             offered
         )
     }

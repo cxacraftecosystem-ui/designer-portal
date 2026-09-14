@@ -178,6 +178,65 @@ async def read_upload_bounded(
     return bytes(buffer)
 
 
+#: The three extensions Excel writes that openpyxl can open.
+#:
+#: A ``.xls`` is refused by NAME here and by MAGIC BYTES in the parser, and the two messages differ
+#: on purpose: this one can name the file the person chose, and the parser's can say what the bytes
+#: actually are ("that file is in the older .xls format, or it is an .xlsx with a password on it").
+WORKBOOK_SUFFIXES: tuple[str, ...] = (".xlsx", ".xlsm", ".xltx")
+
+
+async def read_workbook_upload(
+    file: Any,
+    max_bytes: int,
+    *,
+    request: Any = None,
+    purpose: str,
+    wrong_type_detail: str,
+    empty_detail: str,
+    remedy: str | None = None,
+) -> bytes:
+    """An uploaded .xlsx, or a 4xx the person can act on rather than a 500 out of openpyxl.
+
+    THREE REFUSALS, CHEAPEST TO DEAREST, AND THE ORDER IS THE WHOLE POINT. The extension is a string
+    on the multipart part, so a .docx is turned away without touching the body. The declared
+    ``Content-Length`` costs a header lookup. Only then is the body read, and
+    :func:`read_upload_bounded` counts it as it arrives so a request that UNDERSTATES its length is
+    stopped mid-read rather than after it.
+
+    THE SENTENCES ARE THE CALLER'S, AND THAT IS NOT INDECISION. "That is not a workbook" is the same
+    FACT at two doors with two different NEXT ACTIONS — "fill in the questionnaire pro-forma" and
+    "fill in the annual plan pro-forma". One helper with a generic sentence would have made both
+    doors vaguer than either was on its own; one helper per door would be the copy this function
+    exists to end.
+
+    ⚠ THE EXTENSION GATE IS NOT TOTAL AND NEVER WAS. A multipart part with NO filename skips it
+    entirely and falls through to the parser's magic-byte check, which is the real type check. Do
+    not read this function as one, and do not "tighten" it by refusing a nameless part: a nameless
+    part is what several HTTP clients send for a perfectly ordinary file.
+
+    ``questionnaire_forms._read_upload``'s own docstring predicted this helper — "this is the second
+    door with this shape and there will be a third: the bound belongs beside the other upload rules
+    in ``services/uploads``, where one fix reaches every route". The annual-plan directory is the
+    third door and this is that lift (2026-09-13). Re-pointing the two existing doors at it is a
+    one-line change in each and is tracked as a follow-up rather than done here, because those two
+    route modules were owned by other changes in flight.
+    """
+    name = (getattr(file, "filename", "") or "").lower()
+    if name and not name.endswith(WORKBOOK_SUFFIXES):
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail=wrong_type_detail
+        )
+    content = await read_upload_bounded(
+        file, max_bytes, request=request, purpose=purpose, remedy=remedy
+    )
+    if not content:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=empty_detail
+        )
+    return content
+
+
 def _declared_length(request: Any) -> int | None:
     """``Content-Length`` as an int, or None for anything that is not one.
 

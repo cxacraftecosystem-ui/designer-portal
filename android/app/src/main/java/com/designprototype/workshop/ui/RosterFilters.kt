@@ -82,7 +82,7 @@ enum class RosterDir(val token: String) {
  * `AccessRosterScreen`'s edit dialog), so it is a value an admin can already SEE and must therefore
  * be able to filter for.
  *
- * WITHOUT THIS OPTION, TICKING ALL EIGHT TIERS SILENTLY EXCLUDES EVERY DEFAULT-TIER ADMISSION — the
+ * WITHOUT THIS OPTION, TICKING ALL ELEVEN TIERS SILENTLY EXCLUDES EVERY DEFAULT-TIER ADMISSION — the
  * identical failure `UNASSIGNED_WORKSHOP` was invented for (`record_filters.py:47-53`) and the one
  * `WorkshopScopeSelect`'s "Not linked to a workshop" row closes. A reserved word rather than an empty
  * string, for that module's reason: an empty string is what a blank control sends, and "the admin
@@ -148,7 +148,7 @@ val ACCESS_DATE_FIELDS: List<String> = listOf("added", "requested", "decided", "
 val DESIGNER_DATE_FIELDS: List<String> = listOf("added", "firstSeen", "revoked")
 
 /**
- * THE EIGHT-TIER LADDER, HIGHEST FIRST — `deps.ROLE_RANK`'s order, and the fourth Kotlin copy of it.
+ * THE ELEVEN-TIER LADDER, HIGHEST FIRST — `deps.ROLE_RANK`'s order, and the fourth Kotlin copy of it.
  *
  * ⚠ A COPY, AND IT IS PINNED RATHER THAN TRUSTED. `FieldPermissions.RANKS` and `TaskAdminScreen`'s
  * own `ROLES_BY_RANK` are both private to their files, so this cannot be derived without editing a
@@ -169,6 +169,9 @@ val DESIGNER_DATE_FIELDS: List<String> = listOf("added", "firstSeen", "revoked")
 val ROSTER_ROLE_LADDER: List<String> = listOf(
     "MASTER_ADMIN",
     "ADMIN",
+    "MINISTRY_ADMIN",
+    "REGIONAL_DIRECTOR",
+    "ASSISTANT_DIRECTOR",
     "PROFESSOR",
     "INSPECTOR",
     "DESIGNER",
@@ -586,14 +589,14 @@ val DESIGNER_STANDING_OPTIONS: List<SelectOption> = listOf(
 )
 
 /**
- * THE EIGHT-TIER LADDER PLUS ONE RESERVED ROW, highest tier first.
+ * THE ELEVEN-TIER LADDER PLUS ONE RESERVED ROW, highest tier first.
  *
  * The reserved row is LAST and is named as what it IS rather than as a tier, because it is not one —
  * it is the absence of one. Same placement and same reason as `WorkshopScopeSelect`'s "Not linked to
  * a workshop" row: it has to be tickable or ticking every tier silently drops a whole class of row,
  * but it does not belong among the tiers in the reading order.
  *
- * AND IT IS NOT SEARCHABLE. Nine rows, one above `SEARCH_THRESHOLD` — so left to the option count
+ * AND IT IS NOT SEARCHABLE. Twelve rows, four above `SEARCH_THRESHOLD` — so left to the option count
  * this control would grow a filter box today and lose it the day a tier is removed. It is a closed
  * vocabulary a reader takes in at a glance, which is the case the threshold exists to separate from
  * a corpus, so the caller passes `searchable = false` outright. The web passes `searchable={false}`

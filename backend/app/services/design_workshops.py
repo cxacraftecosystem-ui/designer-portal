@@ -46,6 +46,13 @@ from prisma.errors import UniqueViolationError
 
 from app.core.db import db
 from app.core.deps import can_run_design_workshops, is_admin
+
+# THE PRE-SUBMISSION LOOP'S PURE HALF: the status graph, and the one function that builds the
+# header write which enters PRE_SUBMISSION. It is in `app/schemas` and not in `app/services`
+# because it must import nothing that reaches the database — that is what lets THIS module import
+# it without a cycle (`records` imports `app.core.db`; the loop module imports `review_update`
+# inside the one function that needs it) and what lets its rules be asserted with no Postgres.
+from app.schemas import design_workshop_review_loop
 from app.services import (
     custom_sections,
     design_workshop_data,
@@ -304,6 +311,31 @@ def workshop_summary(record: Any) -> dict[str, Any]:
         "createdAt": record.createdAt.isoformat() if record.createdAt else None,
         "updatedAt": record.updatedAt.isoformat() if record.updatedAt else None,
         "deletedAt": record.deletedAt.isoformat() if record.deletedAt else None,
+        # ── THE PRE-SUBMISSION LOOP: THE CACHE OF THE LATEST DECISION ────────────────────────────
+        # NAMED HERE OR IT IS INVISIBLE — this dict's own docstring says so and calls it the trap,
+        # and four columns added to schema.prisma and not to these four lines would look from every
+        # screen exactly like four columns that are never written.
+        #
+        # THE TRIO IS A CACHE AND NOT THE RECORD. `reviewNotes` is the LATEST sentence and it is
+        # CLEARED when the workshop is handed back in, so a client that built a "what was sent back"
+        # panel from it would show one sentence during a review and nothing at all afterwards. The
+        # register is `inspectionFeedback`, which the two DETAIL reads add and which the LIST
+        # deliberately does not carry — a bounded read per row in a paged endpoint, to print
+        # something no list shows.
+        "reviewNotes": record.reviewNotes,
+        # AN ID AND NOT A NAME, for `dictationConsentById`'s reason one block down: resolving it
+        # would be an account lookup per workshop on the page every designer opens. The feedback
+        # rows carry `actorName`, which is where a screen gets a name from.
+        "reviewedById": record.reviewedById,
+        "reviewedAt": record.reviewedAt.isoformat() if record.reviewedAt else None,
+        # HOW MANY TIMES IT HAS BEEN HANDED IN. Zero means never, which is true of every workshop
+        # that predates this column. Never sent by a client — see `_NEVER_PATCHABLE` in the route
+        # module, which must name every key this dict adds or the build goes red.
+        #
+        # ON THE LIST ROW AS WELL AS THE SINGLE READ, deliberately: the approvals queue IS a list,
+        # it is ordered by `reviewedAt`, and a queue that cannot show its own sort key is a queue
+        # somebody will re-sort in the client against a value it does not have.
+        "submissionRound": record.submissionRound,
         # Tier 3 consent: may this workshop's recordings leave the device? Three keys — the answer, the
         # moment the ARTISAN gave it, and who took it down. The acceptor's display NAME is deliberately
         # not here: this dict is serialised once per row by the paged list, and resolving a name would
@@ -3949,7 +3981,12 @@ async def assert_every_designer_may_be_named(user_ids: set[str]) -> None:
 
 
 async def attach_the_named_designer(
-    workshop_id: str, designer_id: str, *, granted_by_id: str, creator_id: str
+    workshop_id: str,
+    designer_id: str,
+    *,
+    granted_by_id: str,
+    creator_id: str,
+    client: Any = None,
 ) -> bool:
     """Put the named designer on the workshop. Answers whether a row was actually written.
 
@@ -3974,18 +4011,35 @@ async def attach_the_named_designer(
     hold, and it holds by the same test rather than by a comment. Note that their PROFILE is still
     what the seed copies — being the creator does not stop somebody being the designer.
 
-    NOT IN A TRANSACTION WITH THE WORKSHOP CREATE, and the exposure is worth stating rather than
-    hiding: the workshop row is already committed by the time this runs, so a driver-level failure
-    here answers 500 and leaves a workshop the named designer cannot open. That is recoverable from
-    the viewers panel in two clicks and is visible — the admin gets an error, and the panel shows an
-    empty team. The alternative, wrapping the create and the grant together, would have to take the
-    seed in with it (a dozen writes behind a blanket ``except`` that must never fail a create) or
-    leave the ordering harder to read than the failure it prevents.
+    NOT IN A TRANSACTION WITH THE WORKSHOP CREATE — **ON THE ADMIN CREATE PATH, WHICH PASSES NO
+    ``client``.** This paragraph used to state that as an absolute and it is no longer one, which is
+    why it has been edited rather than left: a comment that used to be true is the single thing this
+    repository's house style spends most of its words preventing. On that path the exposure is worth
+    stating rather than hiding: the workshop row is already committed by the time this runs, so a
+    driver-level failure here answers 500 and leaves a workshop the named designer cannot open. That
+    is recoverable from the viewers panel in two clicks and is visible — the admin gets an error, and
+    the panel shows an empty team. The alternative, wrapping the create and the grant together, would
+    have to take the seed in with it (a dozen writes behind a blanket ``except`` that must never fail
+    a create) or leave the ordering harder to read than the failure it prevents.
+
+    ``client`` IS THE SECOND PATH AND IT IS THE OPPOSITE CHOICE, taken for a different caller with a
+    different obligation. ``services/sanction_orders.create_from_sanction`` writes the workshop, the
+    viewer row and the sanction order in ONE ``db.tx()``, because a ministry order that named a
+    designer who cannot open the workshop it paid for is not a recoverable inconvenience — it is a
+    financial record disagreeing with an access table. ``db.tx()`` hands back a DIFFERENT client, so
+    without threading it here the viewer row would commit independently of the workshop it grants
+    access to, and a rollback would leave a grant pointing at a workshop that no longer exists.
+
+    ⚠ **ELIGIBILITY IS STILL THE CALLER'S, AND IT MUST BE ASKED BEFORE THE TRANSACTION OPENS.**
+    ``add_one_viewer``'s own docstring says the caller validates; the admin create route calls
+    ``assert_every_designer_may_be_named`` ABOVE its create for that reason. Do not move that call
+    inside a transaction that has just written the roster rows it reads — from in there it would read
+    them through the module singleton, see nothing, and refuse every sanction order ever recorded.
     """
     if designer_id == creator_id:
         return False
     await add_one_viewer(
-        db,
+        db if client is None else client,
         workshop_id=workshop_id,
         user_id=designer_id,
         granted_by_id=granted_by_id,
@@ -4049,6 +4103,88 @@ async def attach_the_named_designers(
         )
         raise
     return granted
+
+
+async def open_design_workshop(
+    *,
+    actor: Any,
+    columns: Mapping[str, Any],
+    designer_id: str | None = None,
+    designer_ids: Sequence[str] = (),
+    seeded: Mapping[str, Any] | None = None,
+) -> Any:
+    """Open a `DesignWorkshop`. FOUR STEPS, IN THIS ORDER, ALWAYS.
+
+    ══ WHY THIS IS A FUNCTION AND NOT FOUR LINES IN A ROUTE ══════════════════════════════════════
+
+    Until 2026-09-13 there was one ordinary door — ``POST /api/design-workshops`` — and the four
+    steps lived in its body, which was correct while there was one door. The annual-plan directory
+    is a second: a planned row promoted into a real workshop. A second COPY of these four steps
+    would be a second place that can forget the fourth, and forgetting the fourth is not a visible
+    failure. It is a workshop whose state, district, craft, venue and dates sit on the ROW with no
+    stage entry behind them, which the designer's FIRST stage-1 save nulls out under a 200 reading
+    "Stage saved": ``touched_entities`` gains ``workshopSetup`` for any entry naming it, the web
+    sends a read stage's singleton whether or not it holds anything, and ``_coerce_promoted`` nulls
+    a promoted column of a touched entity whose value is blank. Nothing warns, completeness does not
+    move, and the workshop simply loses its header for the fortnight of capture. That whole defect
+    is set out in :func:`seed_designer_prefill`'s own docstring immediately below.
+
+    ══ THE ORDER IS LOAD-BEARING, AND STEP 1 IS WHY ══════════════════════════════════════════════
+
+    ELIGIBILITY IS ASKED ABOVE THE CREATE. Naming somebody who may not hold a viewer row — a
+    professor, a designer whose empanelment has lapsed, an account the platform allow-list has
+    suspended — has to refuse the WHOLE call. Asked after the create, the same 422 leaves a
+    committed, untitled-looking orphan draft behind on every retry. ONE call for the whole set and
+    never one per id: the refusal names every account it objected to, so an administrator makes one
+    trip rather than two.
+
+    THE ACTOR IS SUBTRACTED FROM THAT SET, for the reason ``_deduplicate`` gives on the viewers PUT:
+    their access comes from ``createdById``, no viewer row is ever written for them, so validating
+    them can only produce a refusal about a row that was never going to exist.
+
+    ══ WHAT THIS FUNCTION DOES NOT DO, AND MUST NOT LEARN ════════════════════════════════════════
+
+    IT DOES NOT GATE. ``assert_can_create_design_workshops`` stays on each ROUTE, spelled out there,
+    and ``backend/tests/test_design_workshop_gate.py`` reads ``create_design_workshop``'s own SOURCE
+    to prove it. Moving the gate in here would move it out of the place that test can see, and would
+    make the annual-plan door's gate invisible to the reader of that route.
+
+    IT DOES NOT PARSE. ``columns`` arrives already coerced — dates as ``datetime``, falsy values
+    already dropped — because the two callers coerce from two different sources (a pydantic body, a
+    database row) and a function that accepted both would have to guess which it had been handed.
+    (Two callers is true as of 2026-09-13; check ``grep -rn "open_design_workshop(" backend/app``.)
+
+    IT IS NOT IN A TRANSACTION, and that is inherited rather than chosen: ``attach_the_named_
+    designers`` says at length why the viewer rows are not transactional with the create, and
+    ``seed_designer_prefill`` swallows its own failure on purpose. A ``db.tx()`` wrapped round all
+    four would change both of those decisions silently. The sanction register writes its workshop
+    inside its own seven-row transaction for reasons particular to it (see
+    ``services/sanction_orders.py``) and therefore does not call this; that is the one deliberate
+    exception, and ``tests/test_design_workshop_creation_path.py`` enumerates the call sites so a
+    FOURTH one cannot appear without a test going red.
+    """
+    wanted = set(designer_ids) - {actor.id}
+    if wanted:
+        await assert_every_designer_may_be_named(wanted)
+
+    record = await db.designworkshop.create(
+        data={
+            **dict(columns),
+            "createdById": actor.id,
+            "schemaVersion": registry_version(),
+            "status": "DRAFT",
+        }
+    )
+    if designer_ids:
+        await attach_the_named_designers(
+            record.id,
+            list(designer_ids),
+            granted_by_id=actor.id,
+            creator_id=record.createdById,
+        )
+    return await seed_designer_prefill(
+        record, actor, designer_id=designer_id, extra=dict(seeded or {})
+    )
 
 
 async def seed_designer_prefill(
@@ -4251,7 +4387,7 @@ async def seed_designer_prefill(
                         # been the first query the feature could not answer.
                         #
                         # A THIRD WRITER MUST WRITE THIS COLUMN TOO, and cannot be added quietly:
-                        # `tests/test_stage_search_text_writers.py` sweeps `backend/app` for writes to
+                        # `tests/test_design_workshop_search_text.py` sweeps `backend/app` for writes to
                         # this table and fails on one it has not been told about.
                         "searchText": design_workshop_data.entry_search_text(entity, clean) or None,
                         # THE RESERVED KEY, BECAUSE THIS IS THE OTHER WRITER OF SINGLETON ROWS AND THE
@@ -4494,6 +4630,64 @@ class _RowUpdate:
     #: contributing its promoted values — a blank cover page reported as a successful save — which
     #: is the same class of silence this member was added to end. (2026-09-03)
     entity_key: str
+    #: **DID THIS UPDATE ACTUALLY CHANGE ANYTHING?** Computed at the write site from the row this
+    #: save matched, and read back off the surviving plan by :func:`_content_changed`.
+    #:
+    #: **IT EXISTS BECAUSE ``updates`` IS NOT A CHANGE LIST AND READS EXACTLY LIKE ONE.** The
+    #: planning loop appends one of these for EVERY row the payload names, unconditionally: there is
+    #: no value comparison anywhere in it, because there did not need to be — writing `data`
+    #: wholesale over identical `data` costs a statement and changes nothing. The pre-submission
+    #: loop made that innocent fact dangerous. A gate written as `bool(creates or updates or
+    #: removed)` fires on a form opened and saved, on an offline outbox replaying a byte-identical
+    #: body, and on a save that only dropped unknown keys — each of which would spend a submission
+    #: round, tell every officer the report had been handed back in, and permanently mis-number
+    #: every correction suggestion filed afterwards, because `DwInspectionFeedback.round` is copied
+    #: and never recomputed. Nothing would fail; the designer would simply be told the wrong thing
+    #: for ever.
+    #:
+    #: NO DEFAULT, for `entity_key`'s reason and with a sharper edge: a future write site that
+    #: forgot it would default to "nothing changed" and silently stop resubmitting, or to
+    #: "something changed" and silently resubmit on every replay. Neither is a failure anybody
+    #: sees. (2026-09-13)
+    changed: bool
+
+
+def _content_changed(
+    creates: list[dict[str, Any]], updates: list["_RowUpdate"], removed: list[str]
+) -> bool:
+    """Did this save actually change the designer's content? THE RESUBMISSION GATE, AS ONE LINE.
+
+    **THE DESIGN-WORKSHOP TWIN OF ``access.REVISION_SKIP_FIELDS``, AND IT IS A DIFFERENT SHAPE ON
+    PURPOSE.** For the six record types, "did a human change anything" is answered by diffing a
+    PATCH body against a row and ignoring nine infrastructural keys. For a design workshop the
+    content is ``DwStageEntry`` ROWS and the payload carries registry field keys, of which the
+    registry declares about five hundred — so the answer is per ROW, computed where the row's old
+    and new values are both in hand, and carried here on :attr:`_RowUpdate.changed`.
+
+    **IT IS NOT ``bool(creates or updates or removed)``, AND THAT MISTAKE HAS ALREADY BEEN MADE
+    ONCE IN THIS FEATURE'S DESIGN.** ``updates`` holds one entry per row the payload NAMED, not per
+    row that MOVED. Each of the three ways this function can now answer False is an ordinary
+    Tuesday:
+
+    * A FORM OPENED AND SAVED. The stage is read with GET and posted straight back. Every row is in
+      ``updates``; not one of them is different.
+    * THE OFFLINE OUTBOX REPLAYS. A phone that did not hear the acknowledgement re-sends the same
+      stage body. ``_settle_version_conflicts``' own docstring calls that overlap "the most ordinary
+      path this table has".
+    * A SAVE THAT ONLY DROPPED UNKNOWN KEYS. A client one release ahead sends fields this registry
+      does not declare; they land in ``droppedKeys`` and nothing is written.
+
+    A REFUSED ROW CONTRIBUTES NOTHING, which is why this is read from the plan INSIDE the
+    transaction rather than beside the planning loop. ``_settle_version_conflicts`` drops a
+    contested row from ``updates`` and files a refusal sentence for it; a save whose every row lost
+    the version race wrote nothing and must not resubmit, for the same reason
+    :func:`_promotions_from_plan` had to be rebuilt from the surviving rows. Both halves of that bug
+    shipped once already.
+
+    A CREATE AND A REMOVAL ALWAYS COUNT. A new row is content that was not there, and a swept row is
+    content that was. Neither has a "same values" case to consider. (2026-09-13)
+    """
+    return bool(creates) or bool(removed) or any(planned.changed for planned in updates)
 
 
 @dataclass(frozen=True)
@@ -4568,8 +4762,20 @@ STAGE_ROW_CONFLICT_KEY = "_row"
 _STAGE_WRITE_ATTEMPTS = 3
 
 
-async def save_stage(workshop_id: str, spec: StageSpec, payload: Any, user: Any) -> dict[str, Any]:
+async def save_stage(
+    workshop_id: str,
+    spec: StageSpec,
+    payload: Any,
+    user: Any,
+    *,
+    resubmits: bool = False,
+) -> dict[str, Any]:
     """Write one stage, returning HOW MUCH was stored, what failed validation and what was dropped.
+
+    ``resubmits`` SAYS WHETHER THIS CALLER'S WRITE IS THE DESIGNER ANSWERING AN OFFICER, and it is
+    a parameter rather than a test inside the function because the function cannot answer it. See
+    the paragraph at the branch it gates, which used to assert — wrongly — that every caller was
+    in the workshop's editing party by construction.
 
     **IT DOES NOT RETURN THE STORED VALUES THEMSELVES, and this sentence used to say it did.**
     There was a `stored` dict built here for every non-`_custom` entry of every save, two write
@@ -5020,6 +5226,35 @@ async def save_stage(workshop_id: str, spec: StageSpec, payload: Any, user: Any)
         # backfill's `searchText IS NULL` resume point stays honest for the whole life of the table.
         search_text = design_workshop_data.entry_search_text(item.entity, item.data) or None
         if item.row_id is not None:
+            # ── DID THIS ROW MOVE? COMPUTED HERE, WHERE BOTH PICTURES EXIST ────────────────────
+            #
+            # `item.previous` is what the row held when this request read it and `item.data` is what
+            # is about to be written, hydration included — this is the last line at which the two
+            # are both in hand. It is read back inside the transaction by `_content_changed`, which
+            # is the resubmission gate; see :attr:`_RowUpdate.changed` for what a wrong answer here
+            # costs.
+            #
+            # THREE THINGS COUNT AS A CHANGE AND THE OTHER TWO WOULD BE FALSE POSITIVES:
+            #
+            # * the VALUES differ — the ordinary case;
+            # * the row was SOFT-DELETED and this save resurrects it (`by_id` holds live rows only,
+            #   so a matched row missing from it is a deleted one coming back). The values can be
+            #   identical and the row still returning to the report is a change to the report;
+            # * the ORDINAL differs — a drag-to-reorder of a collection changes what the report
+            #   prints, in order, and nothing else in the payload records it.
+            #
+            # NOT `adopt_client_key`: writing the reserved key onto a singleton that predates it is
+            # infrastructure catching up with itself, invisible on every screen, and a designer who
+            # re-saved an old form would otherwise hand the report back in by doing nothing.
+            # NOT `fieldProvenance` either: it is a stamp ABOUT the values and moves only when they
+            # do, so consulting it would count the same change twice and, on a re-planned row, count
+            # a change that did not happen.
+            row_now = by_id.get(item.row_id)
+            changed = (
+                item.data != item.previous
+                or row_now is None
+                or int(getattr(row_now, "ordinal", 0) or 0) != int(item.ordinal)
+            )
             # deletedAt is cleared unconditionally: the client is asserting this row exists, and
             # for a row that was never deleted writing None over None costs nothing. Clearing it
             # only when the row looked deleted would mean reading a value that another request
@@ -5042,6 +5277,7 @@ async def save_stage(workshop_id: str, spec: StageSpec, payload: Any, user: Any)
                     values=item.data,
                     scope=item.error_scope,
                     entity_key=item.entity.key,
+                    changed=changed,
                 )
             )
         else:
@@ -5136,6 +5372,16 @@ async def save_stage(workshop_id: str, spec: StageSpec, payload: Any, user: Any)
                     # Carried anyway rather than blanked, so this row answers "which entity?" the
                     # same way every other planned write does.
                     entity_key=custom_sections.CUSTOM_ENTITY_KEY,
+                    # THE SAME QUESTION THE REGISTRY ROWS ANSWER, and the designer's own questions
+                    # are answers like any other: a correction filed against a custom field is
+                    # responded to by editing that field, and a report whose only edit was here has
+                    # been edited. The ordinal arm the registry loop carries is absent because there
+                    # is exactly one `_custom` row per (workshop, stage) and its ordinal is always
+                    # 0. The resurrection arm is read straight off the row this save matched.
+                    changed=(
+                        custom_to_store != dict(custom_row.data or {})
+                        or custom_row.deletedAt is not None
+                    ),
                 )
             )
         else:
@@ -5335,7 +5581,144 @@ async def save_stage(workshop_id: str, spec: StageSpec, payload: Any, user: Any)
             # it. The later statuses are the designer's to set, through PATCH, and only theirs.
             if workshop_status == "DRAFT":
                 header["status"] = "IN_PROGRESS"
+            # ── AND THE ONE EXCEPTION THE PARAGRAPH ABOVE NOW HAS (2026-09-13) ─────────────────
+            #
+            # **WHEN A WORKSHOP HAS BEEN SENT BACK, THE EDIT IS THE RESUBMISSION.** That is the rule
+            # `services/records.resubmit_status` has run over six record types since it was written
+            # — "the edit IS the resubmission: flip it back to PENDING so it re-enters the review
+            # queue" — and it is written HERE, and not in a route, for one reason: a design
+            # workshop's content is `DwStageEntry` ROWS, not columns on the record, so the only
+            # place that knows whether a human actually changed anything is the plan this
+            # transaction is about to apply.
+            #
+            # THREE REFUSALS, MIRRORING `resubmit_status`'s THREE, AND THE THIRD ONE DIFFERS:
+            #
+            # 1. A payload that named a status explicitly always wins. `StageSaveIn` carries NO
+            #    status field at all, so for this record type the refusal is structural rather than
+            #    conditional. Do not add one.
+            # 2. It is a no-op for any status but NEEDS_REVISION.
+            # 3. **THE EDITOR TEST IS NOT `createdById`, AND COPYING `resubmit_status`'s WOULD BE A
+            #    BUG.** For the six record types the creator is the person who fills the record in.
+            #    For a design workshop `createdById` is the ADMIN who opened it — the create gate
+            #    admits nobody else — and the people who fill it in hold `DesignWorkshopViewer`
+            #    rows. A `createdById == user.id` test would mean a designer's corrections never
+            #    resubmitted the report and an admin's typo fix always did: precisely backwards, and
+            #    silent in both directions. The right question is "is this account one of the
+            #    workshop's editing party", and it is the CALLER'S to answer — `resubmits`.
+            #
+            # ── THIS PARAGRAPH USED TO ANSWER IT HERE, AND THAT IS THE DEFECT IT SHIPPED ──────
+            #
+            # It read: "it has ALREADY BEEN ANSWERED before this line runs — the route pairs the
+            # designer gate with `load_workshop_or_404(..., for_edit=True)`, so every caller who
+            # reaches `save_stage` is in that party by construction." That was true of the one
+            # caller that existed when it was written. It was FALSE WITHIN THE SAME WAVE: two more
+            # callers landed, both of them officer-driven and neither anywhere near that pair —
+            #
+            #   * `services/artisan_import._write_roster`, reached from
+            #     `POST /design-workshop-oversight/{id}/artisans/upload`. Gate is
+            #     `require_workshop_assigner` (MINISTRY_ADMIN/ADMIN/MASTER_ADMIN — MINISTRY_ADMIN is
+            #     not even in `DESIGN_WORKSHOP_ROLES`), loader is `_workshop_for_assignment_or_404`,
+            #     which is deliberately NOT `load_workshop_or_404` and says so in its own docstring.
+            #     No status test anywhere on that path.
+            #   * `services/design_workshop_oversight.reassign_designer`, reached from
+            #     `PUT /design-workshop-oversight/{id}/designer`. Same gate, same loader; its only
+            #     status guard is `_CLOSED_STATUSES = {SUBMITTED, ARCHIVED}`, so NEEDS_REVISION
+            #     walks straight through.
+            #
+            # Both pass the OFFICER as `user`, and both write rows, so `_content_changed` was True
+            # and both silently resubmitted the designer's report: status back to PRE_SUBMISSION,
+            # `submissionRound` spent, `reviewNotes`/`reviewedById`/`reviewedAt` nulled — before the
+            # designer had read what was asked for. The round increment is the unrecoverable half:
+            # nothing anywhere decrements `submissionRound`, and `DwInspectionFeedback.round` is
+            # copied at write time and never recomputed, so every later suggestion is stamped with a
+            # cycle nobody entered. The officer uploading the artisan list an inspector JUST ASKED
+            # FOR is the ordinary case, not an exotic one — the designer cannot upload it, that
+            # route is assigner-gated.
+            #
+            # **THE DEFAULT IS `False`, AND THE ASYMMETRY IS THE ARGUMENT.** `_RowUpdate.changed`
+            # one screen up gives a flag of this kind NO default, on the grounds that either default
+            # hides a forgetful write site. That reasoning does not transfer, because here the two
+            # mistakes are not comparable. A caller that should resubmit and forgets leaves the
+            # workshop in NEEDS_REVISION: the designer sees the send-back panel still open and hands
+            # it back in through `PATCH /{id}`, which calls the same `presubmission_header`. A
+            # caller that should NOT resubmit and forgets spends a round in a counter with no
+            # inverse, silently, on a report whose corrections are still unmade. One is visible and
+            # recoverable on the screen it happens on; the other is neither. The safe value is
+            # therefore the default, and the ONE caller that is a designer editing their own report
+            # states `resubmits=True` at its call site — `api/routes/design_workshops.save_stage_data`,
+            # which is the only one holding both the designer gate and `for_edit=True`.
+            # `tests/test_design_workshop_review_loop.py`'s call-site census fails if a fourth
+            # caller appears or if a second one starts claiming the party. (2026-09-14)
+            #
+            # AND THE FOURTH, WHICH `resubmit_status` DOES NOT NEED: A SAVE THAT WROTE NOTHING IS
+            # NOT AN EDIT. See `_content_changed` — a replayed outbox body, a form opened and saved,
+            # a save whose every row lost the version race and a save that only dropped unknown keys
+            # all plan writes and change nothing, and none of them is a designer answering an
+            # officer.
+            #
+            # `workshop_status` IS READ ONCE, BEFORE THE TRANSACTION, AND IS DELIBERATELY NOT
+            # RE-READ HERE. It comes from the header row fetched in this function's opening
+            # `gather_reads`, so it is the status as at the start of the request, and the whole of
+            # this block is re-run on a version conflict WITHOUT refreshing it. That means a
+            # send-back landing between the read and the write does not resubmit on THIS save — the
+            # designer's next one does. Correct and deliberate: re-reading it inside the re-run loop
+            # would make the flip depend on which of two concurrent requests won, and would let a
+            # re-run flip a workshop somebody sent back mid-save.
+            resubmission: dict[str, Any] = {}
+            if (
+                resubmits
+                and workshop_status == "NEEDS_REVISION"
+                and _content_changed(creates, updates, removed)
+            ):
+                resubmission = design_workshop_review_loop.presubmission_header(workshop_status)
+            # ── TWO STATEMENTS, AND THE SPLIT IS THE WHOLE POINT ──────────────────────────────
+            #
+            # **THE CONTENT IS WRITTEN BY ID. ONLY THE TRANSITION IS A COMPARE-AND-SET.** These were
+            # one statement until 2026-09-14 — `update_many(where=header_where, data=header)` with
+            # `status: "NEEDS_REVISION"` folded into the predicate whenever the resubmission arm had
+            # fired — and the paragraph beside it reasoned only about the counter and the stage
+            # rows. It missed that `header` is not the status: it is `schemaVersion` PLUS every one
+            # of the fourteen `PROMOTED_COLUMNS` `_coerce_promoted` just produced — craftName,
+            # clusterName, state, district, venue, designerName, workshopCode, both dates. Gating
+            # the whole dict on the predicate meant that when another writer moved the status first,
+            # the statement matched zero rows and the DESIGNER'S CORRECTIONS WERE DROPPED FROM THE
+            # HEADER while this transaction's `DwStageEntry` rows committed.
+            #
+            # THE RACE IS THE ORDINARY ONE, not an exotic interleave: a laptop saving stage 1 with
+            # the corrected craft name while the phone's outbox flushes a stage-3 edit. The phone's
+            # save takes this same arm, commits first, and moves the row to PRE_SUBMISSION; it
+            # contributes NO promoted values of its own, because all fourteen are keyed
+            # `workshopSetup.*`. So the only write that would have moved `craftName` is the one that
+            # matches nothing. `DwStageEntry` says Bandhej, `DesignWorkshop.craftName` says Bandhani,
+            # for the life of the workshop or until somebody happens to save stage 1 again — and the
+            # workshop list, its filters, the global search bucket, the officer's oversight queue,
+            # the analytics rollup and the .xlsx export all read the column, so the correction the
+            # officer demanded reads as un-actioned on the officer's own screen. HTTP 200, empty
+            # `errors`. `_coerce_promoted`'s own docstring calls that divergence the failure the
+            # single-writer rule exists to prevent; the merged statement had re-opened it.
+            # A concurrent `PATCH /{id}` to PRE_SUBMISSION or to IN_PROGRESS does it too.
+            #
+            # SO: an unconditional `update` by id for the content, then the guarded `update_many`
+            # for the four transition keys.
+            #
+            # **THE COUNTER STILL NEEDS ITS PREDICATE, AND STILL HAS IT.** `submissionRound` moves
+            # with `{"increment": 1}`, a read-modify-write inside Postgres, so two concurrent copies
+            # of one payload (the offline replay overlap above) would each increment it and the
+            # counter would jump by two for one act; the whole block is also RE-RUN on a version
+            # conflict, and an `update` by id would count every re-run. `status: "NEEDS_REVISION"`
+            # is what makes the second one write nothing. Splitting does not weaken it: the first
+            # statement takes the row lock, so under READ COMMITTED the second re-reads the
+            # committed status and still matches zero when somebody else moved the row.
+            #
+            # A ZERO ROW COUNT ON THE SECOND STATEMENT IS NOT AN ERROR. It means another request
+            # moved the status first, which is the outcome the predicate exists to produce; the
+            # stage rows AND the promoted columns this transaction wrote stand either way — which is
+            # now true of both halves, and used to be true only of the rows.
             await tx.designworkshop.update(where={"id": workshop_id}, data=header)
+            if resubmission:
+                await tx.designworkshop.update_many(
+                    where={"id": workshop_id, "status": "NEEDS_REVISION"}, data=resubmission
+                )
 
     # ── THE WRITE, AND THE TWO RACES IT IS RE-RUN FOR ─────────────────────────────────────────────
     #
@@ -5347,7 +5730,18 @@ async def save_stage(workshop_id: str, spec: StageSpec, payload: Any, user: Any)
     # where every further statement fails with 25P02 and the driver exposes no savepoint to roll
     # back to. Both recoveries are safe to re-run because every statement in the block is idempotent
     # by construction: the updates address rows by id, the creates are re-planned, the sweep writes
-    # one timestamp, and the header write is a plain assignment. (2026-09-03)
+    # one timestamp, and the header is written as TWO statements whose idempotency is argued
+    # separately. THAT SENTENCE USED TO READ "a plain assignment", stopped being true on 2026-09-13
+    # when `submissionRound: {"increment": 1}` joined the header, and was corrected AGAIN on
+    # 2026-09-14 when the one statement became two:
+    #
+    #   * the content write is `update` BY ID of `schemaVersion` plus the promoted columns — a plain
+    #     assignment, idempotent under any number of re-runs, and deliberately NOT predicated on
+    #     anything, because a predicate that misses drops a designer's corrections on the floor;
+    #   * the transition write is `update_many` predicated on `status: NEEDS_REVISION`, which is
+    #     what keeps the read-modify-write increment safe: the first commit falsifies it for
+    #     everybody else, this request's own re-runs included. An `update` by id would have counted
+    #     every re-run, which is why the counter — and ONLY the counter — still travels under a CAS.
     absorbed_once = False
     attempts = 0
     while True:
@@ -5643,6 +6037,12 @@ async def _absorb_key_collisions(
                 # still promotes its craft onto the header after losing the INSERT race and being
                 # rewritten into an UPDATE of the winner's row. (2026-09-03)
                 entity_key=data["entityKey"],
+                # A CREATE IS ALWAYS A CHANGE, and being rewritten into an UPDATE of the row that
+                # beat it does not make it less of one: this request is storing content that was
+                # not in the report when it started. The winner may have stored the same answers —
+                # that is what `_settle_version_conflicts` decides, one row at a time — but a plan
+                # that arrived here as an INSERT was never a no-op. (2026-09-13)
+                changed=True,
             )
         )
     return still_creates, absorbed

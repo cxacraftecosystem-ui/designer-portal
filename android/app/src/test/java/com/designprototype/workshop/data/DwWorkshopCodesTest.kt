@@ -270,14 +270,28 @@ class DwWorkshopCodesTest {
 
         // A VERSION OF SEVENTEEN OR MORE SIGNIFICANT DIGITS IS THE ONE CASE THIS PORT DOES NOT MATCH,
         // and it is written down rather than asserted away. Twenty-three nines is bit-for-bit the
-        // double JavaScript prints as `1e+23`; `jsNumber` prints "9.999999999999999e+22", because it
-        // goes through `Double.toString`, which before JDK 19 is not the shortest round-tripping
-        // decimal (JDK-4511638). That belongs to `jsNumber` in `PlaceSearch.kt` and is not fixed from
-        // here. What is asserted is what this file owns and what actually reaches a designer: the card
-        // is called NEWER_VERSION rather than damaged, and the sentence names a number.
+        // double JavaScript prints as `1e+23`; `jsNumber` goes through `Double.toString`, which
+        // belongs to `PlaceSearch.kt` and is not fixed from here.
+        //
+        // ⚠ WHICH DECIMAL IT PRINTS DEPENDS ON THE JDK, AND THIS LINE USED TO ASSERT ONE OF THEM.
+        // It read `contains("code format 9")`, which is true only while `Double.toString` is NOT the
+        // shortest round-tripping decimal — i.e. before JDK 19 (JDK-4511638). CI pins JDK 17 and
+        // prints "9.999999999999999e+22", so it passed there; Gradle here resolves JDK 21, prints
+        // "1.0E23", and it failed on every developer machine. A test that is green on the build
+        // server and red for everyone who runs it is worse than one that is simply red: it trains
+        // people to ignore a failing suite.
+        //
+        // So what is asserted is what this file OWNS and what actually reaches a designer: the card
+        // is called NEWER_VERSION rather than damaged, and the sentence names a number of some kind.
+        // Which decimal spelling that number takes is `Double.toString`'s business and nobody here
+        // depends on it.
         val absurd = decodeWorkshopCode("DPW${"9".repeat(23)}:A:CMSIK2JG8000EH8XC1LCY661A:NEWD")
         assertEquals(DwDecodeRefusal.NEWER_VERSION, refusalOf(absurd))
-        assertTrue(messageOf(absurd)!!.contains("code format 9"))
+        val sentence = messageOf(absurd)!!
+        assertTrue(
+            "the refusal must name the version it read, and it said: $sentence",
+            Regex("""code format [0-9]""").containsMatchIn(sentence),
+        )
     }
 
     // ----------------------------------------------------------------------------------

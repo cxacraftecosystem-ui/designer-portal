@@ -54,6 +54,9 @@ import type { User, UserRole } from "@/lib/types";
 const ALL_ROLES: UserRole[] = [
   "MASTER_ADMIN",
   "ADMIN",
+  "MINISTRY_ADMIN",
+  "REGIONAL_DIRECTOR",
+  "ASSISTANT_DIRECTOR",
   "PROFESSOR",
   "INSPECTOR",
   "DESIGNER",
