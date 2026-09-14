@@ -1027,6 +1027,27 @@ jobs:
             head -40 /tmp/schemadiff
             exit 1
           fi
+          # AND IT MUST ACTUALLY IMPORT AND CARRY THE MODELS. Comparing schema.prisma proves what the
+          # ENGINE will be told; it does not prove the generated MODULES beside it are complete. A
+          # half-copied client passes the schema comparison and then fails every route at runtime,
+          # which is the same outage wearing a different hat. Instantiating Prisma exercises the
+          # generated `client.py`, `models.py`, `actions.py` and `types.py` in one line, and the
+          # model accessors are checked by name against the schema so a missing one is named here
+          # rather than discovered by a designer.
+          # ONE LINE, AND BOTH REASONS ARE THE CONTAINER IT LIVES IN. A nested heredoc cannot close
+          # inside this one (an indented terminator does not end an unindented `<<`), and a `-c`
+          # program cannot be indented either, because Python would read the leading spaces of each
+          # continuation line as an IndentationError -- while YAML's block scalar forbids putting
+          # them at column 0. Semicolons are what is left.
+          #
+          # WHAT IT PROVES, THAT THE SCHEMA COMPARISON ABOVE DOES NOT. That check reads the file the
+          # ENGINE will be handed; it says nothing about whether the generated MODULES beside it
+          # arrived intact. A half-copied client passes it and then fails every route at runtime --
+          # the same outage wearing a different hat. Instantiating Prisma exercises client.py,
+          # models.py, actions.py and types.py together, and every model in this release's schema is
+          # then checked by name, so a missing accessor is named HERE rather than found by a user.
+          ./.venv/bin/python -c 'import re,sys,pathlib;from prisma import Prisma;schema=pathlib.Path("prisma/schema.prisma").read_text(encoding="utf-8");models=sorted({m.lower() for m in re.findall(r"^\s*model\s+([A-Za-z0-9_]+)",schema,re.M)});missing=[m for m in models if not hasattr(Prisma(),m)];print(("::error::the installed client is missing %d model accessor(s): %s"%(len(missing),", ".join(missing[:12]))) if missing else ("client instantiates and carries all %d model accessors"%len(models)));sys.exit(1 if missing else 0)'
+
           echo "prisma client verified in this release: $client_dir"
           REMOTE
 
