@@ -1079,12 +1079,21 @@ jobs:
           # "the binary this platform needs is on disk and runnable" -- the release that took the
           # site down proved the two can differ, and the difference only showed up as a 500 on every
           # route after the symlink had already flipped.
-          engine="$(find "$HOME/.cache/prisma-python" -name 'prisma-query-engine-*' -type f 2>/dev/null | head -1)"
-          if [ -z "$engine" ] || [ ! -x "$engine" ]; then
-            echo "::error::no executable prisma query engine under $HOME/.cache/prisma-python. The app would start, serve, and fail every request with 'Not connected to the query engine'."
-            exit 1
-          fi
-          echo "query engine present: $engine"
+          # ASSERTED BY CONNECTING, NOT BY GUESSING A FILENAME. The first version of this check
+          # looked for `prisma-query-engine-*` on disk and failed a deploy whose fetch had plainly
+          # just succeeded ("Downloaded binaries to .../binaries/5.17.0/393aa..."), because the
+          # engine's name and location are prisma's business and not a contract this file gets to
+          # assume. Guessing the artefact is how a check ends up testing itself.
+          #
+          # Opening a connection is the thing that actually has to work, and it is what failed in
+          # production: the app started, served, and answered every request with "Not connected to
+          # the query engine". `connect()` starts the engine binary and speaks to the database, so
+          # it exercises the fetch, the binary's executability and the DSN in one call -- and it
+          # runs BEFORE the symlink flips, so a box that cannot reach its database keeps serving the
+          # release that can.
+          echo "engine cache:"; ls -la "$HOME/.cache/prisma-python/binaries"/*/* 2>/dev/null | head -20 || true
+          set -a; . ./.env; set +a
+          ./.venv/bin/python -c 'import asyncio;from prisma import Prisma;c=Prisma();asyncio.run(c.connect());print("query engine started and the database answered");asyncio.run(c.disconnect())'             || { echo "::error::the release cannot connect to its database. Not flipping the symlink."; exit 1; }
 
           echo "prisma client verified in this release: $client_dir"
           REMOTE
