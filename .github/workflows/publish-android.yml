@@ -1863,7 +1863,7 @@ jobs:
 
       - name: Upload the published APK as a run artifact
         if: ${{ always() && steps.size.outcome == 'success' }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           # THE EXACT BYTES THAT WENT OUT, kept for as long as artifacts are kept. Not a
           # convenience: the release-signed APK is what a support question ("which build is this
@@ -1879,7 +1879,7 @@ jobs:
 
       - name: Upload the R8 mapping
         if: ${{ always() }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           # WITHOUT THIS, THE CRASHES FROM THIS BUILD CANNOT BE READ. Release is the only variant
           # with R8 enabled, so every stack trace from a field handset arrives obfuscated, and
