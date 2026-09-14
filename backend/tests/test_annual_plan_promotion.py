@@ -403,16 +403,27 @@ def world():
     # ---------------------------------------------------------------------------------
     async def seed() -> None:
         async def entry(**overrides: Any):
+            workshop_no = overrides.pop("workshopNo", f"DPW/2099/{uuid.uuid4().hex[:6]}")
             data = {
                 "planYear": 2099,
-                "workshopNo": overrides.pop("workshopNo", f"DPW/2099/{uuid.uuid4().hex[:6]}"),
-                # ⚠ UNIQUE PER ROW, AND THE ORPHAN COUNT BELOW DEPENDS ON IT. It read
-                # "A planned workshop" — the same string on every row — until 2026-09-14, and that
-                # made two refusal tests VACUOUS. They count workshops whose title carries this
-                # row's marker; `promotion_title` returns `plannedTitle[:220]` WHENEVER
-                # plannedTitle is set, so with a shared title the marker identified nothing and
-                # `count(...) == 0` was true no matter what the route did.
-                "plannedTitle": f"A planned workshop {stamp}",
+                "workshopNo": workshop_no,
+                # ⚠ UNIQUE PER ROW, AND THE ORPHAN COUNT BELOW DEPENDS ON IT BEING SO. Two mistakes
+                # were made here in one day and the second is the instructive one.
+                #
+                # It first read "A planned workshop" — the same string on EVERY row — which made two
+                # refusal tests vacuous: they count workshops whose title carries this row's marker,
+                # `promotion_title` returns `plannedTitle[:220]` whenever plannedTitle is set, so the
+                # marker identified nothing and `count(...) == 0` was true whatever the route did.
+                #
+                # The fix then used the MODULE's uuid stamp, which is shared by every row in the
+                # module — so the count matched every workshop this module created, including the
+                # legitimate promotions, and the same two tests failed claiming an orphan that was
+                # somebody else's perfectly good workshop. A marker that over-matches is as useless
+                # as one that matches nothing; it just fails in the louder direction.
+                #
+                # The row's own `workshopNo` is the thing that is actually unique per row, so it is
+                # what the title carries.
+                "plannedTitle": f"A planned workshop {workshop_no}",
                 "workshopKind": "DESIGN_PROTOTYPE_DEVELOPMENT",
                 "plannedStartDate": datetime(2026, 3, 12, tzinfo=UTC),
                 "plannedEndDate": datetime(2026, 3, 26, tzinfo=UTC),
@@ -421,8 +432,20 @@ def world():
             data["workshopNoKey"] = data["workshopNo"].strip().upper()
             return await db.annualplanentry.create(data=data)
 
-        async def account(slug: str, role: str, name: str):
-            return await db.user.create(
+        async def account(slug: str, role: str, name: str, *, empanelled: bool = False):
+            """One account, and OPTIONALLY the roster row that makes a DESIGNER usable.
+
+            ⚠ A `User` ROW WITH `role = "DESIGNER"` IS NOT AN ELIGIBLE DESIGNER, and every test in
+            this module that names one was failing on exactly that once the connection errors
+            stopped hiding it: "Running a design workshop requires Designer access or above", and
+            "… is not on the ACTIVE designer roster, so they cannot sign in at all."
+
+            Eligibility is SET MEMBERSHIP, not a rank floor — a professor outranks a designer and
+            still cannot run a workshop — and the set is the ACTIVE `DesignerRoster`. So a designer
+            the promotion route is expected to ACCEPT needs the roster row; the ones it is expected
+            to REFUSE deliberately do not get one, which is what makes those refusals real.
+            """
+            user = await db.user.create(
                 data={
                     "email": f"plan-{slug}-{uuid.uuid4().hex[:8]}@example.org",
                     "name": name,
@@ -430,6 +453,21 @@ def world():
                     "passwordHash": hash_password(PASSWORD),
                 }
             )
+            if empanelled:
+                await db.designerroster.create(
+                    data={
+                        "email": user.email,
+                        "fullName": user.name,
+                        "institution": "Directorate of Handicrafts",
+                        "isActive": True,
+                        # `admin`, the enclosing local, NOT `facts["admin"]`: this helper is defined
+                        # before that key is set and called after, and a closure resolves at call
+                        # time — but reading through `facts` would depend on an assignment ordering
+                        # forty lines away that nothing else in this file cares about.
+                        "addedById": admin.id,
+                    }
+                )
+            return user
 
         await db.connect()
         try:
@@ -464,9 +502,15 @@ def world():
             entries["ineligible_lead"] = await entry()
             entries["lead_alone"] = await entry()
             entries["race"] = await entry()
+            # NOT empanelled, deliberately: these two are what the "refuses an ineligible designer"
+            # tests name, and a professor is refused by the ROLE arm regardless of any roster row.
             facts["professor_plural"] = await account("prof", "PROFESSOR", "A professor")
             facts["professor_lead"] = await account("lead-prof", "PROFESSOR", "A professor")
-            facts["lead_designer"] = await account("lead", "DESIGNER", "Meera Kanungo")
+            # EMPANELLED, because this one is the designer the route must ACCEPT — the test asserts
+            # the workshop IS created and the viewer row granted. Without the roster entry the route
+            # refuses her before the assertion is reached, and the test fails for a reason that has
+            # nothing to do with what it is about.
+            facts["lead_designer"] = await account("lead", "DESIGNER", "Meera Kanungo", empanelled=True)
 
             # THE STALE SNAPSHOT the race is forced with: the row as it read BEFORE anybody
             # promoted it. Taken here, before the act phase's winning POST, because that is what
