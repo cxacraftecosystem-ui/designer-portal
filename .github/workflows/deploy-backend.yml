@@ -789,8 +789,65 @@ jobs:
           # shebang naming the directory they were BUILT in, which is the previous release and may
           # since have been pruned. The interpreter is a symlink to the system python and does not
           # have that problem.
-          ./.venv/bin/python -m pip install -e . --no-deps
+          #
+          # `--force-reinstall` ON THE EDITABLE INSTALL, ADDED 2026-09-15. Without it pip sees the
+          # copied venv already carrying this project at this version and answers "already
+          # satisfied" WITHOUT rewriting the path file -- so the re-run that this step's comment
+          # says fixes the copied venv's pointer did not actually fix it, and the venv went on
+          # naming the PREVIOUS release's source tree.
+          ./.venv/bin/python -m pip install -e . --no-deps --force-reinstall
           PATH="$PWD/.venv/bin:$PATH" ./.venv/bin/python -m prisma generate
+
+          # ─── THE CLIENT MUST BE IN *THIS* RELEASE'S VENV, AND THAT IS ASSERTED ────────────────
+          #
+          # WHAT HAPPENED ON 2026-09-14, WHICH IS WHY THIS BLOCK EXISTS. The deploy of 1557d93 took
+          # the copied-venv path and then reported:
+          #
+          #   dependencies unchanged since /home/ubuntu/app/releases/b9b35bb… — copying its venv
+          #   ✔ Generated Prisma Client Python to ./../../b9b35bb…/backend/.venv/…/site-packages/prisma
+          #
+          # READ THE SECOND LINE AGAIN: generate wrote the client into the PREVIOUS release. The
+          # release being deployed kept the client that was copied into it -- generated on
+          # 2026-09-03, before SanctionOrder and AnnualPlanEntry existed. Every route that touches
+          # a model added since answered `AttributeError` -> a 500 reading "Something went wrong on
+          # the server. The error has been logged." /api/design-workshops and /api/sanction-orders
+          # were down for a day; /api/users was fine, because it predates that schema. Nothing in
+          # the deploy went red: rsync, generate, migrate, the symlink flip and the readiness probe
+          # all passed, because none of them ever asked WHERE the client landed.
+          #
+          # The check is the one question that matters and it is asked of the interpreter that will
+          # actually serve traffic: import prisma, and see where it resolves. A path outside this
+          # release means the app is about to run somebody else's client. Comparing the schema the
+          # generator embedded beside it against this release's schema then catches the other half
+          # -- a client that IS in the right place but was generated from an older tree, which is
+          # the same outage with a different cause. (The engine loads THAT copy of schema.prisma,
+          # not backend/prisma/schema.prisma, so it is the file that decides what the queries may
+          # name.)
+          #
+          # Self-healing before failing: the copied venv is the only suspect, so throw it away,
+          # build from the lock and generate again. A deploy that is two minutes slower is not a
+          # cost worth weighing against shipping a stale client.
+          client_dir="$(./.venv/bin/python -c 'import prisma, os; print(os.path.dirname(prisma.__file__))')"
+          if [ "${client_dir#$REL/}" = "$client_dir" ] || ! cmp -s "$client_dir/schema.prisma" prisma/schema.prisma; then
+            echo "::warning::the generated client is not this release's ($client_dir) — rebuilding the venv from the lock"
+            rm -rf .venv
+            python3.12 -m venv .venv
+            ./.venv/bin/python -m pip install --upgrade pip
+            ./.venv/bin/python -m pip install -r requirements.lock
+            ./.venv/bin/python -m pip install -e . --no-deps
+            PATH="$PWD/.venv/bin:$PATH" ./.venv/bin/python -m prisma generate
+            client_dir="$(./.venv/bin/python -c 'import prisma, os; print(os.path.dirname(prisma.__file__))')"
+          fi
+
+          if [ "${client_dir#$REL/}" = "$client_dir" ]; then
+            echo "::error::prisma client resolved to $client_dir, which is outside $REL. Refusing to deploy a release that would import another release's client."
+            exit 1
+          fi
+          if ! cmp -s "$client_dir/schema.prisma" prisma/schema.prisma; then
+            echo "::error::$client_dir/schema.prisma does not match this release's prisma/schema.prisma. The query engine reads that copy, so every model added since it was generated would fail at runtime with AttributeError."
+            exit 1
+          fi
+          echo "prisma client verified in this release: $client_dir"
           REMOTE
 
       # ─── MIGRATE ONLY IF THERE IS SOMETHING TO MIGRATE, THEN FLIP ──────────────────────────
