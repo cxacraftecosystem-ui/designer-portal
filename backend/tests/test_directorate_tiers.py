@@ -308,18 +308,29 @@ def test_every_professor_floor_in_deps_opens_for_all_three_and_the_inheritance_i
 def test_no_rank_buys_design_workshop_authority_because_every_one_of_those_gates_is_a_set(
     tier: str,
 ) -> None:
-    """Exactly PROFESSOR's position, one band higher, and it must stay that way.
+    """The three tiers WRITE inside a workshop and reach no other design-workshop set.
 
-    Membership of ``DESIGN_WORKSHOP_ROLES`` is a WRITE grant, not a read grant:
-    ``design_workshops.load_workshop_or_404(..., for_edit=True)`` performs no role check of its own.
-    If ministry oversight needs workshop visibility, the precedent is INSPECTOR's read-only scoped
-    grant table — a row an admin writes — and never a set entry.
+    ⚠ THE FIRST TWO ASSERTIONS ARE INVERTED FROM WHAT THIS TEST CARRIED UNTIL 2026-09-14, and the
+    cause is a ruling rather than a regression. It read "no rank buys design-workshop authority",
+    which was true when written and was made false by the owner's decision that MINISTRY_ADMIN,
+    REGIONAL_DIRECTOR and ASSISTANT_DIRECTOR may write inside a workshop. The gap that forced it: a
+    ministry admin could promote an annual-plan row into a design workshop and then not save a stage
+    in the workshop they had just created.
+
+    THE POINT THE OLD NAME WAS MAKING SURVIVES AND IS SHARPER. Each of these gates is its own SET,
+    so joining one buys nothing in the others — these three now RUN a workshop and still cannot OPEN
+    a bare one and still cannot INSPECT one. Under a rank ladder all three would have moved
+    together, which is the drift a set exists to prevent. PROFESSOR (40) and INSPECTOR (37) are
+    outranked by all three and still write nothing.
     """
     user = _user(tier)
-    assert deps.can_run_design_workshops(user) is False
-    assert tier not in deps.DESIGN_WORKSHOP_ROLES
+    assert deps.can_run_design_workshops(user) is True
+    assert tier in deps.DESIGN_WORKSHOP_ROLES
     assert tier not in deps.DESIGN_WORKSHOP_CREATOR_ROLES
     assert tier not in design_workshop_inspectors.INSPECTION_ROLES
+    # The two tiers between them and a designer, so the assertions above cannot be read as a floor.
+    for below in ("PROFESSOR", "INSPECTOR"):
+        assert deps.can_run_design_workshops(_user(below)) is False
     assert design_workshop_inspectors.is_inspector(user) is False
 
 

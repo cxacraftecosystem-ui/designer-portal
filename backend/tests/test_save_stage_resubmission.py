@@ -52,6 +52,7 @@ every fixture here fails inside the driver rather than at an assertion. ``prisma
 """
 
 import uuid
+from contextlib import suppress
 from datetime import UTC, datetime
 from typing import Any
 
@@ -83,15 +84,67 @@ def anyio_backend():
 
 @pytest.fixture(scope="module")
 async def connection():
-    """One Prisma connection for the module, and it does not close one it did not open.
+    """One Prisma connection for the module — it does not close one it did not open, and it does
+    not TRUST one it did not open either.
 
     ``db`` is a process-wide singleton shared with every other test module in the run. A blind
-    ``connect()``/``disconnect()`` pair here would raise on a session where something else is already
-    connected, and — worse — would close the connection that module is still using if it ran first.
+    ``connect()``/``disconnect()`` pair here would close the connection an earlier module is still
+    using if it ran first, which is why ``opened_here`` exists at all.
+
+    ── THE PROBE, AND EXACTLY HOW WELL IT IS ESTABLISHED ────────────────────────────────────────
+
+    THE REPORTED SYMPTOM. This module has been seen failing a full-suite run at fixture setup with
+    ``RuntimeError: <asyncio.locks.Event ...> is bound to a different event loop`` and
+    ``RuntimeError: Event loop is closed`` — every test in the module erroring at once. The reading
+    that fits is that it INHERITED a connected singleton whose engine belongs to an earlier
+    module’s event loop: this module starts no ``TestClient``, so ``opened_here`` is False, it
+    opens nothing of its own, and the first ``await`` lands on whatever it was handed.
+
+    WHAT IS ACTUALLY PROVEN, from the installed client’s source (prisma 0.15.0):
+
+    * ``Client.is_connected()`` is ``self._internal_engine is not None`` (``_base_client.py:180``)
+      — an OBJECT check, not a liveness check. It cannot see which loop the engine was built in,
+      so it cannot distinguish a usable inherited connection from an unusable one.
+    * ``Client.disconnect()`` clears ``_internal_engine`` BEFORE awaiting ``engine.aclose()``
+      (``_base_client.py:447``), so the client’s state is cleared even when that ``aclose()``
+      raises. That is why the failure below is suppressed rather than handled.
+    * ``Client.connect()`` then finds ``_internal_engine is None`` and builds a NEW engine
+      (``_base_client.py:429``), in whichever loop is running at the time.
+
+    So the suppressed-disconnect/reconnect pair reliably REPLACES an inherited engine with one this
+    module built, which is why ``opened_here`` is then set to True: what we were declining to close
+    no longer exists, and closing what we did build leaves the singleton as the next module expects.
+
+    ⚠ WHAT IS **NOT** PROVEN, AND IS RECORDED HERE RATHER THAN IMPLIED AWAY. The symptom above was
+    NOT reproduced on the machine this guard was written on, and the guard was therefore never
+    observed to cure it. Two things got in the way, both measured: (1) that checkout was ten
+    migrations behind, so every test here died earlier, in ``people``, on
+    ``FieldNotFoundError: Could not find field at createOneUser.data.role`` — MINISTRY_ADMIN is
+    added by ``20260913100200_ministry_admin_role``, which had not been applied; and (2) a
+    synthetic module that deliberately left ``db`` connected across a module boundary did NOT
+    produce the RuntimeError — the inherited engine went on working. So the leak that produces the
+    reported failure is something more specific than "a module left the singleton connected", and
+    it has not been named yet. Do not read this block as a diagnosis.
+
+    WHAT THAT MAKES THIS: a cheap, well-understood seatbelt, not a fix. It costs one ``SELECT 1``
+    on a healthy inherited connection and changes nothing about one. The module that leaves the
+    singleton connected is still the thing to find and fix — see ``test_workshop_join_sync.py`` and
+    ``test_sanction_orders.py`` for the convention this directory is migrating to (a SYNC module
+    fixture, ``asyncio.run(seed())`` with connect+disconnect in a ``finally``, and only then a
+    ``TestClient``); 44 modules here still hold the older shape, an ASYNC module fixture that both
+    awaits ``db`` and holds a ``TestClient``.
     """
     opened_here = not db.is_connected()
     if opened_here:
         await db.connect()
+    else:
+        try:
+            await db.query_raw("SELECT 1")
+        except Exception:  # noqa: BLE001 - ANY failure here means "unusable", not one named cause
+            with suppress(Exception):
+                await db.disconnect()
+            await db.connect()
+            opened_here = True
     try:
         yield db
     finally:

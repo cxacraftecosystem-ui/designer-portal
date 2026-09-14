@@ -9,7 +9,7 @@ ROWS and answers 201, and the damage shows up on somebody else's screen days lat
 
 1. **A RANK TEST STANDING IN FOR A SET.** ``create_from_sanction`` decides whether the named
    designer may run the workshop with ``role_rank(user) < ROLE_RANK["DESIGNER"]`` — a floor — but
-   design-workshop capability is ``DESIGN_WORKSHOP_ROLES``, a SET. The five roles that sit above the
+   design-workshop capability is ``DESIGN_WORKSHOP_ROLES``, a SET. The roles that sit above the
    floor and outside the set (INSPECTOR 37, PROFESSOR 40, ASSISTANT_DIRECTOR 42, REGIONAL_DIRECTOR
    45, MINISTRY_ADMIN 48) kept their role and were then written a ``DesignWorkshopViewer`` row that
    ``load_workshop_or_404`` refuses to honour — its grant arm is
@@ -126,7 +126,7 @@ def _refused(user: Any) -> bool:
 
 
 # --------------------------------------------------------------------------------------
-# 1. The rank test and the set, and the five roles they disagree about
+# 1. The rank test and the set, and the roles they disagree about
 # --------------------------------------------------------------------------------------
 
 
@@ -150,11 +150,19 @@ def test_the_refusal_agrees_with_the_predicate_that_actually_decides_access():
 def test_the_refusal_is_exactly_the_roles_the_rank_test_and_the_set_disagree_about():
     """THE CENSUS, AND IT IS MEANT TO GO RED ON AN ELEVENTH TIER.
 
-    These five are the whole of the defect: each sits at or above DESIGNER's rank, so the lift inside
+    These TWO are the whole of the defect: each sits at or above DESIGNER's rank, so the lift inside
     the transaction leaves it alone, and each sits outside ``DESIGN_WORKSHOP_ROLES``, so the viewer
     row written for it cannot be honoured. A new tier inserted above 35 lands in this set by default
     — silently, with no line of code naming it, which is exactly how INSPECTOR and the three
     directorate tiers acquired the bug in the first place.
+
+    ⚠ IT WAS FIVE UNTIL 2026-09-14 AND THE THREE THAT LEFT WERE FIXED, NOT EXCUSED. The owner ruled
+    that MINISTRY_ADMIN, REGIONAL_DIRECTOR and ASSISTANT_DIRECTOR may run design workshops, so they
+    entered ``DESIGN_WORKSHOP_ROLES`` — and the second half of the condition above stopped holding
+    for them. A sanction order may now name one of those officers and the viewer row written for
+    them IS honoured. That is this docstring's own remedy taken ("if it does, it belongs in
+    DESIGN_WORKSHOP_ROLES and the answer is there, not here"), and the census shrinking is the
+    evidence it worked rather than something to restore.
 
     IF THIS FAILS BECAUSE A TIER WAS ADDED: that is the test working. Decide whether the new tier
     runs design workshops. If it does, it belongs in ``DESIGN_WORKSHOP_ROLES`` and the answer is
@@ -166,9 +174,6 @@ def test_the_refusal_is_exactly_the_roles_the_rank_test_and_the_set_disagree_abo
     assert refused == {
         "INSPECTOR",
         "PROFESSOR",
-        "ASSISTANT_DIRECTOR",
-        "REGIONAL_DIRECTOR",
-        "MINISTRY_ADMIN",
     }, f"the band of roles a sanction order cannot name has changed: {sorted(refused)}"
 
 

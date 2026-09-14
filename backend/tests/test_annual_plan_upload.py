@@ -888,13 +888,29 @@ def test_a_failure_after_the_creates_leaves_nothing_written(world) -> None:
 
     raised = world["rollback_error"]
     answered = world["answers"].get("rollback_second")
-    assert isinstance(raised, RuntimeError), (
-        f"the provoked failure did not reach the caller as a RuntimeError ({raised!r}); the upload "
-        f"answered {answered.status_code if answered is not None else 'nothing'} instead. If that "
-        "is a 500 naming RuntimeError, UnhandledErrorMiddleware turned the exception into a "
-        "response and this line wants the three-line replacement in the docstring above — the "
-        "rollback itself is asserted below and is not in question."
-    )
+    # THE PROVOKED FAILURE ARRIVES AS A 500, NOT AS A RAISED EXCEPTION, and that is the app rather
+    # than this test. `app.main.UnhandledErrorMiddleware` is installed unconditionally and catches
+    # every unhandled exception below CORS, returning JSONResponse(500, {"error": type(exc).__name__})
+    # and re-raising only if the response has already started — which it has not. So
+    # `pytest.raises(RuntimeError)` could never pass against this app in ANY arrangement of this
+    # module, and nothing ever noticed because the module errored at setup for the whole of its
+    # life and this line had never run.
+    #
+    # Asserted as what actually happens, and STILL asserted rather than dropped: a 500 naming
+    # RuntimeError is the proof the failure was provoked, which is the precondition for the two
+    # rollback assertions below — those are the subject of this test and are unaffected either way.
+    if raised is None:
+        assert answered is not None and answered.status_code == 500, (
+            "the provoked failure neither raised nor produced a 500, so nothing was provoked and "
+            "the rollback assertions below would pass vacuously"
+        )
+        assert answered.json().get("error") == "RuntimeError", (
+            f"the 500 does not name the provoked RuntimeError: {answered.text[:200]}"
+        )
+    else:
+        assert isinstance(raised, RuntimeError), (
+            f"the upload failed with something other than the provoked error: {raised!r}"
+        )
 
     stored = world["rows"]["rollback_after"]
     assert len(stored) == 2, "no created row may survive the rollback"
