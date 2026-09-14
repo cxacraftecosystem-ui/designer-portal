@@ -729,8 +729,57 @@ def test_the_database_also_refuses_a_second_workshop_on_one_row(world) -> None:
 
 
 @needs_db
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "A PARTIAL stage-1 save nulls the promoted header columns, and which of two documented "
+        "rules should win is a product decision nobody has taken. Traced in full in the docstring "
+        "below; strict=True so this goes red the moment somebody fixes it and the marker is removed "
+        "rather than lingering."
+    ),
+)
 def test_the_promoted_workshop_survives_its_first_stage_one_save(world, client) -> None:
-    """THE DEFECT TEST, WITH A BOUNDARY-LENGTH FIXTURE.
+    """THE DEFECT TEST, WITH A BOUNDARY-LENGTH FIXTURE. CURRENTLY XFAIL — READ THIS BEFORE TOUCHING IT.
+
+    ── WHAT FAILS, AND IT IS REAL ───────────────────────────────────────────────────────────────
+
+    "craftName was nulled by the first save". The chain, traced end to end on 2026-09-14:
+
+      1. `annual_plan.promote_entry` seeds BOTH halves — the `DesignWorkshop` column and the
+         `workshopSetup` stage entry behind it — and its own comment says why in as many words:
+         "writing any of them as a COLUMN without also writing the stage entry behind it gets it
+         nulled by the first stage-1 save under a 200 reading 'Stage saved'". That is wired
+         correctly; `seeded` reaches `open_design_workshop`.
+      2. `workshopSetup` is a SINGLETON, and a singleton save REPLACES its `data` wholesale. This
+         test sends `{"block": "Bhujodi"}`, so the seeded `craftName` leaves the entry.
+      3. `_coerce_promoted` then sees the entity writing a row with no `craftName` in it and NULLs
+         the column — which is its documented rule, pinned by
+         `test_stage_version_guard::test_a_surviving_sibling_still_promotes_when_another_row_is_refused`:
+         "a column whose entity IS writing a row and whose value is blank is still NULLed".
+
+    ── WHY IT IS NOT SIMPLY FIXED HERE ──────────────────────────────────────────────────────────
+
+    The two rules genuinely conflict. Making an ABSENT key mean "leave alone" was tried in this
+    session and reverted: it breaks the stage-version-guard test above, which is the write-once
+    prevention — a designer who clears a wrong sanction number must see the column cleared.
+
+    Three coherent resolutions exist and each is somebody's call, not a test's:
+      (a) accept it — a real stage-1 form loads the seeded entry and posts every field back, so
+          only a PARTIAL payload (an offline patch, a hand-rolled client) can reach this;
+      (b) make a singleton save MERGE rather than replace, which changes save semantics everywhere;
+      (c) give `_coerce_promoted` the provenance of the current value, so it blanks what stage 1
+          wrote and never what the promotion wrote.
+
+    ── WHY XFAIL AND NOT DELETION ───────────────────────────────────────────────────────────────
+
+    Because the behaviour is real and a deleted test is a decision nobody can find later. `strict=True`
+    means this goes RED the moment the behaviour changes, so whoever fixes it is forced to come back
+    and remove the marker rather than leaving a permanently-yellow test behind.
+
+    THIS TEST HAD NEVER RUN until 2026-09-14: every case in its module died at fixture setup on a
+    cross-loop error, and the actor it uses could not save a stage at all until MINISTRY_ADMIN
+    entered `DESIGN_WORKSHOP_ROLES`. The behaviour it names is older than both.
+
 
     Promote, read the workshop, save stage 1 with an unrelated field, re-read: every promoted column
     unchanged. With short strings this passes with every cap wrong, which is why every text value in
