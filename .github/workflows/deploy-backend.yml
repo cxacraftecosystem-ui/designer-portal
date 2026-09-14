@@ -881,7 +881,11 @@ jobs:
           # it is exactly what goes wrong when a stale client ships -- `SanctionOrder` absent, so
           # `db.sanctionorder` is an AttributeError on a live route. Comparing the declared names
           # catches that and stays quiet about whitespace.
-          names() { grep -oE '^[[:space:]]*(model|enum)[[:space:]]+[A-Za-z0-9_]+' "$1" | awk '{print $1, $2}' | sort; }
+          # ANCHORED AT COLUMN 0 AND REQUIRING THE BRACE. `^[[:space:]]*model` also matches a FIELD named
+          # `model` -- schema.prisma:2130 is `  model String?` -- which made the import check below
+          # demand an accessor called `string`. A declaration in this grammar is never indented and
+          # always opens a block, so both halves of that are load-bearing.
+          names() { grep -oE '^(model|enum) [A-Za-z0-9_]+ *\{' "$1" | awk '{print $1, $2}' | sort; }
           if ! diff <(names /tmp/genclient/schema.prisma) <(names backend/prisma/schema.prisma) > /tmp/schemadiff; then
             echo "::error::the generated client declares different models/enums than backend/prisma/schema.prisma"
             echo "--- < generated | > this commit ---"
@@ -1020,7 +1024,11 @@ jobs:
           # to `prisma/schema.prisma` in the tree beside it. What must be true is that it declares
           # the same models and enums -- that is what the query engine reads it for, and a
           # disagreement there is the AttributeError that took /api/design-workshops down.
-          names() { grep -oE '^[[:space:]]*(model|enum)[[:space:]]+[A-Za-z0-9_]+' "$1" | awk '{print $1, $2}' | sort; }
+          # ANCHORED AT COLUMN 0 AND REQUIRING THE BRACE. `^[[:space:]]*model` also matches a FIELD named
+          # `model` -- schema.prisma:2130 is `  model String?` -- which made the import check below
+          # demand an accessor called `string`. A declaration in this grammar is never indented and
+          # always opens a block, so both halves of that are load-bearing.
+          names() { grep -oE '^(model|enum) [A-Za-z0-9_]+ *\{' "$1" | awk '{print $1, $2}' | sort; }
           if ! diff <(names "$client_dir/schema.prisma") <(names prisma/schema.prisma) > /tmp/schemadiff; then
             echo "::error::$client_dir/schema.prisma declares different models/enums than this release's prisma/schema.prisma. The query engine reads that copy, so anything it does not declare fails at runtime with AttributeError."
             echo "--- < installed | > this release ---"
@@ -1046,7 +1054,7 @@ jobs:
           # the same outage wearing a different hat. Instantiating Prisma exercises client.py,
           # models.py, actions.py and types.py together, and every model in this release's schema is
           # then checked by name, so a missing accessor is named HERE rather than found by a user.
-          ./.venv/bin/python -c 'import re,sys,pathlib;from prisma import Prisma;schema=pathlib.Path("prisma/schema.prisma").read_text(encoding="utf-8");models=sorted({m.lower() for m in re.findall(r"^\s*model\s+([A-Za-z0-9_]+)",schema,re.M)});missing=[m for m in models if not hasattr(Prisma(),m)];print(("::error::the installed client is missing %d model accessor(s): %s"%(len(missing),", ".join(missing[:12]))) if missing else ("client instantiates and carries all %d model accessors"%len(models)));sys.exit(1 if missing else 0)'
+          ./.venv/bin/python -c 'import re,sys,pathlib;from prisma import Prisma;schema=pathlib.Path("prisma/schema.prisma").read_text(encoding="utf-8");models=sorted({m.lower() for m in re.findall(r"^model ([A-Za-z0-9_]+) *\{",schema,re.M)});missing=[m for m in models if not hasattr(Prisma(),m)];print(("::error::the installed client is missing %d model accessor(s): %s"%(len(missing),", ".join(missing[:12]))) if missing else ("client instantiates and carries all %d model accessors"%len(models)));sys.exit(1 if missing else 0)'
 
           echo "prisma client verified in this release: $client_dir"
           REMOTE
