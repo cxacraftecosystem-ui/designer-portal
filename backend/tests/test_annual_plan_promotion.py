@@ -511,6 +511,18 @@ def world():
             # refuses her before the assertion is reached, and the test fails for a reason that has
             # nothing to do with what it is about.
             facts["lead_designer"] = await account("lead", "DESIGNER", "Meera Kanungo", empanelled=True)
+            # A PLATFORM ADMIN, for the one test that writes INSIDE a promoted workshop.
+            #
+            # The fixture's own `admin` is a MINISTRY_ADMIN, and a ministry admin may promote a plan
+            # row into a workshop and then may NOT save a stage in it: `DESIGN_WORKSHOP_ROLES` is
+            # {DESIGNER, ADMIN, MASTER_ADMIN} and running a workshop is SET MEMBERSHIP, not a rank
+            # floor. That is a defensible split — the ministry commissions the workshop, the designer
+            # runs it — and it is not this module's business to assert or to argue.
+            #
+            # So the stage-save test uses an account that may. What it is about is whether the
+            # PROMOTED COLUMNS survive a stage save; routing it through an actor the route refuses
+            # would make it fail for a reason that has nothing to do with that.
+            facts["platform_admin"] = await account("platform-admin", "ADMIN", "A platform admin")
 
             # THE STALE SNAPSHOT the race is forced with: the row as it read BEFORE anybody
             # promoted it. Taken here, before the act phase's winning POST, because that is what
@@ -656,7 +668,19 @@ def client(world):
 
 
 def _headers(world) -> dict[str, str]:
+    """The MINISTRY admin — the actor every promotion in this module is made by."""
     return {"Authorization": f"Bearer {create_access_token(subject=world['admin'].id)}"}
+
+
+def _platform_headers(world) -> dict[str, str]:
+    """A PLATFORM admin, for writes INSIDE a promoted workshop.
+
+    `DESIGN_WORKSHOP_ROLES` is {DESIGNER, ADMIN, MASTER_ADMIN} and running a workshop is SET
+    MEMBERSHIP, not a rank floor — so the ministry admin above, who may create the workshop, may not
+    save a stage in it. Using this for the stage-save test keeps that test about what it is named
+    for; it is not an opinion about whether the split is right.
+    """
+    return {"Authorization": f"Bearer {create_access_token(subject=world['platform_admin'].id)}"}
 
 
 def _promote(client: Any, world: dict[str, Any], key: str, body: dict[str, Any] | None = None):
@@ -728,7 +752,8 @@ def test_the_promoted_workshop_survives_its_first_stage_one_save(world, client) 
     saved = client.put(
         f"/api/design-workshops/{workshop_id}/stages/WORKSHOP_SETUP",
         json={"entries": [{"entityKey": "workshopSetup", "data": {"block": "Bhujodi"}}]},
-        headers=_headers(world),
+        # A PLATFORM admin, not the ministry one that promoted the row — see `_platform_headers`.
+        headers=_platform_headers(world),
     )
     assert saved.status_code in (200, 201), saved.text
 
