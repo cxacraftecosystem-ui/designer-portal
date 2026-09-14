@@ -128,10 +128,16 @@ test("the form's guard and the reader's guard are different rules, and they do n
   // asked for.
   //
   // It is recorded here, in the test that would otherwise just have been edited, because the reader
-  // photographs somebody's Aadhaar card and uploads it to a third-party vision model. If the
-  // directorate should write stage data and NOT read identity cards, the fix is a predicate of its
-  // own on that endpoint — not a narrowing of `DESIGN_WORKSHOP_ROLES`, which would take the stage
-  // save back with it.
+  // photographs somebody's Aadhaar card and uploads it to a third-party vision model.
+  //
+  // PUT TO THE OWNER ON 2026-09-14 AND DECIDED: KEEP IT. The directorate gets the capture aids a
+  // designer has, the card reader included, and this is a ruling rather than an oversight nobody
+  // noticed — which is the only reason the loop below is allowed to read the way it does.
+  //
+  // THE OTHER ANSWER, SPELLED OUT SO REOPENING IT DOES NOT START FROM SCRATCH: a predicate of its
+  // own on that endpoint, `{DESIGNER, ADMIN, MASTER_ADMIN}`, leaving `_require_designer` to the
+  // stage saves. NOT a narrowing of `DESIGN_WORKSHOP_ROLES`, which would take the stage save back
+  // with it and undo the thing that was actually asked for.
   for (const role of ["RESEARCHER", "INSPECTOR", "PROFESSOR"]) {
     expect(canCreateRecords(as(role)), `${role} may open the artisan form`).toBe(true);
     expect(canRunDesignWorkshops(as(role)), `${role} must NOT be offered the card reader`).toBe(false);
