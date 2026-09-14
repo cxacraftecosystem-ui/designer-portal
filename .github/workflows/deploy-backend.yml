@@ -1137,7 +1137,14 @@ jobs:
           # release that can.
           echo "engine cache:"; ls -la "$HOME/.cache/prisma-python/binaries"/*/* 2>/dev/null | head -20 || true
           set -a; . ./.env; set +a
-          ./.venv/bin/python -c 'import asyncio;from prisma import Prisma;c=Prisma();asyncio.run(c.connect());print("query engine started and the database answered");asyncio.run(c.disconnect())'             || { echo "::error::the release cannot connect to its database. Not flipping the symlink."; exit 1; }
+          # NO `disconnect()`, AND ITS ABSENCE IS THE FIX RATHER THAN A SHORTCUT. The first version
+          # called `asyncio.run()` twice -- once for connect, once for disconnect -- and the second
+          # raised `RuntimeError: Event loop is closed` AFTER printing "the database answered". A
+          # prisma connection is bound to the loop that opened it, so the teardown ran against a
+          # loop that no longer existed, and a release whose engine and database were both healthy
+          # was reported broken. The process exits on the next line and takes the engine subprocess
+          # with it; there is nothing for a disconnect to release that the exit does not.
+          ./.venv/bin/python -c 'import asyncio;from prisma import Prisma;asyncio.run(Prisma().connect());print("query engine started and the database answered")'             || { echo "::error::the release cannot connect to its database. Not flipping the symlink."; exit 1; }
 
           echo "prisma client verified in this release: $client_dir"
           REMOTE
