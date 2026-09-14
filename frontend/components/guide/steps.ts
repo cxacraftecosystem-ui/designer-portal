@@ -79,14 +79,18 @@ import {
  *
  * ── THE CHEAPER THING THAT BUYS MOST OF IT, AND IS NOT BUILT EITHER ────────────────────────────
  *
- * `GuideJourney` already reads `location.hash`, VALIDATES it against this array, opens that card
- * and scrolls to it — and nothing anywhere in the app links to `/guide#<id>`. Every one of them goes
- * to the bare route — `grep -rn '"/guide"' frontend/app frontend/components` is the list, and it is
- * eleven sites today. (It said "the nine entry points" when this block was written, which was wrong
- * on the day: the nav item, the dashboard notice, four lock panels and five links off the public
- * pages are eleven however they are grouped. The COUNT was never the argument — the absence of a
- * single `#` in any of them is — so it is stated as a grep rather than as a number a reader has to
- * take on trust and a later link silently invalidates.) Pointing each lock panel and each screen's help at its own
+ * `GuideJourney` already reads `location.hash`, VALIDATES it against the deck it is rendering, opens
+ * that card and scrolls to it — and since 2026-09-15 `guideTrackForAnchor` (`tracks.ts`) resolves
+ * the DECK from the same anchor first, so a link to a card in another deck selects that deck rather
+ * than being silently discarded. The machinery is therefore more complete than it was and is used by
+ * nothing: nothing anywhere in the app links to `/guide#<id>`. Every one of them goes
+ * to the bare route — `grep -rn '"/guide"' frontend/app frontend/components` is the list, minus the
+ * one hit that is this sentence. (It said "the nine entry points" when this block was written, which
+ * was wrong on the day, and then "eleven sites today", which was right on ITS day and was falsified
+ * on 2026-09-15 by one ministry-desk card adding a twelfth. Twice now. The COUNT was never the
+ * argument — the absence of a single `#` in any of them is — so the number is gone and the grep is
+ * the answer, which is what the parenthesis it replaces said should have happened the first time.)
+ * Pointing each lock panel and each screen's help at its own
  * step anchor lands a designer on the paragraph about the screen they were just refused, which is
  * most of what a tour is for, degrades to a plain link under any preference, and costs one href per
  * site. Those files belong to other lanes; this is the note recording that the machinery is here
@@ -95,6 +99,31 @@ import {
  * DO NOT ADD A TOUR LIBRARY on a later re-reading of this comment. What would change the decision
  * is cost 5 going away — the second arc becoming READABLE by every signed-in account — and not a
  * lighter library appearing.
+ *
+ * ── 2026-09-15: A PER-ROLE SCRIPT WAS BUILT, AND THIS DECISION IS UNCHANGED ─────────────────────
+ *
+ * `/guide` now carries three decks — this one, `directorateSteps.ts` and `inspectorSteps.ts` — and
+ * `components/guide/tracks.ts` chooses which one opens from the reader's role. That is the phrase
+ * cost 5 uses, so it is answered here rather than left for a reader to notice the contradiction and
+ * conclude the paragraph above is stale.
+ *
+ * COST 5 IS ABOUT A TOUR'S SCRIPT AND IT SURVIVES INTACT. What made a per-role script expensive
+ * there is that a coach-mark tour must know, per account, WHICH SCREENS WILL ACTUALLY RENDER: it
+ * anchors to live DOM, so a step whose page answers with a lock panel has nothing to point at and
+ * the sequence dead-ends mid-flight. That forces a hand-kept second copy of `ROUTE_GUARDS`, and a
+ * copy that drifts strands a reader.
+ *
+ * WHAT WAS BUILT COPIES NO GATE AND CANNOT DEAD-END. It is three arrays of prose, one card renderer,
+ * and a four-line default over two predicates `lib/permissions.ts` already exports — no anchoring,
+ * no sequence, no live DOM, nothing fetched. The role decides which deck OPENS; the switcher on the
+ * page reaches all three for everybody, so nothing is hidden from anybody and the ungated-page
+ * argument two paragraphs up is honoured three times over instead of once. A wrong answer from the
+ * default costs a reader one click, which is exactly why a heuristic is allowed to make it — and
+ * exactly what a tour's script could not afford.
+ *
+ * SO THE REFUSAL ABOVE STILL BINDS, and what would change it is still cost 5 going away. Three decks
+ * do not make a spotlight cheaper; they make the "no DOM to point at" problem three times larger,
+ * because each deck's audience is refused most of the OTHER decks' screens.
  * ═══════════════════════════════════════════════════════════════════════════════════════════════
  */
 
@@ -1446,7 +1475,21 @@ export const GUIDE_STEPS: GuideStep[] = [
       "IT IS ITS OWN TIER AND NOT A RANK. Inspector / Reviewer is the only role this surface opens for: an admin and the master admin are refused it exactly as a professor is, and they read design & prototype workshops on Design workshops instead. If you are a designer, this step is here so you know what a colleague is looking at when they read your workshop back — not because you can open it.",
       "An admin chooses who inspects a workshop, one workshop at a time, on Manage workshop access.",
       "An empty page is a real answer and the screen says which kind it is. Nothing assigned reads “No workshop is assigned to you”; a list that could not be loaded says so instead — because the correct empty state and a silent failure look identical, and there is no other surface to cross-check against.",
-      "There is no Save, no stage form, no submit and no report button, and none of them is missing: there is no route behind this page that would accept one. Nothing an inspector does can change a workshop.",
+      // ⚠ THIS ROW ENDED "Nothing an inspector does can change a workshop" UNTIL 2026-09-15, AND
+      // THAT SENTENCE WAS TRUE WHEN IT WAS WRITTEN AND STOPPED BEING TRUE WITHOUT ANYTHING SAYING
+      // SO. The inspection surface grew two write routes —
+      // `POST /design-workshop-inspections/{id}/feedback` and `.../send-back` — and a "Correction
+      // suggestions" panel behind them, and a send-back moves the report to Needs revision. The
+      // detail page's own header comment records the change; this card did not, which is the exact
+      // shape of rot this file's header spends paragraphs on: a claim that is checkable, was
+      // checked once, and instructs the next reader not to look again.
+      //
+      // THE CORRECTION IS NARROWER THAN THE ORIGINAL AND THAT IS THE WHOLE POINT. What remains true
+      // is that nothing an inspector does changes a workshop's CONTENT — no stage value, no
+      // photograph, no completeness figure, no record — because `load_inspectable_workshop_or_404`
+      // has no edit path and its own docstring forbids one being added. Write that; never the
+      // shorter thing.
+      "There is no Save and no stage form, and neither is missing: the loader behind this page has no edit path at all, and its own docstring says it must never grow one. What an inspector CAN write is a correction suggestion — a note about one stage or about the report as a whole — and the second of its two buttons sends the report back, which moves it to Needs revision. That changes the report's standing and never a workshop's contents: not a stage value, not a photograph, not the completeness figure, not a record.",
       "Photographs, recordings and attachments are COUNTED rather than shown — “3 photographs are recorded here; an inspection read does not carry them”. An empty gallery would look like a file that failed to load, which is not what happened."
     ]
   }

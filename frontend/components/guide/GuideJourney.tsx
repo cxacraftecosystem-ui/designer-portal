@@ -6,12 +6,18 @@ import { motion, useScroll, useSpring, useTransform } from "framer-motion";
 import { GuideRail } from "@/components/guide/GuideRail";
 import { GuideStepCard } from "@/components/guide/GuideStepCard";
 import { scrollToStep } from "@/components/guide/guideMotion";
-import { GUIDE_STEPS } from "@/components/guide/steps";
+import type { GuideStep } from "@/components/guide/steps";
 import { useAppReducedMotion } from "@/components/guide/useAppReducedMotion";
 
 /**
- * The journey: every step in GUIDE_STEPS threaded onto a scroll-linked spine, with the sticky rail
- * alongside on large screens.
+ * The journey: every step of the deck it is handed, threaded onto a scroll-linked spine, with the
+ * sticky rail alongside on large screens.
+ *
+ * ONE DECK AT A TIME, CHOSEN ABOVE IT. This said "every step in GUIDE_STEPS" while that was the only
+ * array there was; `/guide` now carries three (`components/guide/tracks.ts`) and the page decides
+ * which one to render, keyed on the deck so this component's per-deck state — `expandedId` and
+ * `activeIndex`, both indices into ONE array — cannot be carried across a change of deck and open a
+ * card that is not there.
  *
  * The spine is the page's organising animation. `useScroll` measures how far the reader has
  * travelled through the step list (not the document — the offsets are anchored to the list's
@@ -32,13 +38,19 @@ import { useAppReducedMotion } from "@/components/guide/useAppReducedMotion";
  * fill tracks the scrollbar exactly with no inertia) and the travelling node is not rendered at
  * all.
  */
-export function GuideJourney() {
+export function GuideJourney({ steps }: { steps: GuideStep[] }) {
   const reduce = useAppReducedMotion();
   const listRef = useRef<HTMLOListElement>(null);
   const [activeIndex, setActiveIndex] = useState(0);
   // One card open at a time. The first is open on arrival so the shape of a step is obvious
   // without the reader having to discover that the cards expand.
-  const [expandedId, setExpandedId] = useState<string | null>(GUIDE_STEPS[0].id);
+  //
+  // `steps[0]` IS INDEXED UNGUARDED, exactly as `GUIDE_STEPS[0]` was before the decks existed: a
+  // walkthrough with no steps in it is not a state this page has a rendering for, and a `?.` here
+  // would only turn an empty deck into a blank page instead of a crash. What changed is that there
+  // are now three arrays that must never be empty rather than one, so
+  // `e2e/guide-tracks-unit.spec.ts` asserts it of every registered deck.
+  const [expandedId, setExpandedId] = useState<string | null>(steps[0].id);
 
   // "start 65%" → progress begins when the list's top passes 65% down the viewport;
   // "end 65%"   → it completes when the list's bottom reaches the same line. Measured: the fill
@@ -57,13 +69,25 @@ export function GuideJourney() {
   const nodeTop = useTransform(progress, [0, 1], ["0%", "100%"]);
 
   // Deep links: /guide#questionnaire opens that step and scrolls to it.
+  //
+  // VALIDATED AGAINST THIS DECK AND SILENTLY IGNORED OTHERWISE, which is right here and is only
+  // half the story now that there are three decks: an anchor belonging to ANOTHER deck must select
+  // that deck rather than be discarded, and it cannot be done from inside this component, which has
+  // only been handed one array. `guideTrackForAnchor` in `tracks.ts` is the other half and the page
+  // resolves it before choosing what to render — so by the time this effect runs, a valid anchor is
+  // already in `steps`. The check stays because an anchor belonging to NO deck (a stale link, a
+  // renamed step) must still leave the page where it is rather than throwing.
   useEffect(() => {
     const hash = window.location.hash.replace("#", "");
-    if (!hash || !GUIDE_STEPS.some((step) => step.id === hash)) return;
+    if (!hash || !steps.some((step) => step.id === hash)) return;
     setExpandedId(hash);
     // Wait a frame so the expanded card has its final height before we scroll to it.
     const frame = window.requestAnimationFrame(() => scrollToStep(hash, true));
     return () => window.cancelAnimationFrame(frame);
+    // Deliberately once per mount, as before. The page remounts this component on a deck change
+    // (`key={track.id}`), so a fresh deck gets a fresh run and a live `steps` identity change does
+    // not re-fire the scroll under a reader who is already part-way down the page.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   function jump(id: string) {
@@ -73,7 +97,7 @@ export function GuideJourney() {
 
   return (
     <section className="mt-10 grid gap-8 lg:grid-cols-[260px_minmax(0,1fr)]" aria-label="The documentation process, step by step">
-      <GuideRail steps={GUIDE_STEPS} activeIndex={activeIndex} progress={progress} onJump={jump} />
+      <GuideRail steps={steps} activeIndex={activeIndex} progress={progress} onJump={jump} />
 
       <div className="relative">
         <ol
@@ -112,7 +136,7 @@ export function GuideJourney() {
             </div>
           </div>
 
-          {GUIDE_STEPS.map((step, index) => (
+          {steps.map((step, index) => (
             <GuideStepCard
               key={step.id}
               step={step}
