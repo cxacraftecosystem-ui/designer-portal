@@ -17,12 +17,31 @@ dashboard tile that "should include planned workshops too", a dataset that "shou
 coming" — and every one of those is a one-line edit in a file that has nothing to do with this
 feature. So the guard is a CENSUS of which modules may name the table at all, plus a behavioural
 assertion per surface.
+
+══ HOW SECTION 2 IS ARRANGED ═════════════════════════════════════════════════════════════════════
+
+Every database call is in ONE SYNC fixture, inside a private ``asyncio.run`` loop, and finishes
+before the ``TestClient`` exists; the tests then drive the client and assert over what the fixture
+recorded. That is the convention ``tests/test_workshop_join_sync.py`` and
+``tests/test_seed_shared_questionnaire.py`` set out, and it is not stylistic: ``db`` is a
+process-wide Prisma singleton shared with the running app, and a Prisma connection is bound to the
+event loop that opened it. A module-scoped ASYNC fixture opens the connection in one loop and then
+starts the app in another, so the app's own handlers fail with ``RuntimeError: … is bound to a
+different event loop`` and the log fills with "Unhandled error on POST /api/…" for tests whose
+assertions were never reached. ``asyncio.run`` opens a loop nothing else shares and closes it again,
+which is why the blind ``connect``/``disconnect`` pair below is correct exactly here.
+
+THE WORKSHOP COUNT IS TAKEN IN THE FIXTURE, AND THAT IS SOUND RATHER THAN CONVENIENT: nothing in
+this module creates or deletes a ``DesignWorkshop`` after the seed — every test below is a GET — so
+the number the fixture records is still the table's answer when the list is asked for it.
 """
 
+import asyncio
 import re
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import pytest
 from conftest import needs_db
@@ -30,9 +49,6 @@ from conftest import needs_db
 from app.core.db import db
 from app.core.security import create_access_token, hash_password
 from app.services import design_workshops
-from tests.conftest import borrowed_db
-
-pytestmark = pytest.mark.anyio
 
 APP = Path(design_workshops.__file__).resolve().parents[1]
 PASSWORD = "annual-plan-boundary-password"
@@ -127,59 +143,85 @@ def test_the_plan_table_is_not_in_the_workshop_entity_registry():
 
 
 @pytest.fixture(scope="module")
-def anyio_backend():
-    return "asyncio"
+def world():
+    """A master admin, one REAL workshop, and three hundred planned rows that are not workshops.
 
-
-@pytest.fixture(scope="module")
-async def world():
+    SYNC, and every write inside ``asyncio.run`` before the client exists — see the module
+    docstring. ``live_workshops`` is the workshop table's own answer, recorded here so that the
+    tests below can compare a LIST TOTAL against it without reaching for ``db`` while the app is
+    running and holding a connection bound to a different loop.
+    """
     from fastapi.testclient import TestClient
 
     from app.main import app
 
     stamp = uuid.uuid4().hex[:8]
     email = f"annual-plan-boundary-{stamp}@example.org"
-    async with borrowed_db():
-        admin = await db.user.create(
-            data={
-                "email": email,
-                "name": f"Master admin {stamp}",
-                "role": "MASTER_ADMIN",
-                "passwordHash": hash_password(PASSWORD),
-            }
-        )
-        await db.accessroster.create(
-            data={
-                "email": email,
-                "status": "ACTIVE",
-                "admitRole": "MASTER_ADMIN",
-                "joinedAt": datetime.now(UTC),
-                "notes": "Seeded by tests/test_annual_plan_is_not_a_workshop.py.",
-            }
-        )
-        workshop = await db.designworkshop.create(
-            data={
-                "title": f"A real workshop {stamp}",
-                "templateId": "DCH_STANDARD",
-                "createdById": admin.id,
-                "status": "DRAFT",
-            }
-        )
-        await db.annualplanentry.create_many(
-            data=[
-                {
-                    "planYear": 2098,
-                    "workshopNo": f"BND/{stamp}/{n:03d}",
-                    "workshopNoKey": f"BND/{stamp}/{n:03d}".upper(),
-                    "state": "Gujarat",
-                    "district": "Kachchh",
+
+    async def seed() -> dict[str, Any]:
+        await db.connect()
+        try:
+            admin = await db.user.create(
+                data={
+                    "email": email,
+                    "name": f"Master admin {stamp}",
+                    "role": "MASTER_ADMIN",
+                    "passwordHash": hash_password(PASSWORD),
                 }
-                for n in range(300)
-            ]
-        )
-        entry = await db.annualplanentry.find_first(where={"planYear": 2098})
+            )
+            await db.accessroster.create(
+                data={
+                    "email": email,
+                    "status": "ACTIVE",
+                    "admitRole": "MASTER_ADMIN",
+                    "joinedAt": datetime.now(UTC),
+                    "notes": "Seeded by tests/test_annual_plan_is_not_a_workshop.py.",
+                }
+            )
+            workshop = await db.designworkshop.create(
+                data={
+                    "title": f"A real workshop {stamp}",
+                    "templateId": "DCH_STANDARD",
+                    "createdById": admin.id,
+                    "status": "DRAFT",
+                }
+            )
+            await db.annualplanentry.create_many(
+                data=[
+                    {
+                        "planYear": 2098,
+                        "workshopNo": f"BND/{stamp}/{n:03d}",
+                        "workshopNoKey": f"BND/{stamp}/{n:03d}".upper(),
+                        "state": "Gujarat",
+                        "district": "Kachchh",
+                    }
+                    for n in range(300)
+                ]
+            )
+            entry = await db.annualplanentry.find_first(where={"planYear": 2098})
+            # READ LAST, with all three hundred plan rows already in the table: the number the
+            # workshop table answers while the plan table is full is exactly what the list's total
+            # has to match.
+            live_workshops = await db.designworkshop.count(where={"deletedAt": None})
+            return {
+                "admin": admin,
+                "workshop": workshop,
+                "entry": entry,
+                "live_workshops": live_workshops,
+                "stamp": stamp,
+            }
+        finally:
+            await db.disconnect()
+
+    seeded = asyncio.run(seed())
     with TestClient(app) as client:
-        yield {"client": client, "admin": admin, "workshop": workshop, "entry": entry}
+        seeded["client"] = client
+        yield seeded
+
+
+@pytest.fixture
+def client(world):
+    return world["client"]
 
 
 def _headers(world) -> dict[str, str]:
@@ -187,55 +229,47 @@ def _headers(world) -> dict[str, str]:
 
 
 @needs_db
-async def test_three_hundred_planned_rows_do_not_move_the_workshop_count(world) -> None:
+def test_three_hundred_planned_rows_do_not_move_the_workshop_count(world, client) -> None:
     """The whole suite in one assertion: the list's total is the workshop table's, not the sum."""
-    listed = world["client"].get("/api/design-workshops", headers=_headers(world)).json()
-    async with borrowed_db():
-        real = await db.designworkshop.count(where={"deletedAt": None})
-    assert listed["total"] == real
+    listed = client.get("/api/design-workshops", headers=_headers(world)).json()
+    assert listed["total"] == world["live_workshops"]
 
 
 @needs_db
-async def test_a_planned_row_id_is_not_a_workshop_id(world) -> None:
+def test_a_planned_row_id_is_not_a_workshop_id(world, client) -> None:
     """404 ``"Record not found"``, byte-identical to an id that does not exist. Anything else tells
     the caller that the id they have is a real row in some other table."""
-    response = world["client"].get(
-        f"/api/design-workshops/{world['entry'].id}", headers=_headers(world)
-    )
+    response = client.get(f"/api/design-workshops/{world['entry'].id}", headers=_headers(world))
     assert response.status_code == 404
     assert response.json()["detail"] == "Record not found"
 
 
 @needs_db
-async def test_no_dataset_streams_a_planned_row(world) -> None:
+def test_no_dataset_streams_a_planned_row(world, client) -> None:
     """Every entry in the dataset registry, checked. One that streamed plan rows would put them in a
     downloaded file labelled as fieldwork, where nothing distinguishes them."""
     from app.api.routes.datasets import DATASETS
 
     for key in DATASETS:
-        response = world["client"].get(f"/api/datasets/{key}", headers=_headers(world))
+        response = client.get(f"/api/datasets/{key}", headers=_headers(world))
         if response.status_code != 200:
             continue
         assert world["entry"].workshopNo not in response.text, key
 
 
 @needs_db
-async def test_the_data_report_has_no_sheet_of_planned_rows(world) -> None:
-    response = world["client"].get("/api/data/report?format=json", headers=_headers(world))
+def test_the_data_report_has_no_sheet_of_planned_rows(world, client) -> None:
+    response = client.get("/api/data/report?format=json", headers=_headers(world))
     if response.status_code == 200:
         assert "annualplan" not in response.text.lower()
 
 
 @needs_db
-async def test_cross_workshop_analytics_counts_no_planned_row(world) -> None:
-    response = world["client"].get(
-        "/api/analytics/design-workshops", headers=_headers(world)
-    )
+def test_cross_workshop_analytics_counts_no_planned_row(world, client) -> None:
+    response = client.get("/api/analytics/design-workshops", headers=_headers(world))
     if response.status_code != 200:
         return
-    async with borrowed_db():
-        real = await db.designworkshop.count(where={"deletedAt": None})
     body = response.json()
     for key in ("total", "workshops", "count"):
         if isinstance(body.get(key), int):
-            assert body[key] == real, key
+            assert body[key] == world["live_workshops"], key

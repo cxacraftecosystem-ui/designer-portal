@@ -22,9 +22,20 @@ own columns for the whole fortnight of capture.
 registry's field keys — the first being ``designers.PREFILL_MAP``, which
 ``tests/test_designer_prefill_contract.py`` guards and which imports only that map, so it cannot see
 this one. Section 1 is that guard, for this map.
+
+══ HOW SECTION 2 REACHES THE DATABASE, AND WHY IT MATTERS ════════════════════════════════════════
+
+Every database call in section 2 happens inside ONE SYNC fixture, in a private ``asyncio.run`` loop,
+before or after a ``TestClient`` exists but never while one is running. ``db`` is a process-wide
+Prisma singleton shared with the app, and a Prisma connection is BOUND TO THE EVENT LOOP THAT OPENED
+IT — so a module-scoped ASYNC fixture connects in one loop, starts the app in another, and every
+promote then fails inside the ROUTE with ``RuntimeError: … is bound to a different event loop``.
+``tests/test_workshop_join_sync.py`` and ``tests/test_seed_shared_questionnaire.py`` carry the
+convention; the block comment at the head of section 2 records how the phases are ordered here.
 """
 
 import ast
+import asyncio
 import inspect
 import textwrap
 import uuid
@@ -42,9 +53,6 @@ from app.schemas.design_workshops import DesignWorkshopCreate
 from app.services import annual_plan
 from app.services.annual_plan_xlsx import _CAP_MIRRORS, _TEXT_CAPS
 from app.services.stage_schema import PROMOTED_COLUMNS, stages
-from tests.conftest import borrowed_db
-
-pytestmark = pytest.mark.anyio
 
 PASSWORD = "annual-plan-promotion-password"
 
@@ -340,45 +348,15 @@ def test_a_plan_row_with_no_title_still_produces_a_scannable_workshop_title():
 # --------------------------------------------------------------------------------------
 # 2. The promotion itself. NEEDS POSTGRES.
 # --------------------------------------------------------------------------------------
-
-
-@pytest.fixture(scope="module")
-def anyio_backend():
-    return "asyncio"
-
-
-@pytest.fixture(scope="module")
-async def world():
-    from fastapi.testclient import TestClient
-
-    from app.main import app
-
-    stamp = uuid.uuid4().hex[:8]
-    email = f"annual-plan-promoter-{stamp}@example.org"
-    async with borrowed_db():
-        admin = await db.user.create(
-            data={
-                "email": email,
-                "name": f"Ministry admin {stamp}",
-                "role": "MINISTRY_ADMIN",
-                "passwordHash": hash_password(PASSWORD),
-            }
-        )
-        await db.accessroster.create(
-            data={
-                "email": email,
-                "status": "ACTIVE",
-                "admitRole": "MINISTRY_ADMIN",
-                "joinedAt": datetime.now(UTC),
-                "notes": "Seeded by tests/test_annual_plan_promotion.py.",
-            }
-        )
-    with TestClient(app) as client:
-        yield {"client": client, "admin": admin, "stamp": stamp}
-
-
-def _headers(world) -> dict[str, str]:
-    return {"Authorization": f"Bearer {create_access_token(subject=world['admin'].id)}"}
+#
+# EVERY DATABASE CALL BELOW IS IN THE ONE SYNC FIXTURE, in a private ``asyncio.run`` loop, with no
+# ``TestClient`` alive at the time — the convention ``tests/test_workshop_join_sync.py`` and
+# ``tests/test_seed_shared_questionnaire.py`` set out, and the reason is in this module's header.
+#
+# The fixture runs in four phases: seed (rows, before any request) → act (the requests whose result
+# a database read has to observe, one TestClient) → observe (the read-backs and the one direct
+# service call, the client now shut down) → yield (a second client, live, for every test that needs
+# no read-back and can therefore keep driving the route itself).
 
 
 #: BOUNDARY-LENGTH VALUES, AND THAT IS THE POINT OF THE FIXTURE. The failure these tests exist to
@@ -395,28 +373,263 @@ BOUNDARY = {
 }
 
 
-async def _entry(**overrides: Any):
-    data = {
-        "planYear": 2099,
-        "workshopNo": overrides.pop("workshopNo", f"DPW/2099/{uuid.uuid4().hex[:6]}"),
-        "plannedTitle": "A planned workshop",
-        "workshopKind": "DESIGN_PROTOTYPE_DEVELOPMENT",
-        "plannedStartDate": datetime(2026, 3, 12, tzinfo=UTC),
-        "plannedEndDate": datetime(2026, 3, 26, tzinfo=UTC),
-    }
-    data.update(overrides)
-    data["workshopNoKey"] = data["workshopNo"].strip().upper()
-    return await db.annualplanentry.create(data=data)
+@pytest.fixture(scope="module")
+def world():
+    """One ministry admin, one plan row per test, and every database call this module makes.
+
+    SYNC, not async — see the block comment above. A module-scoped ASYNC fixture opens the shared
+    Prisma connection in one event loop and then starts the app in another, and the app's own
+    handlers fail with ``RuntimeError: … is bound to a different event loop`` on every promote. That
+    is what filled CI with ``Unhandled error on POST /api/annual-plan/…/promote`` for tests whose
+    assertions were never reached.
+    """
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    stamp = uuid.uuid4().hex[:8]
+    email = f"annual-plan-promoter-{stamp}@example.org"
+
+    facts: dict[str, Any] = {"stamp": stamp}
+    entries: dict[str, Any] = {}
+    answers: dict[str, Any] = {}
+    rows: dict[str, Any] = {}
+    facts["entries"] = entries
+    facts["answers"] = answers
+    facts["rows"] = rows
+
+    # ---------------------------------------------------------------------------------
+    # Phase 1 — seed. A private loop, no app, no TestClient.
+    # ---------------------------------------------------------------------------------
+    async def seed() -> None:
+        async def entry(**overrides: Any):
+            data = {
+                "planYear": 2099,
+                "workshopNo": overrides.pop("workshopNo", f"DPW/2099/{uuid.uuid4().hex[:6]}"),
+                # ⚠ UNIQUE PER ROW, AND THE ORPHAN COUNT BELOW DEPENDS ON IT. It read
+                # "A planned workshop" — the same string on every row — until 2026-09-14, and that
+                # made two refusal tests VACUOUS. They count workshops whose title carries this
+                # row's marker; `promotion_title` returns `plannedTitle[:220]` WHENEVER
+                # plannedTitle is set, so with a shared title the marker identified nothing and
+                # `count(...) == 0` was true no matter what the route did.
+                "plannedTitle": f"A planned workshop {stamp}",
+                "workshopKind": "DESIGN_PROTOTYPE_DEVELOPMENT",
+                "plannedStartDate": datetime(2026, 3, 12, tzinfo=UTC),
+                "plannedEndDate": datetime(2026, 3, 26, tzinfo=UTC),
+            }
+            data.update(overrides)
+            data["workshopNoKey"] = data["workshopNo"].strip().upper()
+            return await db.annualplanentry.create(data=data)
+
+        async def account(slug: str, role: str, name: str):
+            return await db.user.create(
+                data={
+                    "email": f"plan-{slug}-{uuid.uuid4().hex[:8]}@example.org",
+                    "name": name,
+                    "role": role,
+                    "passwordHash": hash_password(PASSWORD),
+                }
+            )
+
+        await db.connect()
+        try:
+            admin = await db.user.create(
+                data={
+                    "email": email,
+                    "name": f"Ministry admin {stamp}",
+                    "role": "MINISTRY_ADMIN",
+                    "passwordHash": hash_password(PASSWORD),
+                }
+            )
+            await db.accessroster.create(
+                data={
+                    "email": email,
+                    "status": "ACTIVE",
+                    "admitRole": "MINISTRY_ADMIN",
+                    "joinedAt": datetime.now(UTC),
+                    "notes": "Seeded by tests/test_annual_plan_promotion.py.",
+                }
+            )
+            facts["admin"] = admin
+
+            # The rows the LIVE tests promote for themselves. One each, because a promotion is not
+            # repeatable and a shared row would make this module order-dependent.
+            for key in ("plain", "twice", "withdraw_refused"):
+                entries[key] = await entry()
+            entries["boundary"] = await entry(**BOUNDARY)
+            entries["withdrawn"] = await entry(withdrawnAt=datetime.now(UTC))
+
+            # The rows whose promotion has to be read back out of the tables afterwards.
+            entries["ineligible_plural"] = await entry()
+            entries["ineligible_lead"] = await entry()
+            entries["lead_alone"] = await entry()
+            entries["race"] = await entry()
+            facts["professor_plural"] = await account("prof", "PROFESSOR", "A professor")
+            facts["professor_lead"] = await account("lead-prof", "PROFESSOR", "A professor")
+            facts["lead_designer"] = await account("lead", "DESIGNER", "Meera Kanungo")
+
+            # THE STALE SNAPSHOT the race is forced with: the row as it read BEFORE anybody
+            # promoted it. Taken here, before the act phase's winning POST, because that is what
+            # makes it stale.
+            facts["stale"] = await db.annualplanentry.find_unique(
+                where={"id": entries["race"].id}
+            )
+            # Recorded as a SCALAR, not re-read off the model in the test: `promote_entry` is handed
+            # that very object in phase 3, and a test asserting over it afterwards would be asking
+            # the snapshot what it looks like after the thing it was a snapshot of.
+            facts["stale_link_at_snapshot"] = facts["stale"].designWorkshopId
+
+            # THE DATABASE'S OWN REFUSAL of a second workshop on one plan row. Pure database, no
+            # route in it at all, so it is driven here; the outcome is RECORDED rather than
+            # asserted, so a unique index that quietly went away fails the test that owns the rule
+            # instead of erroring every test in the module out of the fixture.
+            first = await entry()
+            second = await entry()
+            promoted = await db.designworkshop.create(
+                data={
+                    "title": "A workshop",
+                    "templateId": "DCH_STANDARD",
+                    "createdById": admin.id,
+                    "status": "DRAFT",
+                }
+            )
+            await db.annualplanentry.update(
+                where={"id": first.id}, data={"designWorkshopId": promoted.id}
+            )
+            try:
+                await db.annualplanentry.update(
+                    where={"id": second.id}, data={"designWorkshopId": promoted.id}
+                )
+            except Exception as exc:  # noqa: BLE001 - the CLASS is the finding; see the test
+                facts["one_workshop_one_row"] = type(exc).__name__
+            else:
+                facts["one_workshop_one_row"] = None
+        finally:
+            await db.disconnect()
+
+    # ---------------------------------------------------------------------------------
+    # Phase 2 — act. One TestClient, and only the requests a read-back has to observe.
+    # ---------------------------------------------------------------------------------
+    def act(client: Any) -> None:
+        headers = _headers(facts)
+
+        def promote(key: str, body: dict[str, Any]) -> None:
+            answers[key] = client.post(
+                f"/api/annual-plan/{entries[key].id}/promote", json=body, headers=headers
+            )
+
+        promote("ineligible_plural", {"designerUserIds": [facts["professor_plural"].id]})
+        promote("ineligible_lead", {"designerUserId": facts["professor_lead"].id})
+        promote("lead_alone", {"designerUserId": facts["lead_designer"].id})
+        promote("race", {})
+
+    # ---------------------------------------------------------------------------------
+    # Phase 3 — observe. The client is shut down; the singleton is free again.
+    # ---------------------------------------------------------------------------------
+    async def observe() -> None:
+        from fastapi import HTTPException
+
+        await db.connect()
+        try:
+            # THE ORPHAN IS COUNTED PER PLAN ROW, NOT OVER THE WHOLE TABLE, because a global
+            # ``designworkshop.count()`` bracketing one POST cannot survive being moved into a
+            # fixture that makes several: the legitimate promotion moves the total.
+            #
+            # ⚠ MATCHED ON ``plannedTitle``, NOT ON ``workshopNo``, AND THE DIFFERENCE IS WHETHER
+            # THIS TEST CHECKS ANYTHING AT ALL. The note here used to say "promotion_title always
+            # begins with the plan row's workshopNo". IT DOES NOT: ``annual_plan.promotion_title``
+            # returns ``plannedTitle[:220]`` whenever plannedTitle is set, and it is set on every row
+            # this fixture seeds. The workshopNo therefore appeared in NO title, the count was
+            # structurally 0, and both refusal tests passed without the route being asked anything.
+            # Caught in review on 2026-09-14, before it ever ran green.
+            #
+            # ``plannedTitle`` now carries the module's uuid stamp (see ``entry`` above), so it IS
+            # unique per row and IS what lands in the title. NO ``deletedAt`` FILTER, deliberately:
+            # HEAD counted every row, and a refusal that created a workshop and then soft-deleted it
+            # is still a refusal that created a workshop — exactly the orphan this asks about.
+            for key in ("ineligible_plural", "ineligible_lead"):
+                plan = entries[key]
+                rows[key] = {
+                    "orphans": await db.designworkshop.count(
+                        where={"title": {"contains": plan.plannedTitle}}
+                    ),
+                    "reread": await db.annualplanentry.find_unique(where={"id": plan.id}),
+                }
+
+            rows["lead_alone"] = {"granted": []}
+            created = answers["lead_alone"]
+            if created.status_code == 201:
+                rows["lead_alone"]["granted"] = await db.designworkshopviewer.find_many(
+                    where={"designWorkshopId": created.json()["workshop"]["id"]}
+                )
+
+            # THE RACE, forced rather than run: ``promote_entry`` is handed the STALE row — the
+            # snapshot read before the winning POST above — and the compare-and-set has to catch
+            # what the in-memory check cannot. Both counts are taken HERE, immediately around the
+            # call, so the bracket is exactly the one write it is about.
+            rows["race"] = {}
+            before = await db.designworkshop.count(where={"deletedAt": None})
+            # EVERY exception is recorded, not only HTTPException, and the reason is where this call
+            # now lives. It runs inside the MODULE FIXTURE, so an exception that escapes here does
+            # not fail one test — it errors every test in the module, with a traceback about the
+            # fixture rather than about the compare-and-set. Recording the type instead lets the
+            # assertion say what actually happened: "expected a 409 refusal, got PrismaError" is a
+            # sentence somebody can act on, and a bug that is not an HTTPException is exactly the
+            # kind this test exists to notice.
+            try:
+                await annual_plan.promote_entry(
+                    facts["stale"], actor=facts["admin"], designer_id=None, designer_ids=[]
+                )
+            except HTTPException as exc:
+                rows["race"]["refusal_status"] = exc.status_code
+                rows["race"]["refusal_type"] = None
+            except Exception as exc:  # noqa: BLE001 - recorded and re-raised by the assertion below
+                rows["race"]["refusal_status"] = None
+                rows["race"]["refusal_type"] = f"{type(exc).__name__}: {exc}"
+            else:
+                rows["race"]["refusal_status"] = None
+                rows["race"]["refusal_type"] = None
+            rows["race"]["reread"] = await db.annualplanentry.find_unique(
+                where={"id": entries["race"].id}
+            )
+            rows["race"]["live_after"] = await db.designworkshop.count(where={"deletedAt": None})
+            rows["race"]["live_before"] = before
+        finally:
+            await db.disconnect()
+
+    asyncio.run(seed())
+    with TestClient(app) as client:
+        act(client)
+    asyncio.run(observe())
+    with TestClient(app) as client:
+        facts["client"] = client
+        yield facts
+
+
+@pytest.fixture
+def client(world):
+    return world["client"]
+
+
+def _headers(world) -> dict[str, str]:
+    return {"Authorization": f"Bearer {create_access_token(subject=world['admin'].id)}"}
+
+
+def _promote(client: Any, world: dict[str, Any], key: str, body: dict[str, Any] | None = None):
+    """A live promotion of one of the fixture's plan rows, for the tests that need no read-back.
+
+    What the convention forbids is a DATABASE call while a client is alive, not a request.
+    """
+    return client.post(
+        f"/api/annual-plan/{world['entries'][key].id}/promote",
+        json=body or {},
+        headers=_headers(world),
+    )
 
 
 @needs_db
-async def test_promoting_a_row_creates_one_workshop_and_records_the_link(world) -> None:
-    async with borrowed_db():
-        entry = await _entry()
-
-    response = world["client"].post(
-        f"/api/annual-plan/{entry.id}/promote", json={}, headers=_headers(world)
-    )
+def test_promoting_a_row_creates_one_workshop_and_records_the_link(world, client) -> None:
+    response = _promote(client, world, "plain")
     assert response.status_code == 201, response.text
     body = response.json()
     assert body["entry"]["standing"] == "PROMOTED"
@@ -425,80 +638,57 @@ async def test_promoting_a_row_creates_one_workshop_and_records_the_link(world) 
 
 
 @needs_db
-async def test_a_promoted_row_cannot_be_promoted_twice(world) -> None:
+def test_a_promoted_row_cannot_be_promoted_twice(world, client) -> None:
     """409 NAMING THE EXISTING WORKSHOP. The unique index refuses it too, but a constraint violation
     cannot say WHICH workshop, and "which" is the only useful thing to tell the administrator."""
-    async with borrowed_db():
-        entry = await _entry()
-    assert (
-        world["client"]
-        .post(f"/api/annual-plan/{entry.id}/promote", json={}, headers=_headers(world))
-        .status_code
-        == 201
-    )
-    second = world["client"].post(
-        f"/api/annual-plan/{entry.id}/promote", json={}, headers=_headers(world)
-    )
+    assert _promote(client, world, "twice").status_code == 201
+    second = _promote(client, world, "twice")
     assert second.status_code == 409
-    assert entry.workshopNo in second.json()["detail"]
+    assert world["entries"]["twice"].workshopNo in second.json()["detail"]
 
 
 @needs_db
-async def test_the_database_also_refuses_a_second_workshop_on_one_row(world) -> None:
-    """THE ROUTE IS NOT THE ONLY GUARD, because a rule like this gets a second door added to it."""
-    from prisma.errors import UniqueViolationError
+def test_the_database_also_refuses_a_second_workshop_on_one_row(world) -> None:
+    """THE ROUTE IS NOT THE ONLY GUARD, because a rule like this gets a second door added to it.
 
-    async with borrowed_db():
-        first = await _entry()
-        second = await _entry()
-        promoted = await db.designworkshop.create(
-            data={
-                "title": "A workshop",
-                "templateId": "DCH_STANDARD",
-                "createdById": world["admin"].id,
-                "status": "DRAFT",
-            }
-        )
-        await db.annualplanentry.update(
-            where={"id": first.id}, data={"designWorkshopId": promoted.id}
-        )
-        with pytest.raises(UniqueViolationError):
-            await db.annualplanentry.update(
-                where={"id": second.id}, data={"designWorkshopId": promoted.id}
-            )
+    Driven in the fixture — it is two UPDATEs and no route — and reported here, so that an index
+    which quietly went away fails this test rather than the module's setup.
+    """
+    assert world["one_workshop_one_row"] == "UniqueViolationError", (
+        "a second plan row was allowed to point at a workshop another row already holds — "
+        "`AnnualPlanEntry.designWorkshopId` is no longer unique and the route is now the only guard"
+    )
 
 
 @needs_db
-async def test_the_promoted_workshop_survives_its_first_stage_one_save(world) -> None:
+def test_the_promoted_workshop_survives_its_first_stage_one_save(world, client) -> None:
     """THE DEFECT TEST, WITH A BOUNDARY-LENGTH FIXTURE.
 
     Promote, read the workshop, save stage 1 with an unrelated field, re-read: every promoted column
     unchanged. With short strings this passes with every cap wrong, which is why every text value in
     the fixture is exactly its FieldSpec's ``max_length``.
-    """
-    async with borrowed_db():
-        entry = await _entry(**BOUNDARY)
 
-    created = world["client"].post(
-        f"/api/annual-plan/{entry.id}/promote", json={}, headers=_headers(world)
-    )
+    Every reading is taken through the ROUTE, which is what makes this a live test rather than a
+    recorded one: the columns are what the workshop's own screen shows.
+    """
+    created = _promote(client, world, "boundary")
     assert created.status_code == 201, created.text
     workshop_id = created.json()["workshop"]["id"]
 
-    before = world["client"].get(
+    before = client.get(
         f"/api/design-workshops/{workshop_id}", headers=_headers(world)
     ).json()
     for column in ("craftName", "clusterName", "state", "district", "venue"):
         assert before[column] == BOUNDARY[column], column
 
-    saved = world["client"].put(
+    saved = client.put(
         f"/api/design-workshops/{workshop_id}/stages/WORKSHOP_SETUP",
         json={"entries": [{"entityKey": "workshopSetup", "data": {"block": "Bhujodi"}}]},
         headers=_headers(world),
     )
     assert saved.status_code in (200, 201), saved.text
 
-    after = world["client"].get(
+    after = client.get(
         f"/api/design-workshops/{workshop_id}", headers=_headers(world)
     ).json()
     for column in ("craftName", "clusterName", "state", "district", "venue", "workshopCode"):
@@ -506,49 +696,31 @@ async def test_the_promoted_workshop_survives_its_first_stage_one_save(world) ->
 
 
 @needs_db
-async def test_a_withdrawn_row_cannot_be_promoted(world) -> None:
-    async with borrowed_db():
-        entry = await _entry(withdrawnAt=datetime.now(UTC))
-    response = world["client"].post(
-        f"/api/annual-plan/{entry.id}/promote", json={}, headers=_headers(world)
-    )
+def test_a_withdrawn_row_cannot_be_promoted(world, client) -> None:
+    response = _promote(client, world, "withdrawn")
     assert response.status_code == 409
     assert "withdrawn" in response.json()["detail"].lower()
 
 
 @needs_db
-async def test_naming_an_ineligible_designer_refuses_the_whole_promotion(world) -> None:
+def test_naming_an_ineligible_designer_refuses_the_whole_promotion(world) -> None:
     """THE ORPHAN-DRAFT FAILURE. Eligibility is asked ABOVE the create, so a refusal leaves no
     committed, untitled-looking workshop behind — and the plan row stays un-promoted, so the
     administrator can simply try again with the right name."""
-    async with borrowed_db():
-        entry = await _entry()
-        professor = await db.user.create(
-            data={
-                "email": f"plan-prof-{uuid.uuid4().hex[:8]}@example.org",
-                "name": "A professor",
-                "role": "PROFESSOR",
-                "passwordHash": hash_password(PASSWORD),
-            }
-        )
-        before = await db.designworkshop.count()
-
-    response = world["client"].post(
-        f"/api/annual-plan/{entry.id}/promote",
-        json={"designerUserIds": [professor.id]},
-        headers=_headers(world),
-    )
+    professor = world["professor_plural"]
+    response = world["answers"]["ineligible_plural"]
     assert response.status_code == 422
     assert professor.id in response.text or professor.email in response.text
 
-    async with borrowed_db():
-        assert await db.designworkshop.count() == before
-        reread = await db.annualplanentry.find_unique(where={"id": entry.id})
-        assert reread.designWorkshopId is None
+    seen = world["rows"]["ineligible_plural"]
+    assert seen["orphans"] == 0, (
+        "a refused promotion left a workshop carrying this plan row's number behind"
+    )
+    assert seen["reread"].designWorkshopId is None
 
 
 @needs_db
-async def test_naming_an_ineligible_lead_designer_alone_refuses_the_promotion_too(world) -> None:
+def test_naming_an_ineligible_lead_designer_alone_refuses_the_promotion_too(world) -> None:
     """**THE SINGULAR TWIN OF THE TEST ABOVE, AND THE ONE THAT HAD NEVER BEEN WRITTEN.**
 
     Every promote test in this file sent the PLURAL field, so the singular path was never exercised
@@ -563,37 +735,21 @@ async def test_naming_an_ineligible_lead_designer_alone_refuses_the_promotion_to
     UNVERIFIED LOCALLY: the generated Prisma client on this machine predates today's models and
     ``prisma generate`` does not run here, so this first executes in CI.
     """
-    async with borrowed_db():
-        entry = await _entry()
-        professor = await db.user.create(
-            data={
-                "email": f"plan-lead-prof-{uuid.uuid4().hex[:8]}@example.org",
-                "name": "A professor",
-                "role": "PROFESSOR",
-                "passwordHash": hash_password(PASSWORD),
-            }
-        )
-        before = await db.designworkshop.count()
-
-    response = world["client"].post(
-        f"/api/annual-plan/{entry.id}/promote",
-        json={"designerUserId": professor.id},
-        headers=_headers(world),
-    )
+    professor = world["professor_lead"]
+    response = world["answers"]["ineligible_lead"]
     assert response.status_code == 422, response.text
     assert professor.id in response.text or professor.email in response.text
 
-    async with borrowed_db():
-        assert await db.designworkshop.count() == before, (
-            "a workshop was created for a designer the eligibility rule refuses — and its stage 1 "
-            "and stage 3 now hold that account's profile"
-        )
-        reread = await db.annualplanentry.find_unique(where={"id": entry.id})
-        assert reread.designWorkshopId is None
+    seen = world["rows"]["ineligible_lead"]
+    assert seen["orphans"] == 0, (
+        "a workshop was created for a designer the eligibility rule refuses — and its stage 1 "
+        "and stage 3 now hold that account's profile"
+    )
+    assert seen["reread"].designWorkshopId is None
 
 
 @needs_db
-async def test_a_lead_designer_named_alone_is_granted_the_workshop_they_are_named_on(world) -> None:
+def test_a_lead_designer_named_alone_is_granted_the_workshop_they_are_named_on(world) -> None:
     """The other half of the same defect: the lead has to END UP with a viewer row.
 
     ``attach_the_named_designers`` ran only ``if designer_ids``, so a body naming only the lead
@@ -603,99 +759,71 @@ async def test_a_lead_designer_named_alone_is_granted_the_workshop_they_are_name
 
     UNVERIFIED LOCALLY — see the test above.
     """
-    async with borrowed_db():
-        entry = await _entry()
-        designer = await db.user.create(
-            data={
-                "email": f"plan-lead-{uuid.uuid4().hex[:8]}@example.org",
-                "name": "Meera Kanungo",
-                "role": "DESIGNER",
-                "passwordHash": hash_password(PASSWORD),
-            }
-        )
-
-    created = world["client"].post(
-        f"/api/annual-plan/{entry.id}/promote",
-        json={"designerUserId": designer.id},
-        headers=_headers(world),
-    )
+    created = world["answers"]["lead_alone"]
     assert created.status_code == 201, created.text
-    workshop_id = created.json()["workshop"]["id"]
 
-    async with borrowed_db():
-        granted = await db.designworkshopviewer.find_many(
-            where={"designWorkshopId": workshop_id}
-        )
-        assert [row.userId for row in granted] == [designer.id], (
-            "the lead named alone was given no viewer row, so the designer this workshop is FOR "
-            "answers 404 on it while stage 1 carries their name"
-        )
+    granted = world["rows"]["lead_alone"]["granted"]
+    assert [row.userId for row in granted] == [world["lead_designer"].id], (
+        "the lead named alone was given no viewer row, so the designer this workshop is FOR "
+        "answers 404 on it while stage 1 carries their name"
+    )
 
 
 @needs_db
-async def test_a_second_promotion_that_slips_past_the_check_creates_no_orphan_workshop(
-    world,
-) -> None:
+def test_a_second_promotion_that_slips_past_the_check_creates_no_orphan_workshop(world) -> None:
     """**THE RACE, FORCED RATHER THAN RUN.**
 
     The window is between ``promote_entry``'s ``if entry.designWorkshopId`` check and its stamp, and
     it is real (`open_design_workshop` is four awaits and explicitly not transactional). It cannot
-    be produced reliably from a test client, so the test does what the race does: hands
-    ``promote_entry`` a STALE row — the snapshot it read before somebody else promoted — and asserts
-    the compare-and-set catches what the in-memory check cannot.
+    be produced reliably from a test client, so the fixture does what the race does: hands
+    ``promote_entry`` a STALE row — the snapshot it read before somebody else promoted — and this
+    asserts the compare-and-set catches what the in-memory check cannot.
 
-    TWO PROPERTIES, AND THE SECOND IS THE ONE THAT COSTS MONEY. The call is refused (409 naming the
-    workshop the row actually points at), AND the workshop this call had already created is taken
-    back out — a byte-identical twin left in the directory, with the same title, the same seeded
-    stage-1 header and the same promoted ``workshopCode``, is indistinguishable from the winner to
-    anybody who later has to decide which one is real.
+    TWO PROPERTIES, AND THE SECOND IS THE ONE THAT COSTS MONEY. The call is refused (409), AND the
+    workshop this call had already created is taken back out — a byte-identical twin left in the
+    directory, with the same title, the same seeded stage-1 header and the same promoted
+    ``workshopCode``, is indistinguishable from the winner to anybody who later has to decide which
+    one is real.
 
     UNVERIFIED LOCALLY — see above.
     """
-    from fastapi import HTTPException
-
-    async with borrowed_db():
-        entry = await _entry()
-        stale = await db.annualplanentry.find_unique(where={"id": entry.id})
-        assert stale.designWorkshopId is None
-
-    winner = world["client"].post(
-        f"/api/annual-plan/{entry.id}/promote", json={}, headers=_headers(world)
+    assert world["stale_link_at_snapshot"] is None, (
+        "the snapshot handed to promote_entry was taken AFTER the row was promoted, so it is not "
+        "stale and the compare-and-set is not being exercised at all"
     )
+
+    winner = world["answers"]["race"]
     assert winner.status_code == 201, winner.text
     winning_id = winner.json()["workshop"]["id"]
 
-    async with borrowed_db():
-        before = await db.designworkshop.count(where={"deletedAt": None})
-        with pytest.raises(HTTPException) as refused:
-            await annual_plan.promote_entry(
-                stale, actor=world["admin"], designer_id=None, designer_ids=[]
-            )
-        assert refused.value.status_code == 409
-
-        reread = await db.annualplanentry.find_unique(where={"id": entry.id})
-        assert reread.designWorkshopId == winning_id, "the loser overwrote the winner's link"
-        assert await db.designworkshop.count(where={"deletedAt": None}) == before, (
-            "the losing promotion left a live orphan workshop in the directory that the plan row "
-            "can never reach, delete or explain"
-        )
+    seen = world["rows"]["race"]
+    # Named first, so a non-HTTP failure reads as itself rather than as "expected 409, got None".
+    assert seen["refusal_type"] is None, (
+        f"the stale promotion raised something that is not an HTTPException: {seen['refusal_type']}. "
+        "That is not the refusal this test is about — the compare-and-set did not get as far as "
+        "deciding."
+    )
+    assert seen["refusal_status"] == 409, (
+        "the stale promotion was not refused — the compare-and-set is gone and the second call "
+        "simply overwrote the first"
+    )
+    assert seen["reread"].designWorkshopId == winning_id, "the loser overwrote the winner's link"
+    assert seen["live_after"] == seen["live_before"], (
+        "the losing promotion left a live orphan workshop in the directory that the plan row "
+        "can never reach, delete or explain"
+    )
 
 
 @needs_db
-async def test_withdrawing_a_promoted_row_is_refused(world) -> None:
+def test_withdrawing_a_promoted_row_is_refused(world, client) -> None:
     """A designer may be standing in the courtyard. Withdrawing the line would take it out of the
     directory while the workshop, its viewers, its media and its report went on existing — and
     nothing anywhere would say why the two disagree."""
-    async with borrowed_db():
-        entry = await _entry()
-    assert (
-        world["client"]
-        .post(f"/api/annual-plan/{entry.id}/promote", json={}, headers=_headers(world))
-        .status_code
-        == 201
-    )
-    refused = world["client"].post(
-        f"/api/annual-plan/{entry.id}/withdraw", json={}, headers=_headers(world)
+    assert _promote(client, world, "withdraw_refused").status_code == 201
+    refused = client.post(
+        f"/api/annual-plan/{world['entries']['withdraw_refused'].id}/withdraw",
+        json={},
+        headers=_headers(world),
     )
     assert refused.status_code == 409
     assert "cancel the workshop" in refused.json()["detail"].lower()

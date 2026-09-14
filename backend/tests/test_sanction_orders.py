@@ -48,6 +48,45 @@ than about status codes.
    order. The pre-check is the friendly half; the unique index on ``sanctionOrderKey`` is the half
    that is actually true.
 
+══ HOW THIS FILE IS ARRANGED, AND WHY THE FIXTURE IS THE LONGEST THING IN IT ══════════════════
+
+``db`` is a PROCESS-WIDE Prisma singleton shared with the running application, and a Prisma
+connection is BOUND TO THE EVENT LOOP THAT OPENED IT. The ``TestClient``'s lifespan connects it in
+the portal thread's loop. So a test that reaches for ``db`` while the client is alive is using a
+connection from a loop that does not own it, and the app's own handlers then fail with
+``RuntimeError: <asyncio.locks.Event …> is bound to a different event loop`` — an error reported
+against the ROUTE, not against the assertion, which is why ``app.main`` logs "Unhandled error on
+POST /api/sanction-orders" for a test that never looked wrong. The earlier shape of this module —
+an async, module-scoped fixture, with every test reaching for the shared connection mid-flight —
+hit exactly that: first as ``AlreadyConnectedError``, and then, once the borrow was made polite
+enough to stop disconnecting, as the cross-loop ``RuntimeError``. Thirty-six failures, twice, for
+one structural reason. ``tests/conftest.py`` records the whole of it where the helper used to be.
+
+``tests/test_workshop_join_sync.py`` and ``tests/test_seed_shared_questionnaire.py`` carry the
+convention that works, and it is the one below: **every database call happens inside ONE SYNC
+fixture, in a private ``asyncio.run`` loop, with no ``TestClient`` alive at the time — and the tests
+assert over what it recorded.** ``asyncio.run`` opens a loop nothing else shares and closes it
+again, so the blind ``connect``/``disconnect`` pair inside it is correct here precisely where it
+would be wrong in an async fixture that interleaves with another module's app lifespan.
+
+The fixture therefore runs in four phases, and the order is the whole design:
+
+1. **seed** — ``asyncio.run``: every row the module needs BEFORE any request, plus the request
+   bodies, recorded so the assertions can quote them.
+2. **act** — one ``TestClient``: every request whose RESULT a database read has to observe. The
+   ``httpx.Response`` objects are kept whole (status, headers, ``.content``, ``.json()`` all still
+   answer after the client is closed), so the assertions below are unchanged from when each test
+   made its own request.
+3. **observe** — ``asyncio.run`` again, the client now shut down and the singleton free: every
+   read-back, and the one deliberate edit (the stage-1 cover) that a later request has to see.
+4. **yield** — a second ``TestClient``, live for the tests. A test that needs NO database read
+   still drives this client itself, exactly as ``test_workshop_join_sync`` does: the point is that
+   the database is never touched while a client is running, not that requests are forbidden.
+
+A test whose ``POST`` was made in phase 2 asserts its status code FIRST, and phase 3 records
+nothing for a request the route refused — so a broken route still fails the test that owns it,
+rather than erroring the whole module out of the fixture.
+
 Postgres is required — every behaviour here is a row appearing or not appearing — so the module
 skips itself when ``DATABASE_URL`` does not point at a local database.
 
@@ -57,6 +96,7 @@ skips itself when ``DATABASE_URL`` does not point at a local database.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
 from datetime import UTC, datetime
@@ -75,67 +115,31 @@ from app.services.sanction_orders import (
     normalise_sanction_order_no,
 )
 from app.services.stage_schema import registry_version, stage, stage_completeness
-from tests.conftest import borrowed_db
 
-pytestmark = [needs_db, pytest.mark.anyio]
+pytestmark = [needs_db]
 
 PASSWORD = "sanction-orders-officer-password"
 AMOUNT = "450000.00"
+TOP_OF_COLUMN = "999999999999.99"
+
+#: The five tiers that clear ``can_record_sanction_orders``'s rank floor and are still OUTSIDE
+#: ``DESIGN_WORKSHOP_ROLES``. Named once so the fixture and the test that reads its findings cannot
+#: drift apart.
+INELIGIBLE_ROLES = (
+    "INSPECTOR",
+    "PROFESSOR",
+    "ASSISTANT_DIRECTOR",
+    "REGIONAL_DIRECTOR",
+    "MINISTRY_ADMIN",
+)
+
+#: The two ways an administrator shows somebody the door. Both must survive a sanction order.
+BARRED_STATES = ("REJECTED", "SUSPENDED")
 
 
-@pytest.fixture(scope="module")
-def anyio_backend():
-    return "asyncio"
-
-
-@pytest.fixture(scope="module")
-async def world():
-    """ONE MINISTRY OFFICER, at the floor and not above it.
-
-    ``ASSISTANT_DIRECTOR`` rather than ADMIN deliberately: an admin would pass this gate for the
-    wrong reason, and every refusal below would then be untested against the tier the feature was
-    actually built for.
-    """
-    from fastapi.testclient import TestClient
-
-    from app.main import app
-
-    stamp = uuid.uuid4().hex[:8]
-    email = f"sanction-officer-{stamp}@example.org"
-
-    async with borrowed_db():
-        officer = await db.user.create(
-            data={
-                "email": email,
-                "name": f"Sanction officer {stamp}",
-                "role": "ASSISTANT_DIRECTOR",
-                "passwordHash": hash_password(PASSWORD),
-            }
-        )
-        await db.accessroster.create(
-            data={
-                "email": email,
-                "status": "ACTIVE",
-                "admitRole": "ASSISTANT_DIRECTOR",
-                "joinedAt": datetime.now(UTC),
-                "notes": "Seeded by tests/test_sanction_orders.py.",
-            }
-        )
-
-    with TestClient(app) as client:
-        yield {"client": client, "officer": officer, "stamp": stamp}
-
-
-@pytest.fixture
-def client(world):
-    return world["client"]
-
-
-def _headers(world: dict[str, Any]) -> dict[str, str]:
-    return {"Authorization": f"Bearer {create_access_token(subject=world['officer'].id)}"}
-
-
-def _body(world: dict[str, Any], **overrides: Any) -> dict[str, Any]:
+def _body(**overrides: Any) -> dict[str, Any]:
+    """One create body, unique per call. Built in the fixture and RECORDED, because the assertions
+    quote the number and the address back."""
     stamp = uuid.uuid4().hex[:8]
     body = {
         "sanctionOrderNo": f"SO/2026/{stamp}",
@@ -149,7 +153,599 @@ def _body(world: dict[str, Any], **overrides: Any) -> dict[str, Any]:
     return body
 
 
+def _created_order(reply: Any) -> dict[str, Any] | None:
+    """The created register row, or ``None`` when the route refused.
+
+    THE POINT IS WHERE A FAILURE LANDS. Phase 3 reads rows keyed off the id in this payload; if it
+    simply indexed into a refusal it would raise inside the fixture and every test in the module
+    would report a fixture error instead of the one test whose request was refused. Returning None
+    leaves that test's own ``assert reply.status_code == 201, reply.text`` to say what happened, in
+    the route's own words.
+    """
+    if reply.status_code != 201:
+        return None
+    try:
+        return reply.json()["sanctionOrder"]
+    except (ValueError, KeyError, TypeError):
+        return None
+
+
+@pytest.fixture(scope="module")
+def world():
+    """ONE MINISTRY OFFICER, at the floor and not above it — and every database call in this module.
+
+    ``ASSISTANT_DIRECTOR`` rather than ADMIN deliberately: an admin would pass this gate for the
+    wrong reason, and every refusal below would then be untested against the tier the feature was
+    actually built for.
+
+    SYNC, AND THAT IS THE POINT. See the module docstring: the phases below are ordered so that no
+    database call ever happens while a ``TestClient`` — and therefore the app's own, differently
+    looped, connection — is alive.
+    """
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    stamp = uuid.uuid4().hex[:8]
+    officer_email = f"sanction-officer-{stamp}@example.org"
+
+    facts: dict[str, Any] = {"stamp": stamp}
+    bodies: dict[str, dict[str, Any]] = {}
+    answers: dict[str, Any] = {}
+    rows: dict[str, Any] = {}
+    facts["bodies"] = bodies
+    facts["answers"] = answers
+    facts["rows"] = rows
+
+    # ---------------------------------------------------------------------------------
+    # Phase 1 — seed. A private loop, no app, no TestClient.
+    # ---------------------------------------------------------------------------------
+    async def seed() -> None:
+        from prisma.errors import PrismaError
+
+        await db.connect()
+        try:
+            officer = await db.user.create(
+                data={
+                    "email": officer_email,
+                    "name": f"Sanction officer {stamp}",
+                    "role": "ASSISTANT_DIRECTOR",
+                    "passwordHash": hash_password(PASSWORD),
+                }
+            )
+            await db.accessroster.create(
+                data={
+                    "email": officer_email,
+                    "status": "ACTIVE",
+                    "admitRole": "ASSISTANT_DIRECTOR",
+                    "joinedAt": datetime.now(UTC),
+                    "notes": "Seeded by tests/test_sanction_orders.py.",
+                }
+            )
+            facts["officer"] = officer
+
+            # The plain happy paths, which need no row of their own.
+            bodies["five_fields"] = _body()
+            bodies["round_trip"] = _body(sanctionAmount=TOP_OF_COLUMN)
+            bodies["stage_copy"] = _body()
+            bodies["missing_list"] = _body()
+            bodies["sanctioned"] = _body()
+            bodies["pending_queue"] = _body()
+
+            # The account that already exists.
+            existing = f"sanction-existing-{stamp}@example.org"
+            await db.user.create(
+                data={
+                    "email": existing,
+                    "name": f"Existing {stamp}",
+                    "role": "RESEARCHER",
+                    "passwordHash": hash_password(PASSWORD),
+                }
+            )
+            facts["existing_address"] = existing
+            bodies["existing"] = _body(designerEmail=existing)
+
+            # The admin who must not be demoted by being named.
+            admin_address = f"sanction-admin-{stamp}@example.org"
+            await db.user.create(
+                data={
+                    "email": admin_address,
+                    "name": f"Admin designer {stamp}",
+                    "role": "ADMIN",
+                    "passwordHash": hash_password(PASSWORD),
+                }
+            )
+            facts["admin_address"] = admin_address
+            bodies["admin"] = _body(designerEmail=admin_address)
+
+            # The Gmail alias. Nothing to seed — the first order creates the account, and the
+            # second (undotted) order has to find it again.
+            dotted = f"sanction.alias.{stamp}@gmail.com"
+            facts["dotted"] = dotted
+            bodies["alias_dotted"] = _body(designerEmail=dotted)
+            bodies["alias_canonical"] = _body(designerEmail=canonical_email(dotted))
+
+            # Two accounts on one mailbox.
+            split = f"sanction.split.{stamp}@gmail.com"
+            for spelling in (normalise_email(split), canonical_email(split)):
+                await db.user.create(
+                    data={
+                        "email": spelling,
+                        "name": f"Split {stamp}",
+                        "role": "RESEARCHER",
+                        "passwordHash": hash_password(PASSWORD),
+                    }
+                )
+            facts["split"] = split
+            bodies["split"] = _body(designerEmail=split)
+
+            # The two people an administrator has already shown the door.
+            facts["barred_addresses"] = {}
+            for state in BARRED_STATES:
+                address = f"sanction-barred-{state.lower()}-{stamp}@example.org"
+                await db.accessroster.create(
+                    data={
+                        "email": canonical_email(address),
+                        "status": state,
+                        "notes": "Barred by hand. A sanction order must not undo this.",
+                    }
+                )
+                facts["barred_addresses"][state] = address
+                bodies[f"barred_{state}"] = _body(designerEmail=address)
+
+            # The empanelment an administrator ended.
+            ended = f"sanction-ended-{stamp}@example.org"
+            await db.designerroster.create(
+                data={
+                    "email": canonical_email(ended),
+                    "isActive": False,
+                    "revokedAt": datetime.now(UTC),
+                    "notes": "Empanelment ended by hand. Do not restore.",
+                }
+            )
+            facts["ended_address"] = ended
+            bodies["ended"] = _body(designerEmail=ended)
+
+            # The race, simulated by inserting the register row by hand with a DIFFERENT workshop so
+            # the pre-check's own lookup is bypassed and the unique index is what refuses.
+            number = f"SO/RACE/{stamp}"
+            race_address = f"sanction-race-{stamp}@example.org"
+            squatter = await db.designworkshop.create(
+                data={
+                    "title": f"Squatter {stamp}",
+                    "templateId": "DCH_STANDARD",
+                    "createdById": officer.id,
+                    "status": "DRAFT",
+                }
+            )
+            await db.sanctionorder.create(
+                data={
+                    "sanctionOrderNo": f"{number} (already recorded)",
+                    "sanctionOrderKey": normalise_sanction_order_no(number),
+                    "sanctionOrderDate": datetime(2026, 4, 1, tzinfo=UTC),
+                    "sanctionAmount": "1.00",
+                    "designerUserId": officer.id,
+                    "designerEmail": f"squatter-{stamp}@example.org",
+                    "designWorkshopId": squatter.id,
+                    "createdById": officer.id,
+                }
+            )
+            facts["race_number"] = number
+            facts["race_address"] = race_address
+            bodies["race"] = _body(sanctionOrderNo=number, designerEmail=race_address)
+
+            # The account whose link budget is already spent.
+            throttle_address = f"sanction-throttle-{stamp}@example.org"
+            throttled = await db.user.create(
+                data={
+                    "email": throttle_address,
+                    "name": f"Throttled {stamp}",
+                    "role": "RESEARCHER",
+                    "passwordHash": None,
+                }
+            )
+            for _ in range(credential_links.ISSUE_BUDGET):
+                await db.passwordresettoken.create(
+                    data={
+                        "userId": throttled.id,
+                        "tokenHash": uuid.uuid4().hex,
+                        "purpose": "INVITE",
+                        "expiresAt": datetime.now(UTC),
+                    }
+                )
+            facts["throttle_address"] = throttle_address
+
+            # The designer who may not record an order.
+            designer = await db.user.create(
+                data={
+                    "email": f"sanction-refused-{stamp}@example.org",
+                    "name": f"Refused {stamp}",
+                    "role": "DESIGNER",
+                    "passwordHash": hash_password(PASSWORD),
+                }
+            )
+            facts["refused_designer_id"] = designer.id
+
+            # The five tiers that clear the rank floor and still cannot run a workshop.
+            facts["ineligible_addresses"] = {}
+            for role in INELIGIBLE_ROLES:
+                address = f"sanction-ineligible-{role.lower()}-{stamp}@example.org"
+                await db.user.create(
+                    data={
+                        "email": address,
+                        "name": f"Named {role} {stamp}",
+                        "role": role,
+                        "passwordHash": hash_password(PASSWORD),
+                    }
+                )
+                facts["ineligible_addresses"][role] = address
+                bodies[f"ineligible_{role}"] = _body(designerEmail=address)
+
+            # The officer naming their own mailbox.
+            bodies["own_mailbox"] = _body(designerEmail=officer.email)
+
+            # The row an administrator already decided, left exactly as they would leave it.
+            already = f"sanction-already-admitted-{stamp}@example.org"
+            admins_note = (
+                "Admitted 2025-04 on the department's request; craft taxonomy contributor."
+            )
+            joined = datetime(2024, 4, 1, tzinfo=UTC)
+            deciding = await db.user.create(
+                data={
+                    "email": f"sanction-deciding-admin-{stamp}@example.org",
+                    "name": f"Deciding admin {stamp}",
+                    "role": "ADMIN",
+                    "passwordHash": hash_password(PASSWORD),
+                }
+            )
+            await db.accessroster.create(
+                data={
+                    "email": canonical_email(already),
+                    "status": "ACTIVE",
+                    "admitRole": "RESEARCHER",
+                    "fullName": "R. Sundaram (as the admin typed it)",
+                    "notes": admins_note,
+                    "joinedAt": joined,
+                    "decidedAt": joined,
+                    "decidedById": deciding.id,
+                }
+            )
+            facts["already_address"] = already
+            facts["already_note"] = admins_note
+            facts["already_joined"] = joined
+            facts["deciding_admin_id"] = deciding.id
+            bodies["already_admitted"] = _body(
+                designerEmail=already, designerName="Sundaram R"
+            )
+
+            # THE TABLE'S OWN REFUSAL, driven here rather than in the test because it is pure
+            # database and touches no route at all. The outcome is RECORDED rather than asserted, so
+            # that a table which stopped refusing fails the test that owns the rule instead of
+            # erroring every test in the module out of the fixture.
+            check_workshop = await db.designworkshop.create(
+                data={
+                    "title": f"Check constraint {stamp}",
+                    "templateId": "DCH_STANDARD",
+                    "createdById": officer.id,
+                    "status": "DRAFT",
+                }
+            )
+            try:
+                await db.sanctionorder.create(
+                    data={
+                        "sanctionOrderNo": f"SO/CHECK/{stamp}",
+                        "sanctionOrderKey": normalise_sanction_order_no(f"SO/CHECK/{stamp}"),
+                        "sanctionOrderDate": datetime(2026, 4, 1, tzinfo=UTC),
+                        "sanctionAmount": "0.00",
+                        "designerUserId": officer.id,
+                        "designerEmail": f"check-{stamp}@example.org",
+                        "designWorkshopId": check_workshop.id,
+                        "createdById": officer.id,
+                    }
+                )
+            except Exception as exc:  # noqa: BLE001 - the CLASS is the finding; see the test
+                facts["non_positive_refusal"] = type(exc).__name__
+                facts["non_positive_refusal_is_prisma"] = isinstance(exc, PrismaError)
+            else:
+                facts["non_positive_refusal"] = None
+                facts["non_positive_refusal_is_prisma"] = False
+
+            # Read LAST, so it brackets every create the act phase is about to make.
+            facts["pending_before"] = await access_roster.pending_count()
+        finally:
+            await db.disconnect()
+
+    # ---------------------------------------------------------------------------------
+    # Phase 2 — act. One TestClient, every request a later read has to observe.
+    # ---------------------------------------------------------------------------------
+    def act(client: Any) -> None:
+        headers = _headers(facts)
+
+        def post(key: str) -> None:
+            answers[key] = client.post(
+                "/api/sanction-orders", json=bodies[key], headers=headers
+            )
+
+        post("five_fields")
+        post("existing")
+        post("admin")
+        # ORDER IS LOAD-BEARING: the undotted spelling must arrive SECOND, so that what it finds is
+        # the account the dotted one created.
+        post("alias_dotted")
+        post("alias_canonical")
+        post("split")
+        for state in BARRED_STATES:
+            post(f"barred_{state}")
+        post("ended")
+        post("race")
+        post("round_trip")
+        post("stage_copy")
+        post("missing_list")
+        post("sanctioned")
+        post("pending_queue")
+        for role in INELIGIBLE_ROLES:
+            post(f"ineligible_{role}")
+        post("own_mailbox")
+        post("already_admitted")
+
+    # ---------------------------------------------------------------------------------
+    # Phase 3 — observe. The client is shut down; the singleton is free again.
+    # ---------------------------------------------------------------------------------
+    async def observe() -> None:
+        await db.connect()
+        try:
+            # Read FIRST, so it brackets exactly the creates the act phase made.
+            facts["pending_after"] = await access_roster.pending_count()
+
+            # The seven rows.
+            payload = _created_order(answers["five_fields"])
+            if payload is not None:
+                canonical = canonical_email(bodies["five_fields"]["designerEmail"])
+                account = await db.user.find_unique(
+                    where={"email": normalise_email(bodies["five_fields"]["designerEmail"])}
+                )
+                workshop = await db.designworkshop.find_unique(
+                    where={"id": payload["designWorkshopId"]}
+                )
+                rows["five_fields"] = {
+                    "access": await db.accessroster.find_unique(where={"email": canonical}),
+                    "roster": await db.designerroster.find_unique(where={"email": canonical}),
+                    "account": account,
+                    "profile": (
+                        await db.designerprofile.find_unique(where={"userId": account.id})
+                        if account is not None
+                        else None
+                    ),
+                    "workshop": workshop,
+                    "viewers": (
+                        await db.designworkshopviewer.find_many(
+                            where={"designWorkshopId": workshop.id, "userId": account.id}
+                        )
+                        if workshop is not None and account is not None
+                        else []
+                    ),
+                    "order": await db.sanctionorder.find_unique(where={"id": payload["id"]}),
+                }
+
+            # The account that already existed.
+            rows["existing_accounts"] = await db.user.find_many(
+                where={"email": {"equals": facts["existing_address"], "mode": "insensitive"}}
+            )
+
+            # The admin who must keep their tier.
+            rows["admin_account"] = await db.user.find_unique(
+                where={"email": facts["admin_address"]}
+            )
+
+            # The Gmail alias, all four spellings.
+            dotted = facts["dotted"]
+            rows["alias"] = {
+                "account": await db.user.find_unique(where={"email": normalise_email(dotted)}),
+                "access": await db.accessroster.find_unique(
+                    where={"email": canonical_email(dotted)}
+                ),
+                "roster": await db.designerroster.find_unique(
+                    where={"email": canonical_email(dotted)}
+                ),
+            }
+
+            # The split mailbox: nothing may have been recorded.
+            rows["split_orders"] = await db.sanctionorder.find_many(
+                where={
+                    "sanctionOrderKey": normalise_sanction_order_no(
+                        bodies["split"]["sanctionOrderNo"]
+                    )
+                }
+            )
+
+            # The two barred addresses.
+            rows["barred"] = {}
+            for state in BARRED_STATES:
+                address = facts["barred_addresses"][state]
+                rows["barred"][state] = {
+                    "row": await db.accessroster.find_unique(
+                        where={"email": canonical_email(address)}
+                    ),
+                    "orders": await db.sanctionorder.find_many(
+                        where={
+                            "sanctionOrderKey": normalise_sanction_order_no(
+                                bodies[f"barred_{state}"]["sanctionOrderNo"]
+                            )
+                        }
+                    ),
+                    "accounts": await db.user.find_many(
+                        where={"email": {"equals": address, "mode": "insensitive"}}
+                    ),
+                }
+
+            # The empanelment that was ended.
+            rows["ended_roster"] = await db.designerroster.find_unique(
+                where={"email": canonical_email(facts["ended_address"])}
+            )
+
+            # The race: six absences.
+            race_address = facts["race_address"]
+            rows["race"] = {
+                "accounts": await db.user.find_many(
+                    where={"email": {"equals": race_address, "mode": "insensitive"}}
+                ),
+                "access": await db.accessroster.find_unique(
+                    where={"email": canonical_email(race_address)}
+                ),
+                "roster": await db.designerroster.find_unique(
+                    where={"email": canonical_email(race_address)}
+                ),
+                "workshops": await db.designworkshop.find_many(
+                    where={"title": {"contains": facts["race_number"]}}
+                ),
+            }
+
+            # The amount at the top of the column, read back off the row.
+            payload = _created_order(answers["round_trip"])
+            if payload is not None:
+                rows["round_trip"] = await db.sanctionorder.find_unique(
+                    where={"id": payload["id"]}
+                )
+
+            # The stage-1 copy. READ, THEN DELIBERATELY EDITED — the edit is what the live GET in
+            # ``test_the_stage_one_copy_is_seeded_and_is_a_copy`` has to see, and it has to happen
+            # here because it is a database write and no client may be running when it does.
+            payload = _created_order(answers["stage_copy"])
+            if payload is not None:
+                entry = await db.dwstageentry.find_first(
+                    where={
+                        "designWorkshopId": payload["designWorkshopId"],
+                        "stageKey": "WORKSHOP_SETUP",
+                        "entityKey": "workshopSetup",
+                        "deletedAt": None,
+                    }
+                )
+                data = dict(entry.data or {}) if entry is not None else {}
+                if entry is not None:
+                    edited = dict(data)
+                    edited["sanctionOrderNo"] = "SOMETHING ELSE ENTIRELY"
+                    await db.dwstageentry.update(
+                        where={"id": entry.id},
+                        data={"data": json.loads(json.dumps(edited))},
+                    )
+                rows["stage_copy"] = {
+                    "entry": entry,
+                    "data": data,
+                    "order": await db.sanctionorder.find_unique(where={"id": payload["id"]}),
+                }
+
+            # The one scorer.
+            payload = _created_order(answers["missing_list"])
+            if payload is not None:
+                entry = await db.dwstageentry.find_first(
+                    where={
+                        "designWorkshopId": payload["designWorkshopId"],
+                        "stageKey": "WORKSHOP_SETUP",
+                        "entityKey": "workshopSetup",
+                        "deletedAt": None,
+                    }
+                )
+                rows["missing_list_singleton"] = (
+                    dict(getattr(entry, "data", None) or {}) if entry else {}
+                )
+
+            # One order, one workshop, both directions — and NULL for one opened by hand.
+            payload = _created_order(answers["sanctioned"])
+            if payload is not None:
+                ad_hoc = await db.designworkshop.create(
+                    data={
+                        "title": f"By hand {stamp}",
+                        "templateId": "DCH_STANDARD",
+                        "createdById": facts["officer"].id,
+                        "status": "DRAFT",
+                    }
+                )
+                rows["sanctioned"] = {
+                    "workshop": await db.designworkshop.find_unique(
+                        where={"id": payload["designWorkshopId"]},
+                        include={"sanctionOrder": True},
+                    ),
+                    "ad_hoc": await db.designworkshop.find_unique(
+                        where={"id": ad_hoc.id}, include={"sanctionOrder": True}
+                    ),
+                }
+
+            # The five tiers that cannot run a workshop: four tables each.
+            rows["ineligible"] = {}
+            for role in INELIGIBLE_ROLES:
+                address = facts["ineligible_addresses"][role]
+                account = await db.user.find_unique(where={"email": address})
+                rows["ineligible"][role] = {
+                    "account": account,
+                    "orders": await db.sanctionorder.find_many(
+                        where={
+                            "sanctionOrderKey": normalise_sanction_order_no(
+                                bodies[f"ineligible_{role}"]["sanctionOrderNo"]
+                            )
+                        }
+                    ),
+                    "access": await db.accessroster.find_unique(
+                        where={"email": canonical_email(address)}
+                    ),
+                    "roster": await db.designerroster.find_unique(
+                        where={"email": canonical_email(address)}
+                    ),
+                    "viewers": (
+                        await db.designworkshopviewer.find_many(where={"userId": account.id})
+                        if account is not None
+                        else []
+                    ),
+                }
+
+            # The officer naming their own mailbox.
+            own = facts["officer"].email
+            rows["own_mailbox"] = {
+                "orders": await db.sanctionorder.find_many(
+                    where={
+                        "sanctionOrderKey": normalise_sanction_order_no(
+                            bodies["own_mailbox"]["sanctionOrderNo"]
+                        )
+                    }
+                ),
+                "roster": await db.designerroster.find_unique(
+                    where={"email": canonical_email(own)}
+                ),
+                "access": await db.accessroster.find_unique(
+                    where={"email": canonical_email(own)}
+                ),
+            }
+
+            # The administrator's allow-list decision.
+            rows["already_admitted"] = await db.accessroster.find_unique(
+                where={"email": canonical_email(facts["already_address"])}
+            )
+        finally:
+            await db.disconnect()
+
+    asyncio.run(seed())
+    with TestClient(app) as client:
+        act(client)
+    asyncio.run(observe())
+    with TestClient(app) as client:
+        facts["client"] = client
+        yield facts
+
+
+@pytest.fixture
+def client(world):
+    return world["client"]
+
+
+def _headers(world: dict[str, Any]) -> dict[str, str]:
+    return {"Authorization": f"Bearer {create_access_token(subject=world['officer'].id)}"}
+
+
 def _post(world: dict[str, Any], body: dict[str, Any]) -> Any:
+    """A live create, for the tests that need no database read afterwards.
+
+    Those tests keep making their own request — see the module docstring. What the convention
+    forbids is a DATABASE call while a client is alive, not a request.
+    """
     return world["client"].post("/api/sanction-orders", json=body, headers=_headers(world))
 
 
@@ -158,7 +754,7 @@ def _post(world: dict[str, Any], body: dict[str, Any]) -> Any:
 # --------------------------------------------------------------------------------------
 
 
-async def test_five_fields_produce_seven_rows(world) -> None:
+def test_five_fields_produce_seven_rows(world) -> None:
     """Counted BY HAND, one query per table, because a helper would agree with the implementation.
 
     The ``fullName`` assertion on the DESIGNER ROSTER is the one worth reading twice. It is the only
@@ -171,22 +767,18 @@ async def test_five_fields_produce_seven_rows(world) -> None:
     stamp fails nothing — sanctioned workshops would simply carry NULL where every hand-created one
     carries a version, on a value that is read straight back out on the provenance surface.
     """
-    body = _body(world)
-    answer = _post(world, body)
+    body = world["bodies"]["five_fields"]
+    answer = world["answers"]["five_fields"]
     assert answer.status_code == 201, answer.text
-    payload = answer.json()["sanctionOrder"]
 
-    canonical = canonical_email(body["designerEmail"])
-    async with borrowed_db():
-        access = await db.accessroster.find_unique(where={"email": canonical})
-        roster = await db.designerroster.find_unique(where={"email": canonical})
-        account = await db.user.find_unique(where={"email": normalise_email(body["designerEmail"])})
-        profile = await db.designerprofile.find_unique(where={"userId": account.id})
-        workshop = await db.designworkshop.find_unique(where={"id": payload["designWorkshopId"]})
-        viewers = await db.designworkshopviewer.find_many(
-            where={"designWorkshopId": workshop.id, "userId": account.id}
-        )
-        order = await db.sanctionorder.find_unique(where={"id": payload["id"]})
+    seen = world["rows"]["five_fields"]
+    access = seen["access"]
+    roster = seen["roster"]
+    account = seen["account"]
+    profile = seen["profile"]
+    workshop = seen["workshop"]
+    viewers = seen["viewers"]
+    order = seen["order"]
 
     # 1. the allow-list admission
     assert access is not None and access_roster.status_of(access) == "ACTIVE"
@@ -220,14 +812,14 @@ async def test_five_fields_produce_seven_rows(world) -> None:
     assert order.designerUserId == account.id
 
 
-async def test_a_new_account_is_offered_a_seventy_two_hour_invite_link(world) -> None:
+def test_a_new_account_is_offered_a_seventy_two_hour_invite_link(world, client) -> None:
     """INVITE and not RESET, and the purpose is passed explicitly for a reason worth reading.
 
     The account was just given a real (random, unguessable) password hash, so ``issue_link``'s own
     default would infer RESET and its TWO-HOUR lifetime — far too short for a link an officer
     forwards by hand to somebody who may be in a village. The creation path therefore names INVITE.
     """
-    answer = _post(world, _body(world))
+    answer = _post(world, _body())
     assert answer.status_code == 201, answer.text
     link = answer.json()["credentialLink"]
     assert link is not None
@@ -241,29 +833,13 @@ async def test_a_new_account_is_offered_a_seventy_two_hour_invite_link(world) ->
 # --------------------------------------------------------------------------------------
 
 
-async def test_an_existing_account_is_reused_and_never_duplicated(world) -> None:
+def test_an_existing_account_is_reused_and_never_duplicated(world) -> None:
     """The MAJORITY path in a running programme, and the one that must not mint a second account."""
-    stamp = uuid.uuid4().hex[:8]
-    address = f"sanction-existing-{stamp}@example.org"
-    async with borrowed_db():
-        await db.user.create(
-            data={
-                "email": address,
-                "name": f"Existing {stamp}",
-                "role": "RESEARCHER",
-                "passwordHash": hash_password(PASSWORD),
-            }
-        )
-
-    answer = _post(world, _body(world, designerEmail=address))
+    answer = world["answers"]["existing"]
     assert answer.status_code == 201, answer.text
     payload = answer.json()
 
-    async with borrowed_db():
-        accounts = await db.user.find_many(
-            where={"email": {"equals": address, "mode": "insensitive"}}
-        )
-
+    accounts = world["rows"]["existing_accounts"]
     assert len(accounts) == 1, "a second account was minted for a mailbox that already had one"
     assert str(getattr(accounts[0].role, "value", accounts[0].role)) == "DESIGNER"
     assert payload["sanctionOrder"]["accountCreated"] is False
@@ -272,33 +848,19 @@ async def test_an_existing_account_is_reused_and_never_duplicated(world) -> None
     assert payload["credentialLink"] is None
 
 
-async def test_an_admin_named_on_a_sanction_order_is_not_demoted(world) -> None:
+def test_an_admin_named_on_a_sanction_order_is_not_demoted(world) -> None:
     """LIFT, NEVER LOWER. An ADMIN named as the designer keeps their tier.
 
     The same rule the sign-in path and the allow-list decision path apply. A sanction order naming a
     senior colleague as the designer is ordinary; silently demoting them to DESIGNER would remove
     every capability they hold, from one create they did not perform.
     """
-    stamp = uuid.uuid4().hex[:8]
-    address = f"sanction-admin-{stamp}@example.org"
-    async with borrowed_db():
-        await db.user.create(
-            data={
-                "email": address,
-                "name": f"Admin designer {stamp}",
-                "role": "ADMIN",
-                "passwordHash": hash_password(PASSWORD),
-            }
-        )
-
-    assert _post(world, _body(world, designerEmail=address)).status_code == 201
-
-    async with borrowed_db():
-        account = await db.user.find_unique(where={"email": address})
+    assert world["answers"]["admin"].status_code == 201, world["answers"]["admin"].text
+    account = world["rows"]["admin_account"]
     assert str(getattr(account.role, "value", account.role)) == "ADMIN"
 
 
-async def test_a_gmail_alias_lands_on_one_mailbox_and_can_still_sign_in(world) -> None:
+def test_a_gmail_alias_lands_on_one_mailbox_and_can_still_sign_in(world) -> None:
     """FOUR COLUMNS, EACH ASSERTED BY NAME, because getting any of them backwards is silent.
 
     ``User.email`` is the LITERAL lower-cased address: both sign-in doors look it up literally, so
@@ -308,60 +870,38 @@ async def test_a_gmail_alias_lands_on_one_mailbox_and_can_still_sign_in(world) -
     is the key the gates read; the literal spelling on a roster row is invisible to
     ``ensure_empanelled``'s existence check and lets a revoked designer be quietly re-admitted.
     """
-    stamp = uuid.uuid4().hex[:8]
-    dotted = f"sanction.alias.{stamp}@gmail.com"
+    dotted = world["dotted"]
     canonical = canonical_email(dotted)
     assert canonical != normalise_email(dotted), "the fixture is not testing an alias"
 
-    answer = _post(world, _body(world, designerEmail=dotted))
+    answer = world["answers"]["alias_dotted"]
     assert answer.status_code == 201, answer.text
     assert answer.json()["sanctionOrder"]["designerEmail"] == canonical
 
-    async with borrowed_db():
-        account = await db.user.find_unique(where={"email": normalise_email(dotted)})
-        access = await db.accessroster.find_unique(where={"email": canonical})
-        roster = await db.designerroster.find_unique(where={"email": canonical})
-
-    assert account is not None, "the account must be reachable at the address the designer types"
-    assert access is not None
-    assert roster is not None
+    seen = world["rows"]["alias"]
+    assert seen["account"] is not None, (
+        "the account must be reachable at the address the designer types"
+    )
+    assert seen["access"] is not None
+    assert seen["roster"] is not None
 
     # And a SECOND order for the undotted spelling reuses the same account rather than minting one.
-    second = _post(world, _body(world, designerEmail=canonical))
+    second = world["answers"]["alias_canonical"]
     assert second.status_code == 201, second.text
     assert second.json()["sanctionOrder"]["accountCreated"] is False
-    assert second.json()["sanctionOrder"]["designerUserId"] == account.id
+    assert second.json()["sanctionOrder"]["designerUserId"] == seen["account"].id
 
 
-async def test_two_accounts_on_one_mailbox_refuse_the_whole_create(world) -> None:
+def test_two_accounts_on_one_mailbox_refuse_the_whole_create(world) -> None:
     """REFUSE, never guess — and leave nothing behind.
 
     Filing a ministry workshop under whichever of two rows an index happened to return first is not
     a decision a create route takes on an institution's behalf.
     """
-    stamp = uuid.uuid4().hex[:8]
-    dotted = f"sanction.split.{stamp}@gmail.com"
-    async with borrowed_db():
-        for spelling in (normalise_email(dotted), canonical_email(dotted)):
-            await db.user.create(
-                data={
-                    "email": spelling,
-                    "name": f"Split {stamp}",
-                    "role": "RESEARCHER",
-                    "passwordHash": hash_password(PASSWORD),
-                }
-            )
-
-    body = _body(world, designerEmail=dotted)
-    answer = _post(world, body)
+    answer = world["answers"]["split"]
     assert answer.status_code == 409, answer.text
-    assert canonical_email(dotted) in answer.json()["detail"]
-
-    async with borrowed_db():
-        orders = await db.sanctionorder.find_many(
-            where={"sanctionOrderKey": normalise_sanction_order_no(body["sanctionOrderNo"])}
-        )
-    assert orders == []
+    assert canonical_email(world["split"]) in answer.json()["detail"]
+    assert world["rows"]["split_orders"] == []
 
 
 # --------------------------------------------------------------------------------------
@@ -369,12 +909,12 @@ async def test_two_accounts_on_one_mailbox_refuse_the_whole_create(world) -> Non
 # --------------------------------------------------------------------------------------
 
 
-async def test_a_duplicate_sanction_number_is_a_409_naming_the_existing_order(world) -> None:
+def test_a_duplicate_sanction_number_is_a_409_naming_the_existing_order(world, client) -> None:
     """The officer's next move differs by WHICH situation they are in, so the message must let them
     tell: the existing order's number, the workshop it opened, the designer it named and the day."""
-    body = _body(world)
+    body = _body()
     assert _post(world, body).status_code == 201
-    again = _post(world, _body(world, sanctionOrderNo=body["sanctionOrderNo"]))
+    again = _post(world, _body(sanctionOrderNo=body["sanctionOrderNo"]))
     assert again.status_code == 409, again.text
     detail = again.json()["detail"]
     assert body["sanctionOrderNo"] in detail
@@ -382,7 +922,7 @@ async def test_a_duplicate_sanction_number_is_a_409_naming_the_existing_order(wo
 
 
 @pytest.mark.parametrize("separator", ["-", " ", "."])
-async def test_three_spellings_of_one_number_are_one_order(world, separator: str) -> None:
+def test_three_spellings_of_one_number_are_one_order(world, client, separator: str) -> None:
     """``SO/2026/42``, ``SO-2026-42`` and ``so 2026 42`` are three house styles for one instrument.
 
     The unique index on ``sanctionOrderNo`` alone would admit all three, because Postgres calls them
@@ -390,9 +930,9 @@ async def test_three_spellings_of_one_number_are_one_order(world, separator: str
     """
     stamp = uuid.uuid4().hex[:8]
     first = f"SO/2026/{stamp}"
-    assert _post(world, _body(world, sanctionOrderNo=first)).status_code == 201
+    assert _post(world, _body(sanctionOrderNo=first)).status_code == 201
     restyled = first.replace("/", separator).lower()
-    again = _post(world, _body(world, sanctionOrderNo=restyled))
+    again = _post(world, _body(sanctionOrderNo=restyled))
     assert again.status_code == 409, again.text
 
 
@@ -401,45 +941,27 @@ async def test_three_spellings_of_one_number_are_one_order(world, separator: str
 # --------------------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("state", ["REJECTED", "SUSPENDED"])
-async def test_a_barred_address_is_refused_and_the_decision_still_stands(world, state: str) -> None:
+@pytest.mark.parametrize("state", list(BARRED_STATES))
+def test_a_barred_address_is_refused_and_the_decision_still_stands(world, state: str) -> None:
     """``admit`` writes ACTIVE with no branch, so this read is the ONLY thing in the way.
 
     The assertion that matters is the second one: the row is STILL barred afterwards. A reordering
     that moved the check inside the transaction would still produce a 422 on some paths and would
     have overwritten the administrator's decision on the way; only reading the row back catches it.
     """
-    stamp = uuid.uuid4().hex[:8]
-    address = f"sanction-barred-{state.lower()}-{stamp}@example.org"
-    async with borrowed_db():
-        await db.accessroster.create(
-            data={
-                "email": canonical_email(address),
-                "status": state,
-                "notes": "Barred by hand. A sanction order must not undo this.",
-            }
-        )
-
-    body = _body(world, designerEmail=address)
-    answer = _post(world, body)
+    answer = world["answers"][f"barred_{state}"]
     assert answer.status_code == 422, answer.text
     assert "allow-list" in answer.json()["detail"]
 
-    async with borrowed_db():
-        row = await db.accessroster.find_unique(where={"email": canonical_email(address)})
-        orders = await db.sanctionorder.find_many(
-            where={"sanctionOrderKey": normalise_sanction_order_no(body["sanctionOrderNo"])}
-        )
-        accounts = await db.user.find_many(
-            where={"email": {"equals": address, "mode": "insensitive"}}
-        )
-
-    assert access_roster.status_of(row) == state, "a sanction order overturned an admin's decision"
-    assert orders == []
-    assert accounts == [], "a refused create left an orphan account behind"
+    seen = world["rows"]["barred"][state]
+    assert access_roster.status_of(seen["row"]) == state, (
+        "a sanction order overturned an admin's decision"
+    )
+    assert seen["orders"] == []
+    assert seen["accounts"] == [], "a refused create left an orphan account behind"
 
 
-async def test_an_ended_empanelment_is_not_restored_by_a_sanction_order(world) -> None:
+def test_an_ended_empanelment_is_not_restored_by_a_sanction_order(world) -> None:
     """THE DIRECT DESCENDANT of the assertion in ``test_platform_access_gate``.
 
     ``ensure_empanelled`` never revives a suspended row — deliberately, because the roster suspends
@@ -448,25 +970,12 @@ async def test_an_ended_empanelment_is_not_restored_by_a_sanction_order(world) -
     door, reading "Your designer access has been suspended", with no row on any screen to explain
     it.
     """
-    stamp = uuid.uuid4().hex[:8]
-    address = f"sanction-ended-{stamp}@example.org"
-    async with borrowed_db():
-        await db.designerroster.create(
-            data={
-                "email": canonical_email(address),
-                "isActive": False,
-                "revokedAt": datetime.now(UTC),
-                "notes": "Empanelment ended by hand. Do not restore.",
-            }
-        )
-
-    answer = _post(world, _body(world, designerEmail=address))
+    answer = world["answers"]["ended"]
     assert answer.status_code == 422, answer.text
     assert "empanelment" in answer.json()["detail"].lower()
-
-    async with borrowed_db():
-        row = await db.designerroster.find_unique(where={"email": canonical_email(address)})
-    assert row.isActive is False, "a sanction order restored an empanelment an admin ended"
+    assert world["rows"]["ended_roster"].isActive is False, (
+        "a sanction order restored an empanelment an admin ended"
+    )
 
 
 # --------------------------------------------------------------------------------------
@@ -474,7 +983,7 @@ async def test_an_ended_empanelment_is_not_restored_by_a_sanction_order(world) -
 # --------------------------------------------------------------------------------------
 
 
-async def test_a_refused_create_leaves_no_orphan_anything(world) -> None:
+def test_a_refused_create_leaves_no_orphan_anything(world) -> None:
     """THE ONE TEST THAT CATCHES A MISSING ``client=``, AND IT FORCES THE FAILURE AT THE LAST WRITE.
 
     The race the pre-check cannot win: two officers, one number, the same second. The pre-check reads
@@ -492,47 +1001,14 @@ async def test_a_refused_create_leaves_no_orphan_anything(world) -> None:
     the pre-check's own lookup is bypassed. That is the honest version: it reproduces what the index
     does, not what the route does.
     """
-    stamp = uuid.uuid4().hex[:8]
-    number = f"SO/RACE/{stamp}"
-    address = f"sanction-race-{stamp}@example.org"
-
-    async with borrowed_db():
-        squatter = await db.designworkshop.create(
-            data={
-                "title": f"Squatter {stamp}",
-                "templateId": "DCH_STANDARD",
-                "createdById": world["officer"].id,
-                "status": "DRAFT",
-            }
-        )
-        await db.sanctionorder.create(
-            data={
-                "sanctionOrderNo": f"{number} (already recorded)",
-                "sanctionOrderKey": normalise_sanction_order_no(number),
-                "sanctionOrderDate": datetime(2026, 4, 1, tzinfo=UTC),
-                "sanctionAmount": "1.00",
-                "designerUserId": world["officer"].id,
-                "designerEmail": f"squatter-{stamp}@example.org",
-                "designWorkshopId": squatter.id,
-                "createdById": world["officer"].id,
-            }
-        )
-
-    answer = _post(world, _body(world, sanctionOrderNo=number, designerEmail=address))
+    answer = world["answers"]["race"]
     assert answer.status_code == 409, answer.text
 
-    async with borrowed_db():
-        accounts = await db.user.find_many(
-            where={"email": {"equals": address, "mode": "insensitive"}}
-        )
-        access = await db.accessroster.find_unique(where={"email": canonical_email(address)})
-        roster = await db.designerroster.find_unique(where={"email": canonical_email(address)})
-        workshops = await db.designworkshop.find_many(where={"title": {"contains": number}})
-
-    assert accounts == [], "the account committed outside the transaction"
-    assert access is None, "the allow-list row committed outside the transaction"
-    assert roster is None, "the empanelment committed outside the transaction"
-    assert workshops == [], "the workshop committed outside the transaction"
+    seen = world["rows"]["race"]
+    assert seen["accounts"] == [], "the account committed outside the transaction"
+    assert seen["access"] is None, "the allow-list row committed outside the transaction"
+    assert seen["roster"] is None, "the empanelment committed outside the transaction"
+    assert seen["workshops"] == [], "the workshop committed outside the transaction"
 
 
 # --------------------------------------------------------------------------------------
@@ -540,7 +1016,7 @@ async def test_a_refused_create_leaves_no_orphan_anything(world) -> None:
 # --------------------------------------------------------------------------------------
 
 
-async def test_the_amount_never_reaches_the_wire_as_a_float(world) -> None:
+def test_the_amount_never_reaches_the_wire_as_a_float(world, client) -> None:
     """READ OFF THE RAW BYTES, because that is the only place the difference is visible.
 
     ``jsonable_encoder`` turns a ``Decimal`` into a ``float`` — measured in this repository's own
@@ -550,7 +1026,7 @@ async def test_the_amount_never_reaches_the_wire_as_a_float(world) -> None:
     the assertion is on the parsed TYPE and on the exact string, and the raw body is checked for the
     quotes as well.
     """
-    answer = _post(world, _body(world, sanctionAmount=AMOUNT))
+    answer = _post(world, _body(sanctionAmount=AMOUNT))
     assert answer.status_code == 201, answer.text
     parsed = json.loads(answer.content)["sanctionOrder"]["sanctionAmount"]
     assert isinstance(parsed, str), f"the amount arrived as {type(parsed).__name__}"
@@ -558,57 +1034,43 @@ async def test_the_amount_never_reaches_the_wire_as_a_float(world) -> None:
     assert f'"sanctionAmount":"{AMOUNT}"' in answer.content.decode().replace(" ", "")
 
 
-async def test_the_amount_round_trips_exactly_at_the_top_of_the_column(world) -> None:
+def test_the_amount_round_trips_exactly_at_the_top_of_the_column(world) -> None:
     """Fourteen digits, two of them paise. A float would lose the last one and say nothing."""
-    amount = "999999999999.99"
-    answer = _post(world, _body(world, sanctionAmount=amount))
+    answer = world["answers"]["round_trip"]
     assert answer.status_code == 201, answer.text
     payload = answer.json()["sanctionOrder"]
-    assert payload["sanctionAmount"] == amount
+    assert payload["sanctionAmount"] == TOP_OF_COLUMN
 
-    async with borrowed_db():
-        row = await db.sanctionorder.find_unique(where={"id": payload["id"]})
-    assert Decimal(str(row.sanctionAmount)) == Decimal(amount)
+    row = world["rows"]["round_trip"]
+    assert Decimal(str(row.sanctionAmount)) == Decimal(TOP_OF_COLUMN)
 
 
 @pytest.mark.parametrize("amount", ["0", "0.00", "-1.00"])
-async def test_a_zero_or_negative_amount_is_refused_at_the_door(world, amount: str) -> None:
+def test_a_zero_or_negative_amount_is_refused_at_the_door(world, client, amount: str) -> None:
     """A zero-rupee sanction order is not a sanction order, and a negative one is a typed minus sign.
 
     Refused twice on purpose: ``gt=0`` on the Pydantic field, so the officer gets a named field, and
     ``CHECK ("sanctionAmount" > 0)`` on the table, so a psql session and any future importer are
     refused too. A validator protects one door; a constraint protects the table.
     """
-    assert _post(world, _body(world, sanctionAmount=amount)).status_code == 422
+    assert _post(world, _body(sanctionAmount=amount)).status_code == 422
 
 
-async def test_the_table_itself_refuses_a_non_positive_amount(world) -> None:
-    """The other half of the rule above, asserted against Postgres rather than against Pydantic."""
-    from prisma.errors import PrismaError
+def test_the_table_itself_refuses_a_non_positive_amount(world) -> None:
+    """The other half of the rule above, asserted against Postgres rather than against Pydantic.
 
-    stamp = uuid.uuid4().hex[:8]
-    async with borrowed_db():
-        workshop = await db.designworkshop.create(
-            data={
-                "title": f"Check constraint {stamp}",
-                "templateId": "DCH_STANDARD",
-                "createdById": world["officer"].id,
-                "status": "DRAFT",
-            }
-        )
-        with pytest.raises(PrismaError):
-            await db.sanctionorder.create(
-                data={
-                    "sanctionOrderNo": f"SO/CHECK/{stamp}",
-                    "sanctionOrderKey": normalise_sanction_order_no(f"SO/CHECK/{stamp}"),
-                    "sanctionOrderDate": datetime(2026, 4, 1, tzinfo=UTC),
-                    "sanctionAmount": "0.00",
-                    "designerUserId": world["officer"].id,
-                    "designerEmail": f"check-{stamp}@example.org",
-                    "designWorkshopId": workshop.id,
-                    "createdById": world["officer"].id,
-                }
-            )
+    Driven in the fixture — it is a pure database write with no route in it — and the outcome is
+    reported here, so that a table which quietly stopped refusing fails THIS test rather than the
+    module's setup.
+    """
+    assert world["non_positive_refusal"] is not None, (
+        "the table accepted a zero-rupee sanction order — the CHECK constraint is gone, and a psql "
+        "session or an importer can now write one"
+    )
+    assert world["non_positive_refusal_is_prisma"], (
+        f"the insert failed with {world['non_positive_refusal']}, which is not a PrismaError — "
+        "something other than the CHECK constraint refused it, so the constraint is untested"
+    )
 
 
 # --------------------------------------------------------------------------------------
@@ -616,48 +1078,36 @@ async def test_the_table_itself_refuses_a_non_positive_amount(world) -> None:
 # --------------------------------------------------------------------------------------
 
 
-async def test_the_stage_one_copy_is_seeded_and_is_a_copy(world) -> None:
+def test_the_stage_one_copy_is_seeded_and_is_a_copy(world, client) -> None:
     """The register is the answer; stage 1 holds a COPY, and drift is REPORTED rather than blocked.
 
     A report is a historical document: a sanction order amended in 2028 must not rewrite the cover of
     the report submitted in 2026. And a designer correcting a mistyped number on their own cover is
     doing something legitimate — what an officer needs is to SEE that the document about to be
     printed says something the register does not.
+
+    The designer's edit is made in the fixture (it is a database write), and the GET below is live:
+    the flag it reads is computed by the route from the row the edit left behind.
     """
-    body = _body(world)
-    answer = _post(world, body)
+    body = world["bodies"]["stage_copy"]
+    answer = world["answers"]["stage_copy"]
     assert answer.status_code == 201, answer.text
     payload = answer.json()["sanctionOrder"]
     assert payload["reportCopyMatches"] is True
 
-    async with borrowed_db():
-        entry = await db.dwstageentry.find_first(
-            where={
-                "designWorkshopId": payload["designWorkshopId"],
-                "stageKey": "WORKSHOP_SETUP",
-                "entityKey": "workshopSetup",
-                "deletedAt": None,
-            }
-        )
-        assert entry is not None, "the prefill did not seed stage 1"
-        data = dict(entry.data or {})
-        assert data.get("sanctionOrderNo") == body["sanctionOrderNo"]
-        assert str(data.get("sanctionOrderDate") or "")[:10] == body["sanctionOrderDate"]
+    seen = world["rows"]["stage_copy"]
+    assert seen["entry"] is not None, "the prefill did not seed stage 1"
+    assert seen["data"].get("sanctionOrderNo") == body["sanctionOrderNo"]
+    assert str(seen["data"].get("sanctionOrderDate") or "")[:10] == body["sanctionOrderDate"]
 
-        # The designer edits the cover. The REGISTER does not move; the flag does.
-        data["sanctionOrderNo"] = "SOMETHING ELSE ENTIRELY"
-        await db.dwstageentry.update(
-            where={"id": entry.id}, data={"data": json.loads(json.dumps(data))}
-        )
-        order = await db.sanctionorder.find_unique(where={"id": payload["id"]})
-
-    assert order.sanctionOrderNo == body["sanctionOrderNo"], "a stage edit moved the register"
-    again = world["client"].get(f"/api/sanction-orders/{payload['id']}", headers=_headers(world))
+    # The designer edited the cover. The REGISTER did not move; the flag does.
+    assert seen["order"].sanctionOrderNo == body["sanctionOrderNo"], "a stage edit moved the register"
+    again = client.get(f"/api/sanction-orders/{payload['id']}", headers=_headers(world))
     assert again.status_code == 200, again.text
     assert again.json()["reportCopyMatches"] is False
 
 
-async def test_the_missing_list_is_the_registrys_and_not_a_second_count(world) -> None:
+def test_the_missing_list_is_the_registrys_and_not_a_second_count(world) -> None:
     """ONE SCORER. ``missingMandatory`` is ``stage_completeness(...).missing``, not a client count.
 
     Two arithmetics inside one product is two answers, neither of them wrong enough to fail. The
@@ -665,53 +1115,27 @@ async def test_the_missing_list_is_the_registrys_and_not_a_second_count(world) -
     reports, because it is literally the same list — shortfall labels included, which a hand count
     could not produce.
     """
-    answer = _post(world, _body(world))
+    answer = world["answers"]["missing_list"]
     assert answer.status_code == 201, answer.text
     payload = answer.json()["sanctionOrder"]
 
-    async with borrowed_db():
-        entry = await db.dwstageentry.find_first(
-            where={
-                "designWorkshopId": payload["designWorkshopId"],
-                "stageKey": "WORKSHOP_SETUP",
-                "entityKey": "workshopSetup",
-                "deletedAt": None,
-            }
-        )
-        singleton = dict(getattr(entry, "data", None) or {}) if entry else {}
-
+    singleton = world["rows"]["missing_list_singleton"]
     expected = stage_completeness(stage("WORKSHOP_SETUP"), singleton, {})
     assert payload["missingMandatory"] == list(expected.missing)
     assert payload["readyForWork"] is False
     assert "Workshop title" in " · ".join(payload["missingMandatory"])
 
 
-async def test_a_sanctioned_workshop_carries_its_order_and_an_ad_hoc_one_does_not(world) -> None:
+def test_a_sanctioned_workshop_carries_its_order_and_an_ad_hoc_one_does_not(world) -> None:
     """One order, one workshop, both directions — and NULL for every workshop opened by hand."""
-    answer = _post(world, _body(world))
+    answer = world["answers"]["sanctioned"]
     assert answer.status_code == 201, answer.text
     payload = answer.json()["sanctionOrder"]
 
-    stamp = uuid.uuid4().hex[:8]
-    async with borrowed_db():
-        sanctioned = await db.designworkshop.find_unique(
-            where={"id": payload["designWorkshopId"]}, include={"sanctionOrder": True}
-        )
-        ad_hoc = await db.designworkshop.create(
-            data={
-                "title": f"By hand {stamp}",
-                "templateId": "DCH_STANDARD",
-                "createdById": world["officer"].id,
-                "status": "DRAFT",
-            }
-        )
-        ad_hoc = await db.designworkshop.find_unique(
-            where={"id": ad_hoc.id}, include={"sanctionOrder": True}
-        )
-
-    assert sanctioned.sanctionOrder is not None
-    assert sanctioned.sanctionOrder.id == payload["id"]
-    assert ad_hoc.sanctionOrder is None
+    seen = world["rows"]["sanctioned"]
+    assert seen["workshop"].sanctionOrder is not None
+    assert seen["workshop"].sanctionOrder.id == payload["id"]
+    assert seen["ad_hoc"].sanctionOrder is None
 
 
 # --------------------------------------------------------------------------------------
@@ -719,57 +1143,40 @@ async def test_a_sanctioned_workshop_carries_its_order_and_an_ad_hoc_one_does_no
 # --------------------------------------------------------------------------------------
 
 
-async def test_the_sanction_order_admits_nobody_to_the_pending_queue(world) -> None:
+def test_the_sanction_order_admits_nobody_to_the_pending_queue(world) -> None:
     """The admission is ACTIVE, so ``ACCESS_PENDING_MAX`` is never approached by this door.
 
     Worth pinning because the obvious implementation — write a PENDING row and let an admin approve
     it — would make every sanction order a second job for somebody else, and would fill a capped
     queue with people who have already been decided about.
+
+    THE BRACKET IS WIDER THAN IT WAS, AND DELIBERATELY SO. The count is read at the end of the seed
+    and again at the start of the read-back, so it spans EVERY create this module makes rather than
+    one. That is the same claim asserted over more evidence: not one order admitted anybody, so no
+    order did.
     """
-    async with borrowed_db():
-        before = await access_roster.pending_count()
-
-    assert _post(world, _body(world)).status_code == 201
-
-    async with borrowed_db():
-        after = await access_roster.pending_count()
-    assert after == before
+    assert world["answers"]["pending_queue"].status_code == 201, (
+        world["answers"]["pending_queue"].text
+    )
+    assert world["pending_after"] == world["pending_before"]
 
 
-async def test_a_throttled_link_does_not_roll_back_the_sanction_order(world) -> None:
+def test_a_throttled_link_does_not_roll_back_the_sanction_order(world, client) -> None:
     """A throttle on the fifth account of the morning must not undo a ministry sanction order.
 
     The 201 stands, ``credentialLink`` is null and ``credentialLinkProblem`` says what happened and
     what to do — which is the difference between "no link was offered" and "no link was possible".
-    """
-    stamp = uuid.uuid4().hex[:8]
-    address = f"sanction-throttle-{stamp}@example.org"
-    async with borrowed_db():
-        account = await db.user.create(
-            data={
-                "email": address,
-                "name": f"Throttled {stamp}",
-                "role": "RESEARCHER",
-                "passwordHash": None,
-            }
-        )
-        for _ in range(credential_links.ISSUE_BUDGET):
-            await db.passwordresettoken.create(
-                data={
-                    "userId": account.id,
-                    "tokenHash": uuid.uuid4().hex,
-                    "purpose": "INVITE",
-                    "expiresAt": datetime.now(UTC),
-                }
-            )
 
+    The account and its spent budget are seeded in the fixture; both requests are live, because
+    nothing here has to read a row back.
+    """
     # The account exists, so no link would be offered anyway — the throttle is exercised through the
     # RE-ISSUE arm, which is where an officer actually meets it.
-    answer = _post(world, _body(world, designerEmail=address))
+    answer = _post(world, _body(designerEmail=world["throttle_address"]))
     assert answer.status_code == 201, answer.text
     order_id = answer.json()["sanctionOrder"]["id"]
 
-    again = world["client"].post(
+    again = client.post(
         f"/api/sanction-orders/{order_id}/credential-link", headers=_headers(world)
     )
     assert again.status_code == 429, again.text
@@ -777,59 +1184,50 @@ async def test_a_throttled_link_does_not_roll_back_the_sanction_order(world) -> 
     assert "hour" in again.json()["detail"]
 
 
-async def test_a_designer_may_not_record_a_sanction_order(world) -> None:
+def test_a_designer_may_not_record_a_sanction_order(world, client) -> None:
     """THE WHOLE REQUIREMENT, IN ONE ASSERTION: the person who does the work does not authorise the
     budget for it. The refusal names the next move rather than simply saying no."""
-    stamp = uuid.uuid4().hex[:8]
-    async with borrowed_db():
-        designer = await db.user.create(
-            data={
-                "email": f"sanction-refused-{stamp}@example.org",
-                "name": f"Refused {stamp}",
-                "role": "DESIGNER",
-                "passwordHash": hash_password(PASSWORD),
-            }
-        )
-
-    answer = world["client"].post(
+    answer = client.post(
         "/api/sanction-orders",
-        json=_body(world),
-        headers={"Authorization": f"Bearer {create_access_token(subject=designer.id)}"},
+        json=_body(),
+        headers={
+            "Authorization": f"Bearer {create_access_token(subject=world['refused_designer_id'])}"
+        },
     )
     assert answer.status_code == 403, answer.text
     assert "Assistant Director" in answer.json()["detail"]
 
 
-async def test_the_awaiting_count_matches_the_rows_the_list_calls_unready(world) -> None:
+def test_the_awaiting_count_matches_the_rows_the_list_calls_unready(world, client) -> None:
     """The badge and the list are the same arithmetic, asked twice.
 
     A badge computed from a different query than the list it badges is how a "3 waiting" that opens
     onto nothing comes about — and the officer's conclusion is that the screen is broken, not that
     two counts disagree.
     """
-    assert _post(world, _body(world)).status_code == 201
-    badge = world["client"].get("/api/sanction-orders/awaiting-count", headers=_headers(world))
+    assert _post(world, _body()).status_code == 201
+    badge = client.get("/api/sanction-orders/awaiting-count", headers=_headers(world))
     assert badge.status_code == 200, badge.text
-    listing = world["client"].get("/api/sanction-orders?pageSize=200", headers=_headers(world))
+    listing = client.get("/api/sanction-orders?pageSize=200", headers=_headers(world))
     assert listing.status_code == 200, listing.text
     unready = [row for row in listing.json()["items"] if not row["readyForWork"]]
     assert badge.json()["awaiting"] >= len(unready)
     assert badge.json()["awaiting"] >= 1
 
 
-async def test_the_notes_are_the_only_thing_an_officer_may_edit(world) -> None:
+def test_the_notes_are_the_only_thing_an_officer_may_edit(world, client) -> None:
     """The number, the date and the amount are what the ministry issued.
 
     A portal that lets an officer edit the three facts of the instrument is a portal whose register
     cannot be audited. ``APIModel`` is ``extra="forbid"``, so an attempt names the field it refused
     rather than ignoring it silently — which is what stops a client from believing it edited one.
     """
-    body = _body(world)
+    body = _body()
     created = _post(world, body)
     assert created.status_code == 201, created.text
     order_id = created.json()["sanctionOrder"]["id"]
 
-    patched = world["client"].patch(
+    patched = client.patch(
         f"/api/sanction-orders/{order_id}",
         json={"notes": "Order withdrawn by the ministry on 2026-05-02."},
         headers=_headers(world),
@@ -838,7 +1236,7 @@ async def test_the_notes_are_the_only_thing_an_officer_may_edit(world) -> None:
     assert patched.json()["notes"].startswith("Order withdrawn")
     assert patched.json()["sanctionOrderNo"] == body["sanctionOrderNo"]
 
-    refused = world["client"].patch(
+    refused = client.patch(
         f"/api/sanction-orders/{order_id}",
         json={"sanctionAmount": "1.00"},
         headers=_headers(world),
@@ -857,10 +1255,8 @@ async def test_the_notes_are_the_only_thing_an_officer_may_edit(world) -> None:
 # the decision is "no" — which is the half a refusal moved below ``db.tx(`` would still pass.
 
 
-@pytest.mark.parametrize(
-    "role", ["INSPECTOR", "PROFESSOR", "ASSISTANT_DIRECTOR", "REGIONAL_DIRECTOR", "MINISTRY_ADMIN"]
-)
-async def test_an_account_that_cannot_run_a_workshop_is_refused_before_anything_is_written(
+@pytest.mark.parametrize("role", list(INELIGIBLE_ROLES))
+def test_an_account_that_cannot_run_a_workshop_is_refused_before_anything_is_written(
     world, role: str
 ) -> None:
     """A RANK TEST STANDING IN FOR A SET, AND A 404 NOBODY COULD UNDO.
@@ -879,42 +1275,22 @@ async def test_an_account_that_cannot_run_a_workshop_is_refused_before_anything_
     to DESIGNER so that the viewer row works — would demote a regional director because a colleague
     typed their address into a sanction form.
     """
-    stamp = uuid.uuid4().hex[:8]
-    address = f"sanction-ineligible-{role.lower()}-{stamp}@example.org"
-    async with borrowed_db():
-        await db.user.create(
-            data={
-                "email": address,
-                "name": f"Named {role} {stamp}",
-                "role": role,
-                "passwordHash": hash_password(PASSWORD),
-            }
-        )
-
-    body = _body(world, designerEmail=address)
-    answer = _post(world, body)
+    answer = world["answers"][f"ineligible_{role}"]
     assert answer.status_code == 422, answer.text
     detail = answer.json()["detail"]
     assert role in detail, "the officer is not told what is actually wrong with the account"
     assert "users screen" in detail, "the officer is not told where the fix lives"
 
-    async with borrowed_db():
-        account = await db.user.find_unique(where={"email": address})
-        orders = await db.sanctionorder.find_many(
-            where={"sanctionOrderKey": normalise_sanction_order_no(body["sanctionOrderNo"])}
-        )
-        access = await db.accessroster.find_unique(where={"email": canonical_email(address)})
-        roster = await db.designerroster.find_unique(where={"email": canonical_email(address)})
-        viewers = await db.designworkshopviewer.find_many(where={"userId": account.id})
-
+    seen = world["rows"]["ineligible"][role]
+    account = seen["account"]
     assert str(getattr(account.role, "value", account.role)) == role, "the account was demoted"
-    assert orders == [], "a refused create recorded the order anyway"
-    assert access is None, "a refused create admitted the address to the platform anyway"
-    assert roster is None, "a refused create empanelled them anyway"
-    assert viewers == [], "the viewer row nothing would honour was written anyway"
+    assert seen["orders"] == [], "a refused create recorded the order anyway"
+    assert seen["access"] is None, "a refused create admitted the address to the platform anyway"
+    assert seen["roster"] is None, "a refused create empanelled them anyway"
+    assert seen["viewers"] == [], "the viewer row nothing would honour was written anyway"
 
 
-async def test_an_officer_may_not_record_an_order_naming_their_own_mailbox(world) -> None:
+def test_an_officer_may_not_record_an_order_naming_their_own_mailbox(world) -> None:
     """AUTHOR AND APPROVER IN ONE REQUEST — and the 201 used to hand over the credentials for it.
 
     ``can_record_sanction_orders`` is a rank floor at ASSISTANT_DIRECTOR, and every tier that clears
@@ -930,30 +1306,22 @@ async def test_an_officer_may_not_record_an_order_naming_their_own_mailbox(world
     an admin open a workshop for themselves through the ordinary "New workshop" button. What nobody
     may do is issue themselves the money.
     """
-    address = world["officer"].email
-    body = _body(world, designerEmail=address)
-    answer = _post(world, body)
+    answer = world["answers"]["own_mailbox"]
     assert answer.status_code == 422, answer.text
     assert "cannot name the officer recording it" in answer.json()["detail"]
 
-    async with borrowed_db():
-        orders = await db.sanctionorder.find_many(
-            where={"sanctionOrderKey": normalise_sanction_order_no(body["sanctionOrderNo"])}
-        )
-        roster = await db.designerroster.find_unique(where={"email": canonical_email(address)})
-        access = await db.accessroster.find_unique(where={"email": canonical_email(address)})
-
-    assert orders == [], "a refused create recorded the order anyway"
-    assert roster is None, "the officer empanelled themselves as a designer"
+    seen = world["rows"]["own_mailbox"]
+    assert seen["orders"] == [], "a refused create recorded the order anyway"
+    assert seen["roster"] is None, "the officer empanelled themselves as a designer"
     # The officer's OWN allow-list row is seeded by the fixture at ASSISTANT_DIRECTOR and has to be
     # untouched — a refusal that ran after `admit` would have re-admitted them as a DESIGNER.
-    assert access is not None
-    assert str(getattr(access.admitRole, "value", access.admitRole)) == "ASSISTANT_DIRECTOR"
+    assert seen["access"] is not None
+    assert str(getattr(seen["access"].admitRole, "value", seen["access"].admitRole)) == (
+        "ASSISTANT_DIRECTOR"
+    )
 
 
-async def test_a_sanction_order_does_not_overwrite_an_administrators_allow_list_decision(
-    world,
-) -> None:
+def test_a_sanction_order_does_not_overwrite_an_administrators_allow_list_decision(world) -> None:
     """``admit`` COPIES ITS ``grant`` DICT WHOLESALE ONTO AN EXISTING ROW — ``joinedAt`` is the only
     column it carves out — so this caller used to rewrite four things an administrator owns.
 
@@ -968,38 +1336,11 @@ async def test_a_sanction_order_does_not_overwrite_an_administrators_allow_list_
     morning. ``tests/test_sanction_order_designer_eligibility.py`` pins the other half of that
     comparison: a PROFESSOR or an ADMIN row is never written down to DESIGNER.
     """
-    stamp = uuid.uuid4().hex[:8]
-    address = f"sanction-already-admitted-{stamp}@example.org"
-    admins_note = "Admitted 2025-04 on the department's request; craft taxonomy contributor."
-    joined = datetime(2024, 4, 1, tzinfo=UTC)
-    async with borrowed_db():
-        admin = await db.user.create(
-            data={
-                "email": f"sanction-deciding-admin-{stamp}@example.org",
-                "name": f"Deciding admin {stamp}",
-                "role": "ADMIN",
-                "passwordHash": hash_password(PASSWORD),
-            }
-        )
-        await db.accessroster.create(
-            data={
-                "email": canonical_email(address),
-                "status": "ACTIVE",
-                "admitRole": "RESEARCHER",
-                "fullName": "R. Sundaram (as the admin typed it)",
-                "notes": admins_note,
-                "joinedAt": joined,
-                "decidedAt": joined,
-                "decidedById": admin.id,
-            }
-        )
+    body = world["bodies"]["already_admitted"]
+    answer = world["answers"]["already_admitted"]
+    assert answer.status_code == 201, "an already-admitted address must still work"
 
-    body = _body(world, designerEmail=address, designerName="Sundaram R")
-    assert _post(world, body).status_code == 201, "an already-admitted address must still work"
-
-    async with borrowed_db():
-        row = await db.accessroster.find_unique(where={"email": canonical_email(address)})
-
+    row = world["rows"]["already_admitted"]
     machine_note = SANCTION_ADMISSION_NOTE.format(
         no=body["sanctionOrderNo"], officer=world["officer"].name
     )
@@ -1007,12 +1348,14 @@ async def test_a_sanction_order_does_not_overwrite_an_administrators_allow_list_
     assert row.fullName == "R. Sundaram (as the admin typed it)"
     # 2. THE NOTE. APPENDED, not replaced — both facts are worth keeping, and the machine note is the
     #    only thing on this row that explains why it moved today.
-    assert row.notes == f"{admins_note} {machine_note}"
+    assert row.notes == f"{world['already_note']} {machine_note}"
     # 3. WHO DECIDED. A ministry officer acting through a different door does not become the
     #    administrator who reviewed this person's request.
-    assert row.decidedById == admin.id, "the administrator who admitted them was overwritten"
-    assert row.decidedAt == joined
+    assert row.decidedById == world["deciding_admin_id"], (
+        "the administrator who admitted them was overwritten"
+    )
+    assert row.decidedAt == world["already_joined"]
     # 4. THE TIER, lifted by the same comparison the User row is lifted by — and `joinedAt` still
     #    reads 2024, which is `admit`'s own rule and is asserted beside it so the two cannot drift.
     assert str(getattr(row.admitRole, "value", row.admitRole)) == "DESIGNER"
-    assert row.joinedAt == joined
+    assert row.joinedAt == world["already_joined"]

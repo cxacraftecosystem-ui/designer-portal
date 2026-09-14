@@ -21,7 +21,6 @@
    removed to make a run go green.
 """
 
-import contextlib
 import os
 import sys
 from ipaddress import ip_address
@@ -462,38 +461,63 @@ def _clear_account_credential_budget():
     reset_account_credential_budget()
 
 
-@contextlib.asynccontextmanager
-async def borrowed_db():
-    """Use the shared Prisma connection, and close ONLY one this block opened.
-
-    ⚠ THIS IS NOT A CONVENIENCE WRAPPER. `db` is a PROCESS-WIDE SINGLETON shared with the running
-    application, and the TestClient's lifespan connects it. So a blind `await db.connect()` raises
-    `AlreadyConnectedError` the moment anything else in the run is already connected, and — worse —
-    a blind `await db.disconnect()` in a `finally` CLOSES THE CONNECTION EVERY LATER TEST IS USING.
-    The first failure is loud; the second is a cascade attributed to whichever module happens to run
-    next.
-
-    Both have happened here. `test_seed_shared_questionnaire.py` records thirteen tests failing for
-    exactly this reason, and on 2026-09-14 CI reported 36 more across `test_sanction_orders.py`,
-    `test_annual_plan_promotion.py` and `test_annual_plan_is_not_a_workshop.py` — all
-    `AlreadyConnectedError`, none reproducible on a developer machine where the DB-backed tests skip.
-
-    `test_save_stage_resubmission.py` had already worked the answer out in a local fixture. This is
-    that fixture, lifted to where every suite can reach it, so the next database-backed module does
-    not have to rediscover it from a red CI run.
-    """
-    # IMPORTED INSIDE THE FUNCTION, NOT AT MODULE SCOPE, AND THAT IS THIS FILE'S OWN RULE. Importing
-    # `app.core.db` here would pull in `prisma` during COLLECTION — 108 seconds on this machine, paid
-    # by every run of every non-database test — and it would do it before the refusal above is armed,
-    # which is the window this whole module exists to close. By the time anything awaits this
-    # context manager the module that uses it has long since imported `db` itself.
-    from app.core.db import db
-
-    opened_here = not db.is_connected()
-    if opened_here:
-        await db.connect()
-    try:
-        yield db
-    finally:
-        if opened_here:
-            await db.disconnect()
+# --------------------------------------------------------------------------------------
+# HOW A DATABASE-BACKED MODULE IS SUPPOSED TO REACH THE DATABASE
+# --------------------------------------------------------------------------------------
+#
+# NO HELPER LIVES HERE, AND THAT IS THE FINDING RATHER THAN AN OMISSION. A `borrowed_db()`
+# context manager stood in this spot until 2026-09-14 — "open the shared connection only if it is
+# not already open, close only what you opened". It removed 36 `AlreadyConnectedError` failures and
+# replaced them with 36 of these:
+#
+#     RuntimeError: <asyncio.locks.Event ...> is bound to a different event loop
+#     RuntimeError: Event loop is closed
+#
+# reported against the ROUTE (`ERROR app.main: Unhandled error on POST /api/...`) rather than
+# against any assertion. The borrow was not the mistake by itself; borrowing WHILE AN APP IS RUNNING
+# is. `db` is a process-wide Prisma singleton shared with the application, and a Prisma connection
+# is BOUND TO THE EVENT LOOP THAT OPENED IT. A module-scoped ASYNC fixture runs in one loop; the
+# `TestClient` it starts runs the app — and the app's own queries — in another. Whether the fixture
+# blindly connects (loud: AlreadyConnectedError) or politely borrows (silent until the first
+# handler: cross-loop RuntimeError), the two loops are still sharing one connection.
+#
+# THE SHAPE THAT WORKS IS ALREADY IN THIS DIRECTORY, and it is a rule about WHEN rather than about
+# which helper:
+#
+#     @pytest.fixture(scope="module")
+#     def world():                                   # SYNC. Not async. This is the point.
+#         async def seed() -> dict[str, Any]:
+#             await db.connect()                     # blind, and correct HERE
+#             try:
+#                 ...every database write the module needs...
+#             finally:
+#                 await db.disconnect()              # unconditional, and correct HERE
+#
+#         seeded = asyncio.run(seed())               # a PRIVATE loop, opened and closed right here
+#         with TestClient(app) as client:            # the app now opens its OWN connection, own loop
+#             seeded["client"] = client
+#             yield seeded
+#
+# `asyncio.run` creates a loop nothing else shares and closes it again, so the connection cannot
+# outlive it and nothing later can touch one bound to a dead loop — which is exactly why the blind
+# connect/disconnect pair is right inside it and wrong in an async fixture that interleaves with
+# another module's app lifespan. The tests are then SYNC, drive the `client`, and never touch `db`.
+# A module that must read rows back AFTER a request orders its fixture seed -> TestClient ->
+# `asyncio.run` read-back -> TestClient, so that no database call is ever made while a client is
+# alive; `tests/test_sanction_orders.py` is the worked example of that longer form.
+#
+# Read in full before writing a database-backed suite:
+#
+#     tests/test_workshop_join_sync.py          - THE PATTERN. Copy this one.
+#     tests/test_seed_shared_questionnaire.py   - THE ARGUMENT, and read it for that ONLY. Its header
+#                                                 states the rule and records thirteen tests that once
+#                                                 failed for exactly this reason -- but its own CODE is
+#                                                 the older shape: a module-scoped `anyio_backend` and
+#                                                 an async fixture (see its lines 65-71). It gets away
+#                                                 with it, and a suite copied from it would not. Read
+#                                                 its prose; take its structure from the file above.
+#
+# `tests/test_save_stage_resubmission.py` keeps an open-if-needed/close-what-you-opened fixture of
+# its own, and is allowed to: that module starts NO `TestClient`, so it owns its event loop and
+# nothing else shares its connection. Its docstring says so, and says not to give it a client
+# without revisiting the decision. That is the distinction the removed helper had lost.
