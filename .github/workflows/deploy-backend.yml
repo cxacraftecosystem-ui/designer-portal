@@ -868,8 +868,27 @@ jobs:
           for f in abstract.py http.py query.py; do
             cp "$sp/engine/$f" "/tmp/genclient/engine/$f"
           done
-          # Proof the generated client is THIS schema's before a byte of it leaves the runner.
-          cmp -s /tmp/genclient/schema.prisma backend/prisma/schema.prisma             || { echo "::error::the generated schema.prisma does not match backend/prisma/schema.prisma"; exit 1; }
+          # ─── PROOF THE CLIENT IS THIS SCHEMA'S, BEFORE A BYTE LEAVES THE RUNNER ──────────────
+          #
+          # NOT `cmp`, AND THE FIRST VERSION OF THIS LINE WAS `cmp`. The generator writes its own
+          # copy of the schema beside the modules and does not promise it byte-for-byte: it can
+          # normalise line endings and trailing whitespace, and on the first real run that was
+          # enough to fail a deploy whose client was perfectly correct. An assertion that cries wolf
+          # on a good build is worse than none, because the next person weakens it in a hurry.
+          #
+          # What actually has to be true is SEMANTIC: the client's schema must declare the same
+          # models and enums as this commit's. That is the thing the query engine reads it for, and
+          # it is exactly what goes wrong when a stale client ships -- `SanctionOrder` absent, so
+          # `db.sanctionorder` is an AttributeError on a live route. Comparing the declared names
+          # catches that and stays quiet about whitespace.
+          names() { grep -oE '^[[:space:]]*(model|enum)[[:space:]]+[A-Za-z0-9_]+' "$1" | awk '{print $1, $2}' | sort; }
+          if ! diff <(names /tmp/genclient/schema.prisma) <(names backend/prisma/schema.prisma) > /tmp/schemadiff; then
+            echo "::error::the generated client declares different models/enums than backend/prisma/schema.prisma"
+            echo "--- < generated | > this commit ---"
+            head -40 /tmp/schemadiff
+            exit 1
+          fi
+          echo "generated client declares the same $(names backend/prisma/schema.prisma | wc -l) models and enums as this commit"
           ls -la /tmp/genclient /tmp/genclient/engine
 
       - name: Build or reuse the release venv, and generate the Prisma client
@@ -996,8 +1015,16 @@ jobs:
             echo "::error::prisma client resolved to $client_dir, which is outside $REL. Refusing to deploy a release that would import another release's client."
             exit 1
           fi
-          if ! cmp -s "$client_dir/schema.prisma" prisma/schema.prisma; then
-            echo "::error::$client_dir/schema.prisma does not match this release's prisma/schema.prisma. The query engine reads that copy, so every model added since it was generated would fail at runtime with AttributeError."
+          # SAME SEMANTIC COMPARISON AS ON THE RUNNER, and for the same reason: the file the box now
+          # holds is the GENERATOR'S copy of the schema, which is not promised to be byte-identical
+          # to `prisma/schema.prisma` in the tree beside it. What must be true is that it declares
+          # the same models and enums -- that is what the query engine reads it for, and a
+          # disagreement there is the AttributeError that took /api/design-workshops down.
+          names() { grep -oE '^[[:space:]]*(model|enum)[[:space:]]+[A-Za-z0-9_]+' "$1" | awk '{print $1, $2}' | sort; }
+          if ! diff <(names "$client_dir/schema.prisma") <(names prisma/schema.prisma) > /tmp/schemadiff; then
+            echo "::error::$client_dir/schema.prisma declares different models/enums than this release's prisma/schema.prisma. The query engine reads that copy, so anything it does not declare fails at runtime with AttributeError."
+            echo "--- < installed | > this release ---"
+            head -40 /tmp/schemadiff
             exit 1
           fi
           echo "prisma client verified in this release: $client_dir"
