@@ -868,7 +868,27 @@ jobs:
           for f in abstract.py http.py query.py; do
             cp "$sp/engine/$f" "/tmp/genclient/engine/$f"
           done
-          # ─── PROOF THE CLIENT IS THIS SCHEMA'S, BEFORE A BYTE LEAVES THE RUNNER ──────────────
+          # ─── AND THE ENGINE BINARIES `generate` JUST FETCHED, WHICH TRAVEL WITH THE CLIENT ───
+          #
+          # `prisma generate` fetches the query engine for the platform it runs on as a side effect,
+          # and the generated client HARD-CODES the paths it will look in -- the production error
+          # listed `/home/runner/.cache/prisma-python/...` among them, which is this runner's home.
+          # That is the tell: the client and the engine are a matched pair produced by one act, and
+          # shipping half of it is what took the site down.
+          #
+          # `prisma py fetch` ON THE BOX WAS TRIED FIRST AND IS NOT ENOUGH. It reported "Downloaded
+          # binaries to .../binaries/5.17.0/393aa..." and the very next `connect()` still raised
+          # BinaryNotFoundError for `prisma-query-engine-debian-openssl-3.0.x` in that same
+          # directory -- it does not place the query engine this client asks for.
+          #
+          # Copying the binary is sound HERE and would not be in general: both machines are x86-64
+          # Ubuntu, the engine is selected by the `debian-openssl-3.0.x` target baked into the
+          # client, and the version directory is content-addressed (`5.17.0/<sha>`), so a mismatched
+          # pair cannot quietly overwrite a good one -- it lands beside it under a different hash.
+          echo "engine binaries generate fetched on this runner:"
+          ls -la "$HOME/.cache/prisma-python/binaries"/*/* 2>/dev/null | head -20 || true
+
+          # Proof the generated client is THIS schema's before a byte of it leaves the runner.
           #
           # NOT `cmp`, AND THE FIRST VERSION OF THIS LINE WAS `cmp`. The generator writes its own
           # copy of the schema beside the modules and does not promise it byte-for-byte: it can
@@ -973,6 +993,12 @@ jobs:
           esac
           rsync -az --checksum /tmp/genclient/ "ubuntu@${{ secrets.EC2_HOST }}:$site/"
 
+          # THE ENGINE TRAVELS WITH THE CLIENT. `--ignore-existing` because the version directory is
+          # content-addressed: a hash already on the box is by definition the same bytes, and
+          # re-sending a ~19 MB binary on every deploy over this link is minutes for nothing.
+          ssh ubuntu@${{ secrets.EC2_HOST }} 'mkdir -p ~/.cache/prisma-python/binaries'
+          rsync -az --ignore-existing "$HOME/.cache/prisma-python/binaries/"             "ubuntu@${{ secrets.EC2_HOST }}:.cache/prisma-python/binaries/"
+
           ssh ubuntu@${{ secrets.EC2_HOST }} "SHA='$SHA' bash -s" <<'REMOTE'
           set -euo pipefail
           APP=/home/ubuntu/app
@@ -1030,7 +1056,8 @@ jobs:
           # `py fetch` DOWNLOADS, it does not generate: no schema is parsed and nothing is built in
           # memory, so this is not the step that gets OOM-killed. It is a no-op once the cache holds
           # this version, which is every deploy after the first.
-          ./.venv/bin/python -m prisma py fetch
+          # `prisma py fetch` WAS HERE AND DID NOT WORK -- see the runner step's note. The engine
+          # now arrives by rsync from the runner that generated the matching client.
 
           client_dir="$(./.venv/bin/python -c 'import prisma, os; print(os.path.dirname(prisma.__file__))')"
 
