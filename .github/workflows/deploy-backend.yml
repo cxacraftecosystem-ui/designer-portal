@@ -796,6 +796,82 @@ jobs:
       # the PREVIOUS release's source tree until it is re-run here. `--no-deps` is what keeps the
       # lock authoritative — without it pip re-resolves this project's declared ranges and can lift
       # a pin the lock had settled.
+      # ─── THE CLIENT IS BUILT HERE, ON THE RUNNER, AND NOT ON THE BOX ───────────────────────
+      #
+      # WHY IT MOVED, ON 2026-09-15. `prisma generate` ran on the EC2 box for the life of this
+      # workflow. It was OOM-killed twice in a row that day -- the log says only
+      #
+      #     Error: Generator "prisma-client-py" failed:
+      #     Killed
+      #
+      # -- and the retry after 2 GiB of swap was added thrashed the instance hard enough to drop
+      # the SSH connection outright (`client_loop: send disconnect: Broken pipe`). The API box is a
+      # t3.micro: 1 GiB of RAM, shared with uvicorn and the worker. prisma-client-py builds the
+      # whole client in memory before writing it, and this schema is ~100 models at
+      # `recursive_type_depth = 5`. Swap does not fix that, it only converts a kill into a stall.
+      #
+      # AND THE FAILURE BEFORE THAT ONE IS THE REASON TO DISTRUST BOX-SIDE GENERATION ENTIRELY.
+      # When the deploy copies the previous release's venv, generate had been writing the client
+      # into the PREVIOUS release's directory and exiting 0:
+      #
+      #     ✔ Generated Prisma Client Python to ./../../b9b35bb…/backend/.venv/…/site-packages/prisma
+      #
+      # so the release being deployed silently kept the client it was handed. Production served a
+      # client generated on 2026-09-03 for a day: every route naming a model added since -- 
+      # /api/design-workshops, /api/sanction-orders -- answered `AttributeError`, a 500 reading
+      # "Something went wrong on the server", while /api/users was fine because it predates that
+      # schema. Nothing went red. Between "written to the wrong release" and "silently killed",
+      # every outcome except the correct one was green.
+      #
+      # The runner has memory, builds from the same `prisma==` pin as the box, and produces PURE
+      # PYTHON: the generated modules are platform- and interpreter-independent, and the query
+      # engine BINARY is not among them -- prisma downloads that at runtime into
+      # ~/.cache/prisma-python, which is why shipping these files to a different machine is sound.
+      # Python 3.12 matches the box's interpreter so the bytes are exactly what it would have made.
+      # Pinned to 3.12 to match the interpreter on the box. The generated modules are pure Python
+      # and would import on another minor, but "the bytes the box would have produced" is a cheaper
+      # property to hold than an argument about which syntax the generator emits.
+      - name: Python 3.12 for the generator
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+
+      - name: Generate the Prisma client on the runner, where there is memory for it
+        id: genclient
+        run: |
+          set -euo pipefail
+          # The pin is READ FROM THE LOCK rather than written here. Two copies of a version are one
+          # copy too many, and the box installs prisma from this same file -- a generator built by a
+          # different version than the runtime is its own class of subtle wrongness.
+          pin="$(grep -iE '^prisma==' backend/requirements.lock | head -1)"
+          test -n "$pin" || { echo "::error::no prisma== pin in backend/requirements.lock"; exit 1; }
+          echo "generating with $pin"
+          python3.12 -m venv /tmp/genvenv
+          /tmp/genvenv/bin/python -m pip install --quiet --upgrade pip
+          /tmp/genvenv/bin/python -m pip install --quiet "$pin"
+          ( cd backend && PATH="/tmp/genvenv/bin:$PATH" /tmp/genvenv/bin/python -m prisma generate )
+
+          sp="$(/tmp/genvenv/bin/python -c 'import prisma, os; print(os.path.dirname(prisma.__file__))')"
+          echo "generated into $sp"
+
+          # THE EXACT FILE LIST, and it is explicit rather than "copy the package". The base package
+          # is installed on the box from the lock and must not be overwritten wholesale by another
+          # machine's copy; only the GENERATED artefacts travel. `schema.prisma` is on the list and
+          # is the one that is easy to forget -- the query engine loads THAT copy, beside the
+          # modules, not backend/prisma/schema.prisma, so a client shipped without it keeps
+          # answering about the old schema. That omission is what made this bug survive a
+          # regeneration during diagnosis.
+          mkdir -p /tmp/genclient/engine
+          for f in actions.py bases.py client.py enums.py http.py metadata.py models.py                    partials.py types.py schema.prisma; do
+            cp "$sp/$f" "/tmp/genclient/$f"
+          done
+          for f in abstract.py http.py query.py; do
+            cp "$sp/engine/$f" "/tmp/genclient/engine/$f"
+          done
+          # Proof the generated client is THIS schema's before a byte of it leaves the runner.
+          cmp -s /tmp/genclient/schema.prisma backend/prisma/schema.prisma             || { echo "::error::the generated schema.prisma does not match backend/prisma/schema.prisma"; exit 1; }
+          ls -la /tmp/genclient /tmp/genclient/engine
+
       - name: Build or reuse the release venv, and generate the Prisma client
         env:
           SHA: ${{ github.sha }}
@@ -845,15 +921,43 @@ jobs:
           # naming the PREVIOUS release's source tree.
           ./.venv/bin/python -m pip install -e . --no-deps --force-reinstall
 
-          # RETRIED, because the failure it is retrying is a resource one and not a wrong one. The
-          # generator was OOM-killed here on 2026-09-15 (see the swap step above); with swap in
-          # place the first attempt should succeed, and a second is cheap insurance against a box
-          # that happens to be tight at that moment. `set -e` would otherwise end the script on the
-          # first failure and skip the verification below entirely -- which is exactly what happened
-          # on the deploy that found this, leaving the box on its old release with nothing checked.
-          generate() { PATH="$PWD/.venv/bin:$PATH" ./.venv/bin/python -m prisma generate; }
-          generate || { echo "::warning::prisma generate failed; retrying once"; sleep 5; generate || true; }
+          # NOTHING GENERATES THE CLIENT HERE ANY MORE. It is built on the runner and rsynced in by
+          # the next step -- see that step for why. `prisma generate` ran on this box until
+          # 2026-09-15 and was OOM-killed twice in a row even with 2 GiB of swap added, the second
+          # attempt thrashing hard enough to drop the SSH connection (`client_loop: send disconnect:
+          # Broken pipe`). A 1 GiB t3.micro cannot build a ~100-model client, and giving it swap
+          # only converts the kill into a stall.
+          echo "venv ready; the Prisma client arrives from the runner in the next step"
 
+          REMOTE
+
+      # ─── AND THE GENERATED CLIENT IS PLACED INTO *THIS* RELEASE'S VENV, THEN PROVED ────────
+      #
+      # rsync of the thirteen generated artefacts into the venv the previous step just built or
+      # copied, followed by the check that the whole outage turned on. `--checksum` because a copied
+      # venv carries the previous release's client with plausible timestamps and sizes; content is
+      # the only honest comparison here.
+      - name: Install the runner-generated Prisma client into the release venv, and prove it
+        env:
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          site="$(ssh ubuntu@${{ secrets.EC2_HOST }} "/home/ubuntu/app/releases/$SHA/backend/.venv/bin/python -c 'import prisma, os; print(os.path.dirname(prisma.__file__))'")"
+          echo "box resolves prisma to: $site"
+          case "$site" in
+            /home/ubuntu/app/releases/$SHA/backend/.venv/*) : ;;
+            *) echo "::error::the release venv resolves prisma to $site, outside this release. Refusing to write a client into another release."; exit 1 ;;
+          esac
+          rsync -az --checksum /tmp/genclient/ "ubuntu@${{ secrets.EC2_HOST }}:$site/"
+
+          ssh ubuntu@${{ secrets.EC2_HOST }} "SHA='$SHA' bash -s" <<'REMOTE'
+          set -euo pipefail
+          APP=/home/ubuntu/app
+          REL="$APP/releases/$SHA"
+          cd "$REL/backend"
+          # Stale bytecode would keep the OLD modules importable even though the .py files beside
+          # them are new -- a failure that looks exactly like the rsync not having happened.
+          find .venv -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/null || true
           # ─── THE CLIENT MUST BE IN *THIS* RELEASE'S VENV, AND THAT IS ASSERTED ────────────────
           #
           # WHAT HAPPENED ON 2026-09-14, WHICH IS WHY THIS BLOCK EXISTS. The deploy of 1557d93 took
@@ -880,20 +984,13 @@ jobs:
           # not backend/prisma/schema.prisma, so it is the file that decides what the queries may
           # name.)
           #
-          # Self-healing before failing: the copied venv is the only suspect, so throw it away,
-          # build from the lock and generate again. A deploy that is two minutes slower is not a
-          # cost worth weighing against shipping a stale client.
+          # THERE IS NO SELF-HEAL HERE, AND THAT IS DELIBERATE. An earlier version of this block
+          # rebuilt the venv and re-ran `prisma generate` on the box when the check failed. That is
+          # now the one thing this box must never be asked to do -- it is what gets OOM-killed. If
+          # the client that just arrived from the runner is not the right one, the rsync or the
+          # venv is wrong, and both are the runner's to fix: fail, keep the symlink where it is, and
+          # let the box go on serving the last release that passed this same check.
           client_dir="$(./.venv/bin/python -c 'import prisma, os; print(os.path.dirname(prisma.__file__))')"
-          if [ "${client_dir#$REL/}" = "$client_dir" ] || ! cmp -s "$client_dir/schema.prisma" prisma/schema.prisma; then
-            echo "::warning::the generated client is not this release's ($client_dir) — rebuilding the venv from the lock"
-            rm -rf .venv
-            python3.12 -m venv .venv
-            ./.venv/bin/python -m pip install --upgrade pip
-            ./.venv/bin/python -m pip install -r requirements.lock
-            ./.venv/bin/python -m pip install -e . --no-deps
-            PATH="$PWD/.venv/bin:$PATH" ./.venv/bin/python -m prisma generate
-            client_dir="$(./.venv/bin/python -c 'import prisma, os; print(os.path.dirname(prisma.__file__))')"
-          fi
 
           if [ "${client_dir#$REL/}" = "$client_dir" ]; then
             echo "::error::prisma client resolved to $client_dir, which is outside $REL. Refusing to deploy a release that would import another release's client."
