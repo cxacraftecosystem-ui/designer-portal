@@ -78,14 +78,23 @@ jobs:
             echo "nothing on that group; falling back to the hostname"
             id="$(aws ec2 describe-instances --filters "Name=ip-address,Values=${HOST}"                     --query 'Reservations[].Instances[].InstanceId' --output text || true)"
           fi
+          # NOT FATAL, AND THAT IS THE CORRECTION THIS STEP NEEDED. The CI user is
+          # `designrepo-ci-sg` and it is scoped to security-group actions: DescribeInstances answers
+          #
+          #   UnauthorizedOperation ... not authorized to perform: ec2:DescribeInstances
+          #
+          # which is correct least privilege and not a misconfiguration to widen. But the instance
+          # id is only needed by the REBOOT arm, and the two things this workflow is most often run
+          # for -- "is the box back yet?" and "what does it say when it is" -- need no id at all.
+          # Failing here made the knock unreachable in exactly the outage it was written for.
           if [ -z "$id" ] || [ "$id" = "None" ]; then
-            echo "::error::Could not identify the instance from AWS_SG_ID or EC2_HOST. The AWS output above is what was actually said -- read it before concluding the instance is gone."
-            exit 1
+            echo "::warning::Could not identify the instance (see the AWS output above). The knock below still runs; only the reboot arm needs an id."
+            id=""
           fi
           # More than one instance on the group is not something to guess about: rebooting the wrong
           # box is worse than not rebooting at all.
           count="$(printf '%s' "$id" | wc -w)"
-          if [ "$count" -ne 1 ]; then
+          if [ -n "$id" ] && [ "$count" -ne 1 ]; then
             echo "::error::$count instances share this security group ($id). Refusing to guess which one is the API."
             exit 1
           fi
@@ -146,7 +155,7 @@ jobs:
           fi
 
       - name: Reboot, and wait for the door to reopen
-        if: ${{ inputs.reboot && steps.knock.outputs.reachable == 'false' }}
+        if: ${{ inputs.reboot && steps.knock.outputs.reachable == 'false' && steps.find.outputs.instance != '' }}
         env:
           INSTANCE: ${{ steps.find.outputs.instance }}
         run: |
@@ -172,6 +181,30 @@ jobs:
           done
           echo "::error::sshd did not come back within 10 minutes of the reboot."
           exit 1
+
+      # THE HONEST ENDING WHEN THIS WORKFLOW CANNOT HELP. A reboot needs ec2:RebootInstances and the
+      # CI user does not have it, so when the box is unreachable AND there is no id, the only true
+      # thing to print is who can act and how. Silence here would read as "nothing was wrong".
+      - name: Say plainly if this cannot be fixed from CI
+        if: ${{ always() && steps.knock.outputs.reachable == 'false' }}
+        run: |
+          {
+            echo "### The API box is not answering SSH"
+            echo ""
+            if [ -z "${{ steps.find.outputs.instance }}" ]; then
+              echo "This workflow could not identify or reboot it: the CI IAM user (\`designrepo-ci-sg\`)"
+              echo "is scoped to security-group actions and has neither \`ec2:DescribeInstances\` nor"
+              echo "\`ec2:RebootInstances\`. That is correct least privilege, not a misconfiguration."
+              echo ""
+              echo "**A person with AWS console access has to reboot the instance.** Once it answers"
+              echo "SSH again, re-run \`Deploy backend to EC2\` on \`main\` — the client is generated on"
+              echo "the runner now, so the deploy no longer asks the box to do the thing that wedged it."
+            else
+              echo "Instance \`${{ steps.find.outputs.instance }}\` did not answer. Re-run this workflow with"
+              echo "**reboot: true** to restart it."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          cat "$GITHUB_STEP_SUMMARY"
 
       - name: Close the door
         if: always()
