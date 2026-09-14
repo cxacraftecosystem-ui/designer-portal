@@ -118,11 +118,17 @@ jobs:
           echo "instance=$id" >> "$GITHUB_OUTPUT"
           echo "instance: $id"
 
+      # SKIPPED WHEN THERE IS NO ID, AND NEVER FATAL WHEN THERE IS. `ec2:DescribeInstanceStatus` is
+      # refused to the CI user for the same reason `ec2:DescribeInstances` is, and this is a
+      # diagnostic: it tells a reader more when it can, and must not stand between them and the
+      # knock when it cannot.
       - name: What EC2 thinks is wrong
+        if: ${{ steps.find.outputs.instance != '' }}
+        continue-on-error: true
         env:
           INSTANCE: ${{ steps.find.outputs.instance }}
         run: |
-          set -euo pipefail
+          set -uo pipefail
           # THE TWO CHECKS ARE DIFFERENT QUESTIONS AND BOTH MATTER. `SystemStatus` is the
           # hypervisor's view (is the host healthy, is the network reachable); `InstanceStatus` is
           # the guest's (is the OS responding). A box wedged by OOM typically shows System ok and
