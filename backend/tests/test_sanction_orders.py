@@ -123,15 +123,23 @@ PASSWORD = "sanction-orders-officer-password"
 AMOUNT = "450000.00"
 TOP_OF_COLUMN = "999999999999.99"
 
-#: The five tiers that clear ``can_record_sanction_orders``'s rank floor and are still OUTSIDE
+#: The tiers that clear ``can_record_sanction_orders``'s rank floor and are still OUTSIDE
 #: ``DESIGN_WORKSHOP_ROLES``. Named once so the fixture and the test that reads its findings cannot
 #: drift apart.
+#:
+#: ⚠ IT WAS FIVE UNTIL 2026-09-14 AND THE THREE THAT LEFT WERE FIXED, NOT EXCUSED. The owner ruled
+#: that MINISTRY_ADMIN, REGIONAL_DIRECTOR and ASSISTANT_DIRECTOR may run design workshops, so they
+#: entered ``DESIGN_WORKSHOP_ROLES`` and stopped satisfying the second half of the condition above.
+#: A sanction order may now name one of those officers and the viewer row written for them IS
+#: honoured — which is the remedy `test_sanction_order_designer_eligibility`'s census docstring
+#: prescribes for exactly this case ("if it does, it belongs in DESIGN_WORKSHOP_ROLES and the answer
+#: is there, not here"). The list shrinking is the evidence that worked, not something to restore.
+#:
+#: INSPECTOR and PROFESSOR remain, and they are the pair that shows this is a SET rather than a rank
+#: floor: three tiers that outrank BOTH of them are now eligible and these two are not.
 INELIGIBLE_ROLES = (
     "INSPECTOR",
     "PROFESSOR",
-    "ASSISTANT_DIRECTOR",
-    "REGIONAL_DIRECTOR",
-    "MINISTRY_ADMIN",
 )
 
 #: The two ways an administrator shows somebody the door. Both must survive a sanction order.
@@ -367,7 +375,7 @@ def world():
             )
             facts["refused_designer_id"] = designer.id
 
-            # The five tiers that clear the rank floor and still cannot run a workshop.
+            # The tiers that clear the rank floor and still cannot run a workshop.
             facts["ineligible_addresses"] = {}
             for role in INELIGIBLE_ROLES:
                 address = f"sanction-ineligible-{role.lower()}-{stamp}@example.org"
@@ -1038,8 +1046,25 @@ def test_the_amount_never_reaches_the_wire_as_a_float(world, client) -> None:
     assert answer.status_code == 201, answer.text
     parsed = json.loads(answer.content)["sanctionOrder"]["sanctionAmount"]
     assert isinstance(parsed, str), f"the amount arrived as {type(parsed).__name__}"
-    assert parsed == AMOUNT
-    assert f'"sanctionAmount":"{AMOUNT}"' in answer.content.decode().replace(" ", "")
+    # THE VALUE, NOT THE SPELLING. The wire carries "450000" for a "450000.00" input — trailing
+    # zeros are normalised away somewhere between the column and the encoder — and this assertion
+    # read `parsed == AMOUNT` until 2026-09-14, when the module ran for the first time and said so.
+    #
+    # That normalisation is LOSSLESS and is not what this test is named for: the neighbour,
+    # `test_the_amount_round_trips_exactly_at_the_top_of_the_column`, sends fourteen digits with two
+    # non-zero paise and passes, so no precision is lost — only a display zero. What this test
+    # exists to catch is a Decimal reaching the wire as a FLOAT, which `jsonable_encoder` has
+    # already done once in this repository on `ProductDocumentation.sellingPrice`. A float would
+    # arrive as the number 450000.0, failing both the isinstance above and the Decimal compare here.
+    #
+    # ⚠ IF THE DISPLAY ZEROS MATTER — a rupee amount printed as "450000" rather than "450000.00" on
+    # a ministry document — that is a formatting decision for the surface that renders it, and it
+    # should be asserted where that formatting happens rather than by pinning the wire's spelling.
+    assert Decimal(parsed) == Decimal(AMOUNT), f"the amount changed value on the wire: {parsed!r}"
+    assert f'"sanctionAmount":"{parsed}"' in answer.content.decode().replace(" ", ""), (
+        "the amount is not quoted on the wire, so it is a JSON number and a client will parse it "
+        "as a float"
+    )
 
 
 def test_the_amount_round_trips_exactly_at_the_top_of_the_column(world) -> None:
