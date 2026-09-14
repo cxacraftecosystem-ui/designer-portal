@@ -57,25 +57,36 @@ jobs:
       SG_ID: ${{ secrets.AWS_SG_ID }}
       HOST: ${{ secrets.EC2_HOST }}
     steps:
-      - name: Find the instance behind EC2_HOST
+      - name: Find the instance behind the deploy security group
         id: find
         run: |
           set -euo pipefail
-          # BY IP OR BY DNS NAME, because EC2_HOST is a secret and this workflow does not get to
-          # know which shape it is. `ip-address` matches an Elastic IP or a public IPv4; if that
-          # finds nothing the same value is tried as a public DNS name. Anything else is a secret
-          # naming something this account cannot see, which is worth saying plainly rather than
-          # failing three steps later on an empty variable.
-          id="$(aws ec2 describe-instances \
-                  --filters "Name=ip-address,Values=${HOST}" \
-                  --query 'Reservations[].Instances[].InstanceId' --output text 2>/dev/null || true)"
+          # THE SECURITY GROUP IS THE HANDLE, NOT THE HOSTNAME. The first version of this step
+          # matched EC2_HOST against `ip-address` and then `dns-name` and found nothing, because
+          # EC2_HOST need not be either: it can be a Route 53 record, a CNAME, or an address the
+          # instance does not itself advertise. AWS_SG_ID is a far better key -- deploy-backend.yml
+          # opens port 22 on that exact group every deploy, so by construction it is the group in
+          # front of the box we want, and `instance.group-id` reads the association straight back.
+          #
+          # AND THE AWS ERROR IS NOT SWALLOWED. That first version ended both lookups with
+          # `2>/dev/null || true`, so a permissions failure and a genuine no-match produced the same
+          # empty string and the same misleading message -- which cost a run to work out. Whatever
+          # AWS says here is printed.
+          echo "instances attached to the deploy security group:"
+          id="$(aws ec2 describe-instances                   --filters "Name=instance.group-id,Values=${SG_ID}"                   --query 'Reservations[].Instances[].InstanceId' --output text)"
           if [ -z "$id" ] || [ "$id" = "None" ]; then
-            id="$(aws ec2 describe-instances \
-                    --filters "Name=dns-name,Values=${HOST}" \
-                    --query 'Reservations[].Instances[].InstanceId' --output text 2>/dev/null || true)"
+            echo "nothing on that group; falling back to the hostname"
+            id="$(aws ec2 describe-instances --filters "Name=ip-address,Values=${HOST}"                     --query 'Reservations[].Instances[].InstanceId' --output text || true)"
           fi
           if [ -z "$id" ] || [ "$id" = "None" ]; then
-            echo "::error::No instance in this account matches EC2_HOST by ip-address or dns-name. Either the credentials cannot see it or the host is not an EC2 public address."
+            echo "::error::Could not identify the instance from AWS_SG_ID or EC2_HOST. The AWS output above is what was actually said -- read it before concluding the instance is gone."
+            exit 1
+          fi
+          # More than one instance on the group is not something to guess about: rebooting the wrong
+          # box is worse than not rebooting at all.
+          count="$(printf '%s' "$id" | wc -w)"
+          if [ "$count" -ne 1 ]; then
+            echo "::error::$count instances share this security group ($id). Refusing to guess which one is the API."
             exit 1
           fi
           echo "instance=$id" >> "$GITHUB_OUTPUT"
