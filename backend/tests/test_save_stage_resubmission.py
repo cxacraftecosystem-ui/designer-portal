@@ -77,12 +77,35 @@ SETUP_ENTITY = "workshopSetup"
 NOTE = "Stage 7's cost table does not add up."
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture
 def anyio_backend():
     return "asyncio"
 
 
-@pytest.fixture(scope="module")
+# ⚠ FUNCTION-SCOPED, NOT MODULE-SCOPED, AND THAT IS THE FIX FOR THE CROSS-LOOP FAILURES.
+#
+# `pyproject.toml` sets `asyncio_mode = "auto"` (pytest-asyncio) AND this module marks itself
+# `pytest.mark.anyio`. Two async plugins are therefore live at once, and a MODULE-scoped async
+# fixture ends up in a different event loop from the FUNCTION-scoped tests that use it. The symptom
+# is exactly what CI reported: the first test fails with "bound to a different event loop" and the
+# rest with "Event loop is closed", because the engine belongs to a loop that has already finished.
+#
+# Two earlier attempts missed this by looking at the wrong thing. The first assumed the module
+# INHERITED a bad connection from a neighbour and added an `opened_here` guard; the second probed
+# the inherited connection with `SELECT 1` and rebuilt on failure. Both went to CI and both came
+# back with the three failures unchanged — which was the evidence that the loop mismatch is INSIDE
+# this module, not handed to it. A liveness probe run in the fixture's loop cannot say anything
+# about the tests' loop.
+#
+# Function scope costs three account rows per test instead of three per module, and buys the one
+# thing that has to be true: the fixture and the test that uses it run in the same loop, whichever
+# plugin ends up owning it. The tests are independent — every one mints its own accounts and its own
+# workshop — so nothing was shared that this breaks.
+#
+# The convention this directory is migrating to (a SYNC fixture and `asyncio.run`, see
+# `test_workshop_join_sync.py`) sidesteps the plugins entirely and remains the better answer for a
+# module that also drives a `TestClient`. This one drives none, so it does not need that shape.
+@pytest.fixture
 async def connection():
     """One Prisma connection for the module — it does not close one it did not open, and it does
     not TRUST one it did not open either.
@@ -161,7 +184,7 @@ async def connection():
             await db.disconnect()
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture
 async def people(connection):
     """A designer, an inspector and an officer. Three accounts because all three appear in a header.
 
@@ -185,9 +208,11 @@ async def people(connection):
         "designer": await account("designer", "DESIGNER", "Asha Patel"),
         "inspector": await account("inspector", "INSPECTOR", "Ravi Nair"),
         # MINISTRY_ADMIN and not ADMIN, deliberately: it is the role the two officer-driven callers
-        # are actually gated on (`OVERSIGHT_ASSIGNER_ROLES`), and it is OUTSIDE
-        # `DESIGN_WORKSHOP_ROLES` — so an account that cannot run a design workshop at all was
-        # resubmitting its report.
+        # are actually gated on (`OVERSIGHT_ASSIGNER_ROLES`). It USED to be outside
+        # `DESIGN_WORKSHOP_ROLES` too — the original defect was an account that could not run a
+        # design workshop at all resubmitting its report — and it joined that set on 2026-09-14.
+        # The test is unaffected: what it is about is the RESUBMISSION counter, and the officer is
+        # still the officer.
         "officer": await account("officer", "MINISTRY_ADMIN", "A Ministry Officer"),
     }
 
