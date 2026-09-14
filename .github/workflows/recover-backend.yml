@@ -1,0 +1,175 @@
+name: Recover the API box
+
+# ─── WHAT THIS IS FOR, AND WHY IT IS NOT PART OF THE DEPLOY ────────────────────────────────────
+#
+# The API box stopped answering on 2026-09-15. `prisma generate` had been run ON the box for the
+# life of deploy-backend.yml, and on a 1 GiB t3.micro it is OOM-killed; the retry after swap was
+# added thrashed the instance hard enough that the deploy's own SSH died mid-command
+# (`client_loop: send disconnect: Broken pipe`), and the next deploy could not even complete
+# `ssh-keyscan`. CloudFront still accepted TCP in 59 ms and then timed out at 60 s, which is the
+# signature of a live edge in front of a wedged origin.
+#
+# Generation has since moved to the runner (see deploy-backend.yml), so the CAUSE is gone. This
+# file is the thing that was missing when the box was already down: a way to look at it and, if it
+# really is unreachable, turn it off and on again — without a person with a laptop and the key.
+#
+# ─── IT IS `workflow_dispatch` ONLY, AND DELIBERATELY NOT AUTOMATIC ────────────────────────────
+#
+# Nothing should reboot a production instance because a health check blinked. A reboot is a
+# deliberate act taken by somebody who has read the diagnosis above it, which is why the job PRINTS
+# what it found before it does anything and why `reboot` defaults to false: the default run is a
+# diagnosis that changes nothing.
+#
+# ─── ORDER: LOOK, THEN KNOCK, THEN REBOOT ──────────────────────────────────────────────────────
+#
+# A reboot is the last resort and not the first move. An instance that is merely thrashing recovers
+# on its own and a reboot costs the connections in flight; an instance whose sshd is gone does not.
+# So the job asks EC2 what it thinks the instance's status is, tries SSH itself, and only then — if
+# asked, and only if SSH actually failed — reboots and waits for the door to reopen.
+
+on:
+  workflow_dispatch:
+    inputs:
+      reboot:
+        description: "Reboot the instance if SSH is unreachable. Leave OFF to only diagnose."
+        type: boolean
+        default: false
+
+# Read-only. This workflow deploys nothing and writes nothing to the repository; the only thing it
+# changes is the state of an EC2 instance, and that is through the AWS credentials, not the token.
+permissions:
+  contents: read
+
+# Never two of these at once, and never one of these while a deploy is mid-flight would be better
+# still — but a deploy cannot be reached from here, so the group at least keeps two recoveries from
+# rebooting the same box twice in a row.
+concurrency:
+  group: recover-backend
+  cancel-in-progress: false
+
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: ${{ secrets.AWS_REGION }}
+      SG_ID: ${{ secrets.AWS_SG_ID }}
+      HOST: ${{ secrets.EC2_HOST }}
+    steps:
+      - name: Find the instance behind EC2_HOST
+        id: find
+        run: |
+          set -euo pipefail
+          # BY IP OR BY DNS NAME, because EC2_HOST is a secret and this workflow does not get to
+          # know which shape it is. `ip-address` matches an Elastic IP or a public IPv4; if that
+          # finds nothing the same value is tried as a public DNS name. Anything else is a secret
+          # naming something this account cannot see, which is worth saying plainly rather than
+          # failing three steps later on an empty variable.
+          id="$(aws ec2 describe-instances \
+                  --filters "Name=ip-address,Values=${HOST}" \
+                  --query 'Reservations[].Instances[].InstanceId' --output text 2>/dev/null || true)"
+          if [ -z "$id" ] || [ "$id" = "None" ]; then
+            id="$(aws ec2 describe-instances \
+                    --filters "Name=dns-name,Values=${HOST}" \
+                    --query 'Reservations[].Instances[].InstanceId' --output text 2>/dev/null || true)"
+          fi
+          if [ -z "$id" ] || [ "$id" = "None" ]; then
+            echo "::error::No instance in this account matches EC2_HOST by ip-address or dns-name. Either the credentials cannot see it or the host is not an EC2 public address."
+            exit 1
+          fi
+          echo "instance=$id" >> "$GITHUB_OUTPUT"
+          echo "instance: $id"
+
+      - name: What EC2 thinks is wrong
+        env:
+          INSTANCE: ${{ steps.find.outputs.instance }}
+        run: |
+          set -euo pipefail
+          # THE TWO CHECKS ARE DIFFERENT QUESTIONS AND BOTH MATTER. `SystemStatus` is the
+          # hypervisor's view (is the host healthy, is the network reachable); `InstanceStatus` is
+          # the guest's (is the OS responding). A box wedged by OOM typically shows System ok and
+          # Instance impaired — which is exactly the case a reboot fixes and a host-level problem is
+          # not. `--include-all-instances` so a stopped instance reports rather than returning
+          # nothing at all, which reads identically to "no answer" and is a different fault.
+          aws ec2 describe-instance-status --instance-ids "$INSTANCE" --include-all-instances \
+            --query 'InstanceStatuses[].{state:InstanceState.Name,system:SystemStatus.Status,instance:InstanceStatus.Status}' \
+            --output table
+          echo "### EC2 status" >> "$GITHUB_STEP_SUMMARY"
+          aws ec2 describe-instance-status --instance-ids "$INSTANCE" --include-all-instances \
+            --query 'InstanceStatuses[].{state:InstanceState.Name,system:SystemStatus.Status,instance:InstanceStatus.Status}' \
+            --output text >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Open the door for this runner
+        run: |
+          set -euo pipefail
+          ip="$(curl -fsS --max-time 20 https://checkip.amazonaws.com | tr -d '[:space:]')"
+          echo "runner ip: $ip"
+          # Idempotent: an existing identical rule answers InvalidPermission.Duplicate, which is a
+          # success for our purposes. `|| true` and not a grep, because a grep that matches nothing
+          # exits 1 and `bash -e` would kill the step on the happy path.
+          aws ec2 authorize-security-group-ingress --group-id "$SG_ID" \
+            --protocol tcp --port 22 --cidr "${ip}/32" 2>&1 | tail -2 || true
+          echo "RUNNER_CIDR=${ip}/32" >> "$GITHUB_ENV"
+
+      - name: Start ssh-agent with the deploy key
+        uses: webfactory/ssh-agent@e83874834305fe9a4a2997156cb26c5de65a8555 # v0.10.0
+        with:
+          ssh-private-key: ${{ secrets.EC2_SSH_KEY }}
+
+      - name: Knock — is SSH actually answering?
+        id: knock
+        run: |
+          set -uo pipefail
+          mkdir -p ~/.ssh
+          # `|| true` on the keyscan: an unreachable host makes it exit 1, and on this workflow that
+          # is a FINDING rather than a failure — it is the very state we came to diagnose.
+          ssh-keyscan -T 15 -H "$HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
+          if ssh -o BatchMode=yes -o ConnectTimeout=20 -o StrictHostKeyChecking=no \
+               "ubuntu@${HOST}" 'echo alive; uptime; free -h' 2>&1; then
+            echo "reachable=true" >> "$GITHUB_OUTPUT"
+            echo "SSH answered — the box is up."
+          else
+            echo "reachable=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::SSH did not answer."
+          fi
+
+      - name: Reboot, and wait for the door to reopen
+        if: ${{ inputs.reboot && steps.knock.outputs.reachable == 'false' }}
+        env:
+          INSTANCE: ${{ steps.find.outputs.instance }}
+        run: |
+          set -euo pipefail
+          echo "rebooting $INSTANCE"
+          # `reboot-instances` and NOT stop/start. A reboot keeps the instance on the same host and
+          # the same public IP; a stop/start moves it and, unless the address is Elastic, hands it a
+          # NEW public IP — which would strand EC2_HOST, the CloudFront origin and the SG rules all
+          # at once. That is a much larger outage than the one being fixed.
+          aws ec2 reboot-instances --instance-ids "$INSTANCE"
+
+          echo "waiting for sshd"
+          for i in $(seq 1 40); do
+            sleep 15
+            if ssh -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=no \
+                 "ubuntu@${HOST}" 'echo alive' >/dev/null 2>&1; then
+              echo "back after $((i * 15))s"
+              ssh -o BatchMode=yes -o StrictHostKeyChecking=no "ubuntu@${HOST}" \
+                'uptime; free -h; systemctl is-active design-workshop-api || true'
+              exit 0
+            fi
+            echo "  attempt $i: still closed"
+          done
+          echo "::error::sshd did not come back within 10 minutes of the reboot."
+          exit 1
+
+      - name: Close the door
+        if: always()
+        run: |
+          set -uo pipefail
+          # ALWAYS, including when a step above failed. A rule left open is a hole that outlives the
+          # incident, and the whole point of the window is that it is a window.
+          if [ -n "${RUNNER_CIDR:-}" ]; then
+            aws ec2 revoke-security-group-ingress --group-id "$SG_ID" \
+              --protocol tcp --port 22 --cidr "$RUNNER_CIDR" 2>&1 | tail -2 || true
+            echo "revoked $RUNNER_CIDR"
+          fi
