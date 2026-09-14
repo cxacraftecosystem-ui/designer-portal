@@ -21,10 +21,8 @@ import { RichTextField } from "@/components/richtext/RichTextField";
 import { appendDictatedToStored, plainFromStoredRichText } from "@/components/richtext/storedRichText";
 import { readableError } from "@/components/review/reviewErrors";
 import { dictateAudio, dictationAnswerSentence } from "@/lib/designWorkshops";
-import {
-  DesignWorkshopSelect,
-  useDesignWorkshopSelection
-} from "@/components/forms/DesignWorkshopSelect";
+import { DesignWorkshopCascade } from "@/components/forms/DesignWorkshopCascade";
+import { useDesignWorkshopSelection } from "@/components/forms/DesignWorkshopSelect";
 import { MediaLightbox, MediaPreviewTile, type PreviewMedia } from "@/components/media/MediaLightbox";
 import { UploadProgress } from "@/components/media/UploadProgress";
 import { UploadTray } from "@/components/media/UploadTray";
@@ -1412,7 +1410,7 @@ function QuestionnairePageBody() {
             The design & prototype workshop, directly under the ordinary one — see the hook above.
             Its default is the server's answer to "most recently allocated"; `lib/designWorkshopDefault.ts`.
           */}
-          <DesignWorkshopSelect state={designWorkshop} saving={saving} />
+          <DesignWorkshopCascade state={designWorkshop} saving={saving} />
           <Field label="Status">
             {canPickStatus ? (
               <Select name="status" defaultValue="APPROVED">

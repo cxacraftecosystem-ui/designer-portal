@@ -189,13 +189,33 @@ export function DesignWorkshopSelect({
    * three siblings and `WorkshopSelect` beside it is likewise optional there.
    */
   onDirty,
-  label = "Design & prototype workshop"
+  label = "Design & prototype workshop",
+  /**
+   * The `WORKSHOP_KIND` token the list is narrowed to, from the KIND box mounted above this one.
+   *
+   * ── IT GOES TO THE SERVER, AND THAT IS R5 AND NOT A PREFERENCE ────────────────────────────────
+   *
+   * `GET /design-workshops` has taken `workshopKind` since the column landed, so the narrowing is a
+   * query parameter and never a `.filter()` over the page this control already holds. One page is
+   * at most {@link WORKSHOP_OPTION_PAGE_SIZE} rows out of a table with far more: a client-side
+   * narrowing would answer "no workshops of this kind" about kinds that plainly have some, which is
+   * the failure DROPDOWN_DESIGN R5 is written against and the one this box already pays a debounce
+   * to avoid for `search`.
+   *
+   * ── `undefined` IS NOT A KIND, IT IS THE ABSENCE OF ONE ───────────────────────────────────────
+   *
+   * R1: empty means everything, BY ABSENCE. A caller that has no kind box passes nothing and gets
+   * the unnarrowed list it has always got, which is what keeps this prop additive for the mounts
+   * that do not want the cascade. `buildQuery` drops `undefined`, so no parameter reaches the wire.
+   */
+  workshopKind
 }: {
   state: DesignWorkshopSelectState;
   initial?: string | null;
   saving?: boolean;
   onDirty?: () => void;
   label?: string;
+  workshopKind?: string | null;
 }) {
   /** What the read answered. Three states, and the middle one is the whole of change (1) above. */
   const [list, setList] = useState<WorkshopListState<DwSummary>>({ kind: "loading" });
@@ -255,7 +275,8 @@ export function DesignWorkshopSelect({
           // NEVER 100 INTO A CONTROL THAT DRAWS 80. One number governs the fetch and the render, so
           // two truncation sentences with two different totals cannot both be true at once.
           pageSize: WORKSHOP_OPTION_PAGE_SIZE,
-          search: trimmed || undefined
+          search: trimmed || undefined,
+          workshopKind: workshopKind || undefined
         })
           .then((page) => {
             if (generation.current !== mine) return;
@@ -275,7 +296,12 @@ export function DesignWorkshopSelect({
       trimmed ? SEARCH_DEBOUNCE_MS : 0
     );
     return () => window.clearTimeout(timer);
-  }, [term]);
+    // `workshopKind` BELONGS IN HERE. Without it the kind box changes, the request is never re-sent,
+    // and the panel goes on drawing the previous kind's rows under the new kind's label -- a picker
+    // that is confidently wrong rather than merely stale, because nothing on screen says the list
+    // did not move. The debounce is keyed off the SEARCH TERM only (`trimmed ? … : 0`), so a kind
+    // change re-reads immediately: it is a click, not typing, and there is no burst to absorb.
+  }, [term, workshopKind]);
 
   useEffect(() => {
     if (!isCreate) return;

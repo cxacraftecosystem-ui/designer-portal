@@ -18,10 +18,8 @@ import type { InlineRecordSurfaceProps } from "@/components/forms/inlineRecordHo
 import { MediaCaptureField } from "@/components/forms/MediaCaptureField";
 import { optionToProduct, productToOption, useRecordOffPage } from "@/components/forms/recordPickers";
 import { useWorkshopSelection, WorkshopSelect } from "@/components/forms/WorkshopSelect";
-import {
-  DesignWorkshopSelect,
-  useDesignWorkshopSelection
-} from "@/components/forms/DesignWorkshopSelect";
+import { DesignWorkshopCascade } from "@/components/forms/DesignWorkshopCascade";
+import { useDesignWorkshopSelection } from "@/components/forms/DesignWorkshopSelect";
 import { MediaLightbox, MediaPreviewTile, type PreviewMedia } from "@/components/media/MediaLightbox";
 import { StatusBadge } from "@/components/StatusBadge";
 import { Dropdown } from "@/components/ui/Dropdown";
@@ -1257,7 +1255,7 @@ export function ProcessForm({
         Its default is the server's answer to "most recently allocated" rather than this form's
         guess, so all seven forms and both clients agree; `lib/designWorkshopDefault.ts`.
       */}
-      <DesignWorkshopSelect
+      <DesignWorkshopCascade
         state={designWorkshop}
         initial={initial ? (initial.designWorkshopId ?? null) : undefined}
         saving={saving}

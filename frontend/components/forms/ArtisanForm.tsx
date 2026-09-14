@@ -21,10 +21,8 @@ import { MediaCaptureField } from "@/components/forms/MediaCaptureField";
 import { PhoneField } from "@/components/forms/PhoneField";
 import { useRecordOffPage } from "@/components/forms/recordPickers";
 import { useWorkshopSelection, WorkshopSelect } from "@/components/forms/WorkshopSelect";
-import {
-  DesignWorkshopSelect,
-  useDesignWorkshopSelection
-} from "@/components/forms/DesignWorkshopSelect";
+import { DesignWorkshopCascade } from "@/components/forms/DesignWorkshopCascade";
+import { useDesignWorkshopSelection } from "@/components/forms/DesignWorkshopSelect";
 import { ExistingMedia } from "@/components/media/ExistingMedia";
 import { UploadProgress } from "@/components/media/UploadProgress";
 import { RecordCodeCard } from "@/components/RecordCode";
@@ -1191,7 +1189,7 @@ export function ArtisanForm({
             `markDirty` BY HAND, as every themed control on this form must: the picker is a
             `<button>` and fires no native input event for the form's `onInput` to catch.
           */}
-          <DesignWorkshopSelect
+          <DesignWorkshopCascade
             state={designWorkshop}
             initial={initial ? (initial.designWorkshopId ?? null) : undefined}
             onDirty={markDirty}

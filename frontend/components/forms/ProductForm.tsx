@@ -21,10 +21,8 @@ import { MediaCaptureField } from "@/components/forms/MediaCaptureField";
 import { seedHasArtisan, type InlineHostSeed, type InlineRecordSurfaceProps } from "@/components/forms/inlineRecordHost";
 import { craftChangeClearsArtisan, useCraftAndArtisanOptions, useRecordOffPage } from "@/components/forms/recordPickers";
 import { useWorkshopSelection, WorkshopSelect } from "@/components/forms/WorkshopSelect";
-import {
-  DesignWorkshopSelect,
-  useDesignWorkshopSelection
-} from "@/components/forms/DesignWorkshopSelect";
+import { DesignWorkshopCascade } from "@/components/forms/DesignWorkshopCascade";
+import { useDesignWorkshopSelection } from "@/components/forms/DesignWorkshopSelect";
 import { ExistingMedia } from "@/components/media/ExistingMedia";
 import { GridMeasurement, MEASUREMENT_GRID_PURPOSE, type GridFiles, type GridGroup } from "@/components/media/GridMeasurement";
 import { RecordPhotoMeasure, type MeasureColumn } from "@/components/media/RecordPhotoMeasure";
@@ -852,7 +850,7 @@ export function ProductForm({
             Its default is the server's answer to "most recently allocated" rather than this form's
             guess, so all seven forms and both clients agree; `lib/designWorkshopDefault.ts`.
           */}
-          <DesignWorkshopSelect
+          <DesignWorkshopCascade
             state={designWorkshop}
             initial={initial ? (initial.designWorkshopId ?? null) : undefined}
             onDirty={markDirty}

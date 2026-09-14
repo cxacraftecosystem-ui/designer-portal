@@ -7,10 +7,8 @@ import { CappedListNotice } from "@/components/data/CappedListNotice";
 import { DictatedTextArea } from "@/components/richtext/DictatedTextArea";
 import { DictatedTextInput } from "@/components/richtext/DictatedTextInput";
 import { DictationUnavailableNotice } from "@/components/richtext/DictationUnavailableNotice";
-import {
-  DesignWorkshopSelect,
-  useDesignWorkshopSelection
-} from "@/components/forms/DesignWorkshopSelect";
+import { DesignWorkshopCascade } from "@/components/forms/DesignWorkshopCascade";
+import { useDesignWorkshopSelection } from "@/components/forms/DesignWorkshopSelect";
 import { LIST_PAGE_CEILING, listCut, type ListCut } from "@/components/data/cappedList";
 import { deleteConfirm, useConfirm } from "@/components/dialogs/ConfirmDialog";
 import { EmptyState } from "@/components/EmptyState";
@@ -651,7 +649,7 @@ function MediaPageBody() {
           Under the two link controls and above the caption — see the hook for why it is a separate
           question from "Linked record type".
         */}
-        <DesignWorkshopSelect state={designWorkshop} saving={uploading} />
+        <DesignWorkshopCascade state={designWorkshop} saving={uploading} />
         {/*
           THE LAST BARE PROSE BOX ON A WEB RECORD PAGE, dictated 2026-08-28.
 
