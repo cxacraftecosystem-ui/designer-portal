@@ -439,7 +439,7 @@ def test_an_inspector_still_writes_no_workshop_content(api):
     """
     from app.schemas import design_workshop_review_loop as loop
 
-    assert loop.WRITABLE_TABLES == {"DesignWorkshop", "DwInspectionFeedback", "ReviewLog"}
+    assert {"DesignWorkshop", "DwInspectionFeedback", "ReviewLog"} == loop.WRITABLE_TABLES
     assert "DwStageEntry" not in loop.WRITABLE_TABLES
 
 

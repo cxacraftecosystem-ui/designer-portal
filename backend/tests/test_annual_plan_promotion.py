@@ -42,6 +42,7 @@ from app.schemas.design_workshops import DesignWorkshopCreate
 from app.services import annual_plan
 from app.services.annual_plan_xlsx import _CAP_MIRRORS, _TEXT_CAPS
 from app.services.stage_schema import PROMOTED_COLUMNS, stages
+from tests.conftest import borrowed_db
 
 pytestmark = pytest.mark.anyio
 
@@ -354,8 +355,7 @@ async def world():
 
     stamp = uuid.uuid4().hex[:8]
     email = f"annual-plan-promoter-{stamp}@example.org"
-    await db.connect()
-    try:
+    async with borrowed_db():
         admin = await db.user.create(
             data={
                 "email": email,
@@ -373,8 +373,6 @@ async def world():
                 "notes": "Seeded by tests/test_annual_plan_promotion.py.",
             }
         )
-    finally:
-        await db.disconnect()
     with TestClient(app) as client:
         yield {"client": client, "admin": admin, "stamp": stamp}
 
@@ -413,11 +411,8 @@ async def _entry(**overrides: Any):
 
 @needs_db
 async def test_promoting_a_row_creates_one_workshop_and_records_the_link(world) -> None:
-    await db.connect()
-    try:
+    async with borrowed_db():
         entry = await _entry()
-    finally:
-        await db.disconnect()
 
     response = world["client"].post(
         f"/api/annual-plan/{entry.id}/promote", json={}, headers=_headers(world)
@@ -433,11 +428,8 @@ async def test_promoting_a_row_creates_one_workshop_and_records_the_link(world) 
 async def test_a_promoted_row_cannot_be_promoted_twice(world) -> None:
     """409 NAMING THE EXISTING WORKSHOP. The unique index refuses it too, but a constraint violation
     cannot say WHICH workshop, and "which" is the only useful thing to tell the administrator."""
-    await db.connect()
-    try:
+    async with borrowed_db():
         entry = await _entry()
-    finally:
-        await db.disconnect()
     assert (
         world["client"]
         .post(f"/api/annual-plan/{entry.id}/promote", json={}, headers=_headers(world))
@@ -456,8 +448,7 @@ async def test_the_database_also_refuses_a_second_workshop_on_one_row(world) -> 
     """THE ROUTE IS NOT THE ONLY GUARD, because a rule like this gets a second door added to it."""
     from prisma.errors import UniqueViolationError
 
-    await db.connect()
-    try:
+    async with borrowed_db():
         first = await _entry()
         second = await _entry()
         promoted = await db.designworkshop.create(
@@ -475,8 +466,6 @@ async def test_the_database_also_refuses_a_second_workshop_on_one_row(world) -> 
             await db.annualplanentry.update(
                 where={"id": second.id}, data={"designWorkshopId": promoted.id}
             )
-    finally:
-        await db.disconnect()
 
 
 @needs_db
@@ -487,11 +476,8 @@ async def test_the_promoted_workshop_survives_its_first_stage_one_save(world) ->
     unchanged. With short strings this passes with every cap wrong, which is why every text value in
     the fixture is exactly its FieldSpec's ``max_length``.
     """
-    await db.connect()
-    try:
+    async with borrowed_db():
         entry = await _entry(**BOUNDARY)
-    finally:
-        await db.disconnect()
 
     created = world["client"].post(
         f"/api/annual-plan/{entry.id}/promote", json={}, headers=_headers(world)
@@ -521,11 +507,8 @@ async def test_the_promoted_workshop_survives_its_first_stage_one_save(world) ->
 
 @needs_db
 async def test_a_withdrawn_row_cannot_be_promoted(world) -> None:
-    await db.connect()
-    try:
+    async with borrowed_db():
         entry = await _entry(withdrawnAt=datetime.now(UTC))
-    finally:
-        await db.disconnect()
     response = world["client"].post(
         f"/api/annual-plan/{entry.id}/promote", json={}, headers=_headers(world)
     )
@@ -538,8 +521,7 @@ async def test_naming_an_ineligible_designer_refuses_the_whole_promotion(world) 
     """THE ORPHAN-DRAFT FAILURE. Eligibility is asked ABOVE the create, so a refusal leaves no
     committed, untitled-looking workshop behind — and the plan row stays un-promoted, so the
     administrator can simply try again with the right name."""
-    await db.connect()
-    try:
+    async with borrowed_db():
         entry = await _entry()
         professor = await db.user.create(
             data={
@@ -550,8 +532,6 @@ async def test_naming_an_ineligible_designer_refuses_the_whole_promotion(world) 
             }
         )
         before = await db.designworkshop.count()
-    finally:
-        await db.disconnect()
 
     response = world["client"].post(
         f"/api/annual-plan/{entry.id}/promote",
@@ -561,13 +541,10 @@ async def test_naming_an_ineligible_designer_refuses_the_whole_promotion(world) 
     assert response.status_code == 422
     assert professor.id in response.text or professor.email in response.text
 
-    await db.connect()
-    try:
+    async with borrowed_db():
         assert await db.designworkshop.count() == before
         reread = await db.annualplanentry.find_unique(where={"id": entry.id})
         assert reread.designWorkshopId is None
-    finally:
-        await db.disconnect()
 
 
 @needs_db
@@ -586,8 +563,7 @@ async def test_naming_an_ineligible_lead_designer_alone_refuses_the_promotion_to
     UNVERIFIED LOCALLY: the generated Prisma client on this machine predates today's models and
     ``prisma generate`` does not run here, so this first executes in CI.
     """
-    await db.connect()
-    try:
+    async with borrowed_db():
         entry = await _entry()
         professor = await db.user.create(
             data={
@@ -598,8 +574,6 @@ async def test_naming_an_ineligible_lead_designer_alone_refuses_the_promotion_to
             }
         )
         before = await db.designworkshop.count()
-    finally:
-        await db.disconnect()
 
     response = world["client"].post(
         f"/api/annual-plan/{entry.id}/promote",
@@ -609,16 +583,13 @@ async def test_naming_an_ineligible_lead_designer_alone_refuses_the_promotion_to
     assert response.status_code == 422, response.text
     assert professor.id in response.text or professor.email in response.text
 
-    await db.connect()
-    try:
+    async with borrowed_db():
         assert await db.designworkshop.count() == before, (
             "a workshop was created for a designer the eligibility rule refuses — and its stage 1 "
             "and stage 3 now hold that account's profile"
         )
         reread = await db.annualplanentry.find_unique(where={"id": entry.id})
         assert reread.designWorkshopId is None
-    finally:
-        await db.disconnect()
 
 
 @needs_db
@@ -632,8 +603,7 @@ async def test_a_lead_designer_named_alone_is_granted_the_workshop_they_are_name
 
     UNVERIFIED LOCALLY — see the test above.
     """
-    await db.connect()
-    try:
+    async with borrowed_db():
         entry = await _entry()
         designer = await db.user.create(
             data={
@@ -643,8 +613,6 @@ async def test_a_lead_designer_named_alone_is_granted_the_workshop_they_are_name
                 "passwordHash": hash_password(PASSWORD),
             }
         )
-    finally:
-        await db.disconnect()
 
     created = world["client"].post(
         f"/api/annual-plan/{entry.id}/promote",
@@ -654,8 +622,7 @@ async def test_a_lead_designer_named_alone_is_granted_the_workshop_they_are_name
     assert created.status_code == 201, created.text
     workshop_id = created.json()["workshop"]["id"]
 
-    await db.connect()
-    try:
+    async with borrowed_db():
         granted = await db.designworkshopviewer.find_many(
             where={"designWorkshopId": workshop_id}
         )
@@ -663,8 +630,6 @@ async def test_a_lead_designer_named_alone_is_granted_the_workshop_they_are_name
             "the lead named alone was given no viewer row, so the designer this workshop is FOR "
             "answers 404 on it while stage 1 carries their name"
         )
-    finally:
-        await db.disconnect()
 
 
 @needs_db
@@ -689,13 +654,10 @@ async def test_a_second_promotion_that_slips_past_the_check_creates_no_orphan_wo
     """
     from fastapi import HTTPException
 
-    await db.connect()
-    try:
+    async with borrowed_db():
         entry = await _entry()
         stale = await db.annualplanentry.find_unique(where={"id": entry.id})
         assert stale.designWorkshopId is None
-    finally:
-        await db.disconnect()
 
     winner = world["client"].post(
         f"/api/annual-plan/{entry.id}/promote", json={}, headers=_headers(world)
@@ -703,8 +665,7 @@ async def test_a_second_promotion_that_slips_past_the_check_creates_no_orphan_wo
     assert winner.status_code == 201, winner.text
     winning_id = winner.json()["workshop"]["id"]
 
-    await db.connect()
-    try:
+    async with borrowed_db():
         before = await db.designworkshop.count(where={"deletedAt": None})
         with pytest.raises(HTTPException) as refused:
             await annual_plan.promote_entry(
@@ -718,8 +679,6 @@ async def test_a_second_promotion_that_slips_past_the_check_creates_no_orphan_wo
             "the losing promotion left a live orphan workshop in the directory that the plan row "
             "can never reach, delete or explain"
         )
-    finally:
-        await db.disconnect()
 
 
 @needs_db
@@ -727,11 +686,8 @@ async def test_withdrawing_a_promoted_row_is_refused(world) -> None:
     """A designer may be standing in the courtyard. Withdrawing the line would take it out of the
     directory while the workshop, its viewers, its media and its report went on existing — and
     nothing anywhere would say why the two disagree."""
-    await db.connect()
-    try:
+    async with borrowed_db():
         entry = await _entry()
-    finally:
-        await db.disconnect()
     assert (
         world["client"]
         .post(f"/api/annual-plan/{entry.id}/promote", json={}, headers=_headers(world))

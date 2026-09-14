@@ -21,6 +21,7 @@
    removed to make a run go green.
 """
 
+import contextlib
 import os
 import sys
 from ipaddress import ip_address
@@ -459,3 +460,40 @@ def _clear_account_credential_budget():
     reset_account_credential_budget()
     yield
     reset_account_credential_budget()
+
+
+@contextlib.asynccontextmanager
+async def borrowed_db():
+    """Use the shared Prisma connection, and close ONLY one this block opened.
+
+    ⚠ THIS IS NOT A CONVENIENCE WRAPPER. `db` is a PROCESS-WIDE SINGLETON shared with the running
+    application, and the TestClient's lifespan connects it. So a blind `await db.connect()` raises
+    `AlreadyConnectedError` the moment anything else in the run is already connected, and — worse —
+    a blind `await db.disconnect()` in a `finally` CLOSES THE CONNECTION EVERY LATER TEST IS USING.
+    The first failure is loud; the second is a cascade attributed to whichever module happens to run
+    next.
+
+    Both have happened here. `test_seed_shared_questionnaire.py` records thirteen tests failing for
+    exactly this reason, and on 2026-09-14 CI reported 36 more across `test_sanction_orders.py`,
+    `test_annual_plan_promotion.py` and `test_annual_plan_is_not_a_workshop.py` — all
+    `AlreadyConnectedError`, none reproducible on a developer machine where the DB-backed tests skip.
+
+    `test_save_stage_resubmission.py` had already worked the answer out in a local fixture. This is
+    that fixture, lifted to where every suite can reach it, so the next database-backed module does
+    not have to rediscover it from a red CI run.
+    """
+    # IMPORTED INSIDE THE FUNCTION, NOT AT MODULE SCOPE, AND THAT IS THIS FILE'S OWN RULE. Importing
+    # `app.core.db` here would pull in `prisma` during COLLECTION — 108 seconds on this machine, paid
+    # by every run of every non-database test — and it would do it before the refusal above is armed,
+    # which is the window this whole module exists to close. By the time anything awaits this
+    # context manager the module that uses it has long since imported `db` itself.
+    from app.core.db import db
+
+    opened_here = not db.is_connected()
+    if opened_here:
+        await db.connect()
+    try:
+        yield db
+    finally:
+        if opened_here:
+            await db.disconnect()

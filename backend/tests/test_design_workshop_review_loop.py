@@ -83,7 +83,7 @@ def _enum_members(name: str) -> set[str]:
     guarding against is precisely a token that exists in one place and not the other.
     """
     text = SCHEMA.read_text(encoding="utf-8")
-    block = re.search(rf"^enum {name} \{{(.*?)^\}}", text, re.S | re.M)
+    block = re.search(rf"^enum {name} \{{(.*?)^\}}", text, re.DOTALL | re.MULTILINE)
     assert block, f"enum {name} is not in schema.prisma"
     return {
         line.strip()
@@ -283,13 +283,13 @@ def test_the_cleared_keys_are_exactly_the_cached_decision():
 
 
 def _plan_kwargs(**overrides):
-    base = dict(
-        workshop_id="dw_1",
-        round=2,
-        actor_id="officer_1",
-        at=datetime(2026, 9, 13, 10, 0, tzinfo=UTC),
-        note="Stage 14's cost sheet does not add up.",
-    )
+    base = {
+        "workshop_id": "dw_1",
+        "round": 2,
+        "actor_id": "officer_1",
+        "at": datetime(2026, 9, 13, 10, 0, tzinfo=UTC),
+        "note": "Stage 14's cost sheet does not add up.",
+    }
     base.update(overrides)
     return base
 
@@ -592,7 +592,7 @@ def test_the_skew_matches_the_other_two_ledgers():
 
 def _model_columns(name: str) -> set[str]:
     text = SCHEMA.read_text(encoding="utf-8")
-    block = re.search(rf"^model {name} \{{(.*?)^\}}", text, re.S | re.M)
+    block = re.search(rf"^model {name} \{{(.*?)^\}}", text, re.DOTALL | re.MULTILINE)
     assert block, f"model {name} is not in schema.prisma"
     return {
         line.split()[0]
@@ -614,7 +614,7 @@ def test_every_column_the_plans_name_exists_in_the_schema():
 def test_the_feedback_table_declares_the_two_clocks_and_the_restrict_actor():
     """The shape the column comments argue for, asserted against the model rather than the prose."""
     text = SCHEMA.read_text(encoding="utf-8")
-    block = re.search(r"^model DwInspectionFeedback \{(.*?)^\}", text, re.S | re.M).group(1)
+    block = re.search(r"^model DwInspectionFeedback \{(.*?)^\}", text, re.DOTALL | re.MULTILINE).group(1)
     assert "recordedAt DateTime?" in block, "the device clock must stay nullable"
     assert "createdAt  DateTime  @default(now())" in block
     assert "onDelete: Restrict" in block, "a named officer's instruction must outlive the account"
@@ -631,7 +631,7 @@ def test_the_workshop_carries_the_cache_and_the_counter():
     exhaustively over its two tokens, so a submission cycle pushed into it breaks all three at once.
     """
     text = SCHEMA.read_text(encoding="utf-8")
-    block = re.search(r"^model DesignWorkshop \{(.*?)^\}", text, re.S | re.M).group(1)
+    block = re.search(r"^model DesignWorkshop \{(.*?)^\}", text, re.DOTALL | re.MULTILINE).group(1)
     assert "reviewNotes String?" in block
     assert "reviewedById String?" in block
     assert "reviewedAt DateTime?" in block
@@ -723,19 +723,19 @@ def test_the_migration_matches_the_model():
 
 
 def _row(**overrides):
-    base = dict(
-        id="fb_1",
-        designWorkshopId="dw_1",
-        round=2,
-        stageKey=None,
-        fieldKey=None,
-        note="Stage 14's cost sheet does not add up.",
-        sentBack=True,
-        actorId="officer_1",
-        actor=SimpleNamespace(name="R. Mahapatra"),
-        recordedAt=None,
-        createdAt=datetime(2026, 9, 13, 10, 0, tzinfo=UTC),
-    )
+    base = {
+        "id": "fb_1",
+        "designWorkshopId": "dw_1",
+        "round": 2,
+        "stageKey": None,
+        "fieldKey": None,
+        "note": "Stage 14's cost sheet does not add up.",
+        "sentBack": True,
+        "actorId": "officer_1",
+        "actor": SimpleNamespace(name="R. Mahapatra"),
+        "recordedAt": None,
+        "createdAt": datetime(2026, 9, 13, 10, 0, tzinfo=UTC),
+    }
     base.update(overrides)
     return SimpleNamespace(**base)
 
@@ -796,7 +796,13 @@ def test_the_pure_module_touches_no_database():
         # explaining why it does not import it, and a test that forbade the STRING would forbid the
         # explanation — which is how a file ends up with the rule enforced and the reason deleted.
         assert not re.match(r"^\s*(from|import)\s+app\.core\.db", line), line
-        assert not re.match(r"^\s*from app\.core import .*db", line), line
+        # WORD BOUNDARIES, WRITTEN AS THE TWO-CHARACTER ESCAPE. Until 2026-09-14 this pattern
+        # held two literal 0x08 BACKSPACE CONTROL CHARACTERS here instead — invisible in an
+        # editor, and rendered away by anything that prints the file, so the line looked exactly
+        # as it does now. It meant the regex hunted for a literal backspace beside "db"; nothing
+        # has ever contained one, so this guard matched nothing and checked nothing for its whole
+        # life. Found by ruff (PLE2510) on CI, which is the only reader that could see them.
+        assert not re.match(r"^\s*from app\.core import .*\bdb\b", line), line
         assert not re.match(r"^\s*from app\.services\.design_workshops import", line), line
     proof = subprocess.run(
         [
@@ -809,6 +815,11 @@ def test_the_pure_module_touches_no_database():
         capture_output=True,
         text=True,
         timeout=300,
+        # `check=False`, EXPLICITLY, because the return code is the evidence. `check=True` would
+        # raise a CalledProcessError whose message is a command line, and the assertion below would
+        # never run -- so a failure would arrive as a traceback about subprocess instead of as the
+        # child's own stderr, which is the thing that says WHY the import pulled Prisma in.
+        check=False,
     )
     assert proof.returncode == 0, proof.stderr[-2000:]
     assert proof.stdout.split() == ["0", "8"], (
@@ -1113,7 +1124,7 @@ def test_revision_skip_fields_is_unchanged_by_this_wave():
     """
     from app.services import access
 
-    assert access.REVISION_SKIP_FIELDS == {
+    assert {
         "extraMetadata",
         "location",
         "locationId",
@@ -1123,7 +1134,7 @@ def test_revision_skip_fields_is_unchanged_by_this_wave():
         "recordedAt",
         "recordedTimezone",
         access.MARKER_BODY_KEY,
-    }
+    } == access.REVISION_SKIP_FIELDS
     assert "reviewNotes" not in access.REVISION_SKIP_FIELDS
 
 

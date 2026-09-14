@@ -30,6 +30,7 @@ from conftest import needs_db
 from app.core.db import db
 from app.core.security import create_access_token, hash_password
 from app.services import design_workshops
+from tests.conftest import borrowed_db
 
 pytestmark = pytest.mark.anyio
 
@@ -138,8 +139,7 @@ async def world():
 
     stamp = uuid.uuid4().hex[:8]
     email = f"annual-plan-boundary-{stamp}@example.org"
-    await db.connect()
-    try:
+    async with borrowed_db():
         admin = await db.user.create(
             data={
                 "email": email,
@@ -178,8 +178,6 @@ async def world():
             ]
         )
         entry = await db.annualplanentry.find_first(where={"planYear": 2098})
-    finally:
-        await db.disconnect()
     with TestClient(app) as client:
         yield {"client": client, "admin": admin, "workshop": workshop, "entry": entry}
 
@@ -192,11 +190,8 @@ def _headers(world) -> dict[str, str]:
 async def test_three_hundred_planned_rows_do_not_move_the_workshop_count(world) -> None:
     """The whole suite in one assertion: the list's total is the workshop table's, not the sum."""
     listed = world["client"].get("/api/design-workshops", headers=_headers(world)).json()
-    await db.connect()
-    try:
+    async with borrowed_db():
         real = await db.designworkshop.count(where={"deletedAt": None})
-    finally:
-        await db.disconnect()
     assert listed["total"] == real
 
 
@@ -238,11 +233,8 @@ async def test_cross_workshop_analytics_counts_no_planned_row(world) -> None:
     )
     if response.status_code != 200:
         return
-    await db.connect()
-    try:
+    async with borrowed_db():
         real = await db.designworkshop.count(where={"deletedAt": None})
-    finally:
-        await db.disconnect()
     body = response.json()
     for key in ("total", "workshops", "count"):
         if isinstance(body.get(key), int):
