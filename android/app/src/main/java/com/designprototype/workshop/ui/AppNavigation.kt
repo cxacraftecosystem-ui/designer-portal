@@ -308,7 +308,20 @@ object FieldPermissions {
      *
      * Byte-for-byte `deps.DESIGN_WORKSHOP_ROLES` and the web's own set.
      */
-    private val DESIGN_WORKSHOP_ROLES = setOf("DESIGNER", "ADMIN", "MASTER_ADMIN")
+    private val DESIGN_WORKSHOP_ROLES = setOf(
+        "DESIGNER",
+        // The three directorate tiers, added 2026-09-14 on the owner's ruling. They already read
+        // every workshop; this is the WRITE. STILL A SET AND NOT A FLOOR — PROFESSOR sits between
+        // them and DESIGNER and is deliberately still out.
+        //
+        // INSPECTOR IS DELIBERATELY ABSENT: asked for alongside these three and excluded, because an
+        // inspector in the write set would author the stages it later reviews.
+        "MINISTRY_ADMIN",
+        "REGIONAL_DIRECTOR",
+        "ASSISTANT_DIRECTOR",
+        "ADMIN",
+        "MASTER_ADMIN",
+    )
 
     /**
      * `can_run_design_workshops` — create and edit a design & prototype workshop, generate its

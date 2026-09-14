@@ -64,7 +64,11 @@ class FieldPermissionsTest {
         val allowed = everyRole.filter { FieldPermissions.canRunDesignWorkshops(user(it)) }.toSet()
         assertEquals(
             "canRunDesignWorkshops must equal deps.DESIGN_WORKSHOP_ROLES exactly",
-            setOf("DESIGNER", "ADMIN", "MASTER_ADMIN"),
+            setOf(
+                "DESIGNER",
+                "MINISTRY_ADMIN", "REGIONAL_DIRECTOR", "ASSISTANT_DIRECTOR",
+                "ADMIN", "MASTER_ADMIN"
+            ),
             allowed
         )
     }

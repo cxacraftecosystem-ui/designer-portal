@@ -292,7 +292,11 @@ class DashboardTileParityTest {
             // outranks a designer everywhere else in this app and sits outside it.
             assertEquals(
                 "$destination must be offered to exactly deps.DESIGN_WORKSHOP_ROLES",
-                setOf("DESIGNER", "ADMIN", "MASTER_ADMIN"),
+                setOf(
+                "DESIGNER",
+                "MINISTRY_ADMIN", "REGIONAL_DIRECTOR", "ASSISTANT_DIRECTOR",
+                "ADMIN", "MASTER_ADMIN"
+            ),
                 everyRole.filter { visibleTo(user(it)) }.toSet()
             )
         }
@@ -303,7 +307,11 @@ class DashboardTileParityTest {
         val offered = everyRole.filter { SketchesAndPrototypesCard.visibleTo(user(it)) }.toSet()
         assertEquals(
             "the Sketches & prototypes card must equal deps.DESIGN_WORKSHOP_ROLES exactly",
-            setOf("DESIGNER", "ADMIN", "MASTER_ADMIN"),
+            setOf(
+                "DESIGNER",
+                "MINISTRY_ADMIN", "REGIONAL_DIRECTOR", "ASSISTANT_DIRECTOR",
+                "ADMIN", "MASTER_ADMIN"
+            ),
             offered
         )
         // The mistake worth walking every role for: the rest of this grid is filtered by

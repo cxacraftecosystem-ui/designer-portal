@@ -944,7 +944,24 @@ export function routeRedirectFor(user: User | null | undefined, pathname: string
  * carrying it — the UI offering what the API refuses is exactly what the rank table above is
  * commented about, and a non-monotonic rule drifts far more easily than a threshold.
  */
-export const DESIGN_WORKSHOP_ROLES: readonly UserRole[] = ["DESIGNER", "ADMIN", "MASTER_ADMIN"];
+export const DESIGN_WORKSHOP_ROLES: readonly UserRole[] = [
+  "DESIGNER",
+  // THE THREE DIRECTORATE TIERS, added 2026-09-14 on the owner's ruling. They already read every
+  // workshop; this is the WRITE. The gap it closes: a MINISTRY_ADMIN could promote an annual-plan
+  // row into a workshop and then not save a stage in the workshop they had just created.
+  //
+  // STILL A SET AND NOT A FLOOR. These three sit above professor and PROFESSOR is deliberately
+  // still out — being senior to a designer is not the same as being one.
+  //
+  // INSPECTOR IS DELIBERATELY ABSENT. It was asked for alongside these three and excluded on
+  // purpose: this is the write set, and an inspector in it would author the stages it later
+  // reviews. It reaches a workshop through its own workshop-scoped grant.
+  "MINISTRY_ADMIN",
+  "REGIONAL_DIRECTOR",
+  "ASSISTANT_DIRECTOR",
+  "ADMIN",
+  "MASTER_ADMIN"
+];
 
 export function canRunDesignWorkshops(user: User | null | undefined) {
   return !!user && DESIGN_WORKSHOP_ROLES.includes(user.role);

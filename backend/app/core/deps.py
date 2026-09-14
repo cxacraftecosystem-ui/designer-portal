@@ -343,7 +343,37 @@ def can_manage_crafts(user: Any) -> bool:
 #: this is a SET and not a rank floor, adding the tier to :data:`ROLE_RANK` gave it nothing here —
 #: which is the correct outcome and not an oversight to be tidied up later. What an inspector needs
 #: instead is READ scope on a specific workshop, which is a grant and not a role.
-DESIGN_WORKSHOP_ROLES = frozenset({"DESIGNER", "ADMIN", "MASTER_ADMIN"})
+DESIGN_WORKSHOP_ROLES = frozenset(
+    {
+        "DESIGNER",
+        # ── THE THREE DIRECTORATE TIERS, ADDED 2026-09-14 ON THE OWNER'S RULING ──────────────────
+        # They already READ every workshop (``DESIGN_WORKSHOP_DATA_VIEW_ROLES``); what they gained is
+        # the WRITE — stage saves, custom sections, capture aids, AI layers, the consent record.
+        #
+        # The concrete gap this closes: a MINISTRY_ADMIN could promote an annual-plan row into a
+        # design workshop and then not save a stage in the workshop they had just created. That is a
+        # workflow that dead-ends one step after it starts, and it was found by a test rather than by
+        # anybody using it.
+        #
+        # ⚠ STILL A SET AND NOT A FLOOR, WHICH IS THE WHOLE POINT AND IS EASY TO LOSE HERE. These
+        # three sit ABOVE professor, and PROFESSOR (40) is deliberately still out — being senior to a
+        # designer is not the same thing as being one. Written as a floor at ASSISTANT_DIRECTOR this
+        # would admit a professor and every tier that ever lands between them; written as a set it
+        # admits exactly the people somebody decided on.
+        "MINISTRY_ADMIN",
+        "REGIONAL_DIRECTOR",
+        "ASSISTANT_DIRECTOR",
+        # ── AND INSPECTOR IS DELIBERATELY NOT HERE ──────────────────────────────────────────────
+        # It was asked for in the same breath as the three above and is excluded on purpose, because
+        # this set is the WRITE set: an inspector in it would author the stages it later reviews, and
+        # the review loop stops meaning anything the moment the reviewer can write what it reviews.
+        # An inspector reaches a workshop through its own workshop-scoped grant instead.
+        # ``tests/test_inspector_tier.py::test_an_inspector_has_no_design_workshop_authority`` pins
+        # this, and its docstring is the longer form of the argument.
+        "ADMIN",
+        "MASTER_ADMIN",
+    }
+)
 
 
 def can_run_design_workshops(user: Any) -> bool:

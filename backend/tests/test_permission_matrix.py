@@ -667,18 +667,38 @@ def test_the_craft_and_workshop_predicates_read_rank_alone() -> None:
 # `CustomSectionsIn` — are all-optional, so FastAPI validates them before the handler runs and the
 # decision reached is the GATE's rather than a 422's.
 
-DESIGNER_SET = ("DESIGNER", "ADMIN", "MASTER_ADMIN")
+DESIGNER_SET = (
+    "DESIGNER",
+    # The three directorate tiers joined on 2026-09-14 — see OUTSIDE_DESIGNER_SET below, which they
+    # moved out of. The census test ties this tuple to `deps.DESIGN_WORKSHOP_ROLES` directly, so it
+    # cannot drift from the server's frozenset without failing.
+    "MINISTRY_ADMIN", "REGIONAL_DIRECTOR", "ASSISTANT_DIRECTOR",
+    "ADMIN", "MASTER_ADMIN",
+)
 # INSPECTOR is OUTSIDE, beside PROFESSOR and for the same reason: this block is about who may WRITE
 # inside a workshop, and an inspector inspects the result rather than producing it. Both tiers
-# outrank a designer and both are refused here, which is the clearest statement in this file that the
-# design-workshop gate is set membership and not a rank floor.
+# outrank a designer and both are refused here — and since 2026-09-14 three tiers that outrank BOTH
+# of them are admitted, which makes this the clearest statement in the file that the design-workshop
+# gate is set membership and not a rank floor. A floor anywhere would have to admit the inspector.
 OUTSIDE_DESIGNER_SET = (
-    "CROWDSOURCE_VOLUNTEER", "FIELD_CONTRIBUTOR", "RESEARCHER", "INSPECTOR", "PROFESSOR",
-    # DESIGN_WORKSHOP_ROLES is a frozenset {DESIGNER, ADMIN, MASTER_ADMIN} and NOT a rank floor, so
-    # ranking ABOVE a designer buys no workshop write at all. The directorate tiers are outside it
-    # for the same reason PROFESSOR (40) is: they do not run workshops and do not sign the report.
-    "ASSISTANT_DIRECTOR", "REGIONAL_DIRECTOR", "MINISTRY_ADMIN",
+    "CROWDSOURCE_VOLUNTEER", "FIELD_CONTRIBUTOR", "RESEARCHER",
+    # ── INSPECTOR AND PROFESSOR, AND THE PAIR IS THE WHOLE ARGUMENT FOR A SET ────────────────────
+    # `DESIGN_WORKSHOP_ROLES` is not a rank floor, so ranking ABOVE a designer buys no workshop
+    # write. PROFESSOR (40) has always been the proof of that, and INSPECTOR (37) is the one that
+    # matters most: it is excluded because this is the WRITE set, and an inspector in it would
+    # author the stages it later reviews. See tests/test_inspector_tier.py, whose
+    # `test_an_inspector_has_no_design_workshop_authority` is the longer form.
+    #
+    # ⚠ THE THREE DIRECTORATE TIERS USED TO BE ON THIS LINE AND ARE NOT ANY MORE. On 2026-09-14 the
+    # owner ruled that MINISTRY_ADMIN, REGIONAL_DIRECTOR and ASSISTANT_DIRECTOR may write inside a
+    # workshop — the gap that forced it was a ministry admin who could promote an annual-plan row
+    # into a design workshop and then not save a stage in the workshop they had just created. They
+    # now live in `INSIDE_DESIGNER_SET` below. INSPECTOR was asked for in the same breath and was
+    # deliberately NOT moved, which is why the two groups are written out separately here rather
+    # than derived from one another.
+    "INSPECTOR", "PROFESSOR",
 )
+
 WORKSHOP_WRITES = [
     ("PATCH", "/design-workshops/w1", {"title": "Renamed in the field"}),
     ("PUT", "/design-workshops/w1/stages/WORKSHOP_SETUP", {"entries": []}),

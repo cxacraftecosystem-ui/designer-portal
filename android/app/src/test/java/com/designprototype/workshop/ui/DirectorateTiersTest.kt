@@ -114,11 +114,31 @@ class DirectorateTiersTest {
     }
 
     @Test
-    fun `no rank above a professor buys any design-workshop authority, because every one is a set`() {
+    fun `the three tiers run a workshop and still do not create or inspect one, because each is its own set`() {
+        // ⚠ THE FIRST CLAUSE IS THE INVERSION OF WHAT THIS TEST ASSERTED UNTIL 2026-09-14, and the
+        // reason is a ruling rather than a bug. It read "no rank above a professor buys any
+        // design-workshop authority" — true when it was written, and made false by the owner's
+        // decision that MINISTRY_ADMIN, REGIONAL_DIRECTOR and ASSISTANT_DIRECTOR may WRITE inside a
+        // workshop. The gap that forced it: a ministry admin could promote an annual-plan row into a
+        // design workshop and then not save a stage in the workshop they had just created.
+        //
+        // THE POINT THE OLD NAME WAS MAKING SURVIVES, and is now made better. Each of these three
+        // predicates is its own SET, so gaining one buys nothing in the others — the three tiers RUN
+        // a workshop, and still cannot OPEN a bare one (`DESIGN_WORKSHOP_CREATOR_ROLES` is
+        // {ADMIN, MASTER_ADMIN}) and still cannot INSPECT one. Under a rank ladder all three would
+        // have moved together, which is exactly the drift a set prevents.
         directorate.forEach { role ->
-            assertFalse("$role runs a workshop", FieldPermissions.canRunDesignWorkshops(user(role)))
+            assertTrue("$role runs a workshop", FieldPermissions.canRunDesignWorkshops(user(role)))
             assertFalse("$role creates a workshop", FieldPermissions.canCreateDesignWorkshops(user(role)))
             assertFalse("$role inspects a workshop", FieldPermissions.canInspectDesignWorkshops(user(role)))
+        }
+
+        // AND THE TWO TIERS BETWEEN THEM AND A DESIGNER ARE STILL REFUSED, which is what keeps the
+        // clause above from being read as "a floor moved". PROFESSOR (40) and INSPECTOR (37) are
+        // both outranked by all three tiers above and both write nothing — an inspector especially,
+        // since it would otherwise author the stages it later reviews.
+        for (role in listOf("PROFESSOR", "INSPECTOR")) {
+            assertFalse("$role runs a workshop", FieldPermissions.canRunDesignWorkshops(user(role)))
         }
     }
 

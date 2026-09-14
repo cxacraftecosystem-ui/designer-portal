@@ -55,7 +55,11 @@ class DesignWorkshopCardTest {
         val offered = everyRole.filter { DesignWorkshopCard.visibleTo(user(it)) }.toSet()
         assertEquals(
             "the Design workshop card must equal deps.DESIGN_WORKSHOP_ROLES exactly",
-            setOf("DESIGNER", "ADMIN", "MASTER_ADMIN"),
+            setOf(
+                "DESIGNER",
+                "MINISTRY_ADMIN", "REGIONAL_DIRECTOR", "ASSISTANT_DIRECTOR",
+                "ADMIN", "MASTER_ADMIN"
+            ),
             offered
         )
     }

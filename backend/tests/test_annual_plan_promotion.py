@@ -673,12 +673,12 @@ def _headers(world) -> dict[str, str]:
 
 
 def _platform_headers(world) -> dict[str, str]:
-    """A PLATFORM admin, for writes INSIDE a promoted workshop.
+    """A PLATFORM admin — an ADMIN rather than the MINISTRY_ADMIN `_headers` mints for.
 
-    `DESIGN_WORKSHOP_ROLES` is {DESIGNER, ADMIN, MASTER_ADMIN} and running a workshop is SET
-    MEMBERSHIP, not a rank floor — so the ministry admin above, who may create the workshop, may not
-    save a stage in it. Using this for the stage-save test keeps that test about what it is named
-    for; it is not an opinion about whether the split is right.
+    KEPT THOUGH THE STAGE-SAVE TEST NO LONGER NEEDS IT, because the distinction it draws is still
+    real and this module is where it would next be needed: `DESIGN_WORKSHOP_CREATOR_ROLES` remains
+    {ADMIN, MASTER_ADMIN}, so a ministry admin may now WRITE inside a workshop and still may not
+    OPEN a bare one outside the promotion route.
     """
     return {"Authorization": f"Bearer {create_access_token(subject=world['platform_admin'].id)}"}
 
@@ -752,8 +752,13 @@ def test_the_promoted_workshop_survives_its_first_stage_one_save(world, client) 
     saved = client.put(
         f"/api/design-workshops/{workshop_id}/stages/WORKSHOP_SETUP",
         json={"entries": [{"entityKey": "workshopSetup", "data": {"block": "Bhujodi"}}]},
-        # A PLATFORM admin, not the ministry one that promoted the row — see `_platform_headers`.
-        headers=_platform_headers(world),
+        # THE MINISTRY ADMIN AGAIN, and that line is the point of this test rather than an
+        # oversight. It briefly used a platform admin because MINISTRY_ADMIN was not in
+        # `DESIGN_WORKSHOP_ROLES`, so the tier that promotes a plan row into a workshop could not
+        # then save a stage in the workshop it had just created. The owner ruled on 2026-09-14
+        # that it should be able to; the set now carries the three directorate tiers, and this is
+        # the test that proves the workflow no longer dead-ends one step after it starts.
+        headers=_headers(world),
     )
     assert saved.status_code in (200, 201), saved.text
 
