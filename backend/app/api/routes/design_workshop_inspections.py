@@ -1,8 +1,23 @@
-"""The INSPECTOR's read-only surface, and the admin screen that assigns inspections.
+"""The INSPECTOR's surface — a read, and now a note — and the admin screen that assigns inspections.
 
-Five routes. **Every route an inspector can reach is a GET**, and that is not an accident of what
-has been built so far — it is the feature. See ``app/services/design_workshop_inspectors.py`` for
-the argument in full; this module is the wire, and the two things it adds are the doors.
+Seven routes. **THIS HEADER USED TO SAY "Five routes. Every route an inspector can reach is a GET,
+and that is not an accident of what has been built so far — it is the feature." THAT SENTENCE IS
+NOW WRONG IN ITS LETTER AND RIGHT IN ITS SPIRIT, AND IT IS CORRECTED RATHER THAN DELETED**, because
+the property it was defending is the one that still matters and is unchanged:
+
+    AN INSPECTOR STILL CANNOT TOUCH THE DESIGNER'S CONTENT.
+
+The two POST routes added on 2026-09-13 write ONE table — ``DwInspectionFeedback`` — plus the three
+decision-cache columns and one audit row on the workshop. They cannot reach a ``DwStageEntry``:
+``InspectionWritePlan`` refuses every table outside its three by construction, the read-only loader
+below still takes no argument that turns a read into a write, and the six write doors on
+``/design-workshops`` still answer 403 to an INSPECTOR before the database. What changed is that an
+inspection is now a read AND A NOTE, which is what the owner's requirement asks for: *"Inspecting
+Officers can review them and submit correction suggestions directly in a feedback box."* Until this
+landed an inspector could record nothing at all, which made the tier a viewer with extra steps.
+
+See ``app/services/design_workshop_inspectors.py`` for the argument in full; this module is the
+wire, and the two things it adds are the doors.
 
 =======================================================================================
 WHY THIS IS ITS OWN ROUTER ON ITS OWN PREFIX
@@ -43,6 +58,7 @@ found" — the same trap that once left the admin's designer picker empty on a s
 existed. FastAPI matches in declaration order, so the literal path is declared first.
 """
 
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -62,10 +78,24 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 # decided the caller may read; the authorisation is `load_inspectable_workshop_or_404`, above them.
 # The clean fix is to promote both to ``services/design_workshops`` beside ``workshop_summary``,
 # which this wave deliberately does not do because that file is being edited by another workstream.
-from app.api.routes.design_workshops import _provenance_maps, _stages_payload
+#
+# `_inspection_feedback_payload` IS IMPORTED FOR THE SAME REASON AND WITH THE SAME EXEMPTION: the
+# register both screens read must come back in ONE shape, and the `include={"actor": True}` that
+# puts a name on every suggestion is inside it. A second implementation here would differ first in
+# exactly that include, and the symptom would be a panel of corrections attributed to nobody.
+from app.api.routes.design_workshops import (
+    _inspection_feedback_payload,
+    _provenance_maps,
+    _stages_payload,
+)
 from app.core.db import db
 from app.core.deps import get_current_user, require_admin
-from app.schemas.design_workshop_inspections import DesignWorkshopInspectorsIn
+from app.schemas import design_workshop_review_loop
+from app.schemas.design_workshop_inspections import (
+    DesignWorkshopInspectorsIn,
+    DwInspectionFeedbackIn,
+    DwInspectionSendBackIn,
+)
 from app.services.concurrency import gather_reads
 from app.services.custom_sections import load_definition_or_empty
 from app.services.design_workshop_inspectors import (
@@ -288,4 +318,316 @@ async def read_workshop_under_inspection(
     # two apart will offer a Save button that the API answers 404 to. One boolean is cheaper than the
     # bug report.
     summary["readOnly"] = True
+    # THE FEEDBACK ALREADY FILED, NEWEST FIRST, SO AN OFFICER CAN SEE WHAT COLLEAGUES HAVE ASKED FOR
+    # BEFORE ASKING FOR IT AGAIN — and so the designer's panel and this one are built from the same
+    # rows in the same shape. Bounded rather than paged: a report goes through a handful of rounds,
+    # and `inspectionFeedbackTruncated` says so out loud rather than letting a long history look
+    # like a short one.
+    summary["inspectionFeedback"], summary["inspectionFeedbackTruncated"] = (
+        await _inspection_feedback_payload(workshop_id)
+    )
+    # SAID ON THE WIRE RATHER THAN INFERRED FROM `readOnly`, AND THE TWO ARE NOT THE SAME ANSWER.
+    # `readOnly` is about the workshop's CONTENT and must stay true — the handset's own helper is
+    # `readOnly != false`, so it fails CLOSED, and flipping it to enable a feedback box would offer
+    # a Save button on every stage form that this API answers 404 to, and would open nine designer
+    # screens on a payload that cannot write any of them. This is a second, narrower key: may THIS
+    # account file a suggestion about this report. The designer's own detail read carries the same
+    # key with the opposite value, so a shared component cannot be wrong about which screen it is.
+    #
+    # TRUE WITHOUT RE-ASKING THE DATABASE: reaching this line means `require_inspector` admitted the
+    # account and the read-only loader found their row on this workshop, which is the whole of what
+    # the two write routes below also require. A workshop that is not under review is a different
+    # question — it is refused at the write with a sentence, rather than by hiding the box, because
+    # "this report has not been handed in yet" is something an officer needs to be told.
+    summary["mayRecordFeedback"] = True
     return summary
+
+
+# --------------------------------------------------------------------------------------
+# THE FIRST WRITE DOORS ON THIS ROUTER, ADDED 2026-09-13
+#
+# TWO ROUTES AND NOT ONE ROUTE WITH A `sendBack` BOOLEAN, and the reason is the record page's own:
+# "ONE BUTTON PER STATUS, NEVER ONE BUTTON PER INTENTION". Adding a suggestion to an open round and
+# sending a report back to its designers are different acts with different consequences — the
+# second one moves a status, writes a ReviewLog row and puts a fortnight of somebody's work back on
+# their desk — and a boolean on one endpoint is how the second happens by accident.
+#
+# DECLARED LAST, AND BOTH PATHS END IN A LITERAL SEGMENT. `GET /{workshop_id}` above matches one
+# path segment and cannot swallow either of these, so the ordering hazard the module docstring
+# names does not apply — but they are declared after it anyway, so that the file goes on reading in
+# the order FastAPI matches.
+#
+# NEITHER ROUTE TAKES A `round` FROM THE CLIENT. It is copied off the workshop row inside the
+# handler, because a client that could choose the cycle could file a correction against a round the
+# designer has already answered.
+# --------------------------------------------------------------------------------------
+
+
+def _under_review_or_422(record: Any) -> str:
+    """The workshop's status, or the sentence that refuses a decision on a report nobody handed in.
+
+    **STEP ONE OF BOTH WRITE HANDLERS, AND IT IS NOT A COURTESY.** The inspector's scope is a row
+    plus a soft-delete test and carries NO status term, so an officer holding a row on a DRAFT or an
+    IN_PROGRESS workshop reaches the write with `submissionRound == 0` — and the CHECK constraint
+    `DwInspectionFeedback_round_check` then refuses the INSERT, the driver raises, and the officer
+    is told the server is broken about a report that simply has not been handed in yet.
+    """
+    current = str(getattr(record, "status", "") or "")
+    if current not in design_workshop_review_loop.UNDER_REVIEW:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=design_workshop_review_loop.NOT_UNDER_REVIEW_REFUSAL,
+        )
+    return current
+
+
+async def _apply(client: Any, plan: Any) -> Any:
+    """Run one :class:`InspectionWritePlan` against a client — the real one, or a transaction's.
+
+    THE DELEGATE IS RESOLVED OFF THE CLIENT IT IS HANDED, because `db.tx()` returns a DIFFERENT
+    client and a write issued against the module singleton inside a transaction commits on its own.
+    That is the failure `api/routes/review.py` records beside its own send-back: the decision and
+    the log of it must stand or fall together.
+
+    The plan has already refused every table but its three, and refused an update with no `where`,
+    at construction. This function therefore performs no validation of its own — a second copy of
+    those rules is a second place for them to differ.
+    """
+    delegate = getattr(client, plan.table.lower())
+    if plan.operation is design_workshop_review_loop.Operation.CREATE:
+        return await delegate.create(data=dict(plan.data))
+    return await delegate.update(where=dict(plan.where or {}), data=dict(plan.data))
+
+
+async def _apply_while_under_review(client: Any, plan: Any) -> int:
+    """Run an UPDATE plan, but only against a workshop that is STILL under review. Answers the count.
+
+    ── WHY THE STATUS CHECK CANNOT LIVE WHERE `_under_review_or_422` PUTS IT ─────────────────────
+
+    `send_workshop_back_for_revision` reads the workshop OUTSIDE the transaction, validates its
+    status against `UNDER_REVIEW`, refuses an illegal edge with `transition_refusal` — and then
+    applies a write plan whose WHERE is the primary key alone. Between that read and that commit
+    there are three round trips (building the plans, BEGIN, the feedback INSERT), and the workshop
+    can leave the set the check validated against inside them. It is not a hypothetical hole: the
+    ONLY header edit `patchable_from("PRE_SUBMISSION")` offers is `-> IN_PROGRESS`, the web record
+    page ships it as a literal button labelled "Withdraw from inspection", and the review graph's
+    own commentary instructs designers to take it. So: officer presses "Send the report back" while
+    the designer presses "Withdraw from inspection"; the designer's PATCH commits first; the
+    officer's UPDATE re-evaluates a predicate that is the id and overwrites IN_PROGRESS with
+    NEEDS_REVISION — an edge `LEGAL_TRANSITIONS` does not contain from that state at all, refused by
+    this very module's `transition_refusal` even with `by_decision_route=True`. The graph then holds
+    a state it declares unreachable, a `ReviewLog` row asserts a decision on a report that had left
+    review, and the designer's NEXT content-changing save trips
+    `design_workshops`' `NEEDS_REVISION and _content_changed` arm and silently RESUBMITS the report
+    they had deliberately withdrawn, spending a submission round.
+
+    Under READ COMMITTED an `UPDATE … WHERE id = ?` waits on the designer's row lock and then
+    re-evaluates its predicate; adding the status term to that predicate is therefore the whole fix,
+    and it is why this is `update_many` (the only call that takes a predicate beyond the primary key
+    and answers with a count) rather than `update`.
+
+    **THE `NEEDS_REVISION` MEMBER OF THE SET IS DELIBERATE AND MUST STAY.** `send_workshop_back` is
+    documented as a 200 for a second officer sending back an already-sent-back report — "refusing
+    the second would lose their correction to a race" — and `UNDER_REVIEW` is `{PRE_SUBMISSION,
+    NEEDS_REVISION}`, so that case still writes. It is imported rather than retyped so a ninth
+    status cannot change what "under review" means without changing this too.
+
+    A COUNT AND NOT A RECORD: `update_many` answers rows affected. The caller re-reads inside the
+    same transaction, which it has to do anyway because `_feedback_answer` needs a workshop row.
+    """
+    delegate = getattr(client, plan.table.lower())
+    return await delegate.update_many(
+        where={
+            **dict(plan.where or {}),
+            "status": {"in": sorted(design_workshop_review_loop.UNDER_REVIEW)},
+        },
+        data=dict(plan.data),
+    )
+
+
+def _parse_recorded_at(value: str | None) -> Any:
+    """The device's own moment, or None, refusing a string that is not a time.
+
+    A 422 NAMING THE FIELD rather than a 500 from the driver: the value crosses the wire as text
+    from a handset, and "recordedAt is not a time" is something a client can act on.
+
+    A NAIVE MOMENT IS READ AS UTC rather than refused, matching every other clock this API parses
+    off a handset: the fleet's devices send Z-suffixed times, and an older build that drops the
+    suffix has not lied about anything — it has been imprecise about a field whose whole purpose is
+    to be compared against this server's clock.
+    """
+    text = (value or "").strip()
+    if not text:
+        return None
+    try:
+        # NO `.replace("Z", "+00:00")`. `requires-python` is >=3.11 and 3.11's `fromisoformat` reads
+        # the military Z itself, so the substitution was a no-op that FURB162 reports as a lint
+        # error — and `pyproject.toml`'s own baseline note says the redundancy is real and belongs
+        # to whoever is in the function. The handsets go on sending Z-suffixed times and go on
+        # being parsed; nothing about the wire contract moves.
+        moment = datetime.fromisoformat(text)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                "recordedAt must be an ISO-8601 moment (for example 2026-09-13T10:15:00Z). Leave "
+                "it out entirely when the suggestion is being filed straight against the server."
+            ),
+        ) from None
+    return moment if moment.tzinfo else moment.replace(tzinfo=UTC)
+
+
+async def _feedback_answer(record: Any, *, may_record: bool = True) -> dict[str, Any]:
+    """The workshop header plus the register, which is what both write routes answer with.
+
+    THE ANSWER IS THE REGISTER AND NOT THE ROW JUST WRITTEN. An officer who files a suggestion is
+    looking at a list of them; answering with only the new one would make every client re-read the
+    workshop to redraw its own screen, and the two screens would disagree for as long as it took.
+    """
+    summary = workshop_summary(record)
+    summary["inspectionFeedback"], summary["inspectionFeedbackTruncated"] = (
+        await _inspection_feedback_payload(record.id)
+    )
+    summary["readOnly"] = True
+    summary["mayRecordFeedback"] = may_record
+    return summary
+
+
+@router.post("/{workshop_id}/feedback", status_code=status.HTTP_201_CREATED)
+async def record_inspection_feedback(
+    workshop_id: str,
+    payload: DwInspectionFeedbackIn,
+    current_user: Any = Depends(require_inspector),
+) -> dict[str, Any]:
+    """File one correction suggestion. **THE WORKSHOP'S STATUS IS NOT MOVED.**
+
+    THE TWO ACTS ARE SEPARATE ON PURPOSE. An officer reading a report writes down four things they
+    want changed and then decides whether that is enough to send it back; folding both into one
+    endpoint would make the second happen by accident. This route adds a row to the open round and
+    nothing else — no status, no ReviewLog entry, no designer's afternoon lost.
+
+    ``round`` IS COPIED OFF THE WORKSHOP and never sent by a client, so a suggestion filed today is
+    filed against the cycle the report is in today. It stays in that cycle for ever: the column is
+    copied at write time and never recomputed, which is what makes "what was asked for in round 2"
+    answerable after round 5.
+
+    ``recordedAt`` IS THE DEVICE'S OWN MOMENT — an officer can write a suggestion in a courtyard a
+    fortnight before the handset syncs — and a clock more than the shared skew AHEAD of this server
+    is REFUSED rather than corrected. Storing a corrected time would file the suggestion at a moment
+    nobody chose. ``createdAt`` is always when this server heard it.
+
+    APPEND-ONLY: there is no PATCH and no DELETE for these rows anywhere, and there must never be
+    one. An officer who changes their mind files another suggestion; a correction the designer has
+    already acted on is not editable out of the record afterwards.
+
+    A ``stageKey`` IS VALIDATED AGAINST THE REGISTRY AND A ``fieldKey`` DELIBERATELY IS NOT — there
+    are 22 stages and every client draws them from the same dump, while a field key can legitimately
+    come from a client one release ahead, and refusing that row would lose the suggestion rather
+    than the typo.
+    """
+    record = await load_inspectable_workshop_or_404(workshop_id, current_user)
+    _under_review_or_422(record)
+    try:
+        plan = design_workshop_review_loop.feedback_plan(
+            workshop_id=workshop_id,
+            round=int(getattr(record, "submissionRound", 0) or 0),
+            actor_id=current_user.id,
+            at=datetime.now(UTC),
+            note=payload.note,
+            stage_key=payload.stageKey,
+            field_key=payload.fieldKey,
+            recorded_at=_parse_recorded_at(payload.recordedAt),
+        )
+    except design_workshop_review_loop.InspectionRuleViolation as refused:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(refused)
+        ) from refused
+    await _apply(db, plan)
+    return await _feedback_answer(record)
+
+
+@router.post("/{workshop_id}/send-back")
+async def send_workshop_back_for_revision(
+    workshop_id: str,
+    payload: DwInspectionSendBackIn,
+    current_user: Any = Depends(require_inspector),
+) -> dict[str, Any]:
+    """Send the report back to its designers with mandatory comments (status NEEDS_REVISION).
+
+    When any of the workshop's designers next SAVES A STAGE AND CHANGES SOMETHING, the workshop
+    returns to PRE_SUBMISSION for a fresh pass — the edit IS the resubmission. That is the rule
+    ``services/records.resubmit_status`` has run over six record types since it was written, applied
+    to a record whose content is rows rather than columns; see ``services/design_workshops`` and its
+    ``_content_changed``.
+
+    **COMMENTS ARE MANDATORY**, a 422 if blank, byte-for-byte the refusal ``api/routes/review.py``
+    gives for the six record types. A send-back with no sentence tells a designer only that a
+    fortnight of work is wrong.
+
+    **THREE WRITES, ONE TRANSACTION.** The feedback row, the workshop's status and decision cache,
+    and the ReviewLog entry. ``api/routes/review.py`` records why the decision and the log of it are
+    one write: a failure in the gap leaves a report sent back with nothing anywhere saying who sent
+    it back, when, or on what note, and "a status change with no log entry is a decision that
+    appears to have made itself". The delegates are re-resolved against ``tx``, because ``db.tx()``
+    hands back a DIFFERENT client.
+
+    A SECOND OFFICER SENDING BACK AN ALREADY-SENT-BACK REPORT IS A 200 AND A ROW, not a refusal: the
+    transition is a no-op, the status does not move, and their sentence joins the register for the
+    same round. Two officers reading one report at the same time is the ordinary case, and refusing
+    the second would lose their correction to a race.
+
+    **THE STATUS CHECK ABOVE IS ADVISORY AND THE ONE ON THE WRITE IS NOT.** ``_under_review_or_422``
+    reads a row fetched before the transaction opened, so it answers about the workshop as it stood
+    three round trips ago; the write itself carries the status in its WHERE through
+    :func:`_apply_while_under_review`, and a zero count is the designer having withdrawn the report
+    from inspection in the gap. That function's docstring carries the whole argument, including why
+    the 422 rolls the suggestion row back with it.
+
+    NO ReviewLog ROW IS EVER WRITTEN FOR THE RESUBMISSION that follows. ``ReviewLog.status`` is
+    ``RecordStatus``, which has no ``PRE_SUBMISSION``; the resubmission is the designer's edit and is
+    already recorded by the stage rows' own timestamps and provenance.
+    """
+    record = await load_inspectable_workshop_or_404(workshop_id, current_user)
+    current = _under_review_or_422(record)
+    refusal = design_workshop_review_loop.transition_refusal(
+        current, design_workshop_review_loop.NEEDS_REVISION, by_decision_route=True
+    )
+    if refusal:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=refusal)
+    try:
+        plans = design_workshop_review_loop.send_back_plans(
+            workshop_id=workshop_id,
+            round=int(getattr(record, "submissionRound", 0) or 0),
+            actor_id=current_user.id,
+            at=datetime.now(UTC),
+            note=payload.note,
+            stage_key=payload.stageKey,
+            field_key=payload.fieldKey,
+            recorded_at=_parse_recorded_at(payload.recordedAt),
+        )
+    except design_workshop_review_loop.InspectionRuleViolation as refused:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(refused)
+        ) from refused
+    async with db.tx() as tx:
+        # THE ORDER IS THE ORDER A PERSON WOULD TELL IT IN, and inside one transaction it is
+        # cosmetic: the suggestion, then the decision it caused, then the audit entry. All three or
+        # none of them.
+        await _apply(tx, plans.feedback)
+        if not await _apply_while_under_review(tx, plans.workshop):
+            # SOMEBODY MOVED IT BETWEEN THE READ AT THE TOP AND THIS WRITE — in practice the
+            # designer withdrawing the report from inspection. Raising here rolls the whole
+            # transaction back, INCLUDING the suggestion row: a correction filed against a round
+            # that is no longer open would sit in the register naming a cycle nobody can answer,
+            # because `round` is copied at write time and never recomputed. The officer gets the
+            # same sentence they would have got a second earlier, which is the true one.
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=design_workshop_review_loop.NOT_UNDER_REVIEW_REFUSAL,
+            )
+        # RE-READ INSIDE THE TRANSACTION. `update_many` answers a count, and `_feedback_answer`
+        # needs the row as this transaction has just left it — read outside, it would be the row as
+        # some other transaction has left it.
+        updated = await tx.designworkshop.find_unique(where={"id": workshop_id})
+        await _apply(tx, plans.log)
+    return await _feedback_answer(updated)

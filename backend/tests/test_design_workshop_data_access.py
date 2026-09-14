@@ -83,11 +83,20 @@ EVERY_ROLE = (
     "DESIGNER",
     "INSPECTOR",
     "PROFESSOR",
+    "ASSISTANT_DIRECTOR",
+    "REGIONAL_DIRECTOR",
+    "MINISTRY_ADMIN",
     "ADMIN",
     "MASTER_ADMIN",
 )
 
-MAY_VIEW = ("PROFESSOR", "ADMIN", "MASTER_ADMIN")
+# THE THREE DIRECTORATE TIERS JOIN `MAY_VIEW` AND NOT `MAY_EXPORT`, and the split is the point.
+# `DESIGN_WORKSHOP_DATA_VIEW_ROLES` gained them (deps.py:448) because reading the repository is what
+# an inspecting officer is for; `DESIGN_WORKSHOP_DATA_EXPORT_ROLES` did not, because carrying every
+# workshop's data off the platform stays with the two admin tiers. Both are SETS, so neither follows
+# from a rank — adding a tier to one says nothing about the other, which is why this file asserts
+# the pair separately rather than deriving one from a floor.
+MAY_VIEW = ("PROFESSOR", "ASSISTANT_DIRECTOR", "REGIONAL_DIRECTOR", "MINISTRY_ADMIN", "ADMIN", "MASTER_ADMIN")
 MAY_EXPORT = ("ADMIN", "MASTER_ADMIN")
 
 

@@ -538,7 +538,7 @@ internal fun fieldWorkshopLabel(workshop: WorkshopDetailDto): String =
     workshop.title.trim().ifBlank { "Untitled workshop" }
 
 /**
- * The word that says a workshop is over, or null for one that is still open.
+ * The word for where a workshop stands, or null for a plain open one that needs no word.
  *
  * IT IS A PREFIX ON THE HINT AND NOT A `disabled` ROW — §2.6. A designer legitimately corrects a
  * record already filed under a submitted workshop and the server does not refuse it, so disabling
@@ -548,13 +548,37 @@ internal fun fieldWorkshopLabel(workshop: WorkshopDetailDto): String =
  * Soft-deleted workshops are a different answer and never reach here: `list_design_workshops`
  * excludes them unless `includeDeleted`, which is admin-only and which no picker may send. A picker
  * that offered one would file live fieldwork into the trash.
+ *
+ * ── THE THREE ADDED 2026-09-14, AND WHY THIS IS NO LONGER "THE WORD THAT SAYS IT IS OVER" ──────
+ *
+ * The review loop put PRE_SUBMISSION, NEEDS_REVISION and APPROVED into `DesignWorkshopStatus` on
+ * 2026-09-13 and this function knew about none of them, so all three fell to the `else` arm and
+ * printed NO WORD AT ALL: a report sitting on an inspecting officer's desk, and a report an officer
+ * has sent back with four corrections, were both drawn exactly like a draft nobody has opened.
+ *
+ * Adding them forced a split that should have existed anyway. [designWorkshopStanding] sorted on
+ * `word != null`, so "has a word" and "is finished with" were one fact — fine while the only two
+ * words were Submitted and Archived, and WRONG the moment NEEDS_REVISION needs a word, because a
+ * report sent back for corrections is the most open thing in the list and would have sorted to the
+ * bottom with the archived ones. The word and the standing are now two functions, and the standing
+ * is stated as its own `when` rather than derived from the presence of a string.
+ *
+ * AN UNRECOGNISED STATUS STILL GETS NO WORD. A value from a newer server must never be dressed as
+ * one this build understands, and `WorkshopOptionsTest` pins that.
  */
 internal fun designWorkshopStatusWord(status: String): String? = when (status.trim().uppercase()) {
+    // Handed in and waiting on the inspecting officers. NOT "Submitted": since 2026-09-13 that word
+    // means the approved report has gone to the office, and the two must not share a label on a
+    // screen where a designer is deciding what to do next.
+    "PRE_SUBMISSION" -> "In pre-submission"
+    // The one a designer must not be able to miss — officers have asked for corrections.
+    "NEEDS_REVISION" -> "Needs revision"
+    "APPROVED" -> "Approved"
     "SUBMITTED" -> "Submitted"
     "ARCHIVED" -> "Archived"
-    // DRAFT, IN_PROGRESS, COMPLETE — still open, and an unrecognised status from a newer server is
-    // treated as open rather than dressed as one of the two words above. An unknown value must never
-    // be printed as a known one.
+    // DRAFT, IN_PROGRESS, COMPLETE — still open and needing no word, and an unrecognised status from
+    // a newer server is treated the same way rather than dressed as one of the five above. An unknown
+    // value must never be printed as a known one.
     else -> null
 }
 
@@ -645,7 +669,20 @@ internal fun fieldWorkshopOccurrence(workshop: WorkshopDetailDto): String =
  * reader cannot do anything with.
  */
 internal fun designWorkshopStanding(workshop: DesignWorkshopDto): Int =
-    if (designWorkshopStatusWord(workshop.status) == null) 0 else 1
+    // STATED, NOT DERIVED FROM [designWorkshopStatusWord]. This read `if (word == null) 0 else 1`
+    // until 2026-09-14, which made "this row carries a word" and "this workshop is finished with"
+    // one fact. They are not: a report in PRE_SUBMISSION can be withdrawn, and one in NEEDS_REVISION
+    // is waiting on the designer reading this very list — both need a word in the hint and both
+    // belong with the open ones, at the top. Only the two terminal states sort down. APPROVED joins
+    // them: its remaining moves are the sanctioning authority's, so no new fieldwork is filed under
+    // it by the person holding this phone.
+    when (workshop.status.trim().uppercase()) {
+        "SUBMITTED", "ARCHIVED", "APPROVED" -> 1
+        // DRAFT, IN_PROGRESS, COMPLETE, PRE_SUBMISSION, NEEDS_REVISION — and an unknown status from a
+        // newer server, which sorts with the open ones rather than being hidden at the bottom of a
+        // list by a build that does not recognise it.
+        else -> 0
+    }
 
 /** The same, over a field workshop's window. */
 internal fun fieldWorkshopStanding(workshop: WorkshopDetailDto, today: LocalDate = LocalDate.now()): Int =

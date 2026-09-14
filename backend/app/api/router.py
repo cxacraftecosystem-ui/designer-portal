@@ -4,6 +4,7 @@ from app.api.routes import (
     access,
     ai_keys,
     analytics,
+    annual_plan,
     app_release,
     artisans,
     asr_models,
@@ -16,6 +17,7 @@ from app.api.routes import (
     design_ratings,
     design_workshop_access,
     design_workshop_inspections,
+    design_workshop_oversight,
     design_workshop_viewers,
     design_workshops,
     designers,
@@ -31,6 +33,7 @@ from app.api.routes import (
     questionnaire_forms,
     reference,
     review,
+    sanction_orders,
     search,
     secrets,
     settings,
@@ -51,6 +54,17 @@ api_router.include_router(users.router)
 # the designer roster is now the narrower of the two lists: it says who is empanelled, this one says
 # who may reach the product. See app/services/access_roster.py for why they are two tables.
 api_router.include_router(access.router)
+# The ministry's annual directory of planned workshops — /api/annual-plan. Mounted next to the two
+# rosters because all three are administrative REGISTERS rather than fieldwork: they say what the
+# institution intends, not what anybody recorded.
+#
+# IT IS NOT `/design-workshops` AND MUST NOT BE MOUNTED UNDER IT. A row on this prefix is a line in a
+# document and not a workshop; a shared prefix would put it one `/{workshop_id}` away from
+# `load_workshop_or_404`, which is the function the whole access model of the real table rests on,
+# and would invite the next reader to widen that loader to fit. See app/services/annual_plan.py's
+# module docstring for the full boundary — the list of surfaces a planned row must never be counted
+# on — and tests/test_annual_plan_is_not_a_workshop.py, which asserts it surface by surface.
+api_router.include_router(annual_plan.router)
 api_router.include_router(artisans.router)
 api_router.include_router(crafts.router)
 api_router.include_router(workshops.router)
@@ -102,11 +116,38 @@ api_router.include_router(design_workshop_access.router)
 # See app/services/design_workshop_inspectors.py, whose header sets out why read-only here has to be
 # structural rather than a flag on a row.
 api_router.include_router(design_workshop_inspections.router)
+# THE SIXTH SCOPE, /api/design-workshop-oversight: the Assistant Director's and Regional Director's
+# read-only surface, the Ministry Admin's screen that assigns it, and the artisan-list .xlsx import.
+# ITS OWN PREFIX, for the deciding reason the four routers above give — every caller of the
+# officer's routes is BY DEFINITION somebody load_workshop_or_404 turns away (an officer is not in
+# DESIGN_WORKSHOP_ROLES), and a route sharing the /design-workshops prefix invites the next reader
+# to widen that shared loader to fit, which grants STAGE WRITES rather than reads.
+#
+# **THIS POSITION IS STYLISTIC AND IS NOT LOAD-BEARING, AND THAT IS WORTH SAYING OUT LOUD HERE**
+# because three of the comments above this one describe an ordering hazard and a reader will
+# reasonably assume this line inherits it. It does not: /design-workshop-oversight and
+# /design-workshops are DIFFERENT PREFIXES, and Starlette matches the whole path rather than a
+# prefix, so GET /design-workshops/{workshop_id} cannot swallow anything this router declares
+# however the two are registered. It is mounted here because it is the sixth member of the same
+# family and reading them together is the fastest way to understand any of them. The real ordering
+# hazard for this feature is INSIDE its own module, where every literal path is declared before
+# GET /{workshop_id} — see that file's ⚠ paragraph. Moving this line will not fix a 404 on this
+# prefix, and treating it as the cause wastes a debugging session.
+api_router.include_router(design_workshop_oversight.router)
 # The empanelment roster that gates a designer's sign-in, and the profile their reports are
 # prefilled from. Next to design_workshops because it is the same product surface, and separate
 # from users because the two facts it keeps are deliberately not the role column — see
 # app/services/designers.py.
 api_router.include_router(designers.router)
+# The ministry's sanction register, /api/sanction-orders. NEXT TO `designers` because it writes the
+# same two rosters and the same profile, and ON ITS OWN PREFIX because the workshop it creates is
+# created BY the sanction and not by an admin pressing "new workshop": /design-workshops carries a
+# GET /{workshop_id} that swallows any literal path mounted after it (see the note above
+# design_workshop_viewers), and — the deciding reason — the caller here is by definition somebody
+# `assert_can_create_design_workshops` turns away. A route sharing that prefix invites the next
+# reader to widen DESIGN_WORKSHOP_CREATOR_ROLES, which is the set tests/test_design_workshop_gate.py
+# reads the create route's SOURCE to protect.
+api_router.include_router(sanction_orders.router)
 api_router.include_router(dashboard.router)
 # The cross-workshop comparison, /api/analytics/design-workshops. On its own prefix rather than
 # under /design-workshops, which is already shared by two routers and carries a GET /{workshop_id}

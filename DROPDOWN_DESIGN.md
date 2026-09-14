@@ -241,6 +241,11 @@ browse and re-link `:6826`, `:11160`, `:11536`, `:11549`; feedback `:11029`; adm
 empty state. `SearchScreen.kt:1355-1400` — a hand-rolled anchored menu duplicating
 `SelectTrigger` + `DropdownMenu` with `"▾"` and `"✓"` string glyphs. `AccessRosterScreen.kt:864-878`
 — a raw `DropdownMenu` over the eight-tier role ladder, sitting **exactly on `SEARCH_THRESHOLD`**.
+*(True of the 2026-08-29 tree this document was written against. The ladder went to **eleven** on
+2026-09-13, so that picker now sits ABOVE the threshold rather than on it — which changes what this
+row is asking for: it is no longer a borderline case that could go either way, it is a list the
+shared picker would give a filter box to. The finding stands; the reasoning that made it marginal
+does not.)*
 Filter chips, which are not dropdowns: `AccessRosterScreen.kt:757-780`,
 `DesignerRosterScreen.kt:325-329`, `WorkshopScope.kt`, `DataBrowserScreen.kt`, `MapScreen.kt`.
 
@@ -304,7 +309,10 @@ verified individually across `:4169-4226`: `email`, `status`, `admitRole`, `join
 
 **The eight-tier ladder**, canonical at `backend/app/core/deps.py:44-88`: `CROWDSOURCE_VOLUNTEER` 10,
 `FIELD_CONTRIBUTOR` 20, `RESEARCHER` 30, `DESIGNER` 35, `INSPECTOR` 37, `PROFESSOR` 40, `ADMIN` 50,
-`MASTER_ADMIN` 60. Labels at `deps.py:90-103`, mirrored byte-exact at
+`MASTER_ADMIN` 60. *(As the 2026-08-29 tree stood. **ELEVEN since 2026-09-13**: `ASSISTANT_DIRECTOR`
+42, `REGIONAL_DIRECTOR` 45 and `MINISTRY_ADMIN` 48 were inserted between PROFESSOR and ADMIN. The
+line pins below are this document's record of that tree and are deliberately not re-pinned; read
+`ROLE_RANK` for the present ladder.)* Labels at `deps.py:90-103`, mirrored byte-exact at
 `frontend/lib/permissions.ts:104-117`, with the picker order at `:119-122` — `ROLES_BY_RANK`,
 *"All roles, highest tier first — the display order for pickers"* — and in three Kotlin tables. Five
 copies, machine-diffed by `backend/tests/test_role_ladder_parity.py`.

@@ -30,9 +30,10 @@
  * `lib/api.buildQuery` drops entirely, so the parameter is ABSENT on the wire and the server reads
  * absence as "do not filter" (`services/record_filters.resolve_workshop_ids:65-67`). There is
  * deliberately no "select all" anywhere: every `MultiSelectDropdown` in `RosterFilterBar` passes
- * `bulk={false}`. Ticking all eight tiers is NOT the same request as ticking none — it excludes
- * every row whose tier is the platform default — and that is the point of the reserved ninth
- * option, not an accident of it.
+ * `bulk={false}`. Ticking all eleven tiers is NOT the same request as ticking none — it excludes
+ * every row whose tier is the platform default — and that is the point of the reserved twelfth
+ * option, not an accident of it. (Eight and ninth until 2026-09-13; the count is written out here
+ * only to make the sentence readable, and `roleOptions` builds the list from `ROLES_BY_RANK`.)
  *
  * **(ii) SUSPENDED AND REJECTED ROWS STAY LISTED BY DEFAULT.** `emptyRosterFilters` narrows
  * nothing, on either screen, and that is asserted rather than assumed. The rule is already written
@@ -106,7 +107,7 @@ export type RosterDir = "asc" | "desc";
  * standing chip ("at the default joining tier"), so it is a value an admin can already SEE and must
  * therefore be able to filter for.
  *
- * WITHOUT THIS OPTION, ticking all eight tiers silently excludes every default-tier admission — the
+ * WITHOUT THIS OPTION, ticking all eleven tiers silently excludes every default-tier admission — the
  * identical failure `UNASSIGNED_WORKSHOP` was invented for (`services/record_filters.py:47-53`) and
  * the one `WorkshopScopeSelect`'s "Not linked to a workshop" row closes. A reserved word rather than
  * an empty string, for that module's reason: an empty string is what a blank control sends, and
@@ -472,7 +473,7 @@ export const DESIGNER_STANDING_OPTIONS: RosterOption[] = [
 ];
 
 /**
- * THE EIGHT-TIER LADDER PLUS ONE RESERVED ROW, highest tier first.
+ * THE ELEVEN-TIER LADDER PLUS ONE RESERVED ROW, highest tier first.
  *
  * ── IT ITERATES `ROLES_BY_RANK` IN FULL AND MUST NEVER USE `assignableRoles` ─────────────────────
  * `lib/permissions.assignableRoles` narrows the ladder to tiers at or below the caller's own, which
@@ -486,11 +487,19 @@ export const DESIGNER_STANDING_OPTIONS: RosterOption[] = [
  * in the numeric gaps (as INSPECTOR was, at 37) puts it in the right place here without an edit.
  *
  * ── AND IT IS NOT SEARCHABLE ────────────────────────────────────────────────────────────────────
- * Eight roles is exactly `SEARCH_THRESHOLD`, so left to the option count this control would open as
- * a plain list on the day a tier is removed and grow a filter box on the day one is added. It is a
- * closed vocabulary a reader takes in at a glance — the case the threshold exists to separate from
- * a corpus — so `RosterFilterBar` passes `searchable={false}` outright. Android's picker overrides
- * it for the same reason and cites the same number.
+ * `RosterFilterBar` passes `searchable={false}` outright, and THAT OVERRIDE IS NOW LOAD-BEARING
+ * RATHER THAN BELT-AND-BRACES. This paragraph read "Eight roles is exactly `SEARCH_THRESHOLD`, so
+ * left to the option count this control would open as a plain list on the day a tier is removed and
+ * grow a filter box on the day one is added" — true while the ladder was eight, and quietly false
+ * since 2026-09-13: eleven tiers plus the reserved row is TWELVE options, comfortably over the
+ * threshold of 8, so without the override this control would already have grown a filter box.
+ * The reason for the override never depended on the count and is unchanged: this is a closed
+ * vocabulary a reader takes in at a glance — the case `SEARCH_THRESHOLD` exists to separate from a
+ * corpus of records — and a filter box over twelve fixed words invites hunting where reading is
+ * faster. Because it now overrules a genuinely long list, the call site owes it a `capHint` under
+ * the rule in §11.5 of the frontend reference if this list ever passes `RENDER_CAP`; twelve is a
+ * long way short of eighty, so nothing is owed today. Android's picker overrides it for the same
+ * reason.
  */
 export function roleOptions(kind: RosterKind): RosterOption[] {
   const ladder = ROLES_BY_RANK.map((role: UserRole) => ({ value: role, label: ROLE_LABELS[role] }));

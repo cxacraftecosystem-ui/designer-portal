@@ -7,8 +7,10 @@ import { AnimatePresence, motion, useMotionValueEvent, useScroll } from "framer-
 import {
   Activity,
   BadgeCheck,
+  Binoculars,
   Boxes,
   Brush,
+  CalendarRange,
   ChartNoAxesCombined,
   ClipboardCheck,
   ClipboardList,
@@ -17,6 +19,7 @@ import {
   Eye,
   EyeOff,
   FileSearch,
+  FileSignature,
   FileSpreadsheet,
   FolderTree,
   Gauge,
@@ -36,6 +39,7 @@ import {
   Share2,
   SlidersHorizontal,
   Star,
+  UserCheck,
   UserCog,
   Users,
   Wrench,
@@ -51,15 +55,19 @@ import { usePendingAccessCount } from "@/components/hooks/usePendingAccessCount"
 import { OPEN_TASK_BADGE_HREF, openTaskBadgeSentence } from "@/components/tasks/openTaskCount";
 import { HoveredLink, MenuItem } from "@/components/ui/navbar-menu";
 import { WorkshopLogo } from "@/components/WorkshopLogo";
+import { canRecordSanctionOrders } from "@/lib/sanctionOrders";
 import {
+  canAssignWorkshopOversight,
   canCreateRecords,
   canDownloadDataset,
   canInspectDesignWorkshops,
   canManageAccessRoster,
+  canManageAnnualPlan,
   canManageCrafts,
   canManageDesignerRoster,
   canManageUsers,
   canManageWorkshops,
+  canReadWorkshopOversight,
   canReview,
   canRunDesignWorkshops,
   isAdmin,
@@ -218,6 +226,25 @@ export const NAV_ITEMS: NavItem[] = [
     group: "Record",
     can: canRunDesignWorkshops,
     gate: "get_current_user on the list; _require_designer on every write (narrowed here to can_run_design_workshops)"
+  },
+  // IN "Record" AND NOT IN "Admin", and the group is the decision. An officer recording a sanction
+  // order is CREATING the thing the whole product hangs off — the entry above opens a workshop by
+  // hand, this one opens the same workshop from the ministry's own instrument. Filing it under
+  // Admin would hide it from every account below `isAdmin`, which is the three directorate tiers it
+  // exists for: `isAdmin` is SET membership {ADMIN, MASTER_ADMIN} and no rank reaches it.
+  //
+  // GATED ON A RANK FLOOR, which no other entry in this list is. Every sibling here is a set or a
+  // capability boolean; `canRecordSanctionOrders` is `hasRank(user, "ASSISTANT_DIRECTOR")`, so
+  // reasoning down the ladder gives the right answer for this row and the wrong one for its
+  // neighbours. The predicate is imported from `lib/sanctionOrders` rather than from
+  // `lib/permissions` for the import-cycle reason written on the ROUTE_GUARDS row there.
+  {
+    href: "/sanction-orders",
+    label: "Sanction orders",
+    icon: FileSignature,
+    group: "Record",
+    can: canRecordSanctionOrders,
+    gate: "require_sanction_recorder"
   },
   // A questionnaire the designer authored themselves, from the .xlsx pro-forma. DISTINCT FROM "Take
   // interview" above, which is the one shared artisan questionnaire every researcher answers — two
@@ -408,6 +435,50 @@ export const NAV_ITEMS: NavItem[] = [
     can: canInspectDesignWorkshops,
     gate: "assert_inspection_surface (INSPECTION_ROLES, services/design_workshop_inspectors.py)"
   },
+
+  // ── THE SIXTH SCOPE, BOTH HALVES, ADDED 2026-09-13 ────────────────────────────────────────────
+  //
+  // TWO ROWS AND NOT ONE, because they gate DISJOINT audiences and neither is the other's superset.
+  // A Ministry Admin sees both (they choose who monitors a workshop AND may be assigned one); an
+  // ADMIN sees only the first; an Assistant Director or Regional Director sees only the second.
+  //
+  // `canAssignWorkshopOversight` AND NOT `isAdmin` on the first row: a MINISTRY_ADMIN is its primary
+  // user and is not an admin by any predicate in this file. `canReadWorkshopOversight` AND NOT a
+  // rank floor on the second: an ADMIN outranks every officer tier and is REFUSED there by name, so
+  // a floor would draw the row for every admin and land them on a padlock.
+  //
+  // A REGIONAL DIRECTOR IS REFUSED THE FIRST ROW AND THEY OUTRANK AN ASSISTANT DIRECTOR. The
+  // supervised do not choose the supervisor — the same rule the row above states one rung down.
+  //
+  // THE `ROUTE_GUARDS` ROWS EXIST and were written in the same change as these entries rather than
+  // owed afterwards: `/officers` and `/officers/monitored` in `lib/permissions.ts`, with their twin
+  // rows in `docs/PERMISSIONS.md` §5. Four pages in this family shipped with the entry hidden and
+  // the URL open; a hidden nav entry has never been a guard.
+  //
+  // `Binoculars` AND `UserCheck`, AND `Eye` IS DELIBERATELY LEFT ALONE — it is Review's icon two
+  // rows down, and one glyph for two destinations in one menu is a menu a reader has to read twice.
+  //
+  // THE LABELS ARE THE WEB OWNER'S AND NOT ANDROID `actionTitle` STRINGS, and this list's docstring
+  // above claims labels are the handset's — so the exception is stated rather than left to be
+  // noticed. Android has no oversight screen in the working tree as of 2026-09-13
+  // (`grep -rl ASSISTANT_DIRECTOR android/app/src/main` finds nothing), so there was nothing to copy
+  // and nothing to check. If the handset grows the screen, ITS name wins and these two change.
+  {
+    href: "/officers",
+    label: "Workshop oversight",
+    icon: UserCheck,
+    group: "Browse",
+    can: canAssignWorkshopOversight,
+    gate: "assert_may_assign_oversight (OVERSIGHT_ASSIGNER_ROLES, services/design_workshop_oversight.py)"
+  },
+  {
+    href: "/officers/monitored",
+    label: "Workshops I monitor",
+    icon: Binoculars,
+    group: "Browse",
+    can: canReadWorkshopOversight,
+    gate: "assert_oversight_surface (OFFICER_ROLES, services/design_workshop_oversight.py)"
+  },
   { href: "/tools?assign=1", label: "Assign tools to artisans", icon: Wrench, group: "Browse", can: canCreateRecords, gate: "get_current_user + owner/EDIT-grant/admin per artisan" },
 
   // Admin — capability holders below admin (professors, grantees) keep these permanently; admins,
@@ -424,6 +495,30 @@ export const NAV_ITEMS: NavItem[] = [
   // well as its tile on the hub.
   { href: "/admin/analytics", label: "Cross-workshop analytics", icon: ChartNoAxesCombined, group: "Admin", can: isAdmin, gate: "require_admin", adminSurface: true },
   { href: "/users", label: "Manage users", icon: UserCog, group: "Admin", can: canManageUsers, gate: "require_professor", adminSurface: true },
+  // THE MINISTRY'S ANNUAL PLAN. IT EARNS A NAV ENTRY where the designer roster immediately below
+  // deliberately does not, and the difference is what the screen IS. The roster is configuration an
+  // admin visits twice a year; this is a DESTINATION — a ministry administrator opens the directory
+  // to read it, to find the row for a district that has telephoned, and to open a workshop from a
+  // row when it is time. Cross-workshop analytics two rows up earns its entry on the same test.
+  //
+  // `adminSurface` IS DELIBERATELY ABSENT, and this is the only Admin-group entry without it. That
+  // flag means "admin chrome the admin-view toggle may hide", and the toggle only exists for an
+  // account `isAdmin` admits (see `shouldShow` below: `item.adminSurface && isAdmin(user)`). A
+  // MINISTRY_ADMIN is not `isAdmin` and therefore has no toggle — so flagging this row would hide
+  // the directory from every ADMIN browsing with admin view off while leaving it visible to the
+  // tier below them. A rule that fires for exactly the wrong half of its audience.
+  //
+  // `CalendarRange` AND NOT AN ICON ALREADY ON THIS LIST. The admin hub's own comment records what
+  // two identical icons on one grid cost: an admin ends up on the wrong screen twice before reading
+  // the labels. `ClipboardList`, `FileSpreadsheet` and `ChartNoAxesCombined` are all taken.
+  {
+    href: "/annual-plan",
+    label: "Annual plan",
+    icon: CalendarRange,
+    group: "Admin",
+    can: canManageAnnualPlan,
+    gate: "require_annual_plan_manager"
+  },
   // NO DESIGNER ROSTER ENTRY HERE. It is reached from the settings hub — "Settings hub" above —
   // and from nowhere else. The roster is administrative configuration rather than a place anybody
   // navigates to in the course of a day's work, and it used to sit here, on the dashboard AND in

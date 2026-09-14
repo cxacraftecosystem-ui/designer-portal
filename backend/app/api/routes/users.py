@@ -392,50 +392,114 @@ _CREATOR_RELATIONS: tuple[tuple[str, str, str], ...] = (
     ("questionnaire", "ownerId", "questionnaire"),
     ("questionnaireformentry", "createdById", "questionnaire sitting"),
     ("reviewlog", "reviewerId", "review"),
+    # The OFFICER's half of the sanction register. `SanctionOrder.createdById` is `onDelete:
+    # Restrict`, so an officer who has recorded one order is as undeletable as anyone who has
+    # created a record — and without this row the admin would get the generic "referenced by records
+    # kept for research" sentence with no number and no noun.
+    ("sanctionorder", "createdById", "sanction order"),
 )
 
 
-async def _records_created_by(user_id: str) -> list[tuple[str, int]]:
-    """``[(noun, count)]`` for everything this account made, biggest first, empties dropped."""
+#: Rows this account is NAMED ON without having created them — a SECOND list, and the reason it is
+#: second is THE VERB.
+#:
+#: :func:`_undeletable_detail`'s sentence is "This account created …", and a designer named on a
+#: sanction order created nothing: the ministry officer did. Folding the relation into
+#: :data:`_CREATOR_RELATIONS` would print "This account created 1 sanction order", which is false
+#: about the one account it is describing, on the one screen where an admin is deciding what to do
+#: with somebody's record.
+#:
+#: A second sentence is the honest shape, and it is cheap. `SanctionOrder.designerUserId` is
+#: `onDelete: Restrict` exactly as `createdById` is, so BOTH are reachable reasons for the same 409,
+#: and an admin told only about the half that happens to be authorship has been sent on the first of
+#: two trips.
+_NAMED_ON_RELATIONS: tuple[tuple[str, str, str], ...] = (
+    ("sanctionorder", "designerUserId", "sanction order"),
+)
+
+
+async def _counts_over(
+    user_id: str, relations: tuple[tuple[str, str, str], ...]
+) -> list[tuple[str, int]]:
+    """``[(noun, count)]`` over one relation list, biggest first, empties dropped."""
     from app.services.concurrency import gather_reads
 
     counts = await gather_reads(
         *(
             db_model.count(where={column: user_id})
             for db_model, column in (
-                (getattr(db, model), column) for model, column, _noun in _CREATOR_RELATIONS
+                (getattr(db, model), column) for model, column, _noun in relations
             )
         )
     )
     named = [
         (noun, count)
-        for (_model, _column, noun), count in zip(_CREATOR_RELATIONS, counts, strict=True)
+        for (_model, _column, noun), count in zip(relations, counts, strict=True)
         if count
     ]
     return sorted(named, key=lambda pair: pair[1], reverse=True)
 
 
-def _undeletable_detail(owned: list[tuple[str, int]]) -> str:
+async def _records_created_by(user_id: str) -> list[tuple[str, int]]:
+    """``[(noun, count)]`` for everything this account made, biggest first, empties dropped."""
+    return await _counts_over(user_id, _CREATOR_RELATIONS)
+
+
+async def _records_naming(user_id: str) -> list[tuple[str, int]]:
+    """``[(noun, count)]`` for everything that NAMES this account without having been made by it."""
+    return await _counts_over(user_id, _NAMED_ON_RELATIONS)
+
+
+def _undeletable_detail(
+    owned: list[tuple[str, int]], named_on: list[tuple[str, int]] | None = None
+) -> str:
     """The 409's message: what is in the way, how much of it, and what to do instead.
 
     The count is here because it is the fact that decides the admin's next move — three records
     is a reassignment, four hundred is a deactivation — and an admin who is not told the number
     has to go and count it themselves.
+
+    **TWO SENTENCES, BECAUSE THERE ARE TWO VERBS AND ONLY ONE OF THEM IS AUTHORSHIP.** "This account
+    created …" is true of everything in :data:`_CREATOR_RELATIONS` and false of everything in
+    :data:`_NAMED_ON_RELATIONS`: a designer named on a sanction order created nothing, the ministry
+    officer did. Both relations are `onDelete: Restrict`, so both are reachable reasons for the same
+    409 — and an admin told only about the half that happens to be authorship has been sent on the
+    first of two trips.
+
+    ``named_on`` DEFAULTS TO None RATHER THAN TO ``[]`` so that no existing caller changes meaning
+    by omission, and the generic branch below is guarded on BOTH lists: a designer who has created
+    nothing and is named on one order must not be answered with "referenced by records that are kept
+    for research" — no number, no noun — which is the exact failure this parameter exists to remove.
     """
-    if not owned:
-        # The relation that refused is one this list does not name. Say so plainly rather than
-        # inventing a number: the remedy is the same either way.
+    named_on = named_on or []
+    if not owned and not named_on:
+        # The relation that refused is one neither list names. Say so plainly rather than inventing
+        # a number: the remedy is the same either way.
         return (
             "This account is referenced by records that are kept for research, so it cannot be "
             "deleted. Deactivate it instead, or ask a master admin to reassign what it owns."
         )
-    parts = [f"{count} {noun}{'s' if count != 1 else ''}" for noun, count in owned[:3]]
-    if len(owned) > 3:
-        parts.append("and more")
-    return (
-        f"This account created {', '.join(parts)}. Those records are kept for research, so the "
-        "account cannot be deleted. Deactivate it instead, or ask a master admin to reassign them."
-    )
+    sentences: list[str] = []
+    if owned:
+        parts = [f"{count} {noun}{'s' if count != 1 else ''}" for noun, count in owned[:3]]
+        if len(owned) > 3:
+            parts.append("and more")
+        sentences.append(
+            f"This account created {', '.join(parts)}. Those records are kept for research, so the "
+            "account cannot be deleted. Deactivate it instead, or ask a master admin to reassign "
+            "them."
+        )
+    for noun, count in named_on:
+        sentences.append(
+            f"It is also named on {count} {noun}{'s' if count != 1 else ''}, which record who the "
+            "ministry issued them to."
+            if owned
+            else (
+                f"This account is named on {count} {noun}{'s' if count != 1 else ''}, which record "
+                "who the ministry issued them to, so it cannot be deleted. Deactivate it instead."
+            )
+        )
+    return " ".join(sentences)
 
 
 @router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -471,7 +535,9 @@ async def delete_user(user_id: str, current_user: Any = Depends(require_admin)) 
         # when a designer leaves the project.
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=_undeletable_detail(await _records_created_by(user_id)),
+            detail=_undeletable_detail(
+                await _records_created_by(user_id), await _records_naming(user_id)
+            ),
         ) from exc
     # A deleted account must stop authenticating immediately, not when a TTL happens to expire.
     invalidate_cached_user(user_id)

@@ -159,13 +159,18 @@ of eight, because the two tiers added since are pre-launch and unoccupied as wel
 that reading; eleven since 2026-09-13, and the three directorate tiers are unoccupied as well, so the
 finding itself is unchanged and only the denominator moved.)
 
-**This table is a snapshot of a six-tier ladder, and the ladder is now eight.** Two tiers were added
-after the 2026-07-27 measurement above: `DESIGNER` (rank 35) on **2026-08-07** by
-`backend/prisma/migrations/20260807120000_designer_role_roster_profile`, and `INSPECTOR` (rank 37,
-labelled "Inspector / Reviewer") on **2026-08-27**. Neither has a row here and **no count has been
-invented for either** — the six figures sum to the measured total of 20 accounts, which is the whole
-population as it stood, not evidence about tiers that did not yet exist. Anyone re-running this count
-must query **eight** roles and expect eight rows. §9.1 describes the current ladder.
+**This table is a snapshot of a six-tier ladder, and the ladder is now eleven.** Five tiers were
+added after the 2026-07-27 measurement above: `DESIGNER` (rank 35) on **2026-08-07** by
+`backend/prisma/migrations/20260807120000_designer_role_roster_profile`, `INSPECTOR` (rank 37,
+labelled "Inspector / Reviewer") on **2026-08-27**, and `ASSISTANT_DIRECTOR` (42),
+`REGIONAL_DIRECTOR` (45) and `MINISTRY_ADMIN` (48) on **2026-09-13**. None of them has a row here and
+**no count has been invented for any of them** — the six figures sum to the measured total of 20
+accounts, which is the whole population as it stood, not evidence about tiers that did not yet exist.
+Anyone re-running this count must query **eleven** roles and expect eleven rows. §9.1 describes the
+current ladder. (This paragraph said "now eight" and "**eight** roles" until 2026-09-14, one release
+after the directorate tiers landed — the snapshot above was correctly labelled and it was the
+sentence CORRECTING it that went stale, which is the failure mode of every hand-kept count in this
+repository and the reason §9.1 derives its own.)
 
 ### 2.3 Media
 

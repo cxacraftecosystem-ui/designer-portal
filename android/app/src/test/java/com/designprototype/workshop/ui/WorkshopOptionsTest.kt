@@ -316,11 +316,65 @@ class WorkshopOptionsTest {
         assertTrue(options.single { it.value == "w2" }.hint!!.startsWith("Submitted"))
     }
 
-    /** An unrecognised status from a newer server reads as open rather than being dressed as one of the two. */
+    /** An unrecognised status from a newer server reads as open rather than being dressed as one of the five. */
     @Test
     fun `an unknown status is not printed as a known one`() {
         assertNull(designWorkshopStatusWord("SOME_FUTURE_STATE"))
         assertEquals(0, designWorkshopStanding(dw("w1", status = "SOME_FUTURE_STATE")))
+    }
+
+    /**
+     * EVERY MEMBER OF `DesignWorkshopStatus` IS ANSWERED, and the three the review loop added on
+     * 2026-09-13 are the reason this test exists.
+     *
+     * They fell to the `else` arm for a day: a report on an inspecting officer's desk, and a report
+     * an officer had sent back with corrections, were drawn in the picker exactly like a draft
+     * nobody had opened. Listing the statuses HERE rather than deriving them is deliberate — this
+     * client has no enum to derive from, `status` is a plain `String` off the wire, so a hand-written
+     * list is the only thing that can notice a member going unanswered. Add a status to the server's
+     * enum, add a row here.
+     */
+    @Test
+    fun `every design workshop status gets the word it should`() {
+        assertNull(designWorkshopStatusWord("DRAFT"))
+        assertNull(designWorkshopStatusWord("IN_PROGRESS"))
+        assertNull(designWorkshopStatusWord("COMPLETE"))
+        assertEquals("In pre-submission", designWorkshopStatusWord("PRE_SUBMISSION"))
+        assertEquals("Needs revision", designWorkshopStatusWord("NEEDS_REVISION"))
+        assertEquals("Approved", designWorkshopStatusWord("APPROVED"))
+        assertEquals("Submitted", designWorkshopStatusWord("SUBMITTED"))
+        assertEquals("Archived", designWorkshopStatusWord("ARCHIVED"))
+    }
+
+    /**
+     * A REPORT SENT BACK FOR CORRECTIONS SORTS WITH THE OPEN ONES, not with the finished ones.
+     *
+     * `designWorkshopStanding` used to be `if (statusWord == null) 0 else 1`, which tied "carries a
+     * word in the hint" to "is finished with". Those are one fact only while the words are Submitted
+     * and Archived. NEEDS_REVISION is the counter-example that breaks the tie: it is the most open
+     * state a report can be in — somebody is waiting on the designer holding this phone — and under
+     * the derived rule it would have sorted to the bottom of the picker beside the archived rounds
+     * the moment it was given the word it needs. PRE_SUBMISSION is the same argument: it is
+     * withdrawable, so it is not over.
+     */
+    @Test
+    fun `a report in the review loop sorts with the open workshops and not with the closed ones`() {
+        assertEquals(0, designWorkshopStanding(dw("w", status = "NEEDS_REVISION")))
+        assertEquals(0, designWorkshopStanding(dw("w", status = "PRE_SUBMISSION")))
+        // APPROVED is terminal for the person holding this handset: both of its remaining moves are
+        // the sanctioning authority's, so no new fieldwork is filed under it here.
+        assertEquals(1, designWorkshopStanding(dw("w", status = "APPROVED")))
+        assertEquals(1, designWorkshopStanding(dw("w", status = "SUBMITTED")))
+        assertEquals(1, designWorkshopStanding(dw("w", status = "ARCHIVED")))
+
+        val options = designWorkshopOptions(
+            listOf(
+                dw("approved", "Approved round", status = "APPROVED", startDate = "2026-08-01"),
+                dw("sent-back", "Sent back", status = "NEEDS_REVISION", startDate = "2026-01-01"),
+            )
+        )
+        assertEquals(listOf("sent-back", "approved"), options.map { it.value })
+        assertTrue(options.single { it.value == "sent-back" }.hint!!.startsWith("Needs revision"))
     }
 
     /**

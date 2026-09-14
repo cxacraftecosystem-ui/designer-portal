@@ -143,14 +143,35 @@ ROLE_RANK: dict[str, int] = {
     #
     # WHAT IT DELIBERATELY DOES NOT BUY. ``is_admin`` is SET MEMBERSHIP on MASTER_ADMIN and ADMIN and
     # not a rank floor, so 42 is not an admin and cannot become one by moving: no record deletes, no
-    # account creation or deletion, no task assignment, no workshop-access grants, no viewer or
-    # inspector appointment, no usage aggregates, no design-workshop export, no /admin route tree and
-    # no managed API keys. Every design-workshop gate is set membership too, so this tier neither
-    # runs a workshop nor starts one — exactly PROFESSOR's position. Do NOT `fix` that by adding a
-    # directorate tier to ``DESIGN_WORKSHOP_ROLES``: membership there confers stage WRITES through
+    # account DELETION, no task assignment, no inspector appointment, no usage aggregates, no
+    # design-workshop export, no /admin route tree and no managed API keys. Every design-workshop
+    # gate is set membership too, so this tier neither runs a workshop nor starts one — exactly
+    # PROFESSOR's position. Do NOT `fix` that by adding a directorate tier to
+    # ``DESIGN_WORKSHOP_ROLES``: membership there confers stage WRITES through
     # ``load_workshop_or_404(..., for_edit=True)``, which performs no role check of its own. What
     # this tier DOES get is READ of design-workshop stage data, granted separately and deliberately
     # through ``DESIGN_WORKSHOP_DATA_VIEW_ROLES`` below, where the argument is written down.
+    #
+    # AND ONE NAMED EXCEPTION, WHICH THIS COMMENT DENIED UNTIL 2026-09-14 AND WHICH THE CODE HAS
+    # ALLOWED SINCE THE SANCTION REGISTER LANDED. The three clauses struck from the sentence above —
+    # "account creation", "workshop-access grants", "viewer appointment" — are exactly what
+    # ``POST /api/sanction-orders`` does, and its gate is ``services/sanction_orders.
+    # can_record_sanction_orders``, a RANK FLOOR at this tier. Recording a ministry sanction order
+    # mints the named designer's ``User`` row, writes their ``AccessRoster`` admission, writes their
+    # ``DesignWorkshopViewer`` row and hands the officer a 72-hour first-password link for it. That
+    # is the owner's decision and the whole point of the feature (a sanctioned designer starts the
+    # same morning, without an officer having to find an admin first); leaving this comment saying
+    # the opposite made the ladder's own documentation false about the one tier it was describing.
+    #
+    # THE EXCEPTION IS BOUNDED AND THE BOUND IS WHERE TO LOOK BEFORE WIDENING ANY OF THIS. It creates
+    # an account for SOMEBODY ELSE only — ``_refuse_if_the_officer_named_themselves`` 422s an order
+    # whose designer address canonicalises to the recording officer's own mailbox, because this tier
+    # is outside ``DESIGN_WORKSHOP_ROLES`` and would otherwise be issuing itself, through a puppet
+    # account, the stage writes the paragraph above says it does not have. The account is always
+    # marked ``SanctionOrder.accountCreated``, and the register row names the officer. None of the
+    # OTHER struck-through capabilities follow: this tier still cannot create an account at
+    # ``POST /api/users``, still cannot decide the access queue, still cannot appoint an inspector,
+    # and still cannot open the viewers panel on any workshop.
     "ASSISTANT_DIRECTOR": 42,
     # 45 — the middle directorate tier, and the exact midpoint of the free 41-49 band.
     #

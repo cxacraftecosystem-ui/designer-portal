@@ -38,9 +38,12 @@ import type { UserRole } from "@/lib/types";
  *
  * So the ORDER and the NAMES come from `ROLES_BY_RANK` / `ROLE_LABELS`, the COUNT in the heading and
  * the `aria-label` is spelled from `TIERS_LOW_TO_HIGH.length` (see `NUMBER_WORD`), and only the
- * sentence of copy for each tier lives here. Typed as `Record<UserRole, string>`, a NINTH tier
- * added to `UserRole` fails `tsc` in this file until somebody writes its line — ninth and not
- * eighth since 2026-08-27, because INSPECTOR landed that day and is already written in below.
+ * sentence of copy for each tier lives here. Typed as `Record<UserRole, string>`, a TWELFTH tier
+ * added to `UserRole` fails `tsc` in this file until somebody writes its line — twelfth and not
+ * ninth since 2026-09-13, because ASSISTANT_DIRECTOR (42), REGIONAL_DIRECTOR (45) and
+ * MINISTRY_ADMIN (48) landed that day and are already written in below. Do not read the ordinal as
+ * the invariant: the invariant is that the count is `TIERS_LOW_TO_HIGH.length` and this sentence is
+ * the only thing in the file that has to be re-counted by hand.
  *
  * THE FIRST DRAFT OF THIS REWRITE DERIVED THE ROWS AND LEFT THE COUNT WRITTEN OUT BY HAND, in the
  * heading and the `aria-label`, under this same paragraph promising the miscount was now a build

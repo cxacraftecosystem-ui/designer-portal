@@ -352,3 +352,152 @@ def test_prose_cells_are_wrapped_and_given_room(workbook_bytes: bytes) -> None:
     assert ws.column_dimensions["B"].width >= 60, "the transcript column is too narrow to read"
     assert (ws.row_dimensions[2].height or 0) > 15, "the transcript row was left one line tall"
     assert (ws.row_dimensions[2].height or 0) <= 409, "Excel rejects a row taller than 409"
+
+
+# --------------------------------------------------------------------------------------------
+# THE ANNUAL-PLAN WORKBOOKS, HELD TO THE SAME SEVEN INVARIANTS.
+# --------------------------------------------------------------------------------------------
+#
+# Every invariant above is asserted over workbooks THIS SUITE BUILDS. A workbook it does not build
+# is a workbook none of them covers — which is exactly how a new writer comes to call
+# ``ws.cell(...)`` or ``ws.append(...)`` directly and ships an .xlsx that Excel offers to repair.
+# The annual-plan pro-forma and the annual-plan export are the two newest, so they are built here
+# with the same worst-case strings the report workbook is given: a control byte, a lone surrogate,
+# the Unicode noncharacters, a literal leading "=", and a value past the 32767-character ceiling.
+
+WORST = DIRTY_NOTE + " =SUM(A1:A9) " + "अ" * 40_000
+
+
+def _annual_plan_books() -> dict[str, bytes]:
+    from datetime import date
+
+    from app.services.annual_plan_xlsx import (
+        build_annual_plan_pro_forma,
+        build_annual_plan_workbook,
+    )
+
+    return {
+        "annual plan pro-forma": build_annual_plan_pro_forma(),
+        "annual plan export": build_annual_plan_workbook(
+            plan_year=2026,
+            rows=[
+                {
+                    "workshopNo": WORST,
+                    "plannedTitle": WORST,
+                    "workshopKind": "DESIGN_PROTOTYPE_DEVELOPMENT",
+                    "craftName": WORST,
+                    "clusterName": WORST,
+                    "state": WORST,
+                    "district": WORST,
+                    "venue": WORST,
+                    "plannedStartDate": date(2026, 3, 12),
+                    "plannedEndDate": date(2026, 3, 26),
+                    "implementingAgency": WORST,
+                    "sponsor": WORST,
+                    "notes": WORST,
+                }
+            ],
+        ),
+    }
+
+
+@pytest.fixture(scope="module")
+def annual_plan_parts() -> dict[str, dict[str, ET.Element]]:
+    parsed: dict[str, dict[str, ET.Element]] = {}
+    for label, payload in _annual_plan_books().items():
+        archive = zipfile.ZipFile(BytesIO(payload))
+        parsed[label] = {
+            name: ET.fromstring(archive.read(name))
+            for name in archive.namelist()
+            if name.endswith((".xml", ".rels"))
+        }
+    return parsed
+
+
+def test_every_annual_plan_xml_part_parses() -> None:
+    """Parsing IS the assertion Excel makes. "Excel found unreadable content" on a ministry's own
+    pro-forma is a support call this product cannot answer remotely."""
+    for label, payload in _annual_plan_books().items():
+        archive = zipfile.ZipFile(BytesIO(payload))
+        for name in archive.namelist():
+            if not name.endswith((".xml", ".rels")):
+                continue
+            try:
+                ET.fromstring(archive.read(name))
+            except ET.ParseError as exc:  # pragma: no cover - the message is the point
+                pytest.fail(f"{label}: {name} is not well-formed XML: {exc}")
+
+
+def test_no_illegal_codepoint_reaches_an_annual_plan_workbook() -> None:
+    """Raw or as a numeric reference — either way the part stops being XML. ``_put``'s ``_sanitise``
+    is the only thing between a pasted control byte and a file that will not open."""
+    for label, payload in _annual_plan_books().items():
+        archive = zipfile.ZipFile(BytesIO(payload))
+        for name in archive.namelist():
+            if not name.endswith((".xml", ".rels")):
+                continue
+            text = archive.read(name).decode("utf-8")
+            found = _ILLEGAL.search(text)
+            assert found is None, f"{label}: {name} carries U+{ord(found.group()):04X}"
+            for ref in _CHAR_REF.finditer(text):
+                assert not _ILLEGAL.match(chr(int(ref.group(1)))), f"{label}: {name} {ref.group()}"
+
+
+def test_no_annual_plan_text_cell_was_written_as_a_formula(annual_plan_parts) -> None:
+    """A venue a ministry typed beginning "=" is TEXT. Written as <f>, Excel evaluates it, fails,
+    and then offers to repair the file."""
+    for label, parts in annual_plan_parts.items():
+        for name, tree in parts.items():
+            if not name.startswith("xl/worksheets/sheet"):
+                continue
+            for cell in tree.iter(f"{MAIN}c"):
+                formula = cell.find(f"{MAIN}f")
+                assert formula is None, f"{label}: {name} {cell.get('r')} is a formula"
+
+
+def test_no_annual_plan_cell_exceeds_the_excel_character_ceiling(annual_plan_parts) -> None:
+    """The parser clips at its FieldSpec caps, but the WRITER must hold the line independently: an
+    export renders whatever is in the column, and a column filled before the caps existed is
+    exactly the row somebody exports."""
+    for label, parts in annual_plan_parts.items():
+        for name, tree in parts.items():
+            if not name.startswith("xl/worksheets/sheet"):
+                continue
+            for cell in tree.iter(f"{MAIN}c"):
+                total = sum(len(t.text or "") for t in cell.iter(f"{MAIN}t"))
+                assert total <= MAX_CELL_CHARS, f"{label}: {name} {cell.get('r')} holds {total}"
+
+
+def test_no_annual_plan_rich_text_run_is_empty(annual_plan_parts) -> None:
+    for label, parts in annual_plan_parts.items():
+        for name, tree in parts.items():
+            if not name.startswith("xl/worksheets/sheet"):
+                continue
+            for cell in tree.iter(f"{MAIN}c"):
+                for run in cell.iter(f"{MAIN}r"):
+                    text = run.find(f"{MAIN}t")
+                    assert text is not None and text.text, f"{label}: {name} {cell.get('r')}"
+
+
+def test_annual_plan_sheet_titles_are_legal_and_unique(annual_plan_parts) -> None:
+    for label, parts in annual_plan_parts.items():
+        titles = [s.get("name", "") for s in parts["xl/workbook.xml"].iter(f"{MAIN}sheet")]
+        for title in titles:
+            assert title, f"{label}: a sheet was given an empty title"
+            assert len(title) <= 31, f"{label}: {title!r} is over Excel's 31-character limit"
+            assert not set(title) & TITLE_BAD, f"{label}: {title!r} carries a forbidden character"
+            assert title.lower() != "history", f"{label}: 'History' is a title Excel reserves"
+        lowered = [t.lower() for t in titles]
+        assert len(set(lowered)) == len(lowered), f"{label}: duplicate titles {titles}"
+
+
+def test_an_equals_sign_in_a_ministrys_venue_survives_the_export() -> None:
+    """Pinning the type back to text must not mangle the text to dodge the inference."""
+    from app.services.annual_plan_xlsx import build_annual_plan_workbook
+
+    payload = build_annual_plan_workbook(
+        plan_year=2026, rows=[{"workshopNo": "DPW/2026/017", "venue": "=> behind the DIC office"}]
+    )
+    wb = load_workbook(BytesIO(payload))
+    values = [c.value for c in wb["Annual plan"][2]]
+    assert "=> behind the DIC office" in values

@@ -293,7 +293,8 @@ Both `/admin/access` and `/admin/designers` are flat lists today. Add filtering
 and sorting on **web and Android**:
 
 - **date** — added / requested / decided / joined / first-seen, as a **range**
-- **role(s)** — multi-select over the eight-tier ladder; for the access list this
+- **role(s)** — multi-select over the eleven-tier ladder (eight when this item was
+  written; the three directorate tiers landed 2026-09-13); for the access list this
   is `admitRole`, for the designer roster it is the linked account's role
 - **status** — `AccessStatus` (ACTIVE/PENDING/REJECTED/SUSPENDED) and the designer
   roster's active/suspended

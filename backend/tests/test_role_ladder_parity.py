@@ -220,6 +220,74 @@ MIRRORS: tuple[Mirror, ...] = (
         ),
         enforced_by="frontend/e2e/role-ladder-parity-unit.spec.ts (labels, spelling and key order)",
     ),
+    # ── frontend, the two OVERSIGHT tuples ──────────────────────────────────────────────────────
+    #
+    # Both are `partial` rather than `closed`, which is the whole point: the failure a new tier
+    # produces here is a QUESTION — which side of each predicate does it belong on — and not a defect
+    # report. `absent` is where that answer gets written down.
+    #
+    # THEY ARE ALSO THE TWO PREDICATES IN THIS CLIENT WHOSE REFUSALS ARE NOT MONOTONIC IN RANK, so
+    # neither `absent` set can be derived by reading a floor off the ladder: a REGIONAL_DIRECTOR (45)
+    # is absent from the assigner set while a MINISTRY_ADMIN (48) is in it, and an ADMIN (50) is
+    # absent from the officer set while three tiers beneath it are in it.
+    Mirror(
+        path="frontend/lib/permissions.ts",
+        binding="OVERSIGHT_ASSIGNER_ROLES",
+        kind="partial",
+        pattern=r"export const OVERSIGHT_ASSIGNER_ROLES: readonly UserRole\[\] = \[([\s\S]*?)\n\];",
+        absent=frozenset(
+            {
+                "CROWDSOURCE_VOLUNTEER",
+                "FIELD_CONTRIBUTOR",
+                "RESEARCHER",
+                "DESIGNER",
+                "INSPECTOR",
+                "PROFESSOR",
+                "ASSISTANT_DIRECTOR",
+                "REGIONAL_DIRECTOR",
+            }
+        ),
+        why=(
+            "Who may name the designer, the Assistant Director and the Regional Director on a "
+            "design & prototype workshop, and upload that workshop's artisan list. Mirrors "
+            "`OVERSIGHT_ASSIGNER_ROLES` in services/design_workshop_oversight.py. "
+            "A REGIONAL_DIRECTOR IS IN `absent` AND THEY OUTRANK AN ASSISTANT DIRECTOR THEY MIGHT "
+            "BE ASKED TO NAME. That is the rule rather than an omission: the supervised must not "
+            "choose the supervisor. A new tier defaulting into either side of this by nobody "
+            "having thought about it is exactly what `partial` exists to stop — offered wrongly it "
+            "hands somebody the power to choose their own supervisor; absent wrongly, a ministry "
+            "post reaches a screen that refuses it and the officer concludes the deployment is "
+            "broken."
+        ),
+    ),
+    Mirror(
+        path="frontend/lib/permissions.ts",
+        binding="OFFICER_ROLES",
+        kind="partial",
+        pattern=r"export const OFFICER_ROLES: readonly UserRole\[\] = \[([\s\S]*?)\n\];",
+        absent=frozenset(
+            {
+                "CROWDSOURCE_VOLUNTEER",
+                "FIELD_CONTRIBUTOR",
+                "RESEARCHER",
+                "DESIGNER",
+                "INSPECTOR",
+                "PROFESSOR",
+                "ADMIN",
+                "MASTER_ADMIN",
+            }
+        ),
+        why=(
+            "The officer's own read surface — the workshops a Ministry Admin has assigned this "
+            "account to supervise. Mirrors `OFFICER_ROLES` in "
+            "services/design_workshop_oversight.py. "
+            "ADMIN AND MASTER_ADMIN ARE IN `absent` ON PURPOSE, which makes this the second "
+            "non-monotonic rule in the client: `assert_oversight_surface` answers them a 403 BY "
+            "NAME, because an admin scoped by their own oversight rows sees an empty page and "
+            "reads it as a broken deployment. A tier added to this list without that argument "
+            "being re-made would be offered a menu entry, a route and an empty page."
+        ),
+    ),
     # ── frontend, rendered ──────────────────────────────────────────────────────────────────────
     Mirror(
         path="frontend/components/hero/AccessLadder.tsx",

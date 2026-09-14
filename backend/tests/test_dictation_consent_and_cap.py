@@ -118,6 +118,13 @@ _SUMMARY_COLUMNS = (
     "deletedAt",
     "dictationConsentAt",
     "dictationConsentById",
+    # THE PRE-SUBMISSION LOOP'S FOUR (2026-09-13). `submissionRound` is set to 0 below rather than
+    # left None, because it is the one column here that is NOT NULL in the schema and a None would
+    # be a row Postgres cannot produce.
+    "reviewNotes",
+    "reviewedById",
+    "reviewedAt",
+    "submissionRound",
 )
 
 
@@ -130,6 +137,9 @@ def _workshop_row(**overrides):
     columns = dict.fromkeys(_SUMMARY_COLUMNS)
     columns["id"] = "wsp_1"
     columns["dictationConsent"] = "NOT_RECORDED"
+    # Zero means "never handed in", which is what every workshop in the database said on the day
+    # the column landed and what the schema's own default says.
+    columns["submissionRound"] = 0
     columns.update(overrides)
     return SimpleNamespace(**columns)
 

@@ -28,7 +28,11 @@ import type { User, UserRole } from "@/lib/types";
  * until a new tier is given its sentence. A SECOND rendered one hid from that sweep by saying SEVEN
  * rather than six: `app/login/page.tsx`'s `BRAND_POINTS` shipped "Seven-tier access control" past
  * INSPECTOR while the hero badge beside it, which speaks the same sentence from `TIER_COUNT_WORD`,
- * re-counted itself. It now reads Eight and carries a note saying it is hand-kept and why. What is
+ * re-counted itself. It shipped the identical miss a second time — "Eight-tier access control" past
+ * the three directorate tiers of 2026-09-13, corrected by hand on 2026-09-14 after a review found
+ * it — so it now reads Eleven and its note says, in as many words, that the comment has failed
+ * twice and that the repair is to move `TIER_COUNT_WORD` into a motion-free module rather than to
+ * write a better warning. What is
  * left is outside this client: `docs/PERMISSIONS.md`
  * and `SESSION_HANDOVER.md` say "six-tier" only to narrate that correction, `docs/RESEARCH_NOTES.md`
  * keeps a provenance-labelled six-row snapshot on purpose and says so, and the live miscount is
@@ -44,13 +48,29 @@ import type { User, UserRole } from "@/lib/types";
  * `.claude/skills/field-repo-frontend/SKILL.md`, were all on this list
  * and were each corrected in the INSPECTOR wave.
  *
- * TWO OF THOSE THREE ARE BACK ON THE LIST AS OF 2026-09-13, and they are named rather than silently
- * quoted, because this paragraph is the only place that tracks them: `backend/.env.example:184`
- * still reads "eight tiers as of 2026-08-27" and
- * `.claude/skills/field-repo-frontend/SKILL.md` still reads "**Eight**-tier ladder". Neither is read
- * by any check and neither belonged to the workstream that added the directorate tiers; both are one
- * word each. `backend/app/core/config.py` was on it
+ * TWO OF THOSE THREE WENT BACK ON THE LIST ON 2026-09-13, and they are named rather than silently
+ * quoted, because this paragraph is the only place that tracks them.
+ * `.claude/skills/field-repo-frontend/SKILL.md` §14.2 is OFF it again as of 2026-09-14: it now reads
+ * "**Eleven**-tier ladder" and enumerates all eleven ranks, which matters more than the other
+ * entries because every agent is told to load that file before any frontend work, so its count is
+ * the upstream source of the next fourteen copies of whatever it says.
+ * **`backend/.env.example:184` IS STILL ON IT** — it reads "eight tiers as of 2026-08-27", it is
+ * one word, and it was left standing on 2026-09-14 only because the lane that swept the rest was
+ * scoped out of `backend/`. It is read by no check. `backend/app/core/config.py` was on it
  * and should not have been: its "pre-six-tier behavior" dates an ERA, not the present ladder.
+ * RE-SWEPT 2026-09-14 with `grep -rniE "(eight|seven|six|nine|ten)[- ]tier|... tiers"` over every
+ * `.ts/.tsx/.py/.kt/.md/.mjs` in the tree: the live miscounts found and corrected that day were this
+ * client's `app/login/page.tsx` (RENDERED), `components/admin/rosterFilters.ts` (three comments, one
+ * of which had changed MEANING — eleven tiers plus the reserved row is twelve options, no longer
+ * "exactly `SEARCH_THRESHOLD`"), `components/hero/AccessLadder.tsx`'s "a NINTH tier" ordinal,
+ * `docs/README.md`'s index row, `docs/RESEARCH_NOTES.md`'s correcting sentence (the snapshot itself
+ * was correctly labelled; it was the sentence saying "the ladder is now eight" that had rotted), the
+ * frontend skill file, and dated notes on `DROPDOWN_DESIGN.md` and `IMPLEMENTATION_PLAN.md`.
+ * `RECON_FINDINGS.md` was deliberately left alone: it pins itself to commit `7c60e81` in its own
+ * first sentence, so its counts are a record and re-counting them would destroy it — the same rule
+ * `docs/tools/check-docs.mjs` applies to `AUDIT-2026-08-15.md`. Three backend test files
+ * (`test_access_roster.py`, `test_design_workshop_data_access.py`, `test_role_ladder_parity.py`)
+ * still carry "eight tiers" in prose or in an assertion message and were out of that lane's scope.
  * Counted 2026-08-27 by grepping `six-tier|seven-tier|six tiers|seven tiers` over the tree, and
  * RE-COUNTED the same day with `git grep` after the Android correction landed: every surviving
  * hit is a sentence narrating one of these corrections, the deliberate `RESEARCH_NOTES.md`
@@ -440,6 +460,28 @@ export const ROUTE_GUARDS: RouteGuard[] = [
       "Who may sign in to this application at all — and the queue of people waiting for a decision — is settled by admins and the master admin. The queue is a list of named people who tried to get in, so reading it is restricted for the same reason deciding it is."
   },
   {
+    /*
+      The ministry's annual directory of planned workshops.
+
+      A TOP-LEVEL ROUTE AND NOT `/admin/…`, AND THAT IS A DECISION RATHER THAN A FILING PREFERENCE.
+      `/admin` gates on `isAdmin`, which is SET membership ({ADMIN, MASTER_ADMIN}) on both sides of
+      the wire, and the hub page itself re-checks it in the component — so nesting this under it
+      would refuse MINISTRY_ADMIN, the one tier the directory exists for, twice over: once at the
+      guard and once at the shell. It is the same trap `/sanction-orders` two rows down avoids, and
+      for the same reason: a rule that is WIDER than `/admin` must not sit underneath it.
+
+      READ IS THE SAME GATE AS WRITE. The plan is a list of named places and dates the ministry has
+      not announced yet, so reading it is administrative work as much as correcting it is — the same
+      reasoning the designer roster's and the access roster's rules carry above.
+    */
+    path: "/annual-plan",
+    can: canManageAnnualPlan,
+    gate: "require_annual_plan_manager",
+    title: "Ministry administrator access required",
+    message:
+      "The annual plan of workshops — the ministry's directory of what is to be held this year, and where — is uploaded and corrected by the ministry administrator and above. Workshops that have already been opened are on Design workshops."
+  },
+  {
     // The page now holds two things with two different owners, so the ROUTE is admin and the halves
     // gate themselves. Key VALUES stay master-admin (every /secrets route is require_master_admin,
     // and the page renders ApiKeysPanel only for them); RANKING the transcription providers is
@@ -651,6 +693,89 @@ export const ROUTE_GUARDS: RouteGuard[] = [
     title: "Inspector / Reviewer access required",
     message:
       "The inspection surface belongs to the Inspector / Reviewer tier, and is scoped to the workshops an admin has assigned to that account. Designers and admins read design & prototype workshops on Design workshops instead; an admin chooses who inspects a workshop on Manage workshop access."
+  },
+  {
+    /*
+      THE SIXTH SCOPE, HALF ONE — THE ASSIGNMENT SCREEN. A Ministry Admin names a workshop's
+      designer, its Assistant Director and its Regional Director here, and uploads its artisan list.
+
+      ITS ROW WAS WRITTEN IN THE SAME CHANGE AS THE PAGE rather than owed afterwards. Four pages in
+      this family have now shipped with the nav entry hidden and the URL open —
+      `/design-workshops`, `/design-review`, `/sketches-and-prototypes` and, until the inspector
+      wave, the inspection surface — each by a maintainer who had read this table and found nothing
+      beside the design-workshop tree. A hidden nav entry has never been a guard.
+
+      A SIBLING OF `/design-workshops` AND NOT A CHILD, which is a permission fact rather than a
+      filing one, and the API's prefix is separate for the same reason: every caller of every route
+      on `/design-workshop-oversight` is by definition somebody `load_workshop_or_404` turns away,
+      and a route sharing the workshop prefix invites the next reader to "fix" the inconsistency by
+      widening that shared loader — which grants STAGE WRITES. `routeMatches` compares whole
+      segments, so the `/design-workshops` row cannot reach this path.
+
+      A DESIGNER IS REFUSED, WHICH IS THE ROW'S ENTIRE CONTENT, and so is a REGIONAL DIRECTOR even
+      though they outrank an Assistant Director. See `canAssignWorkshopOversight`.
+    */
+    path: "/officers",
+    can: canAssignWorkshopOversight,
+    gate: "assert_may_assign_oversight (OVERSIGHT_ASSIGNER_ROLES, services/design_workshop_oversight.py)",
+    title: "Ministry Admin access required",
+    message:
+      "Naming the designer, the Assistant Director and the Regional Director on a design & prototype workshop — and uploading that workshop's artisan list — is done by a Ministry Admin, an admin or the master admin. An Assistant Director or Regional Director reads the workshops they have been assigned on Workshops I monitor."
+  },
+  {
+    /*
+      THE SIXTH SCOPE, HALF TWO — THE OFFICER'S OWN READ SURFACE.
+
+      DECLARED AFTER `/officers` AND THAT ORDER DOES NOT MATTER, because `routeGuardFor` picks the
+      LONGEST matching path rather than the first: `/officers/monitored` is longer than `/officers`,
+      so it wins for this page and for every id beneath it. Said out loud because the two rules gate
+      DISJOINT audiences — an admin may reach the first and not the second, an Assistant Director the
+      second and not the first — so a reader who assumed first-match-wins would conclude the officer's
+      own page refuses every officer.
+
+      AN ADMIN IS REFUSED HERE and that mirrors the server rather than narrowing it —
+      `assert_oversight_surface` answers them a 403 by name. So the message names the other door,
+      which it has to: a refusal that says only "you may not" to an admin, on a READ surface, in a
+      product where admins read everything, reads as a broken deployment rather than as a rule.
+    */
+    path: "/officers/monitored",
+    can: canReadWorkshopOversight,
+    gate: "assert_oversight_surface (OFFICER_ROLES, services/design_workshop_oversight.py)",
+    title: "Officer access required",
+    message:
+      "Workshops I monitor lists the design & prototype workshops a Ministry Admin has assigned to this account as its Assistant Director or Regional Director. Designers and admins read design & prototype workshops on Design workshops instead; a Ministry Admin chooses who monitors a workshop on Workshop oversight."
+  },
+  {
+    /*
+      THE OFFICER'S REGISTER. A SIBLING OF THE WORKSHOP TREE AND NOT A CHILD OF /admin, and both
+      halves of that are deliberate.
+
+      NOT UNDER /admin, even though it is administrative in feel. `/admin` gates on `isAdmin`, the
+      SET {ADMIN, MASTER_ADMIN}; this gates on rank >= 42, which is WIDER. `routeGuardFor` picks the
+      longest matching path, so a nested rule would technically win — and the hub page itself would
+      still refuse a ministry officer, leaving them a route they may open and no way to reach it. A
+      wider rule nested under a narrower prefix is a trap the next reader has to re-derive.
+
+      A SIBLING RATHER THAN A CHILD OF /design-workshops, for the same reason /design-review and
+      /design-workshop-inspections are siblings: every caller here is by definition somebody
+      `assert_can_create_design_workshops` turns away, and a shared prefix invites widening the set
+      that gate reads.
+
+      THE PREDICATE AND THE SENTENCE ARE WRITTEN OUT HERE rather than referenced, which is the one
+      thing on this row that is not the house pattern. `lib/sanctionOrders.ts` exports the twin
+      `canRecordSanctionOrders` and `SANCTION_ORDER_REFUSAL` that the nav entry and the page use,
+      and it imports `hasRank` from THIS file — so a `can:` pointing back at that module would be an
+      import cycle whose `const` half would land in the temporal dead zone. The two copies are held
+      byte-for-byte equal by `backend/tests/test_sanction_order_gate.py`, which reads both files off
+      disk; lifting them into an exported predicate here is a welcome follow-up, and the test is
+      what makes doing it safe.
+    */
+    path: "/sanction-orders",
+    can: (user) => hasRank(user, "ASSISTANT_DIRECTOR"),
+    gate: "require_sanction_recorder",
+    title: "Ministry officer access required",
+    message:
+      "Recording a sanction order is a ministry officer's act — Assistant Director and above. It opens a workshop, creates the designer's account and issues their sign-in link, so it is not something a designer or a professor can do for themselves. Ask the officer who holds the order to record it; the workshop will appear in your list as soon as they do."
   },
   {
     path: "/design-workshops",
@@ -967,6 +1092,65 @@ export function canInspectDesignWorkshops(user: User | null | undefined) {
   return !!user && INSPECTION_ROLES.includes(user.role);
 }
 
+/**
+ * THE SIXTH SCOPE'S DOOR, HALF ONE: who may name the designer, the Assistant Director and the
+ * Regional Director on a design & prototype workshop — and who may upload that workshop's artisan
+ * list.
+ *
+ * A SET, mirroring `OVERSIGHT_ASSIGNER_ROLES` in
+ * `backend/app/services/design_workshop_oversight.py`, which is
+ * `frozenset({"MINISTRY_ADMIN", "ADMIN", "MASTER_ADMIN"})`.
+ *
+ * **A REGIONAL DIRECTOR IS REFUSED HERE, AND THEY OUTRANK AN ASSISTANT DIRECTOR.** Every rank
+ * instinct is wrong about this predicate, which is why it is a set and not `hasRank(user,
+ * "MINISTRY_ADMIN")` — the two happen to agree today and mean different things, and the day a tier
+ * lands between 45 and 48 the floor would admit it silently. "The supervised must not choose the
+ * supervisor" is the same rule `canInspectDesignWorkshops` states one rung down as "the inspected
+ * must not choose the inspector". An RD who should be able to assign is a MINISTRY_ADMIN, which is a
+ * role change an admin makes on /users — not a widening here.
+ *
+ * A DESIGNER IS REFUSED FOR THE SAME REASON, one rung the other way: a designer may not choose who
+ * supervises, inspects or is named on their own workshop.
+ */
+export const OVERSIGHT_ASSIGNER_ROLES: readonly UserRole[] = [
+  "MINISTRY_ADMIN",
+  "ADMIN",
+  "MASTER_ADMIN"
+];
+
+export function canAssignWorkshopOversight(user: User | null | undefined) {
+  return !!user && OVERSIGHT_ASSIGNER_ROLES.includes(user.role);
+}
+
+/**
+ * THE SIXTH SCOPE'S DOOR, HALF TWO: the officer's own read surface — the workshops a Ministry Admin
+ * has assigned this account to supervise.
+ *
+ * A SET WITH THREE MEMBERS, mirroring `OFFICER_ROLES` in
+ * `backend/app/services/design_workshop_oversight.py`.
+ *
+ * **AN ADMIN IS REFUSED HERE, AND THAT MIRRORS THE SERVER RATHER THAN NARROWING IT.**
+ * `assert_oversight_surface` answers an ADMIN and a MASTER ADMIN a 403 by name, for the reason
+ * `assert_inspection_surface` gives one scope over: scoped by their own oversight rows an admin sees
+ * an empty page and reads it as a broken deployment, and scoped by "everything, because they are an
+ * admin" this becomes a second full read of every workshop in the archive. So this is the second
+ * route rule in this client whose refusal is not monotonic in rank, and §2's ladder gives the wrong
+ * answer for it every time.
+ *
+ * MINISTRY_ADMIN IS IN BOTH SETS, deliberately: they choose who supervises a workshop AND they may
+ * be assigned one. The two are different acts on different screens, and neither predicate is the
+ * other's superset — an ADMIN may assign and may not be assigned.
+ */
+export const OFFICER_ROLES: readonly UserRole[] = [
+  "ASSISTANT_DIRECTOR",
+  "REGIONAL_DIRECTOR",
+  "MINISTRY_ADMIN"
+];
+
+export function canReadWorkshopOversight(user: User | null | undefined) {
+  return !!user && OFFICER_ROLES.includes(user.role);
+}
+
 /** Add, suspend and restore designers on the roster that gates their sign-in: Admin and above. */
 export function canManageDesignerRoster(user: User | null | undefined) {
   return isAdmin(user);
@@ -990,4 +1174,28 @@ export function canManageDesignerRoster(user: User | null | undefined) {
  */
 export function canManageAccessRoster(user: User | null | undefined) {
   return isAdmin(user);
+}
+
+/**
+ * Read and correct the ministry's annual directory of planned workshops. Mirrors
+ * `can_manage_annual_plan` in `backend/app/services/annual_plan.py` and the
+ * `require_annual_plan_manager` dependency in `backend/app/api/routes/annual_plan.py`.
+ *
+ * A RANK FLOOR AT MINISTRY_ADMIN, AND NOT `isAdmin`. Read this before "simplifying" it, because the
+ * two are not the same SHAPE. `isAdmin` here is set membership — `{"ADMIN", "MASTER_ADMIN"}`,
+ * exactly as it is on the server — so a Ministry Admin at rank 48 is NOT admitted by it, and this
+ * feature exists for that tier. Gating the directory on `isAdmin` would leave the ministry
+ * administrator unable to open their own ministry's plan, behind a refusal that reads as a bug.
+ *
+ * REGIONAL_DIRECTOR (45) AND ASSISTANT_DIRECTOR (42) ARE DELIBERATELY BELOW THE FLOOR. The annual
+ * plan is a national instrument issued once a year, and this table carries no per-region column an
+ * edit could be narrowed to — so the rank change that admits a regional director admits them to the
+ * whole of it. If regional editing is ever wanted it is a scope table, not a rank change. See
+ * `can_manage_annual_plan`'s docstring for the same argument at greater length.
+ *
+ * READ IS THE SAME GATE AS WRITE, for the reason {@link canManageAccessRoster} gives about its own
+ * queue: the plan is a list of named places and dates the ministry has not announced yet.
+ */
+export function canManageAnnualPlan(user: User | null | undefined) {
+  return hasRank(user, "MINISTRY_ADMIN");
 }

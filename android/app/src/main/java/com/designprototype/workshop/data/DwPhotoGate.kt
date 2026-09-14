@@ -462,9 +462,17 @@ object DwPhotoGate {
      * would destroy a village day's work rather than delay it.
      *
      * WHAT IT DELIBERATELY DOES NOT SAY, because it is not true today: that the workshop cannot be
-     * SUBMITTED. `PATCH /design-workshops/{id}` writes `status: "SUBMITTED"` behind an enum check
-     * with no completeness test anywhere, so promising a hard block would be this client inventing
-     * an enforcement that does not exist.
+     * HANDED IN. `PATCH /design-workshops/{id}` writes the forward status behind an enum check with
+     * no completeness test anywhere, so promising a hard block would be this client inventing an
+     * enforcement that does not exist. (This sentence named `status: "SUBMITTED"` until 2026-09-14.
+     * Since 2026-09-13 the designer's forward act writes `PRE_SUBMISSION` and SUBMITTED means the
+     * approved report has gone to the office — a status only the sanctioning authority's own route
+     * can write. The claim is unchanged and only the word moved: requirement 12 is explicit that a
+     * report may be handed in part-filled, and the server still consults no scorer on the
+     * transition. Nothing on this handset presses either button: there is no `@PATCH` for
+     * `design-workshops/{id}` anywhere in `WorkshopRepositoryApi`, so this is a description of what
+     * the web does, kept here because the sentence this comment governs is about what a designer can
+     * expect of the whole app and not of this screen.)
      *
      * ── TWO WORDINGS CORRECTED FROM `photoGate.ts`, BOTH OF WHICH THE WEB SHOULD COPY BACK ────
      *

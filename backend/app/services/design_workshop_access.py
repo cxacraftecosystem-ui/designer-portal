@@ -816,6 +816,11 @@ async def add_one_viewer(
 ) -> None:
     """Put exactly this one account on the workshop. **Adds; never removes.**
 
+    Its mirror is :func:`design_workshop_viewers.remove_one_viewer`, which takes one account OFF by
+    the same primary key. "Never removes" is a statement about THIS function's blast radius, not a
+    claim that nothing removes: a caller that wants a swap makes both calls, in that order, so the
+    workshop never passes through a moment with nobody on it.
+
     ONE ``create_many`` NAMING ONE ACCOUNT. The header carries the whole argument for why this is not
     ``replace_viewers``: a whole-set replace deletes whatever it did not see, so using it to add one
     person deletes a viewer a concurrent join-card redemption created and re-creates one an admin just

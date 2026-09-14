@@ -357,29 +357,90 @@ def test_an_inspector_is_refused_every_write_door_before_the_database(api, metho
     )
 
 
-def test_the_inspection_surface_offers_no_write_door_of_its_own(api):
-    """Every route an inspector can reach is a GET, checked over the router rather than by reading.
+#: THE TWO WRITE DOORS THIS SURFACE IS ALLOWED TO HAVE, AND THE WHOLE LIST.
+#:
+#: Until 2026-09-13 the answer was "none", and the assertion below was ``set(route.methods) ==
+#: {"GET"}`` with a message saying read-only here is structural rather than a policy note. **THE
+#: STRUCTURAL PROPERTY IS UNCHANGED AND THE SENTENCE IT WAS WRITTEN AS IS NOW TOO NARROW.** What the
+#: separation protects is that an inspector cannot touch the DESIGNER'S CONTENT — the 22 stages, the
+#: custom sections, the AI layers, the artisan's consent, the export ledger — and those are refused
+#: by ``_require_designer`` on another router, before the database, six times over, in
+#: ``WRITE_DOORS`` above. Nothing in this list can reach a ``DwStageEntry``:
+#: ``schemas/design_workshop_review_loop.InspectionWritePlan`` refuses every table but three BY
+#: CONSTRUCTION, and ``test_an_inspection_decision_cannot_be_written_into_a_stage_entry`` in
+#: ``test_design_workshop_review_loop.py`` asserts it.
+#:
+#: WHAT THE TWO DOORS WRITE. ``/feedback`` inserts one row of ``DwInspectionFeedback`` — an
+#: officer's correction suggestion, its round copied off the workshop — and moves no status.
+#: ``/send-back`` writes that row, the three decision-cache columns on the workshop and one
+#: ``ReviewLog`` entry, in one transaction. Neither writes a stage, and neither can be made to.
+#:
+#: A THIRD ENTRY HERE IS A PERMISSION DECISION AND NOT A REFACTOR. Read the header of
+#: ``app/services/design_workshop_inspectors.py`` before adding one, and say in this comment what
+#: the new door writes and why an inspector may write it.
+INSPECTOR_WRITE_DOORS = {
+    ("POST", "/design-workshop-inspections/{workshop_id}/feedback"),
+    ("POST", "/design-workshop-inspections/{workshop_id}/send-back"),
+}
+
+
+def test_the_inspection_surface_offers_only_the_two_write_doors_it_is_allowed(api):
+    """Every route an inspector can reach is a GET or one of two named POSTs, checked over the router.
 
     Walks the real dependency tree: a route gated by :func:`require_inspector` is one an inspector
-    can reach, and every one of those must be a GET. A route gated by ``require_admin`` may be
-    anything, because an admin is who administers this.
+    can reach. A route gated by ``require_admin`` may be anything, because an admin is who
+    administers this.
 
-    THIS IS THE ASSERTION THAT SURVIVES A NEW ROUTE. The parametrised refusals above cover the doors
-    that exist today; this one fails when somebody adds a POST to this router and hangs it on the
-    inspector's dependency — which is how a read-only surface acquires its first write.
+    THIS IS THE ASSERTION THAT SURVIVES A NEW ROUTE, and the amendment did not weaken it — it made
+    it name the exceptions. The parametrised refusals above cover the doors that exist on the
+    DESIGNER's router; this one fails when somebody adds a third write to THIS one and hangs it on
+    the inspector's dependency, which is how a read-and-a-note surface acquires a stage save.
     """
     for route in inspection_routes.router.routes:
         gates = _dependency_names(route)
         assert gates & {"require_inspector", "require_admin"}, (
             f"{route.path} is on the inspection router with neither door; every route here is "
-            f"either the inspector's own read surface or the admin's administration of it"
+            f"either the inspector's own surface or the admin's administration of it"
         )
-        if "require_inspector" in gates:
-            assert set(route.methods) == {"GET"}, (
-                f"{route.methods} {route.path} is reachable by an INSPECTOR and is not a GET. "
-                f"Read the header of app/services/design_workshop_inspectors.py before changing "
-                f"this test: read-only here is structural, not a policy note."
+        if "require_inspector" not in gates:
+            continue
+        for method in set(route.methods):
+            if method == "GET":
+                continue
+            assert (method, route.path) in INSPECTOR_WRITE_DOORS, (
+                f"{method} {route.path} is reachable by an INSPECTOR and is neither a GET nor one "
+                f"of the two doors this surface is allowed. Read the header of "
+                f"app/services/design_workshop_inspectors.py, then add it to INSPECTOR_WRITE_DOORS "
+                f"with the reason — an inspection is a read and a note, and nothing else."
             )
+
+
+def test_both_allowed_write_doors_actually_exist(api):
+    """The other direction, and without it the list above could name two routes that have gone.
+
+    An allow-list is only a constraint while its entries are real: two stale tuples would leave the
+    test passing over a router that had lost both writes, which is exactly the state this feature
+    was in before 2026-09-13 and is a state somebody should have to notice.
+    """
+    live = {
+        (method, route.path)
+        for route in inspection_routes.router.routes
+        for method in set(route.methods)
+        if method != "GET" and "require_inspector" in _dependency_names(route)
+    }
+    assert live == INSPECTOR_WRITE_DOORS
+
+
+def test_an_inspector_still_writes_no_workshop_content(api):
+    """The property the amendment above preserves, asserted where somebody reading it will look.
+
+    The two doors write a NOTE. Nothing on this router may write the report: the plan class refuses
+    every table but its three, and ``DwStageEntry`` is not one of them and cannot be added.
+    """
+    from app.schemas import design_workshop_review_loop as loop
+
+    assert loop.WRITABLE_TABLES == {"DesignWorkshop", "DwInspectionFeedback", "ReviewLog"}
+    assert "DwStageEntry" not in loop.WRITABLE_TABLES
 
 
 def _dependency_names(route: Any) -> set[str]:
@@ -438,6 +499,17 @@ class _Rows:
 
     async def find_unique(self, where: dict[str, Any], include: Any = None) -> Any:
         return next((row for row in self.rows if self._matches(row, where)), None)
+
+    async def find_first(self, where: dict[str, Any], include: Any = None) -> Any:
+        """The same answer over the same list.
+
+        ADDED FOR THE SIXTH SCOPE, whose key is ``(workshop, capacity)`` rather than
+        ``(workshop, user)`` — so "is this person on this workshop in any capacity" is a
+        ``find_first`` over the key's leading column rather than a ``find_unique`` on the key. The
+        delegate stays narrow either way: an unexpected clause still falls through ``_matches`` and
+        answers None rather than matching everything.
+        """
+        return await self.find_unique(where, include)
 
 
 class _Client:
@@ -512,6 +584,80 @@ def test_a_stranger_holds_neither(world):
     """The control for both: nothing here is answering yes to everybody."""
     assert asyncio.run(viewers.has_viewer_grant(WORKSHOP_ID, STRANGER_ID)) is False
     assert asyncio.run(inspectors.has_inspection_scope(WORKSHOP_ID, STRANGER_ID)) is False
+
+
+# --------------------------------------------------------------------------------------
+# 3b. THE SIXTH SCOPE CANNOT SEE THE FIFTH EITHER — and the fifth cannot see it
+#
+# Added 2026-09-13 with `DesignWorkshopOversight`, the Assistant Director / Regional Director
+# assignment. It is the SAME biconditional the viewer pair above asserts, one table further out,
+# and it is here rather than in the new feature's own file for the reason this module exists: the
+# claim is about what the INSPECTION predicate does when another access row exists, and a test that
+# lived with the other feature would be that feature agreeing with itself.
+# --------------------------------------------------------------------------------------
+
+
+OVERSEER_ID = "cminspectorgate0000000d"
+
+
+@pytest.fixture
+def sixth(world, monkeypatch: pytest.MonkeyPatch):
+    """The same workshop, now also carrying an OVERSIGHT row for a third account.
+
+    Built on ``world`` rather than beside it so all three tables are live at once — which is the
+    only state in which "the predicates cannot see each other" means anything.
+    """
+    from app.services import design_workshop_oversight as oversight
+
+    table = _Rows([SimpleNamespace(designWorkshopId=WORKSHOP_ID, userId=OVERSEER_ID)])
+    world.db.designworkshopoversight = table
+    monkeypatch.setattr(oversight, "db", world.db)
+    return SimpleNamespace(oversight=oversight, table=table)
+
+
+def test_an_oversight_row_does_not_satisfy_has_inspection_scope(sixth):
+    """An Assistant Director must never appear on the INSPECTOR's surface.
+
+    The two are different relationships: an inspector is an INDEPENDENT EXAMINER whose whole value
+    is that they did not work on the thing, while an AD is LINE MANAGEMENT. Folding them would hand
+    every officer the inspector's read surface — and, worse, would make
+    ``INSPECTION_ROLES``' import-time guard look like it was covering the change when it is not:
+    ASSISTANT_DIRECTOR is in neither that set nor ``DESIGN_WORKSHOP_ROLES``, so the RuntimeError
+    that guards the pair stays green while the scope silently widens.
+
+    The oversight is a row in a DIFFERENT TABLE, so the predicate cannot see it and does not have to
+    be taught not to. That is the whole design, asserted against the real function.
+    """
+    assert sixth.table.rows, "the fixture must actually hold an oversight row"
+    assert asyncio.run(inspectors.has_inspection_scope(WORKSHOP_ID, OVERSEER_ID)) is False
+    # The control: a real inspection row does satisfy it, so the assertion above is not passing
+    # because the predicate is broken for everybody.
+    assert asyncio.run(inspectors.has_inspection_scope(WORKSHOP_ID, INSPECTOR_ID)) is True
+
+
+def test_an_inspection_row_does_not_satisfy_has_oversight_scope(world, sixth):
+    """The other direction, and it is not symmetry for its own sake.
+
+    An inspector wandering onto the officer's list would make ``GET
+    /design-workshop-oversight/assigned`` a second, differently-shaped read of the same workshops —
+    two places to look when somebody has access they should not — and would tell a ministry screen
+    that somebody is SUPERVISING a workshop when what they are doing is examining it.
+    """
+    assert world.designworkshopinspector.rows, "the fixture must actually hold an inspection"
+    assert asyncio.run(sixth.oversight.has_oversight_scope(WORKSHOP_ID, INSPECTOR_ID)) is False
+    assert asyncio.run(sixth.oversight.has_oversight_scope(WORKSHOP_ID, OVERSEER_ID)) is True
+
+
+def test_a_viewer_row_does_not_satisfy_has_oversight_scope_either(sixth):
+    """The third pair, closing the triangle.
+
+    A co-designer holding a viewer row must not appear as the workshop's Assistant Director on a
+    document going to a ministry. This is the pair with no import-time guard behind it at all — the
+    viewer and oversight role sets are NOT disjoint (an ADMIN is in both ``DESIGN_WORKSHOP_ROLES``
+    and ``OVERSIGHT_ASSIGNER_ROLES``), so separation here rests entirely on the two tables.
+    """
+    assert asyncio.run(sixth.oversight.has_oversight_scope(WORKSHOP_ID, VIEWER_ID)) is False
+    assert asyncio.run(viewers.has_viewer_grant(WORKSHOP_ID, VIEWER_ID)) is True
 
 
 def test_the_two_clauses_are_different_expressions_over_different_relations():

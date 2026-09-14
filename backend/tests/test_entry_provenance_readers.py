@@ -34,11 +34,20 @@ record tables (no overlay), and it also reads ``DwStageEntry`` for the design-wo
 sheets. It is classified EXEMPT and FENCED under "Reader 9" — it serves values and names no author —
 rather than being left off the inventory, which is what the division above would have implied.
 
+**AND THREE MORE ARRIVED ON 2026-09-13 AND WENT A DAY UNCLASSIFIED**, which the tripwire at the foot
+of this file caught and nothing else would have. They are Readers 12, 13 and 14, and they divide the
+way the paragraphs above divide: the officer's supervision read serves every stage's values to an
+Assistant or Regional Director who wrote none of them, so it RESOLVES and is asserted to; the
+artisan roster import and the sanction register take bookkeeping answers off a row and serve a count,
+two booleans and a list of labels, so both are EXEMPT and both are fenced at the boundary the
+exemption was granted inside.
+
 Nothing here touches a database.
 """
 
 import tokenize
 from datetime import UTC, datetime
+from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -49,6 +58,7 @@ import app.services.stage_definitions  # noqa: F401  - installs the registry
 from app.api.routes import (
     data_browser as browser,
     design_workshop_inspections as inspections,
+    design_workshop_oversight as oversight_routes,
     design_workshops as routes,
 )
 from app.services import (
@@ -65,6 +75,12 @@ ADMIN = SimpleNamespace(id="usr_admin", name="Root", role="MASTER_ADMIN")
 #: is exactly why its provenance has to resolve: an inspector is reading somebody ELSE's work, so
 #: "who wrote this field" is the whole of what they are looking at.
 INSPECTOR = SimpleNamespace(id="usr_ravi", name="Ravi Nair", role="INSPECTOR")
+
+#: Rank 45, added 2026-09-13 with the oversight scope. Reads EVERY stage of a workshop assigned to
+#: their office and can write none of it — the same "reading somebody else's work" the INSPECTOR row
+#: above describes, one rung up and over the whole report rather than over one stage. Its own route
+#: says the ids without names are unreadable, which is what Reader 12 pins.
+DIRECTOR = SimpleNamespace(id="usr_devi", name="Devi Menon", role="REGIONAL_DIRECTOR")
 
 #: One hydrated field (the artisan's recorder owns it) and one typed field (the designer owns it),
 #: which is the pair every reader has to carry intact. A reader that drops either half is broken in
@@ -124,6 +140,23 @@ class _Users:
         return [SimpleNamespace(id=MEENA.id, name=MEENA.name)]
 
 
+
+#: THE CORRECTION REGISTER, STUBBED FOR THIS FILE ALONE (2026-09-13).
+#:
+#: Both detail reads now serialise `DwInspectionFeedback` — the pre-submission loop's register —
+#: through one shared helper that issues a real query with `include={"actor": True}`. This module is
+#: about PROVENANCE and stubs every neighbouring read for exactly that reason (`_transcripts_payload`
+#: and `workshop_summary` are stubbed two lines away): a file that asserts "the author of each field
+#: is resolved" must not also need a feedback table to exist.
+#:
+#: IT RETURNS THE PAIR THE REAL ONE RETURNS — rows and the truncation flag — so a caller that
+#: unpacks it keeps working and a caller that starts expecting a third element fails here rather
+#: than on a screen. The register itself is asserted in `test_design_workshop_review_loop.py` (its
+#: shape) and in `test_dw_inspector_scope.py` (a row, over a database).
+async def _no_feedback(*_a, **_k):
+    return ([], False)
+
+
 @pytest.fixture
 def reader(monkeypatch):
     """Everything the three stage routes touch besides the lines under test.
@@ -155,6 +188,7 @@ def reader(monkeypatch):
     monkeypatch.setattr(routes, "_transcripts_payload", _transcripts)
     monkeypatch.setattr(routes, "workshop_summary", lambda record: {"id": record.id})
     monkeypatch.setattr(routes, "workshop_completeness", lambda *_a, **_k: {})
+    monkeypatch.setattr(routes, "_inspection_feedback_payload", _no_feedback)
     return SimpleNamespace(users=users, entries=entries)
 
 
@@ -700,6 +734,7 @@ def inspection(reader, monkeypatch):
     monkeypatch.setattr(inspections, "load_definition_or_empty", _definition)
     monkeypatch.setattr(inspections, "workshop_summary", lambda record: {"id": record.id})
     monkeypatch.setattr(inspections, "workshop_completeness", lambda *_a, **_k: {})
+    monkeypatch.setattr(inspections, "_inspection_feedback_payload", _no_feedback)
     return reader
 
 
@@ -964,6 +999,242 @@ def test_the_search_bucket_reads_no_stage_ROW_and_so_can_name_nobody():
     )
 
 
+# --------------------------------------------------------------------------------------
+# Reader 12: the officer's supervision read — NOT exempt, and it went unclassified
+# --------------------------------------------------------------------------------------
+#
+# ``GET /design-workshop-oversight/assigned/{id}`` landed on 2026-09-13 and the tripwire below
+# caught it, which is the tripwire doing its job. The classification is the opposite of EXEMPT: it
+# serves EVERY stage's values to an Assistant or Regional Director who did not write any of them,
+# and the route's own docstring says why that makes provenance the point rather than a nicety —
+# "'who wrote this field' is most of what supervision is for, and the ids without them are
+# unreadable".
+#
+# **THE NAME ON THE LIST IS NOT THE CLASSIFICATION. THIS TEST IS.** Appending the path to ``allowed``
+# to make the suite green would have left a read surface with no assertion on it anywhere —
+# ``grep -rn "read_overseen_workshop" tests/`` returned nothing — so deleting the single
+# ``await resolve_display_names(...)`` line would have made every field on the officer's screen read
+# as authored by nobody with the whole suite still passing. That is the order this file's tripwire
+# docstring states and it is worth restating: classify by writing the test, never by adding the name.
+
+
+@pytest.fixture
+def supervision(reader, monkeypatch):
+    """The oversight route's own doubles, over three rows it owns outright.
+
+    It takes ``reader`` only for the ``app.core.db.db`` patch that gives ``resolve_display_names``
+    its one recorded name lookup; the ROWS are built below rather than reused, for the reason the
+    comment there gives.
+
+    A fixture of its own for ``inspection``'s reason, and it is the same import shape: this route
+    took its copies at module load (``from app.services.design_workshops import entry_rows, …``,
+    ``from app.api.routes.design_workshops import _provenance_maps, _stages_payload``), so a patch on
+    the source module would not be seen here. ``_stages_payload``, ``_provenance_maps`` and
+    ``resolve_display_names`` are the real ones — they are the lines under test.
+
+    The two oversight reads are replaced on the SERVICE module the route reaches through, which is
+    what keeps this test about provenance instead of about the AD/RD scope query: whether an officer
+    may open this workshop at all is ``tests/test_workshop_oversight_unit.py``'s subject.
+    """
+    # IT OWNS ITS STAMPS, FOR THE REASON SPELLED OUT AT LENGTH IN `inspection` ABOVE — and this
+    # fixture is the proof that the reason is real rather than theoretical. Written first as
+    # `fresh = _entries()`, it FAILED exactly the way that comment predicts: `_assert_resolved`
+    # passed while `users.calls` was EMPTY, because `_row` shallow-copies the module-level `STAMPS`
+    # and an earlier test had already filled `byName` in place on the one shared dict. The reader
+    # under test had made no lookup at all and the test could not tell.
+    reference = {
+        "by": MEENA.id, "byName": None, "at": "2026-03-01T09:00:00+00:00",
+        "source": ep.SOURCE_REFERENCE, "refModel": "Artisan", "refId": "art_1", "refKey": "name",
+    }
+    designer = {
+        "by": ASHA.id, "byName": ASHA.name, "at": "2026-03-08T15:30:00+00:00",
+        "source": ep.SOURCE_DESIGNER,
+    }
+    fresh = [
+        _row("ent_setup", SINGLETON_STAGE, "workshopSetup", {"venue": "Barpali"},
+             {"venue": dict(designer)}),
+        _row("ent_p1", COLLECTION_STAGE, "participant",
+             {"name": "Sita Devi", "phone": "9000011111"},
+             {"name": dict(reference), "phone": dict(designer)}, ordinal=0),
+        _row("ent_p2", COLLECTION_STAGE, "participant",
+             {"name": "Kamla Bai"}, {"name": dict(reference)}, ordinal=1),
+    ]
+
+    async def _load(*_a, **_k):
+        return SimpleNamespace(id="dw_1", title="Bagru 2026", deletedAt=None)
+
+    async def _rows(_workshop_id, *, stage_key=None):
+        return [r for r in fresh if stage_key is None or r.stageKey == stage_key]
+
+    async def _definition(*_a, **_k):
+        return SimpleNamespace(version="v1", sections=(), fields_by_stage={}, fields=())
+
+    async def _oversight_rows(*_a, **_k):
+        return []
+
+    monkeypatch.setattr(oversight_routes.oversight, "load_overseen_workshop_or_404", _load)
+    monkeypatch.setattr(oversight_routes.oversight, "oversight_rows", _oversight_rows)
+    monkeypatch.setattr(oversight_routes, "entry_rows", _rows)
+    monkeypatch.setattr(oversight_routes, "load_definition_or_empty", _definition)
+    monkeypatch.setattr(oversight_routes, "workshop_summary", lambda record: {"id": record.id})
+    monkeypatch.setattr(oversight_routes, "workshop_completeness", lambda *_a, **_k: {})
+    return SimpleNamespace(users=reader.users, entries=fresh)
+
+
+async def test_the_officer_supervision_read_resolves_the_overlay(supervision):
+    """``GET /design-workshop-oversight/assigned/{id}`` — the read an AD/RD supervises through.
+
+    The assertion the wave that added this route never wrote: an officer opening a workshop nobody
+    on their staff wrote sees the AUTHOR of each field, not "(unknown)".
+    """
+    out = await oversight_routes.read_overseen_workshop("dw_1", current_user=DIRECTOR)
+    _assert_resolved(
+        out["stages"][COLLECTION_STAGE]["provenance"]["collections"]["participant"]["ent_p1"],
+        where="GET /design-workshop-oversight/assigned/{id}",
+    )
+    assert out["stages"][SINGLETON_STAGE]["provenance"]["singleton"]["venue"]["by"] == ASHA.id
+    assert supervision.users.calls == [[MEENA.id]], (
+        "one lookup for the whole workshop, not one per row"
+    )
+
+
+async def test_the_officer_supervision_read_says_on_the_wire_that_it_is_read_only(supervision):
+    """``readOnly`` travels in the payload, asserted beside the provenance for Reader 8's reason.
+
+    Both arrive from the same handler, and a refactor that rebuilt the payload would drop them
+    together. The route's own comment gives the argument: both clients will eventually render this
+    through the same screen as the designer's read, and a screen that cannot tell the two apart
+    offers a Save button the API answers 404 to.
+    """
+    out = await oversight_routes.read_overseen_workshop("dw_1", current_user=DIRECTOR)
+    assert out["readOnly"] is True
+
+
+# --------------------------------------------------------------------------------------
+# Readers 13 and 14: the artisan roster import and the sanction register — EXEMPT, and fenced
+# --------------------------------------------------------------------------------------
+#
+# Both landed on 2026-09-13 and both were caught by the tripwire below. Both are EXEMPT on Reader 7's
+# grounds and neither exemption is free, so each gets a test of the BOUNDARY it was granted inside —
+# not a test that it resolves the overlay.
+#
+#   * ``services/artisan_import`` reads the participant rows to answer two bookkeeping questions and
+#     nothing else: what ``ordinal`` to continue the roster from, and which artisans are already on
+#     it (``data["artisanRef"]``). It SERVES nothing — its output is a count — and the values it
+#     writes come from the imported workbook, not from the rows it read. A THIRD key off ``data`` is
+#     the change that makes that false, which is what the test below fails on.
+#   * ``services/sanction_orders`` reads stage 1's ``workshopSetup`` singleton to answer two
+#     questions ABOUT the register rather than about the report: is the copied sanction number and
+#     date still the one on the order (``reportCopyMatches``), and is stage 1 complete enough for
+#     work to begin (``readyForWork`` + ``missingMandatory``, both straight off the registry's own
+#     ``stage_completeness``). A bool, a bool and a list of LABELS. No stamped field value reaches
+#     the wire and nobody is named, which is the boundary fenced below.
+#
+# Resolving provenance in either would be wrong rather than merely wasteful, for Reader 7's reason:
+# a stamp carries ``by`` and ``byName``, and the sanction list is read by ministry officers who hold
+# no grant on the workshop at all.
+
+
+async def test_the_roster_import_reads_an_ordinal_and_a_reference_and_no_third_thing(monkeypatch):
+    """``artisan_import._write_roster`` — driven for real against a stubbed table.
+
+    The rows it reads are given STAMPED data and a full set of hydrated-looking answers, so a reader
+    that started copying values off them would show up in what it hands ``save_stage``. What it may
+    legitimately carry is the workbook's own two keys.
+    """
+    from app.services import artisan_import
+
+    existing = [
+        _row("ent_p1", COLLECTION_STAGE, "participant",
+             {"artisanRef": "art_1", "name": "Sita Devi", "phone": "9000011111"}, STAMPS, ordinal=4),
+    ]
+    handed: list = []
+
+    async def _find_many(where=None):
+        return existing
+
+    async def _save_stage(_workshop_id, _spec, payload, _actor, **_kw):
+        handed.append(payload)
+        return {"created": len(payload.entries), "errors": {}}
+
+    monkeypatch.setattr(
+        "app.core.db.db", SimpleNamespace(dwstageentry=SimpleNamespace(find_many=_find_many))
+    )
+    monkeypatch.setattr(dw, "save_stage", _save_stage)
+
+    written = await artisan_import._write_roster(
+        SimpleNamespace(id="dw_1"),
+        ["art_1", "art_2"],
+        actor=ADMIN,
+        warn=lambda *_a, **_k: None,
+    )
+
+    assert written == 1, "the artisan already on the roster is skipped; the new one is written"
+    entries = [entry for payload in handed for entry in payload.entries]
+    assert [entry.data for entry in entries] == [{"artisanRef": "art_2", "serialNo": 5}], (
+        "the roster import carried a third key off the rows it read. It is EXEMPT from resolving "
+        "provenance because it takes an ordinal and a reference and serves nothing - see above."
+    )
+    served = repr(handed)
+    assert "Sita Devi" not in served and "9000011111" not in served, (
+        "a stamped value came off the existing rows and into the write"
+    )
+    assert "fieldProvenance" not in served and "byName" not in served
+
+
+async def test_the_sanction_register_takes_two_booleans_and_a_list_of_labels(monkeypatch):
+    """``sanction_orders.sanction_payload`` — the wire shape, fenced at its widest.
+
+    Every officer-facing sanction surface goes through this one builder, so fencing it fences the
+    list, the detail read and the badge together. The stage-1 singleton it reads is given a stamped
+    answer (``venue``) that no caller has any business seeing here, alongside the two keys it IS
+    entitled to compare.
+    """
+    from app.services import sanction_orders as so
+
+    singleton = _row(
+        "ent_setup", SINGLETON_STAGE, "workshopSetup",
+        {"sanctionOrderNo": "SO/2026/42", "sanctionOrderDate": "2026-04-01", "venue": "Barpali"},
+        {"venue": STAMPS["phone"], "sanctionOrderNo": STAMPS["name"]},
+    )
+
+    async def _rows(_workshop_id, *, stage_key=None):
+        assert stage_key == SINGLETON_STAGE, "the register reads stage 1 and nothing else"
+        return [singleton]
+
+    monkeypatch.setattr(so, "entry_rows", _rows)
+
+    order = SimpleNamespace(
+        # `sanctionOrderKey` is the NORMALISED column the unique index bites on — upper-cased with
+        # every non-alphanumeric character removed — which is what lets the drift check call the
+        # report's `SO/2026/42` the same instrument as the register's `SO-2026-42`.
+        id="so_1", sanctionOrderNo="SO-2026-42", sanctionOrderKey="SO202642",
+        sanctionOrderDate=datetime(2026, 4, 1, tzinfo=UTC), sanctionAmount=Decimal("250000.00"),
+        designerUserId=ASHA.id, designerEmail="asha@example.org", accountCreated=True,
+        notes=None, designWorkshopId="dw_1", createdById=ADMIN.id,
+        createdAt=datetime(2026, 4, 1, tzinfo=UTC), updatedAt=datetime(2026, 4, 2, tzinfo=UTC),
+    )
+    payload = await so.sanction_payload(
+        order,
+        workshop=SimpleNamespace(id="dw_1", title="Bagru 2026", status="IN_PROGRESS"),
+        designer=SimpleNamespace(name=ASHA.name),
+        officer=SimpleNamespace(name=ADMIN.name),
+    )
+
+    # WHAT THE STAGE ROW IS ALLOWED TO PRODUCE: a drift bool, a readiness bool, and the registry's
+    # own labels for what is still missing. Nothing else off `data`, and nobody named.
+    assert payload["reportCopyMatches"] is True, "the two order keys are compared, normalised"
+    assert isinstance(payload["readyForWork"], bool)
+    assert all(isinstance(label, str) for label in payload["missingMandatory"])
+    served = repr(payload)
+    assert "Barpali" not in served, (
+        "a stage-1 field value reached the sanction register. It is EXEMPT from resolving provenance "
+        "because it serves two booleans and a list of labels - see above."
+    )
+    assert "fieldProvenance" not in served and "byName" not in served and "provenance" not in served
+    assert MEENA.id not in served, "a stamp's author reached a reader holding no grant on the workshop"
+
+
 def _blanked_code(path: Path) -> str:
     """One module's source with comment and string spans blanked out, lowercased.
 
@@ -1071,6 +1342,20 @@ def test_no_new_reader_of_stage_entries_appeared_without_resolving_provenance():
         # groups by (workshop, stage) without ever reading a row.
         "app/api/routes/export.py",
         "app/api/routes/search.py",
+        # Classified 2026-09-14, when the tripwire caught the oversight wave. The officer's
+        # supervision read is NOT exempt and DOES resolve provenance — see the two tests in
+        # "Reader 12" above, which are the classification. It went a day without them, and the
+        # consequence of adding this name without writing them would have been a surface where
+        # deleting one `resolve_display_names` line leaves the whole suite green.
+        "app/api/routes/design_workshop_oversight.py",
+        # Classified 2026-09-14, in the same wave. BOTH EXEMPT and both FENCED by the two tests
+        # under "Readers 13 and 14" above — the roster import takes an ordinal and a reference and
+        # serves a count, and the sanction register takes the two order keys and the registry's own
+        # completeness score and serves two booleans and a list of labels. Neither attributes
+        # anything to anybody, and a stamp in either would export an author to officers holding no
+        # grant on the workshop.
+        "app/services/artisan_import.py",
+        "app/services/sanction_orders.py",
     }
     root = Path(__file__).resolve().parents[1] / "app"
     found = set()

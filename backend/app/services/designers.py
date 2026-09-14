@@ -39,6 +39,7 @@ from prisma.errors import UniqueViolationError
 
 from app.core.db import db
 from app.services import identity, rich_text
+from app.services.concurrency import gather_reads
 
 # Every column of ``DesignerProfile`` a person may write. Named once, here, and consumed by the
 # serializer, the updater and the schema's field list alike — three copies of a twenty-two-name
@@ -277,7 +278,7 @@ DERIVED_EMPANELMENT_NOTE = (
 )
 
 
-async def name_on_the_allow_list(email: Any) -> str | None:
+async def name_on_the_allow_list(email: Any, *, client: Any = None) -> str | None:
     """The administrator's own name for this mailbox, read off ``AccessRoster``, or None.
 
     **THE ONE SOURCE EITHER ROSTER MAY TAKE A NAME FROM.** ``AccessRoster.fullName`` is admin-typed
@@ -308,13 +309,24 @@ async def name_on_the_allow_list(email: Any) -> str | None:
     ``mirror_suspension``, which states the rule) — so the query is written out here. What that rule
     forbids beside :func:`ensure_empanelled` is a WRITER of ``AccessRoster``; a read of one column is
     a different thing, and duplicates nothing.
+
+    ``client`` IS NOT AN OPTIMISATION AND LEAVING IT OFF IS A SILENT DATA DEFECT. This function is
+    called from inside :func:`ensure_empanelled`, which a sanction order now calls from inside
+    ``db.tx()`` — and ``db.tx()`` hands back a DIFFERENT client. Read through the module singleton
+    from in there, this query cannot see the ``AccessRoster`` row the same transaction wrote three
+    statements ago: it answers None, and every sanction-created ``DesignerRoster`` row lands with
+    ``fullName = None``. Nothing raises, nothing rolls back, no test fails, and the symptom is a
+    column of bare email addresses on /admin/designers — which is the exact regression
+    :func:`ensure_empanelled`'s own docstring records having already been fixed once
+    ("the roster reads as though the derived designers are half-registered").
     """
+    reader = db if client is None else client
     keys = email_match_keys(email)
     if not keys:
         return None
     # ``take`` is neither needed nor given: ``AccessRoster.email`` is unique and ``keys`` holds at
     # most two values, so this can return at most two rows.
-    rows = await db.accessroster.find_many(where={"email": {"in": keys}})
+    rows = await reader.accessroster.find_many(where={"email": {"in": keys}})
     named = [row for row in rows if str(getattr(row, "fullName", "") or "").strip()]
     if not named:
         return None
@@ -377,7 +389,12 @@ async def adopt_allow_list_name(email: Any, full_name: Any) -> bool:
 
 
 async def ensure_empanelled(
-    email: Any, *, actor_id: str | None = None, note: str | None = None
+    email: Any,
+    *,
+    actor_id: str | None = None,
+    note: str | None = None,
+    client: Any = None,
+    swallow_race: bool = True,
 ) -> bool:
     """Empanel an allow-listed designer — and ONLY where they have no roster row at all.
 
@@ -468,14 +485,36 @@ async def ensure_empanelled(
     ``actor_id`` is the administrator whose action caused this — the approver, on the allow-list
     path — and None where the empanelment was derived from the person's own sign-in, in which there
     is no actor to name and claiming one would be a fabricated audit trail.
+
+    ``client`` IS THE TRANSACTION THIS WRITE BELONGS TO, and ``None`` means the module singleton —
+    the convention `routes/questionnaire.py` established and `services/access.py` follows. It exists
+    because ``db.tx()`` HANDS BACK A DIFFERENT CLIENT: a callee that goes on writing through the
+    module ``db`` while its caller believes it is inside a transaction is outside it, the writes
+    commit independently, and a rollback leaves exactly the half-state the transaction was opened to
+    make impossible. Nothing about that failure is loud — the happy path passes every test — so the
+    parameter is threaded rather than assumed. See ``services/sanction_orders.create_from_sanction``,
+    which is the caller that needs it.
+
+    ``swallow_race`` IS TRUE FOR THE SIGN-IN PATH AND MUST BE FALSE INSIDE A TRANSACTION, and the
+    two are not the same decision wearing different hats. On the sign-in path a lost race is a happy
+    outcome — a row exists and it is theirs — so the ``UniqueViolationError`` is caught and answered
+    False rather than reaching ``app/main.py``'s catch-all and telling a designer the server broke.
+    Inside ``db.tx()`` that same catch is a trap: Postgres has ALREADY aborted the transaction by the
+    time the exception is raised, so swallowing it and carrying on means every later write in the
+    block fails with an opaque ``current transaction is aborted`` — a 500 three statements away from
+    the statement that caused it, with nothing naming the constraint. Passing False lets the
+    violation propagate, the transaction roll back cleanly, and the caller answer the 409 it means.
+    ``tests/test_sanction_orders.py::test_a_concurrent_empanelment_does_not_abort_the_sanction_transaction``
+    is what holds this.
     """
+    writer = db if client is None else client
     keys = email_match_keys(email)
     if not keys:
         return False
     # THE MAILBOX, UNDER EVERY SPELLING THE TABLE COULD BE HOLDING IT — see the docstring. ``take``
     # is not needed and is not given: ``email`` is unique and ``keys`` holds at most two values, so
     # the query can return at most two rows and this only has to know whether it returned any.
-    existing = await db.designerroster.find_first(where={"email": {"in": keys}})
+    existing = await writer.designerroster.find_first(where={"email": {"in": keys}})
     if existing is not None:
         # INCLUDING — ESPECIALLY — A SUSPENDED ONE. See the rule above. This early return is the
         # whole safety property of the function, which is why the test is a plain ``is not None`` on
@@ -490,9 +529,9 @@ async def ensure_empanelled(
     # the first query. This function runs on every designer sign-in and returns at the check above
     # on all but the very first one, so the second lookup costs one indexed read once per designer
     # ever, instead of one per login of every empanelled designer in the product.
-    full_name = await name_on_the_allow_list(email)
+    full_name = await name_on_the_allow_list(email, client=client)
     try:
-        await db.designerroster.create(
+        await writer.designerroster.create(
             data={
                 "email": address,
                 # NULL when the allow-list carries no name, which is the honest answer and the same
@@ -510,6 +549,13 @@ async def ensure_empanelled(
     except UniqueViolationError:
         # The other login won. A row exists and it admits them, which is the outcome both callers
         # wanted — but this call did not create it, so it must not report that it did.
+        #
+        # UNLESS WE ARE INSIDE A TRANSACTION, in which case the caller has asked for the opposite
+        # and the docstring says why: the Postgres transaction is already aborted here, so returning
+        # False would hand back a "nothing to see" to a caller whose next four writes are all going
+        # to fail with a message about a statement it never issued.
+        if not swallow_race:
+            raise
         return False
     return True
 
@@ -698,11 +744,246 @@ def roster_payload(row: Any) -> dict[str, Any]:
 
 
 # --------------------------------------------------------------------------------------
+# The directory of accounts that can be handed a workshop
+#
+# TWO DOORS, ONE QUERY — NEVER TWO QUERIES. ``GET /designers/directory`` is the ADMIN's roster
+# screen and is gated on ``can_manage_designer_roster``; ``GET /design-workshop-oversight/designers``
+# is the officer's picker and is gated on ``can_assign_workshop_oversight``. A MINISTRY_ADMIN is
+# refused the first and admitted to the second, and the correct answer to that was NOT to widen the
+# roster gate — that gate is what stands in front of the empanelment table, and widening it hands a
+# ministry administrator the power to suspend a designer's sign-in.
+#
+# So the two doors stay two doors and the QUERY becomes one function, on the precedent
+# ``questionnaire.py`` sets by sharing ``csv_response`` with ``export.py`` and
+# ``questionnaire_xlsx`` sets by importing ``xlsx_report._put``: a second copy of "which accounts
+# can run a workshop, minus the ones the roster has suspended" is a second place for the
+# filter-after-the-take defect to come back, and that defect has already been fixed twice in this
+# file's history.
+#
+# ── THE PAYLOADS ARE **NOT** SHARED, AND THAT SPLIT IS THE CONTROL ──────────────────────────────
+#
+# ``roster_directory_payload`` carries ``institution``, ``rosterId``, ``rosterActive``, ``canSignIn``,
+# ``firstSeenAt`` and ``hasProfile``: EMPANELMENT STANDING, which is the admin roster screen's whole
+# subject. ``assignable_designers_payload`` carries four keys and nothing else. If the two shared a
+# builder, the next field added "for symmetry" would hand a Ministry Admin the empanelment standing
+# of every designer in the repository — a field appears, nothing refuses it, and the control the
+# separate gate exists to keep is gone with no test red. ``test_workshop_oversight_unit`` asserts
+# the officer payload's KEY SET, not a sample of it, for exactly that reason.
+# --------------------------------------------------------------------------------------
+
+#: How many directory rows one request will read.
+#:
+#: A CEILING, and two clients hard-code the same number to decide whether the answer was cut —
+#: ``DIRECTORY_CAP`` in ``frontend/app/(protected)/admin/designers/page.tsx`` and
+#: ``DESIGNER_DIRECTORY_CAP`` in ``android/…/DesignerRosterScreen.kt``. A length inference is only
+#: sound while every filter this endpoint applies is inside the query, which is why
+#: :func:`workshop_capable_accounts` folds the roster into the ``WHERE`` rather than dropping rows
+#: after the take.
+#:
+#: MOVED HERE FROM ``api/routes/designers`` when the officer's picker became a second caller. It is
+#: the number the query uses, so it belongs beside the query; the route re-imports it so the
+#: ``DIRECTORY_CAP`` cross-reference in its own comment still names a real name.
+DIRECTORY_TAKE = 500
+
+
+def workshop_capable_roles() -> list[str]:
+    """``sorted(deps.DESIGN_WORKSHOP_ROLES)`` — the accounts that may be handed a workshop.
+
+    A SET AND NOT A RANK THRESHOLD, which is ``can_run_design_workshops``' rule and not this
+    module's to restate: a professor outranks a designer and still cannot run a workshop, so a
+    rank-derived copy would be a different rule that agrees today only by accident. If professors
+    are ever admitted, ``DESIGN_WORKSHOP_ROLES`` changes and every surface follows.
+
+    ``sorted`` because a frozenset has no order and this goes into a query's ``IN`` list — a stable
+    order keeps the emitted SQL identical between processes, which is what makes a query plan and a
+    test assertion reproducible.
+
+    **A FUNCTION RATHER THAN A MODULE CONSTANT, AND THE REASON IS AN IMPORT CYCLE RATHER THAN
+    TASTE.** ``core.deps`` imports ``services/access_roster`` at module level (line 19), and
+    ``access_roster`` imports THIS module (line 104). A top-level ``from app.core.deps import
+    DESIGN_WORKSHOP_ROLES`` here therefore closes the loop, and it closes it in the worst possible
+    place: ``deps``' own import of ``access_roster`` runs at line 19, three hundred lines ABOVE
+    where ``DESIGN_WORKSHOP_ROLES`` is defined, so the failure is an ``ImportError`` on a name that
+    visibly exists. Deferring the import to call time is the same device
+    ``artisans._may_read_full_aadhaar`` uses for ``has_rank``.
+    """
+    from app.core.deps import DESIGN_WORKSHOP_ROLES
+
+    return sorted(DESIGN_WORKSHOP_ROLES)
+
+
+async def workshop_capable_accounts(
+    *, search: str | None = None, include_suspended: bool = False
+) -> list[Any]:
+    """The accounts an admin may hand a workshop to. ONE QUERY, read by two doors.
+
+    EVERY FILTER GOES IN THE ``WHERE``, AND THE SUSPENSION FILTER MOST OF ALL.
+
+    The roster check used to run in Python after the read, so the ``take`` was spent on rows that
+    were then thrown away: twenty suspended designers sorting inside the first 500 came back as 480
+    rows, with eligible designers past the cut never considered at all. Both clients infer "the list
+    was cut" from ``len(rows) >= 500`` and a post-take drop is exactly what breaks that inference —
+    it reports a COMPLETE list that is missing people. Filtering in the query makes the cap apply to
+    rows that are already eligible, which is what makes the length honest again. This is the same
+    defect, in the same shape, that ``eligible_viewers`` was fixed for on 2026-08-13.
+
+    ``active_roster_emails`` IS IMPORTED AT CALL TIME for the cycle
+    :func:`workshop_capable_roles` describes: ``design_workshop_viewers`` imports
+    ``designers.normalise_email`` at module level, so this module must not name it at module level
+    in return.
+    """
+    from app.services.design_workshop_viewers import active_roster_emails
+    from app.services.records import contains
+
+    clauses: list[dict[str, Any]] = [{"role": {"in": workshop_capable_roles()}}]
+    if not include_suspended:
+        # The flag is discarded deliberately: the admin route answers a bare JSON array, so there is
+        # nowhere on the wire to say the roster read itself was cut. ``active_roster_emails``
+        # already logs that case at ERROR, which is the whole reason it returns the flag rather
+        # than swallowing it — see the follow-up note about giving that endpoint an envelope.
+        admitted, _roster_read_was_cut = await active_roster_emails()
+        clauses.append(
+            {
+                "OR": [
+                    # Admins are not roster-gated at any point, the same rule ``roster_allows``
+                    # applies at sign-in: an admin empanelled years ago and later suspended must not
+                    # lose the ability to administer anything.
+                    {"role": {"in": ["ADMIN", "MASTER_ADMIN"]}},
+                    # ``mode: "insensitive"`` because ``admitted`` is lower-cased and ``User.email``
+                    # is not — an address stored shouting would otherwise match no roster row and the
+                    # designer would vanish from a directory the roster admits.
+                    {
+                        "AND": [
+                            {"role": "DESIGNER"},
+                            {"email": {"in": admitted, "mode": "insensitive"}},
+                        ]
+                    },
+                ]
+            }
+        )
+    if search:
+        token = search.strip()
+        # AND-COMPOSED WITH THE CLAUSE ABOVE, NEVER ASSIGNED TO THE SAME ``OR`` KEY. Two ORs
+        # written to ``where["OR"]`` let the later one win, and if that is the search then the
+        # eligibility clause is gone and the directory offers suspended designers to the one
+        # caller that asked not to see them.
+        #
+        # ``records.contains`` rather than a raw filter: this picker searches the same two User
+        # columns as the viewer picker, whose measured numbers are in the ``contains`` docstring
+        # (``search=_designer`` returned 635 accounts holding no underscore at all).
+        clauses.append({"OR": [{"name": contains(token)}, {"email": contains(token)}]})
+    return await db.user.find_many(
+        where={"AND": clauses},
+        # The id is the TIEBREAKER and it is load-bearing on a capped read: display names are not
+        # unique in this table, so with ``name`` alone which rows fall inside the 500 is Postgres's
+        # choice and can differ between two identical requests — "who is missing" changing on
+        # refresh, which no search term can be relied on to reach.
+        order=[{"name": "asc"}, {"id": "asc"}],
+        take=DIRECTORY_TAKE,
+    )
+
+
+async def roster_directory_payload(
+    users: list[Any], *, include_suspended: bool
+) -> list[dict[str, Any]]:
+    """The ADMIN's answer: each account with its empanelment standing attached.
+
+    Two lookups for the whole page rather than two per row: a directory of eighty designers
+    rendered one query at a time is a hundred and sixty sequential round trips on a cross-region
+    database, which is several seconds before the picker opens.
+    """
+    if not users:
+        return []
+    emails = sorted({u.email for u in users})
+    ids = sorted({u.id for u in users})
+    roster_rows, profiles = await gather_reads(
+        db.designerroster.find_many(where={"email": {"in": emails}}),
+        db.designerprofile.find_many(where={"userId": {"in": ids}}),
+    )
+    # KEYED LOWER-CASED ON BOTH SIDES. ``DesignerRoster.email`` is normalised on the way in and
+    # ``User.email`` is not, so an exact-string key silently misses the roster row of anybody whose
+    # account address is stored with a capital — and a DESIGNER with no roster row found reads as
+    # suspended, which is the one verdict this payload exists to report.
+    by_email = {r.email.lower(): r for r in roster_rows}
+    by_user = {p.userId: p for p in profiles}
+
+    out: list[dict[str, Any]] = []
+    for user in users:
+        roster = by_email.get((user.email or "").lower())
+        profile = by_user.get(user.id)
+        gated = _role_of(user) == "DESIGNER"
+        can_sign_in = bool(roster and roster.isActive) if gated else True
+        # A BACKSTOP, NOT THE FILTER. Since the roster fold moved into the WHERE this is unreachable
+        # on the ``include_suspended=False`` arm, and it must stay that way: put the suspension test
+        # back here as the only filter and the cap starts being spent on rows that are discarded
+        # again. It is kept because a mismatch between the two would otherwise ship a suspended
+        # designer to a picker, and silence is the wrong failure for that.
+        if gated and not can_sign_in and not include_suspended:
+            continue
+        out.append(
+            {
+                "id": user.id,
+                "name": user.name,
+                "email": user.email,
+                "role": _role_of(user),
+                "institution": (
+                    getattr(profile, "institution", None) or getattr(roster, "institution", None)
+                ),
+                "rosterId": getattr(roster, "id", None),
+                "rosterActive": bool(roster and roster.isActive),
+                # What the picker should actually disable a row on. `rosterActive` is a fact about a
+                # table; this is the answer to the question being asked, and for a professor or an
+                # admin with no roster row at all the two deliberately differ.
+                "canSignIn": can_sign_in,
+                "firstSeenAt": (
+                    roster.firstSeenAt.isoformat()
+                    if roster is not None and roster.firstSeenAt
+                    else None
+                ),
+                "hasProfile": profile is not None,
+            }
+        )
+    return out
+
+
+def assignable_designers_payload(users: list[Any]) -> list[dict[str, Any]]:
+    """The OFFICER's answer: four keys, and the absence of the rest is the point.
+
+    **NO ``rosterId``, NO ``rosterActive``, NO ``canSignIn``, NO ``firstSeenAt``, NO ``hasProfile``
+    AND NO ``institution``.** Every one of those is a fact about the EMPANELMENT roster, which is
+    the admin's table: ``can_manage_designer_roster`` is what stands in front of it, a Ministry
+    Admin is outside that gate, and the reason the officer's picker exists at all is that widening
+    that gate would have handed them the power to suspend a designer's sign-in.
+
+    THE SUSPENDED ARE ALREADY GONE BY THE TIME THIS RUNS, because
+    :func:`workshop_capable_accounts` folds the roster into the query's ``WHERE``. So this payload
+    does not need a ``canSignIn`` flag to be safe — every row in it is an account that can sign in
+    today. What it must not do is EXPLAIN that: "suspended" is a judgement the institution made
+    about a person, and it is not an officer's business which designers have one.
+
+    A SEPARATE FUNCTION AND NOT A ``fields=`` PARAMETER ON THE ONE ABOVE. A parameter defaults, and
+    a default that leaks is a leak that looks like a call site nobody changed.
+    """
+    return [{"id": u.id, "name": u.name, "email": u.email, "role": _role_of(u)} for u in users]
+
+
+def _role_of(user: Any) -> str:
+    """The role as a plain string, whether Prisma handed back an enum or a str.
+
+    Spelled here rather than importing ``deps.role_value``, for the cycle
+    :func:`workshop_capable_roles` sets out. Three lines is cheaper than a deferred import inside
+    a loop that runs once per row.
+    """
+    role = getattr(user, "role", None)
+    return str(getattr(role, "value", role) or "")
+
+
+# --------------------------------------------------------------------------------------
 # The profile
 # --------------------------------------------------------------------------------------
 
 
-async def get_or_create_profile(user_id: str) -> Any:
+async def get_or_create_profile(user_id: str, *, client: Any = None) -> Any:
     """The user's profile row, created empty if they have never saved one.
 
     An upsert rather than a find, so ``GET`` and ``PUT`` cannot disagree about whether the row
@@ -714,8 +995,18 @@ async def get_or_create_profile(user_id: str) -> Any:
     ``include`` IS NOT OPTIONAL HERE even though the upsert asks for nothing new — see
     :data:`PROFILE_INCLUDE`. Without it this function answers a row whose ``location`` is ``None``
     because it was never fetched, which is indistinguishable from a designer who has no address.
+
+    ``client`` IS THE TRANSACTION THIS WRITE BELONGS TO, and ``None`` means the module singleton —
+    the convention `routes/questionnaire.py` established and `services/access.py` follows. It exists
+    because ``db.tx()`` HANDS BACK A DIFFERENT CLIENT: a callee that goes on writing through the
+    module ``db`` while its caller believes it is inside a transaction is outside it, the writes
+    commit independently, and a rollback leaves exactly the half-state the transaction was opened to
+    make impossible. Nothing about that failure is loud — the happy path passes every test — so the
+    parameter is threaded rather than assumed. See ``services/sanction_orders.create_from_sanction``,
+    which is the caller that needs it.
     """
-    return await db.designerprofile.upsert(
+    writer = db if client is None else client
+    return await writer.designerprofile.upsert(
         where={"userId": user_id},
         data={"create": {"user": {"connect": {"id": user_id}}}, "update": {}},
         include=PROFILE_INCLUDE,
@@ -795,9 +1086,7 @@ async def update_profile(user_id: str, values: dict[str, Any]) -> Any:
         keys = await identity.resolve_profile_keys(
             user_id=user_id,
             phone=data.get("phone", getattr(stored, "phone", None)),
-            empanelment_no=data.get(
-                "empanelmentNo", getattr(stored, "empanelmentNo", None)
-            ),
+            empanelment_no=data.get("empanelmentNo", getattr(stored, "empanelmentNo", None)),
         )
         data["phoneKey"] = keys.phone_key
         data["empanelmentKey"] = keys.empanelment_key

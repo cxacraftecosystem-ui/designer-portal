@@ -1595,8 +1595,9 @@ The single HTTP entry point. `buildQuery` + `listResource` + `PageResult` on top
 
 ### 14.2 Permissions, as the frontend sees them
 
-**Eight**-tier ladder: CROWDSOURCE(10) · FIELD_CONTRIBUTOR(20) · RESEARCHER(30) · **DESIGNER(35)** ·
-**INSPECTOR(37)** · PROFESSOR(40) · ADMIN(50) · MASTER_ADMIN(60). Source of truth is `ROLE_RANK` in
+**Eleven**-tier ladder: CROWDSOURCE(10) · FIELD_CONTRIBUTOR(20) · RESEARCHER(30) · **DESIGNER(35)** ·
+**INSPECTOR(37)** · PROFESSOR(40) · **ASSISTANT_DIRECTOR(42)** · **REGIONAL_DIRECTOR(45)** ·
+**MINISTRY_ADMIN(48)** · ADMIN(50) · MASTER_ADMIN(60). Source of truth is `ROLE_RANK` in
 `backend/app/core/deps.py`, mirrored in `frontend/lib/permissions.ts`; `docs/tools/check-docs.mjs`
 now checks the two against each other, and `backend/tests/test_role_ladder_parity.py` (2026-08-27)
 holds the other twenty-three hand-kept copies — `lib/types.ts`, `AccessLadder.tsx`, six role tuples
@@ -1609,7 +1610,12 @@ DESIGNER until 2026-08-23**, and because every agent is told to load this docume
 frontend work, it was the upstream source of the same miscount in fourteen other files —
 `permissions.ts`'s own header, the landing hero, the login page, and six documents. It went to
 **Eight** on 2026-08-27 in the same wave as the enum, deliberately, because nothing here would have
-gone red if it had not. If you are counting tiers, count them from `ROLE_RANK` and not from prose.
+gone red if it had not — and then **stayed at Eight through 2026-09-13**, when ASSISTANT_DIRECTOR
+(42), REGIONAL_DIRECTOR (45) and MINISTRY_ADMIN (48) landed, until a review corrected it on
+2026-09-14. That is the same miss twice, for the same reason both times: this line is prose and
+nothing in CI reads it. `frontend/lib/permissions.ts`'s header tracks the sites that are still
+hand-kept, and this file has now been on that list twice. If you are counting tiers, count them from
+`ROLE_RANK` and not from prose — including from this sentence.
 
 `INSPECTOR` is labelled **"Inspector / Reviewer"** in the UI and is `INSPECTOR` in the enum, never
 `REVIEWER` — `canReview` already means the *relation* "may review anyone strictly below me", and one

@@ -6,6 +6,7 @@ import {
   Activity,
   AudioLines,
   BadgeCheck,
+  CalendarRange,
   ChartNoAxesCombined,
   ClipboardCheck,
   ClipboardList,
@@ -32,7 +33,13 @@ import { useAuth } from "@/components/AuthProvider";
 import { usePendingAccessCount } from "@/components/hooks/usePendingAccessCount";
 import { apiFetch } from "@/lib/api";
 import { bytes, formatDateTime } from "@/lib/format";
-import { canManageAccessRoster, canManageDesignerRoster, isAdmin, isMasterAdmin } from "@/lib/permissions";
+import {
+  canManageAccessRoster,
+  canManageAnnualPlan,
+  canManageDesignerRoster,
+  isAdmin,
+  isMasterAdmin
+} from "@/lib/permissions";
 import type { MediaFile } from "@/lib/types";
 
 type Tile = {
@@ -228,6 +235,24 @@ export default function AdminHubPage() {
       href: "/admin/designers",
       icon: BadgeCheck,
       visible: canManageDesignerRoster(user)
+    },
+    {
+      label: "Annual plan",
+      // Says what the DIRECTORY is rather than what the screen does, because the thing an admin
+      // gets wrong about it is reading it as a list of workshops. It is a list of INTENTIONS: two
+      // hundred to three hundred rows a year, none of which is a workshop until somebody opens it.
+      description:
+        "The ministry's directory of the workshops planned for the year — number, date, state, district and venue. Upload the sheet, correct it by uploading it again, and open a workshop from a row when it is time.",
+      href: "/annual-plan",
+      // NOT ClipboardList ("Craft" above wears it) and not FileSpreadsheet — the icon-collision
+      // note on "Who may sign in" records what two identical icons on one grid of twelve cost.
+      icon: CalendarRange,
+      // THE HUB ITSELF IS `isAdmin` (see `permitted` above), so this tile is only ever DRAWN for an
+      // ADMIN or the MASTER ADMIN — a ministry admin never reaches this page and finds the
+      // directory through the nav entry instead. It is gated anyway, and the predicate is the
+      // route's own: the day the floor moves, the tile and the guard move together instead of the
+      // tile outliving the rule it was written under.
+      visible: canManageAnnualPlan(user)
     },
     {
       label: "API keys",

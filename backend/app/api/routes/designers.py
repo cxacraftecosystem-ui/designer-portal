@@ -40,7 +40,6 @@ paths would be swallowed by the parameterised one and ``GET /designers/me/profil
 a user whose id is the string "me" and 404 forever.
 """
 
-import asyncio
 import logging
 from datetime import UTC, datetime
 from typing import Any
@@ -58,12 +57,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from app.api.routes.access import end_live_sessions
 from app.core.db import db
 from app.core.deps import (
-    DESIGN_WORKSHOP_ROLES,
     ROLE_RANK,
     is_admin,
     require_designer,
     require_designer_roster_manager,
-    role_value,
 )
 from app.schemas.designers import (
     DesignerProfileUpdate,
@@ -79,7 +76,6 @@ from app.schemas.designers import (
 # rule therefore lives in ``access_roster.mirror_suspension``, which both roster route modules call,
 # and route modules are leaves that may import either service.
 from app.services import access_roster
-from app.services.design_workshop_viewers import active_roster_emails
 from app.services.designers import (
     canonical_email,
     email_match_keys,
@@ -87,9 +83,12 @@ from app.services.designers import (
     normalise_email,
     profile_has_content,
     profile_payload,
+    roster_directory_payload,
     roster_payload,
     update_profile,
     values_carry_content,
+    workshop_capable_accounts,
+    workshop_capable_roles,
 )
 from app.services.pagination import normalize_pagination, page_payload
 from app.services.record_filters import enum_filter_list_or_422
@@ -125,14 +124,30 @@ logger = logging.getLogger(__name__)
 # ``sorted`` because a frozenset has no order and this goes into a query's ``IN`` list — a stable
 # order keeps the emitted SQL identical between processes, which is what makes a query plan and a
 # test assertion reproducible.
-WORKSHOP_CAPABLE_ROLES = sorted(DESIGN_WORKSHOP_ROLES)
+#
+# THE RULE MOVED TO ``services/designers.workshop_capable_roles`` (2026-09-13) AND THE NAME STAYED
+# HERE. It moved because the query that reads it is now shared with the officer's designer picker
+# on ``/design-workshop-oversight``, and the rule belongs beside the query rather than beside one
+# of its two doors. The name stays because this module's own comments cite it, and because
+# ``tests/test_designer_roster.py`` imports it FROM HERE to assert that a professor is not in it —
+# re-binding it is one line and keeps that assertion pointed at the surface it is about.
+#
+# It is a FUNCTION over there rather than a constant, and that is not a style choice: ``core.deps``
+# imports ``services/access_roster`` which imports ``services/designers``, so that module cannot
+# name ``DESIGN_WORKSHOP_ROLES`` at import time without closing the loop. See its docstring.
+WORKSHOP_CAPABLE_ROLES = workshop_capable_roles()
 
 #: How many directory rows one request will read. Named rather than inlined because two clients
 #: hard-code the same number to decide whether the answer was cut — ``DIRECTORY_CAP`` in
 #: ``frontend/app/(protected)/admin/designers/page.tsx`` and ``DESIGNER_DIRECTORY_CAP`` in
 #: ``android/…/DesignerRosterScreen.kt`` — and a length inference is only sound while every filter
-#: this endpoint applies is inside the query. See :func:`designer_directory`.
-DIRECTORY_TAKE = 500
+#: this endpoint applies is inside the query.
+#:
+#: THE CONSTANT ITSELF NOW LIVES AT ``app.services.designers.DIRECTORY_TAKE``, beside the query
+#: that spends it, because that query is shared with the officer's designer picker on
+#: ``/design-workshop-oversight``. It is deliberately NOT re-imported into this module: a binding
+#: nothing reads is a binding a test will patch, and patching it here would change nothing while
+#: LOOKING like it shrank the cap. **A cap test must patch it on the service.**
 
 # Identical text for "you may not see this profile" and "no such user", because they are answered
 # with the same status and must not be told apart. See :func:`_assert_may_touch_profile`.
@@ -844,127 +859,21 @@ async def designer_directory(
     thing, the server did another, and the next person to build the picker this endpoint's name
     promises would have shipped the docstring's version. See ``WORKSHOP_CAPABLE_ROLES`` above.
     """
-    # EVERY FILTER GOES IN THE ``WHERE``, AND THE SUSPENSION FILTER MOST OF ALL.
+    # ── THE QUERY AND THE PAYLOAD BOTH MOVED TO ``services/designers`` (2026-09-13) ────────────
     #
-    # The roster check used to run in Python after the read (``continue`` in the loop below), so
-    # the ``take`` was spent on rows that were then thrown away: twenty suspended designers
-    # sorting inside the first 500 came back as 480 rows, with eligible designers past the cut
-    # never considered at all. Both clients infer "the list was cut" from ``len(rows) >= 500``
-    # (``DIRECTORY_CAP`` on the web, ``DESIGNER_DIRECTORY_CAP`` on Android) and a post-take drop
-    # is exactly what breaks that inference — it reports a COMPLETE list that is missing people.
-    # Filtering in the query makes the cap apply to rows that are already eligible, which is what
-    # makes the length honest again. This is the same defect, in the same shape, that
-    # ``eligible_viewers`` was fixed for on 2026-08-13.
-    clauses: list[dict[str, Any]] = [{"role": {"in": WORKSHOP_CAPABLE_ROLES}}]
-    if not includeSuspended:
-        # The flag is discarded deliberately: this route answers a bare JSON array, so there is
-        # nowhere on the wire to say the roster read itself was cut. ``active_roster_emails``
-        # already logs that case at ERROR, which is the whole reason it returns the flag rather
-        # than swallowing it — see the follow-up note about giving this endpoint an envelope.
-        admitted, _roster_read_was_cut = await active_roster_emails()
-        clauses.append(
-            {
-                "OR": [
-                    # Admins are not roster-gated at any point, the same rule ``roster_allows``
-                    # applies at sign-in: an admin empanelled years ago and later suspended must not
-                    # lose the ability to administer anything.
-                    {"role": {"in": ["ADMIN", "MASTER_ADMIN"]}},
-                    # ``mode: "insensitive"`` because ``admitted`` is lower-cased and ``User.email``
-                    # is not — an address stored shouting would otherwise match no roster row and the
-                    # designer would vanish from a directory the roster admits.
-                    {
-                        "AND": [
-                            {"role": "DESIGNER"},
-                            {"email": {"in": admitted, "mode": "insensitive"}},
-                        ]
-                    },
-                ]
-            }
-        )
-    if search:
-        token = search.strip()
-        # AND-COMPOSED WITH THE CLAUSE ABOVE, NEVER ASSIGNED TO THE SAME ``OR`` KEY. Two ORs
-        # written to ``where["OR"]`` let the later one win, and if that is the search then the
-        # eligibility clause is gone and the directory offers suspended designers to the one
-        # caller that asked not to see them.
-        #
-        # ``records.contains`` rather than the raw filter this used to compose. This picker searches
-        # the same two User columns as the viewer picker, whose measured numbers are in the
-        # ``contains`` docstring (``search=_designer`` returned 635 accounts holding no underscore
-        # at all), and it was left behind when that sweep ran.
-        clauses.append(
-            {
-                "OR": [
-                    {"name": contains(token)},
-                    {"email": contains(token)},
-                ]
-            }
-        )
-    users = await db.user.find_many(
-        where={"AND": clauses},
-        # The id is the TIEBREAKER and it is load-bearing on a capped read: display names are not
-        # unique in this table, so with ``name`` alone which rows fall inside the 500 is Postgres's
-        # choice and can differ between two identical requests — "who is missing" changing on
-        # refresh, which no search term can be relied on to reach.
-        order=[{"name": "asc"}, {"id": "asc"}],
-        take=DIRECTORY_TAKE,
-    )
-    if not users:
-        return []
-
-    # Two lookups for the whole page rather than two per row: a directory of eighty designers
-    # rendered one query at a time is a hundred and sixty sequential round trips on a
-    # cross-region database, which is several seconds before the picker opens.
-    emails = sorted({u.email for u in users})
-    ids = sorted({u.id for u in users})
-    roster_rows, profiles = await asyncio.gather(
-        db.designerroster.find_many(where={"email": {"in": emails}}),
-        db.designerprofile.find_many(where={"userId": {"in": ids}}),
-    )
-    # KEYED LOWER-CASED ON BOTH SIDES. ``DesignerRoster.email`` is normalised on the way in and
-    # ``User.email`` is not, so an exact-string key silently misses the roster row of anybody whose
-    # account address is stored with a capital — and a DESIGNER with no roster row found reads as
-    # suspended, which is the one verdict this payload exists to report.
-    by_email = {r.email.lower(): r for r in roster_rows}
-    by_user = {p.userId: p for p in profiles}
-
-    out: list[dict[str, Any]] = []
-    for user in users:
-        roster = by_email.get((user.email or "").lower())
-        profile = by_user.get(user.id)
-        gated = role_value(user) == "DESIGNER"
-        can_sign_in = bool(roster and roster.isActive) if gated else True
-        # A BACKSTOP, NOT THE FILTER. Since the roster fold moved into the WHERE above this is
-        # unreachable on the ``includeSuspended=false`` arm, and it must stay that way: put the
-        # suspension test back here as the only filter and the cap starts being spent on rows that
-        # are discarded again. It is kept because a mismatch between the two would otherwise ship a
-        # suspended designer to a picker, and silence is the wrong failure for that.
-        if gated and not can_sign_in and not includeSuspended:
-            continue
-        out.append(
-            {
-                "id": user.id,
-                "name": user.name,
-                "email": user.email,
-                "role": role_value(user),
-                "institution": (
-                    getattr(profile, "institution", None) or getattr(roster, "institution", None)
-                ),
-                "rosterId": getattr(roster, "id", None),
-                "rosterActive": bool(roster and roster.isActive),
-                # What the picker should actually disable a row on. `rosterActive` is a fact about a
-                # table; this is the answer to the question being asked, and for a professor or an
-                # admin with no roster row at all the two deliberately differ.
-                "canSignIn": can_sign_in,
-                "firstSeenAt": (
-                    roster.firstSeenAt.isoformat()
-                    if roster is not None and roster.firstSeenAt
-                    else None
-                ),
-                "hasProfile": profile is not None,
-            }
-        )
-    return out
+    # EXTRACTED, NOT COPIED, because there is a SECOND door onto the same question now:
+    # ``GET /design-workshop-oversight/designers``, the picker a Ministry Admin uses to name a
+    # workshop's designer. Widening THIS route's gate to admit them was the wrong fix and is
+    # refused — ``require_designer_roster_manager`` is what stands in front of the empanelment
+    # table, and a Ministry Admin who could reach it could suspend a designer's sign-in.
+    #
+    # So: two doors, one query. ``workshop_capable_accounts`` is the shared read, with the roster
+    # fold still inside its ``WHERE`` (the whole point — see its docstring). The PAYLOADS are
+    # deliberately NOT shared: this one carries empanelment standing, the officer's carries four
+    # keys, and a shared builder is how the next field added "for symmetry" would hand a ministry
+    # administrator the roster standing of every designer in the repository.
+    users = await workshop_capable_accounts(search=search, include_suspended=includeSuspended)
+    return await roster_directory_payload(users, include_suspended=includeSuspended)
 
 
 # --------------------------------------------------------------------------------------

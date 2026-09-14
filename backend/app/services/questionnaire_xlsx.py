@@ -49,7 +49,7 @@ Every skipped or assumed-about row comes back in ``ParsedQuestionnaire.problems`
 Excel row number and a sentence saying what happened. A silent drop means a designer uploads forty
 questions, sees thirty-eight, and has no way to find out which two went missing or why — and the
 most likely reason for a genuinely unreadable cell is the one case openpyxl cannot help with: a
-FORMULA whose cached value was never written (see ``_cell_text``).
+FORMULA whose cached value was never written (see ``xlsx_table.FormulaCell``).
 
 WRITING SIDE: every value goes into a cell through :func:`app.services.xlsx_report._put`, imported
 rather than restated. That module's docstring records three separate ways ordinary field text made
@@ -68,16 +68,42 @@ import unicodedata
 from dataclasses import dataclass, field
 from io import BytesIO
 from typing import Any
-from zipfile import BadZipFile
 
-from openpyxl import Workbook, load_workbook
+from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
-from openpyxl.utils.exceptions import InvalidFileException
 from openpyxl.worksheet.worksheet import Worksheet
 
 # See the module docstring: shared, not restated. `_put` is the single door every value in an .xlsx
 # this repo produces goes through, and it is what stops Excel offering to repair the download.
 from app.services.xlsx_report import XLSX_MIME, _put, _sanitise
+
+# ── THE READER CORE, EXTRACTED RATHER THAN COPIED (2026-09-13) ──────────────────────────────────
+#
+# Everything below used to be defined in this file, and every line of it is still the same line —
+# it moved to ``services/xlsx_table`` unchanged when a SECOND uploader of a SECOND kind of table
+# (the artisan roster) arrived. The alternative was a private copy of the header normaliser, the
+# two-pass formula map and the magic-byte branch, which is how two readers of one file format come
+# to disagree the first time one of them is corrected: the next fix to ``cell_text`` would land in
+# exactly one of them and nothing would say which. That is the same argument this module's header
+# already makes about importing ``xlsx_report._put`` rather than restating it, and the one
+# ``questionnaire.py:11-15`` makes about sharing ``csv_response`` with ``export.py``.
+#
+# THE FOUR STILL-PRIVATE NAMES ARE KEPT AS ALIASES ON PURPOSE. Every reference in the body of this
+# file goes on reading exactly as it did; an extraction that also renamed a hundred call sites would
+# have made the diff unreviewable and buried any real change inside it. The names this file no
+# longer uses at all are simply not imported — an alias nothing reads is a second place for a reader
+# to look up a definition that has moved.
+from app.services.xlsx_table import (
+    FormulaCell as _FormulaCell,
+    ParseProblem,
+    XlsxTableError,
+    clip as _clip,
+    load_sheets,
+    norm_header as _norm_header,
+    pick_sheet,
+    read_details,
+    truthy as _truthy,
+)
 
 __all__ = [
     "PRO_FORMA_FILENAME",
@@ -100,7 +126,7 @@ __all__ = [
 PRO_FORMA_FILENAME = "questionnaire-pro-forma.xlsx"
 
 # Sheet names. The parser prefers the working sheet by name and the writer emits these, but neither
-# depends on them: a designer who renamed the tab is still read (see `_pick_sheet`).
+# depends on them: a designer who renamed the tab is still read (see `xlsx_table.pick_sheet`).
 SHEET_QUESTIONS = "Questionnaire"
 SHEET_DETAILS = "Details"
 SHEET_HELP = "How to fill this in"
@@ -150,26 +176,6 @@ class QuestionnaireXlsxError(ValueError):
     """
 
 
-# --- Reading: header vocabulary -----------------------------------------------------------------
-
-# Non-breaking and friends. A header pasted out of a Word table or a browser routinely carries one of
-# these instead of a space, and the column then matches nothing while looking identical on screen.
-_SPACEY = re.compile(r"[\s  -\u200b  　]+")
-# Punctuation a person adds to a header without meaning anything by it: "Question:", "Answer *",
-# "Section (code)". Stripped before matching so all of those land on the same column.
-_PUNCT = re.compile(r"[^\w\s]+", re.UNICODE)
-
-
-def _norm_header(value: Any) -> str:
-    """A header cell reduced to what it MEANS: 'Section  Code:' and 'section_code' both -> 'section code'."""
-    text = unicodedata.normalize("NFKC", str(value or ""))
-    text = _PUNCT.sub(" ", text.replace("_", " "))
-    return _SPACEY.sub(" ", text).strip().lower()
-
-
-# Every spelling of every column this accepts. Order matters only within a role; roles are tried in
-# the order of this dict, so the more specific ones ("section title") are matched before the looser
-# ones ("section") could swallow them.
 _COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
     "sectionCode": (
         "section code",
@@ -214,37 +220,32 @@ _COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
 # Answer and note columns are matched by PREFIX, not exact name, because an exported questionnaire
 # emits one pair per recorded sitting: "Answer — Ramesh", "Notes — Ramesh". The text after the dash
 # names the sitting and is what pairs the two columns back up.
+#
+# HANDED TO ``xlsx_table.scan_header`` AS ``prefix_roles``, which is also what tells that function
+# these two roles may legitimately REPEAT while every alias family above may not. The pairing of
+# "the role may occur many times" with "the role is matched by prefix" is not a coincidence to be
+# tidied into two parameters: a prefix role carries a LABEL, and a label is what makes the second
+# occurrence a different column rather than a duplicate of the first.
 _ANSWER_PREFIXES = ("answer", "response", "reply")
 _NOTES_PREFIXES = ("notes", "note", "remarks", "remark", "comment", "comments", "observation")
-_LABEL_SPLIT = re.compile(r"\s*(?:[-–—:/|]|\bfor\b|\bby\b)\s*", re.IGNORECASE)
+_PREFIX_ROLES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("answer", _ANSWER_PREFIXES),
+    ("notes", _NOTES_PREFIXES),
+)
 
-_TRUEISH = {"y", "yes", "true", "t", "1", "required", "mandatory", "compulsory", "x", "✓", "✔", "☑"}
-_FALSEISH = {"n", "no", "false", "f", "0", "optional", "not required", "", "-", "—", "na", "n a"}
-
-
-@dataclass(frozen=True)
-class ParseProblem:
-    """One thing the parser could not do cleanly, in terms a designer can act on.
-
-    ``row`` is the 1-based worksheet row exactly as Excel's row gutter shows it, so "row 34" means
-    press Ctrl+G and type 34. ``severity`` is ``"error"`` when nothing was stored for that row and
-    ``"warning"`` when it was stored but something had to be assumed.
-    """
-
-    sheet: str
-    row: int | None
-    severity: str
-    reason: str
-    value: str | None = None
-
-    def payload(self) -> dict[str, Any]:
-        return {
-            "sheet": self.sheet,
-            "row": self.row,
-            "severity": self.severity,
-            "reason": self.reason,
-            "value": self.value,
-        }
+#: The Details sheet's label vocabulary. **PRIVATE TO THIS FEATURE AND IT MUST STAY THAT WAY.**
+#:
+#: ``_details_sheet``'s ``extra`` rows must not collide with these, because this table is what reads
+#: the sheet back: a row labelled "Notes" or "Summary" added for a reader's benefit would be read as
+#: the questionnaire's DESCRIPTION and would silently overwrite it on the next import.
+#: ``tests/test_questionnaire_interchange.py`` pins that the question set's extra rows survive the
+#: round trip without doing this, and ``artisan_xlsx`` deliberately uses a disjoint key set for its
+#: own Details sheet for the same reason.
+_DETAIL_KEYS = {
+    "title": ("questionnaire title", "title", "name", "questionnaire name", "form title"),
+    "description": ("description", "purpose", "about", "notes", "summary"),
+    "questionnaireId": ("questionnaire id", "id", "questionnaire ref", "form id"),
+}
 
 
 @dataclass
@@ -300,53 +301,6 @@ class ParsedQuestionnaire:
         }
 
 
-# --- Reading: cells -----------------------------------------------------------------------------
-
-
-class _FormulaCell(str):
-    """Marker for a cell that holds a formula whose value was never cached.
-
-    openpyxl in ``data_only`` mode returns the value Excel last *calculated* and stored in the file.
-    A workbook written by a script — LibreOffice headless, a generator, openpyxl itself — has
-    formulas but no cached results, so that value is ``None`` and the cell reads as empty. Reporting
-    "row 12 is blank" for a row that visibly contains ``=B12&" (2024)"`` on the designer's screen is
-    the single most confusing thing this parser could say, so formula cells are detected on a second,
-    non-evaluating pass and reported for what they are.
-    """
-
-
-def _cell_text(value: Any) -> str:
-    """One cell as trimmed text. ``None``, whitespace and Excel's ``#N/A`` family all read as empty."""
-    if value is None:
-        return ""
-    if isinstance(value, bool):
-        return "Yes" if value else "No"
-    if isinstance(value, float) and value.is_integer():
-        # Excel stores every number as a float, so a question numbered 3 arrives as 3.0 and a
-        # question ID typed as a number would become "3.0" in the prompt.
-        value = int(value)
-    text = str(value).strip()
-    if text.startswith("#") and text.endswith("!") and len(text) <= 10:
-        return ""  # #REF!, #NAME?, #VALUE! — an error, not content
-    if text in {"#N/A", "#NULL!"}:
-        return ""
-    return text
-
-
-def _clip(text: str, limit: int) -> str:
-    return text if len(text) <= limit else text[: limit - 1] + "…"
-
-
-def _truthy(text: str) -> bool | None:
-    """'Yes'/'x'/'✓' -> True, 'No'/'' -> False, anything else -> None (i.e. tell the designer)."""
-    key = _norm_header(text)
-    if key in _TRUEISH:
-        return True
-    if key in _FALSEISH:
-        return False
-    return None
-
-
 def derive_section_code(title: str, taken: set[str]) -> str:
     """A stable, unique code for a section the designer titled but did not code.
 
@@ -366,168 +320,6 @@ def derive_section_code(title: str, taken: set[str]) -> str:
     return candidate
 
 
-# --- Reading: the header row --------------------------------------------------------------------
-
-
-def _role_for(header: str) -> tuple[str, str | None] | None:
-    """Map one normalised header to (role, sitting label), or None if it is not a column we know."""
-    if not header:
-        return None
-    for role, aliases in _COLUMN_ALIASES.items():
-        if header in aliases:
-            return (role, None)
-    for prefix in _ANSWER_PREFIXES:
-        if header == prefix or header.startswith(prefix + " "):
-            return ("answer", _label_after(header, prefix))
-    for prefix in _NOTES_PREFIXES:
-        if header == prefix or header.startswith(prefix + " "):
-            return ("notes", _label_after(header, prefix))
-    return None
-
-
-def _label_after(header: str, prefix: str) -> str | None:
-    """'answer ramesh devi' after prefix 'answer' -> 'Ramesh Devi'; a bare 'answer' -> None."""
-    rest = header[len(prefix) :].strip()
-    rest = _LABEL_SPLIT.sub(" ", rest).strip()
-    return rest.title() if rest else None
-
-
-def _scan_header(
-    rows: list[tuple[int, list[str]]],
-) -> tuple[int, dict[int, tuple[str, str | None]]] | None:
-    """Find the header row and what each of its columns means.
-
-    A row qualifies only if it names a QUESTION column. Nothing else is sufficient: a sheet whose
-    first row happens to read "Notes" is not a questionnaire, and treating it as one would produce a
-    form full of empty prompts rather than an honest "I could not find the question column".
-    """
-    for row_number, values in rows[:MAX_HEADER_SCAN_ROWS]:
-        mapping: dict[int, tuple[str, str | None]] = {}
-        seen_roles: set[str] = set()
-        for index, raw in enumerate(values):
-            role = _role_for(_norm_header(raw))
-            if role is None:
-                continue
-            # A repeated single-value column (two "Section Title"s) keeps the first; answer and note
-            # columns legitimately repeat, one pair per sitting, so they are exempt.
-            if role[0] not in ("answer", "notes") and role[0] in seen_roles:
-                continue
-            seen_roles.add(role[0])
-            mapping[index] = role
-        if "prompt" in seen_roles:
-            return row_number, mapping
-    return None
-
-
-def _sheet_rows(ws: Worksheet, formulas: dict[tuple[int, int], str]) -> list[tuple[int, list[str]]]:
-    """One sheet as (row number, [cell text, ...]), trailing blanks kept so column indices line up."""
-    out: list[tuple[int, list[str]]] = []
-    for row_number, row in enumerate(ws.iter_rows(values_only=True), start=1):
-        if row_number > MAX_ROWS_SCANNED:
-            break
-        cells: list[str] = []
-        for column, value in enumerate(row, start=1):
-            text = _cell_text(value)
-            if not text:
-                formula = formulas.get((row_number, column))
-                if formula:
-                    # Reads as empty here but is not empty on the designer's screen. Carried through
-                    # as a marker so the row can be reported precisely instead of as "blank".
-                    cells.append(_FormulaCell(formula))
-                    continue
-            cells.append(text)
-        out.append((row_number, cells))
-    return out
-
-
-def _formula_map(data: bytes) -> dict[str, dict[tuple[int, int], str]]:
-    """Every cell in the workbook that holds a formula, per sheet, from a non-evaluating load.
-
-    A second parse of the same bytes. It buys the difference between "row 12 is blank" and "row 12
-    holds a formula Excel has never calculated" — see ``_FormulaCell``. Cheap in the normal case,
-    where the answer is an empty dict for every sheet.
-    """
-    found: dict[str, dict[tuple[int, int], str]] = {}
-    try:
-        wb = load_workbook(BytesIO(data), data_only=False, read_only=True)
-    except (InvalidFileException, OSError, ValueError, KeyError, TypeError):
-        # The evaluating load has already succeeded, so this one is expected to as well. If it does
-        # not, the caller still gets a fully parsed questionnaire and merely loses the ability to
-        # say "that cell is a formula" — a diagnostic nicety must never be the thing that fails an
-        # upload the designer's file was fine for.
-        return found
-    try:
-        for ws in wb.worksheets[:MAX_SHEETS_SCANNED]:
-            per_sheet: dict[tuple[int, int], str] = {}
-            for row_number, row in enumerate(ws.iter_rows(values_only=True), start=1):
-                if row_number > MAX_ROWS_SCANNED:
-                    break
-                for column, value in enumerate(row, start=1):
-                    if isinstance(value, str) and value.startswith("="):
-                        per_sheet[(row_number, column)] = value
-            found[ws.title] = per_sheet
-    finally:
-        wb.close()
-    return found
-
-
-# --- Reading: the details sheet -----------------------------------------------------------------
-
-_DETAIL_KEYS = {
-    "title": ("questionnaire title", "title", "name", "questionnaire name", "form title"),
-    "description": ("description", "purpose", "about", "notes", "summary"),
-    "questionnaireId": ("questionnaire id", "id", "questionnaire ref", "form id"),
-}
-
-
-def _read_details(rows: list[tuple[int, list[str]]]) -> dict[str, str]:
-    """Label/value pairs off the Details sheet. Tolerates the value being in any column to the right,
-    which is what happens the moment a designer widens column A or inserts one."""
-    found: dict[str, str] = {}
-    for _row_number, values in rows[:60]:
-        if not values:
-            continue
-        key = _norm_header(values[0])
-        for name, aliases in _DETAIL_KEYS.items():
-            if key in aliases and name not in found:
-                value = next((v for v in values[1:] if v and not isinstance(v, _FormulaCell)), "")
-                if value:
-                    found[name] = value
-    return found
-
-
-# --- Reading: the public entry point ------------------------------------------------------------
-
-# What the first few bytes of a file say it really is. Checked instead of the extension because the
-# extension is the thing most likely to be wrong — a designer who renamed "report.xls" to
-# "report.xlsx" to get past an upload filter has an .xls with an .xlsx name, and the message has to
-# describe the file rather than the label somebody put on it.
-_ZIP_MAGIC = b"PK\x03\x04"
-_OLE2_MAGIC = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"  # .xls (BIFF8), and also an ENCRYPTED .xlsx
-
-
-def _unreadable_file_message(data: bytes) -> str:
-    """The sentence a designer is shown when the whole file cannot be opened."""
-    head = data[:8]
-    if head.startswith(_OLE2_MAGIC):
-        # Both cases land here and the remedy differs, so both are named. Re-saving fixes the first
-        # and removing the password fixes the second; neither is guessable from "invalid file".
-        return (
-            "That file is in the older .xls format, or it is an .xlsx with a password on it. Open "
-            "it in Excel, remove any password, then use File > Save As and choose "
-            "'Excel Workbook (.xlsx)'."
-        )
-    if not head.startswith(_ZIP_MAGIC):
-        return (
-            "That is not an Excel workbook — a .csv, a .numbers file or a PDF will not do. Fill in "
-            "the .xlsx pro-forma, or use File > Save As and choose 'Excel Workbook (.xlsx)'."
-        )
-    return (
-        "The workbook could not be opened — it may be password-protected or the upload may have "
-        "been cut short. Open it in Excel, use File > Save As to save a fresh copy, and upload that."
-    )
-
-
 def parse_questionnaire_workbook(
     data: bytes, *, filename: str | None = None
 ) -> ParsedQuestionnaire:
@@ -541,22 +333,19 @@ def parse_questionnaire_workbook(
     if not data:
         raise QuestionnaireXlsxError("The upload was empty. Attach the filled-in .xlsx pro-forma.")
     try:
-        wb = load_workbook(BytesIO(data), data_only=True, read_only=True)
-    except (InvalidFileException, BadZipFile, OSError, ValueError, KeyError, TypeError) as exc:
-        # Which of those it was tells the designer nothing, so the message is chosen from the FILE'S
-        # OWN MAGIC BYTES instead of from the exception class or the extension. openpyxl does not
-        # raise its own InvalidFileException for a BytesIO — it has no filename to inspect — so an
-        # old .xls arrives here as a bare zipfile.BadZipFile, and "the upload may have been cut
-        # short" sends somebody to re-download a file that was never the problem.
-        raise QuestionnaireXlsxError(_unreadable_file_message(data)) from exc
-
-    try:
-        formulas = _formula_map(data)
-        sheets: dict[str, list[tuple[int, list[str]]]] = {}
-        for ws in wb.worksheets[:MAX_SHEETS_SCANNED]:
-            sheets[ws.title] = _sheet_rows(ws, formulas.get(ws.title, {}))
-    finally:
-        wb.close()
+        # BOTH LOAD PASSES, AND THE MAGIC-BYTE BRANCH, LIVE IN ``xlsx_table.load_sheets`` NOW. The
+        # behaviour is unchanged and the reasoning is stated there: which exception openpyxl raised
+        # tells the designer nothing, so the message is chosen from the FILE'S OWN magic bytes.
+        # ``XlsxTableError`` is re-raised as this module's own error so that every caller's
+        # ``except QuestionnaireXlsxError`` goes on meaning exactly what it meant.
+        sheets = load_sheets(
+            data,
+            max_sheets=MAX_SHEETS_SCANNED,
+            max_rows=MAX_ROWS_SCANNED,
+            pro_forma="the .xlsx pro-forma",
+        )
+    except XlsxTableError as exc:
+        raise QuestionnaireXlsxError(str(exc)) from exc
 
     if not sheets:
         raise QuestionnaireXlsxError("The workbook has no sheets in it.")
@@ -573,7 +362,7 @@ def parse_questionnaire_workbook(
             "info",
             "information",
         ):
-            details = _read_details(rows)
+            details = read_details(rows, keys=_DETAIL_KEYS)
             result.title = (
                 _clip(details["title"], MAX_TITLE_CHARS) if details.get("title") else None
             )
@@ -581,7 +370,22 @@ def parse_questionnaire_workbook(
             result.questionnaireId = details.get("questionnaireId") or None
             break
 
-    picked = _pick_sheet(sheets, result.problems)
+    # THE VOCABULARY IS THIS MODULE'S AND THE MECHANISM IS ``xlsx_table``'S, which is the whole
+    # shape of the extraction: the aliases, the required role and the four sentences a reader sees
+    # are the questionnaire's, and the sheet-picking rule — name first, then whichever candidate has
+    # the most rows under its header, naming the sheets it did NOT use — is shared.
+    picked = pick_sheet(
+        sheets,
+        result.problems,
+        aliases=_COLUMN_ALIASES,
+        required_role="prompt",
+        prefix_roles=_PREFIX_ROLES,
+        preferred_names=(SHEET_QUESTIONS, "questions", "form", "sheet1"),
+        preferred_display="Questionnaire",
+        looks_like="a questionnaire",
+        most_noun="questions",
+        max_scan_rows=MAX_HEADER_SCAN_ROWS,
+    )
     if picked is None:
         raise QuestionnaireXlsxError(
             "No sheet in that workbook has a 'Question' column, so there was nothing to import. "
@@ -605,53 +409,6 @@ def parse_questionnaire_workbook(
             "least one question and upload again."
         )
     return result
-
-
-def _pick_sheet(
-    sheets: dict[str, list[tuple[int, list[str]]]],
-    problems: list[ParseProblem],
-) -> tuple[str, int, dict[int, tuple[str, str | None]]] | None:
-    """Which sheet holds the form. Name first, then whichever candidate has the most rows under its
-    header — a designer whose working sheet is called "Sheet1" or "Final v3" is still read."""
-    candidates: list[tuple[str, int, dict[int, tuple[str, str | None]]]] = []
-    for name, rows in sheets.items():
-        found = _scan_header(rows)
-        if found is not None:
-            candidates.append((name, found[0], found[1]))
-    if not candidates:
-        return None
-    for candidate in candidates:
-        name = candidate[0]
-        if _norm_header(name) in (_norm_header(SHEET_QUESTIONS), "questions", "form", "sheet1"):
-            if len(candidates) > 1:
-                others = [c[0] for c in candidates if c[0] != name]
-                problems.append(
-                    ParseProblem(
-                        sheet=name,
-                        row=None,
-                        severity="warning",
-                        reason=(
-                            "More than one sheet looked like a questionnaire; this one was used. "
-                            f"Ignored: {', '.join(others)}."
-                        ),
-                    )
-                )
-            return candidate
-    best = max(candidates, key=lambda c: len(sheets[c[0]]) - c[1])
-    if len(candidates) > 1:
-        others = [c[0] for c in candidates if c[0] != best[0]]
-        problems.append(
-            ParseProblem(
-                sheet=best[0],
-                row=None,
-                severity="warning",
-                reason=(
-                    "No sheet was named 'Questionnaire', so the one with the most questions was "
-                    f"used. Ignored: {', '.join(others)}."
-                ),
-            )
-        )
-    return best
 
 
 def _read_questions(
@@ -913,7 +670,8 @@ def _details_sheet(
     """The Details sheet: four label/value rows, optionally some more, then one italic note.
 
     ``extra`` LABELS MUST NOT COLLIDE WITH ``_DETAIL_KEYS`` above, and that is a real constraint
-    rather than a stylistic one — this sheet is parsed back by :func:`_read_details`, which matches
+    rather than a stylistic one — this sheet is parsed back by ``xlsx_table.read_details`` against
+    :data:`_DETAIL_KEYS`, which matches
     the label in column A against a family of aliases. A row labelled "Notes" or "Summary" would be
     read back as the questionnaire's DESCRIPTION, so a provenance line added here for the reader's
     benefit would silently overwrite the description of the questionnaire the file is imported into.

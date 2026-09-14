@@ -5,7 +5,6 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from app.core.db import db
 from app.core.deps import (
     assert_can_delete,
-    can_manage_crafts,
     get_current_user,
     require_record_creator,
 )
@@ -33,6 +32,7 @@ from app.services.records import (
     prose_contains,
     public_encode,
     require_record,
+    resolve_craft_id,
     resubmit_status,
     take_expected_updated_at,
     viewable_where,
@@ -300,28 +300,16 @@ async def _guard_identity_conflicts(data: dict[str, Any], exclude_id: str | None
                 raise await _identity_conflict(field, value, exclude_id, existing=clash)
 
 
-async def resolve_craft_id(data: dict[str, Any], current_user: Any) -> dict[str, Any]:
-    craft_name = data.pop("craftName", None)
-    if data.get("craftId") or not craft_name:
-        return data
-    existing = await db.craft.find_unique(where={"name": craft_name})
-    if existing:
-        data["craftId"] = existing.id
-        return data
-    # A free-text craft name that matches nothing would otherwise mint a Craft through the artisan
-    # form — the same write POST /crafts guards, reached sideways. Same predicate, so the two can
-    # never disagree: Professor and above.
-    if not can_manage_crafts(current_user):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=(
-                f"Craft '{craft_name}' does not exist yet. Select an existing craft, or ask a "
-                "professor or an admin to add it."
-            ),
-        )
-    created = await db.craft.create(data={"name": craft_name, "createdById": current_user.id})
-    data["craftId"] = created.id
-    return data
+# ``resolve_craft_id`` USED TO BE DEFINED HERE AND IS NOW IMPORTED FROM ``services/records`` (see
+# the import block at the top of this file), with its behaviour on this path unchanged: the default
+# ``allow_create=True`` is exactly the branch that stood here.
+#
+# It moved because the artisan spreadsheet importer is a SECOND caller, and a service reaching into
+# a route module for a name is the dependency direction this codebase refuses everywhere else. The
+# importer passes ``allow_create=False``, which is a decision about SPREADSHEETS and not about the
+# rank of the person uploading one — every directorate tier clears ``can_manage_crafts``, so a
+# typo'd craft name in one cell would otherwise mint a row in the controlled vocabulary and report
+# it as a success. The argument is written out in full at the function.
 
 
 @router.get("")

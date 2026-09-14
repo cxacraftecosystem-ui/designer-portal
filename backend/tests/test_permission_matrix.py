@@ -62,7 +62,11 @@ from app.services.artisan_identity import verhoeff_ok
 #: the ladder itself could not see it.
 ALL_ROLES = (
     "CROWDSOURCE_VOLUNTEER", "FIELD_CONTRIBUTOR", "RESEARCHER", "DESIGNER", "INSPECTOR",
-    "PROFESSOR", "ADMIN", "MASTER_ADMIN",
+    # The three directorate tiers (42/45/48) sit here, between PROFESSOR (40) and ADMIN (50), in
+    # ladder order. They are in ALL_ROLES and deliberately NOT in RECORD_CREATORS below: that tuple
+    # is derived as "may create records AND may not manage the taxonomy", and every tier at or above
+    # the Professor floor clears `can_manage_crafts`, so a directorate tier fails its second half.
+    "PROFESSOR", "ASSISTANT_DIRECTOR", "REGIONAL_DIRECTOR", "MINISTRY_ADMIN", "ADMIN", "MASTER_ADMIN",
 )
 LOWER_TIERS = ("CROWDSOURCE_VOLUNTEER", "FIELD_CONTRIBUTOR")
 #: The tiers that may OPEN a record but may not touch the TAXONOMY — everything at or above the
@@ -530,6 +534,10 @@ def test_a_volunteer_still_comments_on_an_existing_record(
 TRANSCRIBE_CLIP = {"file": ("dictation.webm", b"\x00" * 32, "audio/webm")}
 BELOW_ADMIN = (
     "CROWDSOURCE_VOLUNTEER", "FIELD_CONTRIBUTOR", "RESEARCHER", "DESIGNER", "INSPECTOR", "PROFESSOR",
+    # 42/45/48 are all strictly below ADMIN (50), so every "an admin may, this tier may not" case in
+    # this block applies to them unchanged. `is_admin` is SET membership {ADMIN, MASTER_ADMIN}, not a
+    # rank floor — which is exactly why a tier one rung under ADMIN still belongs in this tuple.
+    "ASSISTANT_DIRECTOR", "REGIONAL_DIRECTOR", "MINISTRY_ADMIN",
 )
 
 
@@ -666,6 +674,10 @@ DESIGNER_SET = ("DESIGNER", "ADMIN", "MASTER_ADMIN")
 # design-workshop gate is set membership and not a rank floor.
 OUTSIDE_DESIGNER_SET = (
     "CROWDSOURCE_VOLUNTEER", "FIELD_CONTRIBUTOR", "RESEARCHER", "INSPECTOR", "PROFESSOR",
+    # DESIGN_WORKSHOP_ROLES is a frozenset {DESIGNER, ADMIN, MASTER_ADMIN} and NOT a rank floor, so
+    # ranking ABOVE a designer buys no workshop write at all. The directorate tiers are outside it
+    # for the same reason PROFESSOR (40) is: they do not run workshops and do not sign the report.
+    "ASSISTANT_DIRECTOR", "REGIONAL_DIRECTOR", "MINISTRY_ADMIN",
 )
 WORKSHOP_WRITES = [
     ("PATCH", "/design-workshops/w1", {"title": "Renamed in the field"}),
@@ -697,6 +709,53 @@ def test_the_designer_set_reaches_the_workshop_write(
     as far as this file can see, and exactly the right depth: WHICH workshop this account may open is
     ownership, decided by that helper and tested where it lives, not rank."""
     assert api.as_(_user(role)).call(method, path, body).reached
+
+
+# --- The inspector's two write doors, added 2026-09-13 -------------------------------------------
+#
+# THE MIRROR IMAGE OF THE BLOCK ABOVE, AND IT IS WORTH HAVING BOTH. That one says the tier that
+# outranks a designer cannot write the report; this one says the tier that writes the CORRECTIONS is
+# the only one who can, admins included in the refusal. `assert_inspection_surface` is
+# `INSPECTION_ROLES` membership — a set of ONE — so an ADMIN and the MASTER_ADMIN are refused these
+# two routes exactly as a volunteer is, and told which door they actually want. An admin decides WHO
+# inspects; an inspector decides WHAT the report should say.
+#
+# THE BODIES ARE VALID ON PURPOSE. `note` is `min_length=1`, so an empty body would be answered 422
+# by pydantic BEFORE the dependency is solved, and every refusal below would pass for the wrong
+# reason and keep passing if the gate were deleted.
+
+INSPECTOR_WRITES = [
+    ("POST", "/design-workshop-inspections/w1/feedback", {"note": "The cost sheet does not add up."}),
+    ("POST", "/design-workshop-inspections/w1/send-back", {"note": "The cost sheet does not add up."}),
+]
+
+#: Every tier that is NOT an inspector — the whole ladder less INSPECTOR, derived so a rank added
+#: later is covered without anybody remembering this list.
+OUTSIDE_INSPECTION_SET = tuple(role for role in ALL_ROLES if role != "INSPECTOR")
+
+
+@pytest.mark.parametrize("method,path,body", INSPECTOR_WRITES)
+@pytest.mark.parametrize("role", OUTSIDE_INSPECTION_SET)
+def test_nobody_outside_the_inspection_tier_files_a_correction_suggestion(
+    api: _Api, method: str, path: str, body: dict, role: str
+) -> None:
+    """403 before any database read, for ADMIN and MASTER_ADMIN as much as for anybody else."""
+    outcome = api.as_(_user(role)).call(method, path, body)
+
+    assert outcome.refused, outcome
+    assert api.tripwire.touched is False, (
+        "the refusal must be decided from the caller's role alone; a gate that runs after the "
+        "loader is a gate somebody can reorder without noticing"
+    )
+
+
+@pytest.mark.parametrize("method,path,body", INSPECTOR_WRITES)
+def test_an_inspector_reaches_the_two_write_doors(api: _Api, method: str, path: str, body: dict) -> None:
+    """"Reached" means the tier gate passed and the scoped loader began — which is as deep as this
+    file can see, and the right depth: WHICH workshop this officer may write on is a row in
+    `DesignWorkshopInspector`, decided by that loader and asserted over a database in
+    `tests/test_dw_inspector_scope.py`."""
+    assert api.as_(_user("INSPECTOR")).call(method, path, body).reached
 
 
 # --- The tuple that let this happen --------------------------------------------------------------

@@ -100,6 +100,13 @@ def _row(rid: str, *, deleted_at: datetime | None = None, deleted_by: str | None
         dictationConsent="NOT_RECORDED",
         dictationConsentAt=None,
         dictationConsentById=None,
+        # THE PRE-SUBMISSION LOOP'S FOUR (2026-09-13). `workshop_summary` reads every one of them,
+        # so a double that lacks them raises an AttributeError from inside the serialiser and reads
+        # as a broken trash listing rather than as a fixture one column behind.
+        reviewNotes=None,
+        reviewedById=None,
+        reviewedAt=None,
+        submissionRound=0,
     )
 
 

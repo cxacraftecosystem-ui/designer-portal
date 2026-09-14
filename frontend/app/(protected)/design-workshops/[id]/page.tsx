@@ -23,7 +23,9 @@
  * a designer uses it, which is deciding in a courtyard whether they can pack up.
  *
  * AND THIS IS WHERE THE WORKSHOP IS FINISHED. {@link SubmissionCard} is the deliberate final act —
- * "Mark complete" and "Submit", each writing its own status through `PATCH /design-workshops/{id}` —
+ * "Mark complete", "Hand in for inspection" and, after a send-back, "Hand it back in", each writing
+ * its own status through `PATCH /design-workshops/{id}` (this line said "Submit" until 2026-09-14,
+ * naming a control the review loop had already renamed in this same file) —
  * and it is the ONE thing on this page that is not offline-first, for a reason its own header sets
  * out. It is never gated on completeness: requirement 12 asks for partial submission in as many
  * words, so the control is offered with required fields outstanding and NAMES how many.
@@ -51,9 +53,12 @@ import { useConfirm } from "@/components/dialogs/ConfirmDialog";
 import { PageHeader } from "@/components/PageHeader";
 import { StatusBadge } from "@/components/StatusBadge";
 import {
+  dwFeedbackRounds,
+  dwPatchableFrom,
   getDesignWorkshop,
   overallPercent,
   patchDesignWorkshop,
+  type DwInspectionFeedback,
   type DwRegistry,
   type DwStage,
   type DwStageCompleteness,
@@ -273,24 +278,41 @@ function submissionScope(stagesTotal: number | null): string {
 }
 
 /**
- * THE ACT IS REVERSIBLE, AND SAYING SO IS ONLY SAFE BECAUSE THE SERVER AGREES.
+ * WHAT CAN STILL BE UNDONE FROM THIS CARD, AND WHAT HAS STOPPED BEING THIS CARD'S TO UNDO.
  *
- * `PATCH /design-workshops/{id}` copies `status` into the row through a plain field loop with no
- * transition table, no ordering rule and no one-way check: any of the five statuses may follow any
- * other, and `COMPLETE` and `SUBMITTED` are not gated differently from each other. So *Reopen for
- * editing* below is a real control and not a hopeful one.
+ * **REWRITTEN 2026-09-13, AND ITS PREVIOUS TEXT IS THE REASON IT HAD TO BE.** It read: *"This can be
+ * undone. Reopen for editing, on this same card, puts the workshop back to In progress — the
+ * repository lets any status follow any other, so nothing here is a one-way door."* That was true of
+ * a server with no transition table, and its own docstring said in so many words that *"if a future
+ * deploy makes SUBMITTED one-way on the server, this string is the thing that has to change first"*.
+ * That deploy is this one. An irreversible act presented as reversible is the worse error.
  *
- * This is written as its own constant, beside {@link submissionScope}, because the brief for this
- * work put it sharply and correctly: an irreversible act presented as reversible is the worse error.
- * If a future deploy makes `SUBMITTED` one-way on the server, this string is the thing that has to
- * change first, and it is easier to find here than inside a dialog call.
+ * WHAT IS STILL TRUE: reopening is offered from Submitted and from Archived, and handing a report in
+ * for inspection can be withdrawn from this card while nobody has acted on it.
+ *
+ * WHAT IS NOT: approving, sending back, withdrawing an approval and handing the approved report on
+ * are DECISIONS. Each is taken on its own route by the office that takes it, each writes an audit
+ * entry in the same transaction as the status, and none of them is undone from here. A workshop
+ * under review cannot be archived — that would hide it from the officers holding it — and an
+ * approved report cannot be archived either until it has been handed on or the approval withdrawn.
  */
 const SUBMISSION_IS_REVERSIBLE =
-  "This can be undone. Reopen for editing, on this same card, puts the workshop back to In progress — " +
-  "the repository lets any status follow any other, so nothing here is a one-way door.";
+  "Handing the report in can be withdrawn from this card while nobody has acted on it, and Reopen for " +
+  "editing still brings a submitted or archived workshop back to In progress. What is not undone here: " +
+  "sending a report back, approving it, withdrawing an approval and handing an approved report on are " +
+  "decisions taken elsewhere by the office that takes them, each recorded with a name and a note.";
 
-/** The five members of `DesignWorkshopStatus`, in the order a workshop travels through them. */
-const DW_STATUSES: DwStatus[] = ["DRAFT", "IN_PROGRESS", "COMPLETE", "SUBMITTED", "ARCHIVED"];
+/** The eight members of `DesignWorkshopStatus`, in the order a workshop travels through them. */
+const DW_STATUSES: DwStatus[] = [
+  "DRAFT",
+  "IN_PROGRESS",
+  "COMPLETE",
+  "PRE_SUBMISSION",
+  "NEEDS_REVISION",
+  "SUBMITTED",
+  "APPROVED",
+  "ARCHIVED"
+];
 
 /**
  * One forward or backward step this card offers, and the exact status it writes.
@@ -320,12 +342,56 @@ const MARK_COMPLETE: SubmissionAction = {
   primary: false
 };
 
-const SUBMIT: SubmissionAction = {
-  status: "SUBMITTED",
-  label: "Submit",
+/**
+ * THE DESIGNER'S FORWARD ACT, AND IT IS NO LONGER `SUBMITTED`.
+ *
+ * `SUBMIT` used to write `SUBMITTED` with the sentence *"This is the version being handed on"*. That
+ * word now means THE APPROVED REPORT HAS GONE TO THE OFFICE, and it is reachable only through the
+ * sanctioning authority's own route — so this control writes `PRE_SUBMISSION`, which is the same act
+ * a designer was always performing: handing the work in and waiting to be told about it.
+ *
+ * IT IS STILL NOT GATED ON COMPLETENESS. Requirement 12 is explicit that a report may be handed in
+ * part-filled, and the server consults no scorer on this transition either.
+ */
+const SEND_FOR_REVIEW: SubmissionAction = {
+  status: "PRE_SUBMISSION",
+  label: "Hand in for inspection",
   icon: Send,
-  meaning: "This is the version being handed on. Requirement 12 is explicit that it may be submitted part-filled.",
+  meaning:
+    "The inspecting officers can read it and file correction suggestions. Requirement 12 is explicit that it may be handed in part-filled.",
   primary: true
+};
+
+/**
+ * THE WAY BACK IN AFTER A SEND-BACK, FOR THE CASE THE STAGE SAVE CANNOT COVER.
+ *
+ * Ordinarily the designer does not press anything: a stage save that CHANGES something on a report
+ * that was sent back hands it back in by itself — the edit IS the resubmission. This button is for
+ * the correction that was not a stage edit at all (an artisan's phone number on the linked record, a
+ * photograph replaced elsewhere), and it goes through the same server function, so the round counter
+ * moves once either way.
+ */
+const HAND_BACK_IN: SubmissionAction = {
+  status: "PRE_SUBMISSION",
+  label: "Hand it back in",
+  icon: Send,
+  meaning:
+    "Say the corrections are done. Saving a stage with a change does this by itself — this is for corrections made outside the stages.",
+  primary: true
+};
+
+/**
+ * WITHDRAWING A REPORT THE OFFICERS ARE STILL HOLDING.
+ *
+ * Back to In progress, which is the only way out of Pre-submission a header edit has: archiving a
+ * report while officers are reading it would hide it from the people who were asked to read it.
+ */
+const WITHDRAW: SubmissionAction = {
+  status: "IN_PROGRESS",
+  label: "Withdraw from inspection",
+  icon: Undo2,
+  meaning: "Take it back off the officers' list while you work on it. You can hand it in again.",
+  primary: false
 };
 
 const REOPEN: SubmissionAction = {
@@ -337,36 +403,206 @@ const REOPEN: SubmissionAction = {
 };
 
 /**
- * Which steps to offer from where.
+ * Which steps to offer from where — the CANDIDATES, before the server's graph has had its say.
+ *
+ * Callers want {@link actionsFor}, immediately below, which is this list filtered by
+ * `dwPatchableFrom`. The two are separate functions because {@link noActionsReason} has to tell the
+ * difference between a status with nothing to offer and a status whose offers were all struck out.
  *
  * NEITHER FORWARD ACT IS A PREREQUISITE FOR THE OTHER, because the server does not make it one — and
  * that is why DRAFT and IN_PROGRESS offer both rather than making a designer press Mark complete to
- * reach Submit. From SUBMITTED only the way back is offered: demoting a submitted workshop to
- * *complete* is a distinction nobody has ever asked for, whereas reopening it is the thing somebody
- * needs the afternoon they spot an error.
+ * reach Hand in for inspection. From SUBMITTED only the way back is offered: demoting a submitted
+ * workshop to *complete* is a distinction nobody has ever asked for, whereas reopening it is the
+ * thing somebody needs the afternoon they spot an error.
  *
- * ARCHIVED IS DELIBERATELY NOT OFFERED AS A DESTINATION, and it is reachable — the same PATCH accepts
- * it, so an admin or an API client can put a workshop there. Archiving is not part of submitting and
- * nothing in this repository treats an archived workshop differently from any other, so a button for
- * it here would be a second, unasked-for feature whose only effect is a word. A workshop that ARRIVES
- * archived still gets the way out.
+ * **EVERY BUTTON HERE IS CHECKED AGAINST THE SERVER'S OWN GRAPH BY `dwPatchableFrom`**, and that is
+ * new on 2026-09-13. Until then any status could follow any other and this table could not be wrong;
+ * now a control offering a status `update_design_workshop` refuses is a button that 422s, and the
+ * mirror is what makes that impossible to write by accident. The four DECISION edges — send back,
+ * approve, withdraw an approval, hand on — are not here and cannot be: each is taken on its own
+ * route, by the office that takes it, with an audit row written in the same transaction.
+ *
+ * **AND THE SENTENCE ABOVE WAS NOT TRUE UNTIL 2026-09-14.** `dwPatchableFrom`, `DW_LEGAL_TRANSITIONS`
+ * and `DW_DECISION_EDGES` were added to `lib/designWorkshops.ts` in the same change as that claim,
+ * for exactly this purpose, and then nothing called them: `grep -rn dwPatchableFrom frontend/`
+ * matched their definitions and this paragraph and nothing else. {@link candidatesFor} was a
+ * hand-written table that happened to agree with the server, so no button 422'd — and the trap was
+ * laid for the next person, who would read three separate comments promising a derivation (here,
+ * `lib/designWorkshops.ts:552-555`, and `backend/app/schemas/design_workshop_review_loop.py:247-249`
+ * — "impossible by construction"), tighten `LEGAL_TRANSITIONS` and its mirror together, and ship a
+ * button nobody had told them was hand-maintained. {@link actionsFor} now really does filter, so the
+ * derivation is a fact about the code rather than a promise in a comment.
+ *
+ * WHAT THE FILTER CAN AND CANNOT DO. It can only REMOVE a button the graph forbids; it cannot invent
+ * one for an edge the graph allows and this table forgot. That other half stays a human
+ * responsibility, and one case is deliberate rather than forgotten — ARCHIVED, below.
+ *
+ * ARCHIVED IS DELIBERATELY NOT OFFERED AS A DESTINATION, and it is reachable from the statuses whose
+ * graph row still contains it. Archiving is not part of submitting, so a button for it here would be
+ * a second, unasked-for feature whose only effect is a word. A workshop that ARRIVES archived still
+ * gets the way out.
+ *
+ * APPROVED RETURNS AN EMPTY LIST DELIBERATELY, which is why {@link noActionsReason} exists: without
+ * a sentence, the deliberate empty case and a build that does not recognise the status render
+ * identically, and both read as a broken page.
  */
-function actionsFor(status: string): SubmissionAction[] {
+function candidatesFor(status: string): SubmissionAction[] {
   switch (status) {
     case "DRAFT":
     case "IN_PROGRESS":
-      return [MARK_COMPLETE, SUBMIT];
+      return [MARK_COMPLETE, SEND_FOR_REVIEW];
     case "COMPLETE":
-      return [SUBMIT, REOPEN];
+      return [SEND_FOR_REVIEW, REOPEN];
+    case "PRE_SUBMISSION":
+      return [WITHDRAW];
+    case "NEEDS_REVISION":
+      return [HAND_BACK_IN, WITHDRAW];
+    case "APPROVED":
+      return [];
     case "SUBMITTED":
     case "ARCHIVED":
-      return [REOPEN];
+      return [REOPEN, SEND_FOR_REVIEW];
     default:
       // A status this build has never heard of, sent by a newer server. Offering a step from it would
       // be guessing at a ladder we do not have; RULE 10 says the screen must say that rather than
-      // draw nothing and read as a workshop with no controls.
+      // draw nothing and read as a workshop with no controls. `dwPatchableFrom` answers [] for the
+      // same input, so the filter below would empty this list anyway — both halves agree, and
+      // {@link noActionsReason} is what turns the empty row into a sentence.
       return [];
   }
+}
+
+/**
+ * The buttons this card actually draws: {@link candidatesFor} ∩ the statuses a HEADER EDIT may set.
+ *
+ * `dwPatchableFrom` is `DW_LEGAL_TRANSITIONS` less `DW_DECISION_EDGES` — the server's own two tables,
+ * mirrored in `lib/designWorkshops.ts`, and `update_design_workshop` enforces the same subtraction.
+ * So a button that survives this filter is one the PATCH will accept, and the docstring above is a
+ * statement about the code rather than about a table somebody has to remember to keep in step.
+ */
+function actionsFor(status: string): SubmissionAction[] {
+  const patchable = dwPatchableFrom(status);
+  return candidatesFor(status).filter((action) => patchable.includes(action.status));
+}
+
+/**
+ * WHY THERE IS NO BUTTON, when there is no button. Null whenever there is one.
+ *
+ * **AN EMPTY CONTROL ROW IS INDISTINGUISHABLE FROM A BROKEN PAGE**, and since 2026-09-13 there are
+ * two entirely different reasons this card can have nothing to offer: a report whose every remaining
+ * move belongs to somebody else (APPROVED), and a status this build has never heard of. The first is
+ * the product working; the second is a client one deploy behind. They must not look the same.
+ */
+function noActionsReason(status: string): string | null {
+  if (actionsFor(status).length > 0) return null;
+  // A THIRD reason exists since the mirror started filtering (2026-09-14) and it must not be read as
+  // either of the two below: a status this build DOES know, whose every candidate the graph now
+  // forbids. That is a client and a server disagreeing about the ladder, not a deliberate empty case
+  // and not an unknown word — and the unknown-status sentence, offered about a status the badge
+  // directly above is rendering by name, would send a designer to reload a browser that is already
+  // current. The three tests are mutually exclusive: APPROVED is the ONLY status whose candidate list
+  // is empty by design, so this one cannot steal its sentence, and an unrecognised status has an
+  // empty candidate list too.
+  if (candidatesFor(status).length > 0) {
+    return (
+      "This version of the app knows this status but has no step it is still allowed to take from it, " +
+      "which means the repository's rules have moved on since this browser loaded. Reload the page; if " +
+      "the buttons are still missing, this browser needs a newer build than the server is running."
+    );
+  }
+  if (status === "APPROVED") {
+    return (
+      "This report is approved. Handing it on to the office and withdrawing the approval are both the " +
+      "sanctioning authority's acts, taken on their own screen — so there is nothing to press here."
+    );
+  }
+  return (
+    "This build does not recognise this workshop's status, so it offers no next step from it. The word " +
+    "above is what the repository holds; this browser probably needs a newer build than the server is running."
+  );
+}
+
+/**
+ * WHAT THE INSPECTING OFFICERS ASKED FOR, ROUND BY ROUND.
+ *
+ * ── IT IS BUILT FROM THE REGISTER AND NEVER FROM `reviewNotes` ────────────────────────────────
+ *
+ * `reviewNotes` is ONE column holding the LATEST sentence, and the server CLEARS it the moment the
+ * report is handed back in — so a panel built from it would show one line during a review and
+ * nothing at all afterwards, which is precisely when the designer is working through the
+ * corrections. `inspectionFeedback` is the register: every suggestion ever filed, in order, each
+ * carrying the cycle it was filed against and the officer who wrote it. Clearing the cache costs
+ * nothing because of this panel, and this panel is what makes the clearing safe.
+ *
+ * ── GROUPED BY ROUND BECAUSE THE ROUND IS THE ANSWER ──────────────────────────────────────────
+ *
+ * "What was asked for last time" is the question a designer opens this with, and a flat list newest
+ * first cannot answer it once there have been three hand-ins. `round` is copied onto each row when
+ * it is written and never recomputed, so round 2's suggestions stay in round 2 for ever.
+ *
+ * ── THE COUNT IT IS DRAWN WITH IS THE COUNT THE SERVER SENT ───────────────────────────────────
+ *
+ * `truncated` is said out loud rather than swallowed: a bounded read that quietly cut the history
+ * makes a long correspondence look like a short one, which is the one wrong answer here.
+ */
+function InspectionFeedbackPanel({
+  rows,
+  truncated,
+  status
+}: {
+  rows: DwInspectionFeedback[];
+  truncated: boolean;
+  status: string;
+}) {
+  const rounds = dwFeedbackRounds(rows);
+  if (rounds.length === 0) return null;
+  return (
+    <section className="panel mb-5 grid gap-3 p-4">
+      <div className="flex flex-wrap items-center gap-3">
+        <h2 className="text-sm font-medium text-ink-900">What the inspecting officers asked for</h2>
+        <span className="text-xs text-ink-500">
+          {rows.length} suggestion{rows.length === 1 ? "" : "s"} on record
+        </span>
+      </div>
+      {status === "NEEDS_REVISION" ? (
+        /* THE ONE SENTENCE THAT SAVES A SUPPORT CALL. Nothing on this card hands the report back
+           in, because the EDIT is the resubmission — a stage save that changes something does it.
+           Without this, a designer who has fixed everything sits looking for a button. */
+        <p className="text-sm leading-6 text-ink-700">
+          This report was sent back. Correct the stages the suggestions name and save them — saving a stage with a
+          change hands the report back in by itself. If the correction was somewhere else entirely, Hand it back in on
+          the card above says so.
+        </p>
+      ) : null}
+      {rounds.map((group) => (
+        <div className="grid gap-2" key={group.round}>
+          <h3 className="field-label">Round {group.round}</h3>
+          <ul className="grid gap-2">
+            {group.rows.map((row) => (
+              <li className="rounded-md border border-line-200 bg-field-50 px-3 py-2" key={row.id}>
+                <p className="whitespace-pre-wrap text-sm leading-6 text-ink-900">{row.note}</p>
+                <p className="mt-1 text-xs leading-5 text-ink-500">
+                  {/* A NULL NAME IS A REAL STATE AND NEVER THE WORKSHOP'S OWN DESIGNER. The account
+                      relation is Restrict so the officer cannot have been deleted; the name column
+                      can simply be blank, and guessing would attribute an instruction to somebody
+                      who did not write it. */}
+                  {row.actorName?.trim() || "An officer no longer named"}
+                  {row.stageKey ? ` · about ${row.stageKey}` : " · about the report as a whole"}
+                  {row.sentBack ? " · this is the one that sent the report back" : ""}
+                </p>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ))}
+      {truncated ? (
+        <p className="text-xs leading-5 text-amber-800">
+          This is the most recent part of a longer correspondence — older suggestions are on the record and are not
+          shown here.
+        </p>
+      ) : null}
+    </section>
+  );
 }
 
 /**
@@ -466,6 +702,14 @@ function SubmissionCard({
   async function move(action: SubmissionAction) {
     const goingBack = action.status === "IN_PROGRESS";
     /*
+      WITHDRAWING AND REOPENING BOTH WRITE `IN_PROGRESS` AND THEY ARE NOT THE SAME SENTENCE. One
+      takes a report off the officers' list while they are holding it; the other brings a finished
+      or archived workshop back for editing. `goingBack` is right about both — neither needs the
+      outstanding-field count — but a dialog that said "Reopen this workshop for editing?" over a
+      report somebody is inspecting would be describing a different act from the one being taken.
+    */
+    const withdrawing = action === WITHDRAW;
+    /*
       THE OUTSTANDING COUNT IS IN THE TITLE, NOT BURIED IN THE BODY, and it is the whole reason this
       confirmation exists. A designer submitting on the last afternoon of a fortnight is not asking
       "am I sure" — they are asking "how much of this is still blank", and a dialog that answers that
@@ -516,7 +760,9 @@ function SubmissionCard({
           "work is listed, and where Sync now appears while it is waiting on the network.";
 
     const agreed = await confirm({
-      title: goingBack
+      title: withdrawing
+        ? "Withdraw this report from inspection?"
+        : goingBack
         ? "Reopen this workshop for editing?"
         : outstanding && outstanding > 0
           ? `${action.label} with ${outstanding} required field${outstanding === 1 ? "" : "s"} outstanding?`
@@ -539,10 +785,14 @@ function SubmissionCard({
       // delete. `neutral` for the way back, which is the plain "are you sure" it looks like.
       tone: goingBack ? "neutral" : "warning",
       confirmLabel: action.label,
-      body: goingBack ? (
+      body: withdrawing ? (
+        "The report comes off the inspecting officers' list and goes back to In progress. Nothing is " +
+        "deleted, no stage changes, and any correction suggestions already filed stay on the record — " +
+        "you can hand it in again when you are ready."
+      ) : goingBack ? (
         "The workshop goes back to In progress, so the record stops claiming to be finished while it is " +
-        "still being worked on. Nothing is deleted, no stage changes, and Mark complete and Submit both " +
-        "stay available."
+        "still being worked on. Nothing is deleted, no stage changes, and Mark complete and Hand in for " +
+        "inspection both stay available."
       ) : (
         <>
           <span className="block">{shortfall}</span>
@@ -583,7 +833,9 @@ function SubmissionCard({
           : ` ${unsentStages} stage${unsentStages === 1 ? " is" : "s are"} still saved on this device only — the ` +
             "status is on the repository, that fieldwork is not.";
       setOutcome(
-        (goingBack
+        (withdrawing
+          ? "Withdrawn. The report is off the officers' list and back to In progress on the repository."
+          : goingBack
           ? "Reopened. The workshop is back to In progress on the repository."
           : `Recorded on the repository. This workshop now reads ${(updated.status ?? "")
               .replace(/_/g, " ")
@@ -664,8 +916,11 @@ function SubmissionCard({
           decide whether they can pack up. The definitions live in one place now, on the readiness
           screen, and both screens render them verbatim; see {@link STAGE_CHECK_IS}.
 
-          THIS SIDE LEADS WITH THE WORKSHOP'S STATUS because the reader is standing at those two
-          buttons asking "does this stop me?" — and the answer, still, is no.
+          THIS SIDE LEADS WITH THE WORKSHOP'S STATUS because the reader is standing at those
+          buttons asking "does this stop me?" — and the answer, still, is no. ("those TWO buttons"
+          until 2026-09-14: `actionsFor` returns two from DRAFT, IN_PROGRESS, COMPLETE and
+          NEEDS_REVISION, ONE from PRE_SUBMISSION, and NONE from APPROVED, so the count was wrong on
+          two of the eight statuses and the sentence is written to survive all eight.)
 
           THE LINK IS STILL THE POINT. The count on its own sends a designer back through the stage
           index to find what it is counting; `/readiness` names every field and links to the box.
@@ -733,6 +988,12 @@ function SubmissionCard({
               );
             })}
           </div>
+          {/* THE DELIBERATE EMPTY CASE, SAID OUT LOUD. `actionsFor` returns nothing for an approved
+              report because both of its remaining moves are the sanctioning authority's, and a row
+              of no buttons with no sentence is what a broken page looks like. */}
+          {actions.length === 0 ? (
+            <p className="text-sm leading-6 text-ink-700">{noActionsReason(token)}</p>
+          ) : null}
           <dl className="grid gap-1">
             {actions.map((action) => (
               <div key={action.status} className="text-xs leading-5">
@@ -885,6 +1146,18 @@ export default function DesignWorkshopStagesPage({ params }: { params: Promise<{
   /** Who recorded the consent, as the server resolved it. Null = this screen cannot name them. */
   const [consentByName, setConsentByName] = useState<string | null>(null);
   /**
+   * The correction suggestions, held beside the draft rather than in it.
+   *
+   * THE DRAFT IS THIS DEVICE'S COPY OF THE WORKSHOP and these are not this device's to hold: they are
+   * written by other accounts, they arrive only on the single-record read, and a designer who is
+   * offline is reading a report nobody can have sent back since they last synced. Putting them in the
+   * offline store would mean deciding what a STALE suggestion list means, which is a question nothing
+   * on this screen needs to ask. Empty and "not read yet" are deliberately the same state here: the
+   * panel simply does not draw.
+   */
+  const [inspectionFeedback, setInspectionFeedback] = useState<DwInspectionFeedback[]>([]);
+  const [feedbackTruncated, setFeedbackTruncated] = useState(false);
+  /**
    * The status the SERVER confirmed on this page's own PATCH, held apart from the draft.
    *
    * HELD APART FOR THE SAME REASON `consentByName` IS: the draft is this device's copy, and this is a
@@ -940,6 +1213,10 @@ export default function DesignWorkshopStagesPage({ params }: { params: Promise<{
         // leaves it out of the list because it would be a name lookup per row in a paged endpoint.
         // Held apart from the draft because the draft is this device's copy and a name is not on it.
         setConsentByName(detail.dictationConsentByName ?? null);
+        // THE REGISTER, OFF THE SAME READ. It costs no extra request — `get_design_workshop` carries
+        // it — and it is the only place on the web a designer can see what was asked for.
+        setInspectionFeedback(detail.inspectionFeedback ?? []);
+        setFeedbackTruncated(detail.inspectionFeedbackTruncated === true);
         const merged = await adoptServerDetail(detail, loadedRegistry);
         if (cancelled) return;
         /*
@@ -1362,6 +1639,15 @@ export default function DesignWorkshopStagesPage({ params }: { params: Promise<{
           onStatusChanged={setConfirmedStatus}
         />
       ) : null}
+
+      {/* DIRECTLY UNDER THE SUBMISSION CARD, because it is the answer to the question that card's
+          status raises. A designer who reads "Needs revision" and has to scroll past twenty-two
+          stage rows to find out WHY has been told half a sentence. */}
+      <InspectionFeedbackPanel
+        rows={inspectionFeedback}
+        status={confirmedStatus ?? detail?.status ?? ""}
+        truncated={feedbackTruncated}
+      />
 
       {/*
         ABOVE THE SEARCH PANEL AND THE STAGE INDEX, AND THAT PLACEMENT IS THE POINT.

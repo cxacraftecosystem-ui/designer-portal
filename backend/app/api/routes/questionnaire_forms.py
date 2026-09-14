@@ -101,7 +101,6 @@ from app.services.questionnaire_forms import (
 from app.services.questionnaire_kinds import coerce_kind, label_for
 from app.services.questionnaire_xlsx import (
     PRO_FORMA_FILENAME,
-    XLSX_MIME,
     QuestionnaireXlsxError,
     build_pro_forma,
     build_question_set_workbook,
@@ -119,6 +118,7 @@ from app.services.records import (
     with_id_tiebreak,
 )
 from app.services.uploads import read_upload_bounded
+from app.services.xlsx_report import xlsx_response
 
 router = APIRouter(prefix="/questionnaires", tags=["questionnaires"])
 
@@ -483,11 +483,15 @@ async def _read_upload(file: UploadFile, request: Request | None = None) -> byte
 
 
 def _xlsx_response(payload: bytes, filename: str) -> Response:
-    return Response(
-        content=payload,
-        media_type=XLSX_MIME,
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-    )
+    """The download header, now owned by ``services/xlsx_report`` beside ``XLSX_MIME`` itself.
+
+    KEPT AS A ONE-LINE DELEGATE RATHER THAN DELETED, so the five call sites below read exactly as
+    they did and the diff that moved it stays a move. The body went public when a THIRD .xlsx
+    download appeared — the artisan pro-forma on ``/design-workshop-oversight`` — because the
+    alternative was that new router either restating a 73-character MIME string nobody proof-reads
+    or reaching into THIS route module for a private name.
+    """
+    return xlsx_response(payload, filename)
 
 
 # --- The pro-forma ------------------------------------------------------------------------------
