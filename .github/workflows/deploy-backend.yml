@@ -885,8 +885,24 @@ jobs:
           # Ubuntu, the engine is selected by the `debian-openssl-3.0.x` target baked into the
           # client, and the version directory is content-addressed (`5.17.0/<sha>`), so a mismatched
           # pair cannot quietly overwrite a good one -- it lands beside it under a different hash.
-          echo "engine binaries generate fetched on this runner:"
-          ls -la "$HOME/.cache/prisma-python/binaries"/*/* 2>/dev/null | head -20 || true
+          # THE ENGINE BINARY, LIFTED OUT OF THE CLI THE GENERATOR JUST INSTALLED.
+          #
+          # The generated client hard-codes THREE absolute paths to look in, and the third is
+          # `/home/runner/.cache/prisma-python/.../node_modules/prisma/query-engine-...` -- this
+          # runner's home, baked in at generation time and meaningless on the box. That is the whole
+          # reason a client generated elsewhere cannot find its engine, and why rsyncing the cache
+          # tree wholesale did not help: the box would have the bytes at a path its own client never
+          # consults.
+          #
+          # The FIRST path it consults is `<release>/backend/prisma-query-engine-<target>`, which is
+          # release-local and therefore the right home for it anyway -- a rolled-back release keeps
+          # the engine it was verified with instead of sharing one mutable cache.
+          engine_src="$(find "$HOME/.cache/prisma-python/binaries" -type f -name 'query-engine-*' | head -1)"
+          test -n "$engine_src" || { echo "::error::generate did not leave a query engine under the prisma-python cache"; exit 1; }
+          mkdir -p /tmp/genengine
+          cp "$engine_src" "/tmp/genengine/prisma-$(basename "$engine_src")"
+          chmod +x /tmp/genengine/*
+          ls -la /tmp/genengine
 
           # Proof the generated client is THIS schema's before a byte of it leaves the runner.
           #
@@ -993,11 +1009,12 @@ jobs:
           esac
           rsync -az --checksum /tmp/genclient/ "ubuntu@${{ secrets.EC2_HOST }}:$site/"
 
-          # THE ENGINE TRAVELS WITH THE CLIENT. `--ignore-existing` because the version directory is
-          # content-addressed: a hash already on the box is by definition the same bytes, and
-          # re-sending a ~19 MB binary on every deploy over this link is minutes for nothing.
-          ssh ubuntu@${{ secrets.EC2_HOST }} 'mkdir -p ~/.cache/prisma-python/binaries'
-          rsync -az --ignore-existing "$HOME/.cache/prisma-python/binaries/"             "ubuntu@${{ secrets.EC2_HOST }}:.cache/prisma-python/binaries/"
+          # THE ENGINE TRAVELS WITH THE CLIENT, into the release directory -- the first path the
+          # generated client consults, and the only one of its three that is neither the runner's
+          # home nor a shared mutable cache. `--chmod` because rsync does not carry the executable
+          # bit reliably across this hop, and a present-but-unexecutable engine produces the exact
+          # same BinaryNotFoundError as an absent one ("...or could not be executed").
+          rsync -az --chmod=F755 /tmp/genengine/             "ubuntu@${{ secrets.EC2_HOST }}:/home/ubuntu/app/releases/$SHA/backend/"
 
           ssh ubuntu@${{ secrets.EC2_HOST }} "SHA='$SHA' bash -s" <<'REMOTE'
           set -euo pipefail
