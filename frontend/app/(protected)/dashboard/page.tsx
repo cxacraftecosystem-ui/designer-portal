@@ -33,6 +33,7 @@ import {
 } from "lucide-react";
 
 import { DashboardCard } from "@/components/DashboardCard";
+import { MinistryDeskCard } from "@/components/dashboard/MinistryDeskCard";
 import { EmptyState } from "@/components/EmptyState";
 import { PageHeader } from "@/components/PageHeader";
 import { StatusBadge } from "@/components/StatusBadge";
@@ -546,6 +547,27 @@ function DashboardView() {
       {error ? (
         <div className="mb-4 rounded-md border border-red-200 bg-error-100 px-3 py-2 text-sm text-error-600">{error}</div>
       ) : null}
+      {/*
+        THE MINISTRY DESK — drawn for the three directorate posts and the master admin, and for
+        nobody else. It renders null for everyone outside that set, so every other account's
+        dashboard is byte-identical to what it was before this line existed.
+
+        ABOVE THE GRID, AND NOT IN IT. None of the five destinations it gathers is an Android
+        `EntryMode`, so none of them can join the `tiles` array below without putting the web out of
+        step with the handset — two parity tests, one per client, read that array. A sibling section
+        costs the grid nothing and is checked by neither, which is the correct answer for a web-only
+        card serving four tiers.
+
+        AND ABOVE RATHER THAN BELOW, because below is roughly nineteen tiles of a designer's work
+        away. "Gather their screens so they are easy to reach" is not answered by putting them after
+        everything that is not theirs.
+
+        THE COMPONENT OWNS ITS OWN GATE — `canSeeMinistryDesk`, plus each row's own destination
+        predicate — rather than being wrapped in a condition here. One gate, in the file whose whole
+        subject it is, is one place to read it and one place to change it; a second copy in this
+        page's JSX would be the hand-kept mirror this repository keeps paying for.
+      */}
+      <MinistryDeskCard />
       {/* The tiles are glass, and glass on a flat canvas refracts nothing you can see — these
           two soft orbs are what their rims bend. Purple only: `grad-mesh` carries a faint amber
           orb, and gold belongs to the marketing surfaces, never to a data screen. */}

@@ -1,9 +1,10 @@
 "use client";
 
 import { motion, useMotionValue, useSpring, useTransform } from "framer-motion";
-import { ArrowDown, Compass, ListOrdered, ShieldCheck } from "lucide-react";
+import { ArrowDown } from "lucide-react";
 
 import { riseItem, springy, staggerParent } from "@/components/guide/guideMotion";
+import type { GuideTrack } from "@/components/guide/tracks";
 import { useAppReducedMotion } from "@/components/guide/useAppReducedMotion";
 import { useGsapHeadline } from "@/components/guide/useGsapHeadline";
 
@@ -18,7 +19,7 @@ import { useGsapHeadline } from "@/components/guide/useGsapHeadline";
  * values never leave their centred rest position, so the band renders as a plain static
  * gradient.
  */
-export function GuideHero({ stepCount, onStart }: { stepCount: number; onStart: () => void }) {
+export function GuideHero({ track, onStart }: { track: GuideTrack; onStart: () => void }) {
   const reduce = useAppReducedMotion();
   const headline = useGsapHeadline<HTMLHeadingElement>(reduce);
 
@@ -36,35 +37,37 @@ export function GuideHero({ stepCount, onStart }: { stepCount: number; onStart: 
   });
 
   /*
-   * THE THREE FACTS ARE THE READER'S ORIENTATION, AND THE FIRST ONE IS ABOUT WHO GETS IN.
+   * ── THE COPY IN THIS BAND BELONGS TO THE TRACK, NOT TO THIS COMPONENT ─────────────────────────
    *
-   * ⚠ THIS PARAGRAPH OPENED "The walkthrough is reachable before anybody has an account", AND THAT
-   * IS NOT TRUE OF THIS PAGE. `/guide` lives under `app/(protected)`; `AppShell` does
-   * `router.replace("/login")` and then `if (!user) return null`, so a signed-out reader who follows
-   * the landing page's "Take the walkthrough" is sent to sign in and never reads a word of this
-   * band. Nor can the reader the fact was WRITTEN for: an address nobody has admitted gets a pending
-   * request instead of an account, so that person cannot reach this page either. The band was
-   * addressing an audience that is not in the room — which is the quietest way for help text to be
-   * wrong, because nothing on screen contradicts it and the people who would have noticed cannot see
-   * it. `components/hero/WalkthroughCallout.tsx` already carries the honest version for the public
-   * side ("`/guide` sits inside the app … signing in is the first step"), and that file belongs to
-   * the landing-page lane rather than to this one.
+   * The headline, the paragraph and the three facts were literals here until `/guide` grew a second
+   * and third deck, and most of them were FALSE of the other two audiences rather than merely
+   * ill-fitting: "the repository records first, then the 22-stage design & prototype workshop they
+   * feed" describes one job out of three. They are fields on `GuideTrack` now
+   * (`components/guide/tracks.ts`), and this component renders whichever deck it is handed.
    *
-   * THE FACT SURVIVED THE CORRECTION AND IS NOW AIMED AT THE READER WHO IS ACTUALLY HERE. Anybody
-   * reading this band is signed in, so how THEY got in is behind them; how a colleague gets in is
-   * not, and it is the question a designer brings back from the field with a researcher standing
-   * beside them. Same fact, addressed to the person who can act on it.
+   * ── THE RULES THEY ARE STILL WRITTEN UNDER, WHICH DID NOT MOVE WITH THEM ──────────────────────
    *
-   * There are three and not four because four facts is a list and three is an orientation — review
-   * is taught on its own card, where the reader is doing it. (That sentence used to name the card by
-   * NUMBER. Numbering a step in prose is the same defect as printing a step count: `GUIDE_STEPS` has
-   * grown three times since, and the number was wrong before the first of them.)
+   * THREE FACTS AND NOT FOUR, because four facts is a list and three is an orientation.
+   *
+   * ⚠ EVERY FACT MUST ADDRESS THE READER WHO IS ACTUALLY IN THE ROOM, and getting that wrong here is
+   * invisible. The first fact opened "The walkthrough is reachable before anybody has an account",
+   * which is not true of this page: `/guide` lives under `app/(protected)`, `AppShell` does
+   * `router.replace("/login")` and then `if (!user) return null`, so a signed-out reader is sent to
+   * sign in and never reads a word of this band — and nor can the reader that fact was WRITTEN for,
+   * since an address nobody has admitted gets a pending request rather than an account. The band was
+   * addressing an audience that cannot see it, which is the quietest way for help text to be wrong:
+   * nothing on screen contradicts it and the people who would have noticed are not here.
+   * `components/hero/WalkthroughCallout.tsx` carries the honest version for the public side. The
+   * fact survived the correction by being re-aimed — how a COLLEAGUE gets in is a live question for
+   * somebody who is already signed in — and every fact added to any deck owes the same test.
+   *
+   * ⚠ AND NO FACT MAY CARRY A HAND-TYPED COUNT. Where a deck states how many steps it has, the
+   * number is `steps.length` interpolated in `tracks.ts` and never a literal — the page header said
+   * "Ten steps" over an array of sixteen, and a fact in a tinted box is no more durable than a page
+   * header. Numbering a step in prose is the same defect: a sentence here once named a card by its
+   * position, and the array has grown three times since.
    */
-  const facts = [
-    { icon: ShieldCheck, text: "Access is by invitation — an admin admits each address before it can sign in" },
-    { icon: ListOrdered, text: `${stepCount} steps, in the order you do them in the field` },
-    { icon: Compass, text: "Every record is scoped to a workshop" }
-  ];
+  const facts = track.facts;
 
   return (
     <motion.section
@@ -97,18 +100,22 @@ export function GuideHero({ stepCount, onStart }: { stepCount: number; onStart: 
       </motion.p>
       {/* The one GSAP-owned element on the page: an overlapping per-word timeline, which framer's
           sequential stagger cannot express. See useGsapHeadline for why. `overflow-hidden` gives
-          the words something to rise out of. */}
+          the words something to rise out of.
+
+          ⚠ THE SPLIT IS DONE ONCE PER MOUNTED NODE (`useGsapHeadline` guards on `dataset.split`,
+          because re-splitting would nest spans inside spans), so changing `track.headline` on a
+          LIVE node would leave the previous deck's words in the DOM as spans and the new sentence
+          unrendered. The page therefore keys this component on the track id, which remounts it and
+          gives the hook a fresh <h2> to split. If that key is ever removed, this headline stops
+          changing with the deck and nothing will say so. */}
       <h2
         ref={headline}
         className="mt-3 max-w-2xl overflow-hidden font-display text-3xl font-bold tracking-tight text-white sm:text-4xl"
       >
-        Document a craft, end to end.
+        {track.headline}
       </h2>
       <motion.p variants={riseItem(reduce)} className="mt-4 max-w-2xl text-sm leading-relaxed text-purple-100">
-        This is the whole process, in the order you actually perform it: the repository records first,
-        then the 22-stage design &amp; prototype workshop they feed and the report that comes out of it.
-        Each step below names the screen it lives on, the fields it asks for, and the mistakes that
-        cost people a second trip to the field.
+        {track.intro}
       </motion.p>
 
       <motion.ul variants={staggerParent(reduce)} className="mt-7 grid gap-2.5 sm:grid-cols-3">

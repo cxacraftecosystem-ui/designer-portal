@@ -288,6 +288,44 @@ MIRRORS: tuple[Mirror, ...] = (
             "being re-made would be offered a menu entry, a route and an empty page."
         ),
     ),
+    # THE THIRD NON-MONOTONIC SET IN THAT FILE, AND THE ONLY ONE THAT GATES NO CAPABILITY AT ALL.
+    # It decides who is shown the dashboard card that gathers the ministry screens; each ROW on that
+    # card keeps the destination's own predicate, so widening this literal widens nothing but a
+    # panel. Registered anyway, and as `partial` rather than `covers`, because the shape of the set
+    # is the thing a new tier would default into wrongly -- and because a card nobody can find is the
+    # failure it was written to fix, so "absent by accident" costs as much here as "offered by
+    # accident" does on a gate.
+    Mirror(
+        path="frontend/lib/permissions.ts",
+        binding="MINISTRY_DESK_ROLES",
+        kind="partial",
+        pattern=r"export const MINISTRY_DESK_ROLES: readonly UserRole\[\] = \[([\s\S]*?)\n\];",
+        absent=frozenset(
+            {
+                "CROWDSOURCE_VOLUNTEER",
+                "FIELD_CONTRIBUTOR",
+                "RESEARCHER",
+                "DESIGNER",
+                "INSPECTOR",
+                "PROFESSOR",
+                "ADMIN",
+            }
+        ),
+        why=(
+            "Who is offered the ministry desk -- the dashboard card gathering the annual plan, the "
+            "sanction register, workshop oversight, the workshop list and the officer's read "
+            "surface. "
+            "ADMIN IS IN `absent` WHILE MASTER_ADMIN IS OFFERED, so this set has a HOLE at rank 50 "
+            "with rank 60 above it and no rank floor can express it -- which is the whole reason it "
+            "is a set. The argument is not about capability: an admin can do most of what the card "
+            "links to, and is out because they already have `/admin` and every one of these "
+            "destinations in the nav sheet, while the three ministry posts are refused `/admin` "
+            "twice over and have no hub at all. A new tier defaulting into this by nobody having "
+            "thought about it is either a card on the dashboard of somebody it means nothing to, or "
+            "-- far worse -- a ministry post that cannot find its own screens, which is the state "
+            "this card was written to end."
+        ),
+    ),
     # ── frontend, rendered ──────────────────────────────────────────────────────────────────────
     Mirror(
         path="frontend/components/hero/AccessLadder.tsx",
@@ -654,6 +692,25 @@ MIRRORS: tuple[Mirror, ...] = (
             "count, on the one surface whose reason for existing is counting them."
         ),
     ),
+    # ── the walkthrough decks, 2026-09-15 ────────────────────────────────────────────────────────
+    Mirror(
+        path="frontend/e2e/guide-tracks-unit.spec.ts",
+        binding="ALL_ROLES",
+        kind="closed",
+        pattern=r"const ALL_ROLES: UserRole\[\] = \[([\s\S]*?)\n\];",
+        why=(
+            "`/guide` carries three decks now -- the designer's, the directorate's and the "
+            "inspector's -- and `guideTrackFor` picks which one OPENS from the reader's role. This "
+            "tuple is what makes that sweep exhaustive: the test walks every tier and asserts which "
+            "deck it lands on, so a tier missing here is a tier nobody ever asked the question "
+            "about. "
+            "IT IS A DEFAULT AND NOT A GATE -- every deck stays reachable from the page's switcher "
+            "for everybody -- which is why the consequence of a wrong answer is one click rather "
+            "than a refusal. That is also exactly why it would go unnoticed: nothing breaks, nobody "
+            "is locked out, and a ministry officer simply opens on a walkthrough about somebody "
+            "else's job forever."
+        ),
+    ),
     Mirror(
         path=f"{_ANDROID_TEST}/ui/DirectorateTiersTest.kt",
         binding="everyRole",
@@ -987,6 +1044,21 @@ KNOWN_NON_MIRRORS: dict[str, str] = {
         "A NEW TIER GENUINELY DOES WANT A LINE HERE, and this row is not a claim otherwise -- it is "
         "the statement that the file asserts a predicate rather than mirroring the ladder, so the "
         "sweep should not demand the shape a Mirror row has."
+    ),
+    "frontend/e2e/ministry-desk-unit.spec.ts": (
+        "Five tiers named in individual assertions, and NOT an enumeration -- the file's own sweep "
+        "iterates `ROLES_BY_RANK`, which is DERIVED from `lib/permissions.ts::ROLE_RANK` (a `ranked` "
+        "mirror above), so every tier the ladder gains reaches every assertion in it on the day it "
+        "lands with nothing in the file to remember. Its one literal, `AUDIENCE`, is four tokens and "
+        "is the SUBJECT rather than a copy of the ladder: it is the ministry desk's audience written "
+        "out deliberately so that widening `MINISTRY_DESK_ROLES` has to be typed twice. The other "
+        "tier it names is ADMIN, in the assertion that the audience has a HOLE at rank 50 -- a tier "
+        "in, the tier above it out, the tier above THAT in -- which is the proof that no rank floor "
+        "can express the set.\n"
+        "A NEW TIER GENUINELY DOES WANT A LINE IN `MINISTRY_DESK_ROLES`, and the `partial` mirror "
+        "for that literal is where the sweep makes somebody decide. This row only says that THIS "
+        "file asserts a predicate rather than mirroring the ladder, so it should not be asked for "
+        "the shape a Mirror row has."
     ),
     "frontend/e2e/identity-ocr-unit.spec.ts": (
         "Two SEPARATE partial loops asserting two different predicates — the first loop "

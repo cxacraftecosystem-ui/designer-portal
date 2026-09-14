@@ -1216,3 +1216,78 @@ export function canManageAccessRoster(user: User | null | undefined) {
 export function canManageAnnualPlan(user: User | null | undefined) {
   return hasRank(user, "MINISTRY_ADMIN");
 }
+
+/**
+ * WHO IS OFFERED THE MINISTRY DESK — the dashboard card that gathers the ministry surfaces into one
+ * place. The three directorate tiers and the master admin, and nobody else.
+ *
+ * ── THIS IS A CARD'S AUDIENCE AND IT IS NOT AN ENTITLEMENT ───────────────────────────────────────
+ *
+ * Nothing here opens a door. Every destination the card links to keeps the predicate it already had
+ * — {@link canManageAnnualPlan} on Annual plan, {@link canAssignWorkshopOversight} on Workshop
+ * oversight, `canRecordSanctionOrders` (lib/sanctionOrders.ts) on Sanction orders,
+ * {@link canReadWorkshopOversight} on Workshops I monitor, {@link canRunDesignWorkshops} on Design
+ * workshops — and the card asks each one again, per row, so a row a viewer cannot open is not drawn.
+ * Widening THIS predicate therefore widens no capability at all; it would only put a card with no
+ * rows in it on somebody's dashboard. That separation is the whole reason it is a predicate of its
+ * own rather than a reuse of one of the five: a launching surface and a capability are two different
+ * questions, and answering them with one function is how a later edit to the launcher silently moves
+ * the gate. {@link canSeeDataTile} above is the same shape for the same reason, and is likewise
+ * mirrored nowhere — there is no server predicate for "which cards does this dashboard draw", and
+ * inventing one in `deps.py` would be a gate that gates nothing.
+ *
+ * ── IT IS A SET, AND EVERY OTHER SHAPE IS WRONG HERE IN A DIFFERENT DIRECTION ────────────────────
+ *
+ * NOT `isAdmin`. That is set membership on {ADMIN, MASTER_ADMIN} on both sides of the wire, so it
+ * admits exactly one member of this audience and refuses the three tiers the card exists for. It is
+ * the trap the `/annual-plan` route rule above spends a paragraph on: a Ministry Admin's token says
+ * admin and no predicate in this file agrees.
+ *
+ * NOT A RANK FLOOR. The tightest floor that admits ASSISTANT_DIRECTOR (42) also admits ADMIN (50),
+ * and an ADMIN is deliberately OUT — see below. No floor produces this set, because the set has a
+ * hole in it at 50 and every threshold instinct closes that hole.
+ *
+ * NOT `canRecordSanctionOrders`, which is the predicate that comes closest — Assistant Director and
+ * above, i.e. 42, 45, 48, 50, 60 — and differs by exactly one tier. Borrowing it would put the card
+ * on an admin's dashboard, and a set that happens to agree with another set for every tier that
+ * exists today is precisely the drift this file's header is written against.
+ *
+ * ── WHY AN ADMIN IS EXCLUDED BY NAME, WHICH IS THE ONLY SURPRISING MEMBERSHIP HERE ───────────────
+ *
+ * An ADMIN can do most of what this card links to — they assign oversight, they read and correct the
+ * annual plan, they record sanction orders — so their exclusion is not about capability and must not
+ * be read as one. It is about which accounts have a HUB already. An admin has `/admin`, the settings
+ * hub, and every one of these destinations in the nav sheet besides; the three directorate tiers
+ * have neither, because `/admin` gates on `isAdmin` and refuses them at the route guard and again
+ * inside the page. This card is the hub those three do not otherwise have. Handing it to an account
+ * that already has one would be a fourth entrance to screens that already have three — the cost the
+ * dashboard's own "NO DESIGNER ROSTER TILE HERE" note records.
+ *
+ * MASTER_ADMIN is in the set on the owner's instruction, and it earns its place rather than merely
+ * obeying one: it is the account that must be able to see what a ministry officer sees without
+ * holding a ministry post. It also demonstrates that the per-row gating is real rather than
+ * decorative — a master admin is REFUSED `/officers/monitored` BY NAME on the server
+ * (`assert_oversight_surface`), so that row is absent from their card and present on an Assistant
+ * Director's.
+ *
+ * ── AND IT IS NOT ADMIN CHROME ──────────────────────────────────────────────────────────────────
+ *
+ * Deliberately not wrapped in the dashboard's `adminSurface` helper, for the reason the `/annual-plan`
+ * nav entry gives in full: the admin-view toggle exists only for an account `isAdmin` admits, so
+ * flagging this would hide the card from the ONE member of this set who has a toggle — the master
+ * admin, browsing with admin view off — while leaving it on screen for the three tiers below them.
+ * A rule that fires for exactly the wrong half of its audience.
+ *
+ * `backend/tests/test_role_ladder_parity.py` registers this literal as a `partial` mirror, so a
+ * twelfth tier cannot default into or out of this audience by nobody having thought about it.
+ */
+export const MINISTRY_DESK_ROLES: readonly UserRole[] = [
+  "ASSISTANT_DIRECTOR",
+  "REGIONAL_DIRECTOR",
+  "MINISTRY_ADMIN",
+  "MASTER_ADMIN"
+];
+
+export function canSeeMinistryDesk(user: User | null | undefined) {
+  return !!user && MINISTRY_DESK_ROLES.includes(user.role);
+}
