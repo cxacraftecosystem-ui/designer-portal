@@ -416,6 +416,54 @@ jobs:
       #     is pruned when three newer releases exist. It is not cleaned up eagerly, on purpose: a
       #     directory nobody points at costs disk, and deleting things during a deploy is how a
       #     deploy deletes the wrong thing.
+      # ─── SWAP, BECAUSE THE GENERATOR DOES NOT FIT IN THIS BOX ──────────────────────────────
+      #
+      # `prisma generate` was OOM-KILLED on 2026-09-15 and the deploy log said only:
+      #
+      #     Error: Generator "prisma-client-py" failed:
+      #     Killed
+      #
+      # "Killed" with no other word is the kernel OOM killer. The API runs on a t3.micro -- 1 GiB
+      # of RAM, no swap by default -- and prisma-client-py builds the whole client in memory before
+      # writing it: ~100 models at `recursive_type_depth = 5` is a types.py of several megabytes and
+      # a peak far above what is free beside uvicorn and the worker.
+      #
+      # THIS IS WHY THE CLIENT WENT STALE, and the reason it was invisible for a day is worse than
+      # the crash. On the deploy that actually shipped the outage the generator did NOT die -- it
+      # ran, and wrote into the PREVIOUS release's venv, so the step exited 0 with a tick beside it
+      # and the release kept the client that had been copied into it. Between "it silently wrote to
+      # the wrong place" and "it is silently killed", every outcome except the correct one was
+      # green. The assertion added beside the generate step closes the reporting half; this closes
+      # the resource half.
+      #
+      # 2 GiB, which is the conventional 2x for a 1 GiB instance and nothing to do with the
+      # generator's exact peak -- the point is headroom, not a measured figure. The root volume is
+      # 30 GiB with three releases kept, so the space is not interesting.
+      #
+      # IDEMPOTENT AND NEVER FATAL. It does nothing when swap is already on, and a box that refuses
+      # it (no sudo, a full disk, a hardened image) still deploys -- the generate assertion is what
+      # decides whether the release is fit to serve, and a deploy must not fail because a tuning
+      # step could not run. `/etc/fstab` gets the entry so a reboot does not quietly undo it, and
+      # the grep guard keeps a second entry from being appended on every deploy.
+      - name: Ensure the box has swap, so the client generator is not OOM-killed
+        continue-on-error: true
+        run: |
+          ssh ubuntu@${{ secrets.EC2_HOST }} 'bash -s' <<'REMOTE'
+          set -uo pipefail
+          if [ "$(swapon --show --noheadings | wc -l)" -gt 0 ]; then
+            echo "swap already active:"; swapon --show
+            exit 0
+          fi
+          echo "no swap active — creating /swapfile (2 GiB)"
+          sudo fallocate -l 2G /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=2048
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
+          grep -q '^/swapfile ' /etc/fstab || echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+          echo "swap now:"; swapon --show
+          free -h
+          REMOTE
+
       - name: Prepare the release layout and the systemd units
         env:
           SHA: ${{ github.sha }}
@@ -796,7 +844,15 @@ jobs:
           # says fixes the copied venv's pointer did not actually fix it, and the venv went on
           # naming the PREVIOUS release's source tree.
           ./.venv/bin/python -m pip install -e . --no-deps --force-reinstall
-          PATH="$PWD/.venv/bin:$PATH" ./.venv/bin/python -m prisma generate
+
+          # RETRIED, because the failure it is retrying is a resource one and not a wrong one. The
+          # generator was OOM-killed here on 2026-09-15 (see the swap step above); with swap in
+          # place the first attempt should succeed, and a second is cheap insurance against a box
+          # that happens to be tight at that moment. `set -e` would otherwise end the script on the
+          # first failure and skip the verification below entirely -- which is exactly what happened
+          # on the deploy that found this, leaving the box on its old release with nothing checked.
+          generate() { PATH="$PWD/.venv/bin:$PATH" ./.venv/bin/python -m prisma generate; }
+          generate || { echo "::warning::prisma generate failed; retrying once"; sleep 5; generate || true; }
 
           # ─── THE CLIENT MUST BE IN *THIS* RELEASE'S VENV, AND THAT IS ASSERTED ────────────────
           #
