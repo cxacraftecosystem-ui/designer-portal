@@ -14,10 +14,16 @@
  *
  * ── `readOnly` IS HONOURED RATHER THAN ASSUMED ───────────────────────────────────────────────
  *
- * An officer is outside `DESIGN_WORKSHOP_ROLES`, so `/design-workshops/{id}` and every page beneath
- * it answers a **404** to them — exactly as it does to a professor. Nothing on this page links into
- * that tree, and the read-only banner is DECLARED rather than left to be inferred from the absence
- * of buttons: a screen with no Save on it looks the same as a screen whose Save has not loaded yet.
+ * `readOnly` IS THE ASSIGNMENT'S PROPERTY AND NOT A ROLE'S, WHICH MATTERS SINCE 2026-09-14. This
+ * comment used to say an officer is outside `DESIGN_WORKSHOP_ROLES` so the workshop tree answers a
+ * **404** to them, exactly as it does to a professor. The three directorate tiers are now inside
+ * that set, so that is no longer the reason and this page must not lean on it: what makes a
+ * MONITORED workshop read-only is the oversight assignment it is rendered from, which grants
+ * watching and not authoring. An officer who separately holds a viewer grant on the same workshop
+ * edits it in the workshop tree, not here.
+ *
+ * The read-only banner is DECLARED rather than left to be inferred from the absence of buttons: a
+ * screen with no Save on it looks the same as a screen whose Save has not loaded yet.
  *
  * ── THE RENDERERS ARE THE INSPECTION SURFACE'S, IMPORTED AND NOT COPIED ──────────────────────
  *

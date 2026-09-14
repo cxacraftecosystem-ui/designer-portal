@@ -45,7 +45,7 @@ from fastapi import HTTPException, status
 from prisma.errors import UniqueViolationError
 
 from app.core.db import db
-from app.core.deps import can_run_design_workshops, is_admin
+from app.core.deps import can_run_design_workshops, has_rank, is_admin
 
 # THE PRE-SUBMISSION LOOP'S PURE HALF: the status graph, and the one function that builds the
 # header write which enters PRE_SUBMISSION. It is in `app/schemas` and not in `app/services`
@@ -157,6 +157,93 @@ logger = logging.getLogger(__name__)
 # --------------------------------------------------------------------------------------
 
 
+async def _refuse_if_the_officer_is_authoring_what_they_sanctioned(
+    record: Any, user: Any, *, for_edit: bool
+) -> None:
+    """403 when the caller is about to WRITE inside a workshop their own sanction order opened.
+
+    ── WHY THIS EXISTS, AND IT IS A CONSEQUENCE OF THE 2026-09-14 WIDENING ───────────────────────
+
+    ``DESIGN_WORKSHOP_ROLES`` gained MINISTRY_ADMIN, REGIONAL_DIRECTOR and ASSISTANT_DIRECTOR on the
+    owner's ruling, so those three may now author stages. That is the intended effect and it is not
+    what this function objects to. What it closes is the interaction nobody had to think about while
+    the three tiers were outside the set:
+
+      1. ``can_record_sanction_orders`` is a rank floor at ASSISTANT_DIRECTOR (42), so all three
+         tiers may record a sanction order.
+      2. ``services/sanction_orders`` opens the workshop that order authorises with
+         ``createdById = officer.id`` -- stated at its step 1.5, and correct: the officer is who
+         brought it into existence.
+      3. The creator arm of :func:`load_workshop_or_404` admits the creator unconditionally.
+      4. Before the widening, ``_require_designer`` then refused them on all eighteen write routes
+         it guards, so the officer could READ what they had authorised and write not one stage.
+         After the widening it admits them.
+
+    Put together, an officer at 42 can now record the instrument, author the whole fortnight of
+    fieldwork inside the workshop it opened, and review and approve it as themselves --
+    ``can_review_record`` is strictly-below and ``can_edit_others_record`` is the PROFESSOR floor,
+    and 42 clears both. That is EXACTLY the escalation
+    ``sanction_orders._refuse_if_the_officer_named_themselves`` exists to prevent, reached without
+    the puppet designer that refusal is looking for: there is no second mailbox to name, no
+    credential link to redeem, and therefore no 422 to trip. The requirement that rule is written
+    from is one sentence in ``can_record_sanction_orders`` -- *the person who does the work does not
+    authorise their own budget* -- and it now needs enforcing from the other end as well.
+
+    ── WHAT IT DOES NOT DO ──────────────────────────────────────────────────────────────────────
+
+    IT DOES NOT TOUCH READ. ``for_edit`` is false on the read path, so the officer still opens the
+    workshop, still sees every stage, still generates the report. Authorising work you may not then
+    inspect would be a worse rule than the one this replaces.
+
+    IT DOES NOT TOUCH THE THREE TIERS ANYWHERE ELSE. A regional director authoring a workshop
+    somebody else sanctioned, or one an admin created, is untouched -- that is the capability the
+    owner asked for and this function is scoped to the single workshop their own order opened.
+
+    IT IS NOT A ROLE TEST DRESSED UP AS A ROW TEST. The refusal turns on ``createdById`` and on the
+    sanction order's ``createdById`` being the same account, not on rank. An ADMIN who records an
+    order (48 and above clear the floor too) is refused by the same clause for the same reason.
+
+    ── 403 AND NOT 404, WHICH IS THE OPPOSITE OF THE CLAUSE ABOVE ───────────────────────────────
+
+    Everywhere else in this helper a refusal is 404 so that it cannot confirm the id exists. Here
+    the caller has ALREADY been admitted as the creator, has read this workshop, and is looking at
+    it on their own screen; hiding it now would be a lie they can disprove by pressing back. They
+    are owed the reason instead, because the reason is actionable: the work belongs to the named
+    designer, and there is a designer on the order to hand it to.
+
+    ── COST ─────────────────────────────────────────────────────────────────────────────────────
+
+    One indexed lookup on ``SanctionOrder.designWorkshopId`` (``@unique``), and only when all three
+    cheap conditions already hold: this is a write, the caller is the creator, and the caller is at
+    or above the sanction floor. An ordinary designer saving an ordinary stage fails the third test
+    on a role string already in memory and pays nothing.
+    """
+    if not for_edit:
+        return
+    if getattr(record, "createdById", None) != getattr(user, "id", None):
+        return
+    # The floor from ``can_record_sanction_orders``, restated rather than imported: importing it
+    # would make this module depend on ``services.sanction_orders``, which already imports things
+    # that reach back here. ``tests/test_sanction_order_gate.py`` pins the threshold in one place.
+    if not has_rank(user, "ASSISTANT_DIRECTOR"):
+        return
+    order = await db.sanctionorder.find_unique(
+        where={"designWorkshopId": record.id},
+    )
+    if order is None:
+        return
+    if getattr(order, "createdById", None) != getattr(user, "id", None):
+        return
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail=(
+            "You recorded the sanction order that opened this workshop, so you cannot also author "
+            "it. The work belongs to the designer the order names; you can read every stage and "
+            "the report."
+        ),
+    )
+
+
 async def load_workshop_or_404(workshop_id: str, user: Any, *, for_edit: bool = False) -> Any:
     """Fetch a workshop the caller may see, or raise.
 
@@ -232,6 +319,7 @@ async def load_workshop_or_404(workshop_id: str, user: Any, *, for_edit: bool = 
         # change what a stranger is told: a 403 here would confirm the id exists to exactly the
         # people the clause is turning away.
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Record not found")
+    await _refuse_if_the_officer_is_authoring_what_they_sanctioned(record, user, for_edit=for_edit)
     # WHO-MAY-ENTER IS ANSWERED BEFORE IS-IT-DELETED, AND THAT ORDER IS THE FIX RATHER THAN THE
     # STYLE. The deleted check used to run FIRST, so a non-admin got 404 before the `for_edit`
     # 409 below could ever be reached — and the only accounts that reach this helper with

@@ -13,12 +13,26 @@
  * both. **A REGIONAL DIRECTOR IS REFUSED THE ASSIGNMENT SCREEN EVEN THOUGH THEY OUTRANK AN
  * ASSISTANT DIRECTOR** — the supervised do not choose the supervisor.
  *
- * ── 2. AN OFFICER IS OUTSIDE `DESIGN_WORKSHOP_ROLES`, SO NO OTHER ROUTE ANSWERS THEM ──────────
+ * ── 2. WHY THESE PAGES EXIST AT ALL — AND THE REASON CHANGED ON 2026-09-14 ────────────────
  *
- * `load_workshop_or_404` refuses anybody outside that frozenset before it looks at anything, which
- * is why PROFESSOR cannot open a design workshop either. So `/design-workshops/{id}` and every page
- * beneath it is a **404** for an Assistant Director or a Regional Director, and nothing on the
- * officer's own pages may link into that tree.
+ * THE ORIGINAL REASON, KEPT BECAUSE IT EXPLAINS THE SHAPE OF THIS MODULE: an officer was outside
+ * `DESIGN_WORKSHOP_ROLES`, `load_workshop_or_404` refused anybody outside that frozenset before it
+ * looked at anything, and so `/design-workshops/{id}` and every page beneath it answered a **404**
+ * to an Assistant Director or a Regional Director. These pages are the surface that was built
+ * instead, and that is why they render the inspection surface's components rather than the
+ * workshop's own.
+ *
+ * **THAT IS NO LONGER WHY.** The three directorate tiers joined `DESIGN_WORKSHOP_ROLES` on the
+ * owner's ruling, so `load_workshop_or_404` now admits them by role and the workshop tree is
+ * reachable. What keeps these pages worth having is the second half, which did not change: a
+ * monitored workshop is one an officer was ASSIGNED, the assignment is what `readOnly: true` below
+ * is about, and an officer holding an oversight assignment is not thereby a designer on that
+ * workshop. Reaching a workshop still needs the creator arm, an admin, or a viewer grant.
+ *
+ * AND ONE THING THAT DOES STILL REFUSE THEM, WHICH IS WORTH KNOWING HERE: an officer may not author
+ * the workshop their OWN sanction order opened —
+ * `services/design_workshops._refuse_if_the_officer_is_authoring_what_they_sanctioned` answers 403
+ * on the write and leaves the read alone, so a monitored workshop can still be read end to end.
  *
  * ── 3. `readOnly: true` IS ON THE WIRE ON PURPOSE ─────────────────────────────────────────────
  *

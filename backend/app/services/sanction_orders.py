@@ -70,10 +70,19 @@ silent in the way everything else here is silent:
   ``load_workshop_or_404`` refuses to honour. 201 for the officer, permanent 404 for the designer,
   no screen in the product able to undo it.
 * ``_refuse_if_the_officer_named_themselves``. The gate on this route is a rank floor at
-  ASSISTANT_DIRECTOR, every tier that clears it is outside ``DESIGN_WORKSHOP_ROLES``, and the 201
-  hands the caller a working first-password link for the account it just minted at role DESIGNER —
-  so an officer naming a second mailbox they control could sign in as their own designer and stand
-  on both sides of the instrument.
+  ASSISTANT_DIRECTOR and the 201 hands the caller a working first-password link for the account it
+  just minted at role DESIGNER — so an officer naming a second mailbox they control could sign in as
+  their own designer and stand on both sides of the instrument.
+
+  **THIS REFUSAL WAS HALF THE LOCK UNTIL 2026-09-14 AND IS NOW THE ONLY ONE ON THIS SIDE.** It used
+  to be backed by a second, structural fact — every tier that clears the floor was outside
+  ``DESIGN_WORKSHOP_ROLES``, so an officer could not author a stage even if they got in. The three
+  directorate tiers joined that set on the owner's ruling, so that sentence is no longer true and
+  the officer does not need a puppet: the workshop this transaction opens carries
+  ``createdById = officer.id``, which is a way IN through ``load_workshop_or_404`` all by itself.
+  What closes it from the other end is
+  ``services/design_workshops._refuse_if_the_officer_is_authoring_what_they_sanctioned``, and the two
+  are now a pair. Read both before loosening either.
 
 EVERY ONE OF THESE IS A READ (or, for the self-naming one, no read at all), TAKEN BEFORE THE
 TRANSACTION OPENS. Do not "optimise" them into it: from in there they would read the rows this
@@ -184,10 +193,9 @@ def can_record_sanction_orders(user: Any) -> bool:
     same morning, without an officer having to find an admin first — but it is a real widening and
     the ladder's comment has been corrected to say so rather than left claiming otherwise.
 
-    What bounds it is :func:`_refuse_if_the_officer_named_themselves`. Every tier that clears this
-    floor (42, 45, 48) is OUTSIDE ``DESIGN_WORKSHOP_ROLES``, so none of them can write a single stage
-    of a workshop; the 201 here, however, hands the caller a working 72-hour first-password link for
-    an account it just created at role DESIGNER. Without that refusal an officer could name a mailbox
+    What bounds it is :func:`_refuse_if_the_officer_named_themselves`, plus — since 2026-09-14 — its
+    counterpart in ``services/design_workshops``. The 201 here hands the caller a working 72-hour
+    first-password link for an account it just created at role DESIGNER. Without that refusal an officer could name a mailbox
     they control, redeem the link, and hold both ends of the instrument — authoring the work as a
     designer and approving it as themselves. The account minted by this flow is therefore always
     SOMEBODY ELSE'S, it is always marked ``SanctionOrder.accountCreated = true``, and the register row
@@ -498,10 +506,12 @@ def _refuse_if_the_officer_named_themselves(officer: Any, keys: list[str]) -> No
 
     ── WHAT THIS CLOSES ──────────────────────────────────────────────────────────────────────────
 
-    :func:`can_record_sanction_orders` is a rank floor at ASSISTANT_DIRECTOR (42), and every tier
-    that clears it — 42, 45, 48 — is OUTSIDE ``DESIGN_WORKSHOP_ROLES`` and therefore refused by
-    ``routes/design_workshops._require_designer`` on all eighteen routes it guards. Without this
-    check an officer could route around that in one request: name a second mailbox they control, and
+    :func:`can_record_sanction_orders` is a rank floor at ASSISTANT_DIRECTOR (42). Until 2026-09-14
+    every tier that clears it — 42, 45, 48 — was also OUTSIDE ``DESIGN_WORKSHOP_ROLES`` and therefore
+    refused by ``routes/design_workshops._require_designer`` on all eighteen routes it guards; THAT IS
+    NO LONGER SO, the three tiers are in the set, and the companion refusal named at the end of this
+    docstring is what took over that half of the job. Without this check an officer could route around
+    it in one request: name a second mailbox they control, and
     the 201 hands back ``credentialLink.link`` — a working 72-hour first-password URL — for a brand
     new account this transaction created at role DESIGNER, admitted ACTIVE on the allow-list and
     empanelled on the designer roster, with a ``DesignWorkshopViewer`` row on the workshop it just
@@ -547,6 +557,16 @@ def _refuse_if_the_officer_named_themselves(officer: Any, keys: list[str]) -> No
     one somebody re-derives wrongly the next time this is edited. The designer's own address has
     already been refused by the ``if not keys`` above this call if it is unusable, so a blank on the
     other side is not a way through.
+
+    ── ITS COMPANION, AND WHY THIS ONE IS NO LONGER SUFFICIENT ALONE ────────────────────────────
+
+    ``services/design_workshops._refuse_if_the_officer_is_authoring_what_they_sanctioned``. This
+    function stops an officer NAMING a designer they control. It cannot stop an officer who names a
+    real designer honestly and then authors the workshop themselves — and since the three directorate
+    tiers joined ``DESIGN_WORKSHOP_ROLES`` on 2026-09-14, they can, because step 1.5 of the create
+    stamps ``createdById = officer.id`` on the workshop and the creator arm of ``load_workshop_or_404``
+    admits the creator with no role test at all. The companion refuses the WRITE on that one workshop
+    and leaves the read alone. Neither function is the whole rule; together they are.
     """
     own = set(designers.email_match_keys(getattr(officer, "email", None)))
     if own and own.intersection(keys):
