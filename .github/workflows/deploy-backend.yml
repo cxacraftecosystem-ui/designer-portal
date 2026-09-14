@@ -1013,6 +1013,25 @@ jobs:
           # the client that just arrived from the runner is not the right one, the rsync or the
           # venv is wrong, and both are the runner's to fix: fail, keep the symlink where it is, and
           # let the box go on serving the last release that passed this same check.
+          # ─── THE QUERY ENGINE BINARY, WHICH `generate` USED TO FETCH AS A SIDE EFFECT ────────
+          #
+          # MOVING GENERATION TO THE RUNNER TOOK THIS WITH IT, and the release that shipped without
+          # it started, served, and failed every single request:
+          #
+          #   Background DB reconnect failed: Expected .../prisma-query-engine-debian-openssl-3.0.x
+          #   ... to exist but none were found or could not be executed.
+          #   Try running prisma py fetch
+          #
+          # The client is PURE PYTHON and travels; the engine is a PLATFORM BINARY and does not. The
+          # paths it searched even included `/home/runner/.cache/...` -- the runner's home, carried
+          # in from the machine that generated the client -- which is the clearest possible sign
+          # that a binary cannot be shipped this way and has to be fetched where it will run.
+          #
+          # `py fetch` DOWNLOADS, it does not generate: no schema is parsed and nothing is built in
+          # memory, so this is not the step that gets OOM-killed. It is a no-op once the cache holds
+          # this version, which is every deploy after the first.
+          ./.venv/bin/python -m prisma py fetch
+
           client_dir="$(./.venv/bin/python -c 'import prisma, os; print(os.path.dirname(prisma.__file__))')"
 
           if [ "${client_dir#$REL/}" = "$client_dir" ]; then
@@ -1055,6 +1074,17 @@ jobs:
           # models.py, actions.py and types.py together, and every model in this release's schema is
           # then checked by name, so a missing accessor is named HERE rather than found by a user.
           ./.venv/bin/python -c 'import re,sys,pathlib;from prisma import Prisma;schema=pathlib.Path("prisma/schema.prisma").read_text(encoding="utf-8");models=sorted({m.lower() for m in re.findall(r"^model ([A-Za-z0-9_]+) *\{",schema,re.M)});missing=[m for m in models if not hasattr(Prisma(),m)];print(("::error::the installed client is missing %d model accessor(s): %s"%(len(missing),", ".join(missing[:12]))) if missing else ("client instantiates and carries all %d model accessors"%len(models)));sys.exit(1 if missing else 0)'
+
+          # AND THE ENGINE IS ASSERTED, not assumed. `py fetch` exiting 0 is not the same claim as
+          # "the binary this platform needs is on disk and runnable" -- the release that took the
+          # site down proved the two can differ, and the difference only showed up as a 500 on every
+          # route after the symlink had already flipped.
+          engine="$(find "$HOME/.cache/prisma-python" -name 'prisma-query-engine-*' -type f 2>/dev/null | head -1)"
+          if [ -z "$engine" ] || [ ! -x "$engine" ]; then
+            echo "::error::no executable prisma query engine under $HOME/.cache/prisma-python. The app would start, serve, and fail every request with 'Not connected to the query engine'."
+            exit 1
+          fi
+          echo "query engine present: $engine"
 
           echo "prisma client verified in this release: $client_dir"
           REMOTE
