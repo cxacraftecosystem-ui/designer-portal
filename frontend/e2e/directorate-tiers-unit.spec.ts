@@ -86,15 +86,33 @@ test("a ministry admin is not an admin, and neither are the other two directorat
   }
 });
 
-test("no directorate tier reaches any design-workshop set, because every one of them is a set", () => {
+test("the three tiers run a workshop and reach no other design-workshop set, because each is its own set", () => {
+  // ⚠ THE FIRST EXPECTATION IS THE INVERSION OF WHAT THIS TEST ASSERTED UNTIL 2026-09-14, and the
+  // cause is a ruling rather than a bug. It read "no directorate tier reaches any design-workshop
+  // set" — true when written, made false by the owner's decision that these three may WRITE inside a
+  // workshop. The gap that forced it: a MINISTRY_ADMIN could promote an annual-plan row into a
+  // design workshop and then not save a stage in the workshop they had just created.
+  //
+  // THE POINT THE OLD NAME WAS MAKING SURVIVES AND IS NOW SHARPER. Each of these is its own SET, so
+  // gaining one buys nothing in the others: the three RUN a workshop, and still cannot OPEN a bare
+  // one, cannot INSPECT one, and cannot EXPORT its rows. Under a rank ladder all four would have
+  // moved together, which is the drift a set exists to prevent.
   for (const role of DIRECTORATE) {
-    expect(canRunDesignWorkshops(user(role)), role).toBe(false);
+    expect(canRunDesignWorkshops(user(role)), role).toBe(true);
     expect(canCreateDesignWorkshops(user(role)), role).toBe(false);
     expect(canInspectDesignWorkshops(user(role)), role).toBe(false);
     // EXPORT is the half that did NOT move on 2026-09-13, and it is the half that takes rows out of
     // the product. A professor has read-without-export since 2026-08-30; these three inherit that
     // exact shape rather than a wider one.
     expect(canExportDesignWorkshopData(user(role)), role).toBe(false);
+  }
+
+  // AND THE TWO TIERS BETWEEN THEM AND A DESIGNER ARE STILL REFUSED, which is what stops the first
+  // expectation being read as "a floor moved". PROFESSOR and INSPECTOR are both outranked by all
+  // three above and both write nothing — an inspector especially, since it would otherwise author
+  // the stages it later reviews.
+  for (const role of ["PROFESSOR", "INSPECTOR"] as const) {
+    expect(canRunDesignWorkshops(user(role)), role).toBe(false);
   }
 });
 

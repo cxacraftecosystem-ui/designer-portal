@@ -140,11 +140,11 @@ and this one asserted an absence it had never looked for.
 
 | Area | Tracked files | Tracked lines | Tree files | Tree lines |
 |---|---|---|---|---|
-| `backend/app` | 198 | 142,309 | 198 | 142,309 |
+| `backend/app` | 198 | 142,339 | 198 | 142,339 |
 | `frontend/app` | 87 | 44,922 | 87 | 44,922 |
 | `frontend/components` | 286 | 122,750 | 286 | 122,750 |
-| `frontend/lib` | 122 | 64,832 | 122 | 64,832 |
-| `android/app/src/main/java` | 257 | 222,656 | 257 | 222,656 |
+| `frontend/lib` | 122 | 64,849 | 122 | 64,849 |
+| `android/app/src/main/java` | 257 | 222,669 | 257 | 222,669 |
 
 Two columns because the two numbers get quoted interchangeably and disagree by however much work is
 uncommitted. **Tracked** is `git ls-files`, which is the figure to use in a write-up — it is

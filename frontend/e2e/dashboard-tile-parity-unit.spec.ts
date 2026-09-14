@@ -99,16 +99,30 @@ const OFFERED: Record<UserRole, boolean> = {
   MASTER_ADMIN: true,
   ADMIN: true,
   DESIGNER: true,
-  // FALSE, and it is the same answer PROFESSOR gets one line down for the same reason: the tile
-  // leads to running a workshop, and `canRunDesignWorkshops` is a SET that INSPECTOR is not in.
-  // Outranking a designer buys review authority over their records, not the ability to run one.
+  // FALSE, and it is the same answer PROFESSOR gets below for the same reason: the tile leads to
+  // running a workshop, and `canRunDesignWorkshops` is a SET that INSPECTOR is not in. Outranking a
+  // designer buys review authority over their records, not the ability to run one.
+  //
+  // THIS ROW NOW CARRIES THE ARGUMENT THAT PROFESSOR USED TO. Three tiers that outrank BOTH an
+  // inspector and a professor were admitted on 2026-09-14 and these two were not — so no floor
+  // anywhere on the ladder produces this column, which is the clearest the set-not-threshold point
+  // has ever been. An inspector is excluded for a second reason of its own: it would otherwise
+  // author the stages it later reviews.
   INSPECTOR: false,
-  // FALSE, all three, for INSPECTOR's reason one band higher: the tile leads to RUNNING a workshop
-  // and `canRunDesignWorkshops` is a SET. Outranking a designer buys review authority over their
-  // records, not the ability to produce one — and these three outrank a professor as well.
-  MINISTRY_ADMIN: false,
-  REGIONAL_DIRECTOR: false,
-  ASSISTANT_DIRECTOR: false,
+  // TRUE, all three, since 2026-09-14 — and they are the only rows in this table that moved.
+  //
+  // The owner ruled that the directorate tiers may WRITE inside a workshop; the gap that forced it
+  // was a MINISTRY_ADMIN who could promote an annual-plan row into a design workshop and then not
+  // save a stage in the workshop they had just created. So the tile that leads to running one is
+  // offered to them.
+  //
+  // ⚠ THIS LITERAL IS STILL WRITTEN OUT ROLE BY ROLE AND MUST STAY THAT WAY. The whole value of
+  // this table is that it is an INDEPENDENT statement of who the feature is for — derived from the
+  // predicate it would assert `canRunDesignWorkshops` equal to itself, and a widening would sail
+  // through unnoticed, which is precisely the event these three lines are recording.
+  MINISTRY_ADMIN: true,
+  REGIONAL_DIRECTOR: true,
+  ASSISTANT_DIRECTOR: true,
   PROFESSOR: false,
   RESEARCHER: false,
   FIELD_CONTRIBUTOR: false,

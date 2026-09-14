@@ -196,11 +196,21 @@ test("exporting it is admin and master admin, and is strictly narrower", () => {
   expect(DESIGN_WORKSHOP_DATA_EXPORT_ROLES.length).toBeLessThan(DESIGN_WORKSHOP_DATA_VIEW_ROLES.length);
 });
 
-test("the new capability does not widen the designer set", () => {
-  // The two sets are almost opposites and that is deliberate: running a workshop is WRITING inside
-  // somebody's fortnight of work, this is READING a table of what a corpus recorded.
-  expect(DESIGN_WORKSHOP_ROLES).toEqual(["DESIGNER", "ADMIN", "MASTER_ADMIN"]);
+test("the view capability still does not carry a write", () => {
+  // Running a workshop is WRITING inside somebody's fortnight of work; this is READING a table of
+  // what a corpus recorded. The two sets are still not the same set, which is what this checks.
+  //
+  // ⚠ THE WRITE SET DID LATER WIDEN, AND NOT BY THIS CAPABILITY. On 2026-09-14 the owner ruled that
+  // the three directorate tiers may write inside a workshop. So this no longer asserts a literal
+  // array — that only re-breaks on every deliberate change — but the PROPERTY it was written for:
+  // a professor reads and cannot write, an inspector neither, and nothing may write what it cannot
+  // read. The backend test of the same name carries the same three claims.
   expect(canRunDesignWorkshops(asUser("PROFESSOR"))).toBe(false);
+  expect(canRunDesignWorkshops(asUser("INSPECTOR"))).toBe(false);
+  for (const role of DESIGN_WORKSHOP_ROLES) {
+    if (role === "DESIGNER") continue; // reaches its OWN workshops by grant, not by this predicate
+    expect(canViewDesignWorkshopData(asUser(role)), role).toBe(true);
+  }
   expect(canViewDesignWorkshopData(asUser("DESIGNER"))).toBe(false);
   // An inspector holds a grant on ONE workshop; this predicate opens every workshop there is.
   expect(canViewDesignWorkshopData(asUser("INSPECTOR"))).toBe(false);

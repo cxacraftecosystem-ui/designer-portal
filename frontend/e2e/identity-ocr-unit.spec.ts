@@ -117,22 +117,33 @@ test("the form's guard and the reader's guard are different rules, and they do n
   // `canCreateRecords` at the Researcher floor, so the artisan form opens for it — and the card
   // reader must not, or an inspector photographs somebody's Aadhaar card and ships it to a vision
   // model before the 403 comes back.
-  // The three directorate tiers (42/45/48, added 2026-09-13) are in this loop for PROFESSOR's
-  // reason, one band higher: they clear the record-creator floor and sit outside
-  // `DESIGN_WORKSHOP_ROLES`, which is a SET no rank reaches. Outranking a professor buys them the
-  // artisan form and not the card reader.
-  for (const role of [
-    "RESEARCHER",
-    "INSPECTOR",
-    "PROFESSOR",
-    "ASSISTANT_DIRECTOR",
-    "REGIONAL_DIRECTOR",
-    "MINISTRY_ADMIN"
-  ]) {
+  // ⚠ THE THREE DIRECTORATE TIERS LEFT THIS LOOP ON 2026-09-14, AND IT IS A CONSEQUENCE WORTH
+  // SEEING RATHER THAN A LINE TO UPDATE.
+  //
+  // They were here for PROFESSOR's reason one band higher: outside `DESIGN_WORKSHOP_ROLES`, so the
+  // artisan form opened for them and the card reader did not. The owner then widened that set so a
+  // ministry admin could save a stage in a workshop they had just created — and because the OCR
+  // endpoint is gated by THE SAME PREDICATE (`_require_designer`), the three gained the Aadhaar
+  // card reader in the same move. Nobody asked for that; it arrived attached to the thing that was
+  // asked for.
+  //
+  // It is recorded here, in the test that would otherwise just have been edited, because the reader
+  // photographs somebody's Aadhaar card and uploads it to a third-party vision model. If the
+  // directorate should write stage data and NOT read identity cards, the fix is a predicate of its
+  // own on that endpoint — not a narrowing of `DESIGN_WORKSHOP_ROLES`, which would take the stage
+  // save back with it.
+  for (const role of ["RESEARCHER", "INSPECTOR", "PROFESSOR"]) {
     expect(canCreateRecords(as(role)), `${role} may open the artisan form`).toBe(true);
     expect(canRunDesignWorkshops(as(role)), `${role} must NOT be offered the card reader`).toBe(false);
   }
-  for (const role of ["DESIGNER", "ADMIN", "MASTER_ADMIN"]) {
+  for (const role of [
+    "DESIGNER",
+    "MINISTRY_ADMIN",
+    "REGIONAL_DIRECTOR",
+    "ASSISTANT_DIRECTOR",
+    "ADMIN",
+    "MASTER_ADMIN"
+  ]) {
     expect(canRunDesignWorkshops(as(role)), `${role} is in the set the endpoint admits`).toBe(true);
   }
   // Signed out, or `/me` still in flight: no reader. The control must fail closed rather than flash
