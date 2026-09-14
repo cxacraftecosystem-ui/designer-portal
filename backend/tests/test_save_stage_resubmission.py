@@ -134,21 +134,30 @@ async def connection():
     ``TestClient``); 44 modules here still hold the older shape, an ASYNC module fixture that both
     awaits ``db`` and holds a ``TestClient``.
     """
-    opened_here = not db.is_connected()
-    if opened_here:
-        await db.connect()
-    else:
-        try:
-            await db.query_raw("SELECT 1")
-        except Exception:  # noqa: BLE001 - ANY failure here means "unusable", not one named cause
-            with suppress(Exception):
-                await db.disconnect()
-            await db.connect()
-            opened_here = True
+    # ── ALWAYS BUILD OUR OWN ENGINE. NO BORROWING, NO PROBE. ─────────────────────────────────────
+    #
+    # The probe this replaced ran `SELECT 1` on an inherited connection and rebuilt only if that
+    # failed. It went to CI and the three cross-loop failures came back unchanged, so whatever this
+    # module inherits does not fail a `SELECT 1` in the FIXTURE's loop and still fails in the
+    # TESTS'. A liveness check in the wrong loop proves nothing about the right one.
+    #
+    # Unconditional is both simpler and sound, and it is sound for a reason rather than by luck:
+    # pytest tears a module's fixtures down before the next module's run, so when this fixture opens
+    # there is no other module still using the singleton. Anything still attached to it is a leak,
+    # and the correct response to a leak is to replace it, not to test it.
+    #
+    # `disconnect()` clears `_internal_engine` BEFORE awaiting `engine.aclose()` (prisma 0.15.0,
+    # _base_client.py:447), so the state is cleared even when that `aclose()` raises against a dead
+    # loop — which is exactly why it is suppressed rather than handled. `connect()` then finds None
+    # and builds a fresh engine in THIS loop (:429). We always own what we hand out, so the teardown
+    # is unconditional too and the next module inherits a closed singleton.
+    with suppress(Exception):
+        await db.disconnect()
+    await db.connect()
     try:
         yield db
     finally:
-        if opened_here:
+        with suppress(Exception):
             await db.disconnect()
 
 
