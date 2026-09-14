@@ -115,6 +115,7 @@ from app.services.sanction_orders import (
     normalise_sanction_order_no,
 )
 from app.services.stage_schema import registry_version, stage, stage_completeness
+from prisma import Json
 
 pytestmark = [needs_db]
 
@@ -626,7 +627,14 @@ def world():
                     edited["sanctionOrderNo"] = "SOMETHING ELSE ENTIRELY"
                     await db.dwstageentry.update(
                         where={"id": entry.id},
-                        data={"data": json.loads(json.dumps(edited))},
+                        # `Json(...)`, prisma's wrapper, and NOT a bare dict. A raw mapping is
+                        # refused by the query engine with "`data` should be of any of the following
+                        # types: `JsonNullValueInput`, `Json`" — 35 setup errors across this module
+                        # and its sibling, all from this one line. `json.loads(json.dumps(...))` was
+                        # doing the round-trip to plain types, which is necessary and not
+                        # sufficient: the wrapper is what tells the engine which input type it is.
+                        # Every other Json write in this directory uses it.
+                        data={"data": Json(json.loads(json.dumps(edited)))},
                     )
                 rows["stage_copy"] = {
                     "entry": entry,
