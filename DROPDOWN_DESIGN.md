@@ -818,11 +818,20 @@ no web twin because a browser has no outbox.
 
 **Two copy decisions the cascade forced, both resolved toward one string per fact.**
 
-- The row that takes the filter off is **"Any type of workshop"** on both clients, as
-  `ANY_WORKSHOP_KIND` (`WorkshopOptions.kt`). The handset list screen said "Any type" under a comment
-  claiming it matched the web, which said "Any type of workshop"; requirement 20 cannot be honoured by
-  two strings, and the longer one is the one that still reads correctly when a screen reader speaks
-  the row out of its box, and beside a SECOND picker.
+- The row that takes the filter off is **"Any type of workshop"** on all FOUR surfaces that carry it
+  — each client's list filter and each client's record-form cascade — held on the handset as
+  `ANY_WORKSHOP_KIND` (`WorkshopOptions.kt`).
+
+  **This bullet said "on both clients" when it was first written, and that was not yet true.** Three
+  of the four sites had been moved and the web's list page (`design-workshops/page.tsx`) still said
+  "Any type" — which was, until that moment, *correct*, because it matched the handset list screen
+  it is the twin of. Moving only the handset closed one divergence and opened another, under
+  requirement 20's own banner, and this document asserted the result as fact. The web's list page
+  has since moved onto the same string, so the claim now holds; it is recorded here rather than
+  quietly corrected because an arbiter that has been wrong once should say where.
+
+  The longer wording is the one that survived: it still reads correctly when a screen reader speaks
+  the row out of its labelled box, and when the row sits directly above a SECOND picker.
 - An empty answer to a NARROWED read gets its own sentence, `narrowedEmptyLine`, and never
   §3.5's `scopedEmptyLine`. This is the web's own rule — `DesignWorkshopSelect.tsx` states it for the
   search term: *"THE NOTICE IS ASKED OF THE UNNARROWED LIST … a claim about a grant table produced by

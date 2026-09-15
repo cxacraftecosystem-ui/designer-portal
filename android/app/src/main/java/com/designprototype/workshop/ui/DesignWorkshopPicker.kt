@@ -218,6 +218,30 @@ class DesignWorkshopPickerState(initialId: String) {
         private set
 
     /**
+     * Settle [everListedRows] from a read that was NOT narrowed by a type.
+     *
+     * ── WHY THE STICKY FLAG ABOVE IS NOT ENOUGH ON ITS OWN ────────────────────────────────────
+     *
+     * It is written only from the rows a LIST READ returned, and every list read this picker issues
+     * carries the current type — which opens at `DEFAULT_WORKSHOP_KIND` and is retained across
+     * records. So THE FIRST READ IS ALREADY NARROWED and there is no unnarrowed read at all unless
+     * somebody taps "Any type of workshop".
+     *
+     * That leaves the exact hole the flag was introduced to close, reached WITHOUT a tap: a designer
+     * holding nine design workshops, none of them of the default type, opens a record filed under
+     * none, the one read returns zero rows, `everListedRows` stays false, and a record they simply
+     * never filed is queued as `UNFILED_NO_OPTIONS` — *"there was nothing to pick"* — about an
+     * account with nine. Worse than the original defect, because it needs no interaction to happen.
+     *
+     * So when a narrowed read comes back empty the question is asked again without the filter, and
+     * only ever to answer "does this account have any at all". It does not touch [workshops],
+     * [total] or [listState]: what is drawn stays the answer to the question the designer asked.
+     */
+    fun noteUnnarrowedRows(any: Boolean) {
+        if (any) everListedRows = true
+    }
+
+    /**
      * What [isDirty] compares against.
      *
      * MOVED BY THE PREFILL AND NEVER BY A TAP, which is the whole mechanism: the app filling a box in
@@ -531,7 +555,32 @@ fun rememberDesignWorkshopPicker(
                 workshopKind = state.kind.takeIf { it.isNotBlank() },
             )
         }
-            .onSuccess { page -> state.markListed(page) }
+            .onSuccess { page ->
+                state.markListed(page)
+                /*
+                  THE UNNARROWED PROBE, AND IT IS THE CHEAP CASE THAT MATTERS.
+                  It runs only when a TYPE-FILTERED read came back with nothing and nothing has ever
+                  been listed — so on the ordinary path, where the default type has workshops, it
+                  never runs at all. One row is asked for because the only question is "any at all";
+                  the answer is fed to `noteUnnarrowedRows`, which touches nothing that is drawn.
+                  Without it `hadOptions` is false for every account holding no workshops of the
+                  default type, and the outbox mislabels a deliberate non-filing as "there was
+                  nothing to pick". See `noteUnnarrowedRows` for the full trace.
+                */
+                if (page.items.isEmpty() && !state.everListedRows && state.kind.isNotBlank()) {
+                    runCatching {
+                        repository.designWorkshops(page = 1, pageSize = 1, workshopKind = null)
+                    }
+                        .onSuccess { state.noteUnnarrowedRows(it.items.isNotEmpty()) }
+                        .onFailure { probeError ->
+                            // A probe that does not answer leaves the flag alone. Cancellation is
+                            // rethrown for the reason the arm below gives; any other failure simply
+                            // means the question stays unanswered, which is the status quo and never
+                            // a worse answer than guessing.
+                            if (probeError is CancellationException) throw probeError
+                        }
+                }
+            }
             .onFailure { error ->
                 // Leaving the screen is not a failure. Rethrown, as every other load on this client
                 // does, so a dead composable never writes state — AND, since this arm now writes a

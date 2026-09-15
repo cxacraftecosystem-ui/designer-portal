@@ -646,12 +646,18 @@ fun WorkshopListScreen(
           rather than through `includeNone`: this is the row that takes the filter off, and the
           reader has to be able to see the way back on the same list they used to get here.
 
-          IT IS A CONSTANT NOW AND THE WORDS CHANGED. This call site said "Any type" under a comment
-          claiming it was spelled exactly as the web spells it; the web says "Any type of workshop"
-          (`DesignWorkshopCascade.tsx`), and the record forms' cascade on this handset needed the
-          same row. Two strings, one of them with a comment asserting they were one — requirement 20
-          is that the clients must not disagree about any of this, and it cannot be honoured by three
-          copies. See [ANY_WORKSHOP_KIND] for which one gave and why.
+           IT IS A CONSTANT NOW AND THE WORDS CHANGED — ON ALL FOUR SURFACES, WHICH IS THE PART THE
+           FIRST VERSION OF THIS COMMENT GOT WRONG. It said the web "says 'Any type of workshop'" and
+           cited `DesignWorkshopCascade.tsx`. That is this screen's twin's SIBLING, not its twin:
+           THIS screen's twin is `design-workshops/page.tsx`, which drives the same `kindFilter`
+           state and which said "Any type" — exactly what this call site used to say. Changing only
+           the handset therefore closed one divergence and opened another, under requirement 20's own
+           banner.
+
+           So the web's list page moved to the same string in the same commit, and the four sites —
+           two clients x (list filter, record-form cascade) — now carry one wording. The longer form
+           survived: it is what reads correctly when a screen reader speaks the row out of its
+           labelled box, and when the row sits directly above a SECOND picker.
 
           `searchable = false` — six members of a vocabulary compiled into this app is precisely the
           class the shared threshold answers correctly, and six is under it anyway; passing the

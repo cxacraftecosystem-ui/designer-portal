@@ -119,15 +119,22 @@ const val TYPE_DETAILS_INSTEAD: String = "Do not link a workshop — type the de
  * than the primitive's none-row. The reader has to be able to see the way back on the same list they
  * used to get here, and an option is the only place a way back can be seen.
  *
- * ── WHY THE HANDSET GAVE UP "Any type" ─────────────────────────────────────────────────────
+ * ── ONE ROW, FOUR SURFACES, AND WHICH WORDING SURVIVED ─────────────────────────────────────
  *
- * `WorkshopListScreen` shipped "Any type" and `DesignWorkshopCascade.tsx:147` shipped "Any type of
- * workshop", each with a comment claiming to spell it "exactly as the web spells it". They were two
- * strings, and requirement 20 is that the clients must not disagree about any of this. The web's is
- * the one that survives, for two reasons and not by seniority: it is the one that reads correctly
+ * Each client's list filter and each client's record-form cascade carried this row, and they were
+ * not one string. `WorkshopListScreen` and `design-workshops/page.tsx` — its twin, same `kindFilter`
+ * state — both said "Any type"; `DesignWorkshopCascade.tsx` said "Any type of workshop".
+ *
+ * ONLY THE FIRST CARRIED A COMMENT CLAIMING TO SPELL IT "exactly as the web spells it", and that
+ * claim was TRUE of its own twin. An earlier version of this note said the cascade made the same
+ * claim. It does not — it claims the same SHAPE ("the same shape the list filter uses"), which is a
+ * different and correct statement, and saying otherwise made a wrong edit read as a correction.
+ *
+ * The longer form survives, for two reasons and not by seniority: it is the one that reads correctly
  * when a screen reader speaks the row on its own, out of the labelled box it belongs to; and the
  * record forms mount this box directly above a SECOND picker, where a bare "Any type" is a row a
- * designer can reasonably read as being about the workshop rather than about the type.
+ * designer can reasonably read as being about the workshop rather than about the type. The web's
+ * list page moved onto it rather than the handset moving back, so all four now agree.
  *
  * One constant, so the list screen's filter and the record forms' cascade cannot part company again.
  */

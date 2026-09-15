@@ -1738,8 +1738,11 @@ function DesignWorkshopsPageBody() {
           the product was a hard-coded `workshopType="DESIGN_PROTOTYPE"` literal on two request
           builders against the legacy `Workshop` table.
 
-          "Any type" is the empty value and it is FIRST, exactly as "Any status" is beside it — the
-          same absence-means-everything rule the request builder above relies on.
+          The empty value is FIRST, exactly as "Any status" is beside it — the same
+          absence-means-everything rule the request builder above relies on. Its LABEL is no longer
+          "Any type": see the note on the option itself for why all four surfaces carrying this row
+          moved onto one wording, and why "Any status" beside it is untouched (it has no twin on a
+          second control and no screen-reader problem to solve).
         */}
         <Dropdown
           value={kindFilter}
@@ -1748,7 +1751,14 @@ function DesignWorkshopsPageBody() {
             setPage(1);
           }}
           options={[
-            { value: "", label: "Any type" },
+            // ONE STRING ON FOUR SURFACES, and this is the one that moved to get there. It read
+            // "Any type"; the handset's list filter matched it, and then the record forms grew a
+            // cascade whose row has to read correctly BENEATH A SECOND PICKER and on its own out of
+            // a screen reader — where a bare "Any type" is a row a designer can reasonably take to
+            // be about the workshop rather than about the type. Requirement 20 is that the clients
+            // do not disagree; it is not honoured by two strings matched pairwise, so the shorter
+            // one gave. `ui/WorkshopOptions.kt`'s ANY_WORKSHOP_KIND is the handset's single copy.
+            { value: "", label: "Any type of workshop" },
             ...kindChoices.options.map((option) => ({ value: option.value, label: option.label }))
           ]}
           ariaLabel="Filter by type of workshop"

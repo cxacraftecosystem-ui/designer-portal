@@ -68,8 +68,18 @@ import type { User } from "@/lib/types";
  * screens carry the same names in both." Checked against the tree rather than assumed:
  * `grep -rn "ASSISTANT_DIRECTOR" android/app/src/main --include=*.kt` finds the rank and the label
  * and NOTHING ELSE — no annual plan, no sanction register, no oversight screen, no "Workshops I
- * monitor" — and `InspectionDetailScreen.kt` has no feedback box, so the handset can read the
- * suggestions on a workshop and cannot file one. Repeating that sentence over the two new decks
+ * monitor".
+ *
+ * ⚠ AND THE CLAUSE THAT USED TO END THIS PARAGRAPH WAS ITSELF WRONG THE SAME WAY, which is worth
+ * leaving on the record rather than silently deleting. It read "`InspectionDetailScreen.kt` has no
+ * feedback box, so the handset can read the suggestions on a workshop and cannot file one." The
+ * second half is right; THE FIRST HALF IS NOT. `DwInspectionDetailDto` declares
+ * `inspectionFeedback`, which is what makes it plausible — but
+ * `grep -rn "inspectionFeedback" android/app/src/main --include=*.kt` finds that declaration, its
+ * twin in `StageSchema.kt`, and a mention in a comment. NO SCREEN READS IT. A field on the wire is
+ * not a screen, and only a screen is a thing a reader can open. `INSPECTOR_TRACK.recapLead` was
+ * corrected for exactly this and this paragraph was not, so the file said both things at once for a
+ * day. Repeating that sentence over the two new decks
  * would send an officer hunting a handset for screens that were never built, which is the failure
  * `WalkthroughSteps.kt` states as "worse than a missing step". Each deck now says what is true of
  * its own screens, and only that.
