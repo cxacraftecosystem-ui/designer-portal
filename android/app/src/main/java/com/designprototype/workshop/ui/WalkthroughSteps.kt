@@ -27,6 +27,7 @@ import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.ui.graphics.vector.ImageVector
+import com.designprototype.workshop.data.UserDto
 
 /*
  * ─────────────────────────────────────────────────────────────────────────────────────────────────
@@ -721,14 +722,439 @@ internal val walkthroughSteps: List<WalkStep> =
     listOf(walkthroughIntro) + walkthroughJourney + walkthroughOutro
 
 /**
- * Where [step] sits in the journey, counting from one, or null if it is the opening or closing card.
+ * Where [step] sits in [deck]'s journey, counting from one, or null if it is an opening or closing
+ * card.
  *
  * THE ONE PLACE A STEP NUMBER IS ALLOWED TO COME FROM. Hand-written numbers in the titles are what
  * made "10. View Data" the tenth of twelve entries in a list that claimed to have ten; deriving the
  * position means inserting a step renumbers everything after it and no human has to notice.
  *
+ * ⚠ THE DECK IS A PARAMETER AND USED NOT TO BE, AND THAT WAS NOT A STYLE PROBLEM. This function read
+ * the top-level `walkthroughJourney` directly, which is the designer's twenty-three. The day a
+ * SECOND deck existed that made it answer null for every step of it — an id the designer's journey
+ * does not contain is not in the designer's journey — so every card of the inspector's deck would
+ * have drawn as an unnumbered "Page n of m" against a meter denominated in somebody else's
+ * twenty-three. Nothing would have crashed and nothing would have looked broken; it would simply
+ * have been the wrong deck's arithmetic, silently, on the surface whose whole subject is "where am
+ * I, out of how many". The parameter is what makes the wrong answer unrepresentable.
+ *
  * Matched on [WalkStep.id] rather than on the whole value, so a screen holding a step it copied or
  * rebuilt still gets the right answer.
  */
-internal fun walkthroughStepNumber(step: WalkStep): Int? =
-    walkthroughJourney.indexOfFirst { it.id == step.id }.takeIf { it >= 0 }?.plus(1)
+internal fun walkthroughStepNumber(deck: WalkthroughDeck, step: WalkStep): Int? =
+    deck.journey.indexOfFirst { it.id == step.id }.takeIf { it >= 0 }?.plus(1)
+
+// ---------------------------------------------------------------------------------------------
+// The decks, and the rule that decides which one opens
+// ---------------------------------------------------------------------------------------------
+
+/*
+ * ═══════════════════════════════════════════════════════════════════════════════════════════════
+ * TWO WALKTHROUGHS ON THIS HANDSET, AND WHY THAT IS NOT THE WEB'S THREE.
+ * ═══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * The web registers three decks in `frontend/components/guide/tracks.ts` — the designer's fortnight,
+ * a DIRECTORATE deck for the three ministry posts, and an INSPECTOR deck — and `guideTrackFor` picks
+ * which one OPENS from the reader's role. Its module header is explicit that this is "a DEFAULT, NOT
+ * A GATE": `/guide` stays ungated, every deck stays in the bundle for everybody, and the switcher on
+ * the page reaches all three, so the role picks what opens and takes nothing away. BOTH HALVES OF
+ * THAT DECISION ARE CARRIED ACROSS BELOW — [walkthroughDeckFor] is a default, [WALKTHROUGH_DECKS] is
+ * the whole register, and the opening card of every deck switches to any other. A role-chosen deck
+ * with no way back to the others would be NARROWER than the web on the client that has fewer
+ * screens, which is the wrong direction for the only difference to run in.
+ *
+ * ── THE DIRECTORATE DECK IS NOT HERE, AND THIS IS THE GREP RATHER THAN THE OPINION ──────────────
+ *
+ * Its five cards name `/annual-plan`, `/sanction-orders`, `/officers`, `/officers/monitored` and
+ * `/design-workshops`. FOUR OF THE FIVE DO NOT EXIST ON THIS HANDSET IN ANY FORM. Run from
+ * `android/app/src/main`, with `--include=*.kt`, on 2026-09-15:
+ *
+ *   grep -rniE 'annual[ _-]?plan'                                           → 0
+ *   grep -rniE 'monitored|monitoring'                                       → 0
+ *   grep -rniE 'sanction-orders|sanctionOrders|SanctionOrder'               → 1, and it is a
+ *                                                                             hypothetical inside a
+ *                                                                             KDoc (DwPhotoIntake)
+ *   grep -rniE '/officers'                                                  → 0
+ *   grep -rniE 'AnnualPlanScreen|SanctionOrderScreen|OversightScreen'       → 0
+ *   grep -rniE 'canReadWorkshopOversight|OFFICER_ROLES|canSeeMinistryDesk'  → 0
+ *
+ * The three directorate tiers exist here as rank constants (42/45/48), display labels, roster filter
+ * chips and membership of `DESIGN_WORKSHOP_ROLES` — and as no screen, no route and no repository
+ * method. The fifth card, `/design-workshops`, is `NavDestination.DESIGN_WORKSHOPS`, which this
+ * app has and which the DESIGNER's deck already teaches under `design-workshop`. So a directorate
+ * deck here would be one step a reader can already reach and four doors into nothing, which is
+ * exactly what the header of this file calls "worse than a missing step": it sends an officer
+ * hunting a menu for rows that were never built, and what they conclude is that they cannot find
+ * them rather than that they are not there.
+ *
+ * The web reached this same conclusion about this same handset and wrote it into
+ * `DIRECTORATE_TRACK.recapLead` — "Four of these five screens are on the web only" — having run the
+ * grep itself. Manufacturing the deck here to make the two clients' deck COUNTS match would be
+ * making the numbers agree by making the product lie.
+ *
+ * ⚠ AND THE FIX IS NOT `OFFICER_ROLES`. The selector the web uses for that deck has zero Android
+ * hits today, and adding it to `FieldPermissions` to support a deck of dead links would be widening
+ * this app's role surface to make a screen render. When the handset grows an annual plan, a sanction
+ * register and an oversight screen, the deck and its predicate arrive together and this paragraph
+ * comes out.
+ * ═══════════════════════════════════════════════════════════════════════════════════════════════
+ */
+
+/**
+ * One walkthrough: an opening card, a numbered journey, a closing card, and who it is written for.
+ *
+ * THE WEB'S [GuideTrack] HAS FOURTEEN FIELDS AND THIS HAS FIVE, and the missing nine are not an
+ * omission — they are page-level copy for bands this handset does not draw. `headline`, `intro` and
+ * `facts` belong to a hero section with a pointer-driven wash and a GSAP headline that
+ * `WalkthroughJourney.kt` argues at length for NOT copying; `description` is a `PageHeader`
+ * subtitle and there is no page header here, because the walkthrough is a dialog; `checklist` and
+ * `checklistLead` are the closing band, which this client already carries as the closing card's own
+ * body; and `next` is a "Where to go next" tile grid whose every entry is a route — this app's
+ * equivalent is the "Open …" button each step already has, borrowed from `FIELD_NAV_ITEMS`.
+ * Declaring empty versions of those fields so the two types "match" would be nine registers with
+ * nothing reading them.
+ *
+ * What IS here is what actually differs between two decks on this client: which steps, in which
+ * order, with which two ends, under which name.
+ */
+internal data class WalkthroughDeck(
+    /**
+     * Stable id. Never shown, and never a URL — this app has no deep links into the walkthrough.
+     *
+     * Equal to the web's `GuideTrack.id` where a counterpart exists, on the same reasoning
+     * [WalkStep.id] gives: it is the only part of a deck stable enough for a test to join on while
+     * the prose is still being edited.
+     */
+    val id: String,
+    /** The switcher's button label — the web's `GuideTrack.name`, verbatim. */
+    val name: String,
+    /** One line saying who the deck is for — the web's `GuideTrack.audience`, verbatim. */
+    val audience: String,
+    /** The numbered steps, in the order the work happens in. Never includes the two ends. */
+    val journey: List<WalkStep>,
+    /**
+     * The whole deck as it is paged through: the opening card, the journey, the closing card.
+     *
+     * DERIVED AND NOT DECLARED, so the two can never disagree. The screen renders this; everything
+     * that counts, numbers or recaps reads [journey]. Keeping them apart is what lets an opening
+     * card state a count that is about the journey rather than about itself — see the argument over
+     * `walkthroughSteps`.
+     */
+    val steps: List<WalkStep>,
+)
+
+/**
+ * The designer's deck — the fortnight of fieldwork, unchanged down to the byte.
+ *
+ * It wraps the lists that were already here rather than restating them, which is what keeps
+ * `WalkthroughStepsTest`'s join against `frontend/components/guide/steps.ts` pointed at the same
+ * objects it has always been pointed at. A deck that COPIED or filtered `walkthroughJourney` would
+ * leave that suite green while the screen rendered something else — the web's own deck registry
+ * pins the identical property (`expect(DESIGNER_TRACK.steps).toBe(GUIDE_STEPS)`) for the same
+ * reason.
+ */
+internal val WALKTHROUGH_DESIGNER_DECK = WalkthroughDeck(
+    id = "designer",
+    name = "Documenting a craft",
+    audience = "Designers, and anybody learning how a workshop is run",
+    journey = walkthroughJourney,
+    steps = walkthroughSteps,
+)
+
+/**
+ * THE INSPECTOR'S JOURNEY — the Inspector / Reviewer tier, and nobody else.
+ *
+ * ── WHY THIS IS A DECK OF ITS OWN AND NOT A CARD IN THE DESIGNER'S ──────────────────────────────
+ *
+ * [walkthroughJourney] already ends with one card about this surface, `design-workshop-inspection`,
+ * and that card is correct where it stands: it is there so a DESIGNER knows what a colleague is
+ * looking at when they read the workshop back, and its first sentence says so. It is not a
+ * walkthrough for an inspector and it cannot become one, because the deck it sits in is the
+ * fortnight of fieldwork an inspector does not do. An inspector opening the walkthrough on this
+ * handset was handed twenty-five cards about recording artisans, filling stages and generating a
+ * report, exactly one of which describes a screen they can open, near the end of it.
+ *
+ * ── THREE CARDS AND NOT THE WEB'S FOUR, AND THE MISSING ONE IS A CAPABILITY ──────────────────────
+ *
+ * `frontend/components/guide/inspectorSteps.ts` teaches four: `inspection-list`, `inspection-read`,
+ * `inspection-feedback` and `inspection-review-queue`. THE THIRD IS NOT A MISSING ENTRY POINT ON
+ * THIS HANDSET, IT IS A MISSING CAPABILITY, and the difference is why it is not written below as a
+ * step with a rewritten address. The Retrofit interface declares exactly five inspection endpoints —
+ * `WorkshopRepositoryApi.kt` lines 1797, 1802, 1810, 1829 and 1841: four GETs and one PUT of the
+ * inspector roster — and there is no `POST …/feedback` and no `POST …/send-back`, although the
+ * backend serves both (`routes/design_workshop_inspections.py`: `record_inspection_feedback`,
+ * `send_workshop_back_for_revision`). Over `InspectionDetailScreen.kt` and `InspectionListScreen.kt`,
+ * `grep -rniE 'suggestion|feedback|correction|send.?back'` finds NOTHING, and
+ * `grep -rn 'inspectionFeedback' android/app/src/main --include=*.kt` finds the field on the
+ * payload's DTO and no reader of it anywhere under `ui/`.
+ *
+ * So this handset cannot file a correction AND CANNOT READ THE ONES ALREADY FILED. That second half
+ * is worth stating because the web's own closing copy got it wrong in the other direction — it said
+ * "the handset can read the suggestions already on a workshop", which the DTO makes plausible and
+ * the screen makes false. The honest version is in [walkthroughInspectorOutro], as prose, on the
+ * closing card, which is exactly where the web puts its equivalent (`INSPECTOR_TRACK.recapLead`).
+ *
+ * ⚠ WHAT MUST NOT HAPPEN IS A FOURTH STEP WITH `destination = null` AND THE WEB'S FIELD LIST ON IT.
+ * That card would draw a heading reading "What the screen asks for" over the four controls of a
+ * panel this phone does not have, on the one surface whose job is teaching a newcomer what things
+ * are called. [walkthroughInspectorOmissions] is where the omission is REGISTERED instead, in one
+ * place, with a test holding it to the web's own list so that a deck which quietly drops a second
+ * card cannot pass as this decision.
+ *
+ * ── AND THE LAST CARD IS NOT PART OF THE INSPECTION SURFACE, ON PURPOSE ─────────────────────────
+ *
+ * `Review` is open to Field Contributor and above, so it is not the tier's own screen — but it is
+ * the other half of what "Inspector / Reviewer" names, and at rank 37 an inspector outranks a
+ * designer there, which is the only place in this product where that rank buys anything. Leaving it
+ * out would teach an inspector that their whole job is the workshops somebody assigned them. Its
+ * ADDRESS is rewritten to the record browser, which is not an invention: the header of this file
+ * records that two of the web's steps naming web-only surfaces were already rewritten to name where
+ * the capability lives on this handset, and the shipped `review` step does exactly that against the
+ * same `NavDestination.REVIEW` — whose router arm says in as many words that "Android has no
+ * standalone review queue: reviewing happens inside the record browser".
+ */
+internal val walkthroughInspectorJourney: List<WalkStep> = listOf(
+    WalkStep(
+        id = "inspection-list",
+        title = "Workshops to inspect · Open your assigned workshops",
+        icon = Icons.Filled.FindInPage,
+        destination = NavDestination.DESIGN_WORKSHOP_INSPECTIONS,
+        body = "Open the design & prototype workshops an admin has assigned you, and work down " +
+            "them one at a time. An inspection is scoped one workshop at a time, by a row an admin " +
+            "creates, and that scoping is the whole design rather than a limitation of it: the " +
+            "alternative — an inspector who can read every workshop in the archive — would be a " +
+            "second full read of the repository and a second place to look when somebody has " +
+            "access they should not. The screen is a search box over your own assignments and then " +
+            "a card per workshop carrying its title, craft, cluster, place, code, status and " +
+            "dates, with the word \"Read-only\" printed on every one of them; the count above the " +
+            "list is the server's own total rather than the length of the page you are looking at, " +
+            "and the pager moves twenty at a time. Watch out: THIS SURFACE BELONGS TO THE " +
+            "INSPECTOR / REVIEWER TIER AND IS A SET WITH EXACTLY ONE MEMBER, not \"Inspector and " +
+            "above\" — an admin is refused it by name, so is the master admin, and so is a " +
+            "professor, which makes it the only row in this menu a master admin cannot reach. You " +
+            "cannot ask for an assignment or give yourself one either: an admin makes them one " +
+            "workshop at a time from that workshop's own stage index, which is a screen this " +
+            "account cannot open. The screen needs a connection every time — an inspection is read " +
+            "from the repository on each visit and nothing about it is kept on this phone, because " +
+            "an assignment an admin ended this morning has ended and a copy held here could not " +
+            "know that. And an empty list is a real answer: the page says \"No workshop is " +
+            "assigned to you\" and tells you in as many words that it is hiding nothing, a search " +
+            "that matched nothing says so differently, and a load that failed keeps whatever rows " +
+            "were already on screen and puts the failure above them — so a correct empty state and " +
+            "a dropped connection never read as the same thing.",
+    ),
+    WalkStep(
+        id = "inspection-read",
+        title = "Workshop under inspection · Read every stage",
+        icon = Icons.Filled.Layers,
+        destination = NavDestination.DESIGN_WORKSHOP_INSPECTIONS,
+        body = "Tap a card in that list and read the workshop back, stage by stage, as the " +
+            "designers recorded it. A report that reaches a Development Commissioner's office is " +
+            "read by somebody who did not run the fortnight, and \"who wrote this field, and " +
+            "when\" is most of what that reading is for — so this screen draws the same authorship " +
+            "sentence under every value that the designer's own stage form draws under every box, " +
+            "from the same stamp, because an inspector and the designer being inspected must never " +
+            "be reading two different accounts of who did what. The walk is over the twenty-two " +
+            "stages the registry declares and NOT over the stages somebody happens to have " +
+            "touched: an empty stage is a finding on an inspection screen rather than a row to " +
+            "omit, so a stage nobody started renders as a stage nobody started, and one the source " +
+            "document marks as legitimately skippable says so beside its own count. Each stage " +
+            "prints the server's own \"n of m required fields answered\", each record card lists " +
+            "the values that exist, and the fields nobody answered are counted underneath instead " +
+            "of drawn as forty empty rows. THERE IS NO SINGLE FIGURE FOR THE WORKSHOP AS A " +
+            "WHOLE ON THIS HANDSET — the browser prints one and this screen counts stage by " +
+            "stage — and that is deliberate rather than missing: a second arithmetic over one " +
+            "workshop is how a designer and their inspector come to disagree about what is " +
+            "outstanding. Watch out: READ-ONLY HERE IS STRUCTURAL AND NOT A " +
+            "SETTING. There is no stage form on this screen, no Save and no delete, and none of " +
+            "them is missing — every stage-editing route stands behind a loader that refuses " +
+            "anybody outside the design-workshop write set before it looks at the row, and an " +
+            "inspector is outside it by construction, so an affordance here would be a 404 waiting " +
+            "to be found by somebody who would reasonably conclude the app is broken. " +
+            "PHOTOGRAPHS, RECORDINGS AND ATTACHMENTS ARE COUNTED AND NOT CARRIED: a media field " +
+            "says how many files are recorded there and that an inspection read does not carry " +
+            "them, which is deliberate, because an empty gallery would read as a file that failed " +
+            "to load — and it means a judgement that turns on seeing a photograph is one this " +
+            "screen cannot settle. A completeness figure is arithmetic and not a verdict: a stage " +
+            "can answer every required field and still be wrong. A value that came from an " +
+            "artisan, product or tool record is a COPY taken when the stage was saved, so the " +
+            "record may have been corrected since and this stage would not have changed. And " +
+            "answers to questions a workshop's own designer added are counted and not shown, " +
+            "because the questions themselves are read through a route an inspection does not " +
+            "reach, and answers without their questions are not evidence of anything.",
+    ),
+    WalkStep(
+        id = "inspection-review-queue",
+        title = "Review · Work the record queue",
+        icon = Icons.Filled.Visibility,
+        destination = NavDestination.REVIEW,
+        body = "Work the repository-wide queue of records waiting on a decision, which is the " +
+            "other half of the tier's own name. The inspection surface is the handful of " +
+            "workshops somebody assigned you; this is the standing job — artisans, products, " +
+            "processes, tools and interviews submitted by anybody ranked below you, waiting to be " +
+            "approved, rejected or sent back for revision — and it is the one place in this " +
+            "product where the tier's RANK buys something rather than its set membership, because " +
+            "at 37 you outrank a designer and a designer's records reach your queue. THIS HANDSET " +
+            "HAS NO SEPARATE REVIEW QUEUE — the web has a page of its own, and here the same menu " +
+            "row opens the record browser, which is the one surface where a reviewer can read a " +
+            "submission and act on it. Watch out: THIS SCREEN IS NOT THE INSPECTION SURFACE AND IS " +
+            "NOT GATED LIKE IT. Review opens for Field Contributor and above — everybody with " +
+            "somebody ranked below them — so the people working beside you in the queue are not " +
+            "inspectors; what your tier changes is WHOSE records you see. You review strictly " +
+            "below you and never across: a record submitted by another Inspector / Reviewer is not " +
+            "yours to decide, and neither is one from a professor or a directorate post. And " +
+            "reviewing a record and rewriting one are two different ladders — editing somebody " +
+            "else's record is Professor and above, and 37 is below 40, so the server refuses your " +
+            "edit even where a control offers it. Send it back with what to fix and let the person " +
+            "who recorded it correct it, which is what the rule is for.",
+    ),
+)
+
+/**
+ * The inspector deck's opening card.
+ *
+ * THE COUNT IS DERIVED FOR THE SAME REASON THE DESIGNER'S IS, and now for a second one: there are
+ * two decks, so there are two numbers that can rot instead of one, and a card that typed its own
+ * would be wrong in whichever deck somebody edits next. It interpolates its OWN journey and never
+ * [walkthroughJourney] — a sentence here reading twenty-three would be the designer's arithmetic on
+ * the inspector's card, which is precisely the defect `walkthroughStepNumber` gained a parameter to
+ * make unrepresentable.
+ */
+private val walkthroughInspectorIntro = WalkStep(
+    id = "inspector-intro",
+    title = "What an inspection is, in order",
+    icon = Icons.Filled.Explore,
+    body = "${walkthroughInspectorJourney.size} steps, in the order an inspection happens — the " +
+        "list you were given, the workshop you read, and the wider record queue your tier opens. " +
+        "Your surface is not the designer's with the buttons removed: it is a different tree, " +
+        "behind a different gate, reached through an assignment an admin makes one workshop at a " +
+        "time. You cannot run a design & prototype workshop, and that is the point of the tier " +
+        "rather than a limitation of it — an inspector who could fill in a stage would be " +
+        "reviewing their own work, and the server refuses to start if the two sets ever overlap. " +
+        "This is the deck that opens for an Inspector / Reviewer account; the designer's " +
+        "walkthrough is still here in full, and the button under this card switches to it. You can " +
+        "leave at any point, and you can reopen this from the menu without losing whatever form " +
+        "you are in the middle of.",
+)
+
+/**
+ * The inspector deck's closing card — and the one place on this handset that says what it cannot do.
+ *
+ * A CHECKLIST AND NOT A SUMMARY, on the same argument as the designer's: the moment it is read for
+ * is the one just before somebody acts irreversibly. Here that moment is a suggestion being filed,
+ * which cannot be edited or withdrawn, or a send-back, which moves a report onto somebody's desk.
+ *
+ * ⚠ AND IT OPENS BY SAYING NEITHER CAN BE DONE FROM THIS PHONE. That sentence is the whole reason
+ * the deck is three cards and not four — see [walkthroughInspectorJourney] for the greps, and
+ * [walkthroughInspectorOmissions] for the register a test holds to the web's own list. It is on the
+ * CLOSING card rather than in a step of its own because a step is a door and this is the absence of
+ * one: the web makes the identical placement, putting the same fact in `INSPECTOR_TRACK.recapLead`
+ * rather than in a card. An inspector who reads this knows to finish the job in a browser; one who
+ * is told nothing hunts the menu for a box that was never built, which this file's own header calls
+ * worse than a missing step.
+ */
+private val walkthroughInspectorOutro = WalkStep(
+    id = "before-you-send-it-back",
+    title = "Before you send a report back",
+    icon = Icons.Filled.CheckCircle,
+    body = "FILING A CORRECTION IS A BROWSER JOB, and this is the one thing on this deck the " +
+        "handset cannot do. There is no box here to type a suggestion into and no button to send " +
+        "a report back — and this app cannot show you the suggestions already filed on a workshop " +
+        "either, although the payload it reads carries them. So read the workshop on the phone, in " +
+        "the courtyard, where the signal and the artisans are; then open a browser to say what is " +
+        "wrong. When you do: your note says what is wrong AND what it should say, because the " +
+        "designers read it exactly as written with no conversation attached. You picked the right " +
+        "stage, or chose the report as a whole on purpose rather than by leaving the box alone. " +
+        "You pressed the button you meant — filing a suggestion leaves the report where it is, and " +
+        "only sending it back puts it on the designers' desks. You are not deciding on a " +
+        "photograph you could not see, because media is counted on an inspection read and never " +
+        "carried. And a value that looks wrong may be a copy taken when the stage was saved, so " +
+        "the record it came from may have been corrected since without the stage changing.",
+)
+
+/**
+ * The web's inspector cards this handset deliberately does not teach, and nothing else.
+ *
+ * ONE REGISTER, IN ONE PLACE, WITH A TEST STANDING OVER IT. The failure this exists to prevent is
+ * not the omission — the omission is argued in [walkthroughInspectorJourney] and is correct today —
+ * it is the omission going UNNOTICED when it stops being correct. A handset that grows a feedback
+ * box, or a second card quietly dropped from this deck while somebody was editing prose, both look
+ * exactly like this file on the day they happen. `WalkthroughDecksTest` reads
+ * `frontend/components/guide/inspectorSteps.ts` at runtime and asserts that the web's ids minus this
+ * deck's ids are EXACTLY this set: a third state is a red test, in either direction.
+ *
+ * It is a set of ids and not a set of reasons, because the reason belongs beside the greps that
+ * prove it and a second copy of an argument is an argument that can disagree with itself.
+ */
+internal val walkthroughInspectorOmissions: Set<String> = setOf(
+    // `POST /design-workshop-inspections/{id}/feedback` and `.../send-back` have no client method on
+    // this handset, `InspectionDetailScreen` draws no panel, and no screen under `ui/` reads the
+    // `inspectionFeedback` rows the payload already carries. A capability, not an address.
+    "inspection-feedback",
+)
+
+/** The inspector's deck: the opening card, three screens, and the closing checklist. */
+internal val WALKTHROUGH_INSPECTOR_DECK = WalkthroughDeck(
+    id = "inspector",
+    name = "Inspecting a workshop",
+    audience = "Inspector / Reviewer",
+    journey = walkthroughInspectorJourney,
+    steps = listOf(walkthroughInspectorIntro) + walkthroughInspectorJourney +
+        walkthroughInspectorOutro,
+)
+
+/**
+ * Every deck, in the order the switcher prints them.
+ *
+ * THE DESIGNER'S IS FIRST AND STAYS FIRST WHOEVER IS READING, and the web's registry gives the
+ * reason this file has no better version of: the order of a list of choices is not the same question
+ * as which of them is selected, and a switcher that reordered itself per account would mean two
+ * colleagues describing "the second one" and meaning different decks.
+ */
+internal val WALKTHROUGH_DECKS: List<WalkthroughDeck> =
+    listOf(WALKTHROUGH_DESIGNER_DECK, WALKTHROUGH_INSPECTOR_DECK)
+
+/**
+ * WHICH DECK OPENS FOR THIS ACCOUNT. A DEFAULT, NOT A GATE.
+ *
+ * ── THE PROPERTY THAT MAKES THIS SAFE AT ALL, AND IT IS NOT THE PREDICATE ───────────────────────
+ *
+ * The walkthrough's nav row is the one row this repository has decided must NEVER be gated — a
+ * crowdsource volunteer on day one needs it more than an admin does — and `WalkthroughSurfaceTest`
+ * walks all eleven tiers asserting the row's `can` admits each. Nothing below changes that, and
+ * nothing below may be allowed to: every deck stays in the APK for everybody, the opening card of
+ * whichever one opens switches to any other, and a wrong answer here costs the reader one tap. That
+ * is the same ruling `tracks.ts` makes for the web, in its words: the role "picks which deck OPENS
+ * and takes nothing away from anybody". If this ever becomes a filter over which decks EXIST for an
+ * account, it has stopped being this function.
+ *
+ * ── WHY IT IS `canInspectDesignWorkshops` AND NOT A RANK ────────────────────────────────────────
+ *
+ * The web tests the same predicate first and says why: `INSPECTION_ROLES` is a set with exactly one
+ * member, so it can never claim an account another arm wanted. On this client the reason is sharper
+ * still, because the rank instinct is actively wrong here — INSPECTOR is 37, which sits BETWEEN
+ * DESIGNER (35) and PROFESSOR (40), so `rank >= RANK_INSPECTOR` would open the inspector's deck for
+ * a professor, all three directorate tiers, an admin and the master admin: six of the eleven tiers,
+ * every one of which the inspection surface refuses by name. `FieldPermissions.canInspectDesignWorkshops`
+ * delegates to the data layer's set, which is the same set the two inspection screens re-derive
+ * before they issue a request, so the deck that opens and the screens it teaches cannot disagree.
+ *
+ * ── THE WEB'S SECOND ARM HAS NO COUNTERPART HERE, WHICH IS A CONSEQUENCE AND NOT A CHOICE ───────
+ *
+ * `guideTrackFor` tests `canReadWorkshopOversight` next and opens the directorate deck. There is no
+ * directorate deck on this handset and no `OFFICER_ROLES` in this tree — see the block comment above
+ * [WalkthroughDeck] for the greps — so a ministry post falls through to the designer's deck, which
+ * is the deck that describes the workshop they can genuinely open and write in on this phone. That
+ * is the honest answer rather than a placeholder: the four screens the web would send them to do not
+ * exist here.
+ *
+ * A NULL USER GETS THE DESIGNER'S DECK. `RepositoryApp` renders the sign-in screen until there is a
+ * user, so this arm is not reachable from the dialog — but the function is pure and testable, and
+ * answering null for an unknown account would push the null check onto every caller.
+ */
+internal fun walkthroughDeckFor(user: UserDto?): WalkthroughDeck =
+    if (user != null && FieldPermissions.canInspectDesignWorkshops(user)) {
+        WALKTHROUGH_INSPECTOR_DECK
+    } else {
+        WALKTHROUGH_DESIGNER_DECK
+    }

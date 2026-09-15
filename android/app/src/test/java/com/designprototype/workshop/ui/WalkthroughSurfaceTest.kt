@@ -420,6 +420,43 @@ class WalkthroughSurfaceTest {
     }
 
     @Test
+    fun `the walkthrough is handed the signed-in account so a deck can be chosen for it`() {
+        // TWO WALKTHROUGHS SINCE 2026-09-15, AND THE ROLE PICKS WHICH ONE OPENS. The dialog was
+        // role-blind: it hardcoded `steps = walkthroughSteps` and took no account at all, so an
+        // Inspector / Reviewer was handed twenty-five cards about recording artisans, exactly one of
+        // which describes a screen they can open. What is pinned here is the wiring, not the rule —
+        // `WalkthroughDecksTest` owns which deck each tier lands on — because the wiring is the half
+        // that can be undone by a refactor that looks like a simplification: drop the argument, and
+        // the selection silently becomes "the designer's, always" with every deck test still green.
+        val callSite = slice(mainActivity, "WalkthroughDialog(", 240)
+        assertTrue(
+            "the walkthrough is no longer handed the signed-in account, so it cannot choose a deck " +
+                "for them and every tier opens on the designer's: " + callSite,
+            callSite.contains("user = user"),
+        )
+        assertEquals(
+            "the deck is chosen from more than one place, or from none. `walkthroughDeckFor` is the " +
+                "one rule and the window is the one caller: a second answer is a second opinion " +
+                "about whose walkthrough this is",
+            1,
+            occurrences(window, "walkthroughDeckFor("),
+        )
+        assertFalse(
+            "the window hardcodes one deck again, which is what made it role-blind the first time",
+            window.contains("steps = walkthroughSteps"),
+        )
+        // AND IT IS A DEFAULT, NOT A GATE. The switcher on the opening card draws the whole
+        // register, unfiltered — `tracks.ts` rules for the web that the role "picks which deck OPENS
+        // and takes nothing away from anybody", and a handset that narrowed the register per account
+        // would be enforcing as a gate what the browser offers as a default.
+        assertTrue(
+            "the window no longer hands the journey the whole deck register, so a reader cannot " +
+                "reach any deck but the one their role opened",
+            window.contains("decks = WALKTHROUGH_DECKS"),
+        )
+    }
+
+    @Test
     fun `the menu row into the walkthrough is ungated for every role there is`() {
         // A CROWDSOURCE VOLUNTEER ON DAY ONE NEEDS THIS MORE THAN AN ADMIN DOES, and they are the
         // account with no capability at all — so they are also the account a `can` predicate added

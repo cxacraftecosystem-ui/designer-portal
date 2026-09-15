@@ -712,6 +712,30 @@ MIRRORS: tuple[Mirror, ...] = (
         ),
     ),
     Mirror(
+        path=f"{_ANDROID_TEST}/ui/WalkthroughDecksTest.kt",
+        binding="everyRole",
+        kind="closed",
+        pattern=r"private val everyRole = listOf\(([\s\S]*?)\n[ \t]*\)",
+        why=(
+            "The handset twin of `frontend/e2e/guide-tracks-unit.spec.ts`. The walkthrough carries "
+            "two decks now -- the designer's fortnight and the inspector's -- and "
+            "`walkthroughDeckFor` picks which one OPENS from the reader's role. This tuple is what "
+            "makes that sweep exhaustive: the test walks every tier and asserts which deck it lands "
+            "on.\n"
+            "THE LADDER GIVES THE WRONG ANSWER FOR THIS ROW, WHICH IS WHY COMPLETENESS MATTERS HERE "
+            "MORE THAN ON MOST. INSPECTOR is 37, BETWEEN designer (35) and professor (40), and "
+            "`canInspectDesignWorkshops` is set membership on {INSPECTOR} -- so the SIX tiers above "
+            "37 (professor, the three directorate posts, admin, master admin) all clear every "
+            "threshold instinct and are all refused the surface by name. A tier missing from this "
+            "tuple is a tier nobody ever asked the question about, on the one file whose reason for "
+            "existing is asking it.\n"
+            "IT IS A DEFAULT AND NOT A GATE -- every deck ships for everybody and the opening card "
+            "switches between them -- so a wrong answer costs one tap rather than a refusal, which "
+            "is also exactly why it would go unnoticed: nothing breaks, nobody is locked out, and an "
+            "inspector simply opens on a walkthrough about somebody else's job forever."
+        ),
+    ),
+    Mirror(
         path=f"{_ANDROID_TEST}/ui/DirectorateTiersTest.kt",
         binding="everyRole",
         kind="closed",

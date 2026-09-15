@@ -850,6 +850,65 @@ private val WALKTHROUGH_FIELDS: Map<String, List<String>> = mapOf(
     ),
 )
 
+/**
+ * The same register, for the INSPECTOR deck, out of `frontend/components/guide/inspectorSteps.ts`.
+ *
+ * ── WHY A SECOND TABLE AND NOT MORE KEYS IN THE FIRST ───────────────────────────────────────────
+ *
+ * The web keeps its three decks in three files, and `backend/tests/test_walkthrough_fields_parity.py`
+ * joins the handset's table to `steps.ts` BY EQUALITY in both directions — an id here that the web's
+ * designer deck does not teach is reported as "a second register with nothing holding it to the
+ * first", which is the correct report for an invented entry and the wrong one for a second deck.
+ * Splitting the tables the way the web splits its files is what lets each join stay an equality
+ * against the file that actually owns those strings, rather than a containment that would stop
+ * noticing a dropped key.
+ *
+ * ── AND THE ENTRIES ARE STILL THE WEB'S, VERBATIM, INCLUDING WHERE THEY ARE WEB-SHAPED ──────────
+ *
+ * Three of the web's four inspector cards carry SECTION DESCRIPTIONS rather than form labels, which
+ * `inspectorSteps.ts` says outright: an inspection read draws the values of a workshop it did not
+ * author, so it has no form and no labels of its own. They are copied unchanged anyway, on the rule
+ * the designer table already lives under — there is one register and it is the web's. That rule
+ * already carries a line saying "paste it with Ctrl+V" onto a handset with no Ctrl key, and the
+ * trade was accepted there for the reason that holds here: a table edited on this side to read
+ * better is a table nothing can hold to anything, and the sentences a reader acts on are in
+ * [WalkStep.body], which IS written from this app's own Kotlin.
+ *
+ * `inspection-feedback` has no entry because this deck has no such step — see
+ * [walkthroughInspectorOmissions] for the register and `WalkthroughSteps.kt` for the greps.
+ */
+private val WALKTHROUGH_INSPECTOR_FIELDS: Map<String, List<String>> = mapOf(
+    "inspection-list" to listOf(
+        "Search — by title, craft, cluster or workshop code, across your assignments only",
+        "Each row: the workshop's title, its code, craft and cluster, its dates and its status",
+        "Nothing else — there is no filter by designer, district or date on this list",
+    ),
+    "inspection-read" to listOf(
+        "Dates, Designer, Venue — as stage 1 recorded them",
+        "Required fields answered — a percentage across every stage",
+        "Each stage, numbered and titled, with its own required-field count",
+        "Under each value: who wrote it, and where it was copied from",
+        "Media fields, as a count — “3 files recorded here”",
+    ),
+    "inspection-review-queue" to listOf(
+        "The queue, newest first, with the record's type, title and who submitted it",
+        "Approve · Reject · Send for revision",
+        "A comment — mandatory on Send for revision",
+        "Edit — offered on the row, and see the caution below before you use it",
+    ),
+)
+
+/**
+ * Every deck's field register, in one lookup.
+ *
+ * The card asks [walkthroughFacets] for a step's facets and knows nothing about which deck the step
+ * came from, which is the property that keeps one card composable drawing every deck. A step id is
+ * unique across all decks — `WalkthroughDecksTest` asserts it, exactly as the web's own deck spec
+ * does — so a flat merge cannot resolve one id to two lists.
+ */
+private val WALKTHROUGH_ALL_FIELDS: Map<String, List<String>> =
+    WALKTHROUGH_FIELDS + WALKTHROUGH_INSPECTOR_FIELDS
+
 // ---------------------------------------------------------------------------------------------
 // The prose, split into the blocks the web's card renders
 // ---------------------------------------------------------------------------------------------
@@ -958,7 +1017,7 @@ internal fun walkthroughFacets(step: WalkStep): WalkthroughFacets {
     return WalkthroughFacets(
         summary = prose.substring(0, cut).trim(),
         detail = prose.substring(cut).trim(),
-        fields = WALKTHROUGH_FIELDS[step.id].orEmpty(),
+        fields = WALKTHROUGH_ALL_FIELDS[step.id].orEmpty(),
         watch = if (caution.isEmpty()) emptyList() else listOf(caution),
     )
 }
@@ -1088,8 +1147,28 @@ private fun walkthroughScreenReaderActive(): Boolean {
  * still exactly one way out of this screen and it still writes the flag, which is the property that
  * stops the walkthrough reappearing tomorrow for somebody who dismissed it today.
  *
- * @param steps the deck: the opening card, the journey, the closing card. Handed in rather than read
- *   from the top-level `val` so that a preview or a test can render three of them.
+ * ── IT TAKES A DECK AND IT USED TO TAKE A LIST, AND THE OLD SIGNATURE WAS A LIE ───────────────
+ *
+ * This parameter was `steps: List<WalkStep>` under a sentence claiming it was handed in "rather than
+ * read from the top-level `val` so that a preview or a test can render three of them". That was true
+ * of the SIGNATURE and false of the BODY. Four things inside read the designer's `walkthroughJourney`
+ * global directly — the progress meter's denominator, the header's "Step n of m", the step numbers
+ * themselves, and the outro's recap chips — so a second deck passed in here would have rendered with
+ * every card unnumbered, a meter denominated in somebody else's twenty-three, and THE DESIGNER'S
+ * TWENTY-THREE RECAP CHIPS ON ITS CLOSING CARD. Nothing would have crashed; it would simply have been
+ * the wrong deck's arithmetic, on the one surface whose whole subject is "where am I, out of how
+ * many". Taking the [WalkthroughDeck] rather than its `steps` is what makes that unrepresentable
+ * instead of merely avoided, because the journey and the deck now arrive together and neither can be
+ * fetched from a global.
+ *
+ * @param deck the walkthrough being read: its opening card, its numbered journey, its closing card.
+ * @param decks every deck this build carries, for the switcher on the opening card. A DEFAULT AND NOT
+ *   A GATE — see [walkthroughDeckFor]: the role picks which deck opens and takes nothing away, so
+ *   every other deck has to be one tap from the first card or this client is narrower than the web's,
+ *   which reaches all three from a switcher on an ungated page.
+ * @param onChooseDeck the reader picked another deck. The caller swaps it; this composable does not
+ *   hold the choice, for the same reason it does not hold the seen flag — one owner per piece of
+ *   state, and the window is the thing that outlives a scroll position.
  * @param reduceMotion read ONCE by the caller and threaded down. Do not re-read it per card: the
  *   answer involves a `ContentResolver` round trip to the settings provider, and twenty-five cards
  *   asking the same question twenty-five times is twenty-four IPCs for one Boolean.
@@ -1099,11 +1178,14 @@ private fun walkthroughScreenReaderActive(): Boolean {
  */
 @Composable
 internal fun WalkthroughJourney(
-    steps: List<WalkStep>,
+    deck: WalkthroughDeck,
+    decks: List<WalkthroughDeck>,
+    onChooseDeck: (WalkthroughDeck) -> Unit,
     reduceMotion: Boolean,
     onOpen: (NavDestination) -> Unit,
     onFinish: () -> Unit,
 ) {
+    val steps = deck.steps
     // Three is the smallest shape this draws: an opening card, at least one numbered step, a closing
     // card. The real deck is twenty-five and this cannot fire; the guard is so that a preview handed
     // a two-card stub renders nothing rather than indexing off the end of the list.
@@ -1124,11 +1206,16 @@ internal fun WalkthroughJourney(
      */
     val listRange = remember(steps) { 1..(steps.size - 2).coerceAtLeast(1) }
 
-    // The denominator every "Step n of m" on this screen counts against, taken from the journey and
-    // never from the deck. The two are different numbers on purpose: numbering the opening and
-    // closing cards as steps would put a reader at "Step 1 of 25" on a card whose own first sentence
-    // says there are twenty-three of them.
-    val journeyTotal = walkthroughJourney.size
+    // The denominator every "Step n of m" on this screen counts against, taken from THIS DECK's
+    // journey and never from its deck. The two are different numbers on purpose: numbering the
+    // opening and closing cards as steps would put a reader at "Step 1 of 25" on a card whose own
+    // first sentence says there are twenty-three of them.
+    //
+    // ⚠ AND IT IS `deck.journey` RATHER THAN THE `walkthroughJourney` GLOBAL IT READ UNTIL THE
+    // SECOND DECK LANDED. That global is the designer's twenty-three; read here it would have
+    // denominated the inspector's three-step deck in it, so a reader on the inspector's last card
+    // would have watched a progress ring stop at thirteen per cent with nothing left to scroll.
+    val journeyTotal = deck.journey.size
 
     /*
      * THE HORIZONTAL AXIS, DECIDED ONCE, HERE, AND HANDED TO EVERYTHING THAT DRAWS ON IT.
@@ -1308,7 +1395,7 @@ internal fun WalkthroughJourney(
 
     Column(modifier = Modifier.fillMaxSize()) {
         WalkthroughHeader(
-            steps = steps,
+            deck = deck,
             // Lambdas and not values: see the note over the derived readings. Reading either of these
             // HERE would put the scroll back in the recompose scope that emits all twenty-five rows.
             activeIndex = { activeIndex },
@@ -1405,7 +1492,13 @@ internal fun WalkthroughJourney(
                 reduceMotion = reduceMotion,
                 onMeasured = { height -> metrics.measure(hero.id, height) },
             ) {
-                WalkthroughHeroCard(step = hero, onStart = { travelTo(listRange.first) })
+                WalkthroughHeroCard(
+                    step = hero,
+                    deck = deck,
+                    decks = decks,
+                    onChooseDeck = onChooseDeck,
+                    onStart = { travelTo(listRange.first) },
+                )
             }
 
             for (index in listRange) {
@@ -1416,7 +1509,7 @@ internal fun WalkthroughJourney(
                 // different step the day one is inserted above it.
                 key(step.id) {
                     WalkthroughRow(
-                        number = walkthroughStepNumber(step),
+                        number = walkthroughStepNumber(deck, step),
                         journeyTotal = journeyTotal,
                         railWidth = railWidth,
                         bubbleSize = bubbleSize,
@@ -1449,7 +1542,7 @@ internal fun WalkthroughJourney(
                 reduceMotion = reduceMotion,
                 onMeasured = { height -> metrics.measure(outro.id, height) },
             ) {
-                WalkthroughOutroCard(step = outro, onFinish = onFinish)
+                WalkthroughOutroCard(step = outro, journey = deck.journey, onFinish = onFinish)
             }
 
             /*
@@ -1499,12 +1592,18 @@ internal fun WalkthroughJourney(
  */
 @Composable
 private fun WalkthroughHeader(
-    steps: List<WalkStep>,
+    deck: WalkthroughDeck,
     activeIndex: () -> Int,
     percent: () -> Int,
     reduceMotion: Boolean,
     onFinish: () -> Unit,
 ) {
+    // The deck being read, unpacked once. It arrives as the deck rather than as its `steps` because
+    // the readout below needs BOTH halves — which card the reader is on, and how many numbered steps
+    // that card's own deck has — and handing down only the first is how the denominator came to be
+    // fetched from a global belonging to a different deck.
+    val steps = deck.steps
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1570,23 +1669,28 @@ private fun WalkthroughHeader(
                 label = "walkthrough-active-step",
             ) { index ->
                 val step = steps.getOrNull(index) ?: steps.first()
-                val number = walkthroughStepNumber(step)
+                val number = walkthroughStepNumber(deck, step)
                 Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
                     Text(
                         /*
                          * DERIVED, NEVER TYPED, AND TWO DENOMINATORS THAT ARE DIFFERENT ON PURPOSE.
                          *
-                         * The journey is twenty-three numbered steps; the deck is those plus an
-                         * opening card and a closing checklist. Numbering the ends as steps would put
-                         * a reader at "Step 1 of 25" on a card whose own first sentence says there
-                         * are twenty-three — the opening card contradicting itself in the header
-                         * above it. So a numbered step says which step it is and the two ends say
-                         * which page they are; both answer "where am I, out of how many" and neither
-                         * claims to be something it is not. The active step is always a numbered one,
-                         * so the second branch is a floor rather than a state anybody reaches.
+                         * A deck's journey is its numbered steps; the deck is those plus an opening
+                         * card and a closing checklist. Numbering the ends as steps would put a
+                         * reader at "Step 1 of 25" on a card whose own first sentence says there are
+                         * twenty-three — the opening card contradicting itself in the header above
+                         * it. So a numbered step says which step it is and the two ends say which
+                         * page they are; both answer "where am I, out of how many" and neither
+                         * claims to be something it is not. The active step is always a numbered
+                         * one, so the second branch is a floor rather than a state anybody reaches.
+                         *
+                         * ⚠ BOTH NUMBERS BELONG TO THE DECK IN FRONT OF THE READER. The first one
+                         * read the designer's `walkthroughJourney` global, which is right for
+                         * exactly one of the decks this app carries and silently wrong for the
+                         * other — "Step 2 of 23" printed over a deck with three cards in it.
                          */
                         if (number != null) {
-                            "Step $number of ${walkthroughJourney.size}"
+                            "Step $number of ${deck.journey.size}"
                         } else {
                             "Page ${index + 1} of ${steps.size}"
                         },
@@ -2248,9 +2352,33 @@ private fun WalkthroughPanelSection(
  * adding an animation library to an APK to fade in seven words would be the trade in reverse. What
  * carries over is what the band is FOR: the dark brand tile, the eyebrow, the count that is derived
  * rather than typed, and a button that starts the journey.
+ *
+ * ── AND, SINCE THERE ARE TWO DECKS, THE SWITCHER ─────────────────────────────────────
+ *
+ * `tracks.ts` is explicit that a role-chosen deck is "a DEFAULT, NOT A GATE": every deck stays in the
+ * bundle for everybody and the page's switcher reaches all of them, so the role picks what opens and
+ * takes nothing away. A handset that chose a deck by role and offered no way to the others would be
+ * enforcing as a GATE what the web offers as a default — narrower than the web, on the client with
+ * fewer screens, which is the wrong direction for the only difference to run in.
+ *
+ * IT LIVES ON THE OPENING CARD AND NOT IN THE PINNED HEADER, and that is a decision about one row of
+ * chrome rather than a layout preference. The header already carries a progress ring, a two-line
+ * readout and Skip across the width of a 360dp handset; a fourth control there is either a truncated
+ * label or a second row of header on every card of the journey. Choosing which walkthrough to read is
+ * also a decision made BEFORE reading one, which is where this card sits. The cost is written down
+ * rather than hidden: a reader at the bottom of a deck has to scroll back to the top to switch. With
+ * three cards on the inspector's deck and a Skip that reopens from the menu, that was judged cheaper
+ * than the row of chrome — and if a third deck ever makes it expensive, the honest fix is a switcher
+ * on the closing card too, not a smaller header.
  */
 @Composable
-private fun WalkthroughHeroCard(step: WalkStep, onStart: () -> Unit) {
+private fun WalkthroughHeroCard(
+    step: WalkStep,
+    deck: WalkthroughDeck,
+    decks: List<WalkthroughDeck>,
+    onChooseDeck: (WalkthroughDeck) -> Unit,
+    onStart: () -> Unit,
+) {
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.field.brandTile),
         shape = RoundedCornerShape(WALK_CARD_CORNER),
@@ -2290,6 +2418,49 @@ private fun WalkthroughHeroCard(step: WalkStep, onStart: () -> Unit) {
                 ),
                 modifier = Modifier.heightIn(min = 48.dp),
             ) { Text("Start at step 1") }
+
+            /*
+             * THE OTHER DECKS, NAMED AND NOT COUNTED.
+             *
+             * Only the ones that are not open — a switcher offering the deck you are already reading
+             * is a control with nothing to do, and on a register of two it is half the control. Each
+             * button says the deck's own `name` and then who it is for, because "Inspecting a
+             * workshop" on its own does not tell a designer whether it is theirs to read, and this
+             * surface's whole job is telling a newcomer what things are.
+             *
+             * The block disappears entirely when there is one deck, which is how this reads on a
+             * build that has not grown a second one — no heading over nothing, the same rule the step
+             * card keeps for an empty facet.
+             */
+            val others = decks.filter { it.id != deck.id }
+            if (others.isNotEmpty()) {
+                HorizontalDivider(color = MaterialTheme.field.onBrandTileMuted.copy(alpha = 0.3f))
+                Text(
+                    if (others.size == 1) "THE OTHER WALKTHROUGH" else "THE OTHER WALKTHROUGHS",
+                    color = MaterialTheme.field.onBrandTileMuted,
+                    style = FieldTextStyles.Eyebrow,
+                )
+                others.forEach { other ->
+                    TextButton(
+                        onClick = { onChooseDeck(other) },
+                        modifier = Modifier.heightIn(min = 48.dp),
+                    ) {
+                        Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
+                            Text(
+                                other.name,
+                                color = MaterialTheme.field.accentOnBrandTile,
+                                style = FieldTextStyles.Link,
+                            )
+                            Text(
+                                other.audience,
+                                color = MaterialTheme.field.onBrandTileMuted,
+                                fontSize = 11.sp,
+                                lineHeight = 15.sp,
+                            )
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -2298,13 +2469,26 @@ private fun WalkthroughHeroCard(step: WalkStep, onStart: () -> Unit) {
  * The closing card: the checklist, the whole process in one line, and Done.
  *
  * The recap row is the web's outro section 1 — every step as a numbered chip — and like the count on
- * the opening card it is DERIVED from `walkthroughJourney` rather than written out. A hand-written
- * recap is a list that is correct on the day it is typed and silently wrong the day after a step is
- * inserted, which is the failure the titles' missing numbers already avoid.
+ * the opening card it is DERIVED from the journey rather than written out. A hand-written recap is a
+ * list that is correct on the day it is typed and silently wrong the day after a step is inserted,
+ * which is the failure the titles' missing numbers already avoid.
+ *
+ * ⚠ [journey] IS A PARAMETER AND USED TO BE THE `walkthroughJourney` GLOBAL, WHICH IS THE DESIGNER'S.
+ * That read was the worst of the four this file carried: the other three printed the wrong NUMBER,
+ * and this one would have printed the designer's twenty-three subjects — "Record workshop", "Record
+ * artisan", "Upload media" — as the recap of an INSPECTOR's deck, under a heading saying they were
+ * the whole process, on the last card an inspector reads.
+ *
+ * @param journey the numbered steps of the deck this closing card belongs to. Never the deck itself:
+ *   the two ends are not steps and must not appear among their own recap chips.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun WalkthroughOutroCard(step: WalkStep, onFinish: () -> Unit) {
+private fun WalkthroughOutroCard(
+    step: WalkStep,
+    journey: List<WalkStep>,
+    onFinish: () -> Unit,
+) {
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.field.surface50),
         border = BorderStroke(1.dp, MaterialTheme.field.hairline),
@@ -2359,7 +2543,7 @@ private fun WalkthroughOutroCard(step: WalkStep, onFinish: () -> Unit) {
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                walkthroughJourney.forEachIndexed { index, journeyStep ->
+                journey.forEachIndexed { index, journeyStep ->
                     Text(
                         "${index + 1} ${walkthroughTitleParts(journeyStep.title).first}",
                         color = MaterialTheme.field.body,

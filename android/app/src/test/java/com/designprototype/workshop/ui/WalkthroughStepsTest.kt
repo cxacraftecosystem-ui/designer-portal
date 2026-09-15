@@ -93,6 +93,22 @@ import java.io.File
  * longer true is the old parenthetical listing four Android-only subjects: three of them were the
  * drift described above, and exactly ONE is genuinely this app's own, `offline`, which is the one
  * subject a browser cannot teach.
+ *
+ * ── AND THE PARITY HALF IS THE DESIGNER'S DECK, WHILE THE RULES HALF IS EVERY DECK ──────────────
+ *
+ * There are two walkthroughs in this APK since 2026-09-15 and `steps.ts` is the register for exactly
+ * one of them — the designer's. So the four assertions above the fold still read
+ * [walkthroughJourney] by name, because a deck the web keeps in a different file cannot be held to
+ * this one, and widening them would make the inspector's three cards look like three subjects
+ * missing from the web.
+ *
+ * EVERY RULE THE LIST SETS ITSELF, THOUGH, IS A RULE ABOUT A DECK AND NOT ABOUT THAT DECK. A number
+ * typed into a title, a count typed into an opening card, a door pointing at a menu row that is gone
+ * — each is exactly as wrong on the second deck as on the first, and a second deck that inherited
+ * none of them is a second deck with no contract at all. Those assertions walk
+ * [WALKTHROUGH_DECKS], so a third deck is covered on the day it is registered rather than on the day
+ * somebody remembers to widen a test. `WalkthroughDecksTest` is what holds the inspector deck to the
+ * web's own inspector file, which is the parity half this suite structurally cannot do.
  */
 class WalkthroughStepsTest {
 
@@ -209,7 +225,14 @@ class WalkthroughStepsTest {
         // Everything above and `walkthroughStepNumber` below join on the id. A duplicate does not
         // fail anything loudly; it makes `indexOfFirst` answer for the wrong step, so a parity
         // check quietly stops covering one of the two and reports a pass.
-        val ids = walkthroughSteps.map { it.id }
+        //
+        // ACROSS EVERY DECK AND NOT WITHIN ONE, since there are two. `walkthroughFacets` looks a
+        // step's field list up by id in one flat register, and the card that draws a step has no
+        // idea which deck it came from — so one id in two decks would draw one deck's form labels
+        // on the other deck's card, which is the same failure as a duplicate inside a deck with a
+        // longer way to travel. The web's own deck spec asserts exactly this, in its words:
+        // "every anchor is unique across all three decks, not merely within one".
+        val ids = WALKTHROUGH_DECKS.flatMap { deck -> deck.steps.map { it.id } }
         assertEquals(
             "a duplicated id makes every id-based check answer for the wrong step, silently",
             ids.size,
@@ -226,7 +249,7 @@ class WalkthroughStepsTest {
         // it. The position is derived from the list instead — see `walkthroughStepNumber` — so this
         // asserts that nobody has quietly gone back to typing it.
         val numbered = Regex("""^\s*\d+\s*[.)]""")
-        walkthroughSteps.forEach { step ->
+        WALKTHROUGH_DECKS.flatMap { it.steps }.forEach { step ->
             assertFalse(
                 "“${step.title}” has a step number typed into it. Inserting a step ahead of it " +
                     "would make that number wrong with nothing to catch it; the dialog derives " +
@@ -241,49 +264,80 @@ class WalkthroughStepsTest {
         // The original defect, pinned from both ends: the sentence must contain the REAL size, and
         // it must not contain the size of the deck it is part of. If somebody re-types the number
         // and the list then grows, the first assertion fails on the very next step that is added.
-        val intro = walkthroughSteps.first()
-        assertNull("the opening card is not one of the numbered steps", walkthroughStepNumber(intro))
-        assertTrue(
-            "the opening card must state how many steps the journey has, and state the true " +
-                "number: it read “Ten steps, in this order” over a list of twelve while the web " +
-                "taught nineteen",
-            intro.body.contains("${walkthroughJourney.size} steps")
-        )
-        assertFalse(
-            "the opening card must count the JOURNEY and not the deck — a reader on a card whose " +
-                "first sentence says there are ${walkthroughJourney.size} steps must not be told " +
-                "there are ${walkthroughSteps.size}",
-            intro.body.contains("${walkthroughSteps.size} steps")
-        )
+        //
+        // PER DECK, because there are two numbers that can rot rather than one, and the second deck
+        // is the one where a copied opening card would say twenty-three over three cards.
+        WALKTHROUGH_DECKS.forEach { deck ->
+            val intro = deck.steps.first()
+            assertNull(
+                "“${deck.id}”'s opening card is not one of its numbered steps",
+                walkthroughStepNumber(deck, intro)
+            )
+            assertTrue(
+                "“${deck.id}”'s opening card must state how many steps its journey has, and state " +
+                    "the true number: the shipped one read “Ten steps, in this order” over a list " +
+                    "of twelve while the web taught nineteen",
+                intro.body.contains("${deck.journey.size} steps")
+            )
+            assertFalse(
+                "“${deck.id}”'s opening card must count the JOURNEY and not the deck — a reader " +
+                    "on a card whose first sentence says there are ${deck.journey.size} steps must " +
+                    "not be told there are ${deck.steps.size}",
+                intro.body.contains("${deck.steps.size} steps")
+            )
+        }
     }
 
     @Test
-    fun `the deck is the journey with one card at each end`() {
-        assertEquals(
-            "the deck is the opening card, the journey, and the closing checklist",
-            walkthroughJourney.size + 2,
-            walkthroughSteps.size
-        )
-        assertEquals(
-            "the journey must reach the screen in its own order, unedited",
-            walkthroughJourney,
-            walkthroughSteps.subList(1, walkthroughSteps.size - 1)
-        )
+    fun `every deck is a journey with one card at each end`() {
+        WALKTHROUGH_DECKS.forEach { deck ->
+            assertEquals(
+                "“${deck.id}” is the opening card, the journey, and the closing checklist",
+                deck.journey.size + 2,
+                deck.steps.size
+            )
+            assertEquals(
+                "“${deck.id}”'s journey must reach the screen in its own order, unedited",
+                deck.journey,
+                deck.steps.subList(1, deck.steps.size - 1)
+            )
+            // THREE IS THE SMALLEST SHAPE `WalkthroughJourney` DRAWS — it returns early below that
+            // and renders a blank full-screen window with a Skip button on it, which is not a
+            // failure any other assertion in this file would notice. The web pins the same floor for
+            // the same structural reason, its journey indexing `steps[0]` unguarded.
+            assertTrue(
+                "“${deck.id}” has ${deck.steps.size} cards; the journey draws nothing under three",
+                deck.steps.size >= 3
+            )
+        }
     }
 
     @Test
     fun `only the journey is numbered, and it is numbered from one`() {
         // Two denominators, deliberately different: a numbered step says which STEP it is, the two
-        // ends say which PAGE they are. Collapsing them would put a reader at "Step 1 of
-        // ${walkthroughSteps.size}" on a card that says there are ${walkthroughJourney.size}.
-        assertNull(walkthroughStepNumber(walkthroughSteps.first()))
-        assertNull(walkthroughStepNumber(walkthroughSteps.last()))
-        walkthroughJourney.forEachIndexed { index, step ->
-            assertEquals(
-                "“${step.title}” must report itself as step ${index + 1}",
-                index + 1,
-                walkthroughStepNumber(step)
-            )
+        // ends say which PAGE they are. Collapsing them would put a reader at "Step 1 of 25" on a
+        // card that says there are twenty-three.
+        WALKTHROUGH_DECKS.forEach { deck ->
+            assertNull(walkthroughStepNumber(deck, deck.steps.first()))
+            assertNull(walkthroughStepNumber(deck, deck.steps.last()))
+            deck.journey.forEachIndexed { index, step ->
+                assertEquals(
+                    "“${step.title}” must report itself as step ${index + 1} of “${deck.id}”",
+                    index + 1,
+                    walkthroughStepNumber(deck, step)
+                )
+            }
+            // AND A DECK NUMBERS ITS OWN STEPS AND NOBODY ELSE'S. `walkthroughStepNumber` read the
+            // designer's journey out of a global until the second deck landed, which answered null
+            // for every card of that deck; this is the assertion that the parameter is being used.
+            WALKTHROUGH_DECKS.filter { it.id != deck.id }.forEach { other ->
+                other.journey.forEach { step ->
+                    assertNull(
+                        "“${step.id}” belongs to “${other.id}” and “${deck.id}” gave it a number",
+                        walkthroughStepNumber(deck, step)
+                    )
+                }
+            }
         }
     }
 
@@ -296,7 +350,7 @@ class WalkthroughStepsTest {
         // A destination dropped from the menu does not break the build: the button falls back to
         // "Open the screen this step teaches", which is a third name for a screen on the one
         // surface whose whole job is teaching a newcomer the first two.
-        walkthroughSteps.forEach { step ->
+        WALKTHROUGH_DECKS.flatMap { it.steps }.forEach { step ->
             val destination = step.destination ?: return@forEach
             assertNotNull(
                 "“${step.title}” opens $destination, which is no longer a row in FIELD_NAV_ITEMS. " +
@@ -312,11 +366,20 @@ class WalkthroughStepsTest {
         // and the closing checklist are not features and must not grow a button that implies they
         // are — and neither may point at the walkthrough itself, which would be a door back into
         // the room the reader is standing in.
-        assertNull("the opening card is not a feature", walkthroughSteps.first().destination)
-        assertNull("the closing checklist is not a feature", walkthroughSteps.last().destination)
+        WALKTHROUGH_DECKS.forEach { deck ->
+            assertNull(
+                "“${deck.id}”'s opening card is not a feature",
+                deck.steps.first().destination
+            )
+            assertNull(
+                "“${deck.id}”'s closing checklist is not a feature",
+                deck.steps.last().destination
+            )
+        }
         assertTrue(
             "no step may open the walkthrough from inside the walkthrough",
-            walkthroughSteps.none { it.destination == NavDestination.WALKTHROUGH }
+            WALKTHROUGH_DECKS.flatMap { it.steps }
+                .none { it.destination == NavDestination.WALKTHROUGH }
         )
     }
 
@@ -329,7 +392,10 @@ class WalkthroughStepsTest {
         // costs a return trip when it is missed. It is also the half that gets dropped when a step
         // is written in a hurry, because the other three can be read off the form and this one
         // cannot: it has to come from something that actually went wrong for somebody.
-        walkthroughJourney.forEach { step ->
+        //
+        // EVERY DECK'S JOURNEY. The caution is the half a skimmer still takes in, and a deck added
+        // later without this contract is a deck of four blocks with the fourth one missing.
+        WALKTHROUGH_DECKS.flatMap { it.journey }.forEach { step ->
             assertTrue(
                 "“${step.title}” has no “Watch out” — the one part of a step that cannot be " +
                     "reconstructed by reading the screen it describes",
@@ -342,7 +408,7 @@ class WalkthroughStepsTest {
     fun `every step wears a glyph and says what it is`() {
         // The icon is how a designer finds the drawer row they just read about — they are looking
         // for the picture — so a step without one sends them reading thirty-one labels instead.
-        walkthroughSteps.forEach { step ->
+        WALKTHROUGH_DECKS.flatMap { it.steps }.forEach { step ->
             assertNotNull("“${step.title}” has no icon to find its row by", step.icon)
             assertTrue("a step with no words is not a step", step.title.isNotBlank())
             assertTrue("“${step.title}” has no body", step.body.isNotBlank())

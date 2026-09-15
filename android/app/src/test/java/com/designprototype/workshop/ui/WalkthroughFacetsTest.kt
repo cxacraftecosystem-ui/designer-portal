@@ -57,6 +57,16 @@ import org.junit.Test
  * `backend/tests/test_walkthrough_fields_parity.py`, which reads both source files and fails naming
  * the step. What is answered HERE is the same thing this file answers about the caution: that the
  * card ends up with something to draw, and never with a heading over nothing.
+ *
+ * -- AND IT IS EVERY DECK SINCE 2026-09-15, NOT THE DESIGNER'S --------------------------------
+ *
+ * Every assertion below iterated the top-level `walkthroughJourney`, which is one deck of two. The
+ * cutter is not a designer-deck function -- it is THE function a card gets a facet from, whichever
+ * deck the card belongs to -- so a second deck reaching it through the same composable while
+ * inheriting none of this file's guarantees would be a deck whose cautions could silently fail to
+ * be drawn, which is the exact defect this file was written for. The lists come from
+ * [WALKTHROUGH_DECKS] instead, so a third deck is covered on the day it is registered rather than
+ * on the day somebody remembers to widen a test.
  */
 class WalkthroughFacetsTest {
 
@@ -65,7 +75,8 @@ class WalkthroughFacetsTest {
         // THE REGRESSION GUARD FOR THE SHIPPED DEFECT. Not "the body mentions a caution" — that is
         // `WalkthroughStepsTest`'s assertion and it was true of both broken steps — but "the cutter
         // found one and the card therefore has something to draw a heading over".
-        val silent = walkthroughJourney.filter { walkthroughFacets(it).watch.isEmpty() }
+        val silent = WALKTHROUGH_DECKS.flatMap { it.journey }
+            .filter { walkthroughFacets(it).watch.isEmpty() }
         assertTrue(
             "these steps carry a caution in their body that the card will not draw, because the " +
                 "seam was not recognised: ${silent.map { it.id }}. The two that shipped this way " +
@@ -82,7 +93,7 @@ class WalkthroughFacetsTest {
         // "Watch out: create it before you leave" says it twice, and one that opens on a stray comma
         // or colon reads as a typo on the one screen whose job is to look authoritative to somebody
         // who has never used the app.
-        walkthroughJourney.forEach { step ->
+        WALKTHROUGH_DECKS.flatMap { it.journey }.forEach { step ->
             step.watchNotes().forEach { note ->
                 assertFalse(
                     "“${step.id}” has a caution still wearing its own introduction: “$note”",
@@ -102,7 +113,7 @@ class WalkthroughFacetsTest {
         // survived there too, a reader would meet the caution twice — once with no heading over it
         // and once with — which is worse than either alone, because the second reading looks like a
         // different caution until you have read both.
-        walkthroughJourney.forEach { step ->
+        WALKTHROUGH_DECKS.flatMap { it.journey }.forEach { step ->
             val facets = walkthroughFacets(step)
             val whole = facets.summary + " " + facets.detail
             assertFalse(
@@ -119,7 +130,7 @@ class WalkthroughFacetsTest {
         // detail is blank opens on a chevron and shows a heading-less gap. Both are shapes the cutter
         // can produce from a body that is one sentence long, which is why the floor exists in
         // `walkthroughFirstSentenceEnd` and why this asserts the result rather than the rule.
-        walkthroughJourney.forEach { step ->
+        WALKTHROUGH_DECKS.flatMap { it.journey }.forEach { step ->
             val facets = walkthroughFacets(step)
             assertTrue("“${step.id}” has no collapsed summary line", facets.summary.isNotBlank())
             assertTrue("“${step.id}” has nothing in its detail panel", facets.detail.isNotBlank())
@@ -138,7 +149,7 @@ class WalkthroughFacetsTest {
         // journey feel longer than it is. The ceiling is generous on purpose: the cutter deliberately
         // runs past a short opening sentence rather than printing a fragment, so the honest limit is
         // "no step has quietly become three sentences", not "one sentence".
-        walkthroughJourney.forEach { step ->
+        WALKTHROUGH_DECKS.flatMap { it.journey }.forEach { step ->
             val summary = walkthroughFacets(step).summary
             assertTrue(
                 "“${step.id}” has a ${summary.length}-character collapsed summary: “$summary”",
@@ -157,7 +168,7 @@ class WalkthroughFacetsTest {
         // The one journey step with no door is `offline`, which teaches a behaviour rather than a
         // form and correctly has nothing to list. It is not named here — the null destination is
         // what excuses it, and naming it would be a second register of exceptions.
-        val silent = walkthroughJourney
+        val silent = WALKTHROUGH_DECKS.flatMap { it.journey }
             .filter { it.destination != null && walkthroughFacets(it).fields.isEmpty() }
         assertTrue(
             "these steps open a screen and no longer name a single thing it asks for: " +
@@ -178,7 +189,7 @@ class WalkthroughFacetsTest {
         // anything readable in it. A blank string therefore survives every other assertion in this
         // file and renders as an empty bordered box, which is the same family of defect as a
         // heading over nothing and is harder to spot because the heading above it looks right.
-        walkthroughSteps.forEach { step ->
+        WALKTHROUGH_DECKS.flatMap { it.steps }.forEach { step ->
             walkthroughFacets(step).fields.forEach { field ->
                 assertTrue(
                     "“${step.id}” carries a blank entry in its field list: “$field”",
@@ -194,8 +205,10 @@ class WalkthroughFacetsTest {
         // web and no screen of its own. What matters is the SHAPE handed back: an empty list, not a
         // list holding one blank string, because the card asks `isNotEmpty()` and would otherwise
         // draw "What the screen asks for" over a single empty chip.
-        val screenless = listOf(walkthroughSteps.first(), walkthroughSteps.last()) +
-            walkthroughJourney.filter { it.destination == null }
+        val screenless = WALKTHROUGH_DECKS.flatMap { deck ->
+            listOf(deck.steps.first(), deck.steps.last()) +
+                deck.journey.filter { it.destination == null }
+        }
         screenless.forEach { step ->
             assertEquals(
                 "“${step.id}” teaches no screen and must list no fields — an entry here is a " +
@@ -214,7 +227,7 @@ class WalkthroughFacetsTest {
         // by their own composables. What matters here is the SHAPE the cutter hands back for a body
         // with no seam in it: an empty list and not a list holding one empty string, because the card
         // decides whether to draw the "Watch out for" heading by asking whether the list is empty.
-        listOf(walkthroughSteps.first(), walkthroughSteps.last()).forEach { end ->
+        WALKTHROUGH_DECKS.flatMap { listOf(it.steps.first(), it.steps.last()) }.forEach { end ->
             val facets = walkthroughFacets(end)
             assertEquals(
                 "“${end.id}” is one of the two ends and must produce no caution bullets",

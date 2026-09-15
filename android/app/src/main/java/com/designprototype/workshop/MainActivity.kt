@@ -4178,6 +4178,15 @@ private fun HomeScreen(
                 // The walkthrough never sits on top of a required-update prompt (that must be handled first).
                 if (showWalkthrough && pendingUpdate == null) {
                     WalkthroughDialog(
+                        /*
+                         * WHICH DECK OPENS, AND NOTHING ELSE. `walkthroughDeckFor` reads the role and
+                         * answers a deck; it is a DEFAULT and not a gate, so the dialog still opens
+                         * for every account and the deck it opens on still offers the others on its
+                         * first card. Handed the account rather than a deck so that the rule lives in
+                         * one place beside the decks it chooses between, which is also the only place
+                         * a test can ask it the question tier by tier.
+                         */
+                        user = user,
                         onFinish = { finishWalkthrough() },
                         onOpen = { destination ->
                             /*

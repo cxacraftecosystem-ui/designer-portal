@@ -50,7 +50,7 @@ to do.
 WHAT THIS DOES *NOT* CHECK, DELIBERATELY
 ══════════════════════════════════════════════════════════════════════════════════════════════
 
-Whether a string is *true*. Four of the web's cards carry section descriptions rather than form
+Whether a string is *true*. Seven of the web's cards carry section descriptions rather than form
 labels — `design-workshop-codes` and `design-workshop-readiness` render no labelled field at all,
 `design-workshop-stages` is built from a registry the server publishes, and
 `design-workshop-inspection` reads a workshop it did not author — and `steps.ts` names all four and
@@ -65,6 +65,20 @@ import re
 
 _ROOT = pathlib.Path(__file__).resolve().parents[2]
 WEB_STEPS = _ROOT / "frontend" / "components" / "guide" / "steps.ts"
+WEB_INSPECTOR_STEPS = _ROOT / "frontend" / "components" / "guide" / "inspectorSteps.ts"
+ANDROID_STEPS = (
+    _ROOT
+    / "android"
+    / "app"
+    / "src"
+    / "main"
+    / "java"
+    / "com"
+    / "designprototype"
+    / "workshop"
+    / "ui"
+    / "WalkthroughSteps.kt"
+)
 ANDROID_JOURNEY = (
     _ROOT
     / "android"
@@ -83,6 +97,34 @@ ANDROID_JOURNEY = (
 # reports itself instead of quietly parsing to nothing.
 WEB_ANCHOR = "export const GUIDE_STEPS"
 ANDROID_ANCHOR = "private val WALKTHROUGH_FIELDS"
+
+# ══════════════════════════════════════════════════════════════════════════════════════════════
+# THE SECOND DECK, 2026-09-15
+# ══════════════════════════════════════════════════════════════════════════════════════════════
+#
+# `/guide` carries three decks now and the handset carries two of them — the designer's, and the
+# inspector's. The web keeps each deck's steps in its own file and the handset keeps each deck's
+# field register in its own table, so each join below stays an EQUALITY against the file that
+# actually owns those strings. Merging either side into one table would turn both joins into
+# containments, which stop noticing a dropped key, which is the whole failure this file exists for.
+#
+# ── THE DIRECTORATE DECK HAS NO ANDROID HALF AND IS NOT JOINED HERE ────────────────────────────
+#
+# Four of its five screens do not exist on the handset in any form — the greps are written out over
+# `WalkthroughDeck` in `WalkthroughSteps.kt`, and `DIRECTORATE_TRACK.recapLead` says the same thing
+# from the web's side. A join for it would be a join against nothing, asserted green forever.
+#
+# ── AND THE INSPECTOR DECK IS THREE OF THE WEB'S FOUR, BY A DECISION WITH A REGISTER ───────────
+#
+# `inspection-feedback` is not taught on the handset because the capability is absent: no client
+# method for `POST …/feedback` or `.../send-back`, no panel on `InspectionDetailScreen`, and no
+# reader anywhere under `ui/` for the `inspectionFeedback` rows the payload already carries. The
+# decision is argued where the deck is declared; `walkthroughInspectorOmissions` is the one register
+# of it, and this file reads that register rather than hard-coding the id, so the two cannot drift.
+# `WalkthroughDecksTest.kt` holds the same register to the web's own list from the Android side.
+WEB_INSPECTOR_ANCHOR = "export const INSPECTOR_STEPS"
+ANDROID_INSPECTOR_ANCHOR = "private val WALKTHROUGH_INSPECTOR_FIELDS"
+ANDROID_OMISSIONS_ANCHOR = "internal val walkthroughInspectorOmissions"
 
 
 # ──────────────────────────────────────────────────────────────────────────────────────────────
@@ -212,9 +254,19 @@ def web_fields() -> list[tuple[str, list[str]]]:
     clients to one sequence for the reason it gives — "the order is the actual lesson: a stage's
     reference pickers are empty if the records were never made".
     """
-    source = _strip_ts_comments(WEB_STEPS.read_text(encoding="utf-8"))
-    at = source.find(WEB_ANCHOR)
-    assert at >= 0, f"{WEB_ANCHOR} is no longer declared in {WEB_STEPS.name}"
+    return _web_fields_from(WEB_STEPS, WEB_ANCHOR)
+
+
+def _web_fields_from(path: pathlib.Path, anchor: str) -> list[tuple[str, list[str]]]:
+    """``[(id, fields)]`` in the order the deck at *anchor* in *path* declares them.
+
+    A list of pairs and not a dict, because ORDER is half of what is being compared: this table read
+    top to bottom is the deck read top to bottom, and both client suites already hold the two
+    walkthroughs to one sequence for the reason they give — "the order is the actual lesson".
+    """
+    source = _strip_ts_comments(path.read_text(encoding="utf-8"))
+    at = source.find(anchor)
+    assert at >= 0, f"{anchor} is no longer declared in {path.name}"
     body = source[at:]
 
     marks = [(m.group(1), m.start()) for m in re.finditer(r'\bid:\s*"([^"]+)"', body)]
@@ -224,27 +276,27 @@ def web_fields() -> list[tuple[str, list[str]]]:
         chunk = body[pos:end]
         opener = re.search(r"\bfields:\s*\[", chunk)
         assert opener, (
-            f"the web's “{step_id}” card no longer declares a fields[] array. Every card has one — "
-            "see the GuideStep type — so this is a refactor of steps.ts and this parser has to "
-            "learn about it."
+            f"the web's “{step_id}” card no longer declares a fields[] array. Every card has "
+            "one — see the GuideStep type — so this is a refactor of the guide and this parser has "
+            "to learn about it."
         )
         out.append((step_id, _literals(_balanced(chunk, opener.end() - 1, "[", "]"))))
     return out
 
 
-def android_fields() -> list[tuple[str, list[str]]]:
-    """``[(id, fields)]`` in the order ``WALKTHROUGH_FIELDS`` declares them.
+def _android_fields_from(path: pathlib.Path, anchor: str) -> list[tuple[str, list[str]]]:
+    """``[(id, fields)]`` in the order the Kotlin table at *anchor* declares them.
 
     The table is ``"<id>" to listOf("…", "…")``. The id is itself a quoted string, so the entries are
     read out of the ``listOf(…)`` block alone rather than out of the whole pair — otherwise every
     step would carry its own id as its first chip.
     """
-    source = ANDROID_JOURNEY.read_text(encoding="utf-8")
-    at = source.find(ANDROID_ANCHOR)
+    source = path.read_text(encoding="utf-8")
+    at = source.find(anchor)
     assert at >= 0, (
-        f"{ANDROID_ANCHOR} is no longer declared in {ANDROID_JOURNEY.name}. If the handset's copy "
-        "of the web's field lists has moved, this file has to move with it — do not delete this "
-        "test to make a rename pass."
+        f"{anchor} is no longer declared in {path.name}. If the handset's copy of the web's field "
+        "lists has moved, this file has to move with it — do not delete this test to make a rename "
+        "pass."
     )
     opener = source.index("mapOf(", at) + len("mapOf(") - 1
     table = _balanced(source, opener, "(", ")")
@@ -254,6 +306,66 @@ def android_fields() -> list[tuple[str, list[str]]]:
         block = _balanced(table, entry.end() - 1, "(", ")")
         out.append((entry.group(1), _literals(block)))
     return out
+
+
+def web_inspector_fields() -> list[tuple[str, list[str]]]:
+    """The web's INSPECTOR deck. See the block over ``WEB_INSPECTOR_ANCHOR``."""
+    return _web_fields_from(WEB_INSPECTOR_STEPS, WEB_INSPECTOR_ANCHOR)
+
+
+def android_inspector_fields() -> list[tuple[str, list[str]]]:
+    """The handset's copy of it."""
+    return _android_fields_from(ANDROID_JOURNEY, ANDROID_INSPECTOR_ANCHOR)
+
+
+def android_inspector_omissions() -> set[str]:
+    """The web inspector cards the handset deliberately does not teach, read off the Kotlin.
+
+    READ AND NEVER RESTATED. Writing ``{"inspection-feedback"}`` into this file would be a THIRD copy
+    of a decision that already lives in two places, and the one copy nobody would think to prune on
+    the day the handset grows a feedback box — which is the exact shape of the defect
+    `WalkthroughStepsTest` was rewritten to remove when its hand-copied array of nineteen web ids
+    rotted against a web that taught twenty-two.
+    """
+    source = ANDROID_STEPS.read_text(encoding="utf-8")
+    at = source.find(ANDROID_OMISSIONS_ANCHOR)
+    assert at >= 0, (
+        f"{ANDROID_OMISSIONS_ANCHOR} is no longer declared in {ANDROID_STEPS.name}. It is the one "
+        "register of which web inspector cards this handset leaves out; if it has moved, this file "
+        "moves with it."
+    )
+    opener = source.index("setOf(", at) + len("setOf(") - 1
+    block = _balanced(source, opener, "(", ")")
+    # LINE COMMENTS OFF FIRST. `_literals` reads every quoted run it is handed, and the Kotlin side
+    # of this file is NOT comment-stripped — so a commented-out entry read back as a registered
+    # omission, and this assertion went green over a register that no longer said anything. That is
+    # the edit somebody makes while a capability is half-landed, which is the one moment the register
+    # is load-bearing.
+    kept = [line for line in block.split("\n") if not line.lstrip().startswith("//")]
+    return set(_literals("\n".join(kept)))
+
+
+def every_declared_field_list() -> list[tuple[str, list[str]]]:
+    """Every ``(id, fields)`` pair on either client, across every deck both of them carry.
+
+    The two sweeps that use this ask questions that are about a STRING rather than about a deck — an
+    escape this parser would silently mangle, a blank entry that draws an empty chip — so restricting
+    either to the designer's deck would have left the inspector's three cards unguarded against
+    exactly the defects the designer's twenty-three are guarded against.
+    """
+    return (
+        web_fields() + android_fields() + web_inspector_fields() + android_inspector_fields()
+    )
+
+
+def android_fields() -> list[tuple[str, list[str]]]:
+    """``[(id, fields)]`` in the order ``WALKTHROUGH_FIELDS`` declares them.
+
+    The table is ``"<id>" to listOf("…", "…")``. The id is itself a quoted string, so the entries are
+    read out of the ``listOf(…)`` block alone rather than out of the whole pair — otherwise every
+    step would carry its own id as its first chip.
+    """
+    return _android_fields_from(ANDROID_JOURNEY, ANDROID_ANCHOR)
 
 
 # ──────────────────────────────────────────────────────────────────────────────────────────────
@@ -286,6 +398,34 @@ def test_both_declarations_still_parse_to_something():
         f"contents in {ANDROID_JOURNEY.name}: {[i for i, f in android if not f]}"
     )
 
+    # The second deck, with its own floor. THREE and not ten: this deck is four cards on the web and
+    # three on the handset by a decision with a register, so a floor of ten would be a floor nothing
+    # could ever clear. It is still a floor and not the current count, for the reason above — pinning
+    # the exact number would put a third copy of the register in this file.
+    web_inspector = web_inspector_fields()
+    android_inspector = android_inspector_fields()
+    assert len(web_inspector) >= 3, (
+        f"only {len(web_inspector)} steps parsed out of {WEB_INSPECTOR_STEPS.name}"
+    )
+    assert len(android_inspector) >= 2, (
+        f"only {len(android_inspector)} inspector entries parsed out of {ANDROID_JOURNEY.name}"
+    )
+    assert all(fields for _, fields in web_inspector), (
+        "a web inspector card parsed to an EMPTY fields[]: "
+        f"{[i for i, f in web_inspector if not f]}"
+    )
+    assert all(fields for _, fields in android_inspector), (
+        "a handset inspector entry parsed to an EMPTY listOf(): "
+        f"{[i for i, f in android_inspector if not f]}"
+    )
+    # AND THE OMISSION REGISTER PARSED TO SOMETHING. If `setOf(…)` ever came back empty, the
+    # equality below would silently become "the handset teaches every web inspector card", which is
+    # a claim nobody made and which would go green the day a card was dropped.
+    assert android_inspector_omissions(), (
+        "the handset's omission register parsed to nothing, so the inspector join below has "
+        "stopped asking whether a card was dropped"
+    )
+
 
 def test_neither_declaration_uses_an_escape_this_parser_invents():
     r"""Only ``\"`` appears in either file today, and a label may not contain a newline or a tab.
@@ -295,7 +435,7 @@ def test_neither_declaration_uses_an_escape_this_parser_invents():
     pins the narrow fact that makes the simple version correct — and a chip whose text carries a line
     break is a layout defect on both clients anyway.
     """
-    for step_id, fields in web_fields() + android_fields():
+    for step_id, fields in every_declared_field_list():
         for field in fields:
             assert "\n" not in field and "\t" not in field, (
                 f"“{step_id}” has a field with a line break or a tab in it: {field!r}. A chip is one "
@@ -328,6 +468,62 @@ def test_the_handset_carries_a_field_list_for_every_step_the_web_teaches():
         "and the card no longer says what the screen will ask them for. Extra on the handset: that "
         "is a second register with nothing holding it to the first — the web is the register, so "
         "teach the step there and copy it here, in one commit."
+    )
+
+
+def test_the_handset_carries_the_inspector_cards_it_says_it_carries():
+    """The second deck's join, and the omission is part of it rather than a hole in it.
+
+    Three ways this goes wrong, and they are genuinely different reports:
+
+    * A web inspector card missing here AND absent from the register is a subject that went untaught
+      without anybody deciding — the same defect as the designer deck's, which is how the entire
+      design-workshop arc went missing from the handset for months.
+    * An id here the web does not teach is a second register with nothing holding it to the first.
+    * An id in the REGISTER that the handset now teaches after all is the stale half: the day
+      somebody adds the feedback box and writes the card, the register has to lose that line, and
+      nothing but this assertion would say so.
+    """
+    web = [step_id for step_id, _ in web_inspector_fields()]
+    android = [step_id for step_id, _ in android_inspector_fields()]
+    omitted = android_inspector_omissions()
+    assert android == [step_id for step_id in web if step_id not in omitted], (
+        f"the web's inspector deck declares fields for {web},\n"
+        f"the handset declares them for {android},\n"
+        f"and `walkthroughInspectorOmissions` says the handset deliberately omits {sorted(omitted)}.\n"
+        "Those three do not add up. The web is the register: teach the step there and copy the "
+        "field list here in one commit, or record the omission where the deck is declared — never "
+        "edit one of the three alone to turn this green."
+    )
+    assert not (omitted - set(web)), (
+        f"{sorted(omitted - set(web))} is registered as an omission and the web's inspector deck "
+        "does not teach it at all, so it is a typo rather than a decision"
+    )
+
+
+def test_every_inspector_field_matches_the_web_word_for_word_and_in_screen_order():
+    """The same comparison as the designer deck's, for the deck the web keeps in another file.
+
+    NOT restricted to labels that would make sense on a handset. Three of the four web inspector
+    cards carry SECTION DESCRIPTIONS rather than form labels, and `inspectorSteps.ts` says why: an
+    inspection read draws the values of a workshop it did not author, so it has no form and no labels
+    of its own. The handset copies them unchanged anyway, on the rule the designer table already
+    lives under — there is one register and it is the web's, which is what makes the copy safe rather
+    than the paraphrase that would read better.
+    """
+    web = dict(web_inspector_fields())
+    android = dict(android_inspector_fields())
+    drifted = {
+        step_id: {"web": fields, "android": android[step_id]}
+        for step_id, fields in web.items()
+        if step_id in android and android[step_id] != fields
+    }
+    assert drifted == {}, "the two copies of the inspector field lists have drifted:\n" + "\n".join(
+        _report(step_id, pair["web"], pair["android"]) for step_id, pair in drifted.items()
+    ) + (
+        "\nThe web is the register: fix inspectorSteps.ts and WALKTHROUGH_INSPECTOR_FIELDS together, "
+        "in one commit. Never edit the Kotlin alone to turn this green — that makes the two "
+        "walkthroughs describe two different products with one test saying they agree."
     )
 
 
@@ -387,7 +583,7 @@ def test_no_field_is_blank_on_either_client():
     the "heading over an empty block" family of defects gets through. `WalkthroughFacetsTest` guards
     the same shape for the caution bullets, one client over.
     """
-    for step_id, fields in web_fields() + android_fields():
+    for step_id, fields in every_declared_field_list():
         assert all(field.strip() for field in fields), (
             f"“{step_id}” declares a blank field, which draws an empty chip: {fields!r}"
         )

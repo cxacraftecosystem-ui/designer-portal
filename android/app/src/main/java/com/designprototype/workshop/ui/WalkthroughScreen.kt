@@ -14,13 +14,17 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import com.designprototype.workshop.data.UserDto
 
 /*
  * ─────────────────────────────────────────────────────────────────────────────────────────────────
@@ -240,15 +244,39 @@ private fun walkthroughOpenLabel(destination: NavDestination): String? =
 /**
  * The walkthrough's window: a full-bleed dialog with [WalkthroughJourney] scrolling inside it.
  *
- * THE SIGNATURE IS UNCHANGED FROM THE PAGED VERSION, ON PURPOSE. `MainActivity` is seventeen thousand
- * lines long, other work landed in it today, and it holds six things that have to keep agreeing about
- * this dialog — the first-run gate inside a `remember` initialiser, the router arm, the `navigate`
- * exemption, the Settings row, the dashboard button and the `pendingUpdate == null` ordering guard
- * that keeps this from burying a required-update prompt. Replacing the entire surface behind an
- * identical two-lambda signature is what let all six of them stay exactly as they were, and that
- * ordering guard becomes MORE load-bearing now that this fills the screen rather than floating over
- * the middle of it: do not touch it, and do not give this composable a parameter that would make
- * somebody have to.
+ * ── WHICH DECK IT OPENS ON, AND WHY THE CHOICE LIVES HERE ────────────────────────────────────────
+ *
+ * There are two walkthroughs in this APK and `walkthroughDeckFor` picks which one OPENS from the
+ * signed-in account's role. IT IS A DEFAULT AND NOT A GATE, exactly as `tracks.ts` rules for the web
+ * — every deck is in the build for everybody, whichever one opens offers the others on its first
+ * card, and a wrong answer costs the reader one tap. The walkthrough's own menu row stays ungated
+ * for all eleven tiers, which is what `WalkthroughSurfaceTest` asserts role by role and what this
+ * must not quietly become a second opinion about.
+ *
+ * The CHOICE is state and the state is here, one level above the journey, for the same reason the
+ * seen flag is: the window is the thing that outlives a scroll position. Held in a `remember` keyed
+ * on the account's role rather than recomputed per composition, so that a reader who switched to the
+ * other deck stays on it while they read — recomputing would snap them back to the role's default on
+ * the next recomposition, which on a scrolling surface is every few frames.
+ *
+ * THE SIGNATURE GREW EXACTLY ONE PARAMETER, AND THE SIX THINGS IT WAS GUARDING STAYED PUT.
+ * `MainActivity` is seventeen thousand lines long and holds six things that have to keep agreeing
+ * about this dialog — the first-run gate inside a `remember` initialiser, the router arm, the
+ * `navigate` exemption, the Settings row, the dashboard button and the `pendingUpdate == null`
+ * ordering guard that keeps this from burying a required-update prompt. Replacing the entire surface
+ * behind an identical two-lambda signature is what let all six of them stay exactly as they were
+ * when this became a journey, and that ordering guard is MORE load-bearing now that this fills the
+ * screen rather than floating over the middle of it: do not touch it.
+ *
+ * ⚠ THE PARAGRAPH HERE USED TO END "do not give this composable a parameter that would make somebody
+ * have to", AND [user] IS THAT PARAMETER. It is added anyway, and the test the rule was protecting is
+ * the reason it is safe rather than an exception to it: NONE of those six is touched by it. All six
+ * are statements about WHEN this dialog is shown and what happens when it closes; [user] is about
+ * WHICH deck it opens on, which is a question none of them asks. The one line that changes is the
+ * call site's own argument list, and `WalkthroughSurfaceTest` still reads both lambdas out of the
+ * same slice. What the rule was actually refusing is a parameter that forces the first-run gate, the
+ * exemption or the ordering guard to be rewritten to supply it; a value that is already in scope at
+ * the call site is not that.
  *
  * ── ONE EXIT LAMBDA, ON PURPOSE ──────────────────────────────────────────────────────────────────
  *
@@ -329,9 +357,19 @@ private fun walkthroughOpenLabel(destination: NavDestination): String? =
  */
 @Composable
 internal fun WalkthroughDialog(
+    user: UserDto?,
     onFinish: () -> Unit,
     onOpen: (NavDestination) -> Unit,
 ) {
+    /*
+     * THE DECK THIS ACCOUNT OPENS ON, AND THE READER'S OWN CHOICE AFTER THAT.
+     *
+     * Keyed on the ROLE and not on the whole account, because the role is the only thing
+     * `walkthroughDeckFor` reads: keying on `user` would reset a reader's chosen deck the next time
+     * any unrelated field on their profile changed underneath a live session.
+     */
+    var deck by remember(user?.role) { mutableStateOf(walkthroughDeckFor(user)) }
+
     /*
      * READ ONCE, HERE, AND THREADED DOWN AS A BOOLEAN.
      *
@@ -377,7 +415,9 @@ internal fun WalkthroughDialog(
             color = MaterialTheme.colorScheme.surface,
         ) {
             WalkthroughJourney(
-                steps = walkthroughSteps,
+                deck = deck,
+                decks = WALKTHROUGH_DECKS,
+                onChooseDeck = { chosen -> deck = chosen },
                 reduceMotion = reduceMotion,
                 onOpen = onOpen,
                 onFinish = onFinish,
