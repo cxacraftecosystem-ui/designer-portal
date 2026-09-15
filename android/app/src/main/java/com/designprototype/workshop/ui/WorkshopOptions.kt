@@ -1,6 +1,7 @@
 package com.designprototype.workshop.ui
 
 import com.designprototype.workshop.data.DesignWorkshopDto
+import com.designprototype.workshop.data.SchemaResponse
 import com.designprototype.workshop.data.WorkshopDetailDto
 import java.time.LocalDate
 
@@ -107,6 +108,30 @@ const val ATTACH_LATER: String = "Don't attach it yet"
 
 /** A create flow where typing the details is the alternative to linking a workshop. */
 const val TYPE_DETAILS_INSTEAD: String = "Do not link a workshop — type the details below"
+
+/**
+ * THE ROW THAT TAKES A TYPE FILTER OFF — which is not a "none" row, and is filed apart from the four
+ * above for exactly that reason.
+ *
+ * The block above rules that a control which FILTERS a screen expresses "everything" by ABSENCE and
+ * never through `includeNone`. This constant does not contradict that: the empty value still travels
+ * as an ABSENT `workshopKind`, and what is drawn is an ordinary FIRST OPTION carrying `""` rather
+ * than the primitive's none-row. The reader has to be able to see the way back on the same list they
+ * used to get here, and an option is the only place a way back can be seen.
+ *
+ * ── WHY THE HANDSET GAVE UP "Any type" ─────────────────────────────────────────────────────
+ *
+ * `WorkshopListScreen` shipped "Any type" and `DesignWorkshopCascade.tsx:147` shipped "Any type of
+ * workshop", each with a comment claiming to spell it "exactly as the web spells it". They were two
+ * strings, and requirement 20 is that the clients must not disagree about any of this. The web's is
+ * the one that survives, for two reasons and not by seniority: it is the one that reads correctly
+ * when a screen reader speaks the row on its own, out of the labelled box it belongs to; and the
+ * record forms mount this box directly above a SECOND picker, where a bare "Any type" is a row a
+ * designer can reasonably read as being about the workshop rather than about the type.
+ *
+ * One constant, so the list screen's filter and the record forms' cascade cannot part company again.
+ */
+const val ANY_WORKSHOP_KIND: String = "Any type of workshop"
 
 // ---------------------------------------------------------------------------------------------
 // Which list, and what it is called in a sentence
@@ -246,6 +271,39 @@ internal fun couldNotListLine(noun: String): String =
  */
 internal fun scopedEmptyLine(noun: String): String =
     "No $noun are open to this account. An administrator can give you access to one."
+
+/**
+ * GENUINELY EMPTY, BUT ONLY BECAUSE THE READER NARROWED IT — the seventh sentence, and the one that
+ * stops [scopedEmptyLine] being said about a read the designer themselves filtered.
+ *
+ * ── THIS IS THE WEB'S OWN RULE, APPLIED TO THE NARROWING THE HANDSET HAS ──────────────────
+ *
+ * `DesignWorkshopSelect.tsx` states it in as many words for its SEARCH box: *"THE NOTICE IS ASKED OF
+ * THE UNNARROWED LIST. With a term typed, an empty answer means the term matched nothing — and
+ * printing 'No design workshops are open to this account. An administrator can give you access to
+ * one.' underneath a search box somebody has just typed into is a claim about a grant table produced
+ * by a filtered read."* That is precisely right, and the browser applies it to the term only,
+ * because until the cascade landed the term was the only narrowing it had.
+ *
+ * The record-form picker on this handset has no search box — `searchable = false`, see
+ * [workshopCapLine] — so the TYPE is the only narrowing it has, and it is the same act. A designer
+ * on four Skill Upgradation workshops who taps "Cluster Development" and is told that no design
+ * workshops are open to their account has been told something false about a grant table, by a
+ * sentence whose whole purpose is to send them to an administrator. They would go.
+ *
+ * ── AND WHY IT NAMES THE WAY BACK ─────────────────────────────────────────────────
+ *
+ * R2 stands the workshop box down over an empty list, so in this state the only control the reader
+ * can still operate is the type box above it. A notice that named no next action would leave them
+ * looking at two boxes, one dead, with nothing saying which one to touch — the cap sentence's own
+ * argument ([workshopCapLine]: *"a cap notice that does not name a next action tells the reader they
+ * have a problem and not what to do about it"*), one control over.
+ *
+ * [ANY_WORKSHOP_KIND] is quoted rather than described so the sentence names the row as it is drawn.
+ */
+internal fun narrowedEmptyLine(noun: String): String =
+    "No $noun of the type chosen above are open to this account. That is not a claim about your " +
+        "other $noun — choose “$ANY_WORKSHOP_KIND” to see them all."
 
 /**
  * GENUINELY EMPTY, UNSCOPED — the read succeeded and the REPOSITORY has none. The next move is to
@@ -451,6 +509,14 @@ internal fun readableStamp(iso: String?): String {
  *   what "offline" means, and the one that was wrong would either strand fieldwork or shout about a
  *   server fault on a phone in a tunnel.
  *
+ * @param narrowed whether the READER narrowed this read — on this client, whether a `workshopKind`
+ *   was sent. It changes ONE arm: an empty answer to a filtered read is [narrowedEmptyLine] and not
+ *   [scopedEmptyLine], because the second is a claim about a grant table and a filtered read cannot
+ *   support one. Defaulted to `false` so every control that narrows nothing reads exactly as it did.
+ *   It deliberately does NOT touch the failure arms: a read that never answered failed for reasons
+ *   that have nothing to do with the filter on it, and dressing that as "none of this type" would
+ *   hide a dead connection behind a control the designer would then go on fiddling with.
+ *
  * @return null ONLY when the list arrived with rows in it. A caller may print the result
  *   unconditionally with `?.let`, and a null is the state in which the control needs no explanation
  *   because it is doing the obvious thing.
@@ -459,6 +525,7 @@ internal fun workshopListNotice(
     state: WorkshopListState,
     kind: WorkshopListKind,
     online: Boolean,
+    narrowed: Boolean = false,
 ): String? = when (state) {
     WorkshopListState.Loading -> loadingListLine(kind.noun)
     WorkshopListState.Failed -> if (online) couldNotListLine(kind.noun) else offlineListLine(kind.noun)
@@ -468,7 +535,13 @@ internal fun workshopListNotice(
         // sentence names an administrator and never the repository. Neither picker may ever print
         // [unscopedEmptyLine]: this account seeing none is not the platform holding none, and a
         // designer told to "create one" when the real remedy is a grant goes and makes a duplicate.
-        if (state.count == 0) scopedEmptyLine(kind.noun) else null
+        //
+        // UNLESS THE READER NARROWED IT, in which case neither claim is available: the read that
+        // answered "none" answered about one type, and what the account holds under the others was
+        // not asked. See [narrowedEmptyLine], which is the whole of the difference.
+        if (state.count > 0) null
+        else if (narrowed) narrowedEmptyLine(kind.noun)
+        else scopedEmptyLine(kind.noun)
 }
 
 /**
@@ -716,14 +789,43 @@ internal fun fieldWorkshopStanding(workshop: WorkshopDetailDto, today: LocalDate
  *
  * It is FIRST in the list and it is never counted as one of the listed rows, so [workshopCapLine]'s
  * arithmetic is unaffected by it.
+ *
+ * ── THE SECOND HINT, AND WHY THE FIRST ONE BECAME A LIE THE DAY THE TYPE BOX LANDED ─────────
+ *
+ * *"this device could not list it just now"* was true of every way this row could previously be
+ * reached: a failed read, an offline phone, or a workshop sitting past the end of one server
+ * truncated page. The cascade adds a way that is none of those. A product filed last season under a
+ * Skill Upgradation workshop, opened with the type box on its default, produces this row while the
+ * device is online, the read succeeded, and the workshop is sitting in the register perfectly
+ * listable — it simply was not asked for. Printing "could not list it" there is a comment that
+ * contradicts the code, on screen, in front of the one reader who cannot check it; and its obvious
+ * reading — *something is wrong with this phone* — sends a designer to look for a fault instead of
+ * at the box two lines above that is doing exactly what it says.
+ *
+ * @param narrowed whether a type filter was in force on the read that did not return this row. The
+ *   caller decides, because only the caller knows whether the read ANSWERED: a failed read with a
+ *   type chosen is still the old sentence, since the filter is not why the row is missing.
  */
-internal fun offPageWorkshopRow(id: String, kind: WorkshopListKind): SelectOption = SelectOption(
+internal fun offPageWorkshopRow(
+    id: String,
+    kind: WorkshopListKind,
+    narrowed: Boolean = false,
+): SelectOption = SelectOption(
     value = id,
     label = when (kind) {
         WorkshopListKind.DESIGN -> "The design workshop already on this record"
         WorkshopListKind.FIELD -> "The workshop already on this record"
     },
-    hint = "Filed earlier · this device could not list it just now, so its name is not shown",
+    // NEITHER SENTENCE CLAIMS THE TYPE IS WRONG, and the narrowed one is worded around what is
+    // actually known. A stored workshop absent from a filtered page is either of another type or
+    // past the end of that type's first page, and this row cannot tell which without a request it
+    // is not allowed to make (see the note above on §2.9). "Not in the list for the type chosen
+    // above" is true of both, and it points at the control that puts it back.
+    hint = if (narrowed) {
+        "Filed earlier · not in the list for the type chosen above, so its name is not shown"
+    } else {
+        "Filed earlier · this device could not list it just now, so its name is not shown"
+    },
 )
 
 /**
@@ -745,10 +847,15 @@ internal fun offPageWorkshopRow(id: String, kind: WorkshopListKind): SelectOptio
  * @param offPageId the workshop already stored on the record, if any. When it is not among [rows] it
  *   gets [offPageWorkshopRow] at the head of the list. Pass `""` from a control that is not editing
  *   a stored value — a FILTER must not grow a row for something it cannot show.
+ *
+ * @param narrowed whether [rows] are the answer to a read a TYPE filter was in force on. It reaches
+ *   nothing but the off-page row's hint, and it is threaded through rather than decided here because
+ *   this function cannot see whether the read answered at all — see [offPageWorkshopRow].
  */
 internal fun designWorkshopOptions(
     rows: List<DesignWorkshopDto>,
     offPageId: String = "",
+    narrowed: Boolean = false,
 ): List<SelectOption> {
     val listed = rows
         .sortedWith(
@@ -766,7 +873,7 @@ internal fun designWorkshopOptions(
         }
     val wanted = offPageId.trim()
     if (wanted.isEmpty() || listed.any { it.value == wanted }) return listed
-    return listOf(offPageWorkshopRow(wanted, WorkshopListKind.DESIGN)) + listed
+    return listOf(offPageWorkshopRow(wanted, WorkshopListKind.DESIGN, narrowed)) + listed
 }
 
 /**
@@ -798,4 +905,87 @@ internal fun fieldWorkshopOptions(
     val wanted = offPageId.trim()
     if (wanted.isEmpty() || listed.any { it.value == wanted }) return listed
     return listOf(offPageWorkshopRow(wanted, WorkshopListKind.FIELD)) + listed
+}
+
+// ---------------------------------------------------------------------------------------------
+// The TYPE of workshop — the vocabulary the cascade's first box offers
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * The six workshop KINDS, off the served registry — the list screen's type filter, the create
+ * dialog's type box, and the first box of the record forms' cascade.
+ *
+ * ── IT MOVED HERE ON 2026-09-15, AND THE MOVE IS THE POINT OF THIS FILE ─────────────────
+ *
+ * It was `internal` in `ui.designworkshop` (`WorkshopListScreen.kt`) while it had one screen's worth
+ * of callers. The record-form cascade is the third caller and it lives in `ui`, so leaving it where
+ * it was would have run the dependency ui → ui.designworkshop, the reverse of the direction the rest
+ * of the tree runs in — `WorkshopListScreen` fully-qualifies `com.designprototype.workshop.ui
+ * .SelectOption` at every use precisely because it depends on `ui`. Same module, so `internal` would
+ * have RESOLVED; it would simply have been a cycle nobody had written down. This file is already the
+ * declared single home for "one vocabulary for every workshop picker on this handset", and a
+ * vocabulary offered by three pickers on two screens is exactly what that sentence is about.
+ *
+ * ── NO COMPILED-IN FLOOR ON THIS CLIENT, AND THE CLAIM WAS CHECKED RATHER THAN ASSUMED ─────
+ *
+ * `DROPDOWN_DESIGN.md` §3.1 files a served enum as a class-(a) vocabulary on Android — *"always
+ * answerable, may be required, says nothing, no work"* — and gives the reason: `StageSchemaStore`
+ * resolves memory, then `filesDir`, then the BUNDLED APK ASSET, and a build shipped without that
+ * asset throws rather than degrading to an empty registry. The web needs `WORKSHOP_KIND_FLOOR`
+ * because a browser that has never reached this API holds nothing at all; a handset always holds the
+ * copy that shipped with it.
+ *
+ * VERIFIED ON THIS TREE, 2026-08-31 and re-checked 2026-09-15 link by link, rather than taken on the
+ * document's word: `assets/design-workshop-schema.json` carries `enums.WORKSHOP_KIND` with all six
+ * members; [SchemaResponse.enums] decodes it; `StageSchemaStore.load` falls through to `readAsset`
+ * when both memory and disk miss, and `readAsset` RAISES rather than returning an empty registry;
+ * and `WorkshopRepository.designWorkshopSchema` ends in `StageSchemaStore.load(context)` whether or
+ * not the network answered. So a fresh install with no signal draws all six, and the claim holds.
+ * The one thing that could break it is the bundled asset going stale, which is what the regenerate
+ * step and `backend/tests/test_controlled_vocabularies.py` already hold.
+ *
+ * THE CONSEQUENCE FOR THE CASCADE, because it is a place the web must NOT be copied. The browser's
+ * `workshopKindOptions` returns a `served` boolean and the cascade prints a second hint off it —
+ * *"These are this app's built-in workshop types — connect once to refresh them"* (R3, since a
+ * silently short list reads as "there are only these"). There is no handset state that sentence is
+ * true in: the registry always resolves, so a short list here is a short list on the server. Copying
+ * it across would put a permanent, false apology under a box that is right.
+ *
+ * AN EMPTY LIST IS STILL RETURNED HONESTLY rather than substituted for, because the one state this
+ * cannot rule out is a registry that has RETIRED the enum — and quietly drawing six members the
+ * server no longer accepts would offer a token every save refuses. The callers draw nothing then.
+ */
+internal fun workshopKindOptions(schema: SchemaResponse?): List<SelectOption> =
+    schema?.enums?.get("WORKSHOP_KIND").orEmpty().map { option ->
+        SelectOption(value = option.value, label = option.label)
+    }
+
+/**
+ * The type the cascade should be SHOWING, given the type it holds and the types actually offered.
+ *
+ * ── THE WEB'S RULE 3, WHICH IS ABOUT A 422 ON A READ NOBODY ASKED FOR ─────────────────
+ *
+ * `DesignWorkshopCascade.tsx` states it: *"A vocabulary the server has retired must not be sent back
+ * to it as a filter: `workshopKind` is validated server-side, and a token it no longer knows is a
+ * 422 on a read the designer did not ask for. If the registry arrives without
+ * `DESIGN_PROTOTYPE_DEVELOPMENT`, the box falls back to showing every kind rather than to a token
+ * nothing can answer."* `design_workshops.py` is where that is true — `enum_filter_or_422` refuses
+ * an unknown token rather than answering with an empty list, which is the RIGHT server behaviour and
+ * is exactly why the client must not send one.
+ *
+ * FALLING BACK TO `""` AND NOT TO THE FIRST OFFERED TYPE. "Every type" is the only answer that is
+ * certainly correct without knowing what replaced the retired one, and it is the answer that hides
+ * nothing: a default that quietly picked whatever now sits first in the registry would narrow a
+ * designer's list to a type somebody chose for them in a migration.
+ *
+ * AN EMPTY [offered] CHANGES NOTHING, which is the handset's half of the web's `if (!served) return`
+ * guard. There, an unserved list means the floor list is on screen and has no standing to retire
+ * anything. Here it means the registry has retired the whole enum, the type box is not drawn at all
+ * ([workshopKindOptions]), and blanking the held token would be a second read issued for a control
+ * nobody can see.
+ */
+internal fun retainedWorkshopKind(chosen: String, offered: List<SelectOption>): String = when {
+    offered.isEmpty() -> chosen
+    offered.any { it.value == chosen } -> chosen
+    else -> ""
 }

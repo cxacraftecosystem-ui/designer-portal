@@ -3,6 +3,7 @@ package com.designprototype.workshop.ui
 import com.designprototype.workshop.data.DesignWorkshopDto
 import com.designprototype.workshop.data.WorkshopDetailDto
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -218,6 +219,68 @@ class WorkshopOptionsTest {
     fun `a list with rows in it says nothing at all`() {
         assertNull(
             workshopListNotice(WorkshopListState.Listed(count = 4, total = 4), WorkshopListKind.DESIGN, true)
+        )
+    }
+
+    /**
+     * A READ THE DESIGNER NARROWED MAY NOT BE REPORTED AS A CLAIM ABOUT THEIR GRANTS.
+     *
+     * `DesignWorkshopSelect.tsx` writes the rule out for its SEARCH box: *"THE NOTICE IS ASKED OF THE
+     * UNNARROWED LIST … printing 'No design workshops are open to this account. An administrator can
+     * give you access to one.' underneath a search box somebody has just typed into is a claim about a
+     * grant table produced by a filtered read."* The record-form picker on this handset has no search
+     * box — `searchable = false` — so the TYPE is its only narrowing, and it is the same act.
+     *
+     * The cost of getting it wrong is not a wording: a designer on four Skill Upgradation workshops
+     * who taps "Cluster Development" would be sent to an administrator to ask for access they already
+     * have, by a sentence whose entire purpose is to send them there.
+     */
+    @Test
+    fun `an empty answer to a narrowed read is not a claim about the account`() {
+        val narrowed = workshopListNotice(
+            WorkshopListState.Listed(count = 0, total = 0),
+            WorkshopListKind.DESIGN,
+            online = true,
+            narrowed = true,
+        )
+
+        assertEquals(narrowedEmptyLine("design workshops"), narrowed)
+        assertNotEquals(
+            "a filtered read cannot support the scoped claim",
+            scopedEmptyLine("design workshops"),
+            narrowed,
+        )
+        // It has to name the way back, because R2 has just disabled the only other control on screen.
+        assertTrue(narrowed!!.contains(ANY_WORKSHOP_KIND))
+    }
+
+    /**
+     * AND IT CHANGES NOTHING ABOUT A READ THAT NEVER ANSWERED.
+     *
+     * A dropped connection with a type chosen is still a dropped connection. Wording it as "none of
+     * this type" would hide a dead tunnel behind a control the designer would then go on fiddling
+     * with, having been told the phone is fine.
+     */
+    @Test
+    fun `narrowing does not re-word a read that failed`() {
+        for (online in listOf(true, false)) {
+            assertEquals(
+                workshopListNotice(WorkshopListState.Failed, WorkshopListKind.DESIGN, online),
+                workshopListNotice(WorkshopListState.Failed, WorkshopListKind.DESIGN, online, narrowed = true),
+            )
+        }
+        assertEquals(
+            workshopListNotice(WorkshopListState.Loading, WorkshopListKind.DESIGN, true),
+            workshopListNotice(WorkshopListState.Loading, WorkshopListKind.DESIGN, true, narrowed = true),
+        )
+    }
+
+    /** And an unnarrowed empty read still says what it always said. */
+    @Test
+    fun `the default is the unnarrowed sentence`() {
+        assertEquals(
+            scopedEmptyLine("design workshops"),
+            workshopListNotice(WorkshopListState.Listed(0, 0), WorkshopListKind.DESIGN, online = true),
         )
     }
 
@@ -455,6 +518,32 @@ class WorkshopOptionsTest {
         assertEquals(1, options.size)
         assertEquals("gone-from-this-page", options.single().value)
         assertEquals("The design workshop already on this record", options.single().label)
+    }
+
+    /**
+     * AND THE HINT TELLS THE TWO ABSENCES APART, because one of them stopped being true.
+     *
+     * *"this device could not list it just now"* was accurate for every way this row could be reached
+     * before the type box existed: a failed read, an offline phone, a workshop past the end of one
+     * truncated page. A narrowed read is none of those — the device is online, the read succeeded,
+     * and the workshop is sitting in the register perfectly listable; it simply was not asked for.
+     * Left unchanged, the row would be a comment contradicting the code, printed on screen, in front
+     * of the one reader who cannot check it — and its obvious reading, *something is wrong with this
+     * phone*, sends a designer looking for a fault instead of at the box two lines above.
+     */
+    @Test
+    fun `the off-page row says which absence this is`() {
+        val unlisted = designWorkshopOptions(rows = emptyList(), offPageId = "w9").single()
+        val filteredOut = designWorkshopOptions(rows = emptyList(), offPageId = "w9", narrowed = true).single()
+
+        assertEquals("the label is the same row either way", unlisted.label, filteredOut.label)
+        assertNotEquals("but the reason for the absence is not", unlisted.hint, filteredOut.hint)
+        assertTrue(unlisted.hint!!.contains("could not list it"))
+        assertFalse(
+            "a narrowed read must not blame the device for a list it was never asked for",
+            filteredOut.hint!!.contains("could not list it"),
+        )
+        assertTrue("and must point at the control that did it", filteredOut.hint!!.contains("type chosen above"))
     }
 
     /** And it never duplicates a row the list already holds, nor grows one for a blank selection. */

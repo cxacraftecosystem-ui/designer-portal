@@ -11,10 +11,12 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.designprototype.workshop.data.DesignWorkshopDto
 import com.designprototype.workshop.data.DesignWorkshopPageDto
+import com.designprototype.workshop.data.StageSchemaStore
 import com.designprototype.workshop.data.WorkshopRepository
 import com.designprototype.workshop.data.unfiledLinkReason
 import kotlinx.coroutines.CancellationException
@@ -125,12 +127,95 @@ import kotlinx.coroutines.CancellationException
  *
  * [listState] is what tells the three apart, and [WorkshopListKind.DESIGN]'s sentences in
  * `WorkshopOptions.kt` are what each of them says. See DROPDOWN_DESIGN §3.5.
+ *
+ * ════════════════════════════════════════════════════════════════════════════════════════════════════
+ * THE TYPE OF WORKSHOP, WHICH IS A LENS OVER THIS LIST AND IS NEVER PART OF THE RECORD
+ * ════════════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * [kind] is the handset's half of `DesignWorkshopCascade.tsx`, and every ruling that file argues is
+ * honoured here for the reason it gives there rather than because it is what the browser does:
+ *
+ *  - **ONE MOUNT, ONE DECISION.** The web puts both boxes in one component because pairing them at
+ *    each form would be six copies of a decision with one right answer and five wrong ones, and it
+ *    names the precedent — the field repository's tracer, wired form by form, MISSED ON FOUR OF
+ *    NINE MOUNTS, reported by a researcher as the feature simply being absent. On this client the
+ *    equivalent is that the type lives in this STATE and is drawn by [DesignWorkshopField]: all six
+ *    forms pass `state` and `saving` and nothing else, so a seventh form gets the cascade by
+ *    mounting the field, and there is no way to mount half of it.
+ *  - **IT IS NEVER SAVED.** [value] returns [selectedId] and nothing else. A record's type is a
+ *    fact about the workshop it is filed under (`DesignWorkshop.workshopKind`, answered in stage 1),
+ *    so a second copy beside the record is a denormalisation that disagrees with its own source the
+ *    first time somebody corrects that stage.
+ *  - **THE NARROWING GOES TO THE SERVER.** [DESIGN_WORKSHOP_PAGE] is twenty rows out of a table
+ *    that is much larger, so a filter applied to the page in hand answers *"no workshops of this
+ *    type"* about types that plainly have some — R5, and the same absence-read-as-non-existence
+ *    this control is least allowed to say. `GET /design-workshops` has taken `workshopKind` since
+ *    the column landed and `WorkshopRepository.designWorkshops` already folds a blank to an absent
+ *    parameter.
+ *  - **CHANGING IT DOES NOT CLEAR A CHOSEN WORKSHOP.** [chooseKind] cannot touch [selectedId], and
+ *    the narrowed read that follows cannot either — [markListed] writes rows and counts only. A
+ *    product filed last season under a Skill Upgradation workshop opens with that workshop chosen
+ *    and the type box on its default, and `designWorkshopOptions` keeps it visible through
+ *    `offPageWorkshopRow`. Narrowing a list is not the same act as discarding an answer.
  */
 class DesignWorkshopPickerState(initialId: String) {
     /** The workshops this account may file under. Empty until the list lands, or if it never does. */
     var workshops by mutableStateOf<List<DesignWorkshopDto>>(emptyList())
 
     var selectedId by mutableStateOf(initialId)
+
+    /**
+     * The `WORKSHOP_KIND` token the list is narrowed by, or `""` for every type.
+     *
+     * OPENS ON [DEFAULT_WORKSHOP_KIND], which is the owner's instruction and not this file's taste.
+     * It is a FILTER and never an answer: nothing about it is written to the record, and no
+     * capability is tested by it — that question was settled upstream by `canRunDesignWorkshops`
+     * before the form rendered, and re-asking it inside a control would be a second, drifting copy
+     * of a role set `test_role_ladder_parity.py` exists to keep singular.
+     *
+     * `""` AND NEVER A BLANK TOKEN ON THE WIRE. R1: empty means everything, BY ABSENCE.
+     * `WorkshopRepository.designWorkshops` folds the blank to null and Retrofit then omits the
+     * parameter, which is the same journey the list screen's own filter makes.
+     */
+    var kind by mutableStateOf(DEFAULT_WORKSHOP_KIND)
+        private set
+
+    /**
+     * The types on offer, off the registry — empty only where the enum has been RETIRED server-side.
+     *
+     * `workshopKindOptions` is the single vocabulary and it needs no floor on this client, for the
+     * reason set out at its own declaration. An empty list here therefore means one thing rather
+     * than the browser's two, and [DesignWorkshopField] draws no type box at all — the same ruling
+     * `WorkshopListScreen` already shipped for its filter.
+     */
+    var kindChoices by mutableStateOf<List<SelectOption>>(emptyList())
+        private set
+
+    /**
+     * WHETHER THE REGISTER HAS EVER ANSWERED THIS FORM WITH ROWS — sticky, and load-bearing.
+     *
+     * ── THE FAILURE THIS CLOSES, WHICH THE CASCADE CREATED AND THE WEB CANNOT WARN ABOUT ─────
+     *
+     * [unfiledReason] used to read `workshops.isNotEmpty()` straight off the current rows, and that
+     * was exact while the rows could only ever GROW: the list read was issued once, [markFailed]
+     * deliberately keeps what it has, so "there are rows now" and "there were ever rows" were the
+     * same sentence. A type filter breaks that. A designer on nine design workshops who taps a type
+     * that happens to have none leaves this state with an EMPTY [workshops], and a record they
+     * simply never filed would then be queued as `UNFILED_NO_OPTIONS` — *"there was nothing to
+     * pick"* — when in fact there were nine and they did not pick one.
+     *
+     * That is not a cosmetic difference. `unfiledLinkReason` decides which SENTENCE the outbox drain
+     * prints about a record that went up filed under nothing, and the whole point of that sentence
+     * is to let a record missing from a workshop's lists be told apart from a record deliberately
+     * filed under none. A lens over the list must not change what the outbox RECORDS about why a
+     * link is absent; that is the class of silent damage `Offline.kt` and `OutboxUnfiledSentinelTest`
+     * were written to close, and a filter is no excuse to reopen it.
+     *
+     * So the question is asked of the UNNARROWED history rather than of this moment's rows, which is
+     * what [unfiledReason] meant all along and what it accidentally said correctly until now.
+     */
+    var everListedRows by mutableStateOf(false)
+        private set
 
     /**
      * What [isDirty] compares against.
@@ -207,7 +292,10 @@ class DesignWorkshopPickerState(initialId: String) {
     fun unfiledReason(): String? = unfiledLinkReason(
         selectedId = selectedId,
         baselineId = baselineId,
-        hadOptions = workshops.isNotEmpty(),
+        // [everListedRows] and NOT `workshops.isNotEmpty()`. The two were the same expression until
+        // the type box landed and they are not any more; the sticky one is the one that answers the
+        // question being asked. See its declaration for what the live version would have queued.
+        hadOptions = everListedRows,
     )
 
     /** True once the designer has changed the workshop away from the loaded/prefilled one. */
@@ -226,10 +314,67 @@ class DesignWorkshopPickerState(initialId: String) {
         prefillNote = note
     }
 
+    /**
+     * A PERSON CHANGED THE TYPE. It narrows the list and it touches nothing else.
+     *
+     * NOT [selectedId], NOT [baselineId], NOT [prefillNote]. This function's inability to reach the
+     * chosen workshop is the whole of *"changing the type does not clear a chosen workshop"* — it is
+     * a property of the code rather than a promise in a comment, which is what the web's own test
+     * settles for (it greps its cascade for `setWorkshopId(`) because TypeScript could not make it
+     * structural. The prefill note stays too: it explains why the WORKSHOP box filled itself in, and
+     * that is still exactly as true after the type box moves.
+     */
+    internal fun chooseKind(next: String) {
+        kind = next
+    }
+
+    /**
+     * The registry answered with the types on offer, and the held type is checked against them.
+     *
+     * The retirement rule is `retainedWorkshopKind`'s and not this file's, because the reason for it
+     * is the SERVER's (`enum_filter_or_422`) and it must read the same on both clients. Called once
+     * on open; calling it again with the same list is a no-op, which is what lets the loader seed
+     * from the process cache and then confirm off disk without a second read going out.
+     */
+    internal fun offerKinds(options: List<SelectOption>) {
+        kindChoices = options
+        kind = retainedWorkshopKind(kind, options)
+    }
+
+    /**
+     * A READ IS GOING OUT AND WHAT IS ON SCREEN IS THE ANSWER TO A DIFFERENT QUESTION.
+     *
+     * Only reachable from the list effect, which runs on open and on every type change. On open it
+     * clears nothing because there is nothing to clear; on a type change it is the difference
+     * between a picker that is honestly empty for a moment and one that goes on drawing the previous
+     * type's workshops under the new type's label. The second is what the web's rule 2 is about:
+     * *"confidently wrong rather than merely stale, because nothing on screen says the list did not
+     * move."*
+     *
+     * DELIBERATELY NOT THE SAME CHOICE [markFailed] MAKES. That one keeps its rows, because a
+     * dropped connection is no reason to take away the one thing still working. Here the rows are
+     * not stale, they are about something else — the identical split `DwWorkshopNameField` makes
+     * between a failed read and a re-read under a new search term.
+     *
+     * [selectedId] and [everListedRows] survive it, and both matter: the first is the record's link
+     * and no filter may drop it, the second is the outbox's memory of whether anything was ever on
+     * offer.
+     */
+    internal fun markReading() {
+        workshops = emptyList()
+        total = 0
+        listState = WorkshopListState.Loading
+    }
+
     /** The read answered. An empty page is an ANSWER and is recorded as one. */
     internal fun markListed(page: DesignWorkshopPageDto) {
         workshops = page.items
         total = page.total
+        // STICKY, AND SET FROM THE ROWS RATHER THAN FROM `total`. `total` is the server's count for
+        // the query that was asked, which under a type filter is that type's count; the question
+        // this flag answers is whether this form has ever HAD something to offer. See its
+        // declaration for the outbox sentinel that reads it.
+        if (page.items.isNotEmpty()) everListedRows = true
         listState = WorkshopListState.Listed(count = page.items.size, total = page.total)
     }
 
@@ -273,6 +418,26 @@ class DesignWorkshopPickerState(initialId: String) {
  */
 private const val DESIGN_WORKSHOP_PAGE = 20
 
+/**
+ * The type of workshop the first box opens on.
+ *
+ * The owner's instruction is that it *"should be design and prototype workshop by default for all
+ * with the privileges for the same"*. The second half of that sentence is answered upstream and not
+ * here: everyone who can reach a record form can reach this control, and `canRunDesignWorkshops` had
+ * already decided whether the form rendered at all. What the default DOES is narrow the list to the
+ * type nearly every record belongs to.
+ *
+ * `DesignWorkshopCascade.DEFAULT_WORKSHOP_KIND` is the same token on the web and this must stay
+ * byte-identical to it: a designer whose laptop opens on one type and whose phone opens on another
+ * is reading two different lists under one label, on the same record, in the same afternoon.
+ *
+ * IT MUST BE A `WORKSHOP_KIND` THE VOCABULARY CARRIES. `backend/app/services/stage_schema.ENUMS` is
+ * the one definition; `design_workshops.py` validates the parameter with `enum_filter_or_422`, so a
+ * token nothing knows is a 422 on a read the designer did not ask for. `DesignWorkshopPickerTest`
+ * checks it against the registry this APK actually ships rather than against a copy of the list.
+ */
+internal const val DEFAULT_WORKSHOP_KIND: String = "DESIGN_PROTOTYPE_DEVELOPMENT"
+
 @Composable
 fun rememberDesignWorkshopPicker(
     repository: WorkshopRepository,
@@ -280,19 +445,92 @@ fun rememberDesignWorkshopPicker(
     initialId: String?,
     resetKey: Any? = null,
 ): DesignWorkshopPickerState {
-    val state = remember(resetKey) { DesignWorkshopPickerState(initialId.orEmpty()) }
-    LaunchedEffect(resetKey) {
-        /*
-          BOTH REQUESTS, AND THE DEFAULT IS ASKED FOR ONLY ON A CREATE. Issuing the second on an edit
-          would spend a round trip on an answer that is discarded by the branch below — and on a
-          village connection every avoidable request is one the designer waits through.
+    val appContext = LocalContext.current.applicationContext
+    /*
+      SEEDED FROM THE PROCESS CACHE ON THE FIRST COMPOSITION, which is what `DesignWorkshopCascade`
+      does with `peekStageRegistry()` and for the same reason: the type box is the only thing on
+      screen that EXPLAINS why the workshop list below it is short, so a form that paints the
+      narrowed list first and the box that narrowed it a moment later has told the reader the wrong
+      thing in the interval. `StageSchemaStore.peek` is synchronous and touches neither disk nor
+      network, so on any session where a stage screen or the workshop list has already run — which
+      is nearly all of them — the box is there on the first frame. Null on a cold process, which the
+      effect below answers within a frame or two.
+    */
+    val state = remember(resetKey) {
+        DesignWorkshopPickerState(initialId.orEmpty())
+            .also { fresh -> fresh.offerKinds(workshopKindOptions(StageSchemaStore.peek())) }
+    }
 
-          `runCatching` on each SEPARATELY, so a refused default does not cost the list. They fail for
-          different reasons: the list is a scoped read that a designer always passes, the default is a
-          newer endpoint an older deployment may not have at all. A 404 from a server that predates it
-          must leave the picker perfectly usable, unprefilled.
-        */
-        runCatching { repository.designWorkshops(page = 1, pageSize = DESIGN_WORKSHOP_PAGE) }
+    /*
+      ── THE TYPES, OFF DISK, NEVER OFF THE NETWORK ─────────────────────────────────────
+
+      `StageSchemaStore.load` and NOT `repository.designWorkshopSchema`, which is the deliberate
+      choice and the one a later reader is most likely to want to "fix". The repository entry point
+      peeks the same cache and then, when the cache is cold, AWAITS A NETWORK REQUEST before falling
+      through to exactly the answer this line already has. Six record forms are opened dozens of
+      times a day, and putting a round trip in front of a vocabulary that is COMPILED INTO THE APK
+      would mean that on a village connection the type box — the control that explains the narrowing
+      already in force — is the last thing to arrive, after the list it is meant to account for.
+      `StageSchemaStore.load`'s own note is the licence: *"Deliberately network-free so that opening
+      a stage screen cannot block on a request. Freshness is refresh's job and it runs beside this,
+      not in front of it."* `InspectionDetailScreen` reaches for it the same way.
+
+      FRESHNESS IS NOT LOST BY THIS. Any successful fetch anywhere in the app writes through to
+      `filesDir` and to the process cache, so this reads whatever the last connected session learned.
+
+      `runCatching` because the one thing `load` can still throw is a build shipped without the
+      bundled asset. That is a packaging error rather than a field condition, and the honest handling
+      on a record form is an absent type box rather than a crash in the middle of an interview.
+    */
+    LaunchedEffect(resetKey) {
+        runCatching { workshopKindOptions(StageSchemaStore.load(appContext)) }
+            .onSuccess { offered -> state.offerKinds(offered) }
+            .onFailure { error -> if (error is CancellationException) throw error }
+    }
+
+    /*
+      ── THE LIST, RE-READ WHENEVER THE CHOSEN TYPE CHANGES ───────────────────────────
+
+      `state.kind` IS IN THE KEY, and that is rule 2 of the cascade: without it the box changes, no
+      request is sent, and the picker goes on drawing the previous type's workshops under the new
+      type's label — confidently wrong rather than merely stale, because nothing on screen says the
+      list did not move.
+
+      AND NOT DEBOUNCED. A type is a TAP on a picker and not typing, so there is no run of
+      intermediate values to absorb; `DwWorkshopNameField` makes the same split for the same reason
+      and `DesignWorkshopSelect.tsx` keys its debounce off the search term alone.
+
+      THIS EFFECT USED TO ALSO CARRY THE DEFAULT-FOR-ME READ, and splitting them is the only
+      non-obvious piece of this change. Re-keying one effect on the type would have re-issued
+      `GET /design-workshops/default-for-me` on every tap — a request that can only give the same
+      answer, on a connection where, as the note this replaced put it, *"every avoidable request is
+      one the designer waits through"*. Two effects, two keys, each stating which. They still leave
+      together: both launch on the same composition, so the two requests go out at once rather than
+      in series, which is what the browser's own pair of effects achieves and what the single
+      coroutine here did NOT.
+
+      AND YES, READING `state.kind` HERE SUBSCRIBES THE WHOLE FORM TO IT. This function is inlined
+      into the record form's scope, so a type tap recomposes that form. That is accepted rather than
+      overlooked: the same form already recomposes on every keystroke into any of its text fields,
+      which happens some thousands of times more often than somebody taps a type. Moving the read
+      into a nested composable to avoid it would buy nothing measurable and would put the key of the
+      effect somewhere other than beside the effect, which is where a reader looks for it.
+    */
+    LaunchedEffect(resetKey, state.kind) {
+        // What is on screen is the previous type's answer. See [DesignWorkshopPickerState.markReading];
+        // on the first run it clears nothing.
+        state.markReading()
+        runCatching {
+            repository.designWorkshops(
+                page = 1,
+                pageSize = DESIGN_WORKSHOP_PAGE,
+                // THE SERVER IS THE FILTER. One page is twenty rows out of a much larger table, so
+                // narrowing the rows in hand would answer "no workshops of this type" about types
+                // that have some. Blank folds to an ABSENT parameter inside `designWorkshops` — R1,
+                // empty means everything by absence — so `""` asks the unfiltered question.
+                workshopKind = state.kind.takeIf { it.isNotBlank() },
+            )
+        }
             .onSuccess { page -> state.markListed(page) }
             .onFailure { error ->
                 // Leaving the screen is not a failure. Rethrown, as every other load on this client
@@ -300,7 +538,8 @@ fun rememberDesignWorkshopPicker(
                 // sentence, so that a cancelled load never reports "the list could not be loaded"
                 // about a connection that was fine. `walkDesignWorkshopPages` documents the same
                 // trap: a `runCatching` that catches Throwable turns every abandoned keystroke into
-                // a truncation notice.
+                // a truncation notice. THE EFFECT IS KEYED NOW, so this arm also meets the
+                // cancellation of a read a designer overtook by tapping a second type.
                 if (error is CancellationException) throw error
                 /*
                   WHICH FAILURE, BECAUSE THE TWO HAVE DIFFERENT NEXT MOVES. `isTransient` is the
@@ -312,7 +551,29 @@ fun rememberDesignWorkshopPicker(
                 */
                 state.markFailed(transient = repository.isTransient(error))
             }
+    }
 
+    /*
+      ── THE DEFAULT, ON A CREATE ONLY, AND EXACTLY ONCE ──────────────────────────────
+
+      KEYED ON `resetKey` ALONE. The type must not appear here: this endpoint answers "which workshop
+      were you most recently given", which is not a question the type box has any bearing on, and
+      asking it again per tap would spend a round trip to be told the same thing.
+
+      Issuing it on an edit would spend one to be told something the branch below discards outright.
+
+      `runCatching` separately from the list, so a refused default does not cost the list. They fail
+      for different reasons: the list is a scoped read that a designer always passes, the default is
+      a newer endpoint an older deployment may not have at all. A 404 from a server that predates it
+      must leave the picker perfectly usable, unprefilled.
+
+      IT CAN STILL PREFILL A WORKSHOP OF ANOTHER TYPE, and that is correct rather than an oversight.
+      The server answers with the workshop this account was most recently ALLOCATED; narrowing that
+      answer to the type box's default would substitute a filter for an allocation and file the
+      record under a workshop nobody gave them. `designWorkshopOptions` keeps the prefilled row
+      visible through `offPageWorkshopRow`, which is the same mechanism that protects an edit.
+    */
+    LaunchedEffect(resetKey) {
         if (!isEdit && state.selectedId.isBlank()) {
             runCatching { repository.designWorkshopDefaultForMe() }
                 .onSuccess { answer ->
@@ -375,6 +636,19 @@ private fun formatIsoDay(iso: String?): String? {
  * saying "Workshop" will fill in whichever they reach first. The labels name the two things the
  * repository actually calls them, and the sentence under the second one says what filing does — and,
  * more importantly, what it does NOT do.
+ *
+ * ── IT IS TWO BOXES NOW, AND THAT IS WHY IT IS STILL ONE FUNCTION ──────────────────────
+ *
+ * The TYPE box sits above the WORKSHOP box and narrows it. The two are drawn by one composable, off
+ * one state, for the reason `DesignWorkshopCascade.tsx` gives: pairing them at each mount would be
+ * six copies of a decision with one right answer, and the field repository has already paid for that
+ * shape once — its tracer was wired form by form, four of nine mounts were missed, and a researcher
+ * reported the feature as simply absent. Every mount of this field is the whole cascade because
+ * there is nothing else to mount; all six call sites pass `state` and `saving` and always have.
+ *
+ * NOTHING ABOUT THE TYPE IS SENT ANYWHERE. It is a lens over the list; the record carries
+ * `designWorkshopId` and nothing else. `DesignWorkshopPickerTest` sweeps `MainActivity.kt` for any
+ * form that has learned to read it.
  */
 @Composable
 fun DesignWorkshopField(
@@ -382,6 +656,19 @@ fun DesignWorkshopField(
     saving: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
+    /*
+      NARROWED, FOR THE TWO SENTENCES THAT CHANGE UNDER A TYPE FILTER — and read off BOTH the type
+      and the list state, because either half alone gets it wrong.
+
+      A type with no read behind it (still loading, or the read failed) has narrowed nothing that a
+      reader can be told about: the rows are missing because there was no answer, not because of the
+      box. `workshopListNotice` refuses the narrowed arm for the failure states on its own; the
+      off-page row cannot, because it has no idea a read happened at all. So the caller decides once,
+      here, and both get the same answer — which is the whole reason `WorkshopOptions.kt` insists
+      there is exactly one sentence per fact.
+    */
+    val narrowed = state.kind.isNotBlank() && state.listState is WorkshopListState.Listed
+
     /*
       THE LABEL, THE HINT AND THE ORDER ARE `WorkshopOptions.kt`'S AND NOT THIS FILE'S.
 
@@ -392,8 +679,8 @@ fun DesignWorkshopField(
       first. Requirement 20 is that the two clients must not disagree about any of this; three
       copies on ONE client cannot honour it even in principle. See DROPDOWN_DESIGN §2.3, §2.5, §2.6.
     */
-    val options = remember(state.workshops, state.selectedId) {
-        designWorkshopOptions(rows = state.workshops, offPageId = state.selectedId)
+    val options = remember(state.workshops, state.selectedId, narrowed) {
+        designWorkshopOptions(rows = state.workshops, offPageId = state.selectedId, narrowed = narrowed)
     }
 
     /*
@@ -402,7 +689,7 @@ fun DesignWorkshopField(
       empty and knows nothing whatever about WHY, and the five whys that have words have five
       different next moves. Only this composable holds `listState`, so only this composable can say.
     */
-    val notice = workshopListNotice(state.listState, WorkshopListKind.DESIGN, state.online)
+    val notice = workshopListNotice(state.listState, WorkshopListKind.DESIGN, state.online, narrowed)
 
     /*
       R2 — A FIELD MAY ONLY BE MANDATORY WHERE IT IS ANSWERABLE, and its Android half: a control with
@@ -426,6 +713,52 @@ fun DesignWorkshopField(
     val standDown = options.isEmpty() && !enabled
 
     Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        /*
+          THE TYPE OF WORKSHOP — first, because it narrows what is below it and a filter read after
+          the list it filtered is a filter the reader has to go back and re-read the list for.
+
+          DRAWN ONLY WHEN THERE ARE TYPES TO OFFER, which on this client means one thing and not the
+          browser's two: the registry always resolves — memory, then `filesDir`, then the bundled
+          APK asset — so an empty list here is an enum RETIRED server-side, and a filter whose only
+          row is "any" is a control that cannot do anything. `WorkshopListScreen` already ruled this
+          way for its own filter and this is the same ruling, not a second one.
+
+          AND THE WEB'S SECOND HINT IS DELIBERATELY NOT COPIED. `DesignWorkshopCascade.tsx` prints
+          *"These are this app's built-in workshop types — connect once to refresh them"* when its
+          floor list is showing, which is R3 doing exactly its job in a browser that can hold
+          nothing. There is no handset state in which that sentence is true, so copying it across
+          would be a permanent apology under a box that is right. See `workshopKindOptions`.
+
+          `searchable` IS NOT PASSED. Six compiled-in members are under the shared threshold anyway,
+          and overruling a count that is already right is how a threshold stops meaning anything —
+          the same words `WorkshopListScreen` uses at its own type filter. Note that this is the
+          OPPOSITE call from the workshop box below it, and the difference is real: that list is one
+          server-truncated page and this one is the whole vocabulary.
+        */
+        if (state.kindChoices.isNotEmpty()) {
+            SearchableSelectField(
+                label = "Type of workshop",
+                // [ANY_WORKSHOP_KIND] carries `""` and is FIRST — an ordinary option rather than
+                // `includeNone`, because this is the row that takes the filter off and the reader
+                // has to be able to see the way back on the same list they used to get here. The
+                // empty value reaches the wire as an ABSENT parameter (R1), never as a blank token.
+                options = listOf(SelectOption("", ANY_WORKSHOP_KIND)) + state.kindChoices,
+                selectedValue = state.kind,
+                includeNone = false,
+                enabled = !saving,
+                onSelect = { picked -> state.chooseKind(picked) },
+            )
+            // WORD FOR WORD THE WEB'S, and both halves earn their place: the first says what the box
+            // does, and the second stops a designer hunting the saved record for a type it never
+            // carried. `DesignWorkshop.workshopKind` is answered in stage 1 and is the only source
+            // of that fact about a record.
+            Text(
+                "Narrows the workshops below. It is not saved on this record.",
+                color = MaterialTheme.field.muted,
+                fontSize = 11.sp,
+                lineHeight = 15.sp,
+            )
+        }
         SearchableSelectField(
             label = "Design & prototype workshop",
             options = options,
@@ -481,6 +814,14 @@ fun DesignWorkshopField(
           reports for this account, so the sentence now states the arithmetic — and it is worded
           exactly as the web words it, because a designer who meets one wording on the laptop and
           another on the phone learns that the numbers are approximate.
+
+          IT STAYS HONEST UNDER A TYPE FILTER AND MUST NOT BE "FIXED" TO ACCOUNT FOR ONE. A narrowed
+          read returns that type's `total` alongside that type's rows, so both numbers in the
+          sentence are answers to the same question; subtracting or annotating anything here would
+          be mixing a count of one type with a count of all of them. The sentence points at the
+          Design workshops screen, whose search box reaches the whole table — and that screen has
+          the same type filter on it, so the reader arrives somewhere they can ask the question they
+          were already asking.
         */
         workshopCapLine(state.workshops.size, state.total, WorkshopListKind.DESIGN)?.let { cap ->
             Text(cap, color = MaterialTheme.field.muted, fontSize = 11.sp, lineHeight = 15.sp)

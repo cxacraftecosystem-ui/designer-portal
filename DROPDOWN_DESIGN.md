@@ -789,6 +789,56 @@ Two setters, not a boolean — `setWorkshopId` marks the form dirty, `prefillWor
 `DesignWorkshopPicker.kt:197-224`). `undefined` versus `null` for `initial` keeps meaning create
 versus edit (`:116-123`).
 
+## 2.10a The two-tier cascade — "Type of workshop", then the workshop
+
+The six record forms open on a TYPE box above the workshop box, defaulting to
+`DESIGN_PROTOTYPE_DEVELOPMENT`, and the type narrows the workshop list **on the server**. Web:
+`components/forms/DesignWorkshopCascade.tsx`, mounted on `ArtisanForm`, `ProductForm`, `ToolForm`,
+`ProcessForm`, `media/page.tsx` and `questionnaire/page.tsx`. Android: it is drawn by
+`DesignWorkshopField` off `DesignWorkshopPickerState.kind`, so the same six forms
+(`MainActivity.kt` — `ArtisanForm`, `ProductForm`, `ToolForm`, `ProcessForm`, `AndroidMediaForm`,
+`QuestionnaireForm`) get it by mounting the field they already mounted.
+
+Six rules, five of them the browser's and one this handset's alone. The first five are pinned by
+`frontend/e2e/design-workshop-cascade-unit.spec.ts` and by
+`android/app/src/test/java/com/designprototype/workshop/ui/DesignWorkshopPickerTest.kt`; the sixth has
+no web twin because a browser has no outbox.
+
+| # | Rule | Why, and what breaks without it |
+|---|---|---|
+| 1 | **The narrowing is a query parameter.** `GET /design-workshops?workshopKind=` — never a filter over the page in hand. | One page is 80 rows on the web and 20 on the handset out of a much larger table, so a device-side filter answers *"no workshops of this type"* about types that have some. R5, and the failure this whole document is about. |
+| 2 | **The type is in the read's dependencies.** Web: `useEffect(…, [term, workshopKind])`. Android: `LaunchedEffect(resetKey, state.kind)`. | Without it the box changes, no request goes out, and the picker draws the previous type's workshops under the new type's label — confidently wrong rather than merely stale. |
+| 2a | **And it is NOT debounced.** A type is a tap, not typing. | The web keys its debounce off the search term alone (`DesignWorkshopSelect.tsx`); the handset has no search box on this control, so any delay there could only be delaying a tap. `DwWorkshopNameField` makes the identical split. |
+| 2b | **And it does not re-ask `default-for-me`.** That read is keyed on the form, never on the type. | It answers *"which workshop were you most recently given"*, which the type has no bearing on. Re-issuing it per tap spends a village round trip to be told the same thing. This is why the handset loader is three effects rather than one. |
+| 3 | **The default must be a token the vocabulary carries**, and a retired one falls back to `""` (every type) rather than to whatever now sits first. | `design_workshops.py` validates with `enum_filter_or_422`, so an unknown token is a 422 on a read nobody asked for. Falling back to the first offered row would narrow a designer's list to a type somebody chose for them in a migration. |
+| 4 | **The type is never saved.** The record stores `designWorkshopId` and nothing else. | A record's type is a fact about the workshop it is filed under (`DesignWorkshop.workshopKind`, answered in stage 1); a second copy beside the record disagrees with its own source the first time that stage is corrected. |
+| 4a | **Changing the type never clears a chosen workshop.** | The edit case: a product filed last season under a Skill Upgradation workshop opens with that workshop chosen and the type box on its default. §2.9's off-page row is what keeps it visible and selected. Narrowing a list is not the same act as discarding an answer. |
+| 5 | **Every mount has it.** | The field repository shipped its tracer form by form, missed four of nine mounts, and a researcher reported the feature as simply absent. On Android the type lives in the picker STATE and is drawn by the field, so there is no way to mount half of it. |
+| 6 | **A lens must not change what the OUTBOX records.** `DesignWorkshopPickerState.unfiledReason` reads a sticky `everListedRows`, not the current rows. | Android only. A designer on nine design workshops who taps a type with none in it leaves `workshops` empty, and a record they simply never filed would be queued `UNFILED_NO_OPTIONS` — *"there was nothing to pick"* — instead of `UNFILED_BY_CHOICE`. That is §3.7's collapse arriving through a filter. |
+
+**Two copy decisions the cascade forced, both resolved toward one string per fact.**
+
+- The row that takes the filter off is **"Any type of workshop"** on both clients, as
+  `ANY_WORKSHOP_KIND` (`WorkshopOptions.kt`). The handset list screen said "Any type" under a comment
+  claiming it matched the web, which said "Any type of workshop"; requirement 20 cannot be honoured by
+  two strings, and the longer one is the one that still reads correctly when a screen reader speaks
+  the row out of its box, and beside a SECOND picker.
+- An empty answer to a NARROWED read gets its own sentence, `narrowedEmptyLine`, and never
+  §3.5's `scopedEmptyLine`. This is the web's own rule — `DesignWorkshopSelect.tsx` states it for the
+  search term: *"THE NOTICE IS ASKED OF THE UNNARROWED LIST … a claim about a grant table produced by
+  a filtered read"* — applied to the narrowing the handset has. Sending a designer to an
+  administrator for access they already hold is the cost of getting it wrong. Likewise the off-page
+  row's hint has a second arm: *"could not list it just now"* is false when the device could list it
+  and was not asked to.
+
+**One thing the web has that the handset must NOT copy.** `workshopKindOptions` returns `served` on
+the browser and the cascade prints *"These are this app's built-in workshop types — connect once to
+refresh them"* when the `WORKSHOP_KIND_FLOOR` is showing. That is R3 doing its job where a browser can
+hold nothing. There is no handset state in which it is true — §3.1, and the registry chain verified at
+`workshopKindOptions`' own declaration — so copying it would be a permanent apology under a box that
+is right. An empty vocabulary on Android means the enum was RETIRED, and the ruling for that is to
+draw no type box at all.
+
 ## 2.11 The conflicts in the union, resolved
 
 | # | Conflict | Ruling | Why |

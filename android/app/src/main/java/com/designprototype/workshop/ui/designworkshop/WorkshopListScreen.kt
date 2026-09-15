@@ -91,12 +91,14 @@ import com.designprototype.workshop.data.isConnectionFailure
 import com.designprototype.workshop.data.isLocalOnlyWorkshop
 import com.designprototype.workshop.data.overallPercent
 import com.designprototype.workshop.data.visibleDesignWorkshops
+import com.designprototype.workshop.ui.ANY_WORKSHOP_KIND
 import com.designprototype.workshop.ui.FieldPermissions
 import com.designprototype.workshop.ui.SearchableMultiSelectField
 import com.designprototype.workshop.ui.SearchableSelectField
 import com.designprototype.workshop.ui.Text
 import com.designprototype.workshop.ui.field
 import com.designprototype.workshop.ui.requiredMarked
+import com.designprototype.workshop.ui.workshopKindOptions
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -638,12 +640,18 @@ fun WorkshopListScreen(
           DRAWN ONLY WHEN THERE ARE TYPES TO OFFER. `workshopKindOptions` answers off the registry,
           which on this client always resolves — memory, then `filesDir`, then the bundled APK asset
           — so the empty case means the enum has been RETIRED server-side, and a filter whose only
-          row is "Any type" is a control that cannot do anything.
+          row is the "any" row is a control that cannot do anything.
 
-          "Any type" IS THE EMPTY VALUE AND IT IS FIRST, spelled exactly as the web spells it and
-          built as an ordinary first option rather than through `includeNone`: this is the row that
-          takes the filter off, and the reader has to be able to see the way back on the same list
-          they used to get here.
+          [ANY_WORKSHOP_KIND] IS THE EMPTY VALUE AND IT IS FIRST, built as an ordinary first option
+          rather than through `includeNone`: this is the row that takes the filter off, and the
+          reader has to be able to see the way back on the same list they used to get here.
+
+          IT IS A CONSTANT NOW AND THE WORDS CHANGED. This call site said "Any type" under a comment
+          claiming it was spelled exactly as the web spells it; the web says "Any type of workshop"
+          (`DesignWorkshopCascade.tsx`), and the record forms' cascade on this handset needed the
+          same row. Two strings, one of them with a comment asserting they were one — requirement 20
+          is that the clients must not disagree about any of this, and it cannot be honoured by three
+          copies. See [ANY_WORKSHOP_KIND] for which one gave and why.
 
           `searchable = false` — six members of a vocabulary compiled into this app is precisely the
           class the shared threshold answers correctly, and six is under it anyway; passing the
@@ -653,7 +661,7 @@ fun WorkshopListScreen(
         if (kindChoices.isNotEmpty()) {
             SearchableSelectField(
                 label = "Type of workshop",
-                options = listOf(com.designprototype.workshop.ui.SelectOption("", "Any type")) + kindChoices,
+                options = listOf(com.designprototype.workshop.ui.SelectOption("", ANY_WORKSHOP_KIND)) + kindChoices,
                 selectedValue = kindFilter,
                 includeNone = false,
                 enabled = !busy,
@@ -2710,36 +2718,6 @@ internal fun dwDesignerPickerStandDown(
  * and "Implementing agency format" are indistinguishable to anyone who has not laid both out, and
  * picking the wrong one is only discovered when the .docx comes back from the department.
  */
-/**
- * The six workshop KINDS, off the served registry — the type filter's rows and the create form's.
- *
- * ── NO COMPILED-IN FLOOR ON THIS CLIENT, AND THE CLAIM WAS CHECKED RATHER THAN ASSUMED ─────────
- *
- * `DROPDOWN_DESIGN.md` §3.1 files a served enum as a class-(a) vocabulary on Android — *"always
- * answerable, may be required, says nothing, no work"* — and gives the reason: `StageSchemaStore`
- * resolves memory, then `filesDir`, then the BUNDLED APK ASSET, and a build shipped without that
- * asset throws rather than degrading to an empty registry. The web needs `WORKSHOP_KIND_FLOOR`
- * because a browser that has never reached this API holds nothing at all; a handset always holds the
- * copy that shipped with it.
- *
- * VERIFIED ON THIS TREE, 2026-08-31, rather than taken on the document's word:
- * `assets/design-workshop-schema.json` carries `enums.WORKSHOP_KIND` with all six members;
- * [SchemaResponse.enums] decodes it; `StageSchemaStore.load` falls through to `readAsset` when both
- * memory and disk miss, and `readAsset` RAISES rather than returning an empty registry; and
- * `WorkshopRepository.designWorkshopSchema` ends in `StageSchemaStore.load(context)` whether or not
- * the network answered. So a fresh install with no signal draws all six, and the claim holds. The
- * one thing that could break it is the bundled asset going stale, which is what the regenerate step
- * and `backend/tests/test_controlled_vocabularies.py` already hold.
- *
- * AN EMPTY LIST IS STILL RETURNED HONESTLY rather than substituted for, because the one state this
- * cannot rule out is a registry that has RETIRED the enum — and quietly drawing six members the
- * server no longer accepts would offer a token every save refuses. The callers draw nothing then.
- */
-internal fun workshopKindOptions(schema: SchemaResponse?): List<com.designprototype.workshop.ui.SelectOption> =
-    schema?.enums?.get("WORKSHOP_KIND").orEmpty().map { option ->
-        com.designprototype.workshop.ui.SelectOption(value = option.value, label = option.label)
-    }
-
 internal fun templateOptions(templates: List<ReportTemplateDto>): List<com.designprototype.workshop.ui.SelectOption> =
     templates.map { template ->
         com.designprototype.workshop.ui.SelectOption(
