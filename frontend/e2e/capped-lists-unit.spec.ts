@@ -12,7 +12,7 @@ import {
   queueCutNotice,
   type ListCut
 } from "@/components/data/cappedList";
-import { craftChangeClearsArtisan } from "@/components/forms/recordPickers";
+import { craftChangeClearsArtisan, craftsChangeClearsArtisans } from "@/components/forms/recordPickers";
 import type { Artisan, PageResult } from "@/lib/types";
 
 /**
@@ -362,10 +362,127 @@ test("an artisan merely absent from the loaded page does not count as the wrong 
   ).toBe(false);
 });
 
+/**
+ * THE PLURAL OF THE SAME RULE — `ToolForm`'s craft picker became a multi-select on 2026-09-15.
+ *
+ * Deselecting one of several crafts must drop exactly the artisans this form KNOWS practise only the
+ * craft that went, and keep every other tick. The three clauses that make the singular rule safe are
+ * the same three here, and the cases below are the singular's cases with a second craft standing.
+ *
+ * ── AND A FOURTH, WHICH IS WHY EVERY CASE NAMES `removedCraftIds` ───────────────────────────────
+ * The rule took only `nextCraftIds` until the defect below was found, and "their craft is not in the
+ * next list" is a WIDER condition than "their craft was just unticked". `POST /tools/{id}/artisans`
+ * links an artisan to a tool with NO craft check — that is the whole of what the "Assign a tool to
+ * multiple artisans" panel does — so a tool legitimately holds artisans of crafts that were never
+ * ticked on it. Under the wider condition, ADDING a craft condemned all of them.
+ */
+test("a craft DESELECTION drops only the artisans it actually contradicts", () => {
+  const artisans = [artisan("a1", "c1"), artisan("a2", "c2"), artisan("a3", null)];
+
+  // c2 unticked: its artisan goes, c1's stays. This is the whole point of the plural — the singular
+  // rule, read naively, would have cleared the lot because "the craft changed".
+  expect(
+    craftsChangeClearsArtisans({
+      nextCraftIds: ["c1"],
+      removedCraftIds: ["c2"],
+      artisanIds: ["a1", "a2"],
+      artisans
+    })
+  ).toEqual(["a2"]);
+
+  // Nothing removed: nothing dropped.
+  expect(
+    craftsChangeClearsArtisans({
+      nextCraftIds: ["c1", "c2"],
+      removedCraftIds: [],
+      artisanIds: ["a1", "a2"],
+      artisans
+    })
+  ).toEqual([]);
+
+  // THE SHARP HALF, unchanged from the singular: an artisan this form cannot find is KEPT, and so is
+  // one whose record names no craft. "Not on the list" is not "not of that craft", and reading the
+  // first as the second is the silent link deletion the rule exists to stop.
+  expect(
+    craftsChangeClearsArtisans({
+      nextCraftIds: ["c1"],
+      removedCraftIds: ["c2"],
+      artisanIds: ["off-page", "a3"],
+      artisans
+    })
+  ).toEqual([]);
+
+  // Every craft unticked: every artisan this form can place goes, and the two it cannot still stay.
+  expect(
+    craftsChangeClearsArtisans({
+      nextCraftIds: [],
+      removedCraftIds: ["c1", "c2"],
+      artisanIds: ["a1", "a2", "a3", "off-page"],
+      artisans
+    })
+  ).toEqual(["a1", "a2"]);
+});
+
+/**
+ * THE REGRESSION: AN ARTISAN OF A CRAFT THAT WAS NEVER TICKED, WHEN A CRAFT IS *ADDED*.
+ *
+ * Tool T is linked to craft X and to artisans A (of X) and B (of Warli, assigned through the panel,
+ * which asks no question about craft). Both are ticked on the form and both are drawn — B under a
+ * "Warli" heading. The designer ADDS craft Z.
+ *
+ * The old shape passed only `nextCraftIds`, so B's craft was absent from `[X, Z]` and B was returned
+ * as "dropped": B was unticked although no craft was removed, `artisanIds` went out as `[A]`, and
+ * `_write_links`' delete_many/create_many deleted B's `ToolArtisan` row for good. The designer
+ * removed nothing and nothing on screen said a link had gone.
+ */
+test("ADDING a craft drops nobody, including artisans of crafts that were never ticked", () => {
+  const artisans = [artisan("a-of-x", "x"), artisan("b-of-warli", "warli")];
+
+  // The defect, stated as the case that used to fail: X plus a new Z, nothing removed, nobody dropped.
+  expect(
+    craftsChangeClearsArtisans({
+      nextCraftIds: ["x", "z"],
+      removedCraftIds: [],
+      artisanIds: ["a-of-x", "b-of-warli"],
+      artisans
+    })
+  ).toEqual([]);
+
+  // And an UNTICK elsewhere still spares them: removing Z contradicts nobody, so the panel-assigned
+  // artisan of a never-ticked craft survives a deselection too. Only their OWN craft going may drop
+  // them — the clause below.
+  expect(
+    craftsChangeClearsArtisans({
+      nextCraftIds: ["x"],
+      removedCraftIds: ["z"],
+      artisanIds: ["a-of-x", "b-of-warli"],
+      artisans
+    })
+  ).toEqual([]);
+
+  // The rule is still sharp where it should be: untick Warli itself and B goes, because that IS the
+  // craft the designer just removed.
+  expect(
+    craftsChangeClearsArtisans({
+      nextCraftIds: ["x"],
+      removedCraftIds: ["warli"],
+      artisanIds: ["a-of-x", "b-of-warli"],
+      artisans
+    })
+  ).toEqual(["b-of-warli"]);
+});
+
 test("both record forms route the craft change through that one decision", () => {
   for (const file of ["ProductForm.tsx", "ToolForm.tsx"]) {
     const source = read("components", "forms", file);
-    expect(source, `${file} must not re-derive the clear rule`).toContain("craftChangeClearsArtisan(");
+    /*
+      ONE DECISION PER FORM, AND THE TWO FORMS NO LONGER SPELL IT THE SAME WAY — deliberately.
+      `ProductForm` links ONE craft and one artisan and calls the singular rule; `ToolForm`'s picker
+      is a multi-select and calls the plural one, which is the same three clauses over a selection.
+      Both live in `recordPickers.ts` and neither form may re-derive either.
+    */
+    const rule = file === "ToolForm.tsx" ? "craftsChangeClearsArtisans(" : "craftChangeClearsArtisan(";
+    expect(source, `${file} must not re-derive the clear rule`).toContain(rule);
     expect(source, `${file} still carries the old absence-is-the-wrong-craft test`).not.toContain(
       "!artisans.some((a) => a.id === artisanId && a.craftId === next)"
     );
@@ -378,13 +495,33 @@ test("both record forms route the craft change through that one decision", () =>
 
 test("the artisan roster is asked for by craft rather than filtered out of the newest hundred", () => {
   const source = read("components", "forms", "recordPickers.ts");
-  const request = between(source, 'listResource<Artisan>("/artisans", { craftId', "})");
+  /*
+    THE REQUEST IS PLURAL NOW, AND THAT IS WHY THE ANCHOR MOVED. This read
+    `between(source, 'listResource<Artisan>("/artisans", { craftId', "})")` while the endpoint took a
+    singular `craftId` and a form could link one craft. `ToolForm`'s picker is a multi-select since
+    2026-09-15 and `resolve_craft_ids` gave `/artisans` the plural parameter it needs, so the hook
+    asks with `craftIds` — ONE request for every ticked craft, because issuing one per craft means
+    "Select all 178" fires 178 of them.
+
+    THE SINGULAR IS STILL SENT FOR EXACTLY ONE CRAFT, and it is asserted rather than tolerated: the
+    web and the API deploy separately, so a build carrying this request to an API that has not
+    declared `craftIds` would send a parameter FastAPI ignores — an unnarrowed roster under a
+    truncation sentence claiming to be about these crafts.
+  */
+  const request = between(source, 'const result = await listResource<Artisan>("/artisans", {', "});");
+  expect(request).toContain("craftIds: ids.join(\",\")");
+  expect(request, "an old API must still narrow when there is one craft to narrow by").toContain(
+    "craftId: ids.length === 1 ? ids[0] : undefined"
+  );
   expect(request).toContain("LIST_PAGE_CEILING");
   // 749 artisans over 178 crafts: per-craft, one page is the whole answer in practice, and the cut
-  // is still reported for the day some craft is that large.
-  expect(source).toContain('listCut(result, "artisans of this craft")');
-  // The record's own artisan is fetched by id, which is what makes the clear rule decidable at all.
-  expect(source).toContain("useRecordOffPage");
+  // is still reported for the day some craft is that large — with a noun that agrees with what was
+  // actually asked for, or a designer reads a cut about "this craft" over four crafts' artisans.
+  expect(source).toContain('"artisans of these crafts" : "artisans of this craft"');
+  // The record's own artisans are fetched by id, which is what makes the clear rule decidable at
+  // all — in the plural, because each linked artisan is off page one independently of the others.
+  expect(source).toContain("useRecordsOffPage");
+  expect(source, "the singular is still here for the single-select forms").toContain("useRecordOffPage");
 });
 
 test("every record picker in the web forms reports its cut", () => {
@@ -422,21 +559,33 @@ test("every record picker in the web forms reports its cut", () => {
 test("the craft picker in every record form can draw its own current value", () => {
   for (const file of ["ArtisanForm.tsx", "ProductForm.tsx", "ToolForm.tsx"]) {
     const code = codeOf(read("components", "forms", file));
+    /*
+      ── `ToolForm` ASKS THE SAME QUESTION IN THE PLURAL SINCE 2026-09-15 ────────────────────────
+      Its craft picker is a multi-select, and each linked craft is past the 100-row cut or not
+      INDEPENDENTLY of the others: recovering only the first would leave a tool linked to three
+      crafts opening with one tick drawn and two missing. It is worse than the single-select defect
+      this test was written for, not better — a multi-select draws no placeholder for a row it does
+      not have, so the link is invisible rather than visibly "Unlinked". `useRecordsOffPage` is the
+      same rule in the plural and lives in the same file; it is emphatically not a variant, which is
+      how the singular came to be missing from two forms out of three.
+    */
+    const plural = file === "ToolForm.tsx";
 
-    // The by-id recovery itself, spelled the same way in all three — reuse of ArtisanForm's hook,
-    // not a variant of it. A variant is how this came to be missing from two forms out of three.
+    // The by-id recovery itself, spelled the same way everywhere — reuse of ArtisanForm's hook.
     expect(code, `${file}'s craft picker cannot draw a craft that is off page one`).toContain(
-      'useRecordOffPage<Craft>("/crafts", craftId, crafts)'
+      plural ? 'useRecordsOffPage<Craft>("/crafts", craftIds, crafts)' : 'useRecordOffPage<Craft>("/crafts", craftId, crafts)'
     );
     expect(code, `${file} fetches the off-page craft and then does not offer it`).toContain(
-      "mergeById(crafts, [offPageCraft])"
+      plural ? "mergeById(crafts, offPageCrafts)" : "mergeById(crafts, [offPageCraft])"
     );
 
     // And the dropdown is actually built from the merged list. Fetching the craft and then mapping
     // the unmerged page would leave the screen exactly as wrong as before.
-    const select = between(code, 'name="craftId"', "</Select>");
-    expect(select, `${file}'s craft <Select> must map craftOptions`).toContain("craftOptions.map(");
-    expect(select, `${file}'s craft <Select> still maps the raw page`).not.toContain("crafts.map(");
+    const select = plural
+      ? between(code, "<MultiSelectDropdown", "/>")
+      : between(code, 'name="craftId"', "</Select>");
+    expect(select, `${file}'s craft picker must map craftOptions`).toContain("craftOptions.map(");
+    expect(select, `${file}'s craft picker still maps the raw page`).not.toContain("crafts.map(");
 
     // The carried craft is judged against the same merged list: "not on page one" is not "you can no
     // longer reach it", and pruning on it drops a good link out of the carry bag.

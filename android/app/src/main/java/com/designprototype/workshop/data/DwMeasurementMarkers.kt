@@ -47,9 +47,16 @@ import kotlinx.serialization.json.buildJsonObject
 /**
  * The only three columns a method may describe. `measurement_provenance.DIMENSION_FIELDS`, verbatim.
  *
- * The tool form's `height`, `width`, `thickness`, `weight` and `radius` are deliberately NOT here:
- * they are ordinary typed boxes with no measurement route pointed at them, and the server refuses a
- * marker naming one of them BY NAME rather than dropping it.
+ * The tool form's `height`, `width`, `thickness`, `weight` and `radius` are deliberately NOT here,
+ * and the server refuses a marker naming one of them BY NAME rather than dropping it.
+ *
+ * SINCE THE CENTIMETRE PAIRING OF 2026-09-15 THE REASON FOR THE FIRST TWO IS NARROWER THAN IT WAS,
+ * AND THE RULE IS UNCHANGED. It used to be "no measurement route is pointed at them". A route now
+ * reaches `height` and `width`: accepting an inch reading into `heightInches` / `breadthInches`
+ * fills its centimetre partner. But it fills it by CONVERTING a number that is already recorded and
+ * already marked, which is arithmetic rather than a second measurement — the method belongs to the
+ * inch box that was measured, and stamping the converted one too would claim a machine had measured
+ * a column nothing measured. `thickness`, `weight` and `radius` are still simply untouched.
  */
 val DW_MEASUREMENT_DIMENSIONS: Set<String> = setOf("lengthInches", "breadthInches", "heightInches")
 

@@ -1,7 +1,23 @@
 # Open findings
 
-**Status: 2 open and 1 decision recorded, 62 closed.** Last re-checked against the tree on
-2026-09-03.
+**Status: 3 open, 1 decision recorded and 1 deferral, 62 closed.** Open, the decision and the
+deferral last re-counted by heading on 2026-09-16; the closed sections were last re-checked against
+the tree on 2026-09-03.
+
+**Two things moved that line on 2026-09-16, and one of them is a correction rather than an addition.**
+The deferral is new — design-workshop approvals, ruled into 0.0.13, filed under `## Open` because its
+consequence is live in this tree and a reader who meets `APPROVED` and cannot reach it deserves to
+find it here rather than derive it. And **"2 open" had been wrong by one since 2026-09-03**: the
+`[LOW]` roster-copy entry was written into `## Open` in the same wave whose paragraph below explains
+how the count reached 2, and the count was never moved to 3. Counted by heading, as this file's own
+rule says: three severity-tagged entries, one `[DECISION, NOT A DEFECT]`, one `[DEFERRED TO 0.0.13]`.
+That is the same failure this header records twice more below — a register whose worst defect has
+always been its own arithmetic — arriving a third time, in the direction that under-reports.
+
+**Nothing was closed by the 0.0.12 release wave and nothing from it was promoted in.** Its defects
+were found, fixed and pinned inside the wave rather than passing through this register, which is the
+one-way rule the paragraphs below state for both audits: an item is promoted in here when it is taken
+on, and the 0.0.12 items were never outstanding long enough to be.
 
 **How that moved on 2026-09-03**, stated so the arithmetic can be re-done rather than trusted: a
 remediation wave closed **eleven** entries, listed under *Closed on 2026-09-03* below and counted by
@@ -209,6 +225,63 @@ deployment runs one worker on one replica. **1–2 seconds, or 0 with `AUTH_USER
 is now a cheaper trade than it was.** It was not changed in this wave on purpose: a security
 parameter moved as a silent constant edit is a change nobody reviewed. It belongs in the next
 deployment review. The full argument is in [SECURITY.md §4.1](SECURITY.md).
+
+### [DEFERRED TO 0.0.13] Design-workshop approvals were not built, and `APPROVED` has been unreachable since the review loop shipped — recorded 2026-09-16
+
+**The deferral is a decision. The unreachability is the fact that comes with it, and it is written
+here so the next reader does not rediscover it as a novel bug.** Owner's ruling, 2026-09-15: design
+workshop approvals (the S6 workstream) ship in **0.0.13**. Nothing was half-built — there is no
+`design_workshop_approvals.py` in `backend/app/api/routes/`, no partial router, no dead frontend
+route, and nobody is part-way through this. (That filename is written without its directory on
+purpose: `docs/tools/check-docs.mjs` asserts that every repository path a document names EXISTS, and
+the whole point of this entry is a file that does not.)
+
+**What is missing is three verbs on one router**, each named in `DECISION_EDGES` in
+`backend/app/schemas/design_workshop_review_loop.py` against a module that does not exist:
+`POST /design-workshop-approvals/{id}/approve`, `…/revise` and `…/hand-on`.
+
+**The consequence, read straight off `LEGAL_TRANSITIONS` rather than inferred.** Two of the eight
+statuses cannot be entered by anything in this deployment:
+
+* `APPROVED` has exactly one inbound edge, `PRE_SUBMISSION → APPROVED`, and that edge is a
+  `DECISION_EDGE` owned by `/approve`.
+* `SUBMITTED` — which since 2026-09-13 means *the approved report has been handed on* — has exactly
+  one inbound edge, `APPROVED → SUBMITTED`, owned by `/hand-on`. It is therefore unreachable
+  **transitively**, which is the half a reader does not see by scanning the table for the word.
+
+So a report today goes `DRAFT → IN_PROGRESS → PRE_SUBMISSION`, can be sent back to `NEEDS_REVISION`
+by an inspector and resubmitted as often as anyone likes, **and stops there.** The only rows that read
+`APPROVED` or `SUBMITTED` are ones that carried the pre-2026-09-13 meaning of `SUBMITTED`, and they
+can still leave those states (`SUBMITTED → IN_PROGRESS | PRE_SUBMISSION | ARCHIVED`) — they simply
+cannot be re-entered.
+
+**This is deliberate and it is the safe direction**, which is why it is filed as a deferral and not as
+a defect. `DECISION_EDGES`' own comment says it: *"until it lands `APPROVED` is simply unreachable.
+That is the safe direction and the honest one: nothing can be approved by accident, and no header edit
+can manufacture an approval in the meantime."* A `PATCH` carrying one of the four decision edges is
+refused with a sentence that names the route which would make it, so the failure mode is a legible
+refusal rather than a 500 or a silent no-op.
+
+**It is said on screen, once, where the gap is met.** `MINISTRY_APPROVAL_GAP` in
+`frontend/components/dashboard/ministryDesk.ts` prints it under the ministry desk's five rows —
+*"Reading a report back is where this sequence stops today… none of the rows above is waiting on a
+signature from you"* — because five rows listed in the order a workshop reaches them read as a
+COMPLETE order. It names no tier and no release, and it is tied to the existence of the approvals
+router on disk, so it removes itself the day 0.0.13 lands rather than becoming a lie that has to be
+noticed.
+
+**What 0.0.13 owes beyond the three verbs**, listed so the scope is not rediscovered either: a gate
+(nothing in `deps.py` today names a sanctioning authority, and §2's matrix has no row for one); a
+`ReviewLog` row written in the same transaction as each status move, which is the whole reason these
+are routes and not header edits; the `round >= 1` CHECK the send-back path already has to satisfy; and
+a decision about whether an approval may be withdrawn after the report has been handed on — today
+`APPROVED → SUBMITTED` is one-way, and `APPROVED → ARCHIVED` was deleted from the graph on purpose
+because with `ARCHIVED → PRE_SUBMISSION` legal it was a two-hop laundering path out of an approval.
+
+**Not to be "fixed" in the meantime by widening the PATCH.** The four decision edges are subtracted
+from `LEGAL_TRANSITIONS` rather than listed twice, so re-admitting one to the header edit takes a
+deliberate edit to `DECISION_EDGES` — and what it would buy is a status change with no audit row,
+which is a decision that appears to have made itself.
 
 ---
 

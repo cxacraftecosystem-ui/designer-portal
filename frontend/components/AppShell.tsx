@@ -19,7 +19,7 @@ import { FirstPasswordGate } from "@/components/FirstPasswordGate";
 import { useAppReducedMotion } from "@/components/guide/useAppReducedMotion";
 import { PageSelvedge } from "@/components/PageSelvedge";
 import { WorkshopLogo } from "@/components/WorkshopLogo";
-import { isAdmin, roleLabel, routeGuardFor } from "@/lib/permissions";
+import { isAdmin, ministrySurface, roleLabel, routeGuardFor } from "@/lib/permissions";
 import { mustChangePassword } from "@/lib/signIn";
 
 export function AppShell({ children }: { children: React.ReactNode }) {
@@ -174,6 +174,34 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const chromeSettling = Boolean(chrome) && isAdmin(user) && !adminViewResolved;
   const chromeHidden = Boolean(chrome) && !adminChromeVisible(user, adminMode);
 
+  /**
+   * THE MINISTRY SURFACE, STAMPED ON <main> — the whole of how four screens come to look like the
+   * ministry's own. `lib/permissions.ts` holds the register ({@link ministrySurface}, driven by
+   * `ROUTE_GUARDS`' `ministry` flag) and the end of app/globals.css holds the paint; this line is
+   * the only join between them, and a fifth ministry route needs nothing here.
+   *
+   * ── AND ONLY WHEN THE PAGE IS ACTUALLY BEING SERVED ─────────────────────────────────
+   *
+   * `blocked` is in the condition deliberately. What <main> holds when a guard refuses is
+   * `RouteLocked` — a padlock shown to somebody who is NOT a ministry account — and painting the
+   * ministry accent onto it would put the mark in front of exactly the person it is not for, which
+   * is the same argument the three self-refusal panels inside /officers carry for staying purple.
+   * (`chromeSettling` and `chromeHidden` need no clause: no ministry route is admin chrome, so
+   * `chrome` is null on all four and both are already false there.)
+   *
+   * ── IT CANNOT GO STALE ────────────────────────────────────────────────────────────
+   *
+   * `key={pathname}` already remounts <main> on every navigation, so the attribute is recomputed
+   * with the element rather than patched onto a surviving one. `undefined` rather than `false` or
+   * `""`: React omits the attribute entirely, and the CSS selector is an attribute-value match, so a
+   * non-ministry page carries no `data-surface` at all and nothing to explain.
+   *
+   * Components OUTSIDE these four routes opt in by putting `data-surface="ministry"` on their own
+   * root — the ministry desk card on /dashboard does exactly that. The scoped block matches both the
+   * descendant and the self case, so the attribute may sit on the styled element itself.
+   */
+  const ministry = !blocked && ministrySurface(pathname);
+
   return (
     <div className="min-h-screen bg-bg-0">
       {/* The island is a floating pill and comes first in the tab order — give the keyboard a way
@@ -216,6 +244,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         initial={reduce ? { opacity: 1, y: 0 } : { opacity: 0, y: 6 }}
         animate={{ opacity: 1, y: 0 }}
         transition={reduce ? { duration: 0 } : { duration: 0.22, ease: "easeOut" }}
+        data-surface={ministry ? "ministry" : undefined}
         className="relative mx-auto max-w-7xl px-4 pb-12 pt-24"
       >
         {blocked && guard ? (

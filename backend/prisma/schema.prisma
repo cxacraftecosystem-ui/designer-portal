@@ -445,6 +445,17 @@ model User {
   /// Restrict, so the account cannot be deleted while one stands; `routes/users.py`'s
   /// `_NAMED_ON_RELATIONS` is what turns that refusal into a sentence naming how many there are.
   sanctionOrdersNamed    SanctionOrder[]  @relation("SanctionOrderDesigner")
+  /// EVERY sanction order this account is named on, lead or not — one row per order per designer,
+  /// since 0.0.12. The relation above is the LEAD half of the same question and both are kept: the
+  /// scalar still means "the designer whose profile seeds stage 1 and whose name reaches the
+  /// report", and this one means "everybody the ministry named". `_NAMED_ON_RELATIONS` counts
+  /// THIS one and not the scalar — the lead has a row in both, so counting both would tell an
+  /// admin a designer is named on two orders when they are named on one.
+  sanctionOrderDesignerRows SanctionOrderDesigner[] @relation("SanctionOrderDesignerUser")
+  /// Sanction imports this account uploaded. SetNull, not Restrict: a ledger row outlives the
+  /// account that wrote it — the idiom `DwArtisanImport.uploadedById` already uses — where an
+  /// authorship column takes Restrict.
+  sanctionOrderImports   SanctionOrderImport[] @relation("SanctionOrderImportUploadedBy")
   /// Sanction orders this account RECORDED — the ministry officer's authorship trail, and the
   /// reason an officer who has recorded one is as undeletable as anyone who has created a record.
   sanctionOrdersRecorded SanctionOrder[]  @relation("SanctionOrderCreatedBy")
@@ -713,6 +724,12 @@ model Craft {
   artisans  Artisan[]
   products  ProductDocumentation[]
   tools     ToolDocumentation[]
+  /// The many-to-many reading of the same link. `tools` above is the rows whose `craftId`
+  /// is this craft — the FIRST craft of each; this is every tool that names it at all.
+  /// Spelled `toolLinks` because `Artisan` already spells its `ToolArtisan` back-relation
+  /// that way, and two join tables off one parent that disagree about their own names is
+  /// how a later reader comes to believe one of them means something the other does not.
+  toolLinks ToolCraft[]
   media     MediaFile[]
   workshops WorkshopCraft[]
 
@@ -1303,6 +1320,9 @@ model ToolDocumentation {
   media     MediaFile[]
   mediaProcessingJobs MediaProcessingJob[]
   artisanLinks ToolArtisan[]
+  /// EVERY craft this tool is linked to. `craftId` above holds the FIRST of them and
+  /// `craftName` holds all their names joined ", " in this relation's order; see `ToolCraft`.
+  craftLinks ToolCraft[]
 
   @@index([artisanId])
   @@index([craftId])
@@ -1328,6 +1348,39 @@ model ToolArtisan {
   // tool-to-artisans lookup already.
   @@unique([toolId, artisanId])
   @@index([artisanId])
+}
+
+// Many-to-many between a tool and the crafts it is linked to. Lets one documented tool cover several
+// crafts instead of one, WITHOUT retiring `ToolDocumentation.craftId` — every existing filter, index,
+// report, carry-forward and data-browser branch reads that column and keeps reading it. It holds the
+// first of the selected crafts; this table holds all of them, and `craftName` holds their names
+// joined ", " in the same order.
+//
+// IT MIRRORS `ToolArtisan` ABOVE COLUMN FOR COLUMN, deliberately: same four columns, same unique,
+// same single secondary index, same CASCADE on both sides. Two join tables off one parent that
+// disagree about their own shape is how a later reader comes to believe one of them means something
+// the other does not.
+//
+// THE ASYMMETRY WITH `ToolDocumentation.craft` IS REAL AND IS NOT TO BE "FIXED". That relation is
+// `onDelete: SetNull` while this one is `onDelete: Cascade`, so deleting a `Craft` nulls
+// `tool.craftId`, deletes the link row, and LEAVES `tool.craftName` holding the old joined string.
+// That is exactly the shape `ToolArtisan` already has beside `ToolDocumentation.artisan`, and it is
+// why `artisanName` is NOT NULL: the denormalised name is the last record of who the row was about
+// once the referenced row is gone. Making this one SetNull instead would put a dangling link row
+// with a null craft into every read that includes the relation.
+model ToolCraft {
+  id        String   @id @default(cuid())
+  toolId    String
+  craftId   String
+  createdAt DateTime @default(now())
+
+  tool  ToolDocumentation @relation(fields: [toolId], references: [id], onDelete: Cascade)
+  craft Craft             @relation(fields: [craftId], references: [id], onDelete: Cascade)
+
+  // No [toolId] of its own — it is the leading column of the unique below, which serves the
+  // tool-to-crafts lookup already.
+  @@unique([toolId, craftId])
+  @@index([craftId])
 }
 
 model MediaFile {
@@ -5320,6 +5373,23 @@ model SanctionOrder {
   /// where `DERIVED_EMPANELMENT_NOTE` in app/services/designers.py set the precedent.
   notes String?
 
+  /// ── EVERY DESIGNER THIS ORDER NAMES, INCLUDING THE LEAD ────────────────────────────────────
+  /// The three scalars above (`designerUserId`, `designerEmail`, `accountCreated`) are unchanged
+  /// and still mean THE LEAD, exactly as `DesignWorkshopCreate.designerUserId` means the lead
+  /// beside `designerUserIds`. This collection holds a row for EVERY named designer INCLUDING the
+  /// lead — a lead with no row here would be a second place to look for "who is on this order".
+  designers SanctionOrderDesigner[] @relation("SanctionOrderDesigners")
+
+  /// ── WHICH UPLOAD RECORDED THIS, IF ANY ─────────────────────────────────────────────────────
+  /// NULL on every order typed on the officer's form, and on every row that predates the importer.
+  /// Per-order provenance columns rather than a pointer at the ledger row: the same shape
+  /// `AnnualPlanEntry.sourceFilename`/`sheetRow` already uses, which is what lets the register
+  /// answer "which sheet, and which line of it, recorded this order" without a join.
+  sourceFilename String?
+  /// The 1-based Excel gutter row, so an officer holding the sheet can find the line. NULL for a
+  /// hand-typed order.
+  sheetRow Int?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -6150,4 +6220,131 @@ model AnnualPlanEntry {
   @@index([promotedById])
   @@index([createdById])
   @@index([updatedById])
+}
+
+// ======================================================================================
+// The sanction register's second table, and its import ledger
+// ======================================================================================
+
+/// EVERY DESIGNER ONE SANCTION ORDER NAMES.
+///
+/// The scalar `SanctionOrder.designerUserId` beside this table is unchanged and still means THE
+/// LEAD — whose profile seeds stage 1 and whose name reaches the report cover — exactly as
+/// `DesignWorkshopCreate.designerUserId` means the lead beside `designerUserIds`. This table holds a
+/// row for EVERY named designer INCLUDING the lead, which is what `named_designer_team` already
+/// returns (`team: [lead, ...rest]`) and what `attach_the_named_designers` already writes into
+/// `DesignWorkshopViewer`. A lead with no row here would be a second place to look for "who is on
+/// this order", and the two places would disagree the first time one was written and the other was
+/// not.
+///
+/// THE LEAD SCALARS ARE KEPT AND NOT RETIRED, which is a decision rather than an omission.
+/// `@@index([designerUserId])` on `SanctionOrder` serves `_account_the_register_already_knows`'s
+/// first arm, the search clause in `routes/sanction_orders.list_sanction_orders` reads
+/// `designerEmail`, and `sanction_payload` reads all three. Dropping them is strictly more churn for
+/// no gain, and it would leave the one column a report writer needs — the single name OOXML's
+/// `dc:creator` can express — derivable only by sorting a collection.
+model SanctionOrderDesigner {
+  sanctionOrderId String
+  designerUserId  String
+
+  /// THE CANONICAL MAILBOX THIS DESIGNER WAS ADMITTED UNDER — `designers.canonical_email`, and the
+  /// key their allow-list row and their empanelment were written under. Per row and not derived
+  /// from `designerUser.email` for exactly the reason `SanctionOrder.designerEmail` is not: for a
+  /// dotted or +tagged Gmail the account address and the roster key differ ON PURPOSE, because both
+  /// sign-in doors look `User.email` up literally while both rosters key on the mailbox.
+  designerEmail String
+
+  /// DID THIS ORDER MINT *THIS* ACCOUNT. `SanctionOrder.accountCreated` answers the same question
+  /// for the lead only; with several designers the answer differs per person, and it is what
+  /// decides whether a sign-in link is offered for them on the officer's list.
+  accountCreated Boolean @default(false)
+
+  /// FIRST-SEEN ORDER FROM THE SHEET OR THE PICKER, 0 FOR THE LEAD. An ordering an officer chose is
+  /// the only order they can see; without it the officer's list would render the team in whatever
+  /// order the index returned, and "the first name" would stop meaning anything — on a screen where
+  /// the first name is the one that reaches a ministry document.
+  position Int @default(0)
+
+  createdAt DateTime @default(now())
+
+  sanctionOrder SanctionOrder @relation("SanctionOrderDesigners", fields: [sanctionOrderId], references: [id], onDelete: Cascade)
+
+  /// RESTRICT, AND NOT THE `Cascade` `DesignWorkshopViewer.user` CARRIES. That table's own comment
+  /// argues Cascade because "a viewer row is not authorship". This one IS authorship-adjacent: it
+  /// records that the ministry named this person on an instrument that authorised money. It matches
+  /// `SanctionOrder.designerUser` beside it, which is already Restrict for that reason, and
+  /// `routes/users.py::_NAMED_ON_RELATIONS` counts THIS table so the 409 an admin meets names how
+  /// many sanction orders stand in the way.
+  designerUser User @relation("SanctionOrderDesignerUser", fields: [designerUserId], references: [id], onDelete: Restrict)
+
+  /// CASCADE ON THE ORDER SIDE IS SAFE because there is no DELETE on the register —
+  /// `tests/test_sanction_order_gate.py::test_the_register_offers_no_way_to_delete_a_sanction_order`
+  /// asserts `"DELETE" not in methods` on the router. It fires only on a hand-run purge, where
+  /// taking the join rows along with the order is right.
+  ///
+  /// The pair IS the identity — one row per designer per order — so a re-add collides rather than
+  /// stacking. A composite PK and no surrogate `id`, following `DesignWorkshopViewer` rather than
+  /// `ToolArtisan`: there is no second table that ever needs to point at one of these rows.
+  @@id([sanctionOrderId, designerUserId])
+
+  /// "every order this designer is named on" — the other direction, not served by the PK whose
+  /// SECOND column this is, and the scan Postgres runs for the RESTRICT above. It is also the read
+  /// `_NAMED_ON_RELATIONS` makes on every attempt to delete an account.
+  @@index([designerUserId])
+
+  /// "which account has this MAILBOX been issued orders against before" —
+  /// `_account_the_register_already_knows`'s second arm, asked once per named designer in phase 0 of
+  /// every create. Without it that read is a sequential scan of this whole table while an officer
+  /// waits. `SanctionOrder.designerEmail` has no such index and answers the same question for leads
+  /// only; this one answers it for everybody, which is why the arm was added at all.
+  @@index([designerEmail])
+}
+
+/// ONE ROW PER SPREADSHEET OF SANCTION ORDERS AN OFFICER UPLOADED.
+///
+/// The shape is `DwArtisanImport`'s, column for column, and the case for it here is stronger rather
+/// than weaker: that import files people onto a workshop, and this one MINTS ACCOUNTS AND ISSUES
+/// CREDENTIALS. "Which upload created these forty accounts, and who pressed it" is not derivable
+/// from anything else once the workbook is closed — and the workbook itself is deliberately NOT
+/// stored, exactly as `ImportReport.tsx` says of the artisan one.
+///
+/// IT HANGS OFF THE OFFICER AND NOT OFF A PARENT RECORD, which is the one difference from
+/// `DwArtisanImport`. That table indexes `[designWorkshopId, createdAt]` because every artisan
+/// import belongs to one workshop; a sanction import belongs to no single order — it made several —
+/// so the only question anybody asks of it is "what has this officer uploaded, newest first".
+model SanctionOrderImport {
+  id String @id @default(cuid())
+
+  /// The name of the file as the browser sent it, or NULL for a client that sent none. A diagnostic
+  /// and not a key: nothing is ever looked up by it.
+  sourceFilename String?
+  /// Which sheet of the workbook the rows were read from — `pick_sheet`'s answer, which is found by
+  /// heading rather than by position, so it is worth recording.
+  sheetName String?
+
+  /// THE FOUR COUNTS, AND THEY MUST ADD UP ON SCREEN. `rowsRead = recorded + skipped + refused` is
+  /// the arithmetic `ImportReport.tsx` argues for: a count added to the wire cannot be silently left
+  /// off, and a report whose numbers do not sum is a report an officer cannot check.
+  rowsRead Int @default(0)
+  recorded Int @default(0)
+  skipped  Int @default(0)
+  refused  Int @default(0)
+
+  /// Every `ParseProblem` and every per-row refusal, as the payload the client rendered. JSON and
+  /// not a child table for the reason `DwArtisanImport.problems` is: these are sentences written to
+  /// be read once, not rows anything queries.
+  problems Json?
+
+  /// SETNULL, not Restrict: a ledger row outlives the account that wrote it. This is the idiom
+  /// `DwArtisanImport.uploadedById` uses, and it is the opposite of the `Restrict` the authorship
+  /// columns on `SanctionOrder` carry — an audit trail that stops an account being deleted is an
+  /// audit trail that will eventually be deleted itself to unblock somebody.
+  uploadedById String?
+  uploadedBy   User?   @relation("SanctionOrderImportUploadedBy", fields: [uploadedById], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  /// "what has this officer uploaded, newest first" — the only read this table has, and the index
+  /// Postgres also uses for the ON DELETE SET NULL scan it is on the wrong end of.
+  @@index([uploadedById, createdAt])
 }

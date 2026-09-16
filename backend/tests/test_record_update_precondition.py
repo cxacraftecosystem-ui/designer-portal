@@ -284,7 +284,17 @@ def test_every_update_route_asks_before_it_writes_the_audit_row():
         ("artisans.py", 'guard_record_edit(artisan'),
         ("crafts.py", 'guard_record_edit(craft'),
         ("products.py", 'guard_record_edit(product'),
-        ("tools.py", 'guard_record_edit(tool'),
+        # THE TOOLS ANCHOR IS THE BARE CALL, and it is the odd one because the argument list no
+        # longer fits on one line: ``update_tool`` passes ``client=tx`` AND ``derived=derived`` (the
+        # keys the server computed into ``data``, withheld from the contributor guard), so the call
+        # wraps and ``guard_record_edit(tool`` stopped being a substring of the file. That was not a
+        # weaker assertion, it was a ``ValueError: substring not found`` — an anchor that has gone
+        # missing fails as an ERROR rather than as the ordering claim this test makes, which is the
+        # worst way for a guard like this to break. ``guard_record_edit(`` occurs exactly once in
+        # ``tools.py`` (every other mention in that file is prose in double backticks, without the
+        # parenthesis), so the anchor is still unambiguous. Re-check with
+        # ``grep -n "guard_record_edit(" backend/app/api/routes/tools.py``.
+        ("tools.py", "guard_record_edit("),
         ("processes.py", 'guard_record_edit(process, current_user, data'),
         # ``workshops.py`` writes its ledger through ``record_revision`` directly on the privileged
         # branch, so the anchor is the ``db.tx()`` the pair of them live in.

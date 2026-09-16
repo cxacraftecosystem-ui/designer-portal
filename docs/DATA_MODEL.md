@@ -192,11 +192,28 @@ event that never happened. **Never edit the SQL of an applied migration**: Prism
 a rewritten file makes the whole history unapplyable. Repeat this pointer in the header of the next
 migration that touches `Craft`, where the next reader will actually be standing.
 
-### 2.2 One tool, many artisans
+### 2.2 One tool, many artisans — and, since 2026-09-15, many crafts
 
 The same documented tool recurs across crafts. `ToolArtisan` exists so it is entered once and then
 assigned, rather than re-entered per craft — which is also why `ToolDocumentation` keeps its own
 single `artisanId` (the artisan it was *documented with*) alongside the join.
+
+`ToolCraft` (migration `20260915100000_tool_craft_links`) is the same shape on the other axis, added
+when the tool record form's "Linked craft" became a multi-select on all four clients. It is
+`@@unique([toolId, craftId])` with a `@@index([craftId])` and both sides `Cascade`, and it carries no
+`@@index([toolId])` of its own because that is the leading column of the unique.
+
+**The two joins are siblings and the scalar column beside each means the same thing**, which is the
+part worth reading twice. `ToolDocumentation.craftId` is not a denormalised copy of the first row of
+the join — it is *the craft the tool was documented under*, exactly as `artisanId` is the artisan it
+was documented with. What IS derived is `craftName`, the required text box on the form: it is the
+selected crafts' names joined with `", "`, recomputed from the selection on every save. That
+derivation is bounded on both sides at 180 characters — `TOOL_CRAFT_NAME_MAX_LENGTH` in
+`backend/app/schemas/records.py` and `CRAFT_NAME_MAX_LENGTH` in
+`frontend/components/forms/recordPickers.ts` — and an over-long selection is **refused, never
+truncated**, naming the crafts that do not fit. A server that stored a name its own update schema
+would reject would make the record permanently unsaveable, which is why the bound is checked where
+the join is built rather than only where the column is declared.
 
 ### 2.3 Decimals are strings on the wire
 
@@ -436,14 +453,16 @@ refusing to widen it is spent.
 
 ### 5.1 `SanctionOrder` — the ministry's instrument, and the one row that writes both rosters
 
-Added 2026-09-13 (migration `20260913110000_sanction_orders`). A sanction order is the document that
-authorises a design & prototype workshop and names its budget. A ministry officer records five facts
-through `POST /api/sanction-orders` — order number, order date, sanctioned amount, and the designer's
-name and Gmail address — and that one request writes **seven rows in one transaction**: an
-`AccessRoster` admission, a `DesignerRoster` empanelment, a `User` (only where the mailbox has none),
-a `DesignerProfile`, a `DesignWorkshop`, the designer's `DesignWorkshopViewer` row on it, and the
-`SanctionOrder` itself. `backend/app/services/sanction_orders.py` is where the order of those writes
-and the transaction boundary are argued.
+Added 2026-09-13 (migration `20260913110000_sanction_orders`); **made multi-designer on 2026-09-16**
+(migration `20260916150000_sanction_order_designers`, §5.1.1). A sanction order is the document that
+authorises a design & prototype workshop and names its budget. A ministry officer records the order
+number, the order date, the sanctioned amount and the designers it names through
+`POST /api/sanction-orders`, and that one request writes — in one transaction, per designer where the
+row is per-designer — an `AccessRoster` admission, a `DesignerRoster` empanelment, a `User` (only
+where the mailbox has none), a `DesignerProfile`, one `DesignWorkshop`, a `DesignWorkshopViewer` row
+on it for every named designer, the `SanctionOrder` itself and its `SanctionOrderDesigner` rows.
+`backend/app/services/sanction_orders.py` is where the order of those writes and the transaction
+boundary are argued.
 
 | Column | Type | Why it is shaped this way |
 |---|---|---|
@@ -451,8 +470,10 @@ and the transaction boundary are argued.
 | `sanctionOrderKey` | `String @unique` | the same number upper-cased with every non-alphanumeric removed. **This is the constraint that actually bites**: `SO/2026/42`, `SO-2026-42` and `so 2026 42` are three house styles for one instrument and Postgres calls them three values. NOT NULL, unlike `DesignerProfile.empanelmentKey`, because that column was backfilled over rows that had already collided and this table starts empty |
 | `sanctionOrderDate` | `DateTime` | a DATE in meaning; a timestamp because this schema has no date-only type. Always written midnight UTC |
 | `sanctionAmount` | `Decimal @db.Decimal(14, 2)` | `NUMERIC(14,2)` with a `CHECK (> 0)`. **Never a float** — see §2.3, and see the migration header for why 14 digits rather than the 12 the product money columns use, and why there is no currency column |
-| `designerUserId` | FK → `User`, **Restrict** | the designer the order NAMES. Part of what the order says, not a grant that can be withdrawn |
-| `designerEmail` | `String` | the **canonical** mailbox (`designers.canonical_email`), which for an aliased Gmail is deliberately NOT `designerUser.email` — see below |
+| `designerUserId` | FK → `User`, **Restrict** | the **lead** designer the order NAMES. Part of what the order says, not a grant that can be withdrawn. Kept as a scalar after the order became multi-designer, for the reason §5.1.1 gives |
+| `designerEmail` | `String` | the lead's **canonical** mailbox (`designers.canonical_email`), which for an aliased Gmail is deliberately NOT `designerUser.email` — see below |
+| `designers` | `SanctionOrderDesigner[]` | every designer the order names, **including the lead**. A lead with no row here would be a second place to look for "who is on this order" |
+| `sourceFilename`, `sheetRow` | `String?`, `Int?` | which uploaded sheet and which 1-based Excel gutter row recorded this order. NULL on every hand-typed order and every row predating the importer. Per-order columns rather than a pointer at the ledger, the shape `AnnualPlanEntry` already uses, so the register answers "which line of which sheet" with no join |
 | `designWorkshopId` | FK → `DesignWorkshop`, `@unique`, **Restrict** | one order, one workshop, both directions. Restrict because the API's delete is a SOFT delete, so this fires only on a hard purge — and a hard purge of a workshop the ministry funded must be refused by the database rather than discouraged by a route |
 | `createdById` | FK → `User`, **Restrict** | the officer. Who authorised the spend outlives their employment |
 | `accountCreated` | `Boolean` | did this order mint the account, or did the designer already have one? It is what decides whether a sign-in link is offered at all |
@@ -490,6 +511,55 @@ nothing and the first sentence would be false about the one account it is descri
 **There is no `cancelledAt`, no `supersededById` and no delete.** The first time the ministry
 withdraws an order, the product's only answer today is "edit the notes". That is an open question for
 the owner rather than an oversight.
+
+#### 5.1.1 `SanctionOrderDesigner` and `SanctionOrderImport` — several names on one order, and the sheet that recorded it
+
+Added 2026-09-16 (migration `20260916150000_sanction_order_designers`). One migration, two tables, two
+nullable columns on `SanctionOrder` and one backfill — and every statement in it is a `CREATE`, an
+`ADD COLUMN`, an `ADD CONSTRAINT` or an `INSERT`. Nothing existing is altered, retyped or dropped.
+
+**`SanctionOrderDesigner`** is `@@id([sanctionOrderId, designerUserId])` with `Cascade` to the order
+and **`Restrict`** to the `User`. The `Restrict` is the choice worth reading: `DesignWorkshopViewer.user`
+is `Cascade`, and its own comment argues that because *a viewer row is not authorship*. This one is
+authorship-adjacent — it records that the ministry named this person on an instrument that authorised
+money — so it makes a co-designer undeletable exactly as the lead already was.
+
+Four columns beyond the key, each answering a question the scalars cannot:
+
+* `designerEmail` — the canonical mailbox **this** designer was admitted under, per row, for exactly
+  the reason `SanctionOrder.designerEmail` is not derived from `designerUser.email`.
+* `accountCreated` — did this order mint **this** account. With several designers the answer differs
+  per person, and it is what decides whether a sign-in link is offered for them.
+* `position` — first-seen order from the sheet or the picker, **0 for the lead**. An officer's chosen
+  order is the only order they can see, and "the first name" has to keep meaning something on a screen
+  where the first name is the one that reaches a ministry document.
+* `createdAt` — the order's own instant for every backfilled row, not `now()`, so "position 0, then
+  oldest first" stays meaningful across the backfill.
+
+**Why the three lead scalars stayed.** `SanctionOrder.designerUserId`, `designerEmail` and
+`accountCreated` were NOT migrated away into the join. A list cannot express "this one is the lead",
+and the lead is not decoration: their profile is what seeds stage 1 and stage 3, and one name reaches
+`dc:creator` on the generated report because the file format cannot hold a list. Keeping the scalars
+also means the create body a deployed client already sends is byte-for-byte valid — `APIModel` is
+`extra="forbid"`, so replacing two scalars with one list would have 422'd every older client at once.
+The rule that keeps the two representations honest is that the lead has a row in **both**, which is
+why `routes/users.py`'s `_NAMED_ON_RELATIONS` counts the JOIN and not the scalar: counting both would
+report one order as two, and counting only the scalar answers `0` for a co-designer — the people this
+table exists for.
+
+**`SanctionOrderImport`** is the upload ledger, in the shape `DwArtisanImport` set: the filename, the
+sheet `pick_sheet` chose (found by heading, not by position, so worth recording), four counts, the
+problems as `Json`, who uploaded it and when. The counts are on the wire because
+`rowsRead = recorded + skipped + refused` must **add up on screen** — a report whose numbers do not
+sum is a report an officer cannot check, and the panel says so when they do not. The problems are JSON
+and not a child table for `DwArtisanImport.problems`' reason: they are sentences written to be read
+once, not rows anything queries.
+
+**Two things the importer deliberately does not do**, recorded here because their absence is a
+decision: it mints **no sign-in links** (a link is shown once, and a link nobody was standing in front
+of is a link nobody sent — each is re-issued from its own row afterwards), and it writes **no
+tombstone** for a refused row. Confirmation is stateless: every refusal is re-run per row at confirm
+time, so a stale tab's row is refused rather than recorded wrongly.
 
 ### 5.2 `DesignWorkshopOversight` and `DwArtisanImport` — the sixth access system, and its ledger
 

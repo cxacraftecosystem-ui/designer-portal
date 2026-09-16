@@ -219,6 +219,78 @@ function draftHeader(draft: DwDraft): Omit<DwSummary, "id"> {
 }
 
 /* ────────────────────────────────────────────────────────────────────────────
+ * Where this workshop came from
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * The ministry instrument that opened this workshop, as the single-record read hands it back.
+ *
+ * ── THREE STATES, AND THE TWO THAT LOOK ALIKE ARE THE POINT ──────────────────────────────────
+ *
+ * Per register, the server answers one of three things, and this type says so in the type system:
+ *
+ *   * the key is **absent** — this reader does not keep that register and is told nothing about it;
+ *   * the key is **null**   — this reader keeps it, and no row in it names this workshop;
+ *   * the key is an object  — this reader keeps it, and here is the row.
+ *
+ * So `undefined` and `null` are NOT interchangeable here and `?? null` would destroy the
+ * distinction: absent means "say nothing", null means "say there is none". A screen that collapsed
+ * the two would print "No sanction order" to a designer who was never allowed to look in the
+ * register — a confident claim about a table the caller cannot read, which is rule 10 wearing the
+ * opposite hat. `api/routes/design_workshops._register_provenance` is the other half of this and
+ * carries the same three states in its docstring.
+ *
+ * ── WHY THE SHAPE IS A MAP OF HALVES AND NOT TWO NAMED FIELDS ON A PANEL ─────────────────────
+ *
+ * One register reaches this client today. The plan directory's half — which planned row was
+ * promoted into this workshop — is the same fact from the other register and needs the same line;
+ * it is missing because the module that would have to read it is fenced off from that table by
+ * `backend/tests/test_annual_plan_is_not_a_workshop.py`, not because anything here is undecided.
+ * Rendering "whichever halves arrived" rather than "the halves I expect" is what makes that a
+ * server-side change with no client change at all — and it is the same code path that already has
+ * to handle a reader who keeps only one of the two.
+ *
+ * ── DECLARED HERE, NOT IN `lib/designWorkshops.ts` ───────────────────────────────────────────
+ *
+ * `DwDetail` is where this belongs, beside `dictationConsentByName` — the key already on that type
+ * for exactly this reason (a single-read-only key, optional so that a server predating it reads as
+ * absent rather than as a type error). `lib/designWorkshops.ts` is outside this pass's ownership,
+ * so the page narrows the payload itself rather than editing a shared type it does not own; moving
+ * these two lines onto `DwDetail` and deleting the local type is the follow-up, and nothing else on
+ * this screen changes when it happens.
+ *
+ * THE NARROWING BELOW IS A REAL CHECK AND NOT A CAST. `getDesignWorkshop` is typed, so `as` would
+ * have compiled and lied about a key no declaration mentions — which is the whole failure this
+ * screen exists to stop, committed against its own payload.
+ */
+type DwRegisterProvenance = {
+  sanctionOrder?: { sanctionOrderNo: string; sanctionOrderDate: string | null } | null;
+};
+
+/** Read the register keys off a detail payload, keeping absent and null apart. */
+function readRegisterProvenance(payload: unknown): DwRegisterProvenance {
+  const found: DwRegisterProvenance = {};
+  if (!payload || typeof payload !== "object") return found;
+  if (!("sanctionOrder" in payload)) return found;
+  const value = (payload as { sanctionOrder: unknown }).sanctionOrder;
+  if (value === null) {
+    // PRESENT AND EMPTY — the reader keeps the register and it holds nothing about this workshop.
+    found.sanctionOrder = null;
+    return found;
+  }
+  if (value && typeof value === "object") {
+    const row = value as { sanctionOrderNo?: unknown; sanctionOrderDate?: unknown };
+    if (typeof row.sanctionOrderNo === "string") {
+      found.sanctionOrder = {
+        sanctionOrderNo: row.sanctionOrderNo,
+        sanctionOrderDate: typeof row.sanctionOrderDate === "string" ? row.sanctionOrderDate : null
+      };
+    }
+  }
+  return found;
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
  * The final submission
  * ──────────────────────────────────────────────────────────────────────────── */
 
@@ -1158,6 +1230,18 @@ export default function DesignWorkshopStagesPage({ params }: { params: Promise<{
   const [inspectionFeedback, setInspectionFeedback] = useState<DwInspectionFeedback[]>([]);
   const [feedbackTruncated, setFeedbackTruncated] = useState(false);
   /**
+   * Which ministry instrument opened this workshop, held beside the draft for the reason the
+   * suggestions above are: it is a row in another office's register, not this device's copy of the
+   * workshop, and an offline reader is looking at a register they cannot have re-read.
+   *
+   * `{}` IS THE HONEST START AND THE HONEST END OF A FAILED READ. It means "no register answered",
+   * which is what a designer, an offline session and a 500 all have in common — and it renders as
+   * silence rather than as "there is no sanction order", which none of the three can support. It is
+   * deliberately NOT written into the draft store: a stale copy of somebody else's register is a
+   * question nothing on this screen needs to ask.
+   */
+  const [registerProvenance, setRegisterProvenance] = useState<DwRegisterProvenance>({});
+  /**
    * The status the SERVER confirmed on this page's own PATCH, held apart from the draft.
    *
    * HELD APART FOR THE SAME REASON `consentByName` IS: the draft is this device's copy, and this is a
@@ -1217,6 +1301,10 @@ export default function DesignWorkshopStagesPage({ params }: { params: Promise<{
         // it — and it is the only place on the web a designer can see what was asked for.
         setInspectionFeedback(detail.inspectionFeedback ?? []);
         setFeedbackTruncated(detail.inspectionFeedbackTruncated === true);
+        // WHERE THIS WORKSHOP CAME FROM, OFF THE SAME READ AND AT NO EXTRA REQUEST. The server puts
+        // a key here for each ministry register THIS reader keeps, so what arrives is an
+        // entitlement answer as much as a data one and nothing on this page has to guess at either.
+        setRegisterProvenance(readRegisterProvenance(detail));
         const merged = await adoptServerDetail(detail, loadedRegistry);
         if (cancelled) return;
         /*
@@ -1600,6 +1688,58 @@ export default function DesignWorkshopStagesPage({ params }: { params: Promise<{
             reads as complete rather than as 0%. Craft, cluster, dates and the workshop code above are filled in from
             stage 1 and stay blank until it is saved.
           </p>
+          {/*
+            ── WHERE THIS WORKSHOP CAME FROM ─────────────────────────────────────────────────────
+
+            THE ONE DIRECTION NOTHING IN THE PRODUCT COULD ANSWER. The annual plan links forward to
+            the workshop it promoted and the sanction register links forward to the workshop its
+            order opened; standing HERE there was no way back, so an officer reading a record had to
+            leave the page and search a register by title to find out which instrument authorised it.
+
+            IT DRAWS ONLY WHAT THE SERVER ANSWERED, AND THE ABSENT KEY IS AN ANSWER TOO. The payload
+            carries one key per ministry register this READER keeps
+            (`api/routes/design_workshops._register_provenance`), so a designer — who keeps none —
+            sees no band at all, and nothing here has to re-derive an entitlement the server has
+            already decided. Offline and after a failed read the state is `{}`, which draws the same
+            nothing: silence is the only claim any of those three can support.
+
+            NOT THE SAME THING AS "Authorship & divergence" IN THE HEADER ROW. That link opens
+            `/design-workshops/{id}/provenance` — field-by-field authorship across the shared record
+            tables, admin-only. This band is one line about which ministry instrument opened the
+            workshop, and the two are gated differently on purpose.
+
+            AND IT IS THE REGISTER, NOT STAGE 1. `workshopSetup.sanctionOrderNo` and
+            `.sanctionOrderDate` are STANDARD-tier stage-1 boxes carrying `report_role=COVER_FIELD`
+            — what a designer types onto the report's own cover. This is the row an officer
+            recorded. The two can disagree, which is why the sentence names the register rather than
+            printing a bare number with nothing to say where it came from. (This note said
+            "Supplementary" until it was checked: the tiers in `stage_schema.Tier` are BASIC,
+            STANDARD and ADVANCED, and no surface in this product uses that word for any of them.)
+          */}
+          {registerProvenance.sanctionOrder !== undefined ? (
+            <div className="grid gap-1 border-t border-line-200 pt-4">
+              <h2 className="text-sm font-medium text-ink-900">Where this workshop came from</h2>
+              {registerProvenance.sanctionOrder ? (
+                <p className="text-sm leading-6 text-ink-700">
+                  The ministry&rsquo;s sanction register names this workshop on order{" "}
+                  <span className="font-medium text-ink-900">
+                    {registerProvenance.sanctionOrder.sanctionOrderNo}
+                  </span>
+                  {registerProvenance.sanctionOrder.sanctionOrderDate
+                    ? `, dated ${formatDate(registerProvenance.sanctionOrder.sanctionOrderDate)}.`
+                    : "."}
+                </p>
+              ) : (
+                // PRESENT AND EMPTY, SAID OUT LOUD. This reader keeps the register and no order in
+                // it names this workshop — which is ordinary (a workshop opened from the plan, or by
+                // an admin, is not sanctioned through this register) and is worth a sentence rather
+                // than a blank, because a blank here reads as "this screen does not do provenance".
+                <p className="text-sm leading-6 text-ink-700">
+                  No sanction order in the ministry&rsquo;s register names this workshop.
+                </p>
+              )}
+            </div>
+          ) : null}
         </section>
       ) : null}
 

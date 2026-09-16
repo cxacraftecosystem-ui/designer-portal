@@ -727,8 +727,33 @@ class ProcessUpdate(APIModel):
     expectedUpdatedAt: datetime | None = None
 
 
+# ── THE LONGEST ``craftName`` A TOOL MAY CARRY, AND WHY IT IS A NAME RATHER THAN A LITERAL ───────
+#
+# 180 is the bound both tool schemas below have always carried, and it was written when ``craftName``
+# held ONE craft's name. Since ``ToolCraft`` landed the column is SERVER-DERIVED — ``routes/tools.
+# _resolve_craft_links`` overwrites it with every linked craft's name joined ``", "`` — and that
+# assignment happens AFTER this model has validated, so the derived string was never measured against
+# this number at all. The two therefore have to be the same number stated once, because the failure
+# when they differ is not a cosmetic 422: the server stores a name its own ``ToolUpdate`` will refuse
+# on the very next write, and both record forms echo the stored value back on every save, so the
+# record becomes unsavable from every client, permanently, over a box nobody typed in.
+#
+# ``routes/tools._resolve_craft_links`` IMPORTS THIS NAME and refuses a selection whose join crosses
+# it, so the derived value can never exceed what this field will take back. Never truncate instead:
+# a truncated ``craftName`` would disagree with the links it was derived from, which is the one
+# property that function exists to guarantee.
+#
+# THE WEB CLIENT REFUSES AT THE SAME NUMBER, at the picker rather than at the save, so a designer is
+# told which selection is too long while they can still change it — ``forms/recordPickers.
+# CRAFT_NAME_MAX_LENGTH`` and ``craftSelectionVerdict``. That guard can only ever UNDER-count (it
+# skips a ticked craft whose row has not loaded) and the handset has no guard of its own, which is
+# precisely why the server half below is not optional. Re-check the pair with
+# ``grep -rn "CRAFT_NAME_MAX_LENGTH" frontend/components/forms/recordPickers.ts``.
+TOOL_CRAFT_NAME_MAX_LENGTH = 180
+
+
 class ToolCreate(APIModel):
-    craftName: str = Field(min_length=1, max_length=180)
+    craftName: str = Field(min_length=1, max_length=TOOL_CRAFT_NAME_MAX_LENGTH)
     place: str = Field(min_length=1, max_length=180)
     artisanName: str = Field(min_length=1, max_length=180)
     toolkitName: str = Field(min_length=1, max_length=220)
@@ -763,6 +788,35 @@ class ToolCreate(APIModel):
     remarks: str | None = None
     artisanId: str | None = None
     craftId: str | None = None
+    # ── THE CRAFTS AND ARTISANS THIS TOOL IS LINKED TO, PLURAL ──────────────────────────────────
+    #
+    # NEITHER IS A COLUMN. Both are popped by ``routes/tools.py`` and written as ``ToolCraft`` /
+    # ``ToolArtisan`` rows; ``craftId``/``artisanId`` above stay exactly where they are and are
+    # DERIVED from element 0 when these are present and non-empty, so every existing filter, index,
+    # report and carry-forward that reads the singular column reads the same value it always did.
+    # ``craftName`` is derived too — the linked names joined ", " in list order.
+    #
+    # ``artisanIds`` is spelled exactly as :class:`ToolArtisanAssign` below spells it, because it is
+    # the same list of the same ids meaning the same thing. ``POST /tools/{id}/artisans`` remains the
+    # ADDITIVE door (existing links kept, new ones added); this key REPLACES the set, which is what a
+    # record form's multi-select means when it un-ticks a row.
+    #
+    # NULL IS REFUSED, and the validator below is the whole reason the distinction survives. Absent
+    # means "leave the links alone"; ``[]`` means "no links". ``clean_data`` drops ``None`` for
+    # anything outside ``CLEARABLE_KEYS``, and these are not columns so ``_CLEARABLE_COLUMNS`` cannot
+    # carry them — an explicit null would therefore be silently indistinguishable from absent, which
+    # is the one distinction the whole contract rests on.
+    #
+    # ``WorkshopCreate``/``WorkshopUpdate`` ABOVE CARRY THE SAME TWO NAMES AND DO NOT REFUSE A NULL,
+    # and the difference is deliberate rather than an inconsistency nobody noticed. That pair is the
+    # precedent this one is modelled on — same spelling, same ``list[str] | None`` on the update, and
+    # ``workshops.update_workshop`` pops them with the same ``data.pop(…, None)`` and replaces the
+    # set only when the result is not ``None``. A null sent there is read as absent, which is a
+    # smaller defect on that surface because its rosters are edited through their own controls. Here
+    # the ONE edit that cannot otherwise be expressed is the one that removes the last link, so the
+    # two spellings have to stay distinguishable, and the only place they still can be is the parse.
+    craftIds: list[str] | None = None
+    artisanIds: list[str] | None = None
     workshopId: str | None = None
     # The design & prototype workshop this record is filed under. See ArtisanCreate.
     designWorkshopId: str | None = None
@@ -781,9 +835,23 @@ class ToolCreate(APIModel):
     _location_required = model_validator(mode="after")(require_location)
     _measurement_methods = model_validator(mode="after")(validate_measurement_methods)
 
+    @field_validator("craftIds", "artisanIds", mode="before")
+    @classmethod
+    def _no_explicit_null_link_list(cls, value: Any) -> Any:
+        # Pydantic does NOT call a field validator for an absent field with a default, so reaching
+        # this with ``None`` means the caller sent a literal null. Refused rather than coerced to
+        # ``[]``: the two answers do opposite things to stored links, and a client that cannot tell
+        # them apart should be told so at the door rather than discover it a fortnight later when a
+        # queued body replays.
+        if value is None:
+            raise ValueError("send [] to clear the links, or omit the key to leave them alone")
+        return value
+
 
 class ToolUpdate(APIModel):
-    craftName: str | None = Field(default=None, min_length=1, max_length=180)
+    # The same bound as ``ToolCreate.craftName``, by NAME — see ``TOOL_CRAFT_NAME_MAX_LENGTH``. Both
+    # have to move together or a create and its next edit disagree about the same column.
+    craftName: str | None = Field(default=None, min_length=1, max_length=TOOL_CRAFT_NAME_MAX_LENGTH)
     place: str | None = Field(default=None, min_length=1, max_length=180)
     artisanName: str | None = Field(default=None, min_length=1, max_length=180)
     toolkitName: str | None = Field(default=None, min_length=1, max_length=220)
@@ -817,6 +885,35 @@ class ToolUpdate(APIModel):
     remarks: str | None = None
     artisanId: str | None = None
     craftId: str | None = None
+    # ── THE CRAFTS AND ARTISANS THIS TOOL IS LINKED TO, PLURAL ──────────────────────────────────
+    #
+    # NEITHER IS A COLUMN. Both are popped by ``routes/tools.py`` and written as ``ToolCraft`` /
+    # ``ToolArtisan`` rows; ``craftId``/``artisanId`` above stay exactly where they are and are
+    # DERIVED from element 0 when these are present and non-empty, so every existing filter, index,
+    # report and carry-forward that reads the singular column reads the same value it always did.
+    # ``craftName`` is derived too — the linked names joined ", " in list order.
+    #
+    # ``artisanIds`` is spelled exactly as :class:`ToolArtisanAssign` below spells it, because it is
+    # the same list of the same ids meaning the same thing. ``POST /tools/{id}/artisans`` remains the
+    # ADDITIVE door (existing links kept, new ones added); this key REPLACES the set, which is what a
+    # record form's multi-select means when it un-ticks a row.
+    #
+    # NULL IS REFUSED, and the validator below is the whole reason the distinction survives. Absent
+    # means "leave the links alone"; ``[]`` means "no links". ``clean_data`` drops ``None`` for
+    # anything outside ``CLEARABLE_KEYS``, and these are not columns so ``_CLEARABLE_COLUMNS`` cannot
+    # carry them — an explicit null would therefore be silently indistinguishable from absent, which
+    # is the one distinction the whole contract rests on.
+    #
+    # ``WorkshopCreate``/``WorkshopUpdate`` ABOVE CARRY THE SAME TWO NAMES AND DO NOT REFUSE A NULL,
+    # and the difference is deliberate rather than an inconsistency nobody noticed. That pair is the
+    # precedent this one is modelled on — same spelling, same ``list[str] | None`` on the update, and
+    # ``workshops.update_workshop`` pops them with the same ``data.pop(…, None)`` and replaces the
+    # set only when the result is not ``None``. A null sent there is read as absent, which is a
+    # smaller defect on that surface because its rosters are edited through their own controls. Here
+    # the ONE edit that cannot otherwise be expressed is the one that removes the last link, so the
+    # two spellings have to stay distinguishable, and the only place they still can be is the parse.
+    craftIds: list[str] | None = None
+    artisanIds: list[str] | None = None
     workshopId: str | None = None
     # The design & prototype workshop this record is filed under. See ArtisanCreate.
     designWorkshopId: str | None = None
@@ -833,6 +930,18 @@ class ToolUpdate(APIModel):
     # editable); send one to replace it; you may not send null. See forbid_clearing_location.
     _location_kept = model_validator(mode="after")(forbid_clearing_location)
     _measurement_methods = model_validator(mode="after")(validate_measurement_methods)
+
+    @field_validator("craftIds", "artisanIds", mode="before")
+    @classmethod
+    def _no_explicit_null_link_list(cls, value: Any) -> Any:
+        # Pydantic does NOT call a field validator for an absent field with a default, so reaching
+        # this with ``None`` means the caller sent a literal null. Refused rather than coerced to
+        # ``[]``: the two answers do opposite things to stored links, and a client that cannot tell
+        # them apart should be told so at the door rather than discover it a fortnight later when a
+        # queued body replays.
+        if value is None:
+            raise ValueError("send [] to clear the links, or omit the key to leave them alone")
+        return value
 
 
 class ToolArtisanAssign(APIModel):

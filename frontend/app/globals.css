@@ -525,3 +525,110 @@ input[type="number"] {
     display: block;
   }
 }
+
+/* ────────────────────────────────────────────────────────────────────────────
+   THE MINISTRY SURFACE — four screens that belong to the ministry, said in colour
+
+   AppShell stamps `data-surface="ministry"` on <main> for every route whose ROUTE_GUARDS row
+   carries `ministry: true` (/annual-plan, /officers, /officers/monitored, /sanction-orders), and a
+   component that lives OUTSIDE those routes opts in by putting the same attribute on its own root —
+   which is how the ministry desk card, drawn on /dashboard, is themed without editing this file.
+   Every rule below is written twice, as a descendant AND as a self-match, so an opting-in component
+   may carry the attribute on the very element the rule targets.
+
+   ── APPENDED AT END OF FILE, DELIBERATELY ─────────────────────────────────────────────────────
+   Not inside `@layer components`, and not wedged between the layers. Tailwind v3's layers are
+   build-time ORDERING and emit no real `@layer` at-rule, so what decides these rules is selector
+   weight: `[data-surface="ministry"] .panel` is (0,2,0) and both the `.panel` recipe and any single
+   utility are (0,1,0). End-of-file is the one placement that needs no reasoning about layer
+   hoisting at all, and this file already ends in un-layered blocks.
+
+   ── SURFACE ACCENT ONLY. NO ORANGE ON ANY ACTION CONTROL. ─────────────────────────────────────
+   `.field-button`, `.field-button-secondary`, `.field-input`, `.file-trigger`, the global
+   `:focus-visible` outline, `--purple-700` and `shadow-cta` are ALL deliberately absent from this
+   block. Purple-700 remains the only action colour in the product, on a ministry page exactly as on
+   every other. The arithmetic is in tailwind.config.ts beside the ramp: `ministry-700` #923e0d and
+   `amber-800` #92400e are ΔE 0.004 apart — the same colour — and amber is drawn on all four of
+   these screens, so an orange button would sit beside an indistinguishable "Withdrawn" pill and,
+   through `hover:shadow-cta`, throw a saturated PURPLE glow while doing it.
+
+   ── WHAT THIS BLOCK MUST NEVER CONTAIN ────────────────────────────────────────────────────────
+   A bare descendant rule on a utility class — `[data-surface="ministry"] .text-purple-700 { … }`
+   or the same for `.bg-purple-50`. It looks like the tidy way to "finish the job" and it destroys
+   information: StatusBadge paints NEEDS_REVISION and IN_PROGRESS `border-purple-300 bg-purple-50
+   text-purple-700`, deliberately sharing one treatment because both mean somebody is expected to be
+   doing something, and the SAME workshop row is drawn on /design-workshops, on
+   /design-workshop-inspections and on /officers/monitored. Such a rule would make one workshop read
+   purple on a designer's screen and orange on an officer's. This block targets recipe classes only.
+
+   Nor may it re-point `--bg-0` or `--card`. `THEME_COLOR` in lib/preferences.ts drives
+   <meta name="theme-color"> — the mobile address bar — and `applyPreferences` rewrites it on a
+   PREFERENCE change and never on a navigation. An orange page canvas would leave the address bar
+   lavender with no code path in the product that could ever correct it.
+
+   ── THE LIMIT OF THE MECHANISM, RECORDED SO IT IS NOT FOUND IN REVIEW ─────────────────────────
+   Portalled surfaces escape it and stay purple ON PURPOSE. `FieldDialog`, `AnchoredPopover` /
+   `SearchableSelect` panels and `Toast` all `createPortal` to document.body, i.e. outside <main>, so
+   no scope on <main> can reach them. That is the right answer rather than a gap: a dialog, a
+   dropdown panel and a toast are APP chrome that happens to have been raised from a ministry page,
+   not ministry surfaces. The island nav's active pill is purple for the same reason — it is global
+   chrome shared with every route and is rendered before <main>, outside this scope.
+
+   The refusal panel is outside the scope too, by a different route: AppShell stamps the attribute
+   only when the page it guards is actually being served, because `RouteLocked` is shown to somebody
+   who is NOT a ministry account, and putting the ministry accent in front of exactly the person it
+   is not for is the opposite of what it is for.
+   ──────────────────────────────────────────────────────────────────────────── */
+
+/*
+ * The page header's icon chip — the one mark every ministry screen carries, because every one of
+ * them passes an `icon` to PageHeader. `bg-field-200 text-field-600` (surface-200 + purple-700)
+ * everywhere else; here it is the pale ministry ground with ministry ink on it, 6.11:1.
+ *
+ * THE `dark:` PAIR IS NOT OPTIONAL. This ramp is literal and does not invert, so `bg-ministry-100`
+ * is a near-white peach in BOTH themes — as a chip on a dark card it would paint a bright patch,
+ * and `text-ministry-700` on it is the SearchableSelect failure verbatim ("near-black on near-black
+ * once the bar was darkened"). The dark half is CarryContextBanner's own chip pair with the hue
+ * moved: `ministry-900/60` ground, `ministry-200` ink, 10.71:1.
+ */
+[data-surface="ministry"] .field-header-chip,
+.field-header-chip[data-surface="ministry"] {
+  @apply bg-ministry-100 text-ministry-700 dark:bg-ministry-900/60 dark:text-ministry-200;
+}
+
+/*
+ * The ministry spine — a rule down the left edge of every panel on the surface.
+ *
+ * ONLY `border-left-color`, never `border-color`: the other three edges stay `line-200` and keep
+ * inverting with the theme, so the panel is still a themed neutral card wearing one accent stroke.
+ * `border-ministry-300` (no `-l-`) would have painted all four and turned each panel into an orange
+ * box — which is a ground, and grounds are what the address-bar note above rules out.
+ *
+ * 1.75:1 on a light card and 2.44:1 on a dark one. Both read as decoration rather than as text, and
+ * that is the correct reading: this stroke is the SECOND channel. The screens already say what they
+ * are in words — the header titles, "Your ministry desk" — and rule 5 of the frontend contract says
+ * a signal carried only by colour is a signal some readers never get. Nothing here replaces wording.
+ *
+ * The rung flips in dark for the reason the chip's does. Against the panel's own `line-200` border
+ * the accent has to stay the stronger of the two strokes: 1.75 against 1.19 in light, 2.44 against
+ * roughly 1.4 in dark. `ministry-300` in dark would have been a bright stripe, not a rule.
+ */
+[data-surface="ministry"] .panel,
+.panel[data-surface="ministry"] {
+  @apply border-l-2 border-l-ministry-300 dark:border-l-ministry-700;
+}
+
+/*
+ * PROVISION, NOT REPAIR, and said out loud so the next reader does not go looking for the screen it
+ * fixes: `.eyebrow` has NO consumer on any ministry surface today (grep is the check —
+ * `grep -rn eyebrow "app/(protected)/annual-plan" "app/(protected)/officers"
+ * "app/(protected)/sanction-orders"` answers nothing). It is here because the whole point of scoping
+ * RECIPE classes rather than editing pages is that the next ministry screen is right without anybody
+ * being told, and an eyebrow is a purple-700 typographic accent — precisely the kind of mark that
+ * should follow the surface. The `dark:` pair is mandatory for the ramp's usual reason: 2.44:1 on a
+ * dark card without it, 10.06:1 with.
+ */
+[data-surface="ministry"] .eyebrow,
+.eyebrow[data-surface="ministry"] {
+  @apply text-ministry-700 dark:text-ministry-300;
+}

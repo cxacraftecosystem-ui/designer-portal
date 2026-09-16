@@ -49,7 +49,13 @@ import {
 
 import { useAdminView } from "@/components/AdminViewProvider";
 import { useAuth } from "@/components/AuthProvider";
+import {
+  AWAITING_SANCTION_BADGE_CLASS,
+  AWAITING_SANCTION_BADGE_HREF,
+  awaitingSanctionSentence
+} from "@/components/dashboard/ministryDesk";
 import { useAppReducedMotion } from "@/components/guide/useAppReducedMotion";
+import { useAwaitingSanctionCount } from "@/components/hooks/useAwaitingSanctionCount";
 import { useOpenTaskCount } from "@/components/hooks/useOpenTaskCount";
 import { usePendingAccessCount } from "@/components/hooks/usePendingAccessCount";
 import { OPEN_TASK_BADGE_HREF, openTaskBadgeSentence } from "@/components/tasks/openTaskCount";
@@ -146,6 +152,51 @@ function OpenTaskBadge({ count }: { count: number }) {
       <span aria-hidden>{count}</span>
       <span aria-hidden className="font-medium">
         open
+      </span>
+      <span className="sr-only">{sentence}</span>
+    </span>
+  );
+}
+
+/**
+ * HOW MANY SANCTIONED WORKSHOPS ARE STALLED ON THEIR DESIGNER — the badge on "Sanction orders".
+ *
+ * ── WHY AMBER, WHICH IS NEITHER OF THE TWO ARGUMENTS ABOVE ──────────────────────────────────────
+ * It is not the reader's own work, so the purple of the badge above would claim the officer can
+ * finish it by pressing the entry — the thirteen stage-1 fields are the designer's and the officer's
+ * only move is to chase them. It is not a decision anybody has to adjudicate either, which is the
+ * strict reading of amber. What settles it is the screen the number points AT: the register draws
+ * exactly these rows with an amber `bg-amber-100 text-amber-800` readiness pill reading "Awaiting
+ * designer details", so the badge is that pill added up, in that pill's colour. One fact, one
+ * colour, on the chrome and on the row.
+ *
+ * ── WHY THE PILL AND THE SENTENCE COME FROM ANOTHER MODULE ──────────────────────────────────────
+ * This count is drawn by a component outside this file too — the ministry desk card on /dashboard —
+ * and on a ministry officer's dashboard both are on screen at once. The two badges above are one
+ * component each rendered twice, so a literal class string is safe for them; this one would be two
+ * strings in two files, which is how two pills start disagreeing about a colour. The class, the
+ * destination and the sentence are all in `components/dashboard/ministryDesk.ts`, and both
+ * renderers read the same module-level count store, so they cannot differ in pixels, in wording or
+ * in number.
+ *
+ * ── AND NOTHING HERE TURNS ORANGE, INCLUDING THE ENTRY THIS SITS ON ─────────────────────────────
+ * `/sanction-orders` is one of the four ministry surfaces, and when it is the current route the
+ * island's active pill and the sheet's active row stay purple — `text-purple-700` / `bg-purple-50
+ * text-purple-700`, untouched. The island is `fixed`, rendered in `AppShell` BEFORE <main>, so the
+ * `data-surface="ministry"` scope cannot reach it even in principle; but it is also the right answer
+ * rather than a limitation. The active state means "you are here", it is drawn identically on every
+ * route in the product, and it is chrome shared with every audience — a designer and a ministry
+ * officer read the same bar. Repainting it per destination would make the one mark that means "you
+ * are here" mean "and this is whose screen it is" as well.
+ */
+function AwaitingSanctionBadge({ count }: { count: number }) {
+  if (count <= 0) return null;
+  const sentence = awaitingSanctionSentence(count);
+  return (
+    <span title={sentence} className={`ml-auto ${AWAITING_SANCTION_BADGE_CLASS}`}>
+      <span aria-hidden>{count}</span>
+      <span aria-hidden className="font-medium">
+        awaiting
       </span>
       <span className="sr-only">{sentence}</span>
     </span>
@@ -768,6 +819,29 @@ export function DynamicIslandNav() {
   const tasksEntryVisible = visibleItems.some((item) => item.href === OPEN_TASK_BADGE_HREF);
   const openTaskCount = useOpenTaskCount(tasksEntryVisible) ?? 0;
 
+  /**
+   * HOW MANY SANCTIONED WORKSHOPS ARE STALLED ON THEIR DESIGNER — the badge on "Sanction orders".
+   *
+   * The server has offered this number since the register shipped (`GET /sanction-orders/awaiting-
+   * count`, whose docstring calls itself THE NOTIFICATION) and nothing had ever asked for it. An
+   * officer records an order, hands over a sign-in link, and until now the only way to learn that
+   * the designer never filled stage 1 in was to open the register and read every row.
+   *
+   * `enabled` is "the badged entry is actually on screen", the same expression as the two counts
+   * above and for the same two reasons. It folds in the permission — the endpoint is
+   * `require_sanction_recorder` and the entry's `can` is its mirror — so an account that would be
+   * refused never spends the request and is never logged as an authorisation failure while doing
+   * nothing wrong; and it folds in admin view, so an admin browsing as an ordinary user is not shown
+   * chrome they have hidden. The ministry desk card on /dashboard reads the same store, so the two
+   * surfaces cannot show different numbers.
+   *
+   * Nothing here touches the pill: "Sanction orders" is `group: "Record"`, so this badge is drawn
+   * inside a dropdown panel or the sheet, never among `rootItems` — the only entries whose width the
+   * compact/expanded `layout` projection measures.
+   */
+  const sanctionEntryVisible = visibleItems.some((item) => item.href === AWAITING_SANCTION_BADGE_HREF);
+  const awaitingSanctionCount = useAwaitingSanctionCount(sanctionEntryVisible) ?? 0;
+
   if (!user) return null;
 
   async function handleLogout() {
@@ -866,6 +940,9 @@ export function DynamicIslandNav() {
                               <PendingAccessBadge count={pendingAccessCount} />
                             ) : null}
                             {item.href === OPEN_TASK_BADGE_HREF ? <OpenTaskBadge count={openTaskCount} /> : null}
+                            {item.href === AWAITING_SANCTION_BADGE_HREF ? (
+                              <AwaitingSanctionBadge count={awaitingSanctionCount} />
+                            ) : null}
                           </span>
                         </HoveredLink>
                       ))}
@@ -972,6 +1049,9 @@ export function DynamicIslandNav() {
                         on a pointer-driven hover menu does not reach an admin on a tablet. */}
                     {item.href === PENDING_ACCESS_BADGE_HREF ? <PendingAccessBadge count={pendingAccessCount} /> : null}
                     {item.href === OPEN_TASK_BADGE_HREF ? <OpenTaskBadge count={openTaskCount} /> : null}
+                    {item.href === AWAITING_SANCTION_BADGE_HREF ? (
+                      <AwaitingSanctionBadge count={awaitingSanctionCount} />
+                    ) : null}
                   </Link>
                 ))}
               </div>

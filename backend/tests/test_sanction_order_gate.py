@@ -26,6 +26,8 @@ a row anywhere.
 
 from __future__ import annotations
 
+import asyncio
+import inspect
 import re
 from pathlib import Path
 from typing import Any
@@ -150,7 +152,14 @@ def test_every_route_on_the_prefix_carries_the_sanction_gate_read_included() -> 
     or lost it to a renamed decorator, is caught either way.
     """
     routes = [route for route in sanction_routes.router.routes if hasattr(route, "dependant")]
-    assert len(routes) == 7, [getattr(r, "path", None) for r in routes]
+    # ELEVEN SINCE 0.0.12, AND THE NUMBER IS UPDATED BY HAND ON PURPOSE. It was 7 until the
+    # multi-designer release added the designer directory, the pro-forma download and the two
+    # halves of the bulk import. A test that counted ``len(routes)`` against itself would pass
+    # for a router that had lost a route as readily as for one that had gained one; the point of
+    # a hard-coded number here is that adding a door to this prefix has to be a DELIBERATE act,
+    # because every door on it reads a register of named designers, their personal addresses and
+    # the public money attached to them. Do not loosen this into an inequality.
+    assert len(routes) == 11, [getattr(r, "path", None) for r in routes]
     for route in routes:
         calls = _dependency_calls(route.dependant)
         assert sanction_routes.require_sanction_recorder in calls, route.path
@@ -185,9 +194,18 @@ def test_the_awaiting_count_is_declared_before_the_id_route() -> None:
     paths = [
         route.path for route in sanction_routes.router.routes if "GET" in (route.methods or set())
     ]
-    assert paths.index("/sanction-orders/awaiting-count") < paths.index(
-        "/sanction-orders/{sanction_id}"
-    ), paths
+    catch_all = paths.index("/sanction-orders/{sanction_id}")
+    # ── EVERY LITERAL PATH, NOT JUST THE ONE THIS TEST WAS NAMED AFTER ──────────────────────
+    # 0.0.12 added three more literal GETs to this prefix, and a test that checked only the
+    # badge's would have gone on passing while the designer picker answered 404 'Sanction order
+    # not found' and the pro-forma download did nothing. The rule is about the SHAPE of a path
+    # and not about any one endpoint, so it is asserted that way: anything without a ``{`` in it
+    # is a literal and must come first.
+    literals = [path for path in paths if "{" not in path]
+    assert "/sanction-orders/designers" in literals, paths
+    assert "/sanction-orders/pro-forma.xlsx" in literals, paths
+    for literal in literals:
+        assert paths.index(literal) < catch_all, (literal, paths)
 
 
 # --------------------------------------------------------------------------------------
@@ -353,3 +371,202 @@ def test_the_sanction_facts_are_not_promoted_columns() -> None:
     assert "workshopSetup.sanctionOrderNo" not in PROMOTED_COLUMNS
     assert "workshopSetup.sanctionOrderDate" not in PROMOTED_COLUMNS
     assert len(PROMOTED_COLUMNS) == 14, sorted(PROMOTED_COLUMNS)
+
+
+# --------------------------------------------------------------------------------------
+# The fifth door
+# --------------------------------------------------------------------------------------
+
+
+def test_the_designer_directory_is_the_fifth_door_and_not_a_widened_gate() -> None:
+    """``GET /sanction-orders/designers`` exists BECAUSE the four older doors refuse rank 42.
+
+    ── WHY THIS ENDPOINT IS NOT A DUPLICATE ──────────────────────────────────────────────────────
+
+    ``can_record_sanction_orders`` is a rank floor at ASSISTANT_DIRECTOR (42), and every pre-existing
+    designer list is gated above that:
+
+      * ``GET /designers/roster`` and ``GET /designers/directory`` — ``require_designer_roster_manager``
+      * ``GET /design-workshops/eligible-viewers`` — ``require_admin``, the SET {ADMIN, MASTER_ADMIN}
+      * ``GET /design-workshop-oversight/designers`` — ``require_workshop_assigner``,
+        {MINISTRY_ADMIN, ADMIN, MASTER_ADMIN}
+
+    So an Assistant Director (42) and a Regional Director (45) could record a sanction order — the
+    act this whole prefix exists for — and reach no list of the people they were naming on it.
+
+    ── WHAT THIS TEST ACTUALLY REFUSES ───────────────────────────────────────────────────────────
+
+    The tempting "fix" was to widen one of the four instead of adding a fifth. This asserts the two
+    sets that must NOT have grown, by reading the predicates rather than the prose:
+
+      * ``is_admin`` must still be exactly {ADMIN, MASTER_ADMIN}. It is what stands in front of
+        ``eligible-viewers``, and widening it would have moved a great deal more than one picker.
+      * ``OVERSIGHT_ASSIGNER_ROLES`` must still exclude REGIONAL_DIRECTOR — "the supervised must not
+        choose the supervisor" — even though a Regional Director outranks a Ministry Admin's gate on
+        every other axis. A Regional Director who needs a designer LIST does not need the power to
+        appoint the officer who monitors them, and this endpoint is what lets those two stay apart.
+    """
+    from app.core.deps import is_admin
+    from app.services.design_workshop_oversight import OVERSIGHT_ASSIGNER_ROLES
+
+    paths = [route.path for route in sanction_routes.router.routes]
+    assert "/sanction-orders/designers" in paths, paths
+
+    assert is_admin(Fake("ADMIN")) and is_admin(Fake("MASTER_ADMIN"))
+    for outsider in ("MINISTRY_ADMIN", "REGIONAL_DIRECTOR", "ASSISTANT_DIRECTOR", "DESIGNER"):
+        assert not is_admin(Fake(outsider)), outsider
+
+    assert "REGIONAL_DIRECTOR" not in set(OVERSIGHT_ASSIGNER_ROLES), OVERSIGHT_ASSIGNER_ROLES
+    assert "ASSISTANT_DIRECTOR" not in set(OVERSIGHT_ASSIGNER_ROLES), OVERSIGHT_ASSIGNER_ROLES
+
+
+def test_the_designer_directory_answers_four_keys_and_no_roster_judgement() -> None:
+    """The officer's payload carries ``id``/``name``/``email``/``role`` and nothing about standing.
+
+    Whether a designer has a suspension on file is not an officer's business — it is a judgement the
+    institution made about a person, and the gate that guards it (``can_manage_designer_roster``) is
+    deliberately one an officer cannot pass. The four-key payload is the honest middle: it reveals
+    what the officer is already holding on paper and conceals every roster column.
+
+    Asserted over the SHARED helper, because this route and ``/design-workshop-oversight/designers``
+    answer with the same one — "two doors, one query, two payloads" — and a fifth door that built its
+    own dict would be free to grow a fifth key nobody reviewed.
+    """
+    from app.services.designers import assignable_designers_payload
+
+    class Row:
+        id = "u1"
+        name = "Ramesh Kumar"
+        email = "r.kumar@gmail.com"
+        role = "DESIGNER"
+
+    payload = assignable_designers_payload([Row()])
+    assert payload == [
+        {"id": "u1", "name": "Ramesh Kumar", "email": "r.kumar@gmail.com", "role": "DESIGNER"}
+    ]
+    for forbidden in ("rosterActive", "canSignIn", "firstSeenAt", "institution", "rosterId"):
+        assert forbidden not in payload[0], forbidden
+
+
+def test_the_designer_directory_offers_no_admin_account_to_an_officer(monkeypatch) -> None:
+    """⚠ THE PAYLOAD WAS THE REVIEWED HALF; THE ROW SET WAS NOT.
+
+    ``workshop_capable_accounts`` admits ADMIN and MASTER_ADMIN unconditionally — they are never
+    roster-gated, which is right for the two admin-adjacent doors that read it. The fifth door is
+    ``require_sanction_recorder``, a rank floor at ASSISTANT_DIRECTOR, and it would have answered a
+    complete privileged-account directory (role and address included, by the ``role`` key the test
+    above pins as safe) to a tier refused every other designer list in the product — and then let
+    that officer name a MASTER_ADMIN on an order.
+
+    Asserted over the COMPOSED ``where`` rather than by grepping the route, because the property is
+    "no admin row can come back", not "a keyword argument is spelled". A fake client captures the
+    query; nothing here touches a database.
+    """
+    from app.services import designers as designers_service
+    from app.services import design_workshop_viewers
+
+    captured: dict[str, Any] = {}
+
+    class FakeUsers:
+        @staticmethod
+        async def find_many(**kwargs: Any) -> list[Any]:
+            captured.update(kwargs)
+            return []
+
+    class FakeDb:
+        user = FakeUsers()
+
+    async def fake_roster() -> tuple[list[str], bool]:
+        return ["designer@example.org"], False
+
+    monkeypatch.setattr(designers_service, "db", FakeDb())
+    monkeypatch.setattr(design_workshop_viewers, "active_roster_emails", fake_roster)
+
+    def roles_and_arms(where: dict[str, Any]) -> tuple[set[str], list[Any]]:
+        """The role ``IN`` list and the eligibility ``OR``'s arms, read out of the composed query.
+
+        Read structurally rather than by substring: ``"ADMIN" in repr(where)`` is true of
+        ``MINISTRY_ADMIN`` and would have passed this test over a query that still offered every
+        master admin in the installation.
+        """
+        clauses = where["AND"]
+        roles = set(clauses[0]["role"]["in"])
+        arms = next((clause["OR"] for clause in clauses[1:] if "OR" in clause), [])
+        return roles, arms
+
+    asyncio.run(designers_service.workshop_capable_accounts(include_admins=False))
+    roles, arms = roles_and_arms(captured["where"])
+    assert "ADMIN" not in roles and "MASTER_ADMIN" not in roles, roles
+    assert "DESIGNER" in roles, roles
+    assert arms == [
+        {"AND": [{"role": "DESIGNER"}, {"email": {"in": ["designer@example.org"], "mode": "insensitive"}}]}
+    ], "the officer's picker must be the empanelled designer roster and nothing else"
+
+    captured.clear()
+    asyncio.run(designers_service.workshop_capable_accounts())
+    roles, arms = roles_and_arms(captured["where"])
+    assert {"ADMIN", "MASTER_ADMIN"} <= roles, (
+        "the default must still admit admins — the two admin-adjacent doors depend on it"
+    )
+    assert {"role": {"in": ["ADMIN", "MASTER_ADMIN"]}} in arms, arms
+
+    # And the fifth door is the one that asks for the narrow set.
+    source = inspect.getsource(sanction_routes.list_sanction_designers)
+    assert "include_admins=False" in source, source
+
+
+def test_the_upload_pair_is_a_preview_then_a_write_and_never_one_route() -> None:
+    """Two POSTs, and only the second one creates anything.
+
+    THE SPLIT IS THE FEATURE. A one-shot import would have to decide, on the officer's behalf, what
+    a row whose two designer columns disagree means — and the whole argument of
+    ``services/sanction_import`` is that some of those rows have no correct answer without a human.
+    A preview that could write would also mean an officer who uploaded the wrong file had already
+    admitted forty people to the platform before seeing a single row of it.
+
+    The status codes carry that distinction and are asserted here rather than left to a docstring:
+    200 for the read (nothing was created) and 201 for the write.
+    """
+    by_path = {
+        (route.path, tuple(sorted(route.methods))): route
+        for route in sanction_routes.router.routes
+        if hasattr(route, "methods")
+    }
+    preview = by_path[("/sanction-orders/upload", ("POST",))]
+    confirm = by_path[("/sanction-orders/upload/confirm", ("POST",))]
+    assert preview.status_code in (None, 200), preview.status_code
+    assert confirm.status_code == 201, confirm.status_code
+
+
+def test_the_five_standing_refusals_are_never_offered_for_confirmation() -> None:
+    """The governing rule of the confirmation step, asserted against the code that implements it.
+
+    An ended empanelment, a barred address, an account that cannot run a workshop, the officer's own
+    mailbox and a mailbox two accounts answer to are all decisions an ADMINISTRATOR took on a screen.
+    A confirmation step that could overturn one would make a spreadsheet the senior authority — so
+    every one of them is answered by ``designer_standing_verdict``, and a row that trips one is
+    REFUSED rather than sent to the human.
+
+    Asserted by reading the reconciliation's source for the two lines that make it true: the
+    standing verdict is consulted, and its refusal takes the ``refuse`` arm rather than appending a
+    question. A future edit that turned one of these into a ``RowQuestion`` would have to delete one
+    of them, which is the point.
+    """
+    import inspect
+
+    from app.services import sanction_import
+
+    source = inspect.getsource(sanction_import._review_one_row).replace("\r\n", "\n")
+    assert "designer_standing_verdict(" in source
+    assert "return refuse(verdict.refusal.detail)" in source
+    # AND THE SENTENCES ARE IMPORTED, NEVER RETYPED. Every refusal the importer shows comes out of
+    # ``services/sanction_orders`` through the verdict; a literal refusal sentence spelled in the
+    # importer would be a fourth wording of a rule that three surfaces already agree on.
+    whole = inspect.getsource(sanction_import).replace("\r\n", "\n")
+    body = whole.split('"""', 2)[2] if whole.count('"""') >= 2 else whole
+    for spelled_elsewhere in (
+        "has been ended. A sanction order does not restore it",
+        "cannot let somebody back in",
+        "cannot name the officer recording it",
+    ):
+        assert spelled_elsewhere not in body, spelled_elsewhere

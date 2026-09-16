@@ -47,12 +47,25 @@ import type { GuideStep } from "@/components/guide/steps";
  *     nothing to point at and the tour dead-ends mid-sequence. That is what makes it a second copy
  *     of `ROUTE_GUARDS`, and a copy that is WRONG dead-ends a reader.
  *   * THIS is a copy of nothing. It is prose about five screens, in one file, read by a card
- *     renderer that fetches nothing and anchors to nothing. The role picks which deck OPENS —
- *     `guideTrackFor` in `tracks.ts`, four lines, over predicates already exported by
- *     `lib/permissions.ts` — and every deck stays reachable from the switcher afterwards, because
- *     the ungated-page argument above applies in both directions: a designer should be able to read
- *     what their Regional Director is looking at. Nothing here can dead-end, because nothing here
- *     is a sequence through live pages.
+ *     renderer that fetches nothing and anchors to nothing. The role picks which deck opens, and
+ *     since 2026-09-16 also which decks may be read at all — `guideTrackFor` and `guideTracksFor` in
+ *     `tracks.ts`, over predicates already exported by `lib/permissions.ts`. Nothing here can
+ *     dead-end, because nothing here is a sequence through live pages: the worst a wrong answer does
+ *     is show a reader prose about somebody else's job.
+ *
+ *     ⚠ THE CLAUSE THAT USED TO END THAT BULLET IS NOW FALSE AND IS RECORDED RATHER THAN DELETED:
+ *     "every deck stays reachable from the switcher afterwards, because the ungated-page argument
+ *     above applies in both directions: a designer should be able to read what their Regional
+ *     Director is looking at." The owner ruled the other way on 2026-09-16 — only an ADMIN and a
+ *     MASTER ADMIN keep the switcher, and this deck is now shown to the three ministry posts and to
+ *     nobody else. Reason 2 above is the bullet that feels the change: the designer's deck is still
+ *     read by people who are not designers (it is the fallback for seven tiers, the count
+ *     `GuideOutro.tsx` states — this said five until 2026-09-16 and was simply wrong), while THIS
+ *     deck no longer is, so the "different gates cannot share one padlock sentence" argument protects
+ *     the three posts reading it rather than a wider audience. That makes the per-card "who this
+ *     screen is for" sentences MORE necessary, not less: two of these five screens refuse a Regional
+ *     Director who outranks an Assistant Director, and the reader can no longer step out to another
+ *     deck to work out why.
  *
  * The part of cost 5 that stands, and is not being argued away: a reader who opens a card below and
  * presses "Open Annual plan" without the tier lands on a lock panel. That is the same bargain the
@@ -133,22 +146,30 @@ export const DIRECTORATE_STEPS: GuideStep[] = [
     why:
       "A row here is a plan and not a workshop: it carries the number, the date, the state, the district and the venue, and nothing in this product acts on it until somebody opens it. That distinction is the whole value of the screen. It lets the directory be corrected all year — a venue moves, a district is re-cut, a date slips — without any of those corrections reaching a workshop that is already running, and it gives a Ministry Admin one place to answer \"is this one planned, opened, or withdrawn?\" for the whole year at once.",
     // Read off `app/(protected)/annual-plan/page.tsx` in screen order (the filter row, which is the
-    // only labelled form on the page), then the two controls inside `UploadPlanDialog.tsx`. The
-    // three header buttons are named in `watch` rather than here, because they are actions and not
-    // things the screen asks you for.
+    // only labelled form on the page), then the two controls inside `UploadPlanDialog.tsx`, then the
+    // one inside `PromoteDialog.tsx`. The three header buttons are named in `watch` rather than
+    // here, because they are actions and not things the screen asks you for.
+    //
+    // THE PROMOTE DIALOG'S PICKER IS LISTED BECAUSE IT IS A BOX THE SCREEN ASKS YOU FOR, and because
+    // the deck spent a release telling this reader it did not exist — see the promotion bullet in
+    // `watch`. It is `WorkshopDesignerPicker`, whose `FieldBlock` label is the string below; the lead
+    // chooser under it has no visible label of its own and appears only from two designers upward,
+    // so it is named as a clause rather than as a row of its own.
     fields: [
       "Plan year",
       "Search (Workshop No., title or venue)",
       "Show — Every row, Planned only, Already opened, Withdrawn",
       "Order by — Date, Workshop No., District, Last changed",
       "The plan workbook (.xlsx) — on Upload the plan",
-      "“Withdraw the workshops that are in this year's plan and not in this sheet” — a tickbox on the same dialog"
+      "“Withdraw the workshops that are in this year's plan and not in this sheet” — a tickbox on the same dialog",
+      "Designers this workshop is for — on Open workshop, with the lead chooser under it once two are ticked"
     ],
     watch: [
       "THIS SCREEN IS THE MINISTRY ADMIN'S ALONE, and it is the only one of the five that is a rank floor rather than a set: an Assistant Director and a Regional Director are both below it and are refused. The reason is written into the server (`can_manage_annual_plan`) and is worth knowing rather than resenting — the plan is a national instrument and the table carries no per-region column, so the change that let a Regional Director correct their own state's rows would hand them the whole directory. If regional editing is ever wanted it is a scope table, not a promotion.",
       "Upload the WHOLE sheet every time. Rows already in the plan are corrected, new rows are added, and uploading the same sheet twice changes nothing at all — that is how you confirm an earlier upload landed. The report afterwards lists every field it changed, from what to what.",
       "The tickbox is the destructive-looking one and it is not destructive. Ticking it marks every planned row the sheet does not mention as withdrawn; nothing is deleted, and a withdrawn row comes back the moment a later sheet names it. Leave it unticked when the sheet is a partial correction.",
-      "OPENING A WORKSHOP FROM A ROW CAN ONLY BE DONE ONCE, and it names no designer. Everything in the row is copied onto the new workshop and into its stage 1, the designer block of stage 1 is left empty, and the designers who will run it are added on the workshop's own screen afterwards.",
+      "OPENING A WORKSHOP FROM A ROW CAN ONLY BE DONE ONCE, AND IT MAY NAME THE DESIGNERS AS IT OPENS. Everything in the row is copied onto the new workshop and into its stage 1, and the dialog carries a designer picker: everybody you name is given access to the workshop as it is created, and the one marked lead has their designer profile copied into stage 1 and stage 3. Naming nobody is still a real answer and not a failure — the designer block of stage 1 is then left empty, which is the right empty, and designers are added afterwards.",
+      "“AFTERWARDS” IS Workshop oversight, WHICH IS THE NEXT CARD, AND NOT THE WORKSHOP'S OWN SCREEN. Adding a designer to a workshop that is already open is the Designers panel on that screen. The one on the workshop itself — “Designers on a workshop” — is an admin's, and a Ministry Admin is redirected away from it, so the promotion is the one moment you can seed stage 1 with the lead's profile without leaving the annual plan. That is why the picker is worth using rather than skipping.",
       "AFTER A ROW IS OPENED, CORRECTING THE PLAN CORRECTS THE DIRECTORY AND NOTHING ELSE. The workshop is not touched, and the screen says so twice — once in the toast, once in an amber banner on the upload report naming the rows this happened to. If the venue on a running workshop is wrong, it is wrong on the workshop, and that is where it is fixed.",
       "A workshop that has already been opened is never withdrawn, whatever the sheet says."
     ]
@@ -169,17 +190,33 @@ export const DIRECTORATE_STEPS: GuideStep[] = [
       "Everything else in this product assumes the designer is already here. A sanction order is the moment they are not: a name and a Gmail address on a signed document, and no account, no empanelment and no workshop anywhere in the system. Recording the order does all of it at once and in one transaction — the address is admitted to the platform allow-list, the designer is empanelled, an account is created if that mailbox has none, a workshop is opened in their name, and a one-time sign-in link is minted. Doing those five by hand on five screens is five chances to do four of them.",
     // Read off `app/(protected)/sanction-orders/page.tsx` in screen order. `Field required` renders
     // the red asterisk, so "(required)" here is the same fact the box shows.
+    //
+    // ⚠ RE-READ 2026-09-16, AND TWO OF THESE ROWS NAMED CONTROLS THE SCREEN NO LONGER HAS. The card
+    // listed "Designer's name (required)" and "Designer's Gmail ID (required)"; 0.0.12 replaced that
+    // single pair with a DESIGNER PICKER plus an optional typed pair for somebody the platform does
+    // not know yet, and NEITHER of the typed boxes is `required` any more — the page's own comment
+    // on them says so, because the browser cannot express "one of these two" and the submit handler
+    // checks it instead. A reader hunting the deck's required "Designer's name" finds no such box,
+    // and the two that carry that wording are the not-on-the-list-yet path rather than the ordinary
+    // one. The header's two actions are listed last: they are the import half of the screen and a
+    // reader planning a sitting needs to know the register can be typed into a workbook.
     fields: [
       "Sanction order number (required)",
       "Sanction date (required)",
       "Sanction amount (₹) (required)",
-      "Designer's name (required)",
-      "Designer's Gmail ID (required)",
-      "Notes"
+      "Designers this workshop is for — the picker, with the lead chooser under it once two are ticked",
+      "Or a designer who is not on the list yet — their name",
+      "Their Gmail ID",
+      "Notes",
+      "Pro-forma and Upload a sheet — the two buttons in the page header"
     ],
     watch: [
       "ASSISTANT DIRECTOR AND ABOVE, AND THIS IS THE ONE PLACE IN THE DESIGN-WORKSHOP FAMILY THAT REALLY IS A RANK FLOOR. All three directorate tiers can record an order. Reading the register is the same gate as writing it — every route on it, the list included, is behind the same dependency, because the register is a list of named people and the amounts sanctioned against them.",
-      "NOTHING IS EMAILED, BY ANYBODY, EVER. This product has no mail sender. The sign-in link appears on screen once, together with a message you can copy, and you send it yourself by whatever you already use. It works once and it expires — the screen prints the exact moment. If you lose it before sending it, re-issue it from the row.",
+      "NOTHING IS EMAILED, BY ANYBODY, EVER. This product has no mail sender. One link appears on screen per account the order created, together with a message you can copy, and you send each one yourself by whatever you already use. A link works once and it expires — the screen prints the exact moment. Send them while they are on screen: nothing can show a link again, because the server keeps only a digest of it.",
+      "RE-ISSUING FROM THE ROW IS THE LEAD'S LINK AND ONLY THE LEAD'S. The button on the register re-mints for the first designer named on the order, which is the one the register holds. There is no route in this product that can re-issue a CO-DESIGNER'S first link, so if you lose one of those the remedy is an administrator on Users, not this screen. The button is drawn only on an order that actually created an account: one naming somebody who was already here issued nothing, so there is nothing to re-issue.",
+      "AN ORDER MAY NAME SEVERAL DESIGNERS, AND THE FIRST IS THE LEAD. Everybody named gets the same five things — the allow-list admission, the empanelment, an account if that mailbox has none, a profile and access to the workshop — but only ONE name reaches the document: the lead's profile is what is copied into stage 1 and stage 3, and the lead is whose name the report carries. The picker prints who that is, and lets you change it, from two designers upward.",
+      "A SHEET RECORDS NOTHING UNTIL YOU CONFIRM IT. “Pro-forma” downloads the blank workbook to type the office's orders into; “Upload a sheet” reads one back and shows you every row it found and every row it could not, and not one order exists until you press the confirm on that review. Correct the sheet and upload it again as often as you like before then — nothing has happened yet.",
+      "AN IMPORT ISSUES NO SIGN-IN LINKS AT ALL, and this is the one cost of doing it by sheet. Two hundred one-time credentials on one screen is a screen whose accidental closure strands two hundred designers, so the import throws them away: every imported designer whose account was newly created needs their link re-issued by hand from their row.",
       "If that Gmail address already has an account, no link is issued at all and none is needed: they sign in as they always do and the new workshop is simply on their list. The screen says so instead of showing you a link that would not work.",
       "⚠ YOU CANNOT AUTHOR THE WORKSHOP YOUR OWN ORDER OPENED. You may read every stage of it and generate its report, and the moment you try to SAVE one the server answers 403 by name: \"You recorded the sanction order that opened this workshop, so you cannot also author it.\" It is a test on the rows and not on the tier — it fires only where the same account both recorded the order and opened the workshop — so a Regional Director filling in a workshop somebody else sanctioned is untouched. The work belongs to the designer the order names.",
       "YOU CANNOT NAME YOURSELF AS THE DESIGNER. It is refused before anything at all is written — it is the first of the checks, because it is the only one that needs no lookup — so nothing is half-created when it fires.",
@@ -202,13 +239,20 @@ export const DIRECTORATE_STEPS: GuideStep[] = [
     why:
       "A workshop with no designer named on it cannot be opened by anybody and its stage 1 and stage 3 start empty; a workshop with no Assistant Director and no Regional Director is nobody's to read back. Those three postings are what turn an opened workshop into one somebody is accountable for, and they are deliberately not the designer's to make — nobody chooses who supervises their own work. The artisan roster is on the same screen because it is the same act of staffing: it is the list of people the fortnight is for.",
     // NOT the real form labels: this screen's only labelled text boxes are search boxes, and
-    // everything that changes anything is a picker row with a button on it. So the rows are the
-    // four panel headings and the button that commits each — every one of them a thing a reader can
+    // everything that changes anything is a picker with a button under it. So the rows are the FIVE
+    // panel headings and the control that commits each — every one of them a thing a reader can
     // point at on screen. See the header's note on which cards may take this exception and why.
+    //
+    // ⚠ RE-READ OFF THE PAGE 2026-09-16, AND THREE OF THESE NAMED BUTTONS THAT NO LONGER EXIST.
+    // 0.0.12 replaced the add-only lists with whole-set pickers and an explicit Save, and added the
+    // inspectors panel to this screen: “Name as designer”, “Name as Assistant Director” and
+    // “Name as Regional Director” are gone, and the two officer slots are now dropdowns whose
+    // unassign is a ROW inside the control rather than a button beside it.
     fields: [
       "Workshop — the picker at the top; everything below is about the one you chose",
-      "Designer → “Name as designer”",
-      "Assistant Director and Regional Director → “Name as Assistant Director”, “Name as Regional Director”",
+      "Designers this workshop is for → “Save who this workshop is for”",
+      "Assistant Director and Regional Director — a dropdown each, saved the moment you choose, with “Nobody is assigned” as a row in the list",
+      "Inspection of a design workshop → “Save who inspects this”",
       "Artisan list → “Download the pro-forma”, then “Filled-in artisan list” (.xlsx, up to 4 MB)",
       "Earlier uploads — every artisan list this workshop has had, with what each one did"
     ],

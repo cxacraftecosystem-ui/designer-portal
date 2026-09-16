@@ -24,6 +24,16 @@ import { useHeroReducedMotion } from "@/components/hero/useHeroMotion";
  *
  * SIX LINES IS WHERE THIS STOPS. One line per chapter would be a table of contents, and a table of
  * contents is the thing this section is trying to get somebody to open rather than to read here.
+ *
+ * ⚠ AND SINCE 2026-09-16 THESE ARE THE DESIGNER'S CHAPTERS RATHER THAN EVERYBODY'S, which the
+ * paragraph below now says out loud. `/guide` carries three decks and `guideTracksFor`
+ * (`components/guide/tracks.ts`) shows each account only the one its role owns — so an Inspector /
+ * Reviewer opens on the inspection deck and the three ministry posts on the directorate deck, and
+ * neither contains the artisan records, the interview, the review ladder, the sharing or the
+ * designer profile listed here. This list is still right for the audience the heading addresses
+ * ("Never documented a craft before?"), and naming it as the designer's is what keeps it a promise
+ * the product can keep. Do not extend it into three lists: the other two decks are a ministry and an
+ * inspection surface, and this band is on a public landing page for people who have neither.
  */
 const CHAPTERS = [
   "Recording an artisan and carrying them into a product",
@@ -63,11 +73,25 @@ export default function WalkthroughCallout() {
           <h2 className="font-display text-2xl font-bold tracking-tight text-ink-900 sm:text-3xl">
             Never documented a craft before? Start with the walkthrough.
           </h2>
+          {/*
+            IT SAID "EVERY ACCOUNT GETS THE SAME GUIDED TOUR" UNTIL 2026-09-16, and the deck scoping
+            made that unkeepable: the walkthrough now opens on the deck the account's role owns, so an
+            Inspector / Reviewer and the three ministry posts are handed a different document from the
+            one the six chapters below describe, with no switcher on screen to reach this one. The
+            promise is kept by narrowing it — every account still gets a whole walkthrough, and the
+            chapters listed are named as the designer's.
+
+            NO COUNT OF DECKS IS STATED, for the reason the list above states none of chapters: the
+            number is `GUIDE_TRACKS.length` and this file cannot see it. The other two are named by
+            what they are for instead, which is what a reader on a landing page can act on anyway.
+          */}
           <p className="mt-3 max-w-2xl text-base leading-relaxed text-ink-500">
-            Every account gets the same guided tour of the documentation process — what each record
-            type is for, what makes a good interview, and how work travels from the field to an
-            approved, exportable dataset. For a designer it keeps going: how a design &amp; prototype
-            workshop runs from its first stage to a submitted report.
+            Every account gets a guided tour of the part of the process it works — a ministry post
+            opens on the annual plan and the sanction register, an inspector on the workshops assigned
+            to them. The chapters below are the designer&rsquo;s: what each record type is for, what
+            makes a good interview, how work travels from the field to an approved, exportable
+            dataset, and how a design &amp; prototype workshop runs from its first stage to a
+            submitted report.
           </p>
           <ul className="mt-6 grid gap-2 sm:grid-cols-2">
             {CHAPTERS.map((chapter) => (

@@ -159,18 +159,25 @@ val PRODUCT_MEASURE_DIMENSIONS: List<DwRecordDimension> = listOf(
  *
  * ── WHY THE TOOL'S OTHER "Height" BOX IS STILL NOT HERE ───────────────────────────────────────
  *
- * `ToolDocumentation` carries TWO heights and only one of them can be a measurement destination.
- * `heightInches` below is the one this proposes into: it states its unit in its own name, exactly as
- * length and breadth do. The tool form's other box, bound to `ToolCreateRequest.height`, is a bare
- * `Decimal` that declares no unit anywhere — not in the column name, not in the schema, not on the
- * label the designer reads — and it keeps holding whatever was typed, in a unit nothing records.
+ * `ToolDocumentation` carries TWO heights and only one of them can be a PROPOSAL DESTINATION.
+ * `heightInches` below is it: this panel measures in inches, and that column states its unit in its
+ * own name exactly as length and breadth do.
  *
- * That is not an oversight to tidy up later. A geometric measurement's whole advantage over the
- * vision model is that the number can be trusted, and a trustworthy number in a field that does not
- * say what it measures is not better than a bad one — it is the same costing error with more
- * confidence behind it. So the unit-less column is never offered, and the migration that added
- * `heightInches` (`20260827120000_tool_height_inches`) says at length why it did not migrate the old
- * values across: nothing in the database can say what unit they are in.
+ * THE ARGUMENT THAT PUT IT THAT WAY HAS BEEN OVERTAKEN IN PART, AND THE CONCLUSION IS UNCHANGED. It
+ * read: *"the tool form's other box, bound to `ToolCreateRequest.height`, is a bare `Decimal` that
+ * declares no unit anywhere — not in the column name, not in the schema, not on the label the
+ * designer reads."* Since 2026-09-15 the label reads "Height (cm)" and the box IS centimetres,
+ * paired 1:1 with this one. What it is not is a second place to propose a reading into. The form
+ * fills it by CONVERTING what was accepted here (`ui/DimensionUnits.cmTextFromInches`), which keeps
+ * one measured number and one derived one; adding `height` to this list would put a second, rounded
+ * proposal in front of the designer for the same measurement and let the two be accepted
+ * independently, which is how a record comes to hold a height and a height that disagree.
+ *
+ * The rest still stands as written. A geometric measurement's whole advantage over the vision model
+ * is that the number can be trusted, and the migration that added `heightInches`
+ * (`20260827120000_tool_height_inches`) says at length why it did not migrate the old `height`
+ * values across: nothing in the database can say what unit the historic ones are in. That is also
+ * why nothing converts on load.
  *
  * `RecordMeasureFieldTest` asserts that `height` is never a destination here.
  */

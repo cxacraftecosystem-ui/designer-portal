@@ -80,21 +80,49 @@ import {
  * ── THE CHEAPER THING THAT BUYS MOST OF IT, AND IS NOT BUILT EITHER ────────────────────────────
  *
  * `GuideJourney` already reads `location.hash`, VALIDATES it against the deck it is rendering, opens
- * that card and scrolls to it — and since 2026-09-15 `guideTrackForAnchor` (`tracks.ts`) resolves
- * the DECK from the same anchor first, so a link to a card in another deck selects that deck rather
- * than being silently discarded. The machinery is therefore more complete than it was and is used by
- * nothing: nothing anywhere in the app links to `/guide#<id>`. Every one of them goes
- * to the bare route — `grep -rn '"/guide"' frontend/app frontend/components` is the list, minus the
- * one hit that is this sentence. (It said "the nine entry points" when this block was written, which
- * was wrong on the day, and then "eleven sites today", which was right on ITS day and was falsified
- * on 2026-09-15 by one ministry-desk card adding a twelfth. Twice now. The COUNT was never the
- * argument — the absence of a single `#` in any of them is — so the number is gone and the grep is
- * the answer, which is what the parenthesis it replaces said should have happened the first time.)
- * Pointing each lock panel and each screen's help at its own
- * step anchor lands a designer on the paragraph about the screen they were just refused, which is
- * most of what a tour is for, degrades to a plain link under any preference, and costs one href per
- * site. Those files belong to other lanes; this is the note recording that the machinery is here
- * and waiting for them.
+ * that card and scrolls to it. The machinery is used by nothing: nothing anywhere in the app links
+ * to `/guide#<id>`. Every one of them goes to the bare route — `grep -rn '"/guide"' frontend/app
+ * frontend/components` is the list, minus the one hit that is this sentence. (It said "the nine
+ * entry points" when this block was written, which was wrong on the day, and then "eleven sites
+ * today", which was right on ITS day and was falsified on 2026-09-15 by one ministry-desk card
+ * adding a twelfth. Twice now. The COUNT was never the argument — the absence of a single `#` in any
+ * of them is — so the number is gone and the grep is the answer, which is what the parenthesis it
+ * replaces said should have happened the first time.)
+ *
+ * ⚠ 2026-09-16: THE RULE THIS PARAGRAPH RECOMMENDED THE WORK UNDER REVERSED, AND THE OLD CLAUSE IS
+ * KEPT HERE RATHER THAN DELETED. It read: "and since 2026-09-15 `guideTrackForAnchor` (`tracks.ts`)
+ * resolves the DECK from the same anchor first, so a link to a card in another deck selects that
+ * deck rather than being silently discarded. The machinery is therefore more complete than it was".
+ * `guideTrackForAnchor` is unchanged and still resolves every anchor of every deck — but the PAGE
+ * now intersects its answer with `guideTracksFor(user)` (OQ-5, arm b): THE ROLE OUTRANKS THE ANCHOR,
+ * and an anchor into a deck this account may not read is SILENTLY DISCARDED, no note and no
+ * redirect, for every tier except ADMIN and MASTER_ADMIN. `GuideJourney`'s own check then finds the
+ * id is not in the deck it was handed and returns before opening anything, so such a link lands the
+ * reader at the top of a walkthrough that never mentions it, with the hash still in the URL.
+ *
+ * SO THE RECOMMENDATION BELOW IS NOW CONDITIONAL, AND FOR A LOCK PANEL THE CONDITION IS USUALLY
+ * FALSE. Pointing each lock panel and each screen's help at its own step anchor lands a designer on
+ * the paragraph about the screen they were just refused — still true, but only where the panel's
+ * AUDIENCE is inside `guideTracksFor` for the deck that OWNS that step. Deck assignment is by ROLE
+ * FALLBACK and not by route access, so that is not a small set: RESEARCHER (30), FIELD_CONTRIBUTOR
+ * (20), CROWDSOURCE_VOLUNTEER (10) and PROFESSOR (40) are every one of them refused the designer
+ * arc's `canRunDesignWorkshops` routes and every one of them lands on `DESIGNER_TRACK`, so a
+ * `/design-workshops` lock panel pointing at `/guide#design-workshop-stages` works for all four.
+ *
+ * IT BREAKS WHERE REFUSAL AND DECK-SCOPING COINCIDE, which is most of the ministry and inspection
+ * surface: the directorate deck's routes for every tier outside the three officer posts, the
+ * inspector deck's routes for everybody but INSPECTOR, and the designer arc for INSPECTOR and those
+ * three officer posts. (ADMIN and MASTER_ADMIN read all three decks, so nothing is ever discarded
+ * for them.) There the href is the "appears to work and goes nowhere" failure `guideTrackForAnchor`
+ * was written to remove, reintroduced by hand and one site at a time.
+ *
+ * SO: BEFORE ANY LANE ADDS A `/guide#<step>` HREF, check the deck that owns the step against the
+ * audience that will see the link. Where the two do not intersect the href is not owed a fix in this
+ * file — it needs OQ-5 arm (c) first (open the reader's own deck and say in one line which deck the
+ * link belonged to), which was costed and not taken. Where they do intersect it is still one href
+ * per site and still degrades to a plain link under any preference. Those files belong to other
+ * lanes; this is the note recording that the machinery is here, what it now does, and what it no
+ * longer promises.
  *
  * DO NOT ADD A TOUR LIBRARY on a later re-reading of this comment. What would change the decision
  * is cost 5 going away — the second arc becoming READABLE by every signed-in account — and not a
@@ -114,16 +142,31 @@ import {
  * copy that drifts strands a reader.
  *
  * WHAT WAS BUILT COPIES NO GATE AND CANNOT DEAD-END. It is three arrays of prose, one card renderer,
- * and a four-line default over two predicates `lib/permissions.ts` already exports — no anchoring,
- * no sequence, no live DOM, nothing fetched. The role decides which deck OPENS; the switcher on the
- * page reaches all three for everybody, so nothing is hidden from anybody and the ungated-page
- * argument two paragraphs up is honoured three times over instead of once. A wrong answer from the
- * default costs a reader one click, which is exactly why a heuristic is allowed to make it — and
- * exactly what a tour's script could not afford.
+ * and two short selections over three predicates `lib/permissions.ts` already exports — no
+ * anchoring, no sequence, no live DOM, nothing fetched. The role decides which deck opens, and a
+ * wrong answer shows somebody the wrong prose, which is exactly why a heuristic is allowed to make
+ * it and exactly what a tour's script could not afford: a spotlight that guesses wrong points at a
+ * control that is not on the screen.
+ *
+ * ⚠ 2026-09-16: THE DECKS ARE NOW SCOPED, AND THIS PARAGRAPH SAID THEY WERE NOT. It read "the
+ * switcher on the page reaches all three for everybody, so nothing is hidden from anybody and the
+ * ungated-page argument two paragraphs up is honoured three times over instead of once." The owner
+ * ruled that every tier except ADMIN and MASTER_ADMIN is shown only the walkthrough its own role
+ * owns (`guideTracksFor` in `tracks.ts`), so that sentence is false and is replaced rather than
+ * quietly dropped.
+ *
+ * WHAT THE SCOPING DOES NOT TOUCH IS THE UNGATED PAGE, which is the thing the paragraphs above
+ * actually rest on. `/guide` is still absent from `ROUTE_GUARDS`, its nav entry is still
+ * `can: everyone`, and every signed-in account still opens the page and reads a complete walkthrough
+ * end to end. What no longer happens is one reader browsing another tier's deck. The teaching
+ * argument in this header is therefore narrower than it was and is not withdrawn: a card in the deck
+ * you ARE given may still name a screen you cannot open, every such card says so in its own `watch`,
+ * and that is still why this file refuses to be a second copy of `ROUTE_GUARDS`.
  *
  * SO THE REFUSAL ABOVE STILL BINDS, and what would change it is still cost 5 going away. Three decks
- * do not make a spotlight cheaper; they make the "no DOM to point at" problem three times larger,
- * because each deck's audience is refused most of the OTHER decks' screens.
+ * do not make a spotlight cheaper; scoping them makes it worse again, because a reader is now shown
+ * exactly one deck and a tour of it would have to dead-end at every card whose screen their tier is
+ * refused — with no other deck to send them to.
  * ═══════════════════════════════════════════════════════════════════════════════════════════════
  */
 
@@ -688,16 +731,16 @@ export const GUIDE_STEPS: GuideStep[] = [
       "Toolkit name (required)",
       "Local name",
       "English name",
-      "Linked craft (fills craft name)",
+      "Linked crafts (fills craft name)",
       "Craft name (required)",
-      "Linked artisan (fills artisan + place)",
+      "Linked artisans (fills artisan + place)",
       "Artisan name (required)",
       "Place (required)",
       "Process used in",
       "Material",
       "Years in use",
-      "Height",
-      "Width",
+      "Height (cm)",
+      "Width (cm)",
       "Length (inches)",
       "Breadth (inches)",
       "Height (inches)",
@@ -718,12 +761,18 @@ export const GUIDE_STEPS: GuideStep[] = [
       "Fill only the dimensions that make sense for the tool — a blade has a length and thickness, a wheel has a radius.",
       // The same pair of panels as the product form, and the same correction — see that card for
       // what the sentence used to say. The one difference is worth its own clause and is not
-      // cosmetic: this form has BOTH a plain “Height” box and a “Height (inches)”
-      // one, and since 2026-08-27 the measuring panels write only into the second, because that is
-      // the column that can carry the marker recording HOW the figure was reached. A designer who
-      // types into the plain box and then wonders why the panel will not accept into it is reading
-      // two boxes with one name.
-      "“Measure from a photograph” is the first of the two measuring panels: lay the tool on the one-inch grid sheet, mark across a known number of squares, and it works out the inches on THIS device with no connection. It accepts into Length, Breadth and “Height (inches)” — never into the plain “Height” box, which is left to whoever typed in it.",
+      // cosmetic, and it REVERSED in 0.0.12: this form used to have a plain “Height” box
+      // sitting beside “Height (inches)” as an unrelated column, and the measuring panels
+      // wrote only into the second. There is no plain “Height” box any more — it is
+      // labelled “Height (cm)” (`ToolForm.tsx`) — and the two are now ONE measurement
+      // in two units: `onPropose` and `GridMeasurement.onHeight` both end in
+      // `propagate(text, cmTextFromInches, setHeight)`, so an accepted inch reading fills the
+      // centimetre box by conversion. What did NOT change is which column carries provenance:
+      // `measurementMethods` names `heightInches` and only `heightInches`, because the inch box is
+      // the one the panel actually measured into. A card that still promised the plain box was the
+      // designer's alone would send them hunting for a control that no longer exists and then
+      // contradict the screen when its partner filled itself in.
+      "“Measure from a photograph” is the first of the two measuring panels: lay the tool on the one-inch grid sheet, mark across a known number of squares, and it works out the inches on THIS device with no connection. It accepts into Length (inches), Breadth (inches) and Height (inches) — and each accepted inch reading then fills its centimetre partner by conversion, so Height (cm) and Width (cm) move with them. Only the inch box carries the marker recording that a panel produced the figure.",
       "“Document using grid” underneath is the fallback: it asks a vision model to ESTIMATE the inches, needs a connection, and cannot show its working. Use it for the tool that will not lie flat. Neither panel writes a number by itself — both propose, you press the button that accepts, and the photograph you measured on is uploaded with the record so the figure can be checked against it.",
       "\"Process stages\" archives your captures in order as STAGE_STEP_1, STAGE_STEP_2, … so shoot them in sequence.",
       "You can also hand tools to specific artisans later from \"Assign tools to artisans\" — for your own artisans, ones shared with you for editing, or any artisan if you are an admin.",

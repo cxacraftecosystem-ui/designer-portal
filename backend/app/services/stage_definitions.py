@@ -2384,13 +2384,32 @@ STAGE_5 = StageSpec(
                 # because that is where the box was first written, and moving a field reorders it on
                 # both clients.
                 #
-                # The five "(as recorded)" fields DECLARE NO UNIT, and that is the honest declaration.
-                # Their source columns carry no unit suffix, the tool form labels them with the bare
-                # words "Height", "Weight", "Radius", and the record sheet prints them bare. Nobody
-                # knows whether a 12 is inches, centimetres or kilograms. Giving them `unit="cm"` here
-                # would convert an unknown into a stated wrong answer, which is worse than the blank
-                # they replace. If a unit column is ever added to `ToolDocumentation`, these become
-                # ordinary converted fields and these five can be deprecated with `replaced_by`.
+                # The five "(as recorded)" fields DECLARE NO UNIT, and for three of them that is still
+                # the honest declaration. `thickness`, `weight` and `radius` carry no unit suffix on
+                # the column, the tool form labels them with the bare words "Thickness", "Weight",
+                # "Radius", and the record sheet prints them bare. Nobody knows whether a 12 is inches,
+                # centimetres or kilograms. Giving them `unit="cm"` here would convert an unknown into
+                # a stated wrong answer, which is worse than the blank it replaces.
+                #
+                # THIS PARAGRAPH SAID FIVE UNTIL 2026-09-16, AND THE TWO IT LOST ARE `height` AND
+                # `width`. It rested on a sentence about the form's labels — "the tool form labels
+                # them with the bare words 'Height', 'Weight', 'Radius'" — and that sentence is no
+                # longer true of its first word, nor of `width` beside it: the centimetre/inch
+                # pairing shipped, and all four clients now label those two boxes "Height (cm)" and
+                # "Width (cm)", each with a partner box in inches that fills it (1 in = 2.54 cm). A
+                # row SAVED SINCE that pairing therefore holds centimetres in `height`/`width`,
+                # stated on the screen it was typed into. `thickness`, `weight` and `radius` were not
+                # paired with anything and are untouched by it.
+                #
+                # THEY STILL DO NOT GET `unit="cm"`, and that is the part the correction must not
+                # overreach on. Nothing rewrites or converts the values already in those columns —
+                # `ToolForm.tsx` seeds each box from its own column and never converts on load, and
+                # migration 20260827120000_tool_height_inches touched no existing row — so a tool
+                # documented before the pairing holds a number in an unknown unit, and declaring the
+                # box centimetres would restate exactly the guess this block exists to refuse. The
+                # help strings below say which of the two a given number is instead. If a unit column
+                # is ever added to `ToolDocumentation`, these become ordinary converted fields and all
+                # five can be deprecated with `replaced_by`.
                 fromref("lengthCm", "Length", DEC, S, unit="cm", min_value=0),
                 fromref("breadthCm", "Breadth", DEC, S, unit="cm", min_value=0),
                 # ── WHO OR WHAT MEASURED THE THREE CONVERTED FIGURES ──────────────────────
@@ -2440,13 +2459,30 @@ STAGE_5 = StageSpec(
                 # typed.
                 #
                 # A UNIT-DECLARED TWIN AND NOT A RETYPE, which is invariant 6 read the right way round:
-                # giving `heightAsRecorded` a unit would turn an unknown into a stated wrong answer.
-                # Same pairing, same argument, as `toolType` beside `toolFamily`.
+                # giving `heightAsRecorded` a unit would turn an unknown into a stated wrong answer
+                # for every row saved before the centimetre pairing existed. Same pairing, same
+                # argument, as `toolType` beside `toolFamily`.
+                #
+                # THE TWO ARE NO LONGER ALWAYS DIFFERENT NUMBERS, WHICH IS WORSE THAN A DUPLICATE AND
+                # HAS TO BE SAID HERE. Since the pairing shipped, typing into either of the tool
+                # form's height boxes fills the other, so `height` and `heightInches` describe one
+                # measurement — and this entry then shows "Height (measured)" beside "Height (as
+                # recorded)" holding what is meant to be the same figure twice, one of them
+                # disclaiming its unit. They can even DISAGREE in the last hundredth, and the
+                # disagreement is deliberate on both sides: `_inches_to_cm` is
+                # `round(v * 2.54, 2)` (Python's banker's rounding) while the clients are
+                # `floor(v * 2.54 * 100 + 0.5)` (`dimensionUnits.ts` / `DimensionUnits.kt`, which
+                # document the divergence), and the cm box round-trips through inches — 10 cm enters
+                # as 3.94 in and comes back out of `heightCm` as 10.01. Retiring `heightAsRecorded`,
+                # or remapping it onto `heightCm`, is the fix and it is a schema-version bump with its
+                # own blast radius; until then the help text below is what tells a designer which of
+                # the two numbers in front of them is which.
                 #
                 # IT WAS `f()` AND NOT `fromref()` UNTIL 2026-08-27, and the reason recorded here was
                 # "nothing may map into it, because the source column's unit is unknown and a mapping
                 # would invent one". That reason was about the plain `height` column, which is still the
-                # only source `heightAsRecorded` below is copied from and still states no unit. It
+                # only source `heightAsRecorded` below is copied from and which states no unit for any
+                # row saved before the centimetre pairing (see the paragraph on those five boxes). It
                 # stopped being the whole story when `ToolDocumentation.heightInches` landed: that
                 # column states its unit in its own name exactly as `lengthInches` and `breadthInches`
                 # do, so a mapping converts rather than invents, and `design_workshops`'s tool carry
@@ -2467,7 +2503,9 @@ STAGE_5 = StageSpec(
                     min_value=0,
                     help="The tool's height with its unit stated — measured at the workshop, or "
                     "converted from the height in inches on the tool record. The record's "
-                    "other height, the one whose unit it does not state, is below.",
+                    "other height is below; for a tool documented since the form's boxes "
+                    "were paired it is the same measurement again, and for an older one it "
+                    "is a number in no stated unit.",
                 ),
                 fromref(
                     "heightAsRecorded",
@@ -2475,8 +2513,11 @@ STAGE_5 = StageSpec(
                     DEC,
                     S,
                     min_value=0,
-                    help="Copied from the tool record, which does not state the unit it was "
-                    "measured in.",
+                    help="Copied from the tool record's own height box. That box is labelled "
+                    "“Height (cm)” and paired with “Height (inches)”, so anything saved "
+                    "since the pairing is centimetres — and repeats the measured height "
+                    "above, to within a hundredth. Older rows state no unit at all, which "
+                    "is why this box declares none.",
                 ),
                 fromref(
                     "widthAsRecorded",
@@ -2484,7 +2525,10 @@ STAGE_5 = StageSpec(
                     DEC,
                     S,
                     min_value=0,
-                    help="Unit not stated on the tool record.",
+                    help="Copied from the tool record's own width box. That box is labelled "
+                    "“Width (cm)” and paired with “Breadth (inches)”, so anything saved "
+                    "since the pairing is centimetres. Older rows state no unit at all, "
+                    "which is why this box declares none.",
                 ),
                 fromref(
                     "thicknessAsRecorded",

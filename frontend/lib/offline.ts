@@ -426,6 +426,48 @@ export function referenceFieldNoun(key: string): string {
 }
 
 /**
+ * THE PLURAL LIST EACH SCALAR LINK IS *ALSO* SPELLED IN — and why one id has two spellings at all.
+ *
+ * Since 2026-09-15 the tool form sends `craftIds` / `artisanIds` beside `craftId` / `artisanId`
+ * (`components/forms/ToolForm.tsx`, the payload's link block). The lists are not columns: the route
+ * pops them and writes `ToolCraft` / `ToolArtisan` rows. But they are what the server VALIDATES —
+ * `_resolve_craft_links` / `_resolve_artisan_links` 404 "Record not found" for any unknown id in the
+ * list — and what it DERIVES from: `data["craftId"] := craftIds[0]` overrides whatever scalar the
+ * body carries.
+ *
+ * ── SO A RE-PICK THAT REWRITES ONLY THE SCALAR IS NOT A REMEDY ────────────────────────────────
+ * A tool queued against craft X, X deleted at the office before the queue drains: the replay 404s on
+ * the LIST, the banner offers "pick a craft", and a rewrite of `craftId` alone leaves
+ * `craftIds: ["X"]` to 404 exactly the same way on the next pass — for ever, with `blocksRetry`
+ * holding the entry and Discard (which destroys the record and its staged photographs) the only door
+ * out. That is the dead end this whole arm exists to remove, so {@link repickOutboxEntry} re-points
+ * BOTH spellings of the one link. The silent variant matters just as much: where the dangling key was
+ * something else and the researcher re-pointed the craft anyway, the save succeeded and the server
+ * then set `craftId := craftIds[0]` — the old craft — discarding the choice under a 200.
+ *
+ * ── AND WHY THESE KEYS ARE NOT IN {@link REFERENCE_FIELD_NOUNS} INSTEAD ───────────────────────
+ * Two reasons, and both have to hold. They are NOT CLEARABLE COLUMNS: that array is
+ * `services/records.CLEARABLE_KEYS` minus the identity numbers, every key in it is a nullable
+ * foreign key on the record's own table, and {@link bodyWithClearances} writes an explicit `null`
+ * into every key it finds there — `"craftIds": null` is a 422 on the whole save, which this outbox
+ * will not re-queue, so the correction would be gone. And THE SENTENCE IS ALREADY CORRECT WITHOUT
+ * THEM: the scalar rides beside the list holding element 0 of it, so the researcher is already told
+ * "a craft this record points at is no longer on the server" and sent to the right picker. Naming the
+ * plural as a candidate of its own would print the same suspect twice.
+ *
+ * `Offline.kt`'s `REFERENCE_FIELD_NOUNS` block makes the same two arguments for leaving the plural
+ * keys out of the registry, and both are right. Its third sentence — *"THE SENTENCE IS ALREADY
+ * CORRECT WITHOUT THEM … sent to the right box"* — is right about the SENTENCE and wrong about the
+ * remedy: `PendingRecords.repick` there still rewrites the scalar alone, so a handset re-pick of a
+ * tool's craft leaves the same dangling id in `craftIds`. The two clients disagree until that is
+ * mirrored; do not "tidy" this map away on the grounds that the handset has no twin of it yet.
+ */
+export const REFERENCE_LIST_SIBLINGS: Readonly<Record<string, string>> = {
+  artisanId: "artisanIds",
+  craftId: "craftIds"
+};
+
+/**
  * The two columns that file a record under a workshop, and the only two a picker on a record form
  * can leave empty.
  *
@@ -1316,26 +1358,81 @@ export function outboxSentUnfiledMessage(label: string, nouns: readonly string[]
  * inventing a claim about a list the person was looking at when they answered.
  *
  * The failure and the marker are cleared together, so the next pass simply sends the entry.
+ *
+ * ── BOTH SPELLINGS OF ONE LINK, WHICH IS WHAT MAKES IT A REMEDY AT ALL ────────────────────────
+ * See {@link bodyWithRepickedReference}, which is the whole of the rewrite and is pure so the
+ * dead-end this closes can be asserted without an IndexedDB and without a server that 404s.
  */
 export async function repickOutboxEntry(id: number, field: string, chosen: string | null): Promise<void> {
   await updateEntry(id, (row) => {
-    let parsed: Record<string, unknown>;
-    try {
-      const candidate: unknown = JSON.parse(row.body);
-      if (!candidate || typeof candidate !== "object") return null;
-      parsed = candidate as Record<string, unknown>;
-    } catch {
-      // Nothing this build can rewrite. Left exactly as it is: a queue entry is fieldwork, and the
-      // only door out that is not a successful send is the person-confirmed Discard.
-      return null;
-    }
-    parsed[field] = chosen;
+    const body = bodyWithRepickedReference(row.body, field, chosen);
+    // Nothing this build can rewrite. Left exactly as it is: a queue entry is fieldwork, and the
+    // only door out that is not a successful send is the person-confirmed Discard.
+    if (body === null) return null;
     const unfiled = { ...(row.unfiled ?? {}) };
     if (chosen === null) unfiled[field] = UNFILED_BY_CHOICE;
     else delete unfiled[field];
-    return { ...row, body: JSON.stringify(parsed), unfiled, failure: null, skewRun: null, danglingField: null };
+    return { ...row, body, unfiled, failure: null, skewRun: null, danglingField: null };
   });
   await refreshOutbox();
+}
+
+/**
+ * THE QUEUED BODY WITH ONE LINK POINTED SOMEWHERE ELSE — in the scalar AND in its plural sibling.
+ *
+ * `null` when the body is not a JSON object this build can reason about, which the caller reads as
+ * "leave the row exactly as it is". Every other key is re-serialised from the object it parsed to, so
+ * the rest of the record is byte-identical to what the researcher typed.
+ *
+ * ── THE LIST IS REWRITTEN, NOT JUST THE COLUMN ────────────────────────────────────────────────
+ * `craftId`/`artisanId` have a plural sibling on the tool form's body ({@link
+ * REFERENCE_LIST_SIBLINGS}), the server validates the LIST and then derives the scalar from element 0
+ * of it, so a re-pick that rewrote only the column would either 404 again on the same id for ever or
+ * succeed and silently throw the researcher's choice away. The old id is read out of the body BEFORE
+ * the column is overwritten — it is the only place the dangling id is still written down.
+ *
+ * ORDER IS PRESERVED AND DUPLICATES COLLAPSE, keeping first occurrence: the list is ordered on the
+ * wire (element 0 becomes the scalar column and `craftName` is derived in this sequence), so the
+ * replacement stands where the dangling id stood. Re-pointing at an id the list ALREADY holds is not
+ * an error — it means "this is the same craft as that one" — and it must not produce a body with the
+ * id in it twice.
+ *
+ * "NONE OF THEM" DROPS THE ID FROM THE LIST RATHER THAN NULLING THE LIST. `"craftIds": null` is a 422
+ * on the whole save (the key is `list[str] | None` on the schema but a null is refused there), and
+ * this outbox will not re-queue a 4xx, so the correction would be destroyed by the act of applying
+ * it. An emptied list is the coherent partner of the explicit `null` written into the column: no
+ * links, which is exactly what the researcher said.
+ *
+ * A LIST THIS BUILD DID NOT WRITE IS LEFT ALONE. Anything but an array of strings is not something
+ * this function can safely reason about, and rewriting it would be inventing a body for a researcher
+ * whose fieldwork is the only copy — the same rule the unparseable-body arm above follows.
+ */
+export function bodyWithRepickedReference(body: string, field: string, chosen: string | null): string | null {
+  let parsed: Record<string, unknown>;
+  try {
+    const candidate: unknown = JSON.parse(body);
+    // `Array.isArray` as well as the `typeof`, because an array IS an object: `JSON.parse("[1,2]")`
+    // reached the rewrite, took a named key beside its elements, and `JSON.stringify` then dropped
+    // that key on the way back out — a "successful" re-pick that changed nothing at all. No record
+    // form queues a top-level array, so this arm is only ever a body this build did not write.
+    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return null;
+    parsed = candidate as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+  const previous = typeof parsed[field] === "string" ? (parsed[field] as string).trim() : "";
+  parsed[field] = chosen;
+  const plural = REFERENCE_LIST_SIBLINGS[field];
+  const list = plural ? parsed[plural] : undefined;
+  if (plural && previous && Array.isArray(list) && list.every((entry) => typeof entry === "string")) {
+    const next: string[] = [];
+    for (const entry of list as string[]) {
+      const id = entry.trim() === previous ? chosen : entry;
+      if (id && !next.includes(id)) next.push(id);
+    }
+    parsed[plural] = next;
+  }
+  return JSON.stringify(parsed);
 }
 
 /**
@@ -1406,6 +1503,16 @@ async function persistProgress(entry: OutboxEntry): Promise<boolean> {
  * A BODY THAT WILL NOT PARSE IS RETURNED UNTOUCHED rather than rebuilt. It was not written by this
  * build, nothing here can safely reason about it, and sending it exactly as queued is the behaviour
  * it was queued under.
+ *
+ * ── AND IT DOES NOT TOUCH {@link REFERENCE_LIST_SIBLINGS}, WHICH IS A DECISION ─────────────────
+ * A clearance nulls a COLUMN. `craftIds`/`artisanIds` are not columns and `"craftIds": null` is a 422
+ * on the whole save, so nothing here may write one. The coherent body is produced one step earlier,
+ * by {@link bodyWithRepickedReference}, which drops the dangling id from the list at the moment the
+ * researcher answers "none of them" — the only moment anything knows WHICH id they meant. The
+ * residual is an entry re-picked to "none" by a build older than that function: its list still names
+ * the dead id, nothing here can recover which entry it was, and the server would override the cleared
+ * column from `craftIds[0]` in any case. Such an entry is refused exactly as it was before, and its
+ * researcher re-picks it again on this build.
  *
  * ── AND THE SECOND THING WRITTEN IN AT REPLAY: {@link OutboxEntry.clientKey} ────────────────────
  *

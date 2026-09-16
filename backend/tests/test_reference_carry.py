@@ -476,8 +476,15 @@ TOOL_CARRIED = {
     # and only for the three INCH columns — `measurement_provenance.DIMENSION_FIELDS` never stamps
     # the five unit-less ones. See `design_workshops._measurement_method_note`.
     "extraMetadata": "tool.measurementMethodNote (fieldProvenance.method only)",
-    "height": "tool.heightAsRecorded (source states no unit)",
-    "width": "tool.widthAsRecorded (source states no unit)",
+    # "source states no unit" FOR THESE TWO IS NOW TRUE OF OLD ROWS ONLY, and the ledger says so
+    # rather than repeating a claim the tool form has overtaken. Since the centimetre/inch pairing
+    # (all four clients label these boxes "Height (cm)" / "Width (cm)" and fill each from its inch
+    # partner) a row saved through any current client holds centimetres; nothing converted the rows
+    # saved before it, so the COLUMN still cannot say which kind a given value is. The destination
+    # boxes are unchanged and still declare no unit, for exactly that reason — see the help text on
+    # `heightAsRecorded`/`widthAsRecorded` in `stage_definitions`.
+    "height": "tool.heightAsRecorded (cm since the form pairing; older rows state no unit)",
+    "width": "tool.widthAsRecorded (cm since the form pairing; older rows state no unit)",
     "thickness": "tool.thicknessAsRecorded (source states no unit)",
     "weight": "tool.weightAsRecorded (source states no unit)",
     "radius": "tool.radiusAsRecorded (source states no unit)",
@@ -833,6 +840,26 @@ RELATION_LEDGER = {
             "why it is ordered by name and de-duplicated, and why 'documented for' and 'used by' are "
             "two boxes rather than one."
         ),
+        # THE CRAFT HALF OF THE SAME FEATURE, AND IT CROSSES BY VALUE WHERE ITS SIBLING CROSSES BY
+        # RELATION — which is the distinction this ledger exists to make sayable rather than a
+        # smaller version of `artisanLinks`. A tool is now linked to SEVERAL crafts (20260915100000),
+        # and `tool.craftName` already holds every linked craft's name joined ", " in link order,
+        # written by the server from these very rows. `REFERENCE_MODELS`'s tool lambda carries
+        # `craftName` verbatim into the stage entry's craft box, so the whole selection reaches the
+        # workshop through the string it was derived from. Adding an include here would fetch the
+        # same names a second time to print them a second time.
+        #
+        # THE IDS NEVER CROSS, which is the same refusal `artisanLinks` records: a stage entry names
+        # crafts in prose, and a craft chosen HERE is not a craft somebody chose for that workshop.
+        # `Craft` has its own picker (workshopSetup.craftRef) for the entry that genuinely is about a
+        # craft.
+        "craftLinks": (
+            "carried by VALUE, not by relation: tool.craftName already holds every linked craft's "
+            "name joined \", \" in link order and IS the box the stage entry fills, so the "
+            "selection reaches the workshop through the string the server derives from these rows. "
+            "The ids never cross — a craft is reached by its own picker. See artisanLinks above, "
+            "which DOES cross, and _linked_artisan_names for why that one is a separate box."
+        ),
         "designWorkshop": (
             "the back-reference of the filing column above; see _FILING_SCOPE. Nothing includes it and nothing may: the picker reads a record to seed a stage entry, and the workshop that record was FILED under is not the workshop the entry is being written into."
         ),
@@ -862,6 +889,11 @@ RELATION_LEDGER = {
         "artisans": "reached by its own picker (participant.artisanRef)",
         "products": "reached by its own picker",
         "tools": "reached by its own picker",
+        # The back-reference of ToolDocumentation.craftLinks, and the second reading of "tools"
+        # above: that relation is the tools whose `craftId` is this craft — the FIRST craft of each —
+        # and this is every tool that names it at all. Nothing includes it and nothing needs to; a
+        # tool is reached by its own picker (tool.toolRef) from whichever side it is asked for.
+        "toolLinks": "the tool-to-crafts join; see ToolDocumentation.craftLinks",
         # REWRITTEN: the photograph half of this stopped being true when the Craft lambda started
         # reading the `photo` argument it had been throwing away, and the rest of what a craft carries
         # (video, audio notes, a scanned gazetteer page) now reaches the cover stage as a count.

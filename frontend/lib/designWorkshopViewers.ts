@@ -243,11 +243,23 @@ export function eligibleViewerNotice({
 /**
  * Is this failure "the server has no such route" rather than "no such workshop"?
  *
- * Only ever asked of {@link listEligibleDesignWorkshopViewers}, and only that call, because it is
- * the one request in the family that carries no id: a 404 from it cannot mean a missing record and
- * therefore means a missing ROUTE. Asking the same question of `/design-workshops/{id}/viewers`
- * would be unanswerable — a 404 there is genuinely either — which is exactly why the probe is
- * pinned to the id-less endpoint instead of being a general helper.
+ * **THE RULE IS ABOUT THE REQUEST RATHER THAN ABOUT ONE CALL: ASK THIS ONLY OF AN ID-LESS SEARCH
+ * OVER ACCOUNTS.** Such a request names no record, so a 404 from it cannot mean a missing one and
+ * therefore means a missing ROUTE. It was written for {@link listEligibleDesignWorkshopViewers},
+ * which is still the only call `DesignWorkshopViewersPanel` asks it about; as of 0.0.12
+ * `WorkshopDesignerPicker` asks it of whatever door its `fetchEligible` hands in, and all three of
+ * those are id-less searches over accounts — `GET /design-workshops/eligible-viewers`,
+ * `GET /design-workshop-oversight/designers` and, when the ministry officer's own door lands,
+ * `GET /sanction-orders/designers` — so the probe reads the same on each. It is a general helper
+ * now, and the constraint that made it safe had to travel with it.
+ *
+ * **SO A DOOR CARRYING AN ID IN ITS PATH MUST NEVER BE ASKED, AND MUST NEVER BE HANDED TO THAT
+ * PICKER.** A 404 from `/design-workshops/{id}/viewers`, or from any `…/{workshop_id}/designers` a
+ * later screen invents, is genuinely either: the workshop may be deleted, or outside the reader's
+ * scope, where the single-workshop loader answers 404 on purpose so the refusal cannot say whether
+ * it is there. Answering `true` to that tells an officer the deployment has not got the feature yet
+ * on the one screen whose real answer is that the record is gone — a false statement about the
+ * server, with no error state and nothing to retry.
  */
 export function viewerAdministrationMissing(error: unknown): boolean {
   return error instanceof ApiError && error.status === 404;

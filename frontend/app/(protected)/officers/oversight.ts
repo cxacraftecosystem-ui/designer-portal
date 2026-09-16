@@ -22,12 +22,19 @@
  * instead, and that is why they render the inspection surface's components rather than the
  * workshop's own.
  *
- * **THAT IS NO LONGER WHY.** The three directorate tiers joined `DESIGN_WORKSHOP_ROLES` on the
- * owner's ruling, so `load_workshop_or_404` now admits them by role and the workshop tree is
- * reachable. What keeps these pages worth having is the second half, which did not change: a
+ * **THAT IS NO LONGER THE WHOLE REASON.** The three directorate tiers joined
+ * `DESIGN_WORKSHOP_ROLES` on the owner's ruling, so the blanket role refusal at the top of
+ * `load_workshop_or_404` is gone. **THAT IS NOT THE SAME AS "THE WORKSHOP TREE IS NOW REACHABLE",
+ * and reading it that way has already shipped as a 404 on /officers.** Role gates the GRANT arm and
+ * only the grant arm: the loader admits on `record.createdById === user.id`, OR `is_admin(user)`,
+ * OR (`can_run_design_workshops(user)` AND a `DesignWorkshopViewer` row) — an `and`, so a directorate
+ * tier holding no grant is still turned away. Reaching a workshop needs the creator arm, an admin,
+ * or a viewer grant, and an oversight assignment is none of the three.
+ *
+ * What keeps these pages worth having is therefore the second half, which did not change at all: a
  * monitored workshop is one an officer was ASSIGNED, the assignment is what `readOnly: true` below
  * is about, and an officer holding an oversight assignment is not thereby a designer on that
- * workshop. Reaching a workshop still needs the creator arm, an admin, or a viewer grant.
+ * workshop.
  *
  * AND ONE THING THAT DOES STILL REFUSE THEM, WHICH IS WORTH KNOWING HERE: an officer may not author
  * the workshop their OWN sanction order opened —
@@ -70,6 +77,7 @@
  */
 
 import { ApiError, API_BASE, apiFetch, assertApiConfigured, buildQuery, getToken } from "@/lib/api";
+import { designerCreateFields } from "@/lib/designWorkshops";
 import type { DwStageCompleteness, DwStageData, DwSummary } from "@/lib/designWorkshops";
 import type { PageResult } from "@/lib/types";
 
@@ -103,11 +111,44 @@ export type DwOversightAssignment = {
   assignedById: string | null;
 };
 
+/**
+ * One designer on a workshop, as the assignment screen reads them.
+ *
+ * `isLead` IS THE SERVER'S ANSWER AND IS NEVER RE-DERIVED HERE. There is no lead column on
+ * `DesignWorkshopViewer` — the lead is the viewer whose own profile would write the promoted
+ * `designerName` the workshop carries — so the rule lives in one place server-side
+ * (`_the_lead_among`) and both the display and the removal read the same answer. A client that
+ * guessed would mark one person on screen and the write would move another.
+ *
+ * **EVERY ROW CARRIES THE KEY, INCLUDING `false`.** An absent `isLead` would be indistinguishable
+ * from "this server does not answer the question", which is a different fact from "not the lead".
+ */
+export type DwNamedDesigner = {
+  userId: string;
+  name: string;
+  email: string;
+  role: string;
+  isLead: boolean;
+};
+
 export type DwWorkshopOversight = {
   workshopId: string;
   title: string | null;
   status: string;
   designerName: string | null;
+  /**
+   * Who may open this workshop. **NEW IN 0.0.12, AND ITS ABSENCE WAS THE WHOLE DEFECT** — this read
+   * answered `designerName` as a bare string, so the one screen that decides who a workshop is for
+   * could not see who currently held it, could not pre-tick a picker and had nothing to compare a
+   * change against.
+   *
+   * OPTIONAL ON THE TYPE, because the browser bundle and the API ship separately: an API that
+   * predates the key answers without it, and a screen that read `detail.designers.length` would
+   * throw rather than say "this server cannot tell me yet". Treat `undefined` as unknown and `[]` as
+   * "nobody but whoever opened it" — **the creator is not in this list**, they hold the workshop
+   * through `createdById` and have no viewer row.
+   */
+  designers?: DwNamedDesigner[];
   oversight: DwOversightAssignment[];
 };
 
@@ -223,14 +264,96 @@ export function listAssignableDesigners(search?: string) {
  * of the assignment screen, in a repository full of workshops. `DesignWorkshopSelect` is built over
  * that route, which is why this screen does not use it.
  */
-export function listAssignableWorkshops(params: { page?: number; pageSize?: number; search?: string }) {
+/**
+ * Whether a workshop has a designer named on it. **A WORD, NEVER A BOOLEAN**, and the reason is
+ * `buildQuery`: it drops `""` exactly as it drops null/undefined, so a `false` that has to survive
+ * the query builder cannot be a boolean. It is the same shape, and the same reason, as the workshop
+ * scope's reserved word `"none"`.
+ *
+ * `undefined` means BOTH — by absence, the way every filter in this app says "everything" — and
+ * never "false".
+ */
+export type DwStaffingFilter = "staffed" | "unstaffed";
+
+export function listAssignableWorkshops(params: {
+  page?: number;
+  pageSize?: number;
+  search?: string;
+  staffed?: DwStaffingFilter;
+}) {
   return apiFetch<PageResult<DwSummary>>(
     `/design-workshop-oversight/workshops${buildQuery({
       page: params.page,
       pageSize: params.pageSize,
-      search: params.search || undefined
+      search: params.search || undefined,
+      staffed: params.staffed
     })}`
   );
+}
+
+/**
+ * What the create form on `/officers` sends. **THE THIRD CREATION DOOR.**
+ *
+ * `POST /design-workshops` is `require_admin` and a MINISTRY_ADMIN is not an admin, so the account
+ * that decides who every workshop is for could not open one. `POST /design-workshop-oversight/
+ * workshops` is gated on the same predicate as this whole page and goes through the SAME
+ * `open_design_workshop` the other two doors use — the shared opener whose four steps (eligibility,
+ * create, viewer rows, prefill seed) `tests/test_design_workshop_creation_path.py` exists to keep
+ * from being copied a fourth time.
+ *
+ * WARNING: **THE TWO DESIGNER FIELDS KEEP THEIR CREATE-DOOR MEANINGS EXACTLY**, and this module does
+ * not decide them: `designerCreateFields` in `lib/designWorkshops` is the ONE place in the web
+ * client that reads a ticked set and a chosen lead into `designerUserId` / `designerUserIds`, and
+ * {@link createOversightWorkshop} calls it rather than building the pair here. A second reading
+ * would be a second answer to "whose profile is copied into stage 1 and whose name reaches the
+ * report".
+ *
+ * `templateId`, `notes` and `workshopId` are absent from the body BY DESIGN — see the server's
+ * `DesignWorkshopOversightCreateIn`. They are the report format, the designer's scratch column and
+ * a designer's cross-reference to a `Workshop` row; none of the three is an officer's answer.
+ */
+export type DwOversightCreateBody = {
+  title: string;
+  workshopKind?: string;
+  /** The ticked designers, in tick order. The lead is resolved from `lead` by the shared rule. */
+  designerUserIds?: readonly string[];
+  lead?: string;
+  craftName?: string;
+  clusterName?: string;
+  state?: string;
+  district?: string;
+  /** `yyyy-mm-dd`, exactly what the create form's hidden inputs submit. */
+  startDate?: string;
+  endDate?: string;
+};
+
+/**
+ * Open a design & prototype workshop from the oversight screen.
+ *
+ * **NO OFFLINE ARM, DELIBERATELY.** `createWorkshopOrKeepItHere` exists because a designer opens a
+ * workshop in a courtyard with no signal, and its local-draft machinery — `DwDraft.createSentAt`,
+ * `resolveInterruptedCreate`, the adopt-or-ask pass — is the compensation for a POST whose answer
+ * was lost. `/officers` is an office desktop under the standing web-and-backend-only decision for
+ * ministry surfaces, and a local draft created by an account that cannot sync one is a trap rather
+ * than a safety net: `createLocalDraft` gates on `canRunDesignWorkshops`, and the draft would then
+ * have to be adopted into a workshop this account cannot create through the ordinary door either.
+ * A failure here is therefore reported and nothing is kept — which is the honest answer on a desk.
+ *
+ * Answers the created workshop's summary, the same shape {@link listAssignableWorkshops} lists, so
+ * the page can make it the chosen workshop with no second read.
+ */
+export function createOversightWorkshop(body: DwOversightCreateBody) {
+  const { designerUserIds, lead, ...rest } = body;
+  return apiFetch<DwSummary>("/design-workshop-oversight/workshops", {
+    method: "POST",
+    body: JSON.stringify({
+      ...rest,
+      // `JSON.stringify` drops an `undefined` value, so a key the shared resolver omits never
+      // reaches the wire at all — which is what keeps this body answerable by an API that predates
+      // either designer field, since every request model in this app is `extra="forbid"`.
+      ...designerCreateFields({ chosen: designerUserIds ?? [], lead: lead ?? "" })
+    })
+  });
 }
 
 export function getWorkshopOversight(workshopId: string) {
@@ -254,10 +377,159 @@ export function putWorkshopOversight(
   );
 }
 
+/**
+ * One viewer row named in an answer — who lost access, or who still has it.
+ *
+ * Structurally {@link DwNamedDesigner} minus `isLead`, and named separately because that is the
+ * honest shape: the server answers these lists from `viewer_rows`, which carries no lead flag, and a
+ * type that pretended otherwise would invite a screen to draw one.
+ */
+export type DwViewerRow = { userId: string; name: string; email: string; role: string };
+
+/**
+ * The answer to naming a different designer. **TWO KEYS HERE WERE ON THE WIRE AND NOT ON THIS TYPE
+ * UNTIL 0.0.12, AND THE OMISSION WAS THE WHOLE "ADD-ONLY" COMPLAINT.**
+ *
+ * `reassign_designer` has always returned `removedDesigner` and `stillHaveAccess`; this file's
+ * return type dropped both, so the only screen an assigner can open never showed that a replacement
+ * had taken anybody's access away — or that a co-designer, a redeemed join card or a granted access
+ * request still held write access to the workshop. The server was telling the truth to nobody.
+ *
+ * `removedDesigner: null` means "nobody was IDENTIFIABLE as the outgoing lead", which is a different
+ * fact from "nobody had access" — `stillHaveAccess` is what says which. The server resolves the
+ * outgoing lead by matching the workshop's promoted `designerName` against what each viewer's own
+ * profile would write, and an ambiguous answer removes NOBODY and reports instead of guessing.
+ */
+export type DwDesignerReassignment = {
+  designerId: string;
+  designerName: string | null;
+  stagesWritten: string[];
+  removedDesigner: DwViewerRow | null;
+  stillHaveAccess: DwViewerRow[];
+};
+
+/**
+ * Name ONE designer, replacing whoever the report currently names.
+ *
+ * ⚠ **NO SCREEN CALLS THIS SINCE 0.0.12, AND IT IS KEPT RATHER THAN DELETED.** `DesignerPanel`
+ * moved to {@link putWorkshopDesigners}, because a control that can only replace cannot express
+ * "also give the second designer access" or "take the co-designer off" — the two acts the officers
+ * page existed to perform and could not. The route behind this is unchanged, still live, still the
+ * singular door, and still the one `tests/test_workshop_oversight_reassignment.py` pins the three
+ * half-happening defects against; a wire this client cannot speak is a wire that quietly rots, and
+ * the plural door's own answer is checked against this one's shape on the server.
+ *
+ * **Prefer {@link putWorkshopDesigners} for anything new.** It reaches the same replacement — send
+ * the set without the outgoing designer and with `leadUserId` naming the incoming one — and it is
+ * the only one of the two that can also add or remove somebody without moving the report's author.
+ */
 export function putWorkshopDesigner(workshopId: string, designerId: string) {
-  return apiFetch<{ designerId: string; designerName: string | null; stagesWritten: string[] }>(
+  return apiFetch<DwDesignerReassignment>(
     `/design-workshop-oversight/${encodeURIComponent(workshopId)}/designer`,
     { method: "PUT", body: JSON.stringify({ designerId }) }
+  );
+}
+
+/** The answer to a whole-team save: the set as the SERVER now holds it, and who lost access. */
+export type DwDesignerTeamSaved = {
+  designers: DwNamedDesigner[];
+  designerName: string | null;
+  stagesWritten: string[];
+  removedDesigners: DwViewerRow[];
+};
+
+/**
+ * Set the whole team this workshop is FOR, and say which of them leads it.
+ *
+ * WARNING: **A WHOLE-SET BODY IS NOT A WHOLE-SET WRITE.** The server diffs this list against the
+ * rows that exist and adds and removes one at a time; it never calls `replace_viewers`, because a
+ * whole-set replace destroys a viewer row a concurrent join-card redemption created in the same
+ * second. The caller's obligation is the other half of that: **send the WHOLE set, built from
+ * eligible union currently-assigned union ticked-this-sitting**, because an id you did not render
+ * is an id you are asking the server to remove.
+ *
+ * `leadUserId` OMITTED MEANS "LEAVE THE LEAD ALONE", which is the ordinary save — adding a
+ * co-designer must not move whose profile is copied into stage 1 or whose name the report carries.
+ * Sent, it must be one of `userIds`; the server 422s a lead who is not on the workshop rather than
+ * silently promoting somebody else.
+ *
+ * **"NOBODY IS THE DESIGNER" IS NOT EXPRESSIBLE AND THE SERVER SAYS SO**, in two 422s that name the
+ * remedy: an empty set on a workshop that names a designer, and a set that drops the lead with no
+ * `leadUserId` naming their replacement. Render those verbatim — they are the only sentences that
+ * tell an officer what to do next.
+ */
+export function putWorkshopDesigners(
+  workshopId: string,
+  body: { userIds: string[]; leadUserId?: string }
+) {
+  return apiFetch<DwDesignerTeamSaved>(
+    `/design-workshop-oversight/${encodeURIComponent(workshopId)}/designers`,
+    { method: "PUT", body: JSON.stringify(body) }
+  );
+}
+
+/**
+ * One artisan on a workshop's roster, as the oversight screen reads them.
+ *
+ * **SIX KEYS, AND THE ABSENCES ARE THE POINT.** No `aadhaarNumber`, no `pehchanCardNumber`, no
+ * `phone`, no `address`, no `dateOfBirth`. An officer may read an unmasked Aadhaar through the
+ * artisan record itself — `_may_read_full_aadhaar` is a rank floor at PROFESSOR and all three
+ * ministry posts clear it — so nothing is being withheld from them; it is the frontend contract's
+ * own rule that a regulated identity number is never rendered in a LIST, a card or an export view.
+ *
+ * `status` is carried because an imported artisan is created PENDING and enters the review queue,
+ * so a roster of fifteen PENDING rows is the normal state of a fresh import and must not read as a
+ * fault.
+ */
+export type DwRosterArtisan = {
+  id: string;
+  name: string;
+  place: string;
+  craftName: string | null;
+  status: string;
+  createdAt: string | null;
+};
+
+export type DwRosterList = { artisans: DwRosterArtisan[]; truncated: boolean };
+
+/**
+ * Who is on this workshop's artisan roster.
+ *
+ * **NOTHING IN THIS PRODUCT READ THIS LIST BEFORE 0.0.12, ON EITHER CLIENT.**
+ * `GET /artisans?designWorkshopId=...` has existed for as long as the column has and is called by
+ * nobody; `ArtisanListPanel` offered a pro-forma, an upload and an import history and never once
+ * said who was actually on the list. That absence is why the roster's missing REMOVAL went
+ * unnoticed for so long — there was no list to remove anybody from.
+ */
+export function listWorkshopArtisans(workshopId: string) {
+  return apiFetch<DwRosterList>(
+    `/design-workshop-oversight/${encodeURIComponent(workshopId)}/artisans`
+  );
+}
+
+/**
+ * Take one artisan off this workshop's roster. **UNFILES; NEVER DELETES.**
+ *
+ * `Artisan.designWorkshopId` is a nullable link, so this clears it and leaves the artisan's record,
+ * photographs, products, tools and interviews exactly as they are. `Artisan.createdBy` is
+ * `Restrict` and is never touched: an officer did not author these records.
+ *
+ * WARNING: **THE STAGE-3 PARTICIPANT ROW IS LEFT STANDING AND THE SCREEN MUST SAY SO.** The importer
+ * writes a second thing per artisan — a `DwStageEntry` under the stage-3 participants collection —
+ * and removing it from here would be a STAGE WRITE performed by an officer on a report that may be
+ * under inspection. These are two deletions and nothing links them; the participant row is removed
+ * by a designer in stage 3.
+ *
+ * `unlinked: false` is NOT an error. Two officers working one list is the ordinary case, and "that
+ * artisan is already off this roster" is a state the second of them should be told about rather
+ * than shown a failure over.
+ */
+export function unlinkWorkshopArtisan(workshopId: string, artisanId: string) {
+  return apiFetch<{ unlinked: boolean }>(
+    `/design-workshop-oversight/${encodeURIComponent(workshopId)}/artisans/${encodeURIComponent(
+      artisanId
+    )}`,
+    { method: "DELETE" }
   );
 }
 

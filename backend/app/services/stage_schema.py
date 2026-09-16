@@ -1126,7 +1126,10 @@ REFERENCE_HYDRATION: dict[str, dict[str, str]] = {
     # modern, the improvements the artisan suggested for it, the remarks, the craft and place and
     # artisan it was documented against, and every one of its measurements — eight of them since
     # 2026-08-27, counted off the targets below: three converted from inch columns
-    # (`lengthCm`/`breadthCm`/`heightCm`) and five the record states no unit for.
+    # (`lengthCm`/`breadthCm`/`heightCm`) and five carried as recorded. Three of those five —
+    # thickness, weight, radius — the record states no unit for at all; the other two, height and
+    # width, are centimetres for any row saved since the tool form's cm/inch pairing and unknown for
+    # anything older, which is why the boxes still declare no unit and say so in their help text.
     #
     # `source` ("Where obtained") is NOT in this mapping and must not be added to it. It used to be
     # declared with `fromref()`, whose help text promises the designer it will be filled in from

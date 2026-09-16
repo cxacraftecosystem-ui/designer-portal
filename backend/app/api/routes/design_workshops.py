@@ -245,6 +245,20 @@ from app.services.report_templates import (
     template_choices,
 )
 from app.services.memory_budget import budget_bytes
+# THE REGISTER'S OWN PREDICATE, IMPORTED AND NOT RESTATED. `_register_provenance` below decides
+# whether this reader keeps the sanction register before it reads it, and the one thing that must
+# never happen is this module growing a second opinion about that floor.
+#
+# `services/design_workshops.py` RESTATES THE SAME FLOOR RATHER THAN IMPORTING IT, and that is not
+# an inconsistency to tidy away: the service module is imported BY `services/sanction_orders.py`, so
+# importing back would close a cycle, and its own comment says so. THE ARC ONLY BENDS ONE WAY FROM
+# HERE. This module is not a leaf — `api/routes/design_workshop_inspections.py` and
+# `api/routes/design_workshop_oversight.py` both import it — but every importer of a route module is
+# itself a route module: the only `from app.api...` lines anywhere under `app/services/` are two
+# function-body imports of `api/routes/media`, so nothing in the service layer can be reached back
+# into a router. Routes may import services freely; a service importing a route is the thing that
+# would have to be argued. The import is therefore free here and the restatement would be the drift.
+from app.services.sanction_orders import can_record_sanction_orders
 from app.services.s3 import (
     ObjectTooLarge,
     delete_object,
@@ -519,6 +533,16 @@ _NEVER_PATCHABLE: dict[str, str] = {
         "sent by a client. Hand the report in by setting status to PRE_SUBMISSION, or save a stage "
         "on a report that was sent back — the counter moves once either way, and every correction "
         "suggestion filed afterwards is filed against the number it moved to"
+    ),
+    # ── WHERE THIS WORKSHOP CAME FROM: A REGISTER'S ROW, READ BACK ───────────────────────────────
+    # Not a column on this table at all, and refused by name for `dictationConsentByName`'s exact
+    # reason: the single-record read serialises it, an edit form hydrates from that read, and the
+    # cheapest way to submit is to post the object back. `extra="forbid"` would answer "Extra inputs
+    # are not permitted" about a key whose true answer is "yes, but somewhere else".
+    "sanctionOrder": (
+        "which sanction order opened this workshop is the ministry's own register and is recorded "
+        "by POST /sanction-orders. It is read back here so that a reader can see where the workshop "
+        "came from; a workshop's own body may not rewrite the instrument that authorised it"
     ),
 }
 
@@ -2113,7 +2137,23 @@ async def create_design_workshop(
 async def get_design_workshop(
     workshop_id: str, current_user: Any = Depends(get_current_user)
 ) -> dict[str, Any]:
-    """One workshop with every stage's data and its completeness scores."""
+    """One workshop with every stage's data, its completeness scores, and where it came from.
+
+    TWO OF THESE KEYS VARY BY READER AND THEY VARY DIFFERENTLY, which is the thing about this
+    payload worth knowing before reading it.
+
+    ``transcripts`` has been per-reader since it was written: the id an AUDIO field holds is not on
+    its own permission to read the recording back, so ``load_transcript_items`` gates the CONTENTS
+    and the key is always there — an unentitled reader gets ``{}``, which is the right shape for a
+    map. ``_register_provenance`` at the end varies the other way, in PRESENCE: it adds one key per
+    ministry register THIS caller keeps and adds nothing at all for a caller who keeps none, because
+    a register a caller may not look in has no empty value that would not also be a claim. So a
+    designer's payload is byte-identical to the one they got before this existed, and an officer's
+    carries the instrument that opened the workshop they are reading. See that helper for why an
+    absent key and a null one are different answers.
+
+    Everything else here is the same for whoever asks.
+    """
     record = await load_workshop_or_404(workshop_id, current_user)
     entries = await entry_rows(workshop_id)
     definition = await load_custom_definition_or_empty(workshop_id)
@@ -2168,7 +2208,108 @@ async def get_design_workshop(
     # screens that share components. False here and True on the inspection route; the two are read
     # by the same key so a screen cannot be wrong about which one it is showing.
     summary["mayRecordFeedback"] = False
+    # WHERE THIS WORKSHOP CAME FROM. One key per ministry register this READER keeps, absent for a
+    # reader who keeps none — which is every designer, and costs them nothing. See the helper.
+    summary.update(await _register_provenance(record.id, current_user))
     return summary
+
+
+async def _register_provenance(workshop_id: str, user: Any) -> dict[str, Any]:
+    """The ministry instrument that opened this workshop, for the readers who keep that register.
+
+    ── THE QUESTION THIS ANSWERS, AND WHY NOTHING ANSWERED IT BEFORE ─────────────────────────────
+
+    Every link between a workshop and the registers that produced it runs one way. `/annual-plan`
+    links to the workshop it promoted; the sanction register links to the workshop its order opened.
+    Standing ON the workshop there was no way back: an officer looking at a record could not answer
+    "which order authorised this" without leaving the page and searching a register by title. Two
+    relations already existed in the schema; neither reached a client, because ``workshop_summary``
+    is a hand-written dict and a relation that is not named there is invisible.
+
+    ── THE KEY IS ABSENT, NOT NULL, FOR A READER WHO MAY NOT SEE THE REGISTER ────────────────────
+
+    Three states on the wire, and the difference between the last two is the point:
+
+    * key absent  — this reader does not keep that register, and is told nothing about it.
+    * ``None``    — this reader keeps it, and no row in it names this workshop.
+    * an object   — this reader keeps it, and here is the row.
+
+    Sending ``None`` to an unentitled reader would be the silent-emptiness defect in miniature: the
+    client would render "no sanction order" — a confident claim about a register the caller was
+    never allowed to look in. Absence is the only honest answer there.
+
+    AND THE CLIENT DRAWS THE TWO DIFFERENTLY, which is what makes the distinction worth carrying on
+    the wire rather than collapsing with ``?? None``. On the absent key the workshop page draws no
+    band at all; on ``None`` it draws the band and says, in a sentence, that no order in the
+    register names this workshop. That is the right way round: a reader who keeps the register is
+    owed the answer, and a blank where the answer should be reads as "this screen does not do
+    provenance"; a reader who does not keep it is owed silence, because every sentence available
+    there is a claim about a table they may not look in. ``readRegisterProvenance`` in
+    ``app/(protected)/design-workshops/[id]/page.tsx`` is the narrowing that keeps ``undefined`` and
+    ``null`` apart on that side, and it carries the same three states.
+
+    ── THE GATE IS THE REGISTER'S OWN, NOT A NEW ONE ─────────────────────────────────────────────
+
+    ``can_record_sanction_orders`` is the predicate behind ``require_sanction_recorder``, i.e. the
+    dependency on every one of ``/api/sanction-orders``'s routes, read included. So this hands back
+    exactly what the caller could already read one page over, and no tier learns anything new — the
+    reverse direction of a join they already have forwards. Nothing here widens a gate, and
+    ``/design-workshops/{id}/provenance`` — the field-by-field authorship view across the shared
+    record tables — is a different screen behind a different (admin) gate and is untouched by this.
+
+    ── WHAT IT COSTS, AND WHO PAYS ──────────────────────────────────────────────────────────────
+
+    The role test comes FIRST and short-circuits, so a designer opening their own workshop issues no
+    query at all: the ordinary read pays nothing. For an officer it is one lookup on a ``@unique``
+    column. The single read only, never the paged list — ``workshop_summary`` serialises once per
+    row there, and a lookup per row to print something the list does not show is the rule
+    ``dictationConsentByName`` and ``inspectionFeedback`` already follow.
+
+    ── THE OTHER REGISTER IS MISSING FROM THIS FUNCTION ON PURPOSE ───────────────────────────────
+
+    The plan directory's half — which planned row was promoted into this workshop — belongs beside
+    this one and is NOT here, because this module may not read that table. The boundary suite
+    ``tests/test_annual_plan_is_not_a_workshop.py`` asserts, by census, that only
+    ``services/annual_plan.py`` and ``api/routes/annual_plan.py`` may so much as name it, and names
+    THIS FILE in the spot-check that follows. That is a deliberate fence with a written argument
+    (three hundred planned rows unioned into the workshop table reads as a ministry's year of work),
+    and the reader it needs belongs on the far side of it: a function in ``services/annual_plan.py``
+    returning that row for a workshop id, called here under ``can_manage_annual_plan``. Writing it
+    was outside this change's ownership, so the shape above is the one that accommodates it —
+    a second ``if`` and a second key, with no client change at all, because the client renders the
+    halves it is given rather than the halves it expects.
+    """
+    payload: dict[str, Any] = {}
+    if can_record_sanction_orders(user):
+        order = await db.sanctionorder.find_unique(where={"designWorkshopId": workshop_id})
+        # THE REGISTER'S OWN NUMBER, AND NOT STAGE 1'S. `workshopSetup.sanctionOrderNo` and
+        # `.sanctionOrderDate` are STANDARD-tier stage-1 boxes carrying `report_role=COVER_FIELD` —
+        # a row of the report's own cover table, typed by the designer. This is the row an OFFICER
+        # recorded. The two can disagree, and when they do it is the register that authorised the
+        # money — which is why the line on screen names it as the register, not as a bare number.
+        payload["sanctionOrder"] = (
+            None
+            if order is None
+            else {
+                "sanctionOrderNo": order.sanctionOrderNo,
+                # `.date().isoformat()` — the spelling `sanction_payload` uses for this same
+                # column, so the column crosses the wire as ONE shape and no reader has to work out
+                # whether a value from this route is a date or a timestamp. That is a guarantee
+                # about the WIRE and not about what a screen draws: the register's own list
+                # (`app/(protected)/sanction-orders/page.tsx`) prints the ISO string raw, while the
+                # workshop page puts it through `formatDate` — which is what it already does with
+                # `startDate` and `endDate`, serialised out of `workshop_summary` by this very
+                # spelling. Two presentations of one column is worth closing; it is a web-only
+                # change in a file this pass does not own, and it is not closed by making the wire
+                # disagree with itself here.
+                "sanctionOrderDate": (
+                    order.sanctionOrderDate.date().isoformat()
+                    if isinstance(order.sanctionOrderDate, datetime)
+                    else None
+                ),
+            }
+        )
+    return payload
 
 
 async def _inspection_feedback_payload(workshop_id: str) -> tuple[list[dict[str, Any]], bool]:

@@ -812,10 +812,34 @@ def workshop_capable_roles() -> list[str]:
     return sorted(DESIGN_WORKSHOP_ROLES)
 
 
+#: The two tiers this query admits WITHOUT asking the empanelment roster about them, named once
+#: because :func:`workshop_capable_accounts` now has to both include them and leave them out.
+#: Spelled as roles rather than derived from ``is_admin`` because it goes into a Prisma ``IN`` list.
+NEVER_ROSTER_GATED_ROLES = ["ADMIN", "MASTER_ADMIN"]
+
+
 async def workshop_capable_accounts(
-    *, search: str | None = None, include_suspended: bool = False
+    *,
+    search: str | None = None,
+    include_suspended: bool = False,
+    include_admins: bool = True,
 ) -> list[Any]:
-    """The accounts an admin may hand a workshop to. ONE QUERY, read by two doors.
+    """The accounts an admin may hand a workshop to. ONE QUERY, read by three doors.
+
+    ⚠ **``include_admins=False`` IS THE SANCTION REGISTER'S DOOR, AND IT IS A DISCLOSURE BOUNDARY
+    RATHER THAN A TASTE.** The admin arm below is UNCONDITIONAL, so the default answer is every
+    empanelled DESIGNER **plus every ADMIN and MASTER_ADMIN account in the installation**, each
+    labelled with its role by ``assignable_designers_payload``. That was safe while both callers
+    were admin-adjacent — ``GET /designers/directory`` is ``require_designer_roster_manager`` and
+    ``GET /design-workshop-oversight/designers`` is ``require_workshop_assigner``. The third door,
+    ``GET /sanction-orders/designers``, opened in 0.0.12 at ``require_sanction_recorder`` — a rank
+    floor at ASSISTANT_DIRECTOR — and would have handed the complete privileged-account directory of
+    the installation to a tier that is refused all of the other designer lists, one letter of search
+    at a time. A sanction order names a designer doing the work; the officer's picker therefore
+    offers exactly the empanelled DESIGNER roster and nothing else.
+
+    It narrows BOTH halves rather than only dropping the OR arm, so the flag still means what it says
+    if a future caller ever pairs it with ``include_suspended=True`` (which skips the OR entirely).
 
     EVERY FILTER GOES IN THE ``WHERE``, AND THE SUSPENSION FILTER MOST OF ALL.
 
@@ -835,32 +859,36 @@ async def workshop_capable_accounts(
     from app.services.design_workshop_viewers import active_roster_emails
     from app.services.records import contains
 
-    clauses: list[dict[str, Any]] = [{"role": {"in": workshop_capable_roles()}}]
+    roles = workshop_capable_roles()
+    if not include_admins:
+        roles = [role for role in roles if role not in NEVER_ROSTER_GATED_ROLES]
+    clauses: list[dict[str, Any]] = [{"role": {"in": roles}}]
     if not include_suspended:
         # The flag is discarded deliberately: the admin route answers a bare JSON array, so there is
         # nowhere on the wire to say the roster read itself was cut. ``active_roster_emails``
         # already logs that case at ERROR, which is the whole reason it returns the flag rather
         # than swallowing it — see the follow-up note about giving that endpoint an envelope.
         admitted, _roster_read_was_cut = await active_roster_emails()
-        clauses.append(
+        arms: list[dict[str, Any]] = []
+        if include_admins:
+            # Admins are not roster-gated at any point, the same rule ``roster_allows`` applies at
+            # sign-in: an admin empanelled years ago and later suspended must not lose the ability
+            # to administer anything. Dropped whole for the sanction register's door — see the
+            # docstring; leaving it in with the role list narrowed would have worked today and
+            # become wrong the moment somebody asked why the two halves disagreed.
+            arms.append({"role": {"in": NEVER_ROSTER_GATED_ROLES}})
+        # ``mode: "insensitive"`` because ``admitted`` is lower-cased and ``User.email``
+        # is not — an address stored shouting would otherwise match no roster row and the
+        # designer would vanish from a directory the roster admits.
+        arms.append(
             {
-                "OR": [
-                    # Admins are not roster-gated at any point, the same rule ``roster_allows``
-                    # applies at sign-in: an admin empanelled years ago and later suspended must not
-                    # lose the ability to administer anything.
-                    {"role": {"in": ["ADMIN", "MASTER_ADMIN"]}},
-                    # ``mode: "insensitive"`` because ``admitted`` is lower-cased and ``User.email``
-                    # is not — an address stored shouting would otherwise match no roster row and the
-                    # designer would vanish from a directory the roster admits.
-                    {
-                        "AND": [
-                            {"role": "DESIGNER"},
-                            {"email": {"in": admitted, "mode": "insensitive"}},
-                        ]
-                    },
+                "AND": [
+                    {"role": "DESIGNER"},
+                    {"email": {"in": admitted, "mode": "insensitive"}},
                 ]
             }
         )
+        clauses.append({"OR": arms})
     if search:
         token = search.strip()
         # AND-COMPOSED WITH THE CLAUSE ABOVE, NEVER ASSIGNED TO THE SAME ``OR`` KEY. Two ORs

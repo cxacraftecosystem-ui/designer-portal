@@ -50,8 +50,19 @@ function numberInputs(text: string): string[] {
  * ToolForm is TEN since 2026-08-27. `ToolDocumentation` gained a `heightInches` column that day and
  * the form draws a box for it beside `lengthInches` / `breadthInches`; `ToolCreate` / `ToolUpdate`
  * declare it with the same `ge=0` the other measurements carry, so it owes both halves of the bound
- * like every one of its neighbours. The plain `height` box is still here and still bounded — it was
- * not replaced, it holds what was typed into it in a unit the column cannot name.
+ * like every one of its neighbours.
+ *
+ * THE `height` AND `width` BOXES ARE STILL HERE, STILL BOUNDED, AND STILL TEN IN TOTAL — but this
+ * paragraph used to end "it holds what was typed into it in a unit the column cannot name", and on
+ * 2026-09-15 that stopped being true: they are the CENTIMETRE halves of `heightInches` and
+ * `breadthInches`, labelled "Height (cm)" and "Width (cm)", and typing in either box of a pair fills
+ * the other. No column was added or renamed, so the ten names below are unchanged.
+ *
+ * THAT PAIRING IS WHY THE EXACT COUNT BELOW IS A TRAP WORTH NAMING. The boxes must each stay on ONE
+ * LINE of source: their handlers are factories (`typeCm` / `typeInches` in the form) precisely so
+ * that a multi-statement `onChange` does not break a box across lines and drop it out of this
+ * count — and when that happens the failure reads as "a box lost its bound", which is not what went
+ * wrong. See the factories' own comment; it says the same thing from the other side.
  */
 const BOUNDED: Record<string, string[]> = {
   "ProductForm.tsx": ["lengthInches", "breadthInches", "heightInches", "costOfMaking", "sellingPrice"],

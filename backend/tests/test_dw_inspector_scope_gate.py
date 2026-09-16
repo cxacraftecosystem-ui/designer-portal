@@ -247,19 +247,43 @@ def test_everybody_else_is_refused_the_inspection_surface_including_admins(api, 
     ("method", "body"),
     [("GET", None), ("PUT", {"userIds": []})],
 )
-@pytest.mark.parametrize("role", ["RESEARCHER", "DESIGNER", "PROFESSOR", INSPECTOR])
-def test_only_an_admin_reads_or_writes_the_inspection_roster(api, role, method, body):
-    """403 for everybody below admin, and the database never touched.
+@pytest.mark.parametrize(
+    "role",
+    [
+        "RESEARCHER",
+        "DESIGNER",
+        "PROFESSOR",
+        INSPECTOR,
+        # THE TWO DIRECTORATE TIERS THE 0.0.12 RULING DID **NOT** ADMIT, and they are the rows that
+        # make the widening a decision rather than a drift. ``OVERSIGHT_ASSIGNER_ROLES`` excludes a
+        # REGIONAL_DIRECTOR even though they outrank an Assistant Director, because the supervised
+        # must not choose the supervisor — the same sentence one rung up from "the inspected must
+        # not choose the inspector". A rank floor written in place of the set would admit both.
+        "ASSISTANT_DIRECTOR",
+        "REGIONAL_DIRECTOR",
+    ],
+)
+def test_only_an_assigner_reads_or_writes_the_inspection_roster(api, role, method, body):
+    """403 for everybody outside ``OVERSIGHT_ASSIGNER_ROLES``, and the database never touched.
+
+    **THIS TEST WAS NAMED ``..._only_an_admin_...`` UNTIL 0.0.12 AND IS RENAMED RATHER THAN
+    DELETED.** The three administration routes moved from ``require_admin`` = {ADMIN, MASTER_ADMIN}
+    to ``require_workshop_assigner`` = {MINISTRY_ADMIN, ADMIN, MASTER_ADMIN} on an owner's ruling,
+    because a MINISTRY_ADMIN is not an admin anywhere in this codebase and the ministry could
+    therefore stage a workshop into PRE_SUBMISSION and then cause nobody at all to inspect it. Every
+    row below is still refused, and two more were added rather than the set being loosened.
 
     **THE INSPECTOR IS IN THIS LIST AND IT IS THE MOST IMPORTANT ROW.** An inspector who could write
     this roster could assign themselves to any workshop in the repository, which turns a scope an
-    admin controls into one its holder does. DESIGNER is the second most important: the inspected
-    must not choose the inspector, or the inspection is worth nothing — that is the entire value of
-    an independent review and it is enforced here rather than by there being no button for it.
+    administrator controls into one its holder does. DESIGNER is the second most important: the
+    inspected must not choose the inspector, or the inspection is worth nothing — that is the entire
+    value of an independent review and it is enforced here rather than by there being no button for
+    it.
 
     PROFESSOR is here for the reason the sibling queue's test gives: they outrank a designer on the
     ladder and are still not an administrator, which is the row a rank comparison written in place of
-    ``require_admin`` would get wrong.
+    a set would get wrong. ASSISTANT_DIRECTOR and REGIONAL_DIRECTOR are here for the same reason one
+    rung further up, and they are the rows that keep the 0.0.12 widening honest.
     """
     outcome = api.call(
         method, f"/design-workshop-inspections/{WORKSHOP_ID}/inspectors", as_role=role, body=body
@@ -268,8 +292,17 @@ def test_only_an_admin_reads_or_writes_the_inspection_roster(api, role, method, 
     assert api.tripwire.touched is False, "the refusal must fire before any database read"
 
 
-@pytest.mark.parametrize("role", ["ADMIN", "MASTER_ADMIN"])
-def test_an_admin_reaches_the_inspection_roster_and_the_picker(api, role):
+@pytest.mark.parametrize("role", ["MINISTRY_ADMIN", "ADMIN", "MASTER_ADMIN"])
+def test_an_assigner_reaches_the_inspection_roster_and_the_picker(api, role):
+    """**MINISTRY_ADMIN IS THE ROW THE 0.0.12 RULING ADDED**, and it is asserted here rather than
+    only in the refusals above, because the whole point of the change is that this account can now
+    get through. Before it, the ministry staged a workshop into PRE_SUBMISSION and then could cause
+    nobody at all to inspect it — the journey stopped with no refusal anybody could act on.
+
+    The invariant it did not touch: MINISTRY_ADMIN is outside ``INSPECTION_ROLES``, so the account
+    that appoints an inspector still cannot BE one, and ``test_everybody_else_is_refused_the_
+    inspection_surface_including_admins`` above still refuses it the inspector's own read surface.
+    """
     outcome = api.call(
         "GET", f"/design-workshop-inspections/{WORKSHOP_ID}/inspectors", as_role=role
     )
@@ -388,8 +421,19 @@ def test_the_inspection_surface_offers_only_the_two_write_doors_it_is_allowed(ap
     """Every route an inspector can reach is a GET or one of two named POSTs, checked over the router.
 
     Walks the real dependency tree: a route gated by :func:`require_inspector` is one an inspector
-    can reach. A route gated by ``require_admin`` may be anything, because an admin is who
-    administers this.
+    can reach. A route gated by ``require_workshop_assigner`` may be anything, because that set —
+    ``{MINISTRY_ADMIN, ADMIN, MASTER_ADMIN}`` — is who administers this.
+
+    **THE SECOND NAME WAS ``require_admin`` UNTIL 0.0.12 AND THE LITERAL IS UPDATED RATHER THAN
+    LOOSENED**, which is the same discipline this repository applies to every counted assertion: the
+    three administration routes moved to ``OVERSIGHT_ASSIGNER_ROLES`` on an owner's ruling, because
+    ``require_admin`` excludes a MINISTRY_ADMIN and the ministry could therefore stage a workshop
+    into PRE_SUBMISSION and then cause nobody at all to inspect it. Widening this set to
+    ``{require_inspector, require_admin, require_workshop_assigner}`` would have been the loosening:
+    the point of naming the doors is that a route standing behind a THIRD one has to be argued for
+    here. What the ruling did NOT touch is the property this whole file defends — an inspection is
+    still a read and a note, ``INSPECTION_ROLES`` is still the frozenset ``{INSPECTOR}``, and the
+    account that appoints an inspector still cannot be one.
 
     THIS IS THE ASSERTION THAT SURVIVES A NEW ROUTE, and the amendment did not weaken it — it made
     it name the exceptions. The parametrised refusals above cover the doors that exist on the
@@ -398,9 +442,9 @@ def test_the_inspection_surface_offers_only_the_two_write_doors_it_is_allowed(ap
     """
     for route in inspection_routes.router.routes:
         gates = _dependency_names(route)
-        assert gates & {"require_inspector", "require_admin"}, (
+        assert gates & {"require_inspector", "require_workshop_assigner"}, (
             f"{route.path} is on the inspection router with neither door; every route here is "
-            f"either the inspector's own surface or the admin's administration of it"
+            f"either the inspector's own surface or the assigner's administration of it"
         )
         if "require_inspector" not in gates:
             continue

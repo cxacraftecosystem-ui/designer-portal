@@ -692,23 +692,34 @@ MIRRORS: tuple[Mirror, ...] = (
             "count, on the one surface whose reason for existing is counting them."
         ),
     ),
-    # ── the walkthrough decks, 2026-09-15 ────────────────────────────────────────────────────────
+    # ── the walkthrough decks, 2026-09-15; SCOPED PER ROLE 2026-09-16 ────────────────────────────
     Mirror(
         path="frontend/e2e/guide-tracks-unit.spec.ts",
         binding="ALL_ROLES",
         kind="closed",
         pattern=r"const ALL_ROLES: UserRole\[\] = \[([\s\S]*?)\n\];",
         why=(
-            "`/guide` carries three decks now -- the designer's, the directorate's and the "
-            "inspector's -- and `guideTrackFor` picks which one OPENS from the reader's role. This "
-            "tuple is what makes that sweep exhaustive: the test walks every tier and asserts which "
-            "deck it lands on, so a tier missing here is a tier nobody ever asked the question "
+            "`/guide` carries three decks -- the designer's, the directorate's and the inspector's. "
+            "`guideTrackFor` picks which one OPENS from the reader's role and `guideTracksFor` "
+            "decides which ones that reader may see AT ALL. This tuple is what makes both sweeps "
+            "exhaustive: the test walks every tier and asserts the deck it lands on and the exact "
+            "set it is scoped to, so a tier missing here is a tier nobody ever asked either question "
             "about. "
-            "IT IS A DEFAULT AND NOT A GATE -- every deck stays reachable from the page's switcher "
-            "for everybody -- which is why the consequence of a wrong answer is one click rather "
-            "than a refusal. That is also exactly why it would go unnoticed: nothing breaks, nobody "
-            "is locked out, and a ministry officer simply opens on a walkthrough about somebody "
-            "else's job forever."
+            "THE COST OF A WRONG ANSWER ROSE ON 2026-09-16 AND THIS ROW IS WHY IT IS STILL CHEAP TO "
+            "CATCH. This entry used to read 'IT IS A DEFAULT AND NOT A GATE -- every deck stays "
+            "reachable from the page's switcher for everybody -- which is why the consequence of a "
+            "wrong answer is one click rather than a refusal.' The owner then ruled that every tier "
+            "except ADMIN and MASTER_ADMIN is shown only the walkthrough its own role owns, and the "
+            "switcher is not drawn for them at all. So a wrong answer no longer costs a click; it "
+            "costs the reader the deck, with no control on screen that could put it right. The rest "
+            "of the old sentence survives the reversal unchanged and matters more for it: nothing "
+            "breaks, nobody is locked out, and a ministry officer simply reads a walkthrough about "
+            "somebody else's job forever. "
+            "THE SPEC ALSO CARRIES `DECKS_BY_TIER`, A `Record<UserRole, string[]>` WHICH THE "
+            "COMPILER KEEPS COMPLETE -- a tier added to the ladder and not to that table fails to "
+            "build. This row is still the binding one: `ALL_ROLES` is a `UserRole[]`, so a SHORT "
+            "tuple type-checks, and the spec's own cross-check that the two agree is only as "
+            "complete as the tuple it starts from."
         ),
     ),
     Mirror(
@@ -729,10 +740,20 @@ MIRRORS: tuple[Mirror, ...] = (
             "threshold instinct and are all refused the surface by name. A tier missing from this "
             "tuple is a tier nobody ever asked the question about, on the one file whose reason for "
             "existing is asking it.\n"
-            "IT IS A DEFAULT AND NOT A GATE -- every deck ships for everybody and the opening card "
-            "switches between them -- so a wrong answer costs one tap rather than a refusal, which "
-            "is also exactly why it would go unnoticed: nothing breaks, nobody is locked out, and an "
-            "inspector simply opens on a walkthrough about somebody else's job forever."
+            "ON THE HANDSET IT IS STILL A DEFAULT AND NOT A GATE -- every deck ships for everybody "
+            "and the opening card switches between them -- so a wrong answer costs one tap rather "
+            "than a refusal, which is also exactly why it would go unnoticed: nothing breaks, nobody "
+            "is locked out, and an inspector simply opens on a walkthrough about somebody else's job "
+            "forever.\n"
+            "AND THE TWO CLIENTS STOPPED AGREEING ON 2026-09-16, which is stated here so the word "
+            "'twin' above is not read as a claim about behaviour. The WEB now scopes its decks per "
+            "role -- only ADMIN and MASTER_ADMIN keep the switcher -- while the handset keeps both of "
+            "its decks ungated under the standing web-and-backend-only carve-out for administrative "
+            "work. Nothing in Kotlin changed and no Android test goes red: `WalkthroughSurfaceTest.kt` "
+            "asserts on Kotlin source. What did go stale is the RATIONALE three Kotlin comments "
+            "borrow, each of which quotes the web's 'a default, not a gate' rule at a web file that "
+            "no longer says it. Comments only; whether the handset follows is a product call and not "
+            "this row's."
         ),
     ),
     Mirror(

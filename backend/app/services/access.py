@@ -10,6 +10,7 @@ exception is written out above the set; it is the difference between auditing a 
 undoing it.
 """
 
+from collections.abc import Collection
 from typing import Any
 
 from fastapi import HTTPException, status
@@ -487,6 +488,7 @@ async def guard_record_edit(
     record_type: str,
     *,
     client: Any = None,
+    derived: Collection[str] = (),
 ) -> bool:
     """Authorize a field-changing edit and audit it. Returns True if the user is privileged (admin,
     owner, a professor+ outranking the record's author, or an EDIT-tier grantee) and may change any
@@ -506,6 +508,47 @@ async def guard_record_edit(
     ``workshops.update_workshop``) now takes the row update back with it instead of leaving it
     committed. The permission reads below stay on the module client on purpose; see
     :func:`record_revision`.
+
+    ── ``derived`` IS THE KEYS THE SERVER COMPUTED, AND IT NARROWS ONE GUARD AND NOT THE OTHER ──
+
+    Names listed here are withheld from :func:`assert_can_contribute_fields` and from NOTHING else.
+    They are still diffed, still audited and still written: :func:`record_revision` below sees the
+    whole of ``data``, because a server-computed column that moves is still a change to the record
+    and belongs in the ledger under the name of whoever asked for it.
+
+    The contributor guard is the one place the distinction matters, because the question it asks is
+    "did the CALLER change a field somebody else populated" — and a value the caller could not have
+    stated is not an answer to it. ``routes/tools.update_tool`` is the caller this exists for:
+    ``_resolve_craft_links`` REPLACES ``data["craftName"]`` with the linked crafts' names joined in
+    link order, discarding whatever the body said. So on a tool whose stored ``craftName`` had
+    drifted from its crafts' current names — a craft renamed since the save (``crafts.update_craft``
+    cascades to no tool), or a name typed into the independently editable box — EVERY non-privileged
+    editor was refused ``403 … change or clear populated field(s): craftName`` over a string the
+    server itself had just written, on a save that only filled an empty box, and for that record
+    permanently. That is the "fill an empty field on someone else's record" permission
+    ``docs/PERMISSIONS.md`` grants to every role, revoked by a derivation.
+
+    WHAT A CONTRIBUTOR MAY DO TO THE SELECTION BEHIND IT IS GUARDED ON ITS OWN TERMS, and exempting
+    the derived name here does not loosen that: ``update_tool`` reads the tool's stored link rows and
+    refuses a non-privileged caller who changes a populated set, through
+    ``deps.assert_can_contribute_relation``. Read that route before widening this.
+
+    ⚠ **AND "POPULATED" THERE HAS TO MEAN THE DENORMALISED NAME AS WELL AS THE JOIN, OR THIS
+    EXEMPTION COMPENSATES FOR NOTHING.** That was a real hole until 2026-09-16.
+    ``ToolDocumentation.craftName`` is NOT NULL while ``craftId`` is nullable, and migration
+    20260915100000 backfilled a ``ToolCraft`` row only where ``craftId`` was set — so a tool whose
+    craft was typed rather than picked, or whose craft was later deleted from the register, carries a
+    populated name over an EMPTY join. Keyed on the join rows alone, the relation guard saw nothing
+    to protect, this guard had already been told to ignore ``craftName``, and any signed-in account
+    could rewrite the craft on somebody else's regulated record and be answered 200. ``update_tool``
+    now asks ``bool(stored) or not is_empty_value(craftName)`` for the craft half. **A key added to
+    ``derived`` is only safe while the thing said to compensate for it actually covers the same
+    ground — check that, not just the list.**
+
+    PASS ONLY KEYS A CALLER CANNOT INFLUENCE. A name listed here is a name no contributor can be
+    refused over, so anything a client can put in the body — including a column the server merely
+    copies OUT of the body, such as ``craftId``/``artisanId``, which are element 0 of the caller's
+    own list — must stay off this set and keep its ordinary guard.
     """
     from app.core.deps import (
         assert_can_contribute_fields,
@@ -527,7 +570,16 @@ async def guard_record_edit(
         ):
             privileged = True
         else:
-            assert_can_contribute_fields(record, user, data)
+            # THE SERVER'S OWN COLUMNS ARE WITHHELD FROM THIS GUARD AND FROM NOTHING ELSE — see the
+            # ``derived`` paragraph above. ``data`` itself is never rebuilt, so the ledger write on
+            # the next line, and the update the caller issues after it, both still carry every key.
+            assert_can_contribute_fields(
+                record,
+                user,
+                {key: value for key, value in data.items() if key not in derived}
+                if derived
+                else data,
+            )
     await record_revision(record, user, data, record_type, client=client)
     return privileged
 

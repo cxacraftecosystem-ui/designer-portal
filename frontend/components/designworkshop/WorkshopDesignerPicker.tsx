@@ -69,13 +69,24 @@ const SEARCH_DEBOUNCE_MS = 300;
  * {@link namedDesignerTeam}, shared with the form's submit so the sentence under the picker and the
  * body on the wire cannot disagree.
  *
- * ── THE SAME ENDPOINT AS THE VIEWERS PANEL, DELIBERATELY ────────────────────────────────────────
+ * ── THE SAME ENDPOINT AS THE VIEWERS PANEL, BY DEFAULT AND DELIBERATELY ────────────────────────────────────────
  * `GET /design-workshops/eligible-viewers`, not a new eligibility set. The create's own
  * `assert_every_designer_may_be_named` delegates to the same `_assert_every_id_may_be_granted` the
  * viewers PUT uses, so offering an account here that the create would refuse is impossible by
  * construction rather than by agreement. A second endpoint would be a second copy of a rule that
  * spans two rosters — the designer roster is a guest list, the platform allow-list is a cut list —
  * and it would drift within one release.
+ *
+ * THAT IS THIS CONTROL'S DEFAULT AND IT IS NOT ITS ONLY DOOR, as of 0.0.12. `fetchEligible` lets a
+ * caller hand in the read, because the SAME picker is now wanted on screens whose audience
+ * `eligible-viewers` refuses: it is `require_admin`, and a Ministry Admin naming a designer from
+ * Workshop oversight, or an Assistant Director recording a sanction order, is not an admin. The
+ * paragraph above still governs — whichever door a caller passes, the rule it enforces must be the
+ * rule the WRITE it feeds enforces, or this control is once again offering accounts the save will
+ * turn away. What the three consumers share is the MECHANISM and not the eligibility: the `seen`
+ * label cache, the generation counter, the lead resolver and the `MAX_NAMED_DESIGNERS` trim — four
+ * things that have each already shipped as a bug once, and which a sibling control would have had
+ * to copy in full.
  *
  * ── THE SEARCH BOX IS THE SERVER'S, AND THE PICKER'S OWN FILTER IS OFF ──────────────────────────
  * The house rule for a server-truncated list (`.claude/skills/field-repo-frontend`, §11.5): the
@@ -90,6 +101,20 @@ const SEARCH_DEBOUNCE_MS = 300;
  * **The order is the server's and is never re-sorted here** — `name` then `id`, a total order, so
  * which accounts fell inside the ceiling is stable between two identical requests.
  *
+ * ── THE COPY IS THE CREATE FORM'S, AND `fetchEligible` DID NOT CHANGE THAT ─────────────────
+ *
+ * Said here because it is the one part of this control a second consumer cannot simply reuse, and
+ * finding it on screen is worse than reading it now. Four sentences below assume a workshop that
+ * does not exist yet: the field label and hint ("Leave it empty if you do not know yet — stage 1
+ * then carries whoever creates the workshop"), the empty-roster notice ("this one can still be
+ * started"), the lead line ("Stage 1, stage 3 and the report will carry …") and the load-failure
+ * sentence ("the designers this workshop could be for"). They are true of the create form, true
+ * enough of a promotion or a sanction order — both of which DO open a workshop — and FALSE on a
+ * panel that renames the designer of a workshop already running. A consumer in that position should
+ * ask for the copy to become props rather than paraphrase it in a second control; the mechanism is
+ * what this file is for, and forking it to change four sentences is how the two copies start to
+ * disagree about the cap, the lead or the label cache.
+ *
  * ── WHAT IT DOES NOT DO ─────────────────────────────────────────────────────────────────────────
  * It never writes `designerName`. That column is DENORMALISED from stage 1 by `promoted_values()`
  * and is display-only on both clients; writing it by hand from a picker is how the JSON and the
@@ -97,6 +122,36 @@ const SEARCH_DEBOUNCE_MS = 300;
  * which of the two a screen happened to read. The lead line below NAMES the designer whose profile
  * the server will seed; it does not send a name anywhere.
  */
+/**
+ * One page of accounts a picker may offer, and whether it is the whole answer.
+ *
+ * Structurally `DwEligibleViewerList`, and named separately because this one is the SHAPE THREE
+ * ENDPOINTS AGREE ON rather than one endpoint's response type: `GET /design-workshops/eligible-viewers`
+ * (the default), `GET /design-workshop-oversight/designers` and, when the ministry officer's own door
+ * lands, `GET /sanction-orders/designers`. All three answer four keys per account — `id`, `name`,
+ * `email`, `role` — plus `truncated`, and a fourth door must answer the same or it cannot be handed in.
+ *
+ * `truncated` is the server's own word for "this is not the whole eligible set", and it is what the
+ * notice under the search box is built from. A door that cannot cut its answer still has to send
+ * `false`: an absent flag reads as `undefined`, which this control coerces to "say nothing" rather
+ * than crying truncation at a complete list.
+ */
+export type EligibleDesignerPage = { users: DwEligibleViewer[]; truncated: boolean };
+
+/**
+ * A read of the accounts this picker may offer, given a search term.
+ *
+ * The term arrives ALREADY TRIMMED and already capped at the length the endpoints accept
+ * ({@link ELIGIBLE_VIEWER_SEARCH_MAX}, 120 — `Query(None, max_length=120)` on both doors that exist
+ * today, and the number a third must match). Empty string means "no term": every implementation must
+ * treat it as the unfiltered (still capped) list rather than as a search for nothing.
+ *
+ * It must NOT debounce, must NOT cache and must NOT re-sort. This control debounces at 300ms, keeps a
+ * mount-life label cache of its own, and relies on the server's `name`-then-`id` total order so that
+ * which accounts fell inside the ceiling is stable between two identical requests.
+ */
+export type FetchEligibleDesigners = (search: string) => Promise<EligibleDesignerPage>;
+
 /**
  * One account as a row.
  *
@@ -125,7 +180,8 @@ export function WorkshopDesignerPicker({
   lead,
   onLeadChange,
   disabled,
-  offline
+  offline,
+  fetchEligible
 }: {
   /**
    * The chosen account ids, in the order they were ticked. Empty is "not decided yet" — a real and
@@ -142,6 +198,30 @@ export function WorkshopDesignerPicker({
   lead: string;
   onLeadChange: (userId: string) => void;
   disabled?: boolean;
+  /**
+   * WHERE THE ELIGIBLE ACCOUNTS COME FROM. Omitted is
+   * `GET /design-workshops/eligible-viewers` — the default this control shipped with, unchanged.
+   *
+   * ONE CONTROL, THREE AUDIENCES, THREE DOORS. The default door is `require_admin`, which is exactly
+   * right for the create form on /design-workshops (whose audience IS {ADMIN, MASTER_ADMIN}) and
+   * refuses the two ministry screens that now want the same picker — a Ministry Admin naming a
+   * designer from Workshop oversight, an Assistant Director recording a sanction order. Repointing
+   * the default at a wider door would have taken the RICHER eligibility away from the caller
+   * entitled to it; building a sibling control would have copied the four pieces of machinery this
+   * file's header lists, each of which has already been a bug once.
+   *
+   * READ THROUGH A REF, SO IT IS NOT A DEPENDENCY. Callers pass inline closures over page state, new
+   * on every render — in the load effect's dependency array that is a fetch on every keystroke in
+   * the form beneath, which is `useEditDeepLink`'s argument for the same treatment. The consequence,
+   * and it is the right one: changing this prop mid-mount does not by itself re-read. The term and
+   * the offline flag are what a read depends on, and a caller that genuinely needs a different door
+   * for a different subject should remount the picker on that subject's id.
+   *
+   * WHATEVER DOOR IS PASSED MUST ENFORCE THE RULE THE SAVE ENFORCES. This control offers what it is
+   * given; it is not the place the eligibility rule lives. A door that is wider than the write it
+   * feeds turns a picker into a list of names that 422 on Save.
+   */
+  fetchEligible?: FetchEligibleDesigners;
   /**
    * There is no connection, so the eligible set cannot be read.
    *
@@ -180,6 +260,28 @@ export function WorkshopDesignerPicker({
    */
   const generation = useRef(0);
 
+  /**
+   * The door, held in a ref so the load effect depends on the TERM and nothing else.
+   *
+   * Written in an effect with no dependency array rather than during render — the discipline
+   * `components/hooks/useEditDeepLink.ts` follows and explains: a render can be discarded under
+   * concurrent rendering, and a ref written on a discarded render would leave this effect calling
+   * into a closure that never committed. Declared before the effect that reads it so it is committed
+   * first; on the very first commit `useRef`'s initial value is already the right one.
+   *
+   * The `??` is where "default unchanged" lives. With the prop omitted the call below is
+   * `listEligibleDesignWorkshopViewers(term)`, argument for argument, exactly as it was before this
+   * prop existed — which is what keeps the create form on /design-workshops, and
+   * `e2e/design-workshop-designer-access-unit.spec.ts` with it, untouched by a change made for three
+   * other screens.
+   */
+  const fetchEligibleRef = useRef<FetchEligibleDesigners>(
+    fetchEligible ?? listEligibleDesignWorkshopViewers
+  );
+  useEffect(() => {
+    fetchEligibleRef.current = fetchEligible ?? listEligibleDesignWorkshopViewers;
+  });
+
   useEffect(() => {
     if (offline) {
       setEligible(null);
@@ -193,7 +295,9 @@ export function WorkshopDesignerPicker({
     setSearching(true);
     const timer = window.setTimeout(
       () => {
-        listEligibleDesignWorkshopViewers(term)
+        // The door is read at CALL time, not captured when the timer was armed: the ref is the
+        // caller's current answer and the timer may have been sitting for 300ms.
+        fetchEligibleRef.current(term)
           .then((result) => {
             if (generation.current !== current) return;
             const users = result.users ?? [];
@@ -215,6 +319,14 @@ export function WorkshopDesignerPicker({
             setSearching(false);
             setTruncated(false);
             setEligible([]);
+            /*
+              A 404 HERE STILL MEANS "NO SUCH ROUTE" WHATEVER DOOR WAS HANDED IN, and that is a
+              property of the doors rather than a hope. `viewerAdministrationMissing` answers only for an
+              ID-LESS request, precisely because a 404 from one cannot mean a missing record; all
+              three doors this picker accepts are id-less searches over accounts, so the probe reads
+              the same on each. A door taking an id in its path would break that and must not be
+              handed in here.
+            */
             if (viewerAdministrationMissing(err)) {
               setFeatureMissing(true);
               return;

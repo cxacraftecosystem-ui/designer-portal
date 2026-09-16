@@ -1,7 +1,15 @@
 """The OFFICER's read-only surface, the screen that assigns it, and the artisan-list import.
 
-Ten routes on one prefix. Read ``app/services/design_workshop_oversight.py`` for the argument in
+Fifteen routes on one prefix. Read ``app/services/design_workshop_oversight.py`` for the argument in
 full; this module is the wire, and the three things it adds are the two doors and the upload.
+
+**THIS HEADER SAID "Ten routes" UNTIL 0.0.12.** The five that arrived are one change — the
+assignment screen was ADD-ONLY — and they are named here rather than left to be found:
+``POST /workshops`` (the THIRD creation door, see its own docstring), ``PUT /{id}/designers`` (the
+whole TEAM, and the first removal a Ministry Admin has ever been able to perform),
+``GET /{id}/artisans`` and ``DELETE /{id}/artisans/{artisan_id}`` (the roster had no read anywhere
+in the product, which is why nobody noticed it had no removal either). The fifth is ``designers`` on
+the existing ``GET /{workshop_id}``, which is a key rather than a route.
 
 =======================================================================================
 WHY THIS IS ITS OWN ROUTER ON ITS OWN PREFIX
@@ -60,11 +68,18 @@ from fastapi import (
     status,
 )
 
-from app.api.routes.design_workshops import _provenance_maps, _stages_payload
+# ``_parse_date`` JOINS THE TWO SERIALISERS ALREADY IMPORTED FROM THAT MODULE, and for the same
+# reason: the ordinary create door reads ``startDate``/``endDate`` through it, so importing it is
+# what makes the third door treat a malformed date IDENTICALLY (dropped, never refused) rather than
+# making two doors disagree about what "2026-13-40" means. All three are pure; the authorisation on
+# this prefix is the two dependencies below and nothing in that module.
+from app.api.routes.design_workshops import _parse_date, _provenance_maps, _stages_payload
 from app.core.db import db
 from app.core.deps import get_current_user
 from app.schemas.design_workshop_oversight import (
     DesignWorkshopDesignerIn,
+    DesignWorkshopDesignersIn,
+    DesignWorkshopOversightCreateIn,
     DesignWorkshopOversightIn,
 )
 from app.services import design_workshop_oversight as oversight
@@ -78,7 +93,13 @@ from app.services.artisan_xlsx import (
 )
 from app.services.concurrency import gather_reads
 from app.services.custom_sections import load_definition_or_empty
-from app.services.design_workshops import entry_rows, workshop_completeness, workshop_summary
+from app.services.design_workshops import (
+    entry_rows,
+    named_designer_team,
+    open_design_workshop,
+    workshop_completeness,
+    workshop_summary,
+)
 from app.services.designers import assignable_designers_payload, workshop_capable_accounts
 from app.services.entry_provenance import resolve_display_names
 from app.services.pagination import normalize_pagination, page_payload
@@ -288,11 +309,139 @@ async def download_artisan_pro_forma(
     return xlsx_response(build_artisan_pro_forma(workshop=workshop), pro_forma_filename(workshop))
 
 
+@router.post("/workshops", status_code=status.HTTP_201_CREATED)
+async def open_workshop_from_oversight(
+    payload: DesignWorkshopOversightCreateIn,
+    current_user: Any = Depends(require_workshop_assigner),
+) -> dict[str, Any]:
+    """Open a design & prototype workshop from the assignment screen. **THE THIRD CREATION DOOR.**
+
+    ── WHY THERE IS A THIRD DOOR AND NOT A WIDER GATE ────────────────────────────────────────────
+
+    ``POST /design-workshops`` stands behind ``assert_can_create_design_workshops``, i.e.
+    ``DESIGN_WORKSHOP_CREATOR_ROLES`` = ``{ADMIN, MASTER_ADMIN}``, and **a MINISTRY_ADMIN is not an
+    admin anywhere in this codebase**. So the primary user of this screen — the account that decides
+    who every workshop is for, who supervises it and whose artisans are on it — could not open one,
+    and the journey simply stopped: choose a workshop that somebody else had to create first.
+
+    The annual-plan directory met the identical wall and its answer is the precedent this follows
+    verbatim. ``POST /annual-plan/{entry_id}/promote`` creates a workshop through the SAME opener
+    behind ``require_annual_plan_manager``, and its docstring says why: *"a MINISTRY_ADMIN is not in
+    ``DESIGN_WORKSHOP_CREATOR_ROLES``, and widening that set to fit would hand every ministry admin
+    the ordinary create button as well. Two doors, two gates, one creation path."* This is the third
+    of those. ``DESIGN_WORKSHOP_CREATOR_ROLES`` is UNTOUCHED —
+    ``backend/tests/test_design_workshop_gate.py`` reads ``frontend/lib/permissions.ts`` to hold the
+    two copies identical, and it stays green.
+
+    ── ``open_design_workshop`` AND NEVER ``db.designworkshop.create`` ───────────────────────────
+
+    Four steps in order — eligibility above the create, the row, the viewer rows, the prefill seed —
+    and forgetting the fourth is invisible: the workshop's state, district, craft and dates sit on
+    the ROW with no stage entry behind them, and the designer's FIRST stage-1 save nulls every one
+    of them under a 200 reading "Stage saved". ``tests/test_design_workshop_creation_path.py``
+    enumerates the creation sites and fails on a fourth, so this route calls the opener rather than
+    becoming one.
+
+    ``named_designer_team`` reads the body's two designer fields into (the lead, everybody who gets
+    a row) — the same pure function both other doors call, so a third reading of ``designerUserId``
+    beside ``designerUserIds`` cannot come into existence here.
+
+    ── WHAT THIS DOOR DELIBERATELY DOES NOT HAVE ────────────────────────────────────────────────
+
+    **No offline arm.** ``createWorkshopOrKeepItHere`` and ``DwDraft.createSentAt`` exist because a
+    designer opens a workshop in a courtyard with no signal; ``/officers`` is an office desktop
+    under the standing web-and-backend-only decision for ministry surfaces, and a local draft
+    created by an account that cannot sync one is a trap rather than a safety net.
+
+    **No idempotency key**, for the same reason the ordinary door has none: this is a deliberate
+    administrative act taken with the record in front of the officer, not a replayed sync.
+
+    Answers ``workshop_summary`` — the same shape ``GET /workshops`` above lists — so the client can
+    make the new workshop the chosen one without a second read.
+    """
+    lead_id, granted_ids = named_designer_team(payload.designerUserId, payload.designerUserIds)
+
+    # THE SAME SEVEN COLUMNS THE OTHER TWO DOORS CARRY, and falsy values dropped rather than written:
+    # a blank box on a create means "not known yet", and there is no stored value it could overwrite.
+    columns: dict[str, Any] = {
+        "title": payload.title.strip(),
+        **{
+            key: value
+            for key, value in (
+                ("workshopKind", payload.workshopKind),
+                ("craftName", payload.craftName),
+                ("clusterName", payload.clusterName),
+                ("state", payload.state),
+                ("district", payload.district),
+            )
+            if value
+        },
+    }
+    for key in ("startDate", "endDate"):
+        parsed = _parse_date(getattr(payload, key))
+        if parsed:
+            columns[key] = parsed
+
+    # ── THE SAME VALUES IN TWO PLACES, DELIBERATELY, AND NEITHER IS DERIVED FROM THE OTHER ───────
+    #
+    # Every key of `seeded` is declared in `stage_schema.PROMOTED_COLUMNS` under `workshopSetup.*`,
+    # so writing any of them as a COLUMN without also writing the stage entry behind it gets it
+    # nulled by the first stage-1 save under a 200 reading "Stage saved". `seed_designer_prefill`
+    # writes BOTH halves out of `seeded`, which is why the stage values are handed through
+    # `open_design_workshop` rather than created here.
+    #
+    # DATES GO IN AS THE RAW ISO STRINGS, not the `_parse_date` datetimes above: the registry's DATE
+    # type coerces and stores an ISO string, and `_coerce_promoted` is what turns it back into a
+    # column value on the stage-save path. That is the note both other doors carry beside their own
+    # `seeded` literal, and a malformed date is dropped by `validate_entry` exactly as `_parse_date`
+    # drops it, so the two halves agree.
+    #
+    # `title` IS DELIBERATELY NOT SEEDED: it is the one promoted column `DesignWorkshop` declares
+    # NOT NULL and the one `_coerce_promoted` refuses to blank, so it was never at risk — and
+    # seeding it would freeze the create-form title into stage 1 where a later PATCH could not reach
+    # it.
+    seeded = {
+        key: value
+        for key, value in (
+            ("workshopKind", payload.workshopKind),
+            ("craftName", payload.craftName),
+            ("clusterName", payload.clusterName),
+            ("state", payload.state),
+            ("district", payload.district),
+            ("startDate", payload.startDate),
+            ("endDate", payload.endDate),
+        )
+        if value
+    }
+
+    record = await open_design_workshop(
+        actor=current_user,
+        columns=columns,
+        designer_id=lead_id,
+        designer_ids=granted_ids,
+        seeded=seeded,
+    )
+    return workshop_summary(record)
+
+
 @router.get("/workshops")
 async def list_assignable_workshops(
     page: int = 1,
     pageSize: int = 20,
     search: str | None = Query(None, max_length=120),
+    # WHETHER THIS WORKSHOP HAS A DESIGNER ON IT — "staffed", "unstaffed", or absent for both.
+    #
+    # THE ONE FILTER THIS SCREEN ACTUALLY NEEDS, and it is a filter over the promoted
+    # ``designerName`` column rather than over the viewer table, which is the same fact the picker
+    # rows already print. "Which of the two hundred workshops in this directory has nobody named on
+    # it" is the question a ministry administrator opens this page to answer, and before it existed
+    # the only way to answer it was to choose each workshop in turn and read the panel below.
+    #
+    # A STRING AND NOT A BOOLEAN. ``buildQuery`` on the web client drops ``""`` exactly as it drops
+    # null, so a boolean ``staffed=false`` is unsendable — the shape ``workshopIds``' reserved word
+    # ``"none"`` exists for. Two words are also honest about the third state: absent means BOTH,
+    # never "false".
+    staffed: str | None = Query(None, max_length=16),
     _: Any = Depends(require_workshop_assigner),
 ) -> dict[str, Any]:
     """The design & prototype workshops an assigner may name people on. **Every one of them.**
@@ -332,6 +481,10 @@ async def list_assignable_workshops(
     **THE SCOPE IS AND-COMPOSED AND THE SEARCH IS NOT** — the same warning every list on this prefix
     carries, for the same reason. Here there is no scope clause to lose, which is precisely why the
     search must not be allowed to establish the habit of writing to ``where["OR"]`` twice.
+
+    ``staffed`` IS AND-COMPOSED FOR THAT EXACT REASON. It goes into ``where["AND"]`` and never beside
+    the search's ``OR``: an unstaffed filter written onto the same key would either stop narrowing
+    or would silently widen the search to every workshop with no designer the moment somebody typed.
     """
     where: dict[str, Any] = {"deletedAt": None}
     term = (search or "").strip()
@@ -342,6 +495,19 @@ async def list_assignable_workshops(
             {"clusterName": contains(term)},
             {"workshopCode": contains(term)},
         ]
+    wanted_staffing = (staffed or "").strip().lower()
+    if wanted_staffing in {"staffed", "unstaffed"}:
+        # A BLANK STRING COUNTS AS UNSTAFFED, not only NULL. ``designerName`` is a promoted column
+        # and ``_coerce_promoted`` writes "" rather than NULL for an entity that came back with an
+        # empty designer block, so a NULL-only test would file such a workshop as staffed and hide
+        # it from exactly the list an officer opened to find it.
+        empty = [{"designerName": None}, {"designerName": ""}]
+        where.setdefault("AND", []).append(
+            {"OR": empty} if wanted_staffing == "unstaffed" else {"NOT": {"OR": empty}}
+        )
+    # AN UNRECOGNISED WORD IS IGNORED RATHER THAN REFUSED, which is this repository's rule for every
+    # other narrowing on every other list route: "an id the caller cannot see, or one that does not
+    # exist, matches nothing and is not an error — this is a filter, not a lookup".
     clean_page, clean_size, skip = normalize_pagination(page, pageSize)
     total, rows = await gather_reads(
         db.designworkshop.count(where=where),
@@ -451,12 +617,24 @@ async def read_overseen_workshop(
 async def read_workshop_oversight(
     workshop_id: str, _: Any = Depends(require_workshop_assigner)
 ) -> dict[str, Any]:
-    """Who is on this workshop: its designer, its Assistant Director and its Regional Director.
+    """Who is on this workshop: its designers, its Assistant Director and its Regional Director.
 
-    The designer is read off the promoted column rather than out of an oversight row, because
+    ``designerName`` is read off the promoted column rather than out of an oversight row, because
     ``DwOversightCapacity`` has no DESIGNER member and must never grow one — who a workshop is FOR
     already has an owner, and a capacity row saying "the designer is X" beside a column saying "the
     designer is Y" is two answers to one question with the report printing the column.
+
+    ``designers`` IS NEW IN 0.0.12 AND IT IS THE KEY THE ASSIGNMENT SCREEN WAS MISSING. This route
+    answered ``designerName`` — a STRING, no ids — so the one page that decides who a workshop is
+    for could not see who currently holds it, could not pre-tick a picker and had nothing to compare
+    a change against. The rows come from ``design_workshop_viewers.viewer_rows`` through
+    ``oversight.named_designer_rows``, i.e. THE SERVICE and never ``db.designworkshopviewer.*``,
+    which ``tests/test_workshop_oversight_unit.py``'s AST sweep over the three oversight files
+    forbids outright.
+
+    **THE CREATOR IS NOT IN ``designers``** — they hold the workshop through ``createdById`` and
+    have no viewer row — so an empty list means "nobody but whoever opened it", never "nobody at
+    all". The screen over this says so in words.
     """
     record = await _workshop_for_assignment_or_404(workshop_id)
     return {
@@ -464,6 +642,7 @@ async def read_workshop_oversight(
         "title": record.title,
         "status": str(getattr(record.status, "value", record.status)),
         "designerName": getattr(record, "designerName", None),
+        "designers": await oversight.named_designer_rows(record),
         "oversight": await oversight.oversight_rows(workshop_id),
     }
 
@@ -518,6 +697,52 @@ async def set_workshop_designer(
     """
     record = await _workshop_for_assignment_or_404(workshop_id)
     return await oversight.reassign_designer(record, payload.designerId, actor=current_user)
+
+
+@router.put("/{workshop_id}/designers")
+async def set_workshop_designers(
+    workshop_id: str,
+    payload: DesignWorkshopDesignersIn,
+    current_user: Any = Depends(require_workshop_assigner),
+) -> dict[str, Any]:
+    """Set the whole team this workshop is FOR, and answer with it as the server now holds it.
+
+    ── THE PLURAL DOOR BESIDE ``PUT …/designer``, AND THE TWO ARE NOT ALTERNATIVES ────────────────
+
+    That one answers *whose name is on the report* and is a replacement by construction. This one
+    answers *who may open the workshop*, which on a real Design & Prototype Development Workshop is
+    two designers alongside a master craftsperson and a reviewing officer — every one of whom needs
+    the 22 stages. Both facts already exist on the create doors as ``designerUserId`` beside
+    ``designerUserIds``; this prefix had only half of the pair until 0.0.12, which is why an
+    assignment made here was ADD-ONLY and could never be corrected.
+
+    ⚠ **A WHOLE-SET BODY, AND EMPHATICALLY NOT A WHOLE-SET WRITE.** The service DIFFS the body
+    against the rows that exist and adds and removes one at a time.
+    ``design_workshop_viewers.replace_viewers`` is **forbidden from this feature**: a fourth writer
+    of that table (``services/design_workshop_grants.py``, the join cards and the access requests)
+    means a whole-set replace destroys a row a concurrent redemption created in the same second —
+    the exact hazard ``attach_the_named_designers`` refuses to take on.
+
+    **"NOBODY IS THE DESIGNER" IS STILL NOT EXPRESSIBLE.** Two 422s, both naming the remedy: an
+    empty ``userIds`` on a workshop that names a designer, and a body that drops the LEAD without
+    ``leadUserId`` naming their replacement. Removing a CO-designer is always allowed — that is the
+    gap this route exists to close, and their name is on no document.
+
+    Validation runs to completion before any write, and ``assert_every_designer_may_be_named`` is
+    asked of the ADDED ids only. Refusing a REMOVAL because somebody's empanelment has lapsed would
+    strand access precisely on the accounts it is most urgent to withdraw.
+
+    The answer carries ``designers`` (the set as the server now holds it, re-read rather than
+    echoed), ``removedDesigners`` (who lost access, named — a silent stale grant was the whole
+    defect here once already), ``designerName`` and ``stagesWritten``.
+    """
+    record = await _workshop_for_assignment_or_404(workshop_id)
+    return await oversight.set_named_designers(
+        record,
+        user_ids=list(payload.userIds),
+        lead_user_id=payload.leadUserId,
+        actor=current_user,
+    )
 
 
 @router.post("/{workshop_id}/artisans/upload", status_code=status.HTTP_201_CREATED)
@@ -612,6 +837,65 @@ async def upload_artisan_list(
     )
     del content
     return public_encode(report, current_user)
+
+
+@router.get("/{workshop_id}/artisans")
+async def list_workshop_artisans(
+    workshop_id: str, _: Any = Depends(require_workshop_assigner)
+) -> dict[str, Any]:
+    """Who is on this workshop's artisan roster.
+
+    **THIS READ DID NOT EXIST ANYWHERE IN THE PRODUCT UNTIL 0.0.12, ON EITHER CLIENT.**
+    ``GET /artisans?designWorkshopId=…`` has existed for as long as the column has and is called by
+    nothing; ``ArtisanListPanel`` on ``/officers`` offered a pro-forma, an upload and an import
+    history, and never once said who was actually on the list. That absence is why the roster's
+    missing REMOVAL went unnoticed for so long: there was no list to remove anybody from.
+
+    ``oversight.linked_artisan_rows`` carries the payload argument — six keys, and **no regulated
+    identity column at all**. An officer may read an unmasked Aadhaar through the artisan record
+    itself (``_may_read_full_aadhaar`` is ``has_rank(user, "PROFESSOR")`` and all three ministry
+    posts clear it), so this is not a capability being withheld; it is the frontend contract's own
+    rule that a regulated number is never rendered in a LIST.
+
+    ``truncated`` says the list was cut, and the screen says so when it is true — the same contract
+    every other list on this prefix keeps.
+    """
+    await _workshop_for_assignment_or_404(workshop_id)
+    return await oversight.linked_artisan_rows(workshop_id)
+
+
+@router.delete("/{workshop_id}/artisans/{artisan_id}")
+async def unlink_workshop_artisan(
+    workshop_id: str, artisan_id: str, _: Any = Depends(require_workshop_assigner)
+) -> dict[str, Any]:
+    """Take one artisan off this workshop's roster. **UNFILES; NEVER DELETES.**
+
+    The artisan's record, its photographs, its products, its tools and its interviews are all
+    untouched — ``Artisan.designWorkshopId`` is a nullable FK and this clears it, which is the same
+    act ``schemas/records.assert_payload_workshop`` already permits from the artisan form (*"an
+    explicit ``None`` unfiles the record and is always allowed"*), reached from the screen that
+    actually holds the roster. ``Artisan.createdBy`` is ``Restrict`` and is never touched: an
+    officer did not author these records and a roster correction must not be a way to destroy a
+    regulated person-record.
+
+    ⚠ **THE STAGE-3 PARTICIPANT ROW IS LEFT STANDING, AND THE SCREEN SAYS SO IN WORDS.**
+    ``services/artisan_import`` writes one ``DwStageEntry`` per imported artisan under
+    ``WORKSHOP_PLAN_PARTICIPANTS_OPENING``. Deleting it here would be a STAGE WRITE performed by an
+    officer, on a report that may be under inspection, through the same ``save_stage`` path whose
+    ``NEEDS_REVISION`` arm silently RE-SUBMITS a sent-back report and burns a round. **These are two
+    deletions and nothing links them.** Whether they should be one is a product decision nobody has
+    taken; until then this door does one thing and says what it did not do.
+
+    **IT IS NOT A 404 WHEN THE ARTISAN IS ALREADY OFF THE ROSTER**, and ``unlinked`` is how the
+    screen tells the two apart. Two officers working the same list is the ordinary case, and "the
+    row you asked me to remove is already gone" is a state the second of them should be told about
+    rather than shown an error over. An artisan id belonging to a DIFFERENT workshop lands in the
+    same arm, because the service's ``update_many`` predicate carries the workshop — a stale screen
+    can never unfile a record from somewhere it was not looking at.
+    """
+    await _workshop_for_assignment_or_404(workshop_id)
+    unlinked = await oversight.unlink_artisan_from_workshop(workshop_id, artisan_id)
+    return {"unlinked": unlinked}
 
 
 @router.get("/{workshop_id}/artisan-imports")

@@ -6,10 +6,11 @@ import { useEffect, useMemo, useState } from "react";
 import { Field } from "@/components/FormControls";
 import { CarryContextBanner, carryScope, useCarryContext, type CarryScopeState } from "@/components/forms/CarryContextBanner";
 import { CappedListNotice } from "@/components/data/CappedListNotice";
-import { LIST_PAGE_CEILING, listCut, type ListCut } from "@/components/data/cappedList";
+import { LIST_PAGE_CEILING, listCut, mergeById, type ListCut } from "@/components/data/cappedList";
 import { Dropdown, MultiSelectDropdown } from "@/components/ui/Dropdown";
 import {
   artisanToOption,
+  craftRosterCacheKey,
   craftToOption,
   optionToArtisan,
   optionToCraft,
@@ -67,19 +68,51 @@ export function ToolAssignmentSection() {
    * before the newest hundred is absent from a list headed "Artisans of selected crafts", and the
    * panel's own `emptyLabel` then reads "No artisans for these crafts" over crafts that have plenty.
    *
-   * THIS IS THE ONE SITE IN THIS PASS THAT IS NOT FULLY CLOSED, and the reason is a missing server
-   * parameter rather than a preference. `/artisans` takes a SINGULAR `craftId`; the product and tool
-   * forms use it and are therefore whole. This picker is a MULTI-select, so the equivalent request
-   * needs a plural `craftIds` (the shape `workshopIds` already has on the same route). Issuing one
-   * request per ticked craft is not a substitute — "Select all 178" would fire 178 of them. Until
-   * that parameter exists the cut is at least stated rather than silent, which is the difference
-   * between a short list and a list that lies.
+   * ── THIS SITE IS NOW CLOSED, AND THE PARAGRAPH THAT SAID OTHERWISE IS REPLACED, NOT DELETED ────
+   * It read: *"THIS IS THE ONE SITE IN THIS PASS THAT IS NOT FULLY CLOSED, and the reason is a
+   * missing server parameter rather than a preference. `/artisans` takes a SINGULAR `craftId`; the
+   * product and tool forms use it and are therefore whole. This picker is a MULTI-select, so the
+   * equivalent request needs a plural `craftIds` (the shape `workshopIds` already has on the same
+   * route). Issuing one request per ticked craft is not a substitute — 'Select all 178' would fire
+   * 178 of them. Until that parameter exists the cut is at least stated rather than silent, which is
+   * the difference between a short list and a list that lies."*
+   *
+   * Every clause of that was true and the parameter it asked for landed on 2026-09-15:
+   * `resolve_craft_ids` in `backend/app/services/record_filters.py`, wired into
+   * `routes/artisans.list_artisans` beside the singular `craftId`, which still works for every
+   * existing caller. So this panel now asks for the TICKED CRAFTS' roster with one request (the
+   * effect below), and `craftArtisanCut` reports what that request could not carry instead of what a
+   * browser-side filter had already thrown away. Re-check with
+   * `grep -n "craftIds" backend/app/api/routes/artisans.py`.
+   *
+   * ── "THIS SITE" IS THIS BROWSER, AND THE HANDSET IS STILL OPEN ─────────────────────────────────
+   * The parameter exists on the route; only the web client asks for it. `WorkshopRepositoryApi.artisans`
+   * declares page/pageSize/workshopIds/createdBy and no craft scope at all, so BOTH Android surfaces
+   * off that one 100-row register still filter it in memory — the tool form
+   * (`MainActivity.kt`, `knownArtisans.filter { it.craftId in craftIds || it.id in artisanIds }`) and
+   * `ToolAssignScreen`, whose own empty sentence reads "No artisans for the selected crafts." over a
+   * craft that may have a dozen. The two clients therefore still disagree about who practises a craft
+   * on the same data, and a designer standing in a courtyard with the handset gets the pre-2026-09-15
+   * answer. Closing it is `@Query("craftIds")` on that interface, threaded through
+   * `WorkshopRepository.artisans`, plus a craft-keyed `DwReferenceStore` roster load beside the
+   * whole-register one — the two-document shape `loadArtisanProductFallback` already uses. Until that
+   * lands, do not read the paragraph above as a statement about the fleet. Re-check with
+   * `grep -rn "craftIds" android/app/src/main/java/`.
    */
   const [cuts, setCuts] = useState<{ tools: ListCut | null; crafts: ListCut | null; artisans: ListCut | null }>({
     tools: null,
     crafts: null,
     artisans: null
   });
+  /**
+   * WHAT THE TICKED CRAFTS' OWN ROSTER REQUEST COULD NOT CARRY — null until one has answered.
+   *
+   * Distinct from `cuts.artisans`, which describes the whole-register load, and it SUPERSEDES it on
+   * the artisan picker rather than sitting beside it: once the narrowed answer is in, that is the
+   * list the control is drawing, and printing two totals about two different questions under one
+   * dropdown is how a reader ends up trusting neither.
+   */
+  const [craftArtisanCut, setCraftArtisanCut] = useState<ListCut | null>(null);
 
   /*
     CACHE-FIRST FOR ALL THREE REGISTERS — DROPDOWN_DESIGN §3.3, on the web.
@@ -139,8 +172,15 @@ export function ToolAssignmentSection() {
             if (!cancelled) setCuts((previous) => ({ ...previous, artisans: listCut(page, "artisans") }));
             return page.items;
           },
-          onList: (rows) => {
-            if (!cancelled) setArtisans(rows);
+          // `mergeById`, NOT a replace, since the narrowed roster below exists: the two loads race
+          // whenever a carried craft is applied at mount, and a plain `setArtisans(rows)` landing
+          // second would drop every row the narrowed request had just recovered. A LIVE ROW OUTRANKS
+          // A CACHED ONE OF THE SAME ID, and `mergeById` keeps whichever array it is handed first —
+          // so the live answer goes first and cached extras are appended behind it, or a reduced
+          // cached row would survive the refresh meant to replace it. Same rule, same words, as
+          // `forms/recordPickers`.
+          onList: (rows, cachedAt) => {
+            if (!cancelled) setArtisans((previous) => (cachedAt ? mergeById(previous, rows) : mergeById(rows, previous)));
           }
         })
       ]);
@@ -155,6 +195,81 @@ export function ToolAssignmentSection() {
       cancelled = true;
     };
   }, []);
+
+  /**
+   * THE TICKED CRAFTS, SORTED AND JOINED — one string, because it is both a cache key and an effect
+   * dependency.
+   *
+   * SORTED so that ticking Ajrakh then Warli and ticking Warli then Ajrakh are one question with one
+   * cached answer rather than two half-answers this browser would then have to choose between with
+   * no signal. Order carries no meaning on THIS panel — it assigns a tool to people, and the crafts
+   * are only a way of finding them — which is exactly why it may be normalised here and may not be
+   * on the tool form, where `craftIds` order is the wire contract.
+   */
+  const craftRosterKey = useMemo(() => [...craftIds].sort().join(","), [craftIds]);
+
+  /*
+    THE TICKED CRAFTS' OWN ROSTER, IN ONE REQUEST — the request the paragraph above used to say
+    could not be made. `craftIds` accepts repeated parameters or one comma-joined value, and
+    `buildQuery` can only send the second (`lib/api` takes no arrays), so that is what goes out.
+
+    THE SINGULAR IS SENT ALONGSIDE IT FOR ONE CRAFT ONLY, and it is a deploy-skew belt rather than a
+    preference: the web and the API deploy separately, so a browser carrying this build against an
+    API that does not yet declare `craftIds` would send a query parameter FastAPI ignores — and an
+    ignored craft filter is the newest hundred artisans of every craft, under a truncation sentence
+    claiming to be about these crafts. With one craft ticked both parameters narrow to the same set
+    on a new server and the singular still narrows on an old one. With several ticked there is no
+    singular that could be right, so none is sent and a stale API degrades to the behaviour this
+    panel had before rather than to a list that lies.
+
+    IT ONLY EVER ADDS ROWS. The whole-artisan register above is still loaded and still what
+    `carryScope` judges a carried artisan against — "can this researcher still reach them" is a
+    question about the repository and not about the crafts ticked in this panel a moment ago.
+  */
+  useEffect(() => {
+    // A cut left over from the previous selection would describe THIS selection's list with the
+    // previous one's total, which is the same mistake as a stale empty-sentence one field along.
+    setCraftArtisanCut(null);
+    if (!craftRosterKey) return;
+    const ids = craftRosterKey.split(",");
+    let cancelled = false;
+    void loadCachedRegister<Artisan>({
+      model: "artisan",
+      // Beside the whole register under its own key — two documents for one model is
+      // `DwReferenceStore`'s own design: they are different answers to different questions, and the
+      // narrowed one is what this picker actually offers.
+      //
+      // A DIGEST OF THE ROSTER KEY, NOT THE KEY. `referenceCacheKey` cuts each segment of the
+      // document name at 80 characters and a cuid is 25, so raw ids put every four-or-more-craft
+      // selection sharing its three smallest ids into ONE document — and this panel, unlike the tool
+      // form, has no staleness sentence attached to the result, so a wrong-document read here is
+      // simply a wrong list with nothing saying so. `craftRosterCacheKey` carries the whole
+      // argument; the same call is in `recordPickers`' roster effect, off the same helper, so the
+      // two panels cannot drift into two key shapes for one question.
+      filterValue: craftRosterCacheKey(craftRosterKey),
+      decode: optionToArtisan,
+      encode: artisanToOption,
+      fetch: async () => {
+        const page = await listResource<Artisan>("/artisans", {
+          craftIds: ids.join(","),
+          craftId: ids.length === 1 ? ids[0] : undefined,
+          pageSize: LIST_PAGE_CEILING
+        });
+        // The noun has to agree with what was asked for, or an admin reads a cut about "this craft"
+        // over a list drawn from four of them.
+        if (!cancelled) setCraftArtisanCut(listCut(page, ids.length > 1 ? "artisans of these crafts" : "artisans of this craft"));
+        return page.items;
+      },
+      onList: (rows, cachedAt) => {
+        // Live first, cached extras behind — see the mount load above for why the order decides
+        // which copy of a shared id survives.
+        if (!cancelled) setArtisans((previous) => (cachedAt ? mergeById(previous, rows) : mergeById(rows, previous)));
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [craftRosterKey]);
 
   /*
     THE THREE LISTS AS THE SHARED VOCABULARY SEES THEM.
@@ -308,7 +423,24 @@ export function ToolAssignmentSection() {
                 artisanName: tool.artisanName,
                 place: tool.place,
                 craftId: tool.craftId,
-                craftName: tool.craftName,
+                /*
+                  THE FIRST CRAFT'S OWN NAME, NOT `tool.craftName`. Since the tool form became
+                  multi-craft the server derives `tool.craftName` as every linked craft's name joined
+                  ", " — so a tool linked to Ajrakh and Warli carries "Ajrakh, Warli" in that column,
+                  and `tool.craftId` beside it is Ajrakh alone. The bag is SINGULAR: a sitting is one
+                  craft, and the six forms that apply it fill a single required "Craft name" box from
+                  this field. `ProductForm` then SAVES it, and `ProductCreate` has no craftIds to
+                  derive anything from, so "Ajrakh, Warli" is stored as one craft's name against
+                  Ajrakh's id — in the column every export, report and exact-match craft lookup reads.
+                  Nothing re-banks after this: `assign()` writes no context, so unlike the tool form's
+                  own bank there is no later save to correct it.
+
+                  `crafts` is this panel's own register (the craft picker below is built from it), so
+                  this is a lookup and not a second fetch. It falls back to the stored string for a
+                  craft that is off the loaded page — one joined name in the bag is still better than
+                  an empty required box, and `useRecordsOffPage` is not wired to this panel.
+                */
+                craftName: crafts.find((craft) => craft.id === tool.craftId)?.name ?? tool.craftName,
                 toolId: tool.id,
                 toolName: tool.toolkitName
               });
@@ -378,8 +510,14 @@ export function ToolAssignmentSection() {
           />
           {/* Rendered only once crafts are ticked: with none ticked the control says "Select crafts
               first" and is disabled, and a truncation notice over a control nobody can open is
-              noise. */}
-          {craftIds.length ? <CappedListNotice cuts={[cuts.artisans]} /> : null}
+              noise.
+
+              THE NARROWED CUT SUPERSEDES THE REGISTER'S once the crafts' own roster has answered —
+              that is the list this control is drawing, and it is usually not cut at all. Until it
+              answers the register's cut is the honest one, because the register IS what the picker
+              is filtering in the browser at that moment. Never both: two totals about two questions
+              under one dropdown is how a reader ends up trusting neither. */}
+          {craftIds.length ? <CappedListNotice cuts={[craftArtisanCut ?? cuts.artisans]} /> : null}
         </Field>
       </div>
 

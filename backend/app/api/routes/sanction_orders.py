@@ -2,12 +2,30 @@
 
 ══ WHAT AN OFFICER DOES HERE, AND WHAT IT COSTS ═══════════════════════════════════════════════
 
-Five fields — order number, order date, sanctioned amount, the designer's name and their Gmail
-address — and recording them writes SEVEN rows in one transaction: an allow-list admission, an
-empanelment, an account (only where the mailbox has none), a designer profile, a workshop, the
-designer's viewer row on it, and the sanction order itself. The argument for the order of those
+Three facts off the paper — order number, order date, sanctioned amount — and the designer or
+designers it was issued to. Recording one writes SEVEN ROWS PLUS FOUR PER NAMED DESIGNER in one
+transaction: an allow-list admission, an empanelment, an account (only where the mailbox has
+none), a designer profile and a viewer row for each of them, plus the workshop, the sanction
+order itself and one ``SanctionOrderDesigner`` row per name. The argument for the order of those
 writes, the transaction boundary and every refusal that happens before the first of them is in
 ``app/services/sanction_orders.py``; this module is the doors.
+
+**IT NAMED EXACTLY ONE DESIGNER UNTIL 0.0.12**, and this paragraph said "five fields ... seven
+rows". A sanction order is routinely issued for a team, and while the register could name one
+designer the second and third were either left off the instrument entirely — no account, no
+empanelment, unable to open the workshop their own order paid for — or recorded as a second
+order under a number the ministry never issued. The three designer scalars on ``SanctionOrder``
+are unchanged and still mean THE LEAD.
+
+══ AND A SHEET OF THEM CAN BE UPLOADED, IN TWO STEPS ══════════════════════════════════════════
+
+``POST /upload`` reads a workbook and WRITES NOTHING: it answers three lists — what it will
+record, what it needs the officer to settle, and what it refuses whatever they say.
+``POST /upload/confirm`` carries the officer's answers back and records them, ONE TRANSACTION
+PER ORDER. The confirmation is stateless (no token, no server-side parse held between the two
+requests) and every refusal runs again on the way in, so a stale tab can be refused but cannot
+record anything the officer's own form would not. ``app/services/sanction_import.py`` enumerates
+every way the two designer columns can fail to tally and what happens to each.
 
 ══ WHY EVERY ARM IS GATED, READ INCLUDED ══════════════════════════════════════════════════════
 
@@ -41,15 +59,21 @@ defined here so that the refusal is still spelled exactly once, and
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
+from fastapi.responses import Response
 
 from app.core.db import db
 from app.core.deps import get_current_user
-from app.schemas.sanction_orders import SanctionOrderCreate, SanctionOrderUpdate
-from app.services import sanction_orders
+from app.schemas.sanction_orders import (
+    SanctionImportConfirm,
+    SanctionOrderCreate,
+    SanctionOrderUpdate,
+)
+from app.services import designers, sanction_import, sanction_orders
 from app.services.concurrency import gather_reads
 from app.services.pagination import normalize_pagination, page_payload
 from app.services.records import add_date_range, contains, with_id_tiebreak
@@ -58,6 +82,20 @@ from app.services.sanction_orders import (
     SANCTION_ORDER_REFUSAL,
     can_record_sanction_orders,
 )
+from app.services.sanction_orders_xlsx import (
+    PRO_FORMA_FILENAME,
+    SanctionXlsxError,
+    build_sanction_pro_forma,
+    parse_sanction_workbook,
+)
+from app.services.uploads import read_workbook_upload
+from app.services.xlsx_report import xlsx_response
+
+_WRONG_TYPE_DETAIL = (
+    "That is not an Excel workbook. Download the sanction order pro-forma, type the orders into "
+    "it, and upload that — or use File > Save As in Excel and choose 'Excel Workbook (.xlsx)'."
+)
+_EMPTY_DETAIL = "The upload was empty. Attach the filled-in sanction order pro-forma."
 
 router = APIRouter(prefix="/sanction-orders", tags=["sanction-orders"])
 
@@ -98,6 +136,91 @@ async def record_sanction_order(
     return await sanction_orders.create_from_sanction(payload, officer)
 
 
+@router.post("/upload")
+async def upload_sanction_orders(
+    request: Request,
+    file: UploadFile = File(...),
+    officer: Any = Depends(require_sanction_recorder),
+) -> dict[str, Any]:
+    """STEP ONE OF TWO: read the sheet, reconcile it against the rosters, and WRITE NOTHING.
+
+    200 and not 201, because nothing was created. The answer is
+    ``{sheet, sourceFilename, rowsRead, ready[], needsReview[], refused[], problems[]}`` —
+    ``services/sanction_import`` enumerates, in its own header, every one of the nineteen ways the
+    two designer columns can fail to tally and what happens to each. An officer who uploads the
+    wrong file and closes the tab has changed nothing at all.
+
+    ``request`` IS NOT A PARAMETER ANY CLIENT SENDS. FastAPI fills it from the connection; it is
+    here only so the size gate can read the declared ``Content-Length`` and refuse an oversized
+    workbook before copying it into the heap.
+
+    **THERE IS DELIBERATELY NO ``Form()`` SCALAR ON THIS BODY.** The annual plan's upload has two,
+    and each is typed ``str | None`` and validated by hand for a reason its docstring sets out at
+    length: a bare default is read off the QUERY STRING by FastAPI, so a client that put the value
+    in the body has it silently ignored under a 201. This route has nothing to put there — the date
+    is on every row, and there is no destructive flag to guard — and that absence is worth stating,
+    because "add a scalar" is the change that walks into that trap.
+
+    ``asyncio.to_thread`` FOR THE PARSE. Two hundred rows of openpyxl is tens of milliseconds of
+    pure CPU and this process serves every other request while it runs. The RECONCILIATION stays on
+    the loop, correctly: it is database reads, not CPU.
+    """
+    content = await read_workbook_upload(
+        file,
+        sanction_import.MAX_UPLOAD_BYTES,
+        request=request,
+        purpose="sanction order workbook",
+        wrong_type_detail=_WRONG_TYPE_DETAIL,
+        empty_detail=_EMPTY_DETAIL,
+    )
+    try:
+        parsed = await asyncio.to_thread(
+            parse_sanction_workbook, content, filename=file.filename
+        )
+    except SanctionXlsxError as exc:
+        # THE WHOLE FILE, NOT ONE ROW. ``SanctionXlsxError`` is raised only when there is nothing to
+        # import at all; a row this could not read comes back in ``problems`` with the other
+        # rows still offered, which is the contract ``xlsx_table`` states and the reason an officer
+        # with 198 of 200 orders is far better off than one with an error page.
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
+
+    return await sanction_import.review_sheet(parsed, officer=officer)
+
+
+@router.post("/upload/confirm", status_code=status.HTTP_201_CREATED)
+async def confirm_sanction_orders(
+    payload: SanctionImportConfirm,
+    officer: Any = Depends(require_sanction_recorder),
+) -> dict[str, Any]:
+    """STEP TWO OF TWO: record the rows the officer agreed to. **NO FILE, AND NO TOKEN.**
+
+    The confirmation is STATELESS: this body carries the resolved rows rather than a ticket quoting
+    a parse the server is holding. :class:`SanctionImportConfirm` argues why — in short, this
+    repository holds no server-side inter-request state anywhere, and the one short-TTL-token
+    precedent stores a digest rather than the token and is a poor template for "remember this parse
+    for ten minutes".
+
+    **EVERY REFUSAL RUNS AGAIN, PER ROW, AND THAT IS WHAT MAKES THE STATELESSNESS SAFE.** Nothing
+    here writes a row itself: each order goes through ``create_from_sanction``, the same door the
+    officer's form uses, so a stale tab or a hand-edited body meets exactly the rules the form meets,
+    in exactly the same words. What a stale body can do is be REFUSED — it cannot record something
+    the form would not.
+
+    201 because rows were created, and the body is the report:
+    ``{rowsRead, recorded, skipped, refused, accountsCreated, created[], importId, problems[]}``.
+    **The four counts must add up on screen** — ``rowsRead = recorded + skipped + refused`` — which
+    is only checkable if every one of them including the zeroes is drawn.
+
+    IT IS 201 EVEN WHEN EVERY ROW WAS REFUSED, and that is deliberate rather than sloppy. The
+    request itself succeeded and produced a report; answering 4xx would put the whole report in an
+    error payload that the client's error path renders as one sentence, which is the opposite of
+    what an officer needs from two hundred rows. The report says, in numbers, that nothing landed.
+    """
+    return await sanction_import.apply_confirmed_rows(payload, officer)
+
+
 @router.patch("/{sanction_id}")
 async def update_sanction_order(
     sanction_id: str,
@@ -130,6 +253,14 @@ async def reissue_credential_link(
     which is also what silently invalidates nothing — an outstanding link stays valid until it is
     used or withdrawn.
 
+    ⚠ **THIS REGISTER'S OWN ACCOUNTS ONLY.** 422 when the order's ``accountCreated`` is false, and
+    422 when the named account now ranks at or above the officer asking. Without those two this was
+    an unprivileged second door onto ``POST /api/auth/password-links`` (which is
+    ``Depends(require_admin)``): an Assistant Director could record an order naming an existing
+    MASTER_ADMIN — every phase-0 refusal passes for that address — and then take the account over
+    from here. The whole argument, and why the rank test does not belong in ``cannot_run_reason``,
+    is in :func:`app.services.sanction_orders.reissue_credential_link`.
+
     429 when the 4-per-hour-per-designer budget is spent, with ``retry-after`` in seconds. The
     sentence is worded for an officer rather than for an admin, which is why it is spelled in
     ``services/sanction_orders`` rather than imported from ``routes/auth``.
@@ -161,10 +292,16 @@ async def revoke_credential_link(
 # --------------------------------------------------------------------------------------
 
 
-# DECLARED BEFORE ``/{sanction_id}``. FastAPI matches in declaration order, and this repository has
-# already lost an endpoint to that once (see the note above ``design_workshop_viewers`` in
-# app/api/router.py). Putting the literal path first is what keeps that true when somebody adds the
-# next one.
+# ⚠ EVERY LITERAL GET PATH ON THIS PREFIX IS DECLARED BEFORE ``/{sanction_id}``. FastAPI matches
+# in DECLARATION ORDER, and this repository has already lost an endpoint to that once (see the
+# note above ``design_workshop_viewers`` in app/api/router.py). ``GET /sanction-orders/{id}``
+# matches ``/awaiting-count``, ``/designers`` and ``/pro-forma.xlsx`` perfectly well and would
+# answer 404 "Sanction order not found" to all three — a badge that silently reads zero for ever,
+# a picker with no names in it, and a download button that does nothing, on a server where every
+# one of them exists.
+#
+# ``test_the_awaiting_count_is_declared_before_the_id_route`` asserts this PER METHOD and for
+# every literal path, which is what keeps it true when somebody adds the next one.
 @router.get("/awaiting-count")
 async def awaiting_sanction_count(
     _: Any = Depends(require_sanction_recorder),
@@ -259,6 +396,113 @@ async def list_sanction_orders(
 #: caller-supplied string is an invitation to sort by a column that is not indexed — on a register
 #: an officer opens every morning.
 _SORTABLE = frozenset({"sanctionOrderDate", "sanctionAmount", "createdAt", "sanctionOrderNo"})
+
+
+@router.get("/designers")
+async def list_sanction_designers(
+    search: str | None = Query(None, max_length=120),
+    _: Any = Depends(require_sanction_recorder),
+) -> dict[str, Any]:
+    """The accounts an officer may name on a sanction order. **THE FIFTH DOOR, AND IT HAD TO EXIST.**
+
+    ── WHY THE FOUR DOORS THAT ALREADY EXISTED COULD NOT BE USED ─────────────────────────────────
+
+    Every one of them refuses an Assistant Director, which is the FLOOR of this feature's own gate:
+
+      * ``GET /designers/roster``     — ``require_designer_roster_manager`` (admin access or above)
+      * ``GET /designers/directory``  — the same
+      * ``GET /design-workshops/eligible-viewers`` — ``require_admin``, the SET {ADMIN, MASTER_ADMIN}
+      * ``GET /design-workshop-oversight/designers`` — ``require_workshop_assigner``,
+        {MINISTRY_ADMIN, ADMIN, MASTER_ADMIN}
+
+    ``can_record_sanction_orders`` is a rank floor at ASSISTANT_DIRECTOR (42), so ranks 42 and 45 —
+    an Assistant Director and a Regional Director — could record a sanction order and reach no
+    designer list at all. That is the exact trap ``PromoteDialog.tsx`` documents as the reason the
+    annual plan's promote dialog once shipped with no designer picker: *"putting it here would give
+    an administrator a picker that 403s, on the one screen built for them."*
+
+    ── A FIFTH DOOR AND NOT A WIDENED GATE, WHICH IS THE PRECEDENT THIS REPOSITORY ALREADY SET ───
+
+    ``list_assignable_designers`` says it in its own docstring: **two doors, one query, two
+    payloads.** Widening ``can_manage_designer_roster`` "was the wrong fix, because that gate is what
+    stands in front of the EMPANELMENT table and an account that could reach it could suspend a
+    designer's sign-in". The same holds here, twice over:
+
+      * **Never widen ``can_manage_designer_roster``.** An officer who could reach it could end an
+        empanelment — the very decision this feature's own refusals exist to protect.
+      * **Never widen ``require_workshop_assigner``** to reach this. ``OVERSIGHT_ASSIGNER_ROLES``
+        excludes REGIONAL_DIRECTOR deliberately — *"the supervised must not choose the supervisor"* —
+        and a REGIONAL_DIRECTOR who needs a designer list does not need the power to appoint the
+        officer who monitors them.
+
+    ── THE PAYLOAD IS FOUR KEYS AND THE ABSENCE OF THE REST IS THE POINT ─────────────────────────
+
+    ``assignable_designers_payload``: ``id``, ``name``, ``email``, ``role``, and **no roster
+    judgements** — no ``rosterActive``, no ``canSignIn``, no ``firstSeenAt``, no ``institution``.
+    Whether a designer has a suspension on file is not an officer's business. The suspended are
+    already gone before this runs, because ``workshop_capable_accounts`` folds the roster into the
+    query's WHERE rather than filtering after the read — so this payload does not need a flag to be
+    safe, and must not EXPLAIN one to be honest.
+
+    ── ⚠ AND THE ROW SET IS NARROWER THAN THE OTHER DOORS', WHICH IS THE OTHER HALF OF THE SAME RULE
+
+    ``include_admins=False``. ``workshop_capable_accounts`` admits ADMIN and MASTER_ADMIN
+    UNCONDITIONALLY — they are never roster-gated, the same rule ``roster_allows`` applies at sign-in
+    — so the default answer here would have been every empanelled designer **plus every privileged
+    account in the installation**, each labelled with its role by the ``role`` key. Reasoning only
+    about the four keys, as the paragraph above does, misses that entirely: the payload discipline
+    was right and the SET was wrong. The other two doors keep the admin arm because their own gates
+    are already admin-adjacent; this one is the first time the list is reachable below rank 48, and
+    an Assistant Director typing one letter would have been handed the complete privileged-account
+    directory — and then, before 2026-09-16, could tick a MASTER_ADMIN row, record an order naming
+    them and re-issue their sign-in link. Both halves are closed now; this is the half that keeps the
+    list honest about what a sanction order is FOR, which is the designer who does the work.
+
+    ``truncated`` IS THE SERVER'S OWN WORD FOR "THIS IS NOT THE WHOLE SET" and the client draws a
+    notice from it. An empty list with no explanation is this repository's most repeated bug class.
+
+    ── THE SAME SHAPE THE PICKER'S OTHER TWO DOORS ANSWER ───────────────────────────────────────
+
+    ``{users, truncated}``, four keys per row, ``search`` capped at 120 — identical to
+    ``GET /design-workshop-oversight/designers`` and structurally identical to
+    ``GET /design-workshops/eligible-viewers``, because ONE control reads all three
+    (``WorkshopDesignerPicker``'s ``fetchEligible``) and a fourth shape would have meant a fourth
+    control. What the three doors do NOT share is the eligibility — that is each gate's business —
+    and this one's is the widest read with the narrowest payload.
+    """
+    users = await designers.workshop_capable_accounts(
+        search=search, include_suspended=False, include_admins=False
+    )
+    return {
+        "users": designers.assignable_designers_payload(users),
+        "truncated": len(users) >= designers.DIRECTORY_TAKE,
+    }
+
+
+@router.get("/pro-forma.xlsx")
+async def download_sanction_pro_forma(
+    _: Any = Depends(require_sanction_recorder),
+) -> Response:
+    """The blank workbook an office types its orders into.
+
+    **GATED LIKE EVERY OTHER ARM, even though it contains no data at all.** The reason is the same
+    one the module docstring gives for gating the read: this prefix's audience is a decision, and a
+    door that answered anybody would be one more thing to reason about the day somebody asks why the
+    register is browsable. It costs an officer nothing — they are already signed in — and it means
+    ``test_every_route_on_the_prefix_carries_the_sanction_gate_read_included`` stays a sweep over
+    ALL routes rather than a sweep with an exception in it.
+
+    EMPTY UNDER THE HEADINGS, and the worked example is on the instructions sheet where it cannot be
+    imported — see :func:`build_sanction_pro_forma`. A seeded row here would be a sanction order
+    called "EXAMPLE" on a register that has no delete.
+
+    IT IS NOT AN EXPORT AND MUST NOT GROW INTO ONE. There is no sanction export in this release, and
+    the annual plan's round-trip hazard (a filtered export re-uploaded destructively) **does not
+    transfer** — there is no ``withdrawAbsent`` equivalent because there is no delete on the
+    register. If an export is built later, say that in its own header so nobody copies the filter
+    machinery for a round trip that cannot lose anything.
+    """
+    return xlsx_response(build_sanction_pro_forma(), PRO_FORMA_FILENAME)
 
 
 @router.get("/{sanction_id}")

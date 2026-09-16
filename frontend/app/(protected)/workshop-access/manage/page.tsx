@@ -43,6 +43,18 @@ import { routeRedirectFor } from "@/lib/permissions";
  * The inspector's own surface is NOT on this page and cannot be: `assert_inspection_surface` 403s an
  * admin, deliberately. This panel is the whole of what an admin does with the feature.
  *
+ * ⚠ THE FOURTH PANEL IS NO LONGER ADMIN-ONLY AT THE SERVER, AND THIS PAGE STILL IS. In 0.0.12 the
+ * three inspector routes moved from `require_admin` to `require_workshop_assigner`
+ * ({MINISTRY_ADMIN, ADMIN, MASTER_ADMIN}) on an owner's ruling: a MINISTRY_ADMIN is not an admin
+ * anywhere in this codebase, so the ministry could stage a workshop into PRE_SUBMISSION and then
+ * cause nobody at all to inspect it. The panel is now ALSO mounted on /officers, told its workshop
+ * by a `workshopId` prop rather than choosing one. This page is unchanged and deliberately so: its
+ * other three panels are genuinely `require_admin` (the queue and every roster mutation on
+ * `routes/workshops.py`, and the design-workshop viewers PUT), so the ROUTE_REDIRECTS rule below
+ * stays where it is. The consequence to know is that this page now hides LESS than it unlocks for
+ * exactly one tier — a Ministry Admin redirected away from here reaches the fourth panel's routes
+ * through /officers, which is the screen built for them. The other direction never happens.
+ *
  * Two gates, and they answer differently on purpose:
  *
  *  - Below admin: sent to /workshop-access/request, from ROUTE_REDIRECTS. The old page met these
@@ -54,7 +66,9 @@ import { routeRedirectFor } from "@/lib/permissions";
  *    the access and turned it off themselves, and silently rerouting them would look like a demotion.
  *
  * The server is the real boundary either way: the queue and every roster mutation sit behind
- * `require_admin` (backend/app/api/routes/workshops.py), so this page hides nothing it also unlocks.
+ * `require_admin` (backend/app/api/routes/workshops.py), so this page unlocks nothing it does not
+ * also hide. (The reverse is no longer exactly true for the fourth panel — see the 0.0.12 note
+ * above — and that direction is harmless: a tier this page turns away has its own screen.)
  */
 export default function WorkshopAccessManagePage() {
   const { user, loading } = useAuth();

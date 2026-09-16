@@ -423,21 +423,80 @@ def test_every_phase_zero_refusal_is_asked_above_the_transaction():
 
     Asked from inside ``db.tx(``, each of these raises after rows are already written. The rollback
     is correct, so nothing is left behind — but the officer's 422 arrives from the middle of a
-    seven-row write they cannot distinguish from a 500, and a refusal that fires after the workshop
-    row would be reading the rows this transaction is itself writing. Both are silent.
+    write they cannot distinguish from a 500, and a refusal that fires after the workshop row would
+    be reading the rows this transaction is itself writing. Both are silent.
+
+    ⚠ **THE ANCHORS MOVED IN 0.0.12 AND THIS TEST MOVED WITH THEM RATHER THAN BEING LOOSENED.** An
+    order names a TEAM now, so the four standing refusals and the two account lookups were extracted
+    into ``resolve_named_designer`` / ``designer_standing_verdict`` and are asked once per designer
+    — which is also what lets the bulk importer ask them without raising. Four of the six literal
+    call spellings this test used to search for are therefore no longer inside
+    ``create_from_sanction``, and it went red for a tree in which the property it guards still held
+    perfectly. Re-pointing it is the fix; deleting the four names would have left it asserting two
+    thirds of nothing.
+
+    It is now STRONGER than it was, in the one way that matters: the last block asserts that NO
+    spelling of any refusal appears below ``async with db.tx(``, which is the property rather than
+    the call graph, and which would have caught the 0.0.12 move on its own.
     """
-    source = inspect.getsource(create_from_sanction)
-    opens = source.index("async with db.tx(")
+    create = inspect.getsource(create_from_sanction)
+    opens = create.index("async with db.tx(")
+
+    # ── THE TWO THAT ARE FACTS ABOUT THE ORDER, STILL ASKED HERE BY NAME ──────────────────────
+    # Self-naming needs no query at all, so it is asked first and for the WHOLE TEAM; the duplicate
+    # number is a fact about the instrument rather than about a designer, which is why it is not in
+    # the per-designer chain below (asking it there would ask it N times and could report the
+    # duplicate against the second name on the order).
+    for refusal in ("self_named_reason(", "_refuse_if_number_taken("):
+        assert refusal in create, f"{refusal} is no longer called from create_from_sanction"
+        assert create.index(refusal) < opens, f"{refusal} is asked from inside the transaction"
+
+    # ── THE PER-DESIGNER ONES MOVED IN 0.0.12, AND THIS TEST MOVED WITH THEM ──────────────────
+    # An order names a TEAM now, so the four standing refusals and the two account lookups are asked
+    # once per designer, through ``resolve_named_designer`` → ``designer_standing_verdict``. The
+    # property being protected is unchanged — none of them may be asked from inside the transaction —
+    # so what is asserted is that the CHAIN is entered above it and that the chain really contains
+    # every rule. Pointing this at the extraction rather than deleting it is the whole job: a test
+    # whose anchors a refactor moved is a test that passes for a reason nobody chose.
+    assert "resolve_named_designer(" in create, "the per-designer phase-0 chain is not called"
+    assert create.index("resolve_named_designer(") < opens, "the chain is entered inside the tx"
+
+    chain = inspect.getsource(sanction_orders.designer_standing_verdict) + inspect.getsource(
+        sanction_orders.resolve_named_designer
+    )
     for refusal in (
-        "_refuse_if_the_officer_named_themselves(",
-        "_refuse_if_number_taken(",
-        "_the_allow_list_row_or_refuse_if_barred(",
-        "_refuse_if_empanelment_ended(",
-        "_refuse_if_the_named_account_cannot_run_the_workshop(",
+        "self_named_reason(",
+        "allow_list_verdict(",
+        "empanelment_ended_reason(",
+        "account_verdict(",
+        "register_account_verdict(",
+        "cannot_run_reason(",
         "_an_admission_that_preserves_an_admins_decision(",
     ):
-        assert refusal in source, f"{refusal} is no longer called from create_from_sanction"
-        assert source.index(refusal) < opens, f"{refusal} is asked from inside the transaction"
+        assert refusal in chain, f"{refusal} is no longer part of the phase-0 chain"
+
+    # ── AND THE HALF THAT SURVIVES THE NEXT EXTRACTION ────────────────────────────────────────
+    # The assertions above name functions, and a future refactor can move them again. This one names
+    # the PROPERTY: whatever the refusals are called, no spelling of one may appear below
+    # ``async with db.tx(``. It is what would have caught the 0.0.12 move on its own.
+    inside = create[opens:]
+    for refusal in (
+        "self_named_reason(",
+        "_refuse_if_number_taken(",
+        "duplicate_reason(",
+        "allow_list_verdict(",
+        "_the_allow_list_row_or_refuse_if_barred(",
+        "empanelment_ended_reason(",
+        "_refuse_if_empanelment_ended(",
+        "account_verdict(",
+        "_existing_account(",
+        "register_account_verdict(",
+        "cannot_run_reason(",
+        "_refuse_if_the_named_account_cannot_run_the_workshop(",
+        "resolve_named_designer(",
+        "designer_standing_verdict(",
+    ):
+        assert refusal not in inside, f"{refusal} is asked from inside the transaction"
 
 
 def test_the_sibling_eligibility_rule_is_not_called_here():

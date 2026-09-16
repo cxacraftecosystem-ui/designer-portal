@@ -6,6 +6,20 @@ The DB-backed behaviour of the write path (two officers, one workshop, a concurr
 an integration test; what is asserted here is the set of properties that would otherwise be true
 only by accident.
 
+── SECTIONS 7b, 7c AND 7d ARRIVED WITH 0.0.12, WHEN THIS SCREEN STOPPED BEING ADD-ONLY ─────────
+
+Three doors landed at once and each brought a property worth pinning without a database:
+``PUT …/{id}/designers`` (the whole TEAM, and the first removal a Ministry Admin has ever been able
+to perform), ``POST …/workshops`` (the THIRD creation door — a MINISTRY_ADMIN is outside
+``DESIGN_WORKSHOP_CREATOR_ROLES`` and so could not open the workshops they staff), and the
+inspector routes' move to ``require_workshop_assigner`` on the owner's OQ-6 ruling.
+
+**Section 7b's fixture replaces every ROW READ AND ROW WRITE with a recorder, and that is not a
+database test wearing stubs.** What it asserts is ORDER and CONDITION — which refusals fire before
+anything is written, and whether the lead's profile is moved — decisions this module makes that no
+row could show. The rows themselves are ``tests/test_workshop_oversight_reassignment.py``, against
+Postgres, deliberately.
+
 Every test is named as the sentence it asserts.
 """
 
@@ -33,6 +47,17 @@ ALL_ROLES = tuple(deps.ROLE_RANK)
 
 OFFICERS = {"ASSISTANT_DIRECTOR", "REGIONAL_DIRECTOR", "MINISTRY_ADMIN"}
 ASSIGNERS = {"MINISTRY_ADMIN", "ADMIN", "MASTER_ADMIN"}
+
+#: The two sets 0.0.12's rulings were required NOT to move, spelled here so the assertions about
+#: them compare a name to a name.
+#:
+#: ``CREATORS`` is ``DESIGN_WORKSHOP_CREATOR_ROLES``: the third creation door exists precisely so
+#: that this set did not have to grow a ministry tier, and ``tests/test_design_workshop_gate.py``
+#: reads ``frontend/lib/permissions.ts`` to hold the web's copy identical to it.
+#: ``INSPECTABLE`` is ``INSPECTION_ROLES``: OQ-6 widened who may APPOINT an inspector and left who
+#: may BE one exactly as it was, which is the whole of why the widening was safe.
+CREATORS = {"ADMIN", "MASTER_ADMIN"}
+INSPECTABLE = {"INSPECTOR"}
 
 
 def user(role: str, **extra):
@@ -575,11 +600,41 @@ def test_the_designer_prefill_never_falls_back_to_the_actor():
     produces is an administrator who picked a designer off a list and got their OWN name into a
     ministry report — with completeness scoring 100% and the only detector being a human reading the
     cover. Read at the source because the runtime path needs a database and this does not.
+
+    ⚠ **IT READ ``reassign_designer`` UNTIL 0.0.12 AND THE SUBJECT MOVED RATHER THAN THE RULE.**
+    The prefill-and-stage-save block was extracted into
+    :func:`~app.services.design_workshop_oversight.move_the_leads_profile_onto_the_workshop`
+    because :func:`~app.services.design_workshop_oversight.set_named_designers` performs the same
+    act whenever a whole-set save moves the lead — and a hand-typed second copy of this block is
+    precisely how the wrong name reaches a ministry report a second time. Pointing this test at the
+    extracted function is what keeps ONE assertion over BOTH write paths; re-pointing it at
+    ``reassign_designer`` would leave the plural door unguarded, which is the opposite of the repair.
     """
-    source = _body_without_docstring(oversight.reassign_designer)
+    source = _body_without_docstring(oversight.move_the_leads_profile_onto_the_workshop)
     assert "prefill_from_profile(user_id)" in source
     assert "or actor.id" not in source
     assert "actor.id or" not in source
+
+
+def test_both_designer_write_paths_go_through_the_one_extracted_prefill():
+    """**THE ASSERTION THAT MAKES THE TWO ABOVE COVER THE PLURAL DOOR TOO.**
+
+    The two source reads below it are worth exactly as much as the claim that nothing writes the
+    lead's profile except the function they read. Both doors call it and neither re-derives it: a
+    second ``save_stage`` loop grown inside either one would satisfy every other test in this file
+    and put the previous designer's name back on a cover page.
+    """
+    for door in (oversight.reassign_designer, oversight.set_named_designers):
+        body = _body_without_docstring(door)
+        assert "move_the_leads_profile_onto_the_workshop(" in body, door.__name__
+        assert "prefill_from_profile(" not in body, (
+            f"{door.__name__} has grown its own prefill call; there is one of these and it is "
+            f"move_the_leads_profile_onto_the_workshop"
+        )
+        assert "save_stage(" not in body, (
+            f"{door.__name__} has grown its own stage write; "
+            f"tests/test_design_workshop_search_text.py fails on a third writer of that table"
+        )
 
 
 def test_the_designer_reassignment_merges_rather_than_replacing_stage_one():
@@ -589,8 +644,12 @@ def test_the_designer_reassignment_merges_rather_than_replacing_stage_one():
     ``_coerce_promoted`` nulls a promoted column whose contributing entity came back blank, so the
     craft name, the cluster, the state, the district and both dates would go with it, under a 200
     reading "Stage saved".
+
+    Read off ``move_the_leads_profile_onto_the_workshop`` since 0.0.12, for the reason the prefill
+    test above gives: the block moved so that the whole-set door could share it, and the rule has to
+    move with it or it stops covering the door that was added.
     """
-    source = _body_without_docstring(oversight.reassign_designer)
+    source = _body_without_docstring(oversight.move_the_leads_profile_onto_the_workshop)
     assert "merge=True" in source
     assert "replaceCollections=False" in source
     assert "submit=False" in source
@@ -655,6 +714,425 @@ def test_naming_the_officer_who_already_holds_a_capacity_writes_nothing():
     source = _body_without_docstring(oversight.apply_oversight)
     assert "current.userId == user_id" in source
     assert "continue" in source
+
+
+# --------------------------------------------------------------------------------------
+# 7b. THE WHOLE-TEAM DESIGNER WRITE — NEW IN 0.0.12
+#
+# ``PUT …/{id}/designers`` is the door that made assignment on this prefix correctable: before it,
+# an officer could name ONE designer, could not see who else held the workshop and could take
+# nobody off it. Everything here is the part of that door that needs no database — the guards it
+# shares with the singular door, the two states it refuses, and the functions it is forbidden to
+# call. The row-level behaviour is ``tests/test_workshop_oversight_reassignment.py``.
+# --------------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "closed",
+    ["PRE_SUBMISSION", "NEEDS_REVISION", "APPROVED", "SUBMITTED", "ARCHIVED"],
+)
+def test_a_filed_report_refuses_the_whole_team_write_in_the_same_words_as_the_single_one(closed):
+    """**THE GUARD THE PLURAL DOOR MOST NEEDED NOT TO RE-DERIVE**, asserted over both doors at once.
+
+    ``_CLOSED_STATUSES`` is derived from the review loop rather than typed out, and this repository
+    has already paid for a hand-typed copy of it: a report under inspection had its authorship,
+    its stage-1 header and its promoted ``designerName`` rewritten under the officers reading it,
+    and a sent-back report was silently RE-SUBMITTED — spending a submission round and permanently
+    mis-stamping every later ``DwInspectionFeedback.round``. A second door added without the guard
+    would be that defect back, so the sentence is compared to the singular door's *verbatim*: two
+    doors telling a ministry administrator two different stories about one report is how the second
+    copy starts drifting.
+    """
+    workshop = SimpleNamespace(id="w1", status=closed, createdById="c1", designerName="A. Sharma")
+    with pytest.raises(HTTPException) as plural:
+        asyncio.run(
+            oversight.set_named_designers(
+                workshop, user_ids=["d1"], lead_user_id=None, actor=user("MINISTRY_ADMIN")
+            )
+        )
+    with pytest.raises(HTTPException) as singular:
+        asyncio.run(oversight.reassign_designer(workshop, "d1", actor=user("MINISTRY_ADMIN")))
+
+    assert plural.value.status_code == 422
+    assert plural.value.detail == singular.value.detail, (
+        "the two designer doors word the same refusal differently, which is the drift the shared "
+        "assert_the_report_is_not_filed exists to stop"
+    )
+    assert review_loop._LABELS[closed] in plural.value.detail
+
+
+def test_the_whole_team_write_refuses_a_lead_who_is_not_on_the_workshop_before_it_reads_anything():
+    """422, and it is raised ABOVE the first database read, which is what makes it assertable here.
+
+    A body naming somebody as the workshop's designer without also giving them access to it is not a
+    partial save to be tidied up afterwards — it is a report whose named author cannot open the
+    record it is about. Promoting the first id instead would be a screen silently choosing an author
+    the officer did not, which on a ministry document is the worst available answer.
+    """
+    workshop = SimpleNamespace(id="w1", status="IN_PROGRESS", createdById="c1", designerName="")
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(
+            oversight.set_named_designers(
+                workshop, user_ids=["d1", "d2"], lead_user_id="d3", actor=user("MINISTRY_ADMIN")
+            )
+        )
+    assert exc.value.status_code == 422
+    assert "Nothing was changed" in exc.value.detail
+    assert "d3" not in exc.value.detail, "the refusal prints an account id at a ministry officer"
+
+
+def test_the_whole_team_write_never_replaces_the_viewer_set_wholesale():
+    """⚠ **``replace_viewers`` IS FORBIDDEN FROM THIS FEATURE**, asserted at the source.
+
+    ``services/design_workshop_grants.py`` is a FOURTH writer of ``DesignWorkshopViewer`` — a
+    redeemed join card and a granted access request both mint rows — so a whole-set replace deletes
+    a row a concurrent redemption created in the same second, on a table where a deleted row IS the
+    loss of access. ``attach_the_named_designers``' own docstring refuses to take that hazard on;
+    this is the same refusal one module over, where the whole-set BODY makes the whole-set WRITE
+    look like the obvious implementation.
+    """
+    source = _body_without_docstring(oversight.set_named_designers)
+    assert "replace_viewers" not in source, (
+        "the oversight feature replaces the viewer set wholesale; read attach_the_named_designers' "
+        "docstring before allowing it"
+    )
+    assert "attach_the_named_designer(" in source
+    assert "remove_one_viewer(" in source
+    assert source.index("attach_the_named_designer(") < source.index("remove_one_viewer("), (
+        "removals are issued before the adds, so a fault in the gap leaves the workshop with the "
+        "outgoing designer gone and the incoming one not yet granted — a state only an ADMIN the "
+        "assigner cannot escalate to could repair"
+    )
+
+
+def test_eligibility_is_asked_of_the_added_ids_and_never_of_the_removed_ones():
+    """**REFUSING A REMOVAL STRANDS ACCESS ON THE ACCOUNTS IT IS MOST URGENT TO WITHDRAW.**
+
+    ``assert_every_designer_may_be_named`` reads the empanelment roster and the platform allow-list.
+    Asked of a REMOVAL it would refuse to take a lapsed designer off a workshop *because* their
+    empanelment had lapsed — which is the one case an officer is most likely to be acting on. It is
+    asked once, of the added set, so a 422 names every account it objected to and the officer makes
+    one trip rather than N.
+    """
+    source = _body_without_docstring(oversight.set_named_designers)
+    assert "assert_every_designer_may_be_named(set(added))" in source
+    assert source.index("assert_every_designer_may_be_named(") < source.index(
+        "attach_the_named_designer("
+    ), "validation runs after the first write, so one bad id leaves the good half applied"
+
+
+def _viewer(user_id: str, name: str) -> dict[str, str]:
+    """One viewer row in the four keys ``design_workshop_viewers.viewer_rows`` answers with."""
+    return {"userId": user_id, "name": name, "email": f"{user_id}@x.test", "role": "DESIGNER"}
+
+
+@pytest.fixture
+def team(monkeypatch: pytest.MonkeyPatch):
+    """The whole-set door with every ROW READ AND ROW WRITE replaced by a recorder.
+
+    **NOT A DATABASE TEST WEARING STUBS.** What is asserted through this fixture is the ORDER and
+    the CONDITIONS — which refusals fire before any write, and whether the lead's profile is moved —
+    all of which are decisions this module makes and none of which a row could show. The row-level
+    outcomes (who holds a viewer row afterwards, what the promoted column says) are
+    ``tests/test_workshop_oversight_reassignment.py``, against Postgres, deliberately.
+
+    The delegates are narrow on purpose: an unexpected call fails loudly rather than answering
+    plausibly, which is the same device the ``scoped`` fixture above uses one scope over.
+    """
+    from app.services import designers as designer_service
+
+    calls: dict[str, list] = {"added": [], "removed": [], "lead_moved": [], "validated": []}
+    rows = [_viewer("lead-1", "A. Sharma"), _viewer("co-1", "B. Mohanty")]
+
+    async def _viewer_rows(workshop_id):
+        return list(rows)
+
+    # The lead is resolved by matching the promoted ``designerName`` against what each viewer's own
+    # profile WOULD write — never against ``User.name`` — so the stub answers the same shape.
+    async def _prefill(user_id):
+        return {"designerName": {"lead-1": "A. Sharma", "co-1": "B. Mohanty"}.get(user_id, "")}
+
+    async def _attach(workshop_id, user_id, *, granted_by_id, creator_id):
+        calls["added"].append(user_id)
+
+    async def _remove(workshop_id, user_id):
+        calls["removed"].append(user_id)
+
+    async def _validate(user_ids):
+        calls["validated"].append(set(user_ids))
+
+    async def _move_lead(workshop_id, user_id, *, actor):
+        calls["lead_moved"].append(user_id)
+        return ["WORKSHOP_SETUP"]
+
+    async def _named(workshop):
+        return []
+
+    monkeypatch.setattr(oversight.design_workshop_viewers, "viewer_rows", _viewer_rows)
+    monkeypatch.setattr(oversight.design_workshop_viewers, "remove_one_viewer", _remove)
+    monkeypatch.setattr(oversight.design_workshops, "attach_the_named_designer", _attach)
+    monkeypatch.setattr(oversight.design_workshops, "assert_every_designer_may_be_named", _validate)
+    monkeypatch.setattr(designer_service, "prefill_from_profile", _prefill)
+    monkeypatch.setattr(oversight, "move_the_leads_profile_onto_the_workshop", _move_lead)
+    monkeypatch.setattr(oversight, "named_designer_rows", _named)
+    monkeypatch.setattr(
+        oversight,
+        "db",
+        _Client(designworkshop=_Rows([SimpleNamespace(id="w1", designerName="A. Sharma")])),
+    )
+    return calls
+
+
+def _save(user_ids, lead=None, *, designer_name="A. Sharma"):
+    workshop = SimpleNamespace(
+        id="w1", status="IN_PROGRESS", createdById="creator-1", designerName=designer_name
+    )
+    return asyncio.run(
+        oversight.set_named_designers(
+            workshop, user_ids=user_ids, lead_user_id=lead, actor=user("MINISTRY_ADMIN")
+        )
+    )
+
+
+def test_an_empty_team_on_a_workshop_that_names_a_designer_is_refused_and_writes_nothing(team):
+    """**"NOBODY IS THE DESIGNER" IS STILL NOT AN EXPRESSIBLE STATE**, on the door that could say it.
+
+    ``DesignWorkshopDesignerIn`` refuses it structurally — ``designerId`` is ``min_length=1`` and
+    its docstring carries the argument — but a whole-set body CAN send an empty list, and has to,
+    because a workshop that has never named anybody is the ordinary starting state. So the refusal
+    moved to the one place that can tell the two apart: the workshop row. Reaching that state would
+    blank the promoted ``designerName`` column, which is the write ``_coerce_promoted`` exists to
+    stop happening by accident, and the cover page with it.
+    """
+    with pytest.raises(HTTPException) as exc:
+        _save([])
+    assert exc.value.status_code == 422
+    assert "Nothing was changed" in exc.value.detail
+    assert team["removed"] == [], "a refusal that has already taken somebody's access away"
+
+
+def test_dropping_the_lead_without_naming_a_replacement_is_refused_and_writes_nothing(team):
+    """Taking the report's own author off the workshop is NAMING SOMEBODY ELSE, not a deletion.
+
+    The co-designer beside them may be removed freely — that is the gap this door exists to close —
+    so the refusal has to be about the LEAD specifically rather than about the set shrinking.
+    """
+    with pytest.raises(HTTPException) as exc:
+        _save(["co-1"])
+    assert exc.value.status_code == 422
+    assert "A. Sharma" in exc.value.detail, "the refusal must name who it is about"
+    assert team["removed"] == []
+    assert team["added"] == []
+
+
+def test_removing_a_co_designer_is_allowed_and_does_not_restamp_the_report(team):
+    """**THE WHOLE POINT OF THE DOOR, AND THE DEFECT IT MUST NOT INTRODUCE, IN ONE TEST.**
+
+    A co-designer's name is on no document, so taking their access away is an ordinary correction —
+    and before 0.0.12 there was no route in the product a MINISTRY_ADMIN could call to make it.
+    What must NOT happen alongside it is the prefill arm running: that rewrites stage 1, re-copies a
+    ``DesignerProfile`` and moves the promoted ``designerName`` — the .docx ``dc:creator`` — so a
+    save whose only real change was "take Rekha off" would re-attribute the report under a 200 with
+    a human reading the cover as the only detector.
+    """
+    answer = _save(["lead-1"])
+    assert team["removed"] == ["co-1"]
+    assert team["added"] == []
+    assert team["lead_moved"] == [], "a co-designer's removal moved the report's designer"
+    assert answer["stagesWritten"] == []
+    assert [row["userId"] for row in answer["removedDesigners"]] == ["co-1"], (
+        "who lost access is not named in the answer; a silent stale grant was the whole defect"
+    )
+
+
+def test_adding_a_co_designer_validates_only_the_added_id_and_leaves_the_lead_alone(team):
+    """**REFUSING A REMOVAL STRANDS ACCESS ON THE ACCOUNTS IT IS MOST URGENT TO WITHDRAW.**
+
+    ``assert_every_designer_may_be_named`` reads the empanelment roster and the platform allow-list.
+    Asked of a REMOVAL it would refuse to take a lapsed designer off a workshop *because* their
+    empanelment had lapsed, which is the one case an officer is most likely to be acting on. It is
+    asked once, of the added set, so a 422 names every account it objected to and the officer makes
+    one trip rather than N.
+    """
+    _save(["lead-1", "co-1", "new-1"])
+    assert team["validated"] == [{"new-1"}]
+    assert team["added"] == ["new-1"]
+    assert team["removed"] == []
+    assert team["lead_moved"] == []
+
+
+def test_moving_the_lead_is_the_one_thing_that_copies_a_profile_onto_the_workshop(team):
+    """And it copies the LEAD's, never the actor's — the defect ``seed_designer_prefill`` names.
+
+    ``test_the_designer_prefill_never_falls_back_to_the_actor`` asserts the absence of that one
+    plausible extra word at the source; this asserts which id actually reaches the call from the
+    plural door, because a second fallback added anywhere in this function would satisfy the source
+    test and still put an administrator's name on a ministry cover page.
+    """
+    answer = _save(["lead-1", "co-1"], lead="co-1")
+    assert team["lead_moved"] == ["co-1"]
+    assert answer["stagesWritten"] == ["WORKSHOP_SETUP"]
+    assert team["removed"] == []
+
+
+def test_the_creator_is_dropped_from_the_body_rather_than_refused(team):
+    """Their access is ``createdById``; ``attach_the_named_designer`` refuses to mint a second
+    source of truth for it, and ``_deduplicate`` drops them on the viewers PUT for the same stated
+    reason. A body that names them is a no-op ABOUT THEM and not an error about the whole save —
+    the officer ticked the person the screen told them opened the workshop.
+    """
+    _save(["lead-1", "co-1", "creator-1"])
+    assert team["added"] == [], "the creator was granted a redundant viewer row"
+    assert team["removed"] == []
+
+
+def test_the_first_designer_on_a_workshop_nobody_has_ever_led_is_promoted(team):
+    """Without this branch the ordinary case is silently half-done.
+
+    A workshop opened with no designer named has ``designerName`` blank and no lead to move, so the
+    conditional arm above would do nothing: the grant lands, the report goes on naming whoever
+    opened the workshop, and the only detector is a human reading the cover. The FIRST of the set is
+    promoted, which is what ``named_designer_team`` does on both create doors when a body names a
+    team and no lead.
+    """
+    _save(["lead-1", "co-1"], designer_name="")
+    assert team["lead_moved"] == ["lead-1"]
+
+
+# --------------------------------------------------------------------------------------
+# 7c. THE THIRD CREATION DOOR, AND THE ONE IT IS NOT
+# --------------------------------------------------------------------------------------
+
+
+def test_the_oversight_create_door_goes_through_the_shared_opener():
+    """**A FOURTH COPY OF THE FOUR STEPS IS A FOURTH CHANCE TO FORGET THE LAST ONE.**
+
+    Opening a workshop is eligibility-above-the-create, create, viewer rows, then
+    ``seed_designer_prefill``. Forgetting the fourth is invisible: the workshop's state, district,
+    craft and dates sit on the ROW with no stage entry behind them, and the designer's FIRST stage-1
+    save nulls every one of them under a 200 reading "Stage saved".
+    ``tests/test_design_workshop_creation_path.py`` holds the census of ``designworkshop.create``
+    sites; this is the same rule read from the other end, on the door that was added.
+
+    ``_body_without_docstring`` AND NOT ``inspect.getsource``, for the reason that helper's own
+    docstring gives: this route's prose QUOTES the name it is forbidden to call, in order to explain
+    why it does not call it, and reading the raw source would make the explanation the failure.
+    """
+    source = _body_without_docstring(routes.open_workshop_from_oversight)
+    assert "open_design_workshop(" in source
+    assert "designworkshop.create" not in source
+    assert "named_designer_team(" in source, (
+        "the third door reads designerUserId beside designerUserIds itself; a third reading of "
+        "that pair is how three doors come to disagree about whose name reaches the report"
+    )
+    assert "_parse_date(" in source, (
+        "the third door parses dates its own way, so '2026-13-40' means one thing here and another "
+        "on the ordinary create"
+    )
+
+
+def test_the_third_door_does_not_widen_the_creator_set_it_bypasses():
+    """**TWO DOORS, TWO GATES, ONE CREATION PATH — AND NOW THREE OF THE FIRST.**
+
+    The annual plan met this wall first and its promote route records the answer: *"widening that
+    set to fit would hand every ministry admin the ordinary create button as well."* So the fix is
+    another gated door, never a wider ``DESIGN_WORKSHOP_CREATOR_ROLES`` —
+    ``tests/test_design_workshop_gate.py`` reads ``frontend/lib/permissions.ts`` to hold the two
+    copies of that set identical across the stack, and widening it here would move both.
+
+    THE DOOR ITSELF IS READ OFF THE DEPENDENCY TREE, not out of the source text — the same walk
+    ``test_every_route_on_this_prefix_stands_behind_one_of_the_two_doors`` makes, because a gate is a
+    ``Depends`` and not a string. The one source read is the NEGATIVE, and it goes through
+    ``_body_without_docstring`` because this route's prose quotes the creator gate by name in order
+    to say it is not the one standing here.
+    """
+    assert set(deps.DESIGN_WORKSHOP_CREATOR_ROLES) == CREATORS
+    assert "MINISTRY_ADMIN" not in deps.DESIGN_WORKSHOP_CREATOR_ROLES
+
+    created = [
+        route
+        for route in routes.router.routes
+        if route.path.endswith("/workshops") and "POST" in route.methods
+    ]
+    assert len(created) == 1, "there is not exactly one create door on this prefix"
+    gates = _dependency_names(created[0])
+    assert "require_workshop_assigner" in gates
+    assert "assert_can_create_design_workshops" not in gates
+
+    assert "assert_can_create_design_workshops" not in _body_without_docstring(
+        routes.open_workshop_from_oversight
+    )
+
+
+def test_the_staffing_filter_counts_a_blank_designer_name_as_unstaffed():
+    """``_coerce_promoted`` writes ``""`` — not NULL — for an entity that came back blank.
+
+    A NULL-only test would file such a workshop as STAFFED and hide it from exactly the list an
+    officer opened to find it, which is this repository's most repeated bug class wearing a filter.
+    Asserted at the source because the alternative is a database and a promoted column that has been
+    blanked, and the branch is two lines. ``inspect.getsource`` rather than ``_body_without_docstring``
+    here because what is being read is a STRING LITERAL: ``ast.unparse`` re-quotes every string it
+    round-trips, so an assertion written against the source text would pass or fail on the quote
+    character rather than on the rule.
+    """
+    source = inspect.getsource(routes.list_assignable_workshops)
+    assert '{"designerName": None}, {"designerName": ""}' in source
+    assert 'where.setdefault("AND", [])' in source, (
+        "the staffing filter is written beside the search's OR; a typed term would then either "
+        "stop narrowing or silently widen the search to every unstaffed workshop"
+    )
+
+
+# --------------------------------------------------------------------------------------
+# 7d. OQ-6 — A MINISTRY ADMIN APPOINTS INSPECTORS AND STILL CANNOT BE ONE
+#
+# The three inspector routes moved from ``require_admin`` to ``require_workshop_assigner`` in
+# 0.0.12. ``tests/test_dw_inspector_scope_gate.py`` asserts the doors on that router; what belongs
+# HERE is the invariant the ruling was allowed to stand on, because it is a fact about the two SETS
+# this file owns.
+# --------------------------------------------------------------------------------------
+
+
+def test_the_set_that_appoints_an_inspector_is_disjoint_from_the_set_that_may_be_one():
+    """**"THE INSPECTED MUST NOT CHOOSE THE INSPECTOR" IS A STATEMENT ABOUT THE SETS.**
+
+    It was satisfied under ``require_admin`` by accident of ADMIN and MASTER_ADMIN being outside
+    ``INSPECTION_ROLES``; after 0.0.12 it is satisfied for MINISTRY_ADMIN the same way and for the
+    same reason. This asserts it as a property of the two frozensets rather than of any one tier,
+    so a future member of either — an "INSPECTION_COORDINATOR" in one, a fourth assigner in the
+    other — cannot land on both and make the appointment self-serving.
+
+    The other half of the guarantee is not a set and is not asserted here:
+    ``_assert_every_id_may_inspect``'s fourth refusal turns away anybody already on the workshop as
+    its creator or a viewer, which is what stops an assigner appointing the people who ran it.
+    """
+    from app.services.design_workshop_inspectors import INSPECTION_ROLES
+
+    assert oversight.OVERSIGHT_ASSIGNER_ROLES == ASSIGNERS
+    assert set(INSPECTION_ROLES) == INSPECTABLE
+    assert not oversight.OVERSIGHT_ASSIGNER_ROLES & INSPECTION_ROLES, (
+        "an account that appoints an inspector may now be one; the appointment is no longer "
+        "independent of the people it appoints"
+    )
+    assert "MINISTRY_ADMIN" not in INSPECTION_ROLES
+    # And the three officer posts stay out of it too, so widening the ASSIGNER set later cannot
+    # quietly pull an inspectable tier in with it.
+    assert not OFFICERS & INSPECTION_ROLES
+
+
+def test_the_inspector_routes_import_the_assigner_door_rather_than_declaring_a_second_one():
+    """ONE ANSWER TO "WHO MAY APPOINT AN INSPECTOR", AND IT LIVES ON THIS PREFIX.
+
+    A second ``require_workshop_assigner`` declared over on the inspections router would be two
+    functions of the same name asking the same service predicate, with the one in ``deps`` being
+    the one everybody finds — and the day they diverge, the screen and the server disagree about
+    who may appoint. There is no cycle to fear: this router imports from
+    ``api/routes/design_workshops`` and never from the inspections module.
+    """
+    from app.api.routes import design_workshop_inspections as inspections
+
+    assert inspections.require_workshop_assigner is routes.require_workshop_assigner
+    assert "require_admin" not in inspect.getsource(inspections.set_inspectors)
 
 
 # --------------------------------------------------------------------------------------

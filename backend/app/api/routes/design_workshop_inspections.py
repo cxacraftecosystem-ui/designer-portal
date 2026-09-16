@@ -1,4 +1,4 @@
-"""The INSPECTOR's surface — a read, and now a note — and the admin screen that assigns inspections.
+"""The INSPECTOR's surface — a read, and now a note — and the screen that assigns inspections.
 
 Seven routes. **THIS HEADER USED TO SAY "Five routes. Every route an inspector can reach is a GET,
 and that is not an accident of what has been built so far — it is the feature." THAT SENTENCE IS
@@ -48,9 +48,31 @@ THE TWO DOORS
 
 * :func:`require_inspector` — the inspector's own read surface. **403 for admins too**, naming the
   route they actually want; ``assert_inspection_surface`` argues why.
-* ``Depends(require_admin)`` — the administration of who inspects what. THE INSPECTED MUST NOT
-  CHOOSE THE INSPECTOR, so there is no route here through which a designer can add, remove or even
-  suggest one, and the workshop's creator gets no say at all.
+* :func:`require_workshop_assigner` — the administration of who inspects what. THE INSPECTED MUST
+  NOT CHOOSE THE INSPECTOR, so there is no route here through which a designer can add, remove or
+  even suggest one, and the workshop's creator gets no say at all.
+
+  ⚠ **IT WAS ``Depends(require_admin)`` UNTIL 0.0.12 AND THE CHANGE IS AN OWNER'S RULING, NOT A
+  REFACTOR.** ``require_admin`` is the SET ``{ADMIN, MASTER_ADMIN}``, which a MINISTRY_ADMIN is
+  outside — so the ministry could stage a workshop into PRE_SUBMISSION and then cause nobody at all
+  to inspect it. The journey stopped there, with no refusal anybody could act on. The three
+  administration routes now stand behind ``OVERSIGHT_ASSIGNER_ROLES``
+  (``{MINISTRY_ADMIN, ADMIN, MASTER_ADMIN}``), the same door that names a workshop's designer and
+  its two supervising officers, so the four appointments are made by one set of people on one
+  screen.
+
+  **AND THE TIER'S OWN RULE IS UNCHANGED BY IT, WHICH IS THE POINT.** "The inspected must not choose
+  the inspector" is a statement about ``INSPECTION_ROLES``, not about ``require_admin``:
+  MINISTRY_ADMIN is not in ``INSPECTION_ROLES`` (a frozenset of one, ``{INSPECTOR}``), is not in
+  ``DESIGN_WORKSHOP_ROLES``' designer arm for this purpose, and ``_assert_every_id_may_inspect``'s
+  fourth refusal still turns away anybody already on the workshop as its creator or a viewer. A
+  ministry administrator therefore cannot appoint themselves, cannot appoint the designers, and
+  cannot appoint anybody who worked on it. What they gained is the ability to appoint an
+  INSPECTOR — which is the one thing the tier exists for and the one thing nobody could do.
+
+  **A REGIONAL DIRECTOR IS STILL REFUSED**, as they are on every other assignment on the ministry
+  surface: ``OVERSIGHT_ASSIGNER_ROLES`` excludes them because the supervised must not choose the
+  supervisor, which is the same sentence one rung up.
 
 **REGISTRATION ORDER INSIDE THIS MODULE IS LOAD-BEARING.** ``GET /eligible-inspectors`` is declared
 before ``GET /{workshop_id}``, which matches it perfectly well and would answer 404 "Record not
@@ -62,6 +84,17 @@ from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+
+# ── THE ADMINISTRATION DOOR MOVED IN 0.0.12, AND IT IS IMPORTED RATHER THAN RE-DECLARED ──────
+#
+# `require_workshop_assigner` lives on the OVERSIGHT router because that is the prefix whose
+# whole premise is ministry administration; it is imported here — a route module importing a
+# name from another route module, which this file already does for `_stages_payload` and says
+# why — because the alternative is a second function of the same name asking the same service
+# predicate, i.e. TWO ANSWERS to "who may appoint an inspector" with the one in `deps` being
+# the one everybody finds. There is no cycle: the oversight router imports from
+# `api/routes/design_workshops` and never from this module.
+from app.api.routes.design_workshop_oversight import require_workshop_assigner
 
 # THE STAGE SERIALISER IS IMPORTED RATHER THAN COPIED, and it is a PRIVATE name in another route
 # module, which is a smell worth stating out loud instead of quietly living with.
@@ -89,7 +122,7 @@ from app.api.routes.design_workshops import (
     _stages_payload,
 )
 from app.core.db import db
-from app.core.deps import get_current_user, require_admin
+from app.core.deps import get_current_user
 from app.schemas import design_workshop_review_loop
 from app.schemas.design_workshop_inspections import (
     DesignWorkshopInspectorsIn,
@@ -135,10 +168,15 @@ async def _workshop_or_404(workshop_id: str) -> Any:
     """The workshop, for an ADMINISTRATOR.
 
     Deliberately NOT ``load_inspectable_workshop_or_404``: that helper answers "may THIS INSPECTOR
-    read it", and every caller of the two administration routes is an admin, for whom the answer is
-    always yes — including for a soft-deleted workshop, which an admin has to be able to administer
-    in order to restore it with its inspection intact. The sibling viewers router makes the same
-    split for the same reason.
+    read it", and every caller of the two administration routes stands behind
+    ``require_workshop_assigner``, for whom the answer is always yes — including for a soft-deleted
+    workshop, which has to remain administrable so an admin can restore it with its inspection
+    intact. The sibling viewers router makes the same split for the same reason.
+
+    (This said "is an admin" until 0.0.12, when the three administration routes moved to
+    ``OVERSIGHT_ASSIGNER_ROLES``. The reasoning is unchanged and the set is wider by one tier: a
+    MINISTRY_ADMIN has no restore button either, and reaches a deleted workshop here for the same
+    administrative reason.)
     """
     record = await db.designworkshop.find_unique(where={"id": workshop_id})
     if record is None:
@@ -147,7 +185,7 @@ async def _workshop_or_404(workshop_id: str) -> Any:
 
 
 # --------------------------------------------------------------------------------------
-# The admin's screen: who inspects what
+# The assigner's screen: who inspects what
 #
 # DECLARED FIRST because of the literal path below. See the module docstring.
 # --------------------------------------------------------------------------------------
@@ -156,7 +194,7 @@ async def _workshop_or_404(workshop_id: str) -> Any:
 @router.get("/eligible-inspectors")
 async def list_eligible_inspectors(
     search: str | None = Query(None, max_length=120),
-    _: Any = Depends(require_admin),
+    _: Any = Depends(require_workshop_assigner),
 ) -> dict[str, Any]:
     """The accounts that may be assigned an inspection at all.
 
@@ -174,7 +212,9 @@ async def list_eligible_inspectors(
 
 
 @router.get("/{workshop_id}/inspectors")
-async def list_inspectors(workshop_id: str, _: Any = Depends(require_admin)) -> dict[str, Any]:
+async def list_inspectors(
+    workshop_id: str, _: Any = Depends(require_workshop_assigner)
+) -> dict[str, Any]:
     """Everyone assigned to inspect this workshop.
 
     An empty list means NOBODY IS INSPECTING IT — the literal truth, unlike the viewers list, where
@@ -189,15 +229,20 @@ async def list_inspectors(workshop_id: str, _: Any = Depends(require_admin)) -> 
 async def set_inspectors(
     workshop_id: str,
     payload: DesignWorkshopInspectorsIn,
-    current_user: Any = Depends(require_admin),
+    current_user: Any = Depends(require_workshop_assigner),
 ) -> dict[str, Any]:
     """Replace the whole inspection set, and answer with it as it now stands.
 
-    **ADMIN ONLY, AND THAT INCLUDES THE WORKSHOP'S OWN CREATOR.** The inspected must not choose the
-    inspector; if a designer could put somebody on their own workshop as its inspector — or take
-    somebody off it — the inspection is worth nothing. There is deliberately no "suggest an
-    inspector" route either, because a suggestion an admin rubber-stamps is the same thing wearing a
-    queue.
+    **ASSIGNERS ONLY — ``{MINISTRY_ADMIN, ADMIN, MASTER_ADMIN}`` — AND THAT EXCLUDES THE WORKSHOP'S
+    OWN CREATOR.** The inspected must not choose the inspector; if a designer could put somebody on
+    their own workshop as its inspector — or take somebody off it — the inspection is worth nothing.
+    There is deliberately no "suggest an inspector" route either, because a suggestion an assigner
+    rubber-stamps is the same thing wearing a queue.
+
+    (It was ``{ADMIN, MASTER_ADMIN}`` until 0.0.12. The module docstring carries the ruling and the
+    invariant it leaves standing: MINISTRY_ADMIN is outside ``INSPECTION_ROLES``, so the account
+    that appoints an inspector still cannot BE one, and ``_assert_every_id_may_inspect`` still
+    refuses anybody already on the workshop as its creator or a co-designer.)
 
     REPLACES. There is no add route and no remove route: taking somebody off is sending the list
     without them. So a client that posts only what it just ticked has silently ended everybody

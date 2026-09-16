@@ -105,9 +105,16 @@ export function GuideHero({ track, onStart }: { track: GuideTrack; onStart: () =
           ⚠ THE SPLIT IS DONE ONCE PER MOUNTED NODE (`useGsapHeadline` guards on `dataset.split`,
           because re-splitting would nest spans inside spans), so changing `track.headline` on a
           LIVE node would leave the previous deck's words in the DOM as spans and the new sentence
-          unrendered. The page therefore keys this component on the track id, which remounts it and
-          gives the hook a fresh <h2> to split. If that key is ever removed, this headline stops
-          changing with the deck and nothing will say so. */}
+          unrendered. The page therefore keys this component `hero-${track.id}`, which remounts it
+          and gives the hook a fresh <h2> to split. If that key is ever removed, this headline stops
+          changing with the deck and nothing will say so.
+
+          ⚠ AND THE PREFIX IS PART OF THE KEY, not decoration. `key={track.id}` was enough to remount
+          this band and was NOT enough to unmount the previous one: the page's fragment carried the
+          identical key on `<GuideJourney>` three elements down, React's sibling reconciliation is a
+          Map keyed by key, the later child evicted this one, and the old band was never deleted — so
+          the purple bands stacked, one per deck visited. Fixed 2026-09-16; the reasoning is written
+          out beside the two elements in `app/(protected)/guide/page.tsx`. */}
       <h2
         ref={headline}
         className="mt-3 max-w-2xl overflow-hidden font-display text-3xl font-bold tracking-tight text-white sm:text-4xl"

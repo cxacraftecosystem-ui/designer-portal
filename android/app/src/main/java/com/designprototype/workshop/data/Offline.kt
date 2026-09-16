@@ -391,6 +391,25 @@ const val UNFILED_NO_OPTIONS = "noOptions"
  * ORDER IS LOAD-BEARING and that is why this is a `linkedMapOf`. When more than one candidate
  * survives, [outboxDanglingSentence] lists them in this order, so two entries refused the same way
  * never word the same ambiguity two different ways.
+ *
+ * ── `craftIds` AND `artisanIds` ARE DELIBERATELY NOT HERE, AND MUST NOT BE ADDED ───────────────
+ *
+ * The tool form has sent those two lists since 2026-09-15 and they can absolutely dangle — a craft
+ * deleted at the office between the queue and the drain answers the same 404 as one that never
+ * existed. They still do not belong in this map, for two reasons that both have to hold:
+ *
+ *   · THEY ARE NOT COLUMNS. This map is `services/records.CLEARABLE_KEYS` minus the identity
+ *     numbers, and every key in it is a nullable foreign key on the record's own table. `craftIds`
+ *     and `artisanIds` are popped by the route and written as `ToolCraft` / `ToolArtisan` rows, so
+ *     nothing downstream of here — least of all `patchBodyWithClearances`, which nulls a key it
+ *     finds in both this registry and the request class — may treat them as clearable columns. An
+ *     entry here would be one refactor away from a replay sending `"craftIds": null`, which the
+ *     server refuses with a 422, which this outbox will not re-queue: the correction would be gone.
+ *   · THE SENTENCE IS ALREADY CORRECT WITHOUT THEM. [danglingReferenceCandidates] reads PRIMITIVES
+ *     only, so a `JsonArray` is invisible to the scan either way — and the tool form sends
+ *     `craftId` / `artisanId` beside the lists, holding element 0 of each. A designer whose replay
+ *     404s is therefore already told "a craft this record points at is no longer on the server" and
+ *     sent to the right box. Naming the plural key as well would print the same suspect twice.
  */
 internal val REFERENCE_FIELD_NOUNS: Map<String, String> = linkedMapOf(
     "designWorkshopId" to "design & prototype workshop",

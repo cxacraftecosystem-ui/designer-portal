@@ -511,19 +511,34 @@ export type ToolDocumentation = {
   material?: string | null;
   yearsInUse?: number | null;
   /**
-   * TWO HEIGHTS, AND THE PAIR IS DELIBERATE — read both before writing either.
+   * TWO HEIGHTS AND TWO WIDTHS, PAIRED 1:1 SINCE 2026-09-15 — read all four before writing any.
    *
-   * `height` is the original column and it declares no unit: not in its name, not in
-   * `schema.prisma`, not on the label a designer reads. It holds every number already typed into it,
-   * in whatever unit that person had in mind, and it is NOT being migrated — the tool form still
-   * draws its box and still saves it.
+   * `height` is the CENTIMETRE box and `heightInches` its inch partner; `width` is the centimetre
+   * box and `breadthInches` its inch partner. `lengthInches` is standalone and has no centimetre
+   * column. The tool form converts between each pair as a person types — `cm = in × 2.54`, two
+   * decimals, one direction per keystroke — and `components/forms/dimensionUnits.ts` is the whole
+   * of that arithmetic.
    *
-   * `heightInches` was added on 2026-08-27 to end the defect that absence caused, and the schema's
-   * own comment states it: an accepted machine reading of a tool's height "landed in the plain
-   * `height` column above, which declares no unit — losing the one fact the column name is there to
-   * carry". It is also the only one of the two a method marker can name, because
+   * ── WHAT THIS BLOCK SAID BEFORE, AND WHY IT IS RETIRED RATHER THAN DELETED ─────────────────────
+   * It read: *"`height` is the original column and it declares no unit: not in its name, not in
+   * `schema.prisma`, not on the label a designer reads… `heightInches` was added on 2026-08-27 to
+   * end the defect that absence caused"*. Every clause of that was true of the column as it stood,
+   * and the pairing is what answered it: the box now says "Height (cm)" on all four clients, so the
+   * unit is declared where a designer reads it. What did NOT change is the column name — `height`
+   * and `width` keep their spelling on the wire, in `_CLEARABLE_COLUMNS` and in the schemas — so
+   * nothing that reads them had to move.
+   *
+   * ── HISTORIC ROWS GENUINELY HOLD TWO NUMBERS THAT DISAGREE, AND THAT IS NOT REPAIRABLE HERE ────
+   * Every row saved before the pairing has whatever somebody typed into `height`, in whatever unit
+   * they had in mind, beside whatever a measurement route put in `heightInches`. So NOTHING converts
+   * on LOAD: opening a record never rewrites either box, because a load-time conversion would
+   * destroy the disagreeing pair on the next save. Conversion fires on user input only, which is
+   * also what makes correcting one of the two a deliberate act.
+   *
+   * `heightInches` is still the only one of its pair a method marker can name —
    * `services/measurement_provenance.DIMENSION_FIELDS` is exactly `lengthInches` / `breadthInches` /
-   * `heightInches`. Both measurement routes on `ToolForm` propose into it.
+   * `heightInches` — so a machine reading is accepted into the INCH box, which then fills its
+   * centimetre partner; the centimetre box carries no provenance and must never be given a fake one.
    *
    * `string | number | null` like every dimension here, and not `number`: these are Prisma
    * `Decimal(10, 2)` columns and a `Decimal` arrives over the wire as a JSON STRING. Read one behind
@@ -552,8 +567,33 @@ export type ToolDocumentation = {
   status: RecordStatus;
   recordedAt?: string | null;
   recordedTimezone?: string | null;
+  /**
+   * THE FIRST LINKED ARTISAN AND THE FIRST LINKED CRAFT — not the only ones. See
+   * {@link ToolDocumentation.artisanLinks} and {@link ToolDocumentation.craftLinks}.
+   *
+   * A tool has linked several artisans through `ToolArtisan` since that table existed, and several
+   * crafts through `ToolCraft` since 2026-09-15. These two columns were not retired and are not
+   * being retired: every filter, index, report, carry-forward and data-browser branch reads them,
+   * and they keep holding the FIRST of each selection. `GET /tools?craftId=` therefore still matches
+   * only a tool's first craft — a deliberate, stated consequence of that compatibility, not an
+   * oversight.
+   */
   artisanId?: string | null;
   craftId?: string | null;
+  /**
+   * EVERY CRAFT AND EVERY ARTISAN THIS TOOL IS LINKED TO, hydrated on every read of a tool.
+   *
+   * Always present and never null — an empty array for a tool with no links. `craftLinks` comes back
+   * in the order the names appear in `craftName` (the join table carries no ordinal, and `Craft.name`
+   * is unique, so the string is what records the order the designer ticked them in); `artisanLinks`
+   * comes back `createdAt` ascending, which is what `GET /tools/{id}/artisans` has always promised.
+   *
+   * THE NESTED RECORD MAY BE MASKED. `public_encode` applies the identity mask through
+   * `artisanLinks`, exactly as it does everywhere else an `Artisan` is nested — so never render
+   * `artisan.aadhaarNumber` from one of these rows, and see `Artisan.aadhaarNumber` for the rule.
+   */
+  craftLinks?: ToolCraftLink[];
+  artisanLinks?: ToolArtisanLink[];
   workshopId?: string | null;
   /** The design & prototype workshop this record is filed under. See `Artisan`. */
   designWorkshopId?: string | null;
@@ -563,6 +603,30 @@ export type ToolDocumentation = {
   createdById?: string;
   createdBy?: User;
   createdAt: string;
+};
+
+/**
+ * A row of the `ToolCraft` join table, hydrated with the craft it points at.
+ *
+ * `craft` is optional because it is the SERVER's `include` rather than a column — a payload built by
+ * an older build, or one this account may not read the craft of, carries the ids and nothing else,
+ * and a picker that assumed the nested row would draw a blank chip for a link the record holds.
+ */
+export type ToolCraftLink = {
+  id: string;
+  toolId: string;
+  craftId: string;
+  createdAt?: string;
+  craft?: Craft | null;
+};
+
+/** A row of the `ToolArtisan` join table, hydrated with the artisan it points at. See above. */
+export type ToolArtisanLink = {
+  id: string;
+  toolId: string;
+  artisanId: string;
+  createdAt?: string;
+  artisan?: Artisan | null;
 };
 
 export type QuestionnaireQuestion = {

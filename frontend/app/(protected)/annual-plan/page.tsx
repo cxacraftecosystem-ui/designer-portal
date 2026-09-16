@@ -242,6 +242,34 @@ export default function AnnualPlanPage() {
               <FileDown className="h-4 w-4" aria-hidden />
               Pro-forma
             </button>
+            {/*
+              ── THE NEXT TWO BUTTONS LOOK IDENTICAL AND ARE GATED DIFFERENTLY, DELIBERATELY ─────
+
+              EXPORT KEEPS `disabled={planYear == null}`. `exportQuery` is null while there is no
+              year (:136-139) and `download("export")` already no-ops on a null query, so without
+              the attribute this would be a control that silently does nothing. There is genuinely
+              nothing to export out of an empty directory, and the disabled state says so honestly.
+
+              UPLOAD NO LONGER DOES, AND THAT IS THE COLD-START REPAIR. It carried the same
+              expression until 0.0.12, and that one `planYear == null` made the whole feature
+              unusable on every fresh environment: `GET /annual-plan/years` answers `200 []` over an
+              empty table, so `planYear` stays null (:145), `query` is null (:128-134), `refreshRows`
+              returns at its guard (:164) BEFORE the generation counter and before any setter, and
+              `rows` is null for ever. The screen then said "Loading…" under a select reading "No
+              plan uploaded yet" — two state machines contradicting each other — with the one control
+              that could have produced a plan year greyed out beside them and the dialog behind it
+              not even mounted. The page needed a plan before it could be used and a plan could only
+              arrive through the control it disabled while none existed.
+
+              REMOVING IT UNGATES NOTHING. Who may upload is `canManageAnnualPlan`, enforced above
+              this page by `AppShell`'s ROUTE_GUARDS row and again on the route by
+              `require_annual_plan_manager` — the page rendering at all is the proof that both
+              passed. Nor is the year needed on the wire: `upload_annual_plan` resolves it as
+              `typed if typed is not None else parsed.planYear`, off the workbook's own Details
+              sheet, and the blank pro-forma ships with that cell EMPTY for the administrator to
+              fill in. "Download the pro-forma, type the year on its Details sheet, upload it" is
+              the designed cold-start path, and these two lines were the only things in front of it.
+            */}
             <button
               type="button"
               className="field-button-secondary"
@@ -251,12 +279,7 @@ export default function AnnualPlanPage() {
               <Download className="h-4 w-4" aria-hidden />
               Export this list
             </button>
-            <button
-              type="button"
-              className="field-button"
-              onClick={() => setUploadOpen(true)}
-              disabled={planYear == null}
-            >
+            <button type="button" className="field-button" onClick={() => setUploadOpen(true)}>
               <Upload className="h-4 w-4" aria-hidden />
               Upload the plan
             </button>
@@ -340,7 +363,23 @@ export default function AnnualPlanPage() {
           />
           <button
             type="button"
-            className="mt-1 justify-self-start text-xs font-medium text-purple-700 underline"
+            // ⚠ PURPLE, AND THE MINISTRY SWAP WAS CONSIDERED HERE AND REFUSED. This is one of the
+            // four ministry-only surfaces and a typographic accent does follow the surface — but
+            // THIS IS A BUTTON, and the owner's ruling on ministry orange is surface accent only:
+            // pale grounds, borders, the header chip, the desk tiles, and never an action control.
+            // `tailwind.config.ts` annotates the rung itself "surface accent, never an action
+            // colour", and `UploadPlanDialog.tsx` refuses the identical swap on its checkbox with
+            // the arithmetic: `ministry-700` is ΔE 0.004 from `amber-800` — the same colour — and
+            // `amber-800` is the "Withdrawn" pill `StandingChip` draws in the table directly below
+            // this control. Orange here would have made a thing to PRESS and a fact about a planned
+            // workshop indistinguishable by ink, a foot apart, and would have been the only
+            // orange-inked control in the product.
+            //
+            // THE DARK-MODE HALF OF THAT SWAP IS KEPT, because it was a real fix and is not about
+            // the hue: `text-purple-700` on `bg-card` in dark measures 2.32:1, `purple-300`
+            // measures well over the floor. The `<Link>` further down this file stays ministry —
+            // it is body copy that navigates, not a control.
+            className="mt-1 justify-self-start text-xs font-medium text-purple-700 underline dark:text-purple-300"
             onClick={() => {
               setDir((current) => (current === "asc" ? "desc" : "asc"));
               setPage(1);
@@ -359,7 +398,49 @@ export default function AnnualPlanPage() {
         </p>
       ) : null}
 
-      {rows == null ? (
+      {/*
+        ── THREE STATES, NOT TWO, AND THE FIRST ONE IS NEW ─────────────────────────────────────
+
+        `rows === null` is overloaded: it means BOTH "a request is in flight" and "no request was
+        ever made", and until 0.0.12 only the first reading was drawn. On a repository whose
+        directory is empty the second is the true one — `query` is null, so `refreshRows` returns at
+        its guard and no request is ever created — and the screen rendered "Loading…" for ever,
+        directly under a select already saying "No plan uploaded yet". Two machines, one screen, two
+        incompatible answers.
+
+        This is the same reasoning `refreshYears`'s catch already writes down at :153-155 for
+        `years`, applied to the variable it was never applied to.
+
+        ALL THREE CLAUSES ARE LOAD-BEARING. `years != null` keeps the honest "Loading…" while the
+        years read is genuinely outstanding. `years.length === 0` is the directory holding no year at
+        all. And `planYear == null` is what keeps this branch from lying in the other direction: the
+        moment an upload lands, `onUploaded` sets the year (its `setPlanYear`, :577) and a list
+        request really is in
+        flight for a commit or two before `refreshYears` answers — drawing "No plan has been uploaded
+        yet" under the upload report panel that just said one was.
+
+        ⚠ IT INHERITS ONE AMBIGUITY, KNOWINGLY. `refreshYears`'s catch collapses `years` to `[]` as
+        well as setting `error`, so a refused or failed years read reaches this branch too and reads
+        as "the ministry has not uploaded the plan" — which is exactly the misreading
+        `tests/test_annual_plan_web_surface.py` warns about. The red banner above is what tells them
+        apart today. The repair is a `yearsFailed` flag rendered in the plan-year select (:313) as
+        well as
+        here, and it is deliberately not in this change: it is a second state on a second machine,
+        and this branch makes the page no less honest than the select it now agrees with.
+
+        THE TWO EMPTY STATES CARRY THE SAME BODY AND DIFFERENT TITLES, which is intended rather than
+        a copy-paste: "no plan at all" and "this year's plan is empty" are the distinction the
+        feature's own vocabulary turns on, and the NEXT MOVE out of both really is the pro-forma. The
+        one case where the second title's body is beside the point is a reader who has typed a search
+        term — `rows.items.length === 0` fires for a filter that matched nothing too. That sentence
+        belongs to whoever gives the filtered-empty case its own state; it is not this fix.
+      */}
+      {planYear == null && years != null && years.length === 0 ? (
+        <EmptyState
+          title="No plan has been uploaded yet"
+          body="Download the pro-forma, type the ministry's directory into it, and upload it. Correcting it later is the same act: upload the corrected sheet again."
+        />
+      ) : rows == null ? (
         <p className="text-sm text-ink-muted">Loading…</p>
       ) : rows.items.length === 0 ? (
         <EmptyState
@@ -412,7 +493,16 @@ export default function AnnualPlanPage() {
                       {entry.designWorkshopId ? (
                         <Link
                           href={`/design-workshops/${entry.designWorkshopId}`}
-                          className="mt-1 block text-xs font-medium text-purple-700 underline"
+                          // MINISTRY INK, AND THIS ONE IS ALLOWED TO BE: it is body copy inside a
+                          // cell that navigates, not a control — which is exactly the line the
+                          // sort-direction button above is on the other side of. The `StandingChip`
+                          // a line up deliberately does NOT move: its three tones are this
+                          // directory's own vocabulary, and the withdrawn chip is `amber-800`,
+                          // which is ΔE 0.004 from `ministry-700` — the same colour to the eye, so
+                          // a chip and a link of the same ink would be telling two different kinds
+                          // of thing apart by weight alone. That is also why the button above went
+                          // back to purple; the argument in full is on it.
+                          className="mt-1 block text-xs font-medium text-ministry-700 underline dark:text-ministry-300"
                         >
                           {entry.designWorkshopTitle ?? "Open the workshop"}
                         </Link>
@@ -464,21 +554,47 @@ export default function AnnualPlanPage() {
         </div>
       )}
 
-      {planYear != null ? (
-        <UploadPlanDialog
-          open={uploadOpen}
-          onClose={() => setUploadOpen(false)}
-          planYear={planYear}
-          planYearLabel={yearLabel || String(planYear)}
-          onUploaded={(uploaded) => {
-            setUploadOpen(false);
-            setReport(uploaded);
-            setPage(1);
-            void refreshYears();
-            void refreshRows();
-          }}
-        />
-      ) : null}
+      {/*
+        MOUNTED UNCONDITIONALLY. It was wrapped in `{planYear != null ? … : null}` until 0.0.12,
+        which is the second half of the cold-start deadlock above: with no year the dialog did not
+        exist, so `setUploadOpen(true)` flipped a state nothing read and the Upload button — had it
+        been enabled on its own — would have looked broken in a new way. `FieldDialog` renders
+        nothing while `open` is false, so an always-mounted dialog costs a closed portal and no more.
+
+        `planYearLabel={yearLabel}` AND NOT `yearLabel || String(planYear)`. That fallback was
+        harmless only for as long as the dialog could not mount without a year; the moment it can,
+        `"" || String(null)` is `"null"`, and the dialog's title is `Upload the ${planYearLabel}
+        plan` — which is how "Upload the null plan" reaches a ministry administrator's screen.
+        `yearLabel` is already `""` in exactly that case (:188), and the dialog now branches on
+        `planYear` for its title rather than on the label being falsy.
+      */}
+      <UploadPlanDialog
+        open={uploadOpen}
+        onClose={() => setUploadOpen(false)}
+        planYear={planYear}
+        planYearLabel={yearLabel}
+        onUploaded={(uploaded) => {
+          setUploadOpen(false);
+          setReport(uploaded);
+          setPage(1);
+          /*
+            LAND ON THE YEAR THAT WAS JUST UPLOADED, EXPLICITLY.
+
+            `void refreshRows()` below is a NO-OP on the cold-start path: it closes over this
+            render's `query`, which is still null. The screen does self-heal one commit later —
+            `refreshYears` sets `planYear`, `query` changes, `refreshRows`'s identity changes and the
+            effect at :183-185 refires — but nobody reading this handler would see why, and a repair
+            that depends on a chain nobody can see is a repair that gets deleted as dead code.
+
+            `current ??` AND NOT A PLAIN SET, which is the populated-table half: re-uploading last
+            year's corrected sheet must not yank a reader off the year they were looking at. It only
+            fires when there was no year to be on.
+          */
+          setPlanYear((current) => current ?? uploaded.planYear);
+          void refreshYears();
+          void refreshRows();
+        }}
+      />
 
       <PromoteDialog
         entry={promoting}

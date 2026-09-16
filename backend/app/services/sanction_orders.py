@@ -1,22 +1,39 @@
-"""THE MINISTRY'S SANCTION REGISTER — five typed fields, seven written rows, one transaction.
+"""THE MINISTRY'S SANCTION REGISTER — one instrument, a named team, one transaction.
 
-══ WHAT THIS MODULE IS FOR ═════════════════════════════════════════════════════════════════════
+══ WHAT THIS MODULE IS FOR ═══════════════════════════════════════════════════════════════════════
 
 A sanction order is the document that authorises a design & prototype workshop and names its
-budget. A ministry officer types five facts — order number, order date, sanctioned amount, the
-designer's name and the designer's Gmail address — and this module turns them into everything the
-product needs for that designer to start work the same morning:
+budget. A ministry officer types the three facts printed on it — order number, order date,
+sanctioned amount — and names the designer or designers it was issued to, and this module turns
+that into everything the product needs for them to start work the same morning:
 
-    1. an ``AccessRoster`` admission, so they may sign in at all
-    2. a ``DesignerRoster`` empanelment, so the designer gate does not refuse them at the door
-    3. a ``User`` row — **only when no account already answers to that mailbox**
-    4. a ``DesignerProfile``, so workshop creation has a profile to read
+    1. an ``AccessRoster`` admission, so they may sign in at all             — PER DESIGNER
+    2. a ``DesignerRoster`` empanelment, so the designer gate lets them in   — PER DESIGNER
+    3. a ``User`` row, **only where no account already answers to that mailbox** — PER DESIGNER
+    4. a ``DesignerProfile``, so workshop creation has a profile to read     — PER DESIGNER
     5. a ``DesignWorkshop``, created BY the officer and stamped with the registry version
-    6. a ``DesignWorkshopViewer`` row, so the named designer can actually open it
+    6. a ``DesignWorkshopViewer`` row, so each named designer can open it    — PER DESIGNER
     7. the ``SanctionOrder`` row itself, which is the register and the audit trail
+    8. a ``SanctionOrderDesigner`` row per named designer, the lead at position 0
 
-and then, outside the transaction, a stage-1 prefill and a first-password link.
+and then, outside the transaction, a stage-1 prefill and a first-password link per account this
+order actually minted.
 
+══ IT NAMED EXACTLY ONE DESIGNER UNTIL 0.0.12 ═════════════════════════════════════════════════════
+
+This module's first line read "five typed fields, seven written rows" until then, and the shape
+of everything below is still the shape of that decision. A sanction order is routinely issued for
+a TEAM, and while the register could name one designer the second and third were either left off
+the instrument entirely — no account, no empanelment, no viewer row, unable to open the workshop
+their own order paid for — or recorded as a second sanction order under a number the ministry
+never issued.
+
+WHAT DID NOT CHANGE: ``SanctionOrder`` keeps ``designerUserId``, ``designerEmail`` and
+``accountCreated``, and all three still mean THE LEAD, exactly as
+``DesignWorkshopCreate.designerUserId`` means the lead beside ``designerUserIds``. There has to be
+a lead and it has to be CHOSEN rather than derived: stage 1 declares a single ``designerName`` box
+and ``report_docx`` writes ``<dc:creator>``, a field the OOXML core-properties part cannot express
+as a list. A lead derived by sorting a collection is a lead nobody chose.
 ══ THE TRANSACTION, AND THE ONE THING ABOUT IT THAT IS EASY TO GET SILENTLY WRONG ══════════════
 
 Rows 1 through 7 are ONE ``db.tx()``. ``db.tx()`` HANDS BACK A DIFFERENT CLIENT — a callee that
@@ -50,6 +67,12 @@ one. ``credential_links.issue_link`` writes a ``PasswordResetToken`` and can rai
 ``IssueThrottled``: a throttle on the fifth account of the morning must not roll back a ministry
 sanction order. Both run after the commit; both failing leaves a correct, complete workshop.
 
+THE LINK LOOP IS WHERE THAT ARGUMENT NOW EARNS ITS KEEP RATHER THAN MERELY STATING ITSELF. There
+is a **4-per-hour-per-designer** budget (:data:`SANCTION_THROTTLE_DETAIL`). It is generous for
+four DISTINCT designers on one order and it is still exhaustible, and an order whose fourth
+co-designer is throttled must still stand: that person is reported with a problem sentence and a
+re-issue action rather than costing the ministry its instrument.
+
 ══ THE REFUSALS THAT ARE THE WHOLE POINT OF PHASE 0 ════════════════════════════════════════════
 
 ``access_roster.admit`` sets ``status: ACTIVE`` UNCONDITIONALLY. Without the barred-address check
@@ -59,6 +82,16 @@ decision — the one thing ``auth.assert_access_admits`` explicitly refuses to d
 officer would get a 201 and the designer would get a workshop they are refused at the door, reading
 *"Your designer access has been suspended"* with no row on any screen to explain it — which is the
 incident that whole function exists to prevent.
+
+EVERY ONE OF THOSE REFUSALS IS NOW ASKED OF EVERY NAMED DESIGNER AND NOT OF ONE, through
+:func:`resolve_named_designer`. A team whose third name is barred is refused WHOLE, before a row
+is written — the alternative (record the order and quietly drop the person) would put a ministry
+instrument on file naming fewer designers than the paper it was typed from.
+
+AND EACH OF THEM IS SPELLED AS A ``*_reason``/``*_verdict`` FUNCTION THAT ANSWERS RATHER THAN
+RAISES, because ``services/sanction_import`` reads a spreadsheet and cannot let one bad row fail
+two hundred good ones. The ``_refuse_if_*`` wrappers turn the same answers into the same
+``HTTPException``s this route has always thrown. See the banner over phase 0.
 
 TWO MORE LANDED ON 2026-09-14, both of them defects this module shipped with, and both of them
 silent in the way everything else here is silent:
@@ -102,6 +135,8 @@ from __future__ import annotations
 import logging
 import re
 import secrets
+from collections.abc import Sequence
+from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
@@ -357,10 +392,85 @@ SANCTION_LINK_PROBLEM_THROTTLED = (
     "issued: " + SANCTION_THROTTLE_DETAIL + " Re-issue it from this list when the hour is up."
 )
 
+#: ⚠ THE TWO REFUSALS THAT MAKE THE RE-ISSUE DOOR NO WIDER THAN THE CREATE DOOR. Added 2026-09-16
+#: after a sweep found that ``reissue_credential_link`` would mint a credential for ANY account a
+#: register row happened to name — including one that existed long before the order and outranks
+#: the officer entirely. See that function's docstring for the whole argument; these are here
+#: because every other refusal this feature says is spelled once, in this block.
+SANCTION_LINK_NOT_THIS_REGISTERS_ACCOUNT = (
+    "This order did not create the designer's account, so there is no first sign-in link for it to "
+    "re-issue — they already sign in the way they always have. A password link for an account this "
+    "register did not create is an administrator's act: ask an admin to send one from the users "
+    "screen."
+)
+SANCTION_LINK_OUTRANKS_OFFICER = (
+    "The account this order names is now a {role}, and a sanction order cannot issue a sign-in "
+    "link for an account senior to the officer re-issuing it. Ask an admin to send a password link "
+    "from the users screen."
+)
+
 
 # --------------------------------------------------------------------------------------
 # Phase 0 — the reads and the refusals, before anything is written
 # --------------------------------------------------------------------------------------
+
+# ══ A VERDICT AND A REFUSAL ARE THE SAME RULE ASKED BY TWO CALLERS ════════════════════════════
+#
+# Every rule below is spelled ONCE, as a function that ANSWERS a :class:`Refusal` instead of
+# raising one, and the ``_refuse_if_*`` wrappers underneath turn that answer into the
+# ``HTTPException`` the single-order route has always thrown. Nothing about the sentences, the
+# status codes or the order they are asked in has changed for that route.
+#
+# THE SECOND CALLER IS WHY, AND IT CANNOT RAISE. ``services/sanction_import`` reads a spreadsheet of
+# up to ``MAX_SANCTION_ROWS`` orders and has to answer for EVERY row — one bad row must not fail two
+# hundred good ones, which is the contract ``xlsx_table`` states and ``annual_plan_xlsx`` repeats in
+# its own header ("an administrator who loses two workshops out of three hundred finds out when a
+# district asks why nobody came"). An importer built on ``try: … except HTTPException:`` would be
+# reading a status code back out of an exception to decide whether a row is refusable or
+# confirmable, which is a control flow nobody can follow and a sentence nobody can test.
+#
+# **THE SENTENCES STAY SPELLED EXACTLY ONCE AND THAT IS THE PROPERTY THIS SHAPE EXISTS TO KEEP.**
+# ``tests/test_sanction_order_gate.py::test_the_refusal_sentence_is_identical_on_every_surface``
+# reads the constants off disk across three files; adding an importer that paraphrased "this
+# designer's empanelment has been ended" would put a FOURTH wording of a rule in front of the same
+# officer, on the screen where they are least able to tell the two apart. Every refusal an import
+# shows is byte-for-byte the refusal the form shows.
+
+
+@dataclass(frozen=True)
+class Refusal:
+    """One rule's "no", with the status the single-order route answers it with.
+
+    ``status`` travels with ``detail`` because the two are ONE decision and separating them is how
+    a 409 becomes a 422 in a refactor: "two accounts answer to this mailbox" is a CONFLICT about
+    stored rows and "this address is barred" is an UNPROCESSABLE fact about the request, and the
+    officer's client branches on the difference. The importer ignores the status and renders the
+    sentence; the route uses both.
+    """
+
+    status: int
+    detail: str
+
+    def raise_it(self) -> None:
+        raise HTTPException(status_code=self.status, detail=self.detail)
+
+
+async def allow_list_verdict(email: str) -> tuple[Any | None, Refusal | None]:
+    """The allow-list row for this address, and a refusal when an admin has barred it.
+
+    The verdict half of :func:`_the_allow_list_row_or_refuse_if_barred`; read that for WHY this
+    check is the only thing between a sanction order and re-admitting somebody an admin threw out.
+    The row comes back either way, because the caller needs it for a second, unrelated reason —
+    see :func:`_an_admission_that_preserves_an_admins_decision`.
+    """
+    row = await access_roster.access_row(email)
+    state = access_roster.status_of(row)
+    if state in access_roster.BARRED:
+        return row, Refusal(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            SANCTION_ADDRESS_BARRED.format(state=state.lower()),
+        )
+    return row, None
 
 
 async def _the_allow_list_row_or_refuse_if_barred(email: str) -> Any | None:
@@ -390,13 +500,9 @@ async def _the_allow_list_row_or_refuse_if_barred(email: str) -> Any | None:
     overwrites one note against a one-second-stale view of the row, which is strictly better than
     the unconditional overwrite it replaces.
     """
-    row = await access_roster.access_row(email)
-    state = access_roster.status_of(row)
-    if state in access_roster.BARRED:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=SANCTION_ADDRESS_BARRED.format(state=state.lower()),
-        )
+    row, refusal = await allow_list_verdict(email)
+    if refusal is not None:
+        refusal.raise_it()
     return row
 
 
@@ -501,6 +607,19 @@ def _an_admission_that_preserves_an_admins_decision(
     }
 
 
+def self_named_reason(officer: Any, keys: Sequence[str]) -> str | None:
+    """The sentence when this address is one of the recording officer's own, else ``None``.
+
+    The verdict half of :func:`_refuse_if_the_officer_named_themselves`, which is where the whole
+    argument lives. Pure -- no query, no await -- which is why both callers ask it first, and why
+    the importer can answer it for two hundred rows without touching the database once.
+    """
+    own = set(designers.email_match_keys(getattr(officer, "email", None)))
+    if own and own.intersection(keys):
+        return SANCTION_SELF_NAMED
+    return None
+
+
 def _refuse_if_the_officer_named_themselves(officer: Any, keys: list[str]) -> None:
     """422 when the address on the order is one of the recording officer's own spellings.
 
@@ -568,12 +687,9 @@ def _refuse_if_the_officer_named_themselves(officer: Any, keys: list[str]) -> No
     admits the creator with no role test at all. The companion refuses the WRITE on that one workshop
     and leaves the read alone. Neither function is the whole rule; together they are.
     """
-    own = set(designers.email_match_keys(getattr(officer, "email", None)))
-    if own and own.intersection(keys):
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=SANCTION_SELF_NAMED,
-        )
+    reason = self_named_reason(officer, keys)
+    if reason is not None:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=reason)
 
 
 def _refuse_if_the_named_account_cannot_run_the_workshop(user: Any | None) -> None:
@@ -624,22 +740,32 @@ def _refuse_if_the_named_account_cannot_run_the_workshop(user: Any | None) -> No
     new place. The rank half is likewise ``role_rank``/``ROLE_RANK`` and not a literal 35, so if the
     lift below is ever re-spelled this refusal has to be re-spelled with it or it stops matching.
     """
+    reason = cannot_run_reason(user)
+    if reason is not None:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=reason)
+
+
+def cannot_run_reason(user: Any | None) -> str | None:
+    """The sentence when the role this flow LEAVES this account holding cannot open a workshop.
+
+    The verdict half of :func:`_refuse_if_the_named_account_cannot_run_the_workshop`, which
+    carries the whole argument -- including why this is deliberately NOT
+    ``assert_every_designer_may_be_named``. Pure, and the predicate is CALLED rather than
+    restated, for the reason set out there.
+    """
     if user is None:
         # No account yet: the transaction mints one at role DESIGNER, which is in the set.
-        return
+        return None
     if role_rank(user) < ROLE_RANK["DESIGNER"]:
         # The lift below rewrites this account to DESIGNER, which is in the set. Kept as the same
-        # comparison the lift uses — see the docstring's last paragraph.
-        return
+        # comparison the lift uses -- see the docstring's last paragraph.
+        return None
     if can_run_design_workshops(user):
-        return
-    raise HTTPException(
-        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-        detail=SANCTION_DESIGNER_CANNOT_RUN_WORKSHOPS.format(
-            name=getattr(user, "name", None) or getattr(user, "email", None) or "That account",
-            email=getattr(user, "email", None) or "",
-            role=role_value(user),
-        ),
+        return None
+    return SANCTION_DESIGNER_CANNOT_RUN_WORKSHOPS.format(
+        name=getattr(user, "name", None) or getattr(user, "email", None) or "That account",
+        email=getattr(user, "email", None) or "",
+        role=role_value(user),
     )
 
 
@@ -652,12 +778,26 @@ async def _refuse_if_empanelment_ended(keys: list[str]) -> None:
     are refused at the door, reading "Your designer access has been suspended", with no row on any
     screen to explain it. The direct descendant of the assertion in ``test_platform_access_gate``.
     """
-    rows = await db.designerroster.find_many(where={"email": {"in": keys}})
+    reason = await empanelment_ended_reason(keys)
+    if reason is not None:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=reason)
+
+
+async def empanelment_ended_reason(keys: Sequence[str]) -> str | None:
+    """The sentence when a ``DesignerRoster`` row for this mailbox exists and is inactive.
+
+    The verdict half of :func:`_refuse_if_empanelment_ended`.
+
+    **NO ROW AT ALL IS NOT A REFUSAL AND MUST NEVER BECOME ONE.** A designer with no empanelment
+    is the ordinary case this whole feature exists for -- the person is not here yet -- and
+    ``ensure_empanelled`` writes the row four statements into the transaction. Only an empanelment
+    somebody ENDED is refused, because reviving one is an administrator's act and a spreadsheet
+    must not be able to take it.
+    """
+    rows = await db.designerroster.find_many(where={"email": {"in": list(keys)}})
     if any(not bool(getattr(row, "isActive", False)) for row in rows):
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=SANCTION_EMPANELMENT_ENDED,
-        )
+        return SANCTION_EMPANELMENT_ENDED
+    return None
 
 
 async def _existing_account(keys: list[str]) -> Any | None:
@@ -673,17 +813,29 @@ async def _existing_account(keys: list[str]) -> Any | None:
     ``take=3`` rather than 2, so that "two" and "more than two" are distinguishable in the message
     without a second query.
     """
+    found, refusal = await account_verdict(keys)
+    if refusal is not None:
+        refusal.raise_it()
+    return found
+
+
+async def account_verdict(keys: Sequence[str]) -> tuple[Any | None, Refusal | None]:
+    """The one account answering to this mailbox, or a 409 saying two do.
+
+    The verdict half of :func:`_existing_account`, which argues why this is case-insensitive over
+    both spellings where the sign-in door is neither.
+    """
     rows = await db.user.find_many(
         where={"OR": [{"email": {"equals": key, "mode": "insensitive"}} for key in keys]},
         take=3,
     )
     if len(rows) > 1:
         addresses = ", ".join(sorted(str(getattr(row, "email", "") or "") for row in rows))
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=SANCTION_AMBIGUOUS_ACCOUNTS.format(addresses=addresses),
+        return None, Refusal(
+            status.HTTP_409_CONFLICT,
+            SANCTION_AMBIGUOUS_ACCOUNTS.format(addresses=addresses),
         )
-    return rows[0] if rows else None
+    return (rows[0] if rows else None), None
 
 
 async def _account_the_register_already_knows(canonical: str, found: Any | None) -> Any | None:
@@ -707,25 +859,53 @@ async def _account_the_register_already_knows(canonical: str, found: Any | None)
     Deleting this as "already covered" is the tempting edit;
     ``test_a_third_spelling_in_the_register_is_reused_and_never_duplicated`` is what refuses it.
     """
+    settled, refusal = await register_account_verdict(canonical, found)
+    if refusal is not None:
+        refusal.raise_it()
+    return settled
+
+
+async def register_account_verdict(
+    canonical: str, found: Any | None
+) -> tuple[Any | None, Refusal | None]:
+    """The verdict half of :func:`_account_the_register_already_knows`.
+
+    **IT NOW ASKS THE JOIN TABLE AS WELL AS THE LEAD COLUMN, AND THAT IS NOT BELT AND BRACES.**
+    ``SanctionOrder.designerEmail`` knows only the mailbox of the LEAD of each order. Since 0.0.12
+    an order names a TEAM, and a co-designer's canonical mailbox is recorded on
+    ``SanctionOrderDesigner.designerEmail`` and NOWHERE ELSE -- so a third spelling first seen as
+    somebody's SECOND designer was invisible to this read, and the next order naming them as lead
+    would mint them a second ``User`` row. That is the exact defect
+    ``test_a_third_spelling_in_the_register_is_reused_and_never_duplicated`` pins for leads, one
+    table across and one release later.
+
+    The lead column is asked FIRST because it is the older and denser index and answers most
+    lookups on its own; the join is asked only when it did not.
+    """
     prior = await db.sanctionorder.find_first(
         where={"designerEmail": canonical}, include={"designerUser": True}
     )
-    if prior is None:
-        return found
-    known = getattr(prior, "designerUser", None)
+    known = getattr(prior, "designerUser", None) if prior is not None else None
     if known is None:
-        return found
+        # THE SECOND ARM, over every designer of every order rather than over leads alone. Served
+        # by ``@@index([designerEmail])`` on the join, which exists for this read and no other.
+        named = await db.sanctionorderdesigner.find_first(
+            where={"designerEmail": canonical}, include={"designerUser": True}
+        )
+        known = getattr(named, "designerUser", None) if named is not None else None
+    if known is None:
+        return found, None
     if found is None:
-        return known
+        return known, None
     if found.id != known.id:
         addresses = ", ".join(
             sorted({str(found.email or ""), str(getattr(known, "email", "") or "")})
         )
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=SANCTION_AMBIGUOUS_ACCOUNTS.format(addresses=addresses),
+        return None, Refusal(
+            status.HTTP_409_CONFLICT,
+            SANCTION_AMBIGUOUS_ACCOUNTS.format(addresses=addresses),
         )
-    return found
+    return found, None
 
 
 async def _refuse_if_number_taken(key: str) -> None:
@@ -738,13 +918,26 @@ async def _refuse_if_number_taken(key: str) -> None:
     the ordinary case reads as a sentence rather than as a constraint name, and that one exists so
     the ordinary case is not the only case that is handled.
     """
+    reason = await duplicate_reason(key)
+    if reason is not None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=reason)
+
+
+async def duplicate_reason(key: str) -> str | None:
+    """The sentence when this normalised order number is already in the register, else ``None``.
+
+    The verdict half of :func:`_refuse_if_number_taken`. The importer asks it once per sheet row
+    AND keeps its own in-file set beside it, because two rows of one sheet carrying one number
+    collide with each other before either reaches the register -- and the register cannot see a
+    row that has not been written yet. See ``sanction_import``.
+    """
     existing = await db.sanctionorder.find_unique(
         where={"sanctionOrderKey": key},
         include={"designWorkshop": True, "designerUser": True},
     )
     if existing is None:
-        return
-    raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=_duplicate_detail(existing))
+        return None
+    return _duplicate_detail(existing)
 
 
 def _duplicate_detail(existing: Any) -> str:
@@ -761,6 +954,237 @@ def _duplicate_detail(existing: Any) -> str:
         ),
         date=(created.date().isoformat() if isinstance(created, datetime) else "an earlier date"),
     )
+
+
+# --------------------------------------------------------------------------------------
+# The named team
+# --------------------------------------------------------------------------------------
+
+
+@dataclass
+class NamedDesigner:
+    """One designer an order names, resolved against every roster before a row is written.
+
+    ── WHY THE LITERAL AND THE CANONICAL ADDRESS ARE BOTH HELD ───────────────────────────────────
+
+    They are different keys to different tables and this feature is the one place in the product
+    that writes both in a single transaction. ``email`` is what goes on ``User.email``, because both
+    sign-in doors look that column up LITERALLY; ``canonical`` is what goes on ``AccessRoster``,
+    ``DesignerRoster``, ``SanctionOrder.designerEmail`` and ``SanctionOrderDesigner.designerEmail``,
+    because all four key on the MAILBOX. For a dotted or ``+``-tagged Gmail the two differ ON
+    PURPOSE, and collapsing them to one field here is how a designer comes to be admitted under an
+    address they cannot sign in with. :func:`create_from_sanction` argues it at length.
+
+    ``accountCreated`` and ``userId`` are filled INSIDE the transaction, which is why this is a
+    plain mutable dataclass rather than a frozen one: the resolution happens in phase 0 and the two
+    facts it cannot know until the writes happen are stamped on in place, so that phase 2 has one
+    list to walk rather than three parallel ones.
+    """
+
+    name: str
+    email: str
+    canonical: str
+    keys: list[str] = field(default_factory=list)
+    #: The account that already answers to this mailbox, or ``None`` to mint one.
+    user: Any | None = None
+    #: What to hand ``access_roster.admit`` so a sanction order cannot overwrite an admin's decision.
+    admission: dict[str, Any] = field(default_factory=dict)
+    #: Did THIS order mint THIS account. Per designer, because with several the answer differs per
+    #: person and it is what decides whether a sign-in link is offered for them.
+    accountCreated: bool = False
+    userId: str = ""
+
+
+def collapse_named_team(pairs: Sequence[tuple[str, str]]) -> list[tuple[str, str]]:
+    """``[(name, address)]`` with each MAILBOX kept once, at its first position.
+
+    **COLLAPSED AND NOT REFUSED, WHICH IS THE RULE THE OTHER TWO CREATE DOORS ALREADY FOLLOW.**
+    ``namedDesignerTeam`` (``frontend/lib/designWorkshops.ts``) de-duplicates the ticked set keeping
+    first occurrence, and ``attach_the_named_designers`` de-duplicates the ids again on the way to
+    the viewer table. A sanction order that refused instead would be the odd one out, and it would
+    refuse the ordinary shape of the officer's own screen: ticking a designer in the picker and then
+    typing the same person's address into the free-text box beside it.
+
+    **ON THE CANONICAL MAILBOX AND NOT ON THE TYPED STRING**, which is the half a string-equality
+    de-duplication misses: ``r.kumar@gmail.com`` and ``rkumar+dch@gmail.com`` are one person, one
+    ``AccessRoster`` row, one ``DesignerRoster`` row and one ``User`` — and two rows in
+    ``SanctionOrderDesigner`` would violate its ``@@id([sanctionOrderId, designerUserId])`` at the
+    last statement of the transaction, rolling back a recorded ministry order over a typo.
+
+    FIRST POSITION WINS, AND THAT DECIDES WHO THE LEAD IS. Position 0 is the lead everywhere in this
+    feature; a collapse that kept the LAST spelling would move the name that reaches the report.
+    """
+    kept: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for name, address in pairs:
+        mailbox = designers.canonical_email(address)
+        if not mailbox or mailbox in seen:
+            continue
+        seen.add(mailbox)
+        kept.append((name, address))
+    return kept
+
+
+@dataclass(frozen=True)
+class StandingVerdict:
+    """Everything the four standing rules can say about ONE ADDRESS, with no order in hand.
+
+    Split out of :func:`resolve_named_designer` so that the bulk importer can MEMOISE it. Nothing on
+    this dataclass depends on the sanction order being recorded — only on the address, the rosters
+    and the officer asking — so a sheet naming one designer on five rows asks these four questions
+    once instead of five times, and a preview of two hundred rows stays a bounded number of reads.
+
+    ``allowListRow`` is carried because the CREATE needs it for a second, unrelated reason (what to
+    hand ``access_roster.admit`` so a sanction order cannot overwrite an administrator's decision)
+    and reading it twice could in principle resolve two different rows. The importer ignores it.
+    """
+
+    keys: list[str]
+    canonical: str
+    allowListRow: Any | None
+    user: Any | None
+    refusal: Refusal | None
+
+
+async def designer_standing_verdict(address: str, *, officer: Any) -> StandingVerdict:
+    """The four standing refusals and the two account lookups, asked once, about one address.
+
+    **THE ORDER OF THE QUESTIONS IS THE ORDER THE SINGLE-ORDER ROUTE HAS ALWAYS ASKED THEM IN**, and
+    it is load-bearing rather than incidental: the refusals have different next moves, so which one
+    an officer meets decides what they do next. Self-naming is asked first because it needs no query
+    at all; then the allow-list (a barred address is an administrator's decision and outranks
+    everything about the roster); then the empanelment; then the two account lookups, whose answer
+    the LAST question needs. Reordering these changes which sentence a doubly-refused address gets.
+
+    ``_refuse_if_number_taken`` is NOT here, deliberately. It is a fact about the ORDER and not about
+    a designer, so asking it here would ask it once per designer and could report the duplicate
+    against the second name on the instrument.
+
+    ⚠ **EVERY REFUSAL THIS CAN ANSWER IS ONE A SPREADSHEET MUST NEVER BE ABLE TO OVERTURN**, which is
+    the rule the importer's confirmation step is built on: an ended empanelment, a barred address, an
+    account that cannot run a workshop, the officer's own mailbox and a mailbox two accounts answer
+    to are administrators' decisions and facts about the request. They are reported and the row is
+    refused; they are never offered as something to confirm. Everything a human could legitimately
+    have MEANT differently is confirmable, and is decided in ``services/sanction_import`` instead.
+    """
+    keys = designers.email_match_keys(address)
+    canonical = designers.canonical_email(address)
+    if not keys:
+        return StandingVerdict(
+            keys=[],
+            canonical=canonical,
+            allowListRow=None,
+            user=None,
+            refusal=Refusal(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "That is not an address this system can use.",
+            ),
+        )
+
+    def refused(refusal: Refusal, *, row: Any = None) -> StandingVerdict:
+        return StandingVerdict(
+            keys=list(keys), canonical=canonical, allowListRow=row, user=None, refusal=refusal
+        )
+
+    reason = self_named_reason(officer, keys)
+    if reason is not None:
+        return refused(Refusal(status.HTTP_422_UNPROCESSABLE_ENTITY, reason))
+
+    allow_list_row, refusal = await allow_list_verdict(address)
+    if refusal is not None:
+        return refused(refusal, row=allow_list_row)
+
+    reason = await empanelment_ended_reason(keys)
+    if reason is not None:
+        return refused(Refusal(status.HTTP_422_UNPROCESSABLE_ENTITY, reason), row=allow_list_row)
+
+    found, refusal = await account_verdict(keys)
+    if refusal is not None:
+        return refused(refusal, row=allow_list_row)
+
+    settled, refusal = await register_account_verdict(canonical, found)
+    if refusal is not None:
+        return refused(refusal, row=allow_list_row)
+
+    # ASKED OF THE ACCOUNT THE TWO LOOKUPS FINALLY SETTLED ON rather than of the first one found,
+    # and asked HERE rather than inside the transaction: a 422 raised after the workshop row is
+    # written leaves a committed orphan behind on every retry.
+    reason = cannot_run_reason(settled)
+    if reason is not None:
+        return refused(Refusal(status.HTTP_422_UNPROCESSABLE_ENTITY, reason), row=allow_list_row)
+
+    return StandingVerdict(
+        keys=list(keys),
+        canonical=canonical,
+        allowListRow=allow_list_row,
+        user=settled,
+        refusal=None,
+    )
+
+
+async def resolve_named_designer(
+    name: str, address: str, *, officer: Any, note: str
+) -> NamedDesigner | Refusal:
+    """Every phase-0 rule, asked once, for ONE of the designers an order names.
+
+    Answers EITHER a resolved :class:`NamedDesigner` OR the first :class:`Refusal` that applies —
+    never both, and never an exception. :func:`create_from_sanction` raises what comes back;
+    ``services/sanction_import`` renders it beside the sheet row it came from.
+
+    ONE VALUE AND NOT THE ``(thing, refusal)`` TUPLE THE VERDICTS ABOVE USE, deliberately. Those
+    answer a row AND a refusal because the caller needs the row even when there is no refusal
+    (``allow_list_verdict``) or needs "no account, and that is fine" told apart from "no account,
+    because two of them" (``account_verdict``). Here the two outcomes are genuinely exclusive, and a
+    tuple would have made the caller prove that with an ``assert`` — control flow that vanishes
+    under ``python -O``.
+
+    Every rule it applies, and the ORDER it applies them in, is
+    :func:`designer_standing_verdict`'s. What this adds is the one thing that is not a standing fact
+    about an address — the admission dict, which depends on the note naming THIS order.
+    """
+    verdict = await designer_standing_verdict(address, officer=officer)
+    if verdict.refusal is not None:
+        return verdict.refusal
+
+    designer_name = str(name).strip()
+    return NamedDesigner(
+        name=designer_name,
+        email=address,
+        canonical=verdict.canonical,
+        keys=list(verdict.keys),
+        user=verdict.user,
+        # THE ONE THING THAT IS NOT A STANDING FACT ABOUT THE ADDRESS, which is why it is computed
+        # here and not in :func:`designer_standing_verdict`: it depends on the NOTE, and the note
+        # names THIS order. That is also why the importer can memoise the other function and cannot
+        # memoise this one.
+        admission=_an_admission_that_preserves_an_admins_decision(
+            verdict.allowListRow, designer_name=designer_name, note=note
+        ),
+    )
+
+
+def named_team_of(payload: Any) -> list[tuple[str, str]]:
+    """``[(name, address)]`` for one create body, THE LEAD FIRST, each mailbox once.
+
+    ── WHY THE LEAD IS TWO SCALARS AND THE REST ARE A LIST ───────────────────────────────────────
+
+    ``designerName``/``designerEmail`` are unchanged, still required and still mean THE LEAD — whose
+    profile seeds stage 1 and whose name reaches ``<dc:creator>`` on the report, a field the OOXML
+    core-properties part cannot express as a list. ``coDesigners`` carries positions 1..N.
+
+    The alternative — one ``designers: [{name, email}]`` list with "position 0 is the lead" — was
+    rejected for two reasons. It would have made every client that posts this body today invalid, on
+    a model that is ``extra="forbid"``; and it would have needed a rule saying the two scalars must
+    equal element 0, which is a rule to get wrong rather than a shape that cannot be wrong. This way
+    a body with no ``coDesigners`` is byte-for-byte the body the officer's form has always sent, and
+    the team it produces is exactly ``[the lead]``.
+    """
+    lead = (str(getattr(payload, "designerName", "") or ""), str(payload.designerEmail))
+    rest = [
+        (str(getattr(co, "name", "") or ""), str(getattr(co, "email", "")))
+        for co in (getattr(payload, "coDesigners", None) or [])
+    ]
+    return collapse_named_team([lead, *rest])
 
 
 # --------------------------------------------------------------------------------------
@@ -782,7 +1206,27 @@ def _midnight_utc(value: date) -> datetime:
 async def create_from_sanction(payload: Any, officer: Any) -> dict[str, Any]:
     """The whole flow. See the module docstring for the transaction argument.
 
-    Answers the 201 body: ``{sanctionOrder, credentialLink, credentialLinkProblem}``.
+    Answers the 201 body:
+    ``{sanctionOrder, credentialLink, credentialLinkProblem, credentialLinks}``.
+
+    ── IT NAMES A TEAM NOW, AND EVERY PER-PERSON WRITE MOVED INSIDE A LOOP ───────────────────────
+
+    One order, one workshop, one lead — and one row per named designer in ``SanctionOrderDesigner``,
+    the lead included. What multiplied is steps 1.1, 1.2, 1.3, 1.4 and 1.6 of the list in the module
+    docstring: an allow-list admission, an empanelment, an account, a profile and a viewer row, each
+    per person. What did NOT multiply is the workshop, the register row, the stage-1 prefill and the
+    lead scalars on ``SanctionOrder``.
+
+    **THE LOOP IS OVER ``attach_the_named_designer`` (SINGULAR) AND NOT ``attach_the_named_designers``
+    (PLURAL), WHICH LOOKS LIKE THE OBVIOUS TIDY-UP AND IS THE ONE EDIT THAT WOULD BREAK THIS
+    FUNCTION'S CENTRAL GUARANTEE.** The plural helper takes no ``client=`` and says so in its own
+    docstring — it is deliberately NOT transactional with the workshop create, because the admin
+    create path it was written for commits the workshop first. This path is the opposite: everything
+    here is one ``db.tx()`` precisely so that a refusal or a fault leaves no admitted account, no
+    empanelment, no orphan workshop and no half-written register row. Calling the plural helper
+    would silently move the viewer rows OUTSIDE the transaction that the rest of this function is
+    built to hold them in, and nothing would fail — the happy path is identical. So: the singular
+    one, threaded with ``client=tx``, looped here.
     """
     stored_no = tidy_sanction_order_no(payload.sanctionOrderNo)
     key = normalise_sanction_order_no(stored_no)
@@ -796,174 +1240,203 @@ async def create_from_sanction(payload: Any, officer: Any) -> dict[str, Any]:
     # The rule the workshop create route states in its own words: a create that cannot honour the
     # body it was given must not half-succeed. Asked after the writes, each of these would leave a
     # committed orphan behind on every retry.
-    keys = designers.email_match_keys(payload.designerEmail)
-    if not keys:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="That is not an address this system can use.",
-        )
-    # THE ONE REFUSAL THAT NEEDS NO QUERY, SO IT IS ASKED FIRST. An officer naming their own mailbox
-    # is not a fact about the register or the roster — it is a fact about the two addresses in hand.
-    _refuse_if_the_officer_named_themselves(officer, keys)
-    await _refuse_if_number_taken(key)
-    existing_admission = await _the_allow_list_row_or_refuse_if_barred(payload.designerEmail)
-    await _refuse_if_empanelment_ended(keys)
-    existing_user = await _existing_account(keys)
-
-    canonical = designers.canonical_email(payload.designerEmail)
-    existing_user = await _account_the_register_already_knows(canonical, existing_user)
-    # ASKED HERE AND NOT INSIDE THE TRANSACTION, and asked of the account the two lookups above
-    # finally settled on rather than of the first one found: a 422 raised after the workshop row is
-    # written leaves a committed orphan behind on every retry, and this is the refusal that used to
-    # be missing altogether — see the function for the 404 that cost.
-    _refuse_if_the_named_account_cannot_run_the_workshop(existing_user)
     officer_name = str(getattr(officer, "name", None) or getattr(officer, "email", "") or "")
     note = SANCTION_ADMISSION_NOTE.format(no=stored_no, officer=officer_name)
-    designer_name = str(payload.designerName).strip()
-    admission = _an_admission_that_preserves_an_admins_decision(
-        existing_admission, designer_name=designer_name, note=note
-    )
 
-    account_created = False
-    secret: str | None = None
+    # THE ONE REFUSAL THAT NEEDS NO QUERY, SO IT IS ASKED FIRST AND FOR THE WHOLE TEAM AT ONCE. An
+    # officer naming their own mailbox is not a fact about the register or the roster — it is a fact
+    # about the addresses in hand — and it must be asked of the co-designers too: without this pass
+    # an officer could put a real designer in the lead box and their own second mailbox in the list
+    # beside it, which is the same escalation by a longer route. It is asked BEFORE the duplicate
+    # check so that the answer does not depend on whether somebody else happened to use the number.
+    for _name, address in named_team_of(payload):
+        reason = self_named_reason(officer, designers.email_match_keys(address))
+        if reason is not None:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=reason)
+
+    await _refuse_if_number_taken(key)
+
+    team: list[NamedDesigner] = []
+    for name, address in named_team_of(payload):
+        resolved = await resolve_named_designer(name, address, officer=officer, note=note)
+        if isinstance(resolved, Refusal):
+            resolved.raise_it()
+        else:
+            team.append(resolved)
+
+    # ── THE SECOND COLLAPSE, AND IT CANNOT BE DONE UNTIL THE ACCOUNTS ARE RESOLVED ────────────
+    # `collapse_named_team` folds two spellings of one MAILBOX together. This folds two different
+    # mailboxes that turn out to be one ACCOUNT — which happens through
+    # `register_account_verdict`'s third-spelling arm: an address the register has seen before
+    # resolves to an account that another address on this same order also resolves to. Without this
+    # pass the transaction writes two `SanctionOrderDesigner` rows with the same `designerUserId`
+    # and violates that table's composite primary key at its very last statement, rolling back a
+    # recorded ministry order. Keeping the FIRST occurrence keeps the lead where the officer put it.
+    settled: list[NamedDesigner] = []
+    claimed: set[str] = set()
+    for designer in team:
+        account_id = getattr(designer.user, "id", None)
+        if account_id is not None:
+            if account_id in claimed:
+                continue
+            claimed.add(account_id)
+        settled.append(designer)
+    team = settled
+    lead = team[0]
+
+    secrets_minted: dict[str, str] = {}
 
     async with db.tx(max_wait=timedelta(seconds=10), timeout=timedelta(seconds=30)) as tx:
-        # 1.1 THE ALLOW-LIST. Idempotent: find-then-update-or-create, and ``joinedAt`` is written
-        # once so a designer who has been here since 2024 does not read as having joined today.
-        # The returned row is deliberately NOT used to derive `User.email`. It carries whatever
-        # spelling the allow-list already held — `admit`'s own docstring says "a new row is written
-        # under the mailbox; an EXISTING ROW KEEPS THE SPELLING IT HAS" — so reading the address back
-        # off it would make the account's address depend on whether a row happened to exist, which is
-        # a coin-flip between the literal and the canonical form on exactly the aliased addresses
-        # that make the distinction matter.
-        #
-        # ``**admission`` IS FOUR ARGUMENTS AND EVERY ONE OF THEM IS A DECISION, not a spread taken
-        # for brevity: ``admit_role``, ``full_name``, ``note`` and ``decided`` are the four columns
-        # this call used to overwrite on an allow-list row an administrator had already decided
-        # about. ``joinedAt`` is the only one ``admit`` protects for itself. What is sent, and why
-        # each field is sent or withheld, is argued in
-        # :func:`_an_admission_that_preserves_an_admins_decision`; it is computed in phase 0 because
-        # it depends on a READ of the existing row, which from in here would see this transaction's
-        # own work.
-        await access_roster.admit(
-            payload.designerEmail,
-            actor_id=getattr(officer, "id", None),
-            client=tx,
-            **admission,
-        )
-
-        # 1.2 THE EMPANELMENT. Create-only — it answers False where a row already stood and it never
-        # revives a suspended one, which phase 0 has already refused. ``swallow_race=False`` because
-        # we are INSIDE a transaction: a swallowed ``UniqueViolationError`` here leaves an aborted
-        # Postgres transaction and hands the officer an opaque 500 from a write three steps later.
-        await designers.ensure_empanelled(
-            payload.designerEmail,
-            actor_id=getattr(officer, "id", None),
-            note=note,
-            client=tx,
-            swallow_race=False,
-        )
-
-        if existing_user is None:
-            # ── THE PASSWORD NOBODY EVER SEES, AND WHY THE ACCOUNT IS NOT CREATED THROUGH
-            # ── POST /api/users. THREE ROUTES WERE AVAILABLE AND TWO ARE WORSE.
+        for designer in team:
+            # 1.1 THE ALLOW-LIST. Idempotent: find-then-update-or-create, and ``joinedAt`` is
+            # written once so a designer who has been here since 2024 does not read as having
+            # joined today. The returned row is deliberately NOT used to derive `User.email`. It
+            # carries whatever spelling the allow-list already held — `admit`'s own docstring says
+            # "a new row is written under the mailbox; an EXISTING ROW KEEPS THE SPELLING IT HAS" —
+            # so reading the address back off it would make the account's address depend on whether
+            # a row happened to exist, which is a coin-flip between the literal and the canonical
+            # form on exactly the aliased addresses that make the distinction matter.
             #
-            # (a) POST /api/users. Its body REQUIRES a password and ``APIModel`` forbids extras, so
-            #     a sanction flow cannot post without inventing one and cannot add ``invite: true``
-            #     without a schema change. It is also ``require_admin``, where ``is_admin`` is the
-            #     SET {ADMIN, MASTER_ADMIN} and not a rank, so a MINISTRY_ADMIN at 48 is refused by
-            #     it. Calling it from here would mean widening the one route in this product that
-            #     mints accounts, for a caller that is not an admin.
-            #
-            # (b) Adding ``password: str | None`` + ``invite: bool`` to ``UserCreate``. That makes
-            #     the password OPTIONAL on the route an administrator uses by hand — a real
-            #     loosening of the one door that hands out credentials, bought to serve a caller
-            #     that does not use that door.
-            #
-            # (c) THIS. Mint 32 bytes of ``secrets.token_urlsafe`` here, hash it with the same
-            #     ``hash_password`` every other account uses, and never return it, log it or store
-            #     it in plaintext. The account is then in EXACTLY the state POST /api/users leaves
-            #     one in — a real ``passwordHash``, a real ``passwordSetAt``,
-            #     ``mustChangePassword: True`` — which is the state every downstream gate and every
-            #     test already understands.
-            #
-            # WHY NOT LEAVE ``passwordHash`` NULL. ``issue_link`` reads it: NULL means purpose
-            # INVITE with a 72-hour TTL, which is the RIGHT purpose here — but a NULL hash also
-            # means the account can be signed into by nobody at all if the link is lost. A random
-            # hash gives up nothing (it is unguessable by construction, so the account is equally
-            # unreachable) and it keeps ``passwordSetAt`` honest as "this account has had a password
-            # since the day it was made". The purpose is therefore passed EXPLICITLY below rather
-            # than inferred, because a non-NULL hash would otherwise infer RESET and its 2-hour TTL,
-            # which is far too short for a link an officer forwards by hand to somebody in the field.
-            secret = secrets.token_urlsafe(32)
-            user = await tx.user.create(
-                data={
-                    # ── THE LITERAL LOWER-CASED ADDRESS, NOT THE CANONICAL ONE ────────────────
-                    # This is the single most consequential line in the function and it reads as
-                    # the wrong choice until you follow it. BOTH sign-in doors look ``User.email``
-                    # up LITERALLY: ``identity.resolve_identifier`` does
-                    # ``find_unique(where={"email": normalise_email(identifier)})`` and
-                    # ``normalise_email`` is only strip-and-lower, while ``login_with_google``
-                    # matches on Google's own claim. ``canonical_email`` strips every dot and the
-                    # ``+`` suffix from a Gmail local part — so an account stored canonically for
-                    # ``sandy.craft3@gmail.com`` 401s on password sign-in AND is MISSED by Google
-                    # sign-in, which then mints a SECOND User row. Writing the canonical form here
-                    # would manufacture, on every dotted Gmail, the exact split ``routes/auth.py``
-                    # records as a known defect.
-                    #
-                    # The canonical form belongs on the two ROSTER rows (both of which key on the
-                    # mailbox) and on ``SanctionOrder.designerEmail``. That the account address and
-                    # the register address differ for an aliased Gmail is DELIBERATE, is the same
-                    # asymmetry ``POST /api/users`` already creates, and is confusing enough that
-                    # the officer's prewritten message names the sign-in address explicitly.
-                    "email": designers.normalise_email(payload.designerEmail),
-                    "name": designer_name,
-                    "passwordHash": hash_password(secret),
-                    "passwordSetAt": datetime.now(UTC),
-                    "mustChangePassword": True,
-                    "role": "DESIGNER",
-                    "authProvider": "LOCAL",
-                    # Every grant spelled out and every one False, matching ``UserCreate``'s own
-                    # defaults. A designer needs none of them, and a sanction order is not the place
-                    # to grant a capability.
-                    "canManageQuestionnaire": False,
-                    "canManageCrafts": False,
-                    "canManageWorkshops": False,
-                    "canReview": False,
-                    "canViewProvenance": False,
-                    "canDownloadDataset": False,
-                }
+            # ``**designer.admission`` IS FOUR ARGUMENTS AND EVERY ONE OF THEM IS A DECISION, not a
+            # spread taken for brevity: ``admit_role``, ``full_name``, ``note`` and ``decided`` are
+            # the four columns this call used to overwrite on an allow-list row an administrator had
+            # already decided about. ``joinedAt`` is the only one ``admit`` protects for itself.
+            # What is sent, and why each field is sent or withheld, is argued in
+            # :func:`_an_admission_that_preserves_an_admins_decision`; it is computed in phase 0
+            # because it depends on a READ of the existing row, which from in here would see this
+            # transaction's own work.
+            await access_roster.admit(
+                designer.email,
+                actor_id=getattr(officer, "id", None),
+                client=tx,
+                **designer.admission,
             )
-            account_created = True
-        else:
-            user = existing_user
-            # ROLE: LIFT, NEVER LOWER. An ADMIN named on a sanction order keeps their tier — the
-            # same rule ``routes/auth.py`` and ``routes/access.py`` apply when an allow-list row
-            # names a role, and the reason ``test_designer_roster`` has a case for it.
-            # ``mustChangePassword`` is deliberately NOT set here: they already have credentials, and
-            # setting it would send somebody who signs in every day to a change-password screen
-            # because a colleague recorded a sanction order.
-            #
-            # **THIS COMMENT SAID "AN ADMIN OR A PROFESSOR" UNTIL 2026-09-14 AND THE PROFESSOR HALF
-            # WAS THE DEFECT, NOT A FEATURE.** A rank floor is the right test for "do not demote
-            # anybody" and the WRONG test for "can this person run the workshop", because
-            # ``DESIGN_WORKSHOP_ROLES`` is a set: a professor kept their tier here and was then
-            # handed a viewer row nothing would honour. A professor no longer reaches this line at
-            # all — ``_refuse_if_the_named_account_cannot_run_the_workshop`` turned that silent 201
-            # into a 422 in phase 0, naming the screen that fixes it. So the accounts that survive
-            # to here are exactly: below DESIGNER (lifted on the next line), or already inside
-            # ``DESIGN_WORKSHOP_ROLES`` (left alone, correctly). Widening the phase-0 refusal without
-            # re-reading this comparison re-opens the same hole.
-            if role_rank(user) < ROLE_RANK["DESIGNER"]:
-                user = await tx.user.update(where={"id": user.id}, data={"role": "DESIGNER"})
 
-        # 1.4 THE PROFILE. An upsert, so this is safe for an account that already has one, and it
-        # exists because workshop creation READS the profile — a create path that has to handle
-        # "no row yet" as well as "row with no values" is two paths where one will do.
-        await designers.get_or_create_profile(user.id, client=tx)
+            # 1.2 THE EMPANELMENT. Create-only — it answers False where a row already stood and it
+            # never revives a suspended one, which phase 0 has already refused. ``swallow_race=False``
+            # because we are INSIDE a transaction: a swallowed ``UniqueViolationError`` here leaves an
+            # aborted Postgres transaction and hands the officer an opaque 500 from a write three
+            # steps later.
+            await designers.ensure_empanelled(
+                designer.email,
+                actor_id=getattr(officer, "id", None),
+                note=note,
+                client=tx,
+                swallow_race=False,
+            )
+
+            if designer.user is None:
+                # ── THE PASSWORD NOBODY EVER SEES, AND WHY THE ACCOUNT IS NOT CREATED THROUGH
+                # ── POST /api/users. THREE ROUTES WERE AVAILABLE AND TWO ARE WORSE.
+                #
+                # (a) POST /api/users. Its body REQUIRES a password and ``APIModel`` forbids extras,
+                #     so a sanction flow cannot post without inventing one and cannot add
+                #     ``invite: true`` without a schema change. It is also ``require_admin``, where
+                #     ``is_admin`` is the SET {ADMIN, MASTER_ADMIN} and not a rank, so a
+                #     MINISTRY_ADMIN at 48 is refused by it outright. Calling it from here would mean
+                #     widening the one route in this product that mints accounts, for a caller that
+                #     is not an admin.
+                #
+                # (b) Adding ``password: str | None`` + ``invite: bool`` to ``UserCreate``. That
+                #     makes the password OPTIONAL on the route an administrator uses by hand — a real
+                #     loosening of the one door that hands out credentials, bought to serve a caller
+                #     that does not use that door.
+                #
+                # (c) THIS. Mint 32 bytes of ``secrets.token_urlsafe`` here, hash it with the same
+                #     ``hash_password`` every other account uses, and never return it, log it or
+                #     store it in plaintext. The account is then in EXACTLY the state POST /api/users
+                #     leaves one in — a real ``passwordHash``, a real ``passwordSetAt``,
+                #     ``mustChangePassword: True`` — which is the state every downstream gate and
+                #     every test already understands.
+                #
+                # WHY NOT LEAVE ``passwordHash`` NULL. ``issue_link`` reads it: NULL means purpose
+                # INVITE with a 72-hour TTL, which is the RIGHT purpose here — but a NULL hash also
+                # means the account can be signed into by nobody at all if the link is lost. A random
+                # hash gives up nothing (it is unguessable by construction, so the account is equally
+                # unreachable) and it keeps ``passwordSetAt`` honest as "this account has had a
+                # password since the day it was made". The purpose is therefore passed EXPLICITLY
+                # below rather than inferred, because a non-NULL hash would otherwise infer RESET and
+                # its 2-hour TTL, which is far too short for a link an officer forwards by hand to
+                # somebody in the field.
+                #
+                # ONE SECRET PER DESIGNER, KEPT IN A DICT KEYED BY THE MAILBOX RATHER THAN IN A
+                # SINGLE VARIABLE. A shared `secret` would have been overwritten by the next
+                # iteration and the earlier designers' links would have been minted against a hash
+                # nobody holds — which is not a failure any test of the happy path can see, because
+                # `issue_link` binds to `user.passwordHash` and would succeed either way.
+                secret = secrets.token_urlsafe(32)
+                secrets_minted[designer.canonical] = secret
+                user = await tx.user.create(
+                    data={
+                        # ── THE LITERAL LOWER-CASED ADDRESS, NOT THE CANONICAL ONE ────────────────
+                        # This is the single most consequential line in the function and it reads as
+                        # the wrong choice until you follow it. BOTH sign-in doors look ``User.email``
+                        # up LITERALLY: ``identity.resolve_identifier`` does
+                        # ``find_unique(where={"email": normalise_email(identifier)})`` and
+                        # ``normalise_email`` is only strip-and-lower, while ``login_with_google``
+                        # matches on Google's own claim. ``canonical_email`` strips every dot and the
+                        # ``+`` suffix from a Gmail local part — so an account stored canonically for
+                        # ``sandy.craft3@gmail.com`` 401s on password sign-in AND is MISSED by Google
+                        # sign-in, which then mints a SECOND User row. Writing the canonical form here
+                        # would manufacture, on every dotted Gmail, the exact split ``routes/auth.py``
+                        # records as a known defect.
+                        #
+                        # The canonical form belongs on the two ROSTER rows (both of which key on the
+                        # mailbox) and on ``SanctionOrder.designerEmail`` and
+                        # ``SanctionOrderDesigner.designerEmail``. That the account address and the
+                        # register address differ for an aliased Gmail is DELIBERATE, is the same
+                        # asymmetry ``POST /api/users`` already creates, and is confusing enough that
+                        # the officer's prewritten message names the sign-in address explicitly.
+                        "email": designers.normalise_email(designer.email),
+                        "name": designer.name,
+                        "passwordHash": hash_password(secret),
+                        "passwordSetAt": datetime.now(UTC),
+                        "mustChangePassword": True,
+                        "role": "DESIGNER",
+                        "authProvider": "LOCAL",
+                        # Every grant spelled out and every one False, matching ``UserCreate``'s own
+                        # defaults. A designer needs none of them, and a sanction order is not the
+                        # place to grant a capability.
+                        "canManageQuestionnaire": False,
+                        "canManageCrafts": False,
+                        "canManageWorkshops": False,
+                        "canReview": False,
+                        "canViewProvenance": False,
+                        "canDownloadDataset": False,
+                    }
+                )
+                designer.accountCreated = True
+            else:
+                user = designer.user
+                # ROLE: LIFT, NEVER LOWER. An ADMIN named on a sanction order keeps their tier — the
+                # same rule ``routes/auth.py`` and ``routes/access.py`` apply when an allow-list row
+                # names a role, and the reason ``test_designer_roster`` has a case for it.
+                # ``mustChangePassword`` is deliberately NOT set here: they already have credentials,
+                # and setting it would send somebody who signs in every day to a change-password
+                # screen because a colleague recorded a sanction order.
+                #
+                # **THIS COMMENT SAID "AN ADMIN OR A PROFESSOR" UNTIL 2026-09-14 AND THE PROFESSOR
+                # HALF WAS THE DEFECT, NOT A FEATURE.** A rank floor is the right test for "do not
+                # demote anybody" and the WRONG test for "can this person run the workshop", because
+                # ``DESIGN_WORKSHOP_ROLES`` is a set: a professor kept their tier here and was then
+                # handed a viewer row nothing would honour. A professor no longer reaches this line
+                # at all — ``cannot_run_reason`` turned that silent 201 into a 422 in phase 0, naming
+                # the screen that fixes it. So the accounts that survive to here are exactly: below
+                # DESIGNER (lifted on the next line), or already inside ``DESIGN_WORKSHOP_ROLES``
+                # (left alone, correctly). Widening the phase-0 refusal without re-reading this
+                # comparison re-opens the same hole.
+                if role_rank(user) < ROLE_RANK["DESIGNER"]:
+                    user = await tx.user.update(where={"id": user.id}, data={"role": "DESIGNER"})
+
+            # 1.4 THE PROFILE. An upsert, so this is safe for an account that already has one, and
+            # it exists because workshop creation READS the profile — a create path that has to
+            # handle "no row yet" as well as "row with no values" is two paths where one will do.
+            await designers.get_or_create_profile(user.id, client=tx)
+            designer.user = user
+            designer.userId = user.id
 
         # 1.5 THE WORKSHOP. ``createdById`` IS THE OFFICER, not the designer: the officer is who
-        # brought it into existence, and the designer's access comes from the viewer row below.
+        # brought it into existence, and the designers' access comes from the viewer rows below.
         # ``schemaVersion`` is stamped exactly as the admin create route stamps it — the column is
         # nullable, so omitting it fails nothing and leaves sanctioned workshops carrying NULL where
         # every hand-created one carries a version, on a value read straight back out on the
@@ -984,19 +1457,20 @@ async def create_from_sanction(payload: Any, officer: Any) -> dict[str, Any]:
             }
         )
 
-        # 1.6 THE VIEWER ROW — the thing that actually lets the designer open it. Idempotent:
+        # 1.6 THE VIEWER ROWS — the thing that actually lets each designer open it. Idempotent:
         # ``add_one_viewer`` uses ``create_many(skip_duplicates=True)``.
         #
         # ELIGIBILITY IS VALIDATED IN PHASE 0 AND MUST NOT BE RE-ASKED IN HERE. Four refusals, and
         # this comment named only three of them until 2026-09-14 because the fourth did not exist:
-        # barred address, ended empanelment, ambiguous account — AND
-        # ``_refuse_if_the_named_account_cannot_run_the_workshop``, which is the one that decides
-        # whether the row written on the next line can actually do anything. Without it this call
-        # wrote a viewer row for an INSPECTOR, a PROFESSOR or any of the three directorate tiers and
-        # ``load_workshop_or_404`` refused to honour it — a 201 for the officer and a permanent 404
-        # for the designer, undoable from inside the product. If you add a fifth refusal, add it to
-        # phase 0 and to this list; a refusal raised from in here rolls back a ministry sanction
-        # order at the second-to-last statement, and the officer cannot tell that from a 500.
+        # barred address, ended empanelment, ambiguous account — AND ``cannot_run_reason``, which is
+        # the one that decides whether the rows written on the next lines can actually do anything.
+        # Without it this call wrote a viewer row for an INSPECTOR, a PROFESSOR or any of the three
+        # directorate tiers and ``load_workshop_or_404`` refused to honour it — a 201 for the officer
+        # and a permanent 404 for the designer, undoable from inside the product. Since 0.0.12 all
+        # four are asked of EVERY named designer rather than of one, by
+        # :func:`resolve_named_designer`. If you add a fifth refusal, add it to that function and to
+        # this list; a refusal raised from in here rolls back a ministry sanction order at the
+        # second-to-last statement, and the officer cannot tell that from a 500.
         #
         # ``assert_every_designer_may_be_named`` STILL MUST NOT BE CALLED — not here and not in phase
         # 0. Two of its three arms ask about the roster rows this transaction is writing: from in
@@ -1004,13 +1478,19 @@ async def create_from_sanction(payload: Any, officer: Any) -> dict[str, Any]:
         # ever recorded; from phase 0 they refuse every researcher this flow is about to lift and
         # every designer it is about to empanel. The phase-0 refusal above asks the one question that
         # survives the transaction instead, and says why in its own docstring.
-        await attach_the_named_designer(
-            workshop.id,
-            user.id,
-            granted_by_id=getattr(officer, "id", None),
-            creator_id=getattr(officer, "id", None),
-            client=tx,
-        )
+        #
+        # THE SINGULAR HELPER, LOOPED, AND NOT ``attach_the_named_designers`` — see this function's
+        # own docstring. The plural one takes no ``client=`` and is documented as deliberately not
+        # transactional; swapping to it here would move these rows out of this transaction with no
+        # visible symptom on the happy path.
+        for designer in team:
+            await attach_the_named_designer(
+                workshop.id,
+                designer.userId,
+                granted_by_id=getattr(officer, "id", None),
+                creator_id=getattr(officer, "id", None),
+                client=tx,
+            )
 
         # 1.7 THE REGISTER ITSELF. The unique index on ``sanctionOrderKey`` is the real duplicate
         # guard; the pre-check above is only the friendly half of it.
@@ -1022,15 +1502,24 @@ async def create_from_sanction(payload: Any, officer: Any) -> dict[str, Any]:
                         "sanctionOrderKey": key,
                         "sanctionOrderDate": _midnight_utc(payload.sanctionOrderDate),
                         "sanctionAmount": payload.sanctionAmount,
-                        "designerUserId": user.id,
+                        # ── THE THREE LEAD SCALARS, AND THEY STILL MEAN THE LEAD ─────────────────
+                        # Kept beside the join rather than retired, exactly as
+                        # ``DesignWorkshopCreate.designerUserId`` is kept beside ``designerUserIds``.
+                        # ``@@index([designerUserId])`` serves the ON DELETE RESTRICT scan, the
+                        # search clause in ``list_sanction_orders`` reads ``designerEmail``, and
+                        # exactly one name can reach ``<dc:creator>`` on the report. A lead derived
+                        # by sorting a collection is a lead nobody chose.
+                        "designerUserId": lead.userId,
                         # THE CANONICAL MAILBOX, and not ``user.email``. See the account create
                         # above: for an aliased Gmail those two differ on purpose, and THIS is the
                         # key both rosters were written under.
-                        "designerEmail": canonical,
+                        "designerEmail": lead.canonical,
                         "designWorkshopId": workshop.id,
                         "createdById": getattr(officer, "id", None),
-                        "accountCreated": account_created,
+                        "accountCreated": lead.accountCreated,
                         "notes": payload.notes,
+                        "sourceFilename": getattr(payload, "sourceFilename", None),
+                        "sheetRow": getattr(payload, "sheetRow", None),
                     }
                 )
             )
@@ -1049,24 +1538,93 @@ async def create_from_sanction(payload: Any, officer: Any) -> dict[str, Any]:
             )
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detail) from exc
 
+        # 1.8 WHO THE ORDER NAMES — one row per designer, the lead at position 0.
+        #
+        # ``create_many`` AND NOT A LOOP OF ``create``: one statement, and the list is bounded by
+        # ``MAX_SANCTION_DESIGNERS`` at the schema. ``skip_duplicates`` is deliberately NOT passed —
+        # the two collapses in phase 0 are what guarantee no pair repeats, and asking the database to
+        # swallow a repeat here would hide the day one of them stops working.
+        await tx.sanctionorderdesigner.create_many(
+            data=[
+                {
+                    "sanctionOrderId": row.id,
+                    "designerUserId": designer.userId,
+                    "designerEmail": designer.canonical,
+                    "accountCreated": designer.accountCreated,
+                    "position": position,
+                }
+                for position, designer in enumerate(team)
+            ]
+        )
+
     # ── PHASE 2: AFTER THE COMMIT. Each of these may fail without undoing the workshop. ────────
     # THE HOUSE RULE, WITHOUT EXCEPTION: every write to a ``User`` row invalidates the cached copy.
     # A designer whose role was just lifted to DESIGNER and whose cached row still says RESEARCHER is
     # refused by the designer gate for as long as the TTL runs, on the morning they were told to
-    # start. This is not a database write, so it belongs after the commit and not inside it.
-    invalidate_cached_user(user.id)
-    await _seed_the_report_copy(workshop, officer, user.id, stored_no, payload.sanctionOrderDate)
+    # start. This is not a database write, so it belongs after the commit and not inside it. ONE PER
+    # NAMED DESIGNER: a loop that invalidated only the lead would leave every co-designer refused at
+    # the door for the life of the TTL, which is the same incident one name across.
+    for designer in team:
+        invalidate_cached_user(designer.userId)
 
-    link, problem = await _issue_first_credential(
-        user=user, officer=officer, account_created=account_created
+    # THE PREFILL TAKES THE LEAD AND IS NOT LOOPED, AND THAT IS A DECISION RATHER THAN AN OMISSION.
+    # ``seed_designer_prefill`` copies ONE ``DesignerProfile`` into stage 1's single ``designerName``
+    # box and stage 3's single designer block, and ``report_docx`` writes ``<dc:creator>``, a field
+    # the OOXML core-properties part cannot express as a list. Looping it would have each designer
+    # overwrite the one before, and the name on the ministry's document would be decided by whichever
+    # of them the loop reached last. Several people may OPEN it; one name is ON it.
+    await _seed_the_report_copy(
+        workshop, officer, lead.userId, stored_no, payload.sanctionOrderDate
     )
 
+    credential_links_out: list[dict[str, Any]] = []
+    for designer in team:
+        link, problem = await _issue_first_credential(
+            user=designer.user, officer=officer, account_created=designer.accountCreated
+        )
+        if link is None and problem is None:
+            # Nothing to say about this designer: their account already existed, or they sign in
+            # with Google. Both are ordinary and neither is a problem — see
+            # :func:`_issue_first_credential` for the three cases and what the screen says about
+            # each. An entry here would put an empty panel on the officer's screen per designer.
+            continue
+        credential_links_out.append(
+            {
+                "designerUserId": designer.userId,
+                "designerName": designer.name,
+                # BOTH ADDRESSES, BECAUSE THEY DIFFER AND THE OFFICER HAS TO SEND THE RIGHT ONE.
+                # ``designerEmail`` is the canonical mailbox the register was written under;
+                # ``signInEmail`` is the literal address ``User.email`` holds and the ONLY one the
+                # sign-in door will accept. For a dotted or +tagged Gmail these are not the same
+                # string, and the prewritten message names the second one.
+                "designerEmail": designer.canonical,
+                "signInEmail": str(getattr(designer.user, "email", "") or ""),
+                "link": link,
+                "problem": problem,
+            }
+        )
+
+    lead_entry = next(
+        (entry for entry in credential_links_out if entry["designerUserId"] == lead.userId), None
+    )
     return {
         "sanctionOrder": await sanction_payload(
-            row, workshop=workshop, designer=user, officer=officer
+            row, workshop=workshop, designer=lead.user, officer=officer, team=team
         ),
-        "credentialLink": link,
-        "credentialLinkProblem": problem,
+        # ── THE LEAD'S LINK, UNDER THE TWO KEYS THIS ROUTE HAS ALWAYS ANSWERED WITH ──────────────
+        # Redundant with the first entry of ``credentialLinks`` below, and kept deliberately rather
+        # than out of timidity: ``tests/test_sanction_orders.py`` asserts both of these by name on
+        # the raw response, and they are the shape every deployed client reads today. Retiring them
+        # is a one-line change in three places the day that test is updated with them.
+        "credentialLink": (lead_entry or {}).get("link"),
+        "credentialLinkProblem": (lead_entry or {}).get("problem"),
+        # ── AND ONE ENTRY PER DESIGNER WHOSE ACCOUNT THIS ORDER MINTED ───────────────────────────
+        # THE LINK IS SHOWN ONCE AND NOTHING CAN SHOW IT AGAIN — the table stores only a SHA-256
+        # digest — so an order that mints four accounts and returns one link is an order that leaves
+        # three designers unable to sign in, with no screen in the product able to say so. The
+        # re-issue button on each row is the remedy and it is keyed on the ORDER, not on the person,
+        # which is why this list carries the designer each link belongs to.
+        "credentialLinks": credential_links_out,
     }
 
 
@@ -1162,27 +1720,66 @@ async def reissue_credential_link(row: Any, officer: Any) -> dict[str, Any]:
     NULL, RESET once it is not — is the distinction ``ttl_hours`` exists to draw, and this route
     lets it do its job.
 
-    **WHAT BOUNDS THIS ARM IS IN PHASE 0 OF THE CREATE, WHICH IS WHY THERE IS NO SECOND CHECK HERE.**
-    This hands an officer a working sign-in link for whoever the order names. If an officer could
-    name themselves, this would be a second, permanent door to the escalation the create refuses —
-    author the fieldwork as the puppet designer, approve it as the officer — reopenable at any time
-    and long after the 201 is forgotten. :func:`_refuse_if_the_officer_named_themselves` is what
-    means no ``SanctionOrder`` row names the officer who recorded it, so this route can only ever
-    mint a credential for somebody else. Loosen that refusal and this route loosens with it.
+    ⚠ **IT IS THIS REGISTER'S OWN ACCOUNTS ONLY, AND THAT IS THE CHECK THIS ARM SHIPPED WITHOUT.**
+    Until 2026-09-16 this docstring claimed phase 0 of the create bounded the whole arm, so no
+    second check was needed. It does not, and the gap was a full privilege escalation reachable by
+    the FLOOR of this feature's gate. ``_refuse_if_the_officer_named_themselves`` stops an officer
+    naming *themselves*; nothing stopped them naming SOMEBODY ELSE'S EXISTING ACCOUNT. Every phase-0
+    refusal passes for a MASTER_ADMIN's address — it is not the officer's mailbox, it has no barred
+    allow-list row, it has no ``DesignerRoster`` row to have ended, and ``can_run_design_workshops``
+    is True for it because the whole admin band is inside ``DESIGN_WORKSHOP_ROLES``. The 201 came
+    back with ``accountCreated: false`` and ``designerUserId`` pointing at the master admin, and
+    THIS route would then mint a RESET link for it, hand the URL back in the response body, and let
+    the officer set that account's password — signing the real holder out of every device on the way
+    past. ``POST /api/auth/password-links`` is the honest door for that and it is
+    ``Depends(require_admin)``; this was an unprivileged second one.
+
+    So the first refusal below is the create path's own written invariant, finally enforced on both
+    doors: :func:`create_from_sanction`'s gate docstring says the account this flow mints "is always
+    marked ``SanctionOrder.accountCreated = true``", and ``_issue_first_credential`` already returns
+    nothing at all when that flag is false. A re-issue for an order whose flag is false is therefore
+    re-issuing something that was never issued.
+
+    The second refusal is for the case the first one cannot see: an account this register DID mint,
+    at role DESIGNER, which an admin has since lifted. ``accountCreated`` stays true for ever, so
+    without a rank test the order would remain a standing password-reset door onto an account that
+    has outgrown the officer who recorded it. The comparison is ``role_rank`` against the OFFICER's
+    own rank — the same "could this officer administer this account by any other door" question —
+    and it is deliberately NOT in :func:`cannot_run_reason`: that predicate answers "will the account
+    this transaction leaves behind be able to open a workshop", it has no officer to compare against,
+    and an ADMIN who is the practising designer of a cluster is a legitimate thing for an order to
+    name (``test_an_admin_named_on_a_sanction_order_is_not_demoted``). Naming one stays legal. Taking
+    their password does not.
 
     IT IS NOT SCOPED TO THE OFFICER WHO RECORDED THE ORDER, AND THAT IS A SEPARATE, KNOWN COST. Any
     sanction recorder may re-issue any order's link, so one officer can take over the account of a
-    colleague's named designer. Narrowing it to ``createdById`` was considered and is the wrong
-    shape: an officer on leave is exactly when the designer's link needs re-issuing, and the answer
-    to "who took this credential" is an audit question — the ``PasswordResetToken`` row records
-    ``issuedById`` — rather than a reason to strand a designer. Raise it with the owner before
-    treating the current behaviour as settled.
+    colleague's named designer — a designer this register created, at designer rank, which is a far
+    smaller thing than it was before the two refusals above. Narrowing it to ``createdById`` was
+    considered and is the wrong shape: an officer on leave is exactly when the designer's link needs
+    re-issuing, and the answer to "who took this credential" is an audit question — the
+    ``PasswordResetToken`` row records ``issuedById`` — rather than a reason to strand a designer.
+    Raise it with the owner before treating the current behaviour as settled.
+
+    THE LEAD, AND ONLY THE LEAD. ``row.designerUserId`` is the lead scalar, so a co-designer's first
+    link cannot be re-issued from here at all; the officer's screen says so at the call site rather
+    than implying otherwise. That gap is named in ``frontend/app/(protected)/sanction-orders`` and
+    closing it is a route change, not a wording one.
     """
+    if not bool(getattr(row, "accountCreated", False)):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=SANCTION_LINK_NOT_THIS_REGISTERS_ACCOUNT,
+        )
     user = await db.user.find_unique(where={"id": row.designerUserId})
     if user is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="The designer this order names no longer has an account.",
+        )
+    if role_rank(user) >= role_rank(officer):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=SANCTION_LINK_OUTRANKS_OFFICER.format(role=role_value(user)),
         )
     if str(getattr(user, "authProvider", "") or "").upper() == "GOOGLE":
         raise HTTPException(
@@ -1247,12 +1844,70 @@ def _report_copy_matches(singleton: dict[str, Any] | None, row: Any) -> bool | N
     return bool(same_no and same_date)
 
 
+def _named_designer_rows(row: Any, team: Sequence[Any] | None) -> list[dict[str, Any]]:
+    """Every designer this order names, LEAD FIRST, as the wire draws them.
+
+    ── THE ORDER IS IMPOSED HERE AND IS NEVER THE INDEX'S ──────────────────────────────────────
+
+    ``position`` exists on ``SanctionOrderDesigner`` precisely so that "the first name" keeps
+    meaning something, on a screen where the first name is the one that reaches a ministry
+    document. Prisma returns an included collection in whatever order the index gave it, so a
+    payload that simply handed the relation through would render the team differently between two
+    identical reads. Sorted on ``(position, createdAt, designerUserId)``: a total order, so the
+    tie-break can never be the database's choice either. This is ``tools._order_links``' rule one
+    table across, and it was written there after exactly this defect shipped.
+
+    ``team`` is the freshly-resolved list the create already holds, so the 201 does not have to
+    re-read rows it has just written; every other caller passes ``None`` and the stored relation
+    is used. Both arms produce the same four keys in the same order.
+    """
+    if team:
+        return [
+            {
+                "designerUserId": designer.userId,
+                "designerName": designer.name,
+                "designerEmail": designer.canonical,
+                "signInEmail": str(getattr(designer.user, "email", "") or ""),
+                "accountCreated": bool(designer.accountCreated),
+                "position": position,
+            }
+            for position, designer in enumerate(team)
+        ]
+    rows = list(getattr(row, "designers", None) or [])
+    rows.sort(
+        key=lambda item: (
+            int(getattr(item, "position", 0) or 0),
+            getattr(item, "createdAt", None) or datetime.min.replace(tzinfo=UTC),
+            str(getattr(item, "designerUserId", "") or ""),
+        )
+    )
+    return [
+        {
+            "designerUserId": str(getattr(item, "designerUserId", "") or ""),
+            # THE ACCOUNT'S OWN NAME AND NOT A COPY TAKEN AT SANCTION TIME. The join table
+            # deliberately stores no name column: a designer who corrects the spelling of their
+            # own name on their profile should not go on being listed under the officer's typing
+            # for ever, and the one name that is FROZEN — the report cover's — is frozen in
+            # stage 1 where a reader can see it and the register reports the drift.
+            "designerName": str(getattr(getattr(item, "designerUser", None), "name", "") or ""),
+            "designerEmail": str(getattr(item, "designerEmail", "") or ""),
+            "signInEmail": str(
+                getattr(getattr(item, "designerUser", None), "email", "") or ""
+            ),
+            "accountCreated": bool(getattr(item, "accountCreated", False)),
+            "position": int(getattr(item, "position", 0) or 0),
+        }
+        for item in rows
+    ]
+
+
 async def sanction_payload(
     row: Any,
     *,
     workshop: Any | None = None,
     designer: Any | None = None,
     officer: Any | None = None,
+    team: Sequence[Any] | None = None,
 ) -> dict[str, Any]:
     """The wire form of one sanction order. HAND-BUILT, and never ``jsonable_encoder(row)``.
 
@@ -1298,6 +1953,32 @@ async def sanction_payload(
         "readyForWork": bool(score.is_complete),
         # THE REGISTRY'S OWN LIST OF LABELS, not a count this module made up. See _stage_one_state.
         "missingMandatory": list(score.missing),
+        # ── EVERY DESIGNER THE ORDER NAMES, INCLUDING THE LEAD ───────────────────────────────
+        # The three scalars above are the LEAD and are also element 0 of this list. That the lead
+        # appears twice on the wire is deliberate: the scalars are what every deployed client and
+        # every stored report reads, and a list whose first element silently meant something
+        # different from the rest is worse than one redundant name.
+        "designers": _named_designer_rows(row, team),
+        # ── WHICH SHEET RECORDED THIS, IF ANY ────────────────────────────────────────────────
+        # NULL means "typed on the officer's form", permanently — not "a value waiting to be
+        # backfilled". Both are ``SanctionOrder``'s OWN columns and not a pointer at a row of the
+        # table this upload's shape was copied from, which is what lets an officer holding the
+        # workbook find the line an order came off WITHOUT A JOIN. The note above
+        # ``SanctionOrder.sourceFilename`` in ``prisma/schema.prisma`` names that earlier column
+        # pair.
+        #
+        # THE NAME IS CITED THERE AND DELIBERATELY NOT REPEATED HERE. It is the annual plan's
+        # table, and ``tests/test_annual_plan_is_not_a_workshop.py`` keeps a census of the modules
+        # under ``app/`` allowed to so much as say it — a tripwire set wide enough to fire on a
+        # comment, because the leak it exists to stop (planned rows counted as workshops) arrives
+        # as one helpful-looking edit to a module that had no business knowing the name. Naming it
+        # here bought this module nothing — nothing on this code path reads that table, and the
+        # whole point of the two columns is that nothing has to — so it was not worth paying for
+        # by widening the census. ``sanction_orders_xlsx`` and ``sanction_import`` cite the annual
+        # plan twenty-odd times between them without naming it once; this is the same discipline.
+        # See the note beside ``ALLOWED_MENTION_MODULES`` for why the widening was rejected.
+        "sourceFilename": getattr(row, "sourceFilename", None),
+        "sheetRow": getattr(row, "sheetRow", None),
     }
 
 
@@ -1309,6 +1990,12 @@ SANCTION_INCLUDE: dict[str, Any] = {
     "designWorkshop": True,
     "designerUser": True,
     "createdBy": True,
+    # THE TEAM, AND THE ACCOUNT BEHIND EACH OF THEM. Nested because the join stores the mailbox
+    # and not the name — see ``_named_designer_rows`` for why the name is read through the
+    # account rather than copied at sanction time. NO ORDERING IS ASKED FOR HERE on purpose: the
+    # order is imposed in Python, in one place, on every read path, because an ``order_by`` inside
+    # an ``include`` is easy to add to one call site and forget on the other four.
+    "designers": {"include": {"designerUser": True}},
 }
 
 

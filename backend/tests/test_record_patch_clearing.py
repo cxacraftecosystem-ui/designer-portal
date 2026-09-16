@@ -127,12 +127,23 @@ def _editor():
     return _Row(id="usr_7", name="R. Menon", role="RESEARCHER")
 
 
-async def _privileged(_record, _user, _data, _kind, *, client=None):
-    """``guard_record_edit``'s stand-in. ``client`` is accepted and ignored ON PURPOSE (2026-09-03):
-    the routes now pass ``client=tx`` so the audit row lands in the caller's transaction, and a stub
-    with the old four-argument signature would fail every drive below with a TypeError that says
-    nothing about what this file asserts. Ignoring it is honest here — the revision write is what
-    the argument steers, and this stub writes no revision at all."""
+async def _privileged(_record, _user, _data, _kind, *, client=None, derived=()):
+    """``guard_record_edit``'s stand-in. Both keyword arguments are accepted and ignored ON PURPOSE,
+    and for the same reason: each steers something this stub does not do, and a stub with the older
+    signature fails every drive below with a TypeError that says nothing about what this file asserts.
+
+    ``client`` (2026-09-03) — the routes pass ``client=tx`` so the audit row lands in the caller's
+    transaction. Ignoring it is honest here: the revision write is what the argument steers, and this
+    stub writes no revision at all.
+
+    ``derived`` (2026-09-16) — ``tools.update_tool`` passes the keys the SERVER wrote into ``data``
+    rather than the caller (``craftName``, joined from the linked crafts), and the real function
+    withholds exactly those from ``assert_can_contribute_fields``. Ignoring it is honest for the same
+    shape of reason: this stub runs no contributor guard, and what it is standing in for in THIS file
+    is the verdict, not the guard. The narrowing itself is asserted where it belongs, against the
+    real ``assert_can_contribute_fields`` — see
+    ``tests/test_tool_link_lists.test_the_derived_name_is_withheld_from_the_contributor_guard_and_from_nothing_else``.
+    """
     return True
 
 

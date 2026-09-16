@@ -1,5 +1,7 @@
+import logging
+from collections.abc import Sequence
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, NamedTuple
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.encoders import jsonable_encoder
@@ -38,6 +40,12 @@ from app.services.records import clean_data, contains, count_and_page, with_id_t
 router = APIRouter(prefix="/users", tags=["users"])
 
 ALLOWED_ROLES = set(ROLE_RANK)
+
+# WHERE THE DRIFT IN :func:`_count_relation` GETS SHOUTED ABOUT. The 409 body is deliberately quiet
+# about it — an admin can do nothing with "the generated client has no model sanctionorderdesigner"
+# — so the log line is the one place the fact is stated in the words a developer needs. See
+# :func:`_count_relation` for why it is a log and not an exception.
+logger = logging.getLogger(__name__)
 
 
 def serialize_user(user: Any) -> dict[str, Any]:
@@ -413,45 +421,230 @@ _CREATOR_RELATIONS: tuple[tuple[str, str, str], ...] = (
 #: `onDelete: Restrict` exactly as `createdById` is, so BOTH are reachable reasons for the same 409,
 #: and an admin told only about the half that happens to be authorship has been sent on the first of
 #: two trips.
+#:
+#: ── THE ROW THAT WAS OWED LANDED IN 0.0.12, AS A REPLACEMENT ──────────────────────────────────
+#:
+#: This tuple named ``("sanctionorder", "designerUserId", "sanction order")`` until the
+#: multi-designer register shipped. It now names the JOIN TABLE, and the swap was a REPLACEMENT
+#: rather than an addition — deliberately, and the reason is arithmetic rather than taste.
+#:
+#: ``SanctionOrderDesigner`` holds a row for EVERY designer an order names INCLUDING THE LEAD, which
+#: is what ``named_designer_team`` returns (``[lead, ...rest]``) and what the sanction create writes.
+#: So the lead has a row in BOTH tables. Counting both would tell an admin that a designer who leads
+#: exactly one sanction order is "named on 2 sanction orders" — a number that is wrong on the one
+#: screen where somebody is deciding what to do with a colleague's record, and wrong in the
+#: direction that makes the account look busier than it is.
+#:
+#: Counting the JOIN and not the scalar is also the only one of the two that is now COMPLETE. A
+#: co-designer — the second and third names on an order, which is the whole point of the release —
+#: has no row on ``SanctionOrder`` at all, so the old tuple would have answered "0" for them and the
+#: 409 would have fallen through to the no-number branch ("referenced by records that are kept for
+#: research"), which is precisely the vagueness ``named_on`` was added to remove. Both columns are
+#: ``onDelete: Restrict``, so both really do refuse the delete; only one of them can say how many.
+#:
+#: ``SanctionOrder.designerUserId`` KEEPS ITS ``Restrict`` and is NOT listed here. It is the same
+#: fact about the same account, reached through a second column, and naming it twice is the
+#: double-count above. If the lead scalars are ever retired in favour of the join alone, nothing on
+#: this line changes — which is one more reason it is the join that is named.
+#:
+#: WHY THIS COULD NOT BE SWAPPED EARLIER, recorded because the constraint is invisible from here and
+#: the next reader may be tempted to move a name in this tuple speculatively. :func:`_counts_over`
+#: resolves each model BY NAME at REQUEST time, and the generated Prisma client declares its models
+#: in ``__slots__`` with no ``__getattr__``, so a name the schema does not carry does not return an
+#: empty count. Schema model, migration and this line therefore land together, and they did:
+#: ``prisma/migrations/20260916150000_sanction_order_designers``.
+#:
+#: ── AND IT LANDED TOGETHER AND STILL BROKE, WHICH IS WHY THAT IS NO LONGER THE WHOLE STORY ────
+#:
+#: The paragraph above used to end "…raises ``AttributeError`` rather than returning an empty count
+#: — inside ``delete_user``'s ``except ForeignKeyViolationError`` handler, turning the informative
+#: 409 into 'Something went wrong on the server' for every account that has created or been named on
+#: anything." It was exactly right about the mechanism and it happened anyway, on 2026-09-16, on a
+#: machine where all three parts of this change WERE in the working tree: the model was in
+#: schema.prisma, the migration was in ``prisma/migrations``, this line named the join table — and
+#: ``tests/test_user_deletion.py::test_removing_a_colleague_who_did_work_says_what_is_in_the_way``
+#: answered ``500`` with ``'Prisma' object has no attribute 'sanctionorderdesigner'``, because
+#: ``prisma generate`` had not been re-run and the migration had not been applied to the local
+#: database. Landing the three together is a discipline about a COMMIT; the client and the database
+#: are STATE, and no ordering of edits can make a checkout's generated artefacts correct.
+#:
+#: So the constraint this paragraph describes has been removed rather than documented harder:
+#: :func:`_count_relation` now degrades a relation it cannot read to "not counted" instead of
+#: raising, and the argument for that is written there. This tuple is still a place to be careful —
+#: a wrong name here silently under-states the tally — but a wrong name here can no longer take the
+#: endpoint out.
 _NAMED_ON_RELATIONS: tuple[tuple[str, str, str], ...] = (
-    ("sanctionorder", "designerUserId", "sanction order"),
+    ("sanctionorderdesigner", "designerUserId", "sanction order"),
 )
 
 
-async def _counts_over(
-    user_id: str, relations: tuple[tuple[str, str, str], ...]
-) -> list[tuple[str, int]]:
-    """``[(noun, count)]`` over one relation list, biggest first, empties dropped."""
+class _Tally(NamedTuple):
+    """What :func:`_counts_over` could read, and what it could not.
+
+    Two fields rather than one list because they answer different questions and a caller must not
+    be able to confuse them: ``named`` is "these are in the way, this many of them", ``uncounted``
+    is "and I could not look here at all". Collapsing the second into a zero in the first would be
+    a lie of exactly the kind :data:`_NAMED_ON_RELATIONS` exists to stop telling.
+    """
+
+    #: ``[(noun, count)]``, biggest first, zeroes dropped — what the message can put a number on.
+    named: list[tuple[str, int]]
+    #: Nouns whose relation could not be read at all. Not "zero of these": "unknown".
+    uncounted: list[str]
+
+
+async def _count_relation(user_id: str, model: str, column: str) -> int | None:
+    """``count(where={column: user_id})`` for one relation, or ``None`` if it could not be read.
+
+    ══ A MISSING RELATION MUST NOT BE ABLE TO TURN THE 409 INTO A 500 ═════════════════════════
+
+    THE 409 IS ALREADY EARNED BEFORE THIS FUNCTION RUNS. Postgres refused ``DELETE FROM "User"``;
+    that refusal is a fact, established, in hand, and the ONLY reason ``delete_user`` is in an
+    ``except`` block at all. Everything counted here is DECORATION on a verdict already reached —
+    it makes the 409 more useful, it cannot make it more correct. So a failure to decorate must
+    change the message and must not change the status. The old code let it change the status.
+
+    WHAT THE OLD CODE DID. ``getattr(db, model)`` at REQUEST time, no default, inside
+    ``delete_user``'s ``except ForeignKeyViolationError`` handler. The generated Prisma client
+    declares its models in ``__slots__`` with no ``__getattr__``, so a name the client does not
+    carry raised ``AttributeError`` straight out of the handler — and the admin got "Something
+    went wrong on the server. The error has been logged.", which is the exact sentence the handler
+    was written to abolish. The handler defeated its own purpose, and it did so only for accounts
+    that HAD created something, i.e. only when an admin actually needed it.
+
+    THIS IS NOT HYPOTHETICAL AND IT IS NOT A ONE-OFF. It happened on 2026-09-16 with a correct
+    schema, a correct migration and a correct tuple, because ``prisma generate`` had not been
+    re-run and the migration had not been applied. Every one of these produces it again: a stale
+    generated client in any checkout or image; a model renamed in ``schema.prisma`` before this
+    file is updated; a migration written but not deployed to the environment serving the request;
+    a partially-applied migration where the table exists and the column does not. None of those is
+    exotic, all of them are recoverable, and not one of them is a reason to take an administrator's
+    endpoint out.
+
+    AND ON WINDOWS THE DRIFT CANNOT EVEN BE REPAIRED BY THE OBVIOUS COMMAND, WHICH IS WHAT SETTLED
+    THIS. ``backend/scripts/regenerate-client.md`` records it in full, diagnosed 2026-09-14:
+    ``python -m prisma generate`` there dies with ``Error: spawn prisma-client-py ENOENT`` because
+    the Node CLI spawns the provider by the bare name with no ``shell: true``, so ``PATHEXT`` never
+    applies and ``prisma-client-py.EXE`` is never tried — putting the venv on ``PATH`` does not help,
+    because the name is wrong rather than the directory. **AND THE COMMAND EXITS 0.** Re-verified on
+    2026-09-16, both with ``backend/.venv/Scripts`` prepended to ``PATH`` and without: the same
+    error on stdout, exit status zero both times, the generated client untouched. So on the platform
+    this repository is developed on, the one command that keeps the client in step with the schema
+    fails silently and reports success, and the supported repair is a Docker round trip through
+    Linux that copies twelve generated modules — plus ``site-packages/prisma/schema.prisma``, which
+    that runbook calls "the thirteenth file, which is not a .py and is the one that bites" — back
+    into the venv by hand. A client that has drifted behind ``schema.prisma`` is therefore not an
+    unlucky state somebody has to blunder into; it is the DEFAULT outcome of doing the obvious thing,
+    and the repair is long enough to be postponed. Code downstream of that cannot treat the client's
+    contents as a guarantee.
+
+    THE FILE ALREADY DECIDED THIS, FOR THE OTHER HALF OF THE SAME DRIFT. :data:`_CREATOR_RELATIONS`
+    says in as many words: "a model missing from it can only UNDER-state the tally — the database
+    refuses the delete whether or not this list is complete, so drift here costs a vaguer message
+    and never a lost record." A model OMITTED from the tuple costs a vaguer message; a model NAMED
+    in the tuple that the client cannot resolve used to cost the whole endpoint. Same class of
+    drift, same harmlessness to the data, two wildly different outcomes — and the difference was
+    only whether the stale name happened to be present or absent. This function makes both cost a
+    vaguer message.
+
+    ══ THE ALTERNATIVE, WHICH IS TO LET IT RAISE, AND WHY IT LOSES ════════════════════════════
+
+    The case for strictness is real and worth stating: a swallowed failure is a silent failure, and
+    a typo in :data:`_CREATOR_RELATIONS` would now under-report for ever with nobody the wiser.
+    Loud-and-early beats quiet-and-wrong, usually.
+
+    It loses HERE on WHEN it is loud. This code path runs only when an admin has already been
+    refused a deletion — the worst possible moment to replace the one sentence that would have
+    helped them with a stack trace they cannot see. The typo the strict form catches is caught just
+    as well by ``tests/test_sanction_order_undeletable.py``'s assertions on the tuples' contents, at
+    author time, for free, in a place where being loud costs nothing; the drift the strict form
+    catches is a *deployment* fact that no amount of strictness in this file can prevent, only
+    punish, and punish the wrong person. And it is not silent: every branch below logs at ERROR
+    with the model name, so the fact reaches the people who can act on it through the channel built
+    for facts developers need, instead of through an admin's error toast.
+
+    ``None`` RATHER THAN ``0``. A relation that could not be read is not a relation with no rows.
+    Returning 0 would let the caller say "this account created 1 questionnaire" and stop, when
+    there may be four hundred sanction orders it could not see — sending the admin to reassign one
+    record and meet the same refusal again, which is the two-trips failure :data:`_NAMED_ON_RELATIONS`
+    was added to remove. ``None`` keeps "unknown" and "none" apart all the way to the sentence.
+
+    TWO BRANCHES, TWO LOG LINES, BECAUSE THEY HAVE DIFFERENT FIXES. A delegate the client does not
+    carry means ``prisma generate``; a count that raises means the migration, the column or the
+    connection. A single message covering both would name neither.
+    """
+    delegate = getattr(db, model, None)
+    if delegate is None:
+        logger.error(
+            "delete_user: the generated Prisma client carries no model %r, so the 409 for user %s "
+            "cannot say how many %r rows are in the way. The client is behind schema.prisma — "
+            "regenerate it with backend/scripts/regenerate-client.md, NOT with a bare "
+            "`prisma generate`, which exits 0 without doing anything on Windows. Answering a less "
+            "specific 409 rather than a 500; see _count_relation.",
+            model,
+            user_id,
+            model,
+        )
+        return None
+    try:
+        return await delegate.count(where={column: user_id})
+    except Exception:
+        # Deliberately every exception and not a named Prisma error. What is being defended is the
+        # STATUS CODE of a verdict Postgres has already returned, and the set of ways a count can
+        # fail — table absent because a migration is pending, column absent because one was applied
+        # in part, the pool exhausted, the connection dropped — is not a set this file can enumerate
+        # correctly and has no business trying to. `CancelledError` derives from `BaseException`, so
+        # a cancelled request still cancels rather than being logged as drift.
+        logger.exception(
+            "delete_user: counting %s.%s for user %s failed, so the 409 cannot say how many are in "
+            "the way. Usually a migration that has not been applied to this database. Answering a "
+            "less specific 409 rather than a 500; see _count_relation.",
+            model,
+            column,
+            user_id,
+        )
+        return None
+
+
+async def _counts_over(user_id: str, relations: tuple[tuple[str, str, str], ...]) -> _Tally:
+    """What is in the way over one relation list, biggest first, empties dropped.
+
+    Each relation is counted inside :func:`_count_relation`, which never raises, so nothing here
+    has to ask ``gather_reads`` for ``return_exceptions`` — a change to a shared service this route
+    has no standing to make, and a worse shape anyway: a bare ``asyncio.gather`` that propagates
+    leaves its siblings' results unretrieved, whereas a coroutine that handles its own failure
+    leaves the gather with nothing to propagate.
+    """
     from app.services.concurrency import gather_reads
 
     counts = await gather_reads(
-        *(
-            db_model.count(where={column: user_id})
-            for db_model, column in (
-                (getattr(db, model), column) for model, column, _noun in relations
-            )
-        )
+        *(_count_relation(user_id, model, column) for model, column, _noun in relations)
     )
-    named = [
-        (noun, count)
-        for (_model, _column, noun), count in zip(relations, counts, strict=True)
-        if count
-    ]
-    return sorted(named, key=lambda pair: pair[1], reverse=True)
+    named: list[tuple[str, int]] = []
+    uncounted: list[str] = []
+    for (_model, _column, noun), count in zip(relations, counts, strict=True):
+        if count is None:
+            uncounted.append(noun)
+        elif count:
+            named.append((noun, count))
+    return _Tally(sorted(named, key=lambda pair: pair[1], reverse=True), uncounted)
 
 
-async def _records_created_by(user_id: str) -> list[tuple[str, int]]:
-    """``[(noun, count)]`` for everything this account made, biggest first, empties dropped."""
+async def _records_created_by(user_id: str) -> _Tally:
+    """What this account made, biggest first, empties dropped — plus what could not be read."""
     return await _counts_over(user_id, _CREATOR_RELATIONS)
 
 
-async def _records_naming(user_id: str) -> list[tuple[str, int]]:
-    """``[(noun, count)]`` for everything that NAMES this account without having been made by it."""
+async def _records_naming(user_id: str) -> _Tally:
+    """What NAMES this account without having been made by it, plus what could not be read."""
     return await _counts_over(user_id, _NAMED_ON_RELATIONS)
 
 
 def _undeletable_detail(
-    owned: list[tuple[str, int]], named_on: list[tuple[str, int]] | None = None
+    owned: list[tuple[str, int]],
+    named_on: list[tuple[str, int]] | None = None,
+    *,
+    uncounted: Sequence[str] = (),
 ) -> str:
     """The 409's message: what is in the way, how much of it, and what to do instead.
 
@@ -470,6 +663,36 @@ def _undeletable_detail(
     by omission, and the generic branch below is guarded on BOTH lists: a designer who has created
     nothing and is named on one order must not be answered with "referenced by records that are kept
     for research" — no number, no noun — which is the exact failure this parameter exists to remove.
+
+    ``uncounted`` IS THE NOUNS THAT COULD NOT BE READ AT ALL — see :func:`_count_relation`, which
+    now degrades a relation it cannot resolve instead of raising through the handler. It earns its
+    sentence by the SAME argument ``named_on`` earns its own: an admin told about only part of what
+    is in the way "has been sent on the first of two trips". They reassign the one questionnaire the
+    message named, ask again, are refused again, and have learnt nothing — unless the message admits
+    its list was short. One sentence, only ever present in a drifted deployment, and it changes what
+    they do next: stop hunting, escalate.
+
+    IT NAMES THE NOUN AND ASSERTS NOTHING ABOUT THE COUNT, which is the only honest shape available.
+    "It is also named on sanction orders" would be a claim that there ARE some, and in the 2026-09-16
+    failure there were none — the departing designer owned one questionnaire and nothing else, so
+    that sentence would have sent an admin looking through the sanction register for a row that does
+    not exist. "Sanction orders could not be counted" is true either way.
+
+    THE WORDING IS THE PRODUCT'S OWN, not a phrase invented here. ``frontend/app/(protected)/
+    activity/page.tsx`` already tells a reader "Some records could not be loaded — the lists below
+    may be incomplete." when part of a fan-out read fails, which is the same situation with the same
+    remedy (none; the list is short and you are being told so). Saying it a second way on a second
+    screen would make two sentences a user has to learn instead of one.
+
+    KEYWORD-ONLY, AND DEFAULTING TO ``()``. ``tests/test_sanction_order_undeletable.py`` calls this
+    function positionally with two lists and is the specification for its wording; a third positional
+    would put a new argument next to ``named_on``, where a mistaken call site would read as valid.
+    The default makes every existing caller and every existing assertion mean exactly what it did.
+
+    NOT APPENDED TO THE GENERIC BRANCH BELOW. When both lists are empty the message is already "this
+    account is referenced by records that are kept for research" — a sentence that names no number,
+    no noun and no relation, and offers the same remedy. "This list may be incomplete" added to a
+    message that presents no list would be noise dressed as information.
     """
     named_on = named_on or []
     if not owned and not named_on:
@@ -499,6 +722,12 @@ def _undeletable_detail(
                 "who the ministry issued them to, so it cannot be deleted. Deactivate it instead."
             )
         )
+    if uncounted:
+        # De-duplicated, order preserved: both tuples spell the sanction register "sanction order",
+        # so a stale client that resolves neither would otherwise say the word twice in one sentence.
+        nouns = list(dict.fromkeys(f"{noun}s" for noun in uncounted))
+        listed = nouns[0] if len(nouns) == 1 else f"{', '.join(nouns[:-1])} and {nouns[-1]}"
+        sentences.append(f"This list may be incomplete: {listed} could not be counted.")
     return " ".join(sentences)
 
 
@@ -533,10 +762,22 @@ async def delete_user(user_id: str, current_user: Any = Depends(require_admin)) 
         # undeletable, so the only accounts this endpoint could ever delete are the ones that
         # never did anything — which is precisely backwards from what an admin is trying to do
         # when a designer leaves the project.
+        #
+        # NEITHER TALLY MAY RAISE, AND THAT IS ENFORCED IN :func:`_count_relation` RATHER THAN HERE.
+        # Both calls below run INSIDE this handler, so anything they throw replaces the 409 with the
+        # very "Something went wrong on the server" this block exists to abolish — which is exactly
+        # what a stale generated client did on 2026-09-16. A `try` wrapped round these two lines
+        # would have caught it too, and was rejected: it would answer the generic no-number sentence
+        # for an account whose OTHER relations were perfectly readable, throwing away the counts the
+        # message is for. Degrading one relation at a time keeps everything that still works.
+        owned = await _records_created_by(user_id)
+        named_on = await _records_naming(user_id)
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=_undeletable_detail(
-                await _records_created_by(user_id), await _records_naming(user_id)
+                owned.named,
+                named_on.named,
+                uncounted=owned.uncounted + named_on.uncounted,
             ),
         ) from exc
     # A deleted account must stop authenticating immediately, not when a TTL happens to expire.

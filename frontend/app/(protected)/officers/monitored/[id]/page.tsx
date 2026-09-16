@@ -371,6 +371,14 @@ export default function WorkshopUnderOversightPage({
           icon={<Binoculars className="h-5 w-5" aria-hidden />}
         />
         <section className="panel px-6 py-14 text-center" aria-live="polite">
+          {/*
+            PURPLE, DELIBERATELY, ON THE ONE PANEL OF THIS PAGE THAT IS NOT A MINISTRY SURFACE.
+            The read-only band above moved to the `ministry` ramp in 0.0.12 and this padlock did
+            not: a refusal is shown to somebody who is NOT a ministry account — a designer, a
+            professor, an admin — and painting the ministry's own colour around the notice that
+            they are not of the ministry would be a lie told in colour. `AppShell` makes the same
+            call one level up and stamps `data-surface="ministry"` only when the page is served.
+          */}
           <div className="mx-auto mb-4 grid h-12 w-12 place-items-center rounded-full bg-purple-50 text-purple-700">
             <Lock className="h-5 w-5" aria-hidden />
           </div>
@@ -430,12 +438,21 @@ export default function WorkshopUnderOversightPage({
         </div>
       ) : null}
 
+      {/*
+        S0's inline-swap row for this file. A plain `p` and NOT a `.panel`, which is what keeps it
+        out of the scoped `[data-surface="ministry"] .panel` rule's way — that selector is (0,2,0)
+        and would beat a border utility written on the same element.
+
+        THE `dark:` PAIR IS NOT OPTIONAL HERE. The ministry ramp is literal and does not invert, so
+        `bg-ministry-50` under a dark `bg-card` is a pale slab, and `text-ministry-700` on it is
+        2.44:1. Both halves move together: `ministry-950/40` ground, `ministry-300` ink.
+      */}
       {detail && readOnly ? (
-        <p className="mb-4 rounded-md border border-purple-300 bg-purple-50 px-3 py-2 text-xs leading-5 text-ink-700">
-          <span className="font-semibold text-purple-700">Read-only.</span> Every stage below is
-          shown as the designers recorded it, with who wrote each field, and nothing here can be
-          edited, submitted or deleted. Photographs, recordings and attachments are not carried on an
-          oversight read.
+        <p className="mb-4 rounded-md border border-ministry-300 bg-ministry-50 px-3 py-2 text-xs leading-5 text-ink-700 dark:border-ministry-900 dark:bg-ministry-950/40">
+          <span className="font-semibold text-ministry-700 dark:text-ministry-300">Read-only.</span>{" "}
+          Every stage below is shown as the designers recorded it, with who wrote each field, and
+          nothing here can be edited, submitted or deleted. Photographs, recordings and attachments
+          are not carried on an oversight read.
         </p>
       ) : null}
 

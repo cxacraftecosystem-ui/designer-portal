@@ -109,6 +109,14 @@ export default function WorkshopsIMonitorPage() {
       <div>
         <PageHeader title="Workshops I monitor" icon={<Binoculars className="h-5 w-5" aria-hidden />} />
         <section className="panel px-6 py-14 text-center" aria-live="polite">
+          {/*
+            PURPLE, DELIBERATELY, AND IT IS THE ONLY ACCENT ON THIS ROUTE THAT DID NOT MOVE.
+            /officers/monitored is a ministry surface and `AppShell` stamps `data-surface="ministry"`
+            on it, so its panels, borders and header chip took the ministry ramp in 0.0.12. This
+            padlock did not, because a refusal is shown to somebody who is NOT a ministry account —
+            a designer, a professor, an admin — and putting the ministry's own colour around the
+            notice that they are not of the ministry would be a lie told in colour.
+          */}
           <div className="mx-auto mb-4 grid h-12 w-12 place-items-center rounded-full bg-purple-50 text-purple-700">
             <Lock className="h-5 w-5" aria-hidden />
           </div>

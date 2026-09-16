@@ -4,9 +4,12 @@ import Link from "next/link";
 import { motion } from "framer-motion";
 import { ArrowUpRight, CheckCircle2 } from "lucide-react";
 
+import { adminChromeRouteFor, adminChromeVisible } from "@/components/AdminViewProvider";
 import { riseItem, slideItem, springy, staggerParent } from "@/components/guide/guideMotion";
 import type { GuideTrack } from "@/components/guide/tracks";
 import { useAppReducedMotion } from "@/components/guide/useAppReducedMotion";
+import { canAccessRoute } from "@/lib/permissions";
+import type { User } from "@/lib/types";
 
 /*
  * ═════════════════════════════════════════════════════════════════════════════════════════════════
@@ -55,13 +58,63 @@ import { useAppReducedMotion } from "@/components/guide/useAppReducedMotion";
  * `WalkthroughSteps.kt` records as worse than a missing step. So `recapLead` is a track field, and
  * each deck's says what is true of its own screens.
  *
- * ── "WHERE TO GO NEXT" MUST BE REACHABLE BY THE DECK'S AUDIENCE ──────────────────────────────────
+ * ── "WHERE TO GO NEXT" MUST BE REACHABLE BY THE READER, AND IS NOW FILTERED TO MAKE THAT TRUE ────
  *
  * Every entry is a plain `<Link>` with no gate on it, so an entry the reader cannot open is a tile
  * that lands them on a lock panel from the one band of the page that exists to say "you are done,
- * here is where to go". A step CARD may name a screen the reader cannot open — that is how the
- * ungated guide teaches a capability somebody has not earned yet, and every such card says so in its
- * own `watch`. An exit tile may not: it makes a promise instead of a description.
+ * here is where to go". A step CARD may name a screen the reader cannot open — that is how the guide
+ * teaches a capability somebody has not earned yet, and every such card says so in its own `watch`.
+ * An exit tile may not: it makes a promise instead of a description.
+ *
+ * ⚠ THAT RULE WAS WRITTEN HERE AND ENFORCED NOWHERE UNTIL 2026-09-16. `e2e/guide-tracks-unit.spec.ts`
+ * asserted it of the directorate and inspector decks and EXEMPTED the designer's in writing, naming
+ * the gap it was leaving: the designer's deck is the fallback for seven tiers, including
+ * CROWDSOURCE_VOLUNTEER (10), and its "Review" tile is `/review`, which `canReview` admits only from
+ * FIELD_CONTRIBUTOR (20) up. So the bottom tier has been offered a padlock from this band for as
+ * long as this band has existed. The spec named the one-line fix — filter `track.next` on
+ * `canAccessRoute` — and deliberately did not take it, because narrowing a surface nobody asked to
+ * narrow, inside a change about other things, is how a review loses track of what it approved.
+ *
+ * IT IS TAKEN NOW BECAUSE THE DECK SCOPING TURNED A TOLERABLE GAP INTO A TRAP. Until 2026-09-16 a
+ * volunteer who met that padlock could switch to another deck; now the designer's is the only deck
+ * they will ever be shown, and its closing band was the last thing they read. Same one line, and the
+ * change that made it urgent is the change that carries it.
+ *
+ * ── WHY THE REMOVAL IS SILENT, WHICH IS NOT THIS REPOSITORY'S USUAL ANSWER ───────────────────────
+ *
+ * "A list that quietly stops is indistinguishable from a place with no records" governs TRUNCATION —
+ * a cap, a page size, a server that stopped early — where the reader is owed the fact that there is
+ * more. This is not that. A tile the reader cannot open was never a place they could go, so naming
+ * it in order to explain its absence would put a screen in front of somebody for the sole purpose of
+ * telling them they may not have it. Where naming a refused screen IS useful, this page already does
+ * it properly: on the step card, in prose, with its own `watch` saying who the screen is for.
+ *
+ * ── AND IT IS TWO GATES, BECAUSE `AppShell` IS TWO GATES ─────────────────────────────────────────
+ *
+ * The filter shipped on 2026-09-16 reading `canAccessRoute` alone, justified as "the same table
+ * `AppShell` enforces above every page, so a tile is drawn exactly when the page behind it would
+ * render". The first half was true and the conclusion was not. `AppShell` applies a SECOND gate once
+ * the guard has passed — `adminChromeRouteFor(pathname)` plus `adminChromeVisible(user, adminMode)`
+ * — and renders `AdminViewLocked` INSTEAD of the page when an admin is browsing with admin view off.
+ * `/users` is an `ADMIN_CHROME_ROUTES` entry and is the directorate deck's "Manage users" tile, and
+ * `canAccessRoute` admits an admin to it, so an ADMIN or MASTER ADMIN with the toggle off was being
+ * offered exactly the padlock this band was filtered to stop offering. The island nav beside it was
+ * already hiding that destination from that same reader (`isNavItemVisible` consults `adminMode`;
+ * `/users` carries `adminSurface: true`), so the guide was the one surface still promising it.
+ *
+ * ONLY THE SCOPING MADE IT REACHABLE, which is why it arrived with the filter rather than before it:
+ * until ADMIN and MASTER_ADMIN became the only accounts that read all three decks, nobody in
+ * particular was ever steered onto the directorate deck's closing band.
+ *
+ * IT IS A PREFERENCE AND NOT A PERMISSION, so it can only ever subtract, exactly as `AppShell` says:
+ * `adminChromeVisible` answers true for everyone who has no toggle at all, and the entitlement test
+ * runs first either way. `adminMode` arrives as a prop for the reason `user` does — see the filter
+ * below.
+ *
+ * `/dashboard` is in every deck's `next`, is in no `ROUTE_GUARDS` row and is no admin chrome, so
+ * neither gate can empty the band — checked rather than assumed, and asserted in
+ * `e2e/guide-tracks-unit.spec.ts` (under both settings of the toggle) so that a deck whose exits are
+ * all gated cannot ship a heading over nothing.
  * ═════════════════════════════════════════════════════════════════════════════════════════════════
  */
 
@@ -72,9 +125,50 @@ import { useAppReducedMotion } from "@/components/guide/useAppReducedMotion";
  * Everything here reveals on scroll with the same staggered vocabulary as the step cards, so
  * the end of the page feels like the same document rather than a footer bolted on.
  */
-export function GuideOutro({ track }: { track: GuideTrack }) {
+export function GuideOutro({
+  track,
+  user,
+  adminMode
+}: {
+  track: GuideTrack;
+  user: User | null | undefined;
+  /** The admin-view toggle, read once by the page. See the second-gate section in the header. */
+  adminMode: boolean;
+}) {
   const reduce = useAppReducedMotion();
   const steps = track.steps;
+
+  /**
+   * The exits this reader can actually open — BOTH of `AppShell`'s gates, in `AppShell`'s own order.
+   * `canAccessRoute` is the entitlement table it enforces above every page; the second clause is the
+   * admin-view gate it applies afterwards, which renders `AdminViewLocked` instead of the page. A
+   * tile is drawn exactly when the page behind it would render, which is what this comment claimed
+   * while it asked only the first question (see the header).
+   *
+   * `adminChromeRouteFor(href) === null` is the ordinary case and short-circuits the rest, so nothing
+   * but the handful of admin-chrome destinations pays for the second clause at all.
+   *
+   * BOTH THE USER AND THE TOGGLE ARRIVE AS PROPS RATHER THAN FROM `useAuth()` / `useAdminView()`,
+   * matching every other component in this folder: the page owns the account and hands each band what
+   * it needs. It is also what keeps this component renderable from a test or a future preview with
+   * neither provider above it — `useAdminView` THROWS without its provider, so reading it here would
+   * have spent that property to save the page one line.
+   *
+   * THE ONE FRAME BEFORE THE PREFERENCE IS READ shows a master admin one tile fewer, because
+   * `AdminViewProvider` reports `adminMode: false` until it has read `localStorage` for this account.
+   * That is the safe direction and deliberately not held for: `AppShell` holds the whole frame there
+   * because the alternative is flashing a padlock at somebody who may pass, while the worst case here
+   * is an exit tile that appears a commit later in a band the reader has not scrolled to yet.
+   *
+   * Not memoised, and not counted in this comment either: `next` is a handful of entries and
+   * `canAccessRoute` is a linear scan of `ROUTE_GUARDS`. Both are small, neither is on a hot path,
+   * and a number written here would be a hand-kept copy of a table that grows every release.
+   */
+  const exits = track.next.filter(
+    (entry) =>
+      canAccessRoute(user, entry.href) &&
+      (!adminChromeRouteFor(entry.href) || adminChromeVisible(user, adminMode))
+  );
 
   return (
     <div className="mt-12 grid gap-6">
@@ -148,7 +242,7 @@ export function GuideOutro({ track }: { track: GuideTrack }) {
           Where to go next
         </motion.h2>
         <motion.div variants={staggerParent(reduce, 0.04)} className="mt-4 grid gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
-          {track.next.map((entry) => (
+          {exits.map((entry) => (
             <motion.div key={entry.href} variants={riseItem(reduce, 10)}>
               <motion.div
                 whileHover={reduce ? undefined : { y: -3 }}

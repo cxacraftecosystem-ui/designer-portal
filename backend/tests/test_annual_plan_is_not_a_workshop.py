@@ -66,6 +66,49 @@ ALLOWED_CLIENT_MODULES = {
 #: The modules that may so much as MENTION the model by name — the two above plus the parser and the
 #: request bodies, both of which reference it only in prose (a docstring naming the column a value
 #: is stored in) and neither of which reaches a database at all.
+#:
+#: WHAT PUTS A MODULE IN THIS SET IS THAT IT IS THE ANNUAL PLAN'S OWN, not that its mention looks
+#: harmless. All four are this feature: two reach the table, two only spell it. A module from
+#: another feature has to earn its way in by needing the TABLE — never merely the NAME.
+#:
+#: THE DISTINCTION IS NOT PEDANTRY, because the two censuses are not equally strong and this set
+#: is what decides which one still covers a module. The strict census matches
+#: ``\.annualplanentry\.``, which is how prisma is CALLED — it catches ``db.annualplanentry.…``
+#: and misses a raw read, where the table arrives quoted as ``from "AnnualPlanEntry"`` with no dot
+#: in front of it. ``db.query_raw`` is ordinary here (``services/usage.py``,
+#: ``services/design_workshops.py``, ``services/dictation_consent.py``, and see
+#: ``annual_plan.py``'s own note on it), so that gap is a real shape and not a contrived one. The
+#: LOOSE census below is the only guard that closes it. Listing a module here therefore hands it
+#: BOTH halves: it may say the name, and it may then read the table in raw SQL with the whole
+#: suite green. For the annual plan's own modules that is exactly right — a feature reading its
+#: own table leaks nothing. For anything else it is the hole this file exists to prevent.
+#:
+#: PROPOSED AND REJECTED, v0.0.12: ``services/sanction_orders.py``. The sanction register grew an
+#: .xlsx importer this release, and with it ``SanctionOrder.sourceFilename``/``sheetRow``; a
+#: comment in ``sanction_payload`` credited this table's identically-named pair as the shape it
+#: copied, and that comment alone turned the census below red. The mention was prose and nothing
+#: else — no query, no include, no import, and no relation between the two models anywhere in
+#: ``schema.prisma``. The fix was to rewrite the comment, NOT to widen this set, on three counts.
+#:
+#: One: the module wanted the PRECEDENT, not the table, and a precedent can be cited by pointing
+#: at where it is already written down. It is written down in ``prisma/schema.prisma`` above
+#: ``SanctionOrder.sourceFilename``, which ``_modules`` never opens — the rglob is rooted at
+#: ``app/``. The citation survives intact at its canonical address; only the duplicate went.
+#:
+#: Two: the rest of that same release had already proved it costs nothing.
+#: ``services/sanction_orders_xlsx.py`` is an avowed near-copy of ``annual_plan_xlsx`` and names
+#: the annual plan roughly twenty times — its caps, its colour, its date reader, which of its
+#: machinery was deliberately not copied — and ``services/sanction_import.py`` argues against its
+#: transaction shape by name. Neither has ever appeared in this census, because neither needed to
+#: say ``AnnualPlanEntry`` to say any of it. One comment in a third file was the outlier.
+#:
+#: Three: this is the module where the hole above would most likely be used. "Which planned
+#: workshop was this order raised against" is a plausible next request for the officer's register,
+#: and the honest way to build it is the promotion pointer — ``AnnualPlanEntry.designWorkshopId``
+#: to the workshop the order already names — read through ``services/annual_plan.py``. Granting
+#: this module the name in advance, for a comment, would have retired the guard that makes anyone
+#: stop and choose. THE DAY AN ORDER GENUINELY NEEDS A PLAN ROW, ADD IT HERE AND SAY SO; a
+#: citation is not that day.
 ALLOWED_MENTION_MODULES = ALLOWED_CLIENT_MODULES | {
     "services/annual_plan_xlsx.py",
     "schemas/annual_plan.py",

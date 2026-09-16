@@ -346,7 +346,21 @@ import com.designprototype.workshop.ui.SearchRecordTypes
 import com.designprototype.workshop.ui.SearchScreen
 import com.designprototype.workshop.ui.SearchableMultiSelectField
 import com.designprototype.workshop.ui.SearchableSelectField
+import com.designprototype.workshop.ui.SelectOption
 import com.designprototype.workshop.ui.asSelectOptions
+// The tool form's centimetre ↔ inch pairing and its two link pickers. Pure functions, in `ui/`
+// rather than in this file, because that is where the JVM suite can reach them — `DimensionUnitsTest`
+// and `RecordPickersTest` are the only guard either client has on rules that silently destroy data
+// when they are wrong.
+import com.designprototype.workshop.ui.cmTextFromInches
+import com.designprototype.workshop.ui.craftsChangeClearsArtisans
+import com.designprototype.workshop.ui.englishNameMirrorArmed
+import com.designprototype.workshop.ui.inchesTextFromCm
+import com.designprototype.workshop.ui.initialLinkIds
+import com.designprototype.workshop.ui.mergeSelection
+import com.designprototype.workshop.ui.offPageLinkRow
+import com.designprototype.workshop.ui.propagateDimension
+import com.designprototype.workshop.ui.toolArtisanOptions
 import com.designprototype.workshop.ui.GrantAccessFields
 import com.designprototype.workshop.ui.RequestAccessFields
 import com.designprototype.workshop.ui.TaskAdminScreen
@@ -10330,26 +10344,95 @@ private fun ToolForm(
     var craftName by remember(editing) { mutableStateOf(editing?.craftName ?: prefill?.craftName ?: "") }
     var artisanName by remember(editing) { mutableStateOf(editing?.artisanName ?: prefill?.artisanName ?: "") }
     var place by remember(editing) { mutableStateOf(editing?.place ?: prefill?.place ?: "") }
-    var craftId by remember(editing) { mutableStateOf(editing?.craftId ?: prefill?.craftId ?: "") }
-    var artisanId by remember(editing) { mutableStateOf(editing?.artisanId ?: prefill?.artisanId ?: "") }
+    /**
+     * WHETHER "English name" IS STILL FOLLOWING "Toolkit name" — armed on a form that carries no
+     * English name of its own, divorced for ever the moment the designer types in that box.
+     *
+     * Keyed on `editing` like every other state here, so loading a different record into the same
+     * composition recomputes the decision from THAT record rather than inheriting the last one's.
+     * The rule itself is [englishNameMirrorArmed]; it lives in `ui/RecordPickers.kt` because a
+     * judgement that decides whether a saved translation gets overwritten is one a unit test has to
+     * be able to reach.
+     */
+    var mirrorArmed by remember(editing) { mutableStateOf(englishNameMirrorArmed(editing?.toolkitName, editing?.englishName)) }
+    /*
+     * THE CRAFTS AND ARTISANS THIS TOOL IS LINKED TO — a LIST, not a Set, because the order is the
+     * wire contract: the server writes `craftId` from element 0 and joins `craftName` in exactly
+     * this sequence. [mergeSelection] is what puts a sheet's unordered answer back into this shape.
+     *
+     * SEEDED BY [initialLinkIds]: THE RECORD'S OWN SCALAR FIRST, THEN ITS LINK ROWS, deduplicated
+     * keeping the first occurrence. That is the browser's `initialLinkIds` exactly, and the two
+     * clients must agree here or opening the same record on the two surfaces writes two different
+     * records — which it did until 2026-09-16.
+     *
+     * WHAT THIS BLOCK SAID BEFORE, since it is the rule being reversed: *"SEEDED FROM THE LINK ROWS,
+     * AND FROM THE SCALAR ONLY WHEN THERE ARE NONE. Reading `craftId` first would throw away the
+     * second and third craft of every multi-craft tool."* Reading the scalar INSTEAD OF the links
+     * would; reading it first and then appending them throws nothing away. What the links-only seed
+     * did throw away was `artisanId` itself, on every tool whose `ToolArtisan` rows were written by
+     * the assignment panel (which never includes it) or thinned by `unassign_tool_artisan` (which
+     * does not touch it) — so the form opened without that artisan ticked, and the save silently
+     * repointed `tool.artisanId` at somebody else while `artisanName`/`place`, which the server does
+     * NOT derive, went on naming the first. [initialLinkIds] argues it at length.
+     *
+     * Reading the links ONLY would also empty the boxes on a record saved before the join table
+     * existed, or one created from an outbox entry queued by a build that had never heard of these
+     * keys — see [ToolDetailDto.craftLinks], which sets out all three ways an empty list is an
+     * honest answer. The scalar is the fallback for those and the lead for the rest.
+     */
+    var craftIds by remember(editing) {
+        mutableStateOf(initialLinkIds(editing?.craftLinks?.map { it.craftId }, editing?.craftId ?: prefill?.craftId))
+    }
+    var artisanIds by remember(editing) {
+        mutableStateOf(initialLinkIds(editing?.artisanLinks?.map { it.artisanId }, editing?.artisanId ?: prefill?.artisanId))
+    }
+    /*
+     * THE FIRST OF EACH, DERIVED RATHER THAN HELD. `craftId` and `artisanId` are what go on the wire
+     * beside the lists, what the carry bag banks, and what `carryScope` and the dirty signature read.
+     * Deriving them is what makes "the scalar is element 0" true by construction instead of being a
+     * fourth place the invariant has to be maintained by hand.
+     */
+    val craftId = craftIds.firstOrNull().orEmpty()
+    val artisanId = artisanIds.firstOrNull().orEmpty()
     var processUsedIn by remember(editing) { mutableStateOf(editing?.processUsedIn ?: "") }
     var material by remember(editing) { mutableStateOf(editing?.material ?: "") }
     var yearsInUse by remember(editing) { mutableStateOf(editing?.yearsInUse?.toString() ?: "") }
+    /*
+     * THE FIVE DIMENSION BOXES, AND THE TWO PAIRS AMONG THEM.
+     *
+     * Since 2026-09-15 `height` and `width` are CENTIMETRES and each pairs 1:1 with one of the inch
+     * boxes — Height (cm) ↔ Height (inches), Width (cm) ↔ Breadth (inches) — so filling either box
+     * of a pair fills the other, by real conversion. `length` keeps no partner: there is no
+     * centimetre column for it and none is being added.
+     *
+     * WHAT USED TO STAND HERE, because it is the instruction being reversed and a reader who
+     * remembers it needs to know why: *"NOT the `height` above: that one is a bare Decimal that
+     * declares no unit, and it keeps holding whatever was typed."* True until the pairing existed,
+     * and the wire keys, the columns and their types are all unchanged by it — what changed is what
+     * the two boxes MEAN to each other and what the labels say.
+     *
+     * EVERY BOX IS STILL SEEDED FROM ITS OWN COLUMN AND FROM NOTHING ELSE. No conversion happens on
+     * load, no comparison between a pair, no normalisation: rows saved before the pairing genuinely
+     * hold unrelated numbers in `height` and `heightInches` — the schema comment and the note under
+     * the boxes both say so — and converting at load would destroy one of them on the next save.
+     * Conversion fires on USER INPUT ONLY, in the handler of the box being typed into. A
+     * `remember(editing)` re-key re-seeds by the same rule.
+     */
     var height by remember(editing) { mutableStateOf(numToText(editing?.height)) }
     var width by remember(editing) { mutableStateOf(numToText(editing?.width)) }
     var length by remember(editing) { mutableStateOf(numToText(editing?.lengthInches)) }
     var breadth by remember(editing) { mutableStateOf(numToText(editing?.breadthInches)) }
-    // The third of the triple, added 2026-08-27 with the column itself. NOT the `height` above:
-    // that one is a bare Decimal that declares no unit, and it keeps holding whatever was typed.
     var heightInches by remember(editing) { mutableStateOf(numToText(editing?.heightInches)) }
     /*
      * HOW `length` / `breadth` / `heightInches` were measured. See the identical ledger in the
      * product form for why it is keyed on `editing` and why loaded values start unmarked.
      *
-     * NOTE WHICH HEIGHT. This tracks `heightInches` and never the bare `height` above — that box is
-     * unit-less, no measurement route writes into it, and the server refuses a marker naming it by
-     * name. `DwMeasurementMarkers.accept` also drops any column outside the documented three, so the
-     * mistake cannot reach the wire even if a later call site makes it.
+     * NOTE WHICH HEIGHT. This tracks `heightInches` and never `height` — and that is UNCHANGED by
+     * the centimetre pairing, which only means the two boxes now hold one measurement in two units.
+     * An accepted reading fills the cm partner by conversion and gives it NO marker: the server
+     * refuses a marker naming `height` or `width` by name, `DwMeasurementMarkers.accept` drops any
+     * column outside the documented three, and a 422 on this platform is a lost record rather than a
+     * message. A converted number is not a second measurement and must not claim to be one.
      */
     val markers = remember(editing) { DwMeasurementMarkers() }
     var thickness by remember(editing) { mutableStateOf(numToText(editing?.thickness)) }
@@ -10385,21 +10468,217 @@ private fun ToolForm(
         ),
         handoff = prefill
     ) { carried ->
-        carried.craftId?.let { craftId = it }
+        // A SITTING IS ONE CRAFT AND ONE ARTISAN, and the bag stays singular on purpose — banking a
+        // list would change what the banner claims across six other forms. So a carried id lands as
+        // the FIRST entry of a selection that had none, and never on top of a selection the designer
+        // has already made: `ifEmpty` rather than an assignment, because "carry forward" is an offer
+        // and overwriting a chosen craft with a remembered one is not one.
+        carried.craftId?.let { id -> craftIds = craftIds.ifEmpty { listOf(id) } }
         carried.craftName?.let { craftName = it }
-        carried.artisanId?.let { artisanId = it }
+        carried.artisanId?.let { id -> artisanIds = artisanIds.ifEmpty { listOf(id) } }
         carried.artisanName?.let { artisanName = it }
         carried.place?.let { place = it }
         carried.workshopId?.let { if (!workshop.isDirty()) workshop.applyDefault(it) }
+        // DELIBERATELY NOT `englishName`, and deliberately not `toolkitName`. The bag carries no
+        // toolkit name to mirror, and a programmatic write to the English box must never count as
+        // the designer editing it — see `applyToolkitName` below for the half of that rule that
+        // fires the day a carry node DOES bring a toolkit name.
     }
     /** "Change": drop every carried value in one action so the researcher picks from scratch. */
     fun clearCarriedContext() {
         carry.change()
-        craftId = ""
+        craftIds = emptyList()
         craftName = ""
-        artisanId = ""
+        artisanIds = emptyList()
         artisanName = ""
         place = ""
+        // `englishName` is NOT touched. It is not a carried value — nothing in the bag ever fills
+        // it — and clearing it here would destroy a translation the designer typed, in an action
+        // whose whole promise is "drop what was carried in".
+    }
+    /**
+     * EVERY WRITE TO "Toolkit name" GOES THROUGH HERE, and that is the whole of the mirroring rule.
+     *
+     * ── AT THE WRITE SITE, NEVER IN AN EFFECT ─────────────────────────────────────────────────
+     *
+     * A `LaunchedEffect(toolkitName) { if (mirrorArmed) englishName = toolkitName }` fires on the
+     * FIRST composition, with the loaded toolkit name. On an edit whose stored English name is empty
+     * — armed, legitimately — it would write the English box before anybody typed, make the form
+     * dirty, and change a saved record by merely OPENING it. That is the failure the tool form's
+     * sibling comments already forbid in as many words, and writing the mirror from inside this
+     * function is what makes it unreachable rather than merely unlikely.
+     *
+     * ── THE RAW STRING, NOT A NORMALISED ONE ─────────────────────────────────────────────────
+     *
+     * Both boxes are `titleCased = true`, which draws a "Will be saved as …" hint and stores the
+     * text exactly as typed: the title-casing happens on the SERVER, in `clean_data` against
+     * `TITLE_CASE_FIELDS`, which holds `toolkitName` and `englishName` both. So copying the raw
+     * string is what guarantees the two stored values are identical — `titleCase(x) == titleCase(x)`
+     * — and normalising here would be a second implementation of a server rule with nothing holding
+     * the two together.
+     *
+     * A PROGRAMMATIC SET MIRRORS TOO and never disarms: `mirrorArmed` is turned off in the English
+     * box's own handler and nowhere else, so a prefill, a carry apply or a seed fills both boxes
+     * while the mirror is armed and touches neither flag.
+     */
+    fun applyToolkitName(next: String) {
+        toolkitName = next
+        if (mirrorArmed) englishName = next
+    }
+    /**
+     * Every craft this form can put a NAME to: the register it was handed, plus the ones the record
+     * itself carries.
+     *
+     * The register is one server page deep, so a tool linked to a craft recorded last season has an
+     * id on the record and nothing in `crafts` standing for it. `craftLinks[].craft` arrives with
+     * the record from the same read that filled this form, at no extra cost, so the name is
+     * available — which is what lets the picker draw a real row instead of the anonymous off-page
+     * sentence, and what keeps `craftName` correct when a selection is edited around it. The
+     * register is written LAST so a craft renamed since the save shows its current name.
+     */
+    val knownCraftNames: Map<String, String> = remember(crafts, editing) {
+        buildMap {
+            editing?.craftLinks?.forEach { link ->
+                link.craft?.name?.takeIf { it.isNotBlank() }?.let { put(link.craftId, it) }
+            }
+            crafts.forEach { put(it.id, it.name) }
+        }
+    }
+    /** As [knownCraftNames], for artisans, and for the same reason. The register wins on a clash. */
+    val knownArtisans: List<ArtisanDto> = remember(artisans, editing) {
+        val listed = artisans.map { it.id }.toSet()
+        editing?.artisanLinks.orEmpty().mapNotNull { it.artisan }.filter { it.id !in listed } + artisans
+    }
+    /**
+     * `craftName` as the SERVER will store it: every selected craft's name, joined ", " in link
+     * order.
+     *
+     * Written on every selection change rather than left alone, because the server DERIVES this
+     * column from `craftIds` and a box showing something else would be a box showing something that
+     * is about to be overwritten. The accepted cost, stated here so nobody re-litigates it at the
+     * call site: a hand correction typed into "Craft name" is lost while crafts are linked. It has to
+     * be — a body queued on a handset and replayed a fortnight later must still produce a
+     * `craftName` that agrees with its links, and the only way to guarantee that is to derive it.
+     *
+     * `mapNotNull` rather than a blank segment, so the string can never come out as ", Bandhani".
+     * [onCraftsChanged] refuses to call this at all when some selected craft cannot be named, which
+     * is the stronger guard and the one that keeps a name from being dropped; this is the shape that
+     * makes the result honest if the guard is ever relaxed.
+     */
+    fun joinCraftNames(ids: List<String>): String =
+        ids.mapNotNull { knownCraftNames[it]?.takeIf { name -> name.isNotBlank() } }.joinToString(", ")
+    /**
+     * "Artisan name" and "Place" follow the FIRST ticked artisan — from WHICHEVER control moved it.
+     *
+     * ── WHY THIS IS A FUNCTION AND NOT TWO COPIES ────────────────────────────────────────────
+     *
+     * Two things change `artisanIds[0]`: ticking artisans, and unticking a craft whose artisans get
+     * dropped with it. Only the first of them used to refill these boxes. So a designer who ticked
+     * [Kiran (Bandhani), Ramesh (Block Printing)] and then unticked Bandhani saved a record whose
+     * `artisanId` was Ramesh and whose `artisanName`/`place` still said "Kiran Devi" / "Bhuj" —
+     * every DOCX cell, report and carry-forward naming one person and every `artisanId` filter
+     * naming another. The single-select could not produce that: changing the craft set `artisanId`
+     * to "", so the stale name was never attached to a DIFFERENT linked artisan.
+     *
+     * ── ONLY WHEN THE FIRST ACTUALLY CHANGED ────────────────────────────────────────────────
+     *
+     * The server does NOT derive these two from `artisanIds`; it stores what the body carries. That
+     * is the courtesy `craftName` cannot have — an artisan recorded under a married name, a hamlet
+     * the register spells differently — so a hand correction has to survive. Ticking a SECOND
+     * artisan leaves the first where it was, and rewriting the boxes from it would silently undo a
+     * correction typed a minute earlier over a name this form filled in. The browser's
+     * `onArtisansChanged` guards on `first !== artisanId` for exactly that; this handset rewrote the
+     * boxes on every tick that had a first, so a correction the browser preserved was lost here.
+     * That divergence goes with the same change.
+     *
+     * A SELECTION EMPTIED ENTIRELY LEAVES BOTH BOXES ALONE. They are required, and blanking a
+     * required box because a link was removed would refuse the save on a field the designer never
+     * touched; the stored artisan's name is still the honest answer until they change it. So does a
+     * new first this form cannot NAME — an off-page link whose `artisan` the payload did not embed —
+     * because there is nothing to write, and inventing a blank would be worse than a stale name.
+     */
+    fun adoptFirstArtisan(previousFirst: String?) {
+        val first = artisanIds.firstOrNull() ?: return
+        if (first == previousFirst) return
+        val known = knownArtisans.firstOrNull { it.id == first } ?: return
+        artisanName = known.name
+        place = known.place
+    }
+    /**
+     * A craft was ticked or unticked.
+     *
+     * DESELECTING A CRAFT DROPS EXACTLY THE ARTISANS THAT BELONGED ONLY TO IT — the plural form of
+     * the rule the single-select had, where changing the craft cleared the artisan outright. An
+     * artisan of a craft that is still ticked stays; so does one this form cannot see, and so does
+     * one whose record names no craft. [craftsChangeClearsArtisans] is where those three exceptions
+     * are argued, and it is in `ui/RecordPickers.kt` so a test can drive them.
+     *
+     * THE CRAFTS ACTUALLY REMOVED ARE WHAT THE RULE IS GIVEN, not merely the new selection. Until
+     * 2026-09-16 the whole selection was handed over and reconciled against, so ADDING a craft —
+     * which removes nothing — unticked every linked artisan of a craft outside the new list, and a
+     * save turned that into a `delete_many` of their `ToolArtisan` rows. The artisans that hit are
+     * exactly the ones the assignment screen links across crafts, which is what the `|| it.id in
+     * artisanIds` clause in the pool below exists to keep on screen.
+     */
+    fun onCraftsChanged(next: List<String>) {
+        val removed = craftIds.filterNot { it in next }
+        val dropped = craftsChangeClearsArtisans(next, removed, artisanIds, knownArtisans).toSet()
+        if (dropped.isNotEmpty()) {
+            val previousFirst = artisanIds.firstOrNull()
+            artisanIds = artisanIds.filterNot { it in dropped }
+            // The two compat scalars follow the new head, or this save would name one artisan in
+            // `artisanId` and another in `artisanName`. NOT `carry.remember`: unticking a craft is
+            // not the researcher engaging with the artisan control, so it does not overrule the
+            // offer the banner is making.
+            adoptFirstArtisan(previousFirst)
+        }
+        craftIds = next
+        // THE ONE CASE THE BOX IS NOT REWRITTEN: a selected craft this device cannot NAME. It can
+        // happen — an old server that sends no `craftLinks`, over a record whose `craftId` sits past
+        // the end of the register's one page — and rewriting then would silently delete that craft's
+        // name from a NOT NULL column because a lookup failed, not because anything changed. The
+        // server derives the column from the ids anyway, and it can name them all. Unticking
+        // everything DOES blank the box, deliberately: with no links the server stops deriving the
+        // column, so the designer has to say what the craft is, which is what the required mark on
+        // the box below is for.
+        if (next.all { knownCraftNames[it]?.isNotBlank() == true }) craftName = joinCraftNames(next)
+    }
+    /**
+     * An artisan was ticked or unticked.
+     *
+     * `artisanName` and `place` follow the FIRST of them, which is what the two NOT NULL columns
+     * hold and what the single-select filled them from. They are not re-derived by the server, so a
+     * hand correction to either box survives — unlike `craftName` above, and the asymmetry is the
+     * server's, not this form's. [adoptFirstArtisan] is where that is spelled out, and the craft
+     * picker calls it too, because the head can move without this control being touched at all.
+     *
+     * THE BAG IS BANKED ON EVERY TICK, not only on a change of first: engaging with this control at
+     * all is the researcher overruling the offer the banner is making, whereas rewriting the two
+     * boxes would be overwriting something they may have typed. Two different questions, two
+     * different guards.
+     */
+    fun onArtisansChanged(next: List<String>) {
+        val previousFirst = artisanIds.firstOrNull()
+        artisanIds = next
+        adoptFirstArtisan(previousFirst)
+        val first = next.firstOrNull()?.let { id -> knownArtisans.firstOrNull { it.id == id } }
+        if (first != null) {
+            // An explicit pick replaces the remembered context and retires the banner: from here on
+            // the artisan on screen is the researcher's own choice, not a suggestion.
+            carry.remember(
+                CarryContext(
+                    artisanId = first.id,
+                    artisanName = first.name,
+                    place = first.place,
+                    craftId = craftIds.firstOrNull(),
+                    // THE FIRST CRAFT'S OWN NAME, never the joined string. The bag is singular and
+                    // the banner reads its `craftName` as one craft; handing it "Bandhani, Block
+                    // Printing" would print two crafts as though they were one, on six other forms.
+                    craftName = craftIds.firstOrNull()?.let { knownCraftNames[it] } ?: craftName.blankToNull()
+                ),
+                explicit = true
+            )
+        }
     }
     val canSetStatus = remember { canSetRecordStatus(repository.cachedUser()?.role) }
     var status by remember(editing) { mutableStateOf(editing?.status ?: defaultCreateStatus(repository.cachedUser()?.role)) }
@@ -10464,6 +10743,23 @@ private fun ToolForm(
                 remarks = remarks.blankToNull(),
                 artisanId = artisanId.ifBlank { null },
                 craftId = craftId.ifBlank { null },
+                /*
+                 * THE LINKS, ALWAYS SENT, INCLUDING EMPTY.
+                 *
+                 * `craftId` / `artisanId` above are element 0 of these and are still sent beside
+                 * them: the server derives them anyway when a list is non-empty, and they are what
+                 * an EMPTY list leaves standing. They are also what `Offline.danglingReferenceCandidates`
+                 * scans for when a replay 404s, so keeping them on the body is what lets the outbox
+                 * still say "a craft this record points at is no longer on the server".
+                 *
+                 * NEVER NULL FROM THIS FORM. An absent key means "leave the stored links alone",
+                 * which is right for a body composed by a build that had never heard of them and
+                 * wrong for this one: a designer who unticked every craft on an edit has said
+                 * something, and `[]` is how it is said. The server refuses a literal null for
+                 * exactly this reason, so the distinction cannot be lost by accident.
+                 */
+                craftIds = craftIds,
+                artisanIds = artisanIds,
                 workshopId = workshop.value(),
                 designWorkshopId = designWorkshop.value(),
                 status = status,
@@ -10477,7 +10773,12 @@ private fun ToolForm(
                 artisanName = artisanName.trim(),
                 place = place.trim(),
                 craftId = craftId.ifBlank { null },
-                craftName = craftName.trim(),
+                // THE FIRST CRAFT'S OWN NAME, not `craftName`, which now holds every selected craft
+                // joined ", ". A sitting is one craft; the banner on six other forms reads this
+                // string as one craft's name, and handing it "Bandhani, Block Printing" would print
+                // two crafts as though somebody had typed one. Falls back to the box for a tool with
+                // no craft linked at all, where the box is the only thing that knows.
+                craftName = craftIds.firstOrNull()?.let { knownCraftNames[it] } ?: craftName.trim(),
                 workshopId = workshop.value(),
                 workshopName = workshop.workshops.firstOrNull { it.id == workshop.value() }?.title
             )
@@ -10581,9 +10882,16 @@ private fun ToolForm(
         listOf(toolkitName, localName, englishName, craftName.exceptCarried(carried?.craftName),
             artisanName.exceptCarried(carried?.artisanName), place.exceptCarried(carried?.place),
             processUsedIn, material,
-            yearsInUse, height, width, length, breadth, thickness, weight, radius, maker, traditionType,
+            yearsInUse, height, width, length, breadth, heightInches, thickness, weight, radius, maker, traditionType,
             replacementCost, suggestions, remarks, status,
-            craftId.exceptCarried(carried?.craftId), artisanId.exceptCarried(carried?.artisanId)).joinToString("")
+            // THE WHOLE SELECTION, NOT JUST ITS FIRST ENTRY. `craftId` is element 0, so signing that
+            // alone would leave a designer who added a SECOND craft and walked away with no
+            // "save your changes?" at all. Joined rather than listed so the separator cannot be
+            // produced by concatenating two ids; `exceptCarried` still blanks the one-entry case a
+            // carry prefill put there, because a list of exactly the carried craft joins to exactly
+            // the carried id.
+            craftIds.joinToString(",").exceptCarried(carried?.craftId),
+            artisanIds.joinToString(",").exceptCarried(carried?.artisanId)).joinToString("")
     }
     val initialSig = remember(editing) { toolSig() }
     val dirty = !saving && (
@@ -10600,71 +10908,107 @@ private fun ToolForm(
         CarryPrefillBanner(state = carry, onChange = { clearCarriedContext() })
         WorkshopField(state = workshop, saving = saving)
         DesignWorkshopField(state = designWorkshop, saving = saving)
-        RequiredInput("Toolkit name", toolkitName, toolkitNameError, toolkitNameFocus, titleCased = true) { toolkitName = it }
+        RequiredInput("Toolkit name", toolkitName, toolkitNameError, toolkitNameFocus, titleCased = true) { applyToolkitName(it) }
         TextInput("Local name", localName) { localName = it }
-        TextInput("English name", englishName, titleCased = true) { englishName = it }
-        DropdownField(
-            label = "Linked craft (fills craft name)",
-            options = crafts.map { it.id to it.name },
-            selectedValue = craftId,
-            placeholder = "Unlinked / type below"
-        ) { id ->
-            craftId = id
-            crafts.firstOrNull { it.id == id }?.let { craftName = it.name }
-            // Once the craft changes, drop a linked artisan that no longer belongs to it.
-            if (id.isNotBlank() && artisanId.isNotBlank() && artisans.none { it.id == artisanId && it.craftId == id }) {
-                artisanId = ""
-            }
-        }
+        // TYPING HERE IS THE STICKY DIVORCE, and it counts even when what was typed is nothing:
+        // emptying this box by hand is a statement about this box, so the mirror stops and the box
+        // stays empty. Dictation lands through the same handler and divorces for the same reason.
+        TextInput("English name", englishName, titleCased = true) { englishName = it; mirrorArmed = false }
+        /*
+         * THE TWO LINK PICKERS, BOTH MULTI-SELECT SINCE 2026-09-15.
+         *
+         * [SearchableMultiSelectField] rather than [CheckboxMultiSelectField], which is the adapter
+         * the other multi-selects in this file reach for: that one takes `(id, label)` PAIRS and
+         * loses the hint, and the artisan rows need one — the craft name goes there, first, because
+         * [SelectOption] carries no group and the hint is what `SelectOption.matches` searches, so
+         * typing a craft name filters the sheet to that craft. Never [ArtisanMultiSelectField]: it is
+         * an unsearchable wall of checkboxes with no summary line.
+         *
+         * The sheet answers with a whole `Set`; [mergeSelection] puts it back into the ordered list
+         * the wire needs, keeping an id the sheet could not see rather than reading its silence as a
+         * deselection.
+         */
+        val craftOptions: List<SelectOption> =
+            // An off-page craft FIRST, as `designWorkshopOptions` puts its own. It is a craft this
+            // record genuinely holds that the register could not list — one server page deep — and
+            // without a row for it the designer sees a count they cannot account for and cannot
+            // untick what they cannot see. `craftLinks` usually carries the name, so the row is
+            // usually the craft's own; see [offPageLinkRow] for the anonymous fallback.
+            craftIds.filter { id -> crafts.none { it.id == id } }
+                .map { id -> offPageLinkRow(id, knownCraftNames[id], "craft") } +
+                crafts.map { SelectOption(it.id, it.name) }
+        SearchableMultiSelectField(
+            label = "Linked crafts (fills craft name)",
+            options = craftOptions,
+            selected = craftIds.toSet(),
+            placeholder = "Unlinked / type below",
+            emptyMessage = "No crafts have reached this device yet.",
+        ) { next -> onCraftsChanged(mergeSelection(craftIds, next, craftOptions.map { it.value })) }
         RequiredInput("Craft name", craftName, craftNameError, craftNameFocus, titleCased = true) { craftName = it }
-        // Task 6: the artisan dropdown is gated on a linked craft and only lists that craft's artisans.
-        val artisanOptionsForCraft = if (craftId.isNotBlank()) {
-            artisans.filter { it.craftId == craftId || it.id == artisanId }
-        } else {
-            artisans
-        }
-        DropdownField(
-            label = "Linked artisan (fills artisan + place)",
-            options = artisanOptionsForCraft.map { it.id to "${it.name} · ${it.place}" },
-            selectedValue = artisanId,
-            placeholder = if (craftId.isBlank()) "Select a linked craft first" else "Unlinked / type below",
-            enabled = craftId.isNotBlank()
-        ) { id ->
-            artisanId = id
-            artisans.firstOrNull { it.id == id }?.let {
-                artisanName = it.name
-                place = it.place
-                // An explicit pick replaces the remembered context and retires the banner: from here
-                // on the artisan on screen is the researcher's own choice, not a suggestion.
-                carry.remember(
-                    CarryContext(
-                        artisanId = it.id,
-                        artisanName = it.name,
-                        place = it.place,
-                        craftId = craftId.ifBlank { null },
-                        craftName = craftName.blankToNull()
-                    ),
-                    explicit = true
-                )
-            }
-        }
-        if (craftId.isNotBlank() && artisanOptionsForCraft.isEmpty()) {
-            Text("No artisans are linked to this craft yet.", color = Muted, fontSize = 12.sp)
-        }
+        // GATED ON A LINKED CRAFT, exactly as the single-select was, and listing the artisans of
+        // EVERY ticked craft — plus any already linked to this record, so a selection made before a
+        // craft was unticked stays visible rather than disappearing out from under its own chip.
+        val artisanPool = knownArtisans.filter { it.craftId in craftIds || it.id in artisanIds }
+        val artisanOptions: List<SelectOption> =
+            artisanIds.filter { id -> artisanPool.none { it.id == id } }
+                .map { id -> offPageLinkRow(id, null, "artisan") } +
+                // BY CRAFT NAME A→Z, then by artisan name A→Z, by the five-part key the browser sorts
+                // with. The crafts fed in are the SELECTED ones: an artisan of an unticked craft
+                // cannot be on this list, so a name looked up outside the selection could only ever
+                // be the wrong one.
+                toolArtisanOptions(artisanPool, craftIds.mapNotNull { id -> knownCraftNames[id]?.let { id to it } }.toMap())
+        SearchableMultiSelectField(
+            label = "Linked artisans (fills artisan + place)",
+            options = artisanOptions,
+            selected = artisanIds.toSet(),
+            placeholder = if (craftIds.isEmpty()) "Select a linked craft first" else "Unlinked / type below",
+            // TWO STATES, TWO SENTENCES, AND NEITHER SAYS "THERE ARE NONE". An empty list here means
+            // "nothing has been asked for yet" far more often than it means "this craft has no
+            // artisans", and `SearchableMultiSelectField.emptyMessage` is emphatic that a control
+            // inventing that claim speaks over a caller who knows better. This one replaces the
+            // trigger when there is nothing to tick, which is why the standalone notice line that
+            // used to sit under the old dropdown is gone: the primitive prints the sentence itself,
+            // and keeping both would print it twice.
+            emptyMessage = if (craftIds.isEmpty()) {
+                "Choose one or more crafts above to list their artisans."
+            } else {
+                "No artisans are linked to the crafts chosen above."
+            },
+            enabled = craftIds.isNotEmpty(),
+        ) { next -> onArtisansChanged(mergeSelection(artisanIds, next, artisanOptions.map { it.value })) }
         RequiredInput("Artisan name", artisanName, artisanNameError, artisanNameFocus, titleCased = true) { artisanName = it }
         RequiredInput("Place", place, placeError, placeFocus, titleCased = true) { place = it }
         TextInput("Process used in", processUsedIn) { processUsedIn = it }
         TextInput("Material", material) { material = it }
         TextInput("Years in use", yearsInUse, keyboardType = KeyboardType.Number, dictate = false) { yearsInUse = it }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-            Box(modifier = Modifier.weight(1f)) { TextInput("Height", height, keyboardType = KeyboardType.Decimal, dictate = false) { height = it } }
-            Box(modifier = Modifier.weight(1f)) { TextInput("Width", width, keyboardType = KeyboardType.Decimal, dictate = false) { width = it } }
+            Box(modifier = Modifier.weight(1f)) { TextInput("Height (cm)", height, keyboardType = KeyboardType.Decimal, dictate = false) { height = it; propagateDimension(it, ::inchesTextFromCm) { v -> heightInches = v } } }
+            Box(modifier = Modifier.weight(1f)) { TextInput("Width (cm)", width, keyboardType = KeyboardType.Decimal, dictate = false) { width = it; propagateDimension(it, ::inchesTextFromCm) { v -> breadth = v } } }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            // LENGTH IS STANDALONE and gets no partner: there is no centimetre column for it and none
+            // is being added. The pairing is Height (cm) ↔ Height (inches) and Width (cm) ↔ Breadth
+            // (inches), and inventing a third pair would mean a new column on a populated table.
             Box(modifier = Modifier.weight(1f)) { TextInput("Length (inches)", length, keyboardType = KeyboardType.Decimal, dictate = false) { length = it } }
-            Box(modifier = Modifier.weight(1f)) { TextInput("Breadth (inches)", breadth, keyboardType = KeyboardType.Decimal, dictate = false) { breadth = it } }
+            Box(modifier = Modifier.weight(1f)) { TextInput("Breadth (inches)", breadth, keyboardType = KeyboardType.Decimal, dictate = false) { breadth = it; propagateDimension(it, ::cmTextFromInches) { v -> width = v } } }
         }
-        TextInput("Height (inches)", heightInches, keyboardType = KeyboardType.Decimal, dictate = false) { heightInches = it }
+        TextInput("Height (inches)", heightInches, keyboardType = KeyboardType.Decimal, dictate = false) { heightInches = it; propagateDimension(it, ::cmTextFromInches) { v -> height = v } }
+        Text(
+            // THE NOTE THAT USED TO SAY THE OPPOSITE, REWRITTEN RATHER THAN DELETED. Until 2026-09-15
+            // the web forms told a designer that the two height boxes were unrelated columns and to
+            // "fill one of the two, not both"; that instruction is reversed by this pairing, and a
+            // handset that stayed silent about it would leave the two clients teaching different
+            // things about the same record. The last sentence is the honest part: rows saved before
+            // the pairing existed really do hold two numbers that disagree, opening one never
+            // rewrites either box, and only a keystroke converts.
+            "Height (cm) and Height (inches) are the same measurement in two units, and filling " +
+                "either fills the other (1 inch = 2.54 cm, rounded to two decimals). Width (cm) and " +
+                "Breadth (inches) pair the same way. Length (inches) has no centimetre box. Records " +
+                "saved before this pairing existed can hold two numbers that disagree — opening one " +
+                "never rewrites either box, so correct whichever is wrong and its partner follows.",
+            color = Muted,
+            fontSize = 12.sp
+        )
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
             Box(modifier = Modifier.weight(1f)) { TextInput("Thickness", thickness, keyboardType = KeyboardType.Decimal, dictate = false) { thickness = it } }
             Box(modifier = Modifier.weight(1f)) { TextInput("Weight", weight, keyboardType = KeyboardType.Decimal, dictate = false) { weight = it } }
@@ -10692,11 +11036,28 @@ private fun ToolForm(
             photos = media.uris,
             purposes = media.purposes,
             enabled = !saving,
+            /*
+             * AN ACCEPTED READING FILLS ITS CENTIMETRE PARTNER TOO, AND CARRIES NO PROVENANCE INTO IT.
+             *
+             * The panel measures in inches and writes an inch column; since the pairing exists, the
+             * partner box has to follow or the record would go up saying two different things about
+             * one height. What does NOT follow is the marker. `measurementMethods` may name only
+             * `lengthInches` / `breadthInches` / `heightInches` — `DW_MEASUREMENT_DIMENSIONS`, and
+             * `markers.accept` drops anything else — so `height` and `width` carry no method, and a
+             * marker naming one of them would be a 422 on the WHOLE save, which on this platform is
+             * a lost record rather than a message.
+             *
+             * THE CM WRITE CANNOT DISTURB THE MARKER EITHER. `markers.body` keeps a marker only while
+             * the column's box still holds the accepted text byte-for-byte; writing a DIFFERENT box
+             * leaves that comparison untouched. Written with a bare setter through
+             * [propagateDimension] rather than through anything that edits markers, for the same
+             * reason: a call that touched them would advertise a relationship that does not exist.
+             */
             onPropose = { column, text, technique ->
                 when (column) {
                     "lengthInches" -> length = text
-                    "breadthInches" -> breadth = text
-                    "heightInches" -> heightInches = text
+                    "breadthInches" -> { breadth = text; propagateDimension(text, ::cmTextFromInches) { v -> width = v } }
+                    "heightInches" -> { heightInches = text; propagateDimension(text, ::cmTextFromInches) { v -> height = v } }
                 }
                 // As on the product form: the accepted text is recorded with the marker so a later
                 // hand edit drops the claim. See DwMeasurementMarkers.
@@ -10708,16 +11069,27 @@ private fun ToolForm(
             media = media,
             includeHeight = true,
             // Marked only where written — see the product form's note for why an unwritten dimension
-            // must not carry a method.
+            // must not carry a method. The centimetre partner follows the inch box that was written
+            // and is NOT marked; see the paragraph on `onPropose` above for why that is a refusal
+            // rather than an omission.
             onLengthBreadth = { l, b, marker ->
                 if (l != null && l > 0) { length = numToText(l); markers.accept("lengthInches", length, marker) }
-                if (b != null && b > 0) { breadth = numToText(b); markers.accept("breadthInches", breadth, marker) }
+                if (b != null && b > 0) {
+                    breadth = numToText(b)
+                    markers.accept("breadthInches", breadth, marker)
+                    propagateDimension(breadth, ::cmTextFromInches) { v -> width = v }
+                }
             },
             // INTO THE COLUMN THAT SAYS "inches", not the bare `height` box above it. The model is asked
-            // for inches and answers in inches; `ToolDocumentation.height` records no unit at all,
-            // so landing it there threw away the one fact that makes the number costable. The marker
-            // names `heightInches` for the same reason — it is the column that was written.
-            onHeight = { value, marker -> heightInches = numToText(value); markers.accept("heightInches", heightInches, marker) }
+            // for inches and answers in inches; the marker names `heightInches` for the same reason —
+            // it is the column that was written. `height` is filled from it by conversion, which is a
+            // different act: it is now the SAME measurement in centimetres rather than a second,
+            // unit-less number, and it still carries no method of its own.
+            onHeight = { value, marker ->
+                heightInches = numToText(value)
+                markers.accept("heightInches", heightInches, marker)
+                propagateDimension(heightInches, ::cmTextFromInches) { v -> height = v }
+            }
         )
         DropdownField("Maker", makerOptions.map { it to it }, maker, includeNone = false) { maker = it }
         DropdownField("Tradition type", traditionOptions.map { it to it }, traditionType, includeNone = false) { traditionType = it }

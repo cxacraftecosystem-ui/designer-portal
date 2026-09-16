@@ -70,13 +70,24 @@ export function GuideJourney({ steps }: { steps: GuideStep[] }) {
 
   // Deep links: /guide#questionnaire opens that step and scrolls to it.
   //
-  // VALIDATED AGAINST THIS DECK AND SILENTLY IGNORED OTHERWISE, which is right here and is only
-  // half the story now that there are three decks: an anchor belonging to ANOTHER deck must select
-  // that deck rather than be discarded, and it cannot be done from inside this component, which has
-  // only been handed one array. `guideTrackForAnchor` in `tracks.ts` is the other half and the page
-  // resolves it before choosing what to render — so by the time this effect runs, a valid anchor is
-  // already in `steps`. The check stays because an anchor belonging to NO deck (a stale link, a
-  // renamed step) must still leave the page where it is rather than throwing.
+  // VALIDATED AGAINST THIS DECK AND SILENTLY IGNORED OTHERWISE, and since 2026-09-16 that check is
+  // load-bearing rather than defensive.
+  //
+  // ⚠ THIS COMMENT STATED THE OPPOSITE RULE AND THE OLD CLAUSE IS KEPT RATHER THAN DROPPED. It read:
+  // "an anchor belonging to ANOTHER deck must select that deck rather than be discarded … so by the
+  // time this effect runs, a valid anchor is already in `steps`." That was true while the anchor
+  // outranked the role. The owner ruled the other way (OQ-5, arm b): `app/(protected)/guide/page.tsx`
+  // resolves the anchor with `guideTrackForAnchor` and then INTERSECTS the answer with
+  // `guideTracksFor(user)`, so for every tier but ADMIN and MASTER_ADMIN an anchor into another deck
+  // is discarded and the page opens on the reader's own deck. A valid anchor is therefore precisely
+  // NOT already in `steps` — it is there only when the deck that owns it is a deck this account may
+  // read.
+  //
+  // SO THIS CHECK NOW FAILS FOR TWO DIFFERENT REASONS AND BEHAVES THE SAME WAY FOR BOTH: an anchor
+  // belonging to NO deck (a stale link, a renamed step), and an anchor belonging to a deck this
+  // reader is not shown. Either way the page stays where it is rather than throwing, and nothing on
+  // screen says the hash meant something — which is arm (b) as ruled, and why `steps.ts`' header now
+  // qualifies the "point every lock panel at its own step anchor" recommendation it carries.
   useEffect(() => {
     const hash = window.location.hash.replace("#", "");
     if (!hash || !steps.some((step) => step.id === hash)) return;
@@ -85,8 +96,14 @@ export function GuideJourney({ steps }: { steps: GuideStep[] }) {
     const frame = window.requestAnimationFrame(() => scrollToStep(hash, true));
     return () => window.cancelAnimationFrame(frame);
     // Deliberately once per mount, as before. The page remounts this component on a deck change
-    // (`key={track.id}`), so a fresh deck gets a fresh run and a live `steps` identity change does
-    // not re-fire the scroll under a reader who is already part-way down the page.
+    // (a key of "journey-" plus the track id), so a fresh deck gets a fresh run and a live `steps`
+    // identity change does not re-fire the scroll under a reader already part-way down the page.
+    //
+    // THE PREFIX ON THAT KEY IS LOAD-BEARING and was added on 2026-09-16: this component and
+    // `GuideHero` are siblings in one fragment and both read `key={track.id}`, which made the two
+    // collide in React's sibling map and left every previous deck's hero band undeleted in the DOM.
+    // Both keys still change per deck — the remount here is unaffected — and they now also differ
+    // from each other. See the comment beside them in `app/(protected)/guide/page.tsx`.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

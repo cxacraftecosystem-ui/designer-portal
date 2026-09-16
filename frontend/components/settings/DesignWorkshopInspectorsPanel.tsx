@@ -35,17 +35,42 @@ import {
 } from "@/lib/workshopOptions";
 
 /**
- * WHO INSPECTS ONE DESIGN & PROTOTYPE WORKSHOP — the admin's half of the fifth scope.
+ * WHO INSPECTS ONE DESIGN & PROTOTYPE WORKSHOP — the ASSIGNER's half of the fifth scope.
  *
- * The other half is the inspector's own read surface at /design-workshop-inspections, which this
- * account cannot open: `assert_inspection_surface` 403s an admin by name. Two halves, two doors, and
- * this panel is the only place an inspection comes into existence.
+ * The other half is the inspector's own read surface at /design-workshop-inspections, which none of
+ * these accounts can open: `assert_inspection_surface` 403s an admin by name. Two halves, two doors,
+ * and this panel is the only place an inspection comes into existence.
  *
- * It sits on /workshop-access/manage beside `DesignWorkshopViewersPanel` for exactly the reasons
- * that panel gives: this page is already the one place an admin goes to answer "who may work on
+ * ── IT SAID "the admin's half" UNTIL 0.0.12, AND THE CHANGE IS AN OWNER'S RULING ─────────────────
+ *
+ * The three routes behind it moved from `require_admin` = {ADMIN, MASTER_ADMIN} to
+ * `require_workshop_assigner` = OVERSIGHT_ASSIGNER_ROLES = {MINISTRY_ADMIN, ADMIN, MASTER_ADMIN}.
+ * A MINISTRY_ADMIN is not an admin anywhere in this codebase, so before that the ministry could
+ * stage a workshop into PRE_SUBMISSION and then cause nobody at all to inspect it — the journey
+ * simply stopped, with no refusal anybody could act on.
+ *
+ * **THE TIER'S OWN RULE IS UNTOUCHED, WHICH IS WHAT MADE THE WIDENING SAFE.** "The inspected must
+ * not choose the inspector" is a statement about INSPECTION_ROLES — a frozenset of one, {INSPECTOR}
+ * — and MINISTRY_ADMIN is outside it, so the account that appoints an inspector still cannot BE
+ * one. `_assert_every_id_may_inspect`'s fourth refusal still turns away anybody already on the
+ * workshop as its creator or a co-designer, and a REGIONAL_DIRECTOR is still refused the assignment
+ * screen altogether, because the supervised must not choose the supervisor.
+ *
+ * ── TWO MOUNTS, AND THE `workshopId` PROP IS THE DIFFERENCE BETWEEN THEM ─────────────────────────
+ *
+ * On /workshop-access/manage it sits beside `DesignWorkshopViewersPanel` for exactly the reasons
+ * that panel gives: that page is already the one place an admin goes to answer "who may work on
  * what", and it already carries both gates the answer needs — the ROUTE_REDIRECTS rule that sends
  * below-admin to the request page, and the ADMIN_CHROME_ROUTES rule that gives an admin with admin
- * view off a panel instead of a redirect. A second route would have been a second copy of both.
+ * view off a panel instead of a redirect. There it chooses its own workshop.
+ *
+ * On /officers it is the FOURTH panel over a workshop the page has already chosen, so `workshopId`
+ * is passed and the internal picker is not drawn. **That is a refactor and not a preference:** the
+ * oversight page's own picker reads `GET /design-workshop-oversight/workshops`, while this panel's
+ * reads `GET /design-workshops`, which answers a Ministry Admin **200 with an empty page** because
+ * it scopes non-admins to the viewer relation. Two workshop selectors on one screen reading two
+ * endpoints, one of them silently empty for the page's primary user, is the repository's most
+ * repeated bug class rendered as a duplicate control.
  *
  * ── THE FOUR WAYS IT IS NOT THE VIEWERS PANEL ─────────────────────────────────────────────────
  *
@@ -155,7 +180,7 @@ function describeFailure(error: unknown, fallback: string): string {
     return "This device cannot reach the repository, so nothing was sent and nothing has changed. Check the connection and try again.";
   }
   if (error.status === 403) {
-    return `The repository refused this. ${error.message} Choosing who inspects a workshop is administration, so it is open to admins and the master admin only.`;
+    return `The repository refused this. ${error.message} Choosing who inspects a workshop is administration, so it is open to a Ministry Admin, an admin and the master admin.`;
   }
   if (error.status === 422) {
     return `The repository would not accept this. ${error.message}`;
@@ -166,8 +191,28 @@ function describeFailure(error: unknown, fallback: string): string {
   return error.message || fallback;
 }
 
-export function DesignWorkshopInspectorsPanel({ refreshToken }: { refreshToken?: number }) {
+export function DesignWorkshopInspectorsPanel({
+  refreshToken,
+  workshopId: fixedWorkshopId
+}: {
+  refreshToken?: number;
+  /**
+   * The workshop to administer, when the PAGE has already chosen one.
+   *
+   * Passed, the internal picker below is not drawn at all — not merely disabled — and no workshop
+   * list is fetched. Omitted (the /workshop-access/manage mount) is exactly the previous behaviour:
+   * this panel chooses its own workshop from `GET /design-workshops`.
+   *
+   * See this file's header for why the two cannot both be on screen: that endpoint answers a
+   * Ministry Admin 200-with-an-empty-page, so on /officers a second selector would sit beside the
+   * page's own and silently claim the repository had no workshops in it.
+   */
+  workshopId?: string;
+}) {
   const { toast } = useToast();
+
+  /** Is this panel choosing its own workshop, or being told one? Read once, everywhere below. */
+  const ownsThePicker = fixedWorkshopId === undefined;
 
   /* ── The workshop being administered ────────────────────────────────────── */
 
@@ -186,7 +231,17 @@ export function DesignWorkshopInspectorsPanel({ refreshToken }: { refreshToken?:
   /** Was the device reachable when that read FAILED? Captured in the catch, for the reason
    *  `DesignWorkshopSelect` gives: it is a fact about the moment the request died. */
   const [workshopsOnline, setWorkshopsOnline] = useState(true);
-  const [workshopId, setWorkshopId] = useState("");
+  const [chosenWorkshopId, setWorkshopId] = useState("");
+  /**
+   * WHICH WORKSHOP EVERY READ AND WRITE BELOW IS ABOUT.
+   *
+   * The prop WINS when it is given, and the local state is left standing rather than synchronised
+   * into it: nothing writes `setWorkshopId` on this branch (the picker that would is not rendered),
+   * so a state mirror could only ever be a second answer to a question the parent has already
+   * settled — and the one thing it could do is go stale between the parent's re-render and this
+   * effect's.
+   */
+  const workshopId = fixedWorkshopId ?? chosenWorkshopId;
   /**
    * Every workshop this panel has seen, across every search it has run.
    *
@@ -238,6 +293,11 @@ export function DesignWorkshopInspectorsPanel({ refreshToken }: { refreshToken?:
   const workshopGeneration = useRef(0);
 
   useEffect(() => {
+    // NOT FETCHED AT ALL when the parent named the workshop. The list exists to feed a picker that
+    // is not on screen, and asking `GET /design-workshops` from /officers would spend a request to
+    // receive the empty page that endpoint answers a Ministry Admin with — the very answer this
+    // panel's header says must never reach a control.
+    if (!ownsThePicker) return;
     const term = workshopSearch.trim();
     const current = workshopGeneration.current + 1;
     workshopGeneration.current = current;
@@ -274,7 +334,7 @@ export function DesignWorkshopInspectorsPanel({ refreshToken }: { refreshToken?:
       term ? SEARCH_DEBOUNCE_MS : 0
     );
     return () => window.clearTimeout(timer);
-  }, [refreshToken, workshopSearch]);
+  }, [ownsThePicker, refreshToken, workshopSearch]);
 
   /* ── The eligible accounts, searched server-side ────────────────────────── */
 
@@ -570,8 +630,9 @@ export function DesignWorkshopInspectorsPanel({ refreshToken }: { refreshToken?:
 
       <p className="mt-3 rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-xs leading-5 text-ink-500">
         An inspection is READ-ONLY: an Inspector / Reviewer assigned here can open every stage of this
-        workshop and change none of it. Only an admin decides who inspects what — the designers who run
-        a workshop have no say in who examines it, and cannot be its inspector themselves.
+        workshop and change none of it. A Ministry Admin, an admin or the master admin decides who
+        inspects what — the designers who run a workshop have no say in who examines it, and cannot be
+        its inspector themselves.
       </p>
 
       {featureMissing ? (
@@ -587,6 +648,13 @@ export function DesignWorkshopInspectorsPanel({ refreshToken }: { refreshToken?:
 
       {featureMissing ? null : (
         <>
+          {/*
+            DRAWN ONLY WHERE THIS PANEL OWNS THE CHOICE. On /officers the workshop is already the
+            page's, and a second selector there would read a DIFFERENT endpoint from the one four
+            inches above it — see this file's header.
+          */}
+          {ownsThePicker ? (
+            <>
           <div className="mt-4">
             <FieldBlock label="Design workshop">
               <Dropdown
@@ -641,9 +709,19 @@ export function DesignWorkshopInspectorsPanel({ refreshToken }: { refreshToken?:
               {workshopNotice}
             </p>
           ) : null}
+            </>
+          ) : null}
 
           {!workshopId ? (
-            <p className="mt-4 text-sm text-ink-500">Pick a design workshop to see who is inspecting it.</p>
+            // TWO SENTENCES, because there are two reasons to be here and only one of them is
+            // something the reader can act on. With the picker on screen, choosing is the next
+            // move; without it, the parent has not chosen a workshop yet and telling somebody to
+            // pick one from a control that is not there is the trap this panel's header is about.
+            <p className="mt-4 text-sm text-ink-500">
+              {ownsThePicker
+                ? "Pick a design workshop to see who is inspecting it."
+                : "Choose a workshop above to see who is inspecting it."}
+            </p>
           ) : inspectors === null ? (
             <p className="mt-4 text-sm text-ink-500">Loading…</p>
           ) : (

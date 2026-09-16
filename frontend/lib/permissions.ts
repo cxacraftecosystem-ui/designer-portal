@@ -367,6 +367,11 @@ export function canManageSecrets(user: User | null | undefined) {
  * Admin view is deliberately NOT consulted. The toggle hides admin chrome from an admin who wants
  * to browse as an ordinary user; it is not a permission, and it must never lock an admin out of a
  * URL the API would happily serve.
+ *
+ * ONE COLUMN ON THIS TABLE IS NOT ABOUT GATING AT ALL — `ministry?`, read by {@link ministrySurface}
+ * and by nothing else. It is here rather than in a list of its own because this table is already the
+ * register of "which routes are which", and a second list of ministry paths is a second list to go
+ * stale. It changes who may open nothing.
  * ──────────────────────────────────────────────────────────────────────────── */
 
 export type RouteGuard = {
@@ -377,9 +382,36 @@ export type RouteGuard = {
   gate: string;
   title: string;
   message: string;
+  /**
+   * This route is a MINISTRY-ONLY SURFACE, and AppShell paints it as one.
+   *
+   * A flag on the row, and that is the only correct derivation — see {@link ministrySurface}. It is
+   * the same idiom `NAV_ITEMS` uses for `adminSurface?`: a fact about the route, declared beside the
+   * route, so the register stays single and there is no second list of paths to go stale.
+   *
+   * IT IS A FACT ABOUT A SCREEN, NOT ABOUT A VIEWER. There is no "is this person ministry"
+   * predicate in this file and there must not be one. The ministry surfaces are gated by FIVE
+   * different rules and each one's docstring below argues why it could not have been any of the
+   * others: {@link canManageAnnualPlan} is a rank floor at 48, `canRecordSanctionOrders`
+   * (lib/sanctionOrders.ts) a rank floor at 42, {@link canAssignWorkshopOversight} a SET that
+   * refuses a Regional Director who outranks an Assistant Director, {@link canReadWorkshopOversight}
+   * a set that refuses an ADMIN by name, and {@link canSeeMinistryDesk} a card audience with a hole
+   * at ADMIN(50) and MASTER_ADMIN(60) above it. They are non-monotonic in rank in different
+   * directions; no sixth function reconciles them. This flag says only that whoever the row does
+   * admit is being admitted to ministry work.
+   */
+  ministry?: boolean;
 };
 
-/** Shared copy for the four create routes, mirroring `require_record_creator`'s 403 detail. */
+/**
+ * Shared copy for the three create ROUTES, mirroring `require_record_creator`'s 403 detail.
+ *
+ * THREE ROUTES, FOUR RECORD TYPES, and the message below names all four on purpose. `/artisans/new`,
+ * `/products/new` and `/tools/new` are real pages; a process is created by an INLINE form on
+ * `/processes` (`?new=1`), so it has no `/new` route to guard and the same predicate reaches it
+ * through the page. This line read "the four create routes" until 0.0.12, which sent a reader
+ * looking for a fourth row that has never existed.
+ */
 const RECORD_CREATOR_GUARD = {
   can: canCreateRecords,
   gate: "require_record_creator",
@@ -477,6 +509,7 @@ export const ROUTE_GUARDS: RouteGuard[] = [
     path: "/annual-plan",
     can: canManageAnnualPlan,
     gate: "require_annual_plan_manager",
+    ministry: true,
     title: "Ministry administrator access required",
     message:
       "The annual plan of workshops — the ministry's directory of what is to be held this year, and where — is uploaded and corrected by the ministry administrator and above. Workshops that have already been opened are on Design workshops."
@@ -718,6 +751,7 @@ export const ROUTE_GUARDS: RouteGuard[] = [
     path: "/officers",
     can: canAssignWorkshopOversight,
     gate: "assert_may_assign_oversight (OVERSIGHT_ASSIGNER_ROLES, services/design_workshop_oversight.py)",
+    ministry: true,
     title: "Ministry Admin access required",
     message:
       "Naming the designer, the Assistant Director and the Regional Director on a design & prototype workshop — and uploading that workshop's artisan list — is done by a Ministry Admin, an admin or the master admin. An Assistant Director or Regional Director reads the workshops they have been assigned on Workshops I monitor."
@@ -741,6 +775,7 @@ export const ROUTE_GUARDS: RouteGuard[] = [
     path: "/officers/monitored",
     can: canReadWorkshopOversight,
     gate: "assert_oversight_surface (OFFICER_ROLES, services/design_workshop_oversight.py)",
+    ministry: true,
     title: "Officer access required",
     message:
       "Workshops I monitor lists the design & prototype workshops a Ministry Admin has assigned to this account as its Assistant Director or Regional Director. Designers and admins read design & prototype workshops on Design workshops instead; a Ministry Admin chooses who monitors a workshop on Workshop oversight."
@@ -773,6 +808,7 @@ export const ROUTE_GUARDS: RouteGuard[] = [
     path: "/sanction-orders",
     can: (user) => hasRank(user, "ASSISTANT_DIRECTOR"),
     gate: "require_sanction_recorder",
+    ministry: true,
     title: "Ministry officer access required",
     message:
       "Recording a sanction order is a ministry officer's act — Assistant Director and above. It opens a workshop, creates the designer's account and issues their sign-in link, so it is not something a designer or a professor can do for themselves. Ask the officer who holds the order to record it; the workshop will appear in your list as soon as they do."
@@ -862,6 +898,50 @@ export function routeGuardFor(pathname: string): RouteGuard | null {
 export function canAccessRoute(user: User | null | undefined, pathname: string): boolean {
   const guard = routeGuardFor(pathname);
   return !guard || guard.can(user);
+}
+
+/**
+ * Is this screen one of the ministry's own? — the whole of the ministry surface's gating.
+ *
+ * `AppShell` asks this once per navigation and stamps `data-surface="ministry"` on <main>, which is
+ * what the scoped block at the end of app/globals.css hangs off: the header's icon chip, a rule down
+ * the left edge of every panel, the eyebrow. FOUR routes carry the flag today — /annual-plan,
+ * /officers, /officers/monitored and /sanction-orders — and a fifth is one `ministry: true` on its
+ * row, with no CSS, no component and no second list to touch.
+ *
+ * ── READ THE FLAG. DO NOT COMPARE `guard.can`. ──────────────────────────────────────────
+ *
+ * Deriving this by testing `guard.can` against the ministry predicates is the obvious shortcut and
+ * it SILENTLY UNDER-REPORTS: /sanction-orders' `can` is an INLINE ARROW written out on the row
+ * (`(user) => hasRank(user, "ASSISTANT_DIRECTOR")`, and its own comment explains that a reference to
+ * `canRecordSanctionOrders` would be an import cycle through lib/sanctionOrders.ts), so an identity
+ * comparison misses it, finds three of four, and the sanction register quietly stops being a
+ * ministry surface with nothing on screen or in a type to say so. A flag on the row cannot do that.
+ *
+ * ── LONGEST MATCH, WHICH IS THE TABLE'S OWN RULE AND NOT A SEPARATE ONE ───────────────────
+ *
+ * It asks {@link routeGuardFor} rather than sweeping the table itself, so a path resolves to exactly
+ * the row that GUARDS it: /officers/monitored/<id> is ministry because /officers/monitored is, and a
+ * future narrower row nested under a ministry one would be able to opt its own subtree out simply by
+ * not carrying the flag — the same override /officers/monitored already performs on /officers for a
+ * disjoint audience. Two loops over one table would be two answers waiting to disagree.
+ *
+ * ── IT SAYS NOTHING ABOUT THE VIEWER ───────────────────────────────────────────────
+ *
+ * It takes a pathname and no user, deliberately. Whether the person looking may be HERE is
+ * {@link canAccessRoute}'s question and is asked separately — AppShell only stamps the attribute on
+ * a page it is actually serving, because the refusal panel is drawn for somebody who is not a
+ * ministry account and the accent is not for them.
+ *
+ * ── /design-workshops IS NOT ONE OF THESE, AND THE MISTAKE IS EASY ───────────────────────
+ *
+ * It is the fifth row of the ministry DESK card, so "everywhere the desk points" reads like the
+ * definition — and it is gated on {@link canRunDesignWorkshops}, i.e. it is the DESIGNERS' main
+ * workspace. Flagging it would turn every designer's daily screen orange.
+ * `frontend/e2e/ministry-surface-unit.spec.ts` fails on exactly that.
+ */
+export function ministrySurface(pathname: string): boolean {
+  return routeGuardFor(pathname)?.ministry === true;
 }
 
 /* ────────────────────────────────────────────────────────────────────────────

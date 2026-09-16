@@ -72,6 +72,20 @@
  * workshop instead of rival copies of a fortnight; the note at the mount says what a scan can and
  * cannot do, and why a workshop that exists only on this device gets a refusal there rather than a
  * code.
+ *
+ * AN EMPTY LIST HERE HAS TWO DIFFERENT MEANINGS AND THE SCREEN NOW SAYS WHICH. The read is
+ * row-scoped by the server to "created by me, or granted to me", so a directorate account that has
+ * neither opened a workshop nor been named on one gets an empty 200 in a repository full of them —
+ * and the ministry desk sends all three of those tiers here. Nothing on screen distinguished "you
+ * have none" from "there are none", which is the bug class this repository hits more often than any
+ * other: absence reading as non-existence. `services/design_workshop_oversight.py` names it in
+ * those terms over `ROSTER_TAKE` ("a list that quietly stops is indistinguishable from a workshop
+ * with nothing on it, which is this repository's most repeated bug class") — that instance is
+ * truncation and this one is scope, and the reader cannot tell either of them from an empty world.
+ * The empty branch therefore carries a separate sentence and a panel naming the oversight screens
+ * for a reader who can open one; see {@link OVERSIGHT_DOORS}. The scope itself is deliberately NOT
+ * widened — that argument, and the refusal to add `has_oversight_scope` beside `has_viewer_grant`,
+ * is written down on the server.
  */
 
 import { Fragment, Suspense, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
@@ -132,6 +146,7 @@ import { isUnreachable } from "@/lib/offline";
 import { formatDate } from "@/lib/format";
 import {
   DESIGN_WORKSHOP_CREATE_REFUSAL,
+  canAccessRoute,
   canCreateDesignWorkshops,
   canRunDesignWorkshops,
   isAdmin
@@ -185,6 +200,61 @@ const STATUS_OPTIONS = [
   { value: "ARCHIVED", label: "Archived" }
 ];
 
+/**
+ * WHERE A DIRECTORATE ACCOUNT'S WORKSHOPS ACTUALLY ARE, for the empty-scope explainer below.
+ *
+ * ── THE BUG THIS ANSWERS IS THAT AN EMPTY SCOPE LOOKS EXACTLY LIKE AN EMPTY WORLD ────────────
+ *
+ * `GET /api/design-workshops` is row-scoped to `createdById == me OR viewers.some(me)` — the
+ * server's `visible_to_clause`. An Assistant Director or Regional Director who has neither opened a
+ * workshop nor been named on one as a designer therefore gets an **empty 200**: not a refusal they
+ * could act on, but a screen reading "there are no design workshops" in a repository holding a
+ * year of them. That is this repository's most repeated bug class — absence reading as
+ * non-existence — and the ministry desk sends all three directorate tiers here with a row
+ * promising "The workshops you may open".
+ *
+ * The scope is NOT widened to fix it. `has_oversight_scope` in
+ * `services/design_workshop_oversight.py` carries the refusal in its own words — **"THIS IS A READ
+ * PREDICATE AND MUST NEVER BE CALLED FROM A WRITE GATE"**, because every site that would take the
+ * new arm beside `has_viewer_grant` is on a path that also carries stage writes. So the honest fix
+ * is to say on screen what the scope is and name the screens where the other work lives.
+ *
+ * ── THE LABELS ARE THE NAV'S AND THE DESK CARD'S, CHARACTER FOR CHARACTER ────────────────────
+ *
+ * `NAV_ITEMS` and `components/dashboard/ministryDesk.ts` already name these two destinations, and
+ * that file's own header says why a third spelling invented on one screen is a name nobody's grep
+ * finds and nobody's colleague recognises. The notes are this page's own, because they answer a
+ * question the desk card does not ask — not "what is behind this link" but "why is it not here".
+ *
+ * ── EVERY ROW IS FILTERED THROUGH `canAccessRoute`, AND THAT IS NOT BELT AND BRACES ──────────
+ *
+ * The two doors have DIFFERENT audiences and neither contains the other: `/officers` is
+ * `canAssignWorkshopOversight` = {MINISTRY_ADMIN, ADMIN, MASTER_ADMIN}, which refuses an Assistant
+ * Director and a Regional Director by name ("the supervised must not choose the supervisor"), while
+ * `/officers/monitored` is `canReadWorkshopOversight` = {ASSISTANT_DIRECTOR, REGIONAL_DIRECTOR,
+ * MINISTRY_ADMIN}, which refuses an admin by name. So an unfiltered list would send an Assistant
+ * Director — the tier this whole explainer exists for — to a padlock panel, which is a worse answer
+ * than the empty list it replaces. `canAccessRoute` is asked rather than the two predicates being
+ * re-listed here, so a row cannot drift from the guard that actually decides: the same one-line fix
+ * `guide-tracks-unit.spec.ts` names for `GuideOutro`'s tiles.
+ *
+ * IT IS NOT THE WHOLE TEST, THOUGH. `canAccessRoute` admits an ADMIN to `/officers`, and an admin's
+ * list is not row-scoped at all — see `emptyScopeDoors`, which is where that arm lives and where the
+ * server branch it mirrors is named.
+ */
+const OVERSIGHT_DOORS: readonly { href: string; label: string; note: string }[] = [
+  {
+    href: "/officers/monitored",
+    label: "Workshops I monitor",
+    note: "the workshops you were named on as Assistant Director or Regional Director"
+  },
+  {
+    href: "/officers",
+    label: "Workshop oversight",
+    note: "where a workshop's designer and its two supervising officers are named"
+  }
+];
+
 export default function DesignWorkshopsPage() {
   // Next 16: `useSearchParams` — the `?new=1` the dashboard tile has been sending here since it was
   // written — must sit inside a Suspense boundary. Same wrapper /crafts and /workshops use.
@@ -226,6 +296,28 @@ function DesignWorkshopsPageBody() {
    */
   const allowWork = canRunDesignWorkshops(user);
   const allowDelete = isAdmin(user);
+  /**
+   * The screens to name when THIS reader's empty list is a scope rather than an empty repository —
+   * see {@link OVERSIGHT_DOORS}. Empty for everybody else, and both halves of that matter.
+   *
+   * `isAdmin` FIRST, MIRRORING THE SERVER'S OWN BRANCH. The list route composes
+   * `visible_to_clause` under `elif not is_admin(current_user)`, so an admin's read is NOT scoped:
+   * they see every workshop in the repository, and an empty list for them means the repository is
+   * empty. Telling an admin their work is somewhere else would be false, and it is false for a
+   * reason a `canCreateDesignWorkshops` test would only get right by coincidence — the two sets are
+   * identical today and answer different questions.
+   *
+   * THE REST IS ALSO THE TEST FOR "IS THIS A DIRECTORATE READER", deliberately rather than a sixth
+   * ministry predicate. `lib/permissions.ts` argues at length that the ministry predicates are five
+   * on purpose and are non-monotonic in rank in different directions, and refuses to grow an "is
+   * this viewer ministry" helper; a reader who can open neither oversight screen has nothing to be
+   * pointed at either way, so "may open at least one of them" is both the audience and the content.
+   * A designer gets `[]` and keeps the sentence written for them below, unchanged.
+   */
+  const emptyScopeDoors = useMemo(
+    () => (isAdmin(user) ? [] : OVERSIGHT_DOORS.filter((door) => canAccessRoute(user, door.href))),
+    [user]
+  );
   /**
    * "You tried to start a workshop and this account cannot" — raised by the `?new=1` intent, which
    * is the dashboard tile's "New workshop" button.
@@ -1778,14 +1870,70 @@ function DesignWorkshopsPageBody() {
               body={
                 allowCreate
                   ? "Start one with the button above. A workshop can be created with nothing but a title and filled in over the following weeks."
-                  : allowWork
-                    ? // An empty list is the worst moment to be vague at a designer: there is nothing
-                      // on screen to explain itself, so this is the whole answer — why there is no
-                      // "New workshop" button, who to ask, and what happens once they have asked.
-                      "Design workshops you have access to will appear here. Starting a new one is done by an admin or the master admin — ask them to create it for your cluster and name you as one of its designers, and it will show up here ready for all 22 stages."
-                    : "Design workshops you have access to will appear here."
+                  : emptyScopeDoors.length
+                    ? // A DIRECTORATE READER, AND THE SENTENCE WRITTEN FOR A DESIGNER IS WRONG FOR
+                      // THEM. "Ask an admin to name you as one of its designers" is the right next
+                      // move for somebody whose job is inside a workshop; for an officer whose job
+                      // is over one it is advice to be re-cast as a designer, and it leaves the
+                      // actual answer — this list is not where your work is — unsaid. The panel
+                      // below says where it is; this says why it is not here, which is the half a
+                      // reader needs before they will believe the links.
+                      //
+                      // IT CLAIMS NOTHING ABOUT WHY THIS PARTICULAR LIST IS EMPTY, and the first
+                      // draft did: it ended "so this stays empty however many workshops the
+                      // repository holds", which a search term or a status filter can falsify —
+                      // an officer who also holds one workshop of their own, filtered out by the
+                      // box above, would be told the scope is the reason when the filter was.
+                      // Every clause below is a fact about what the SCOPE can ever contain, so it
+                      // survives any filter being set, which is what lets the panel under it stand
+                      // unconditionally too.
+                      "This list is the workshops you opened and the ones you were named on as a designer. Being named as a workshop's supervising officer is a different scope and does not put it here, so a repository full of workshops you supervise still shows you nothing on this screen."
+                    : allowWork
+                      ? // An empty list is the worst moment to be vague at a designer: there is nothing
+                        // on screen to explain itself, so this is the whole answer — why there is no
+                        // "New workshop" button, who to ask, and what happens once they have asked.
+                        "Design workshops you have access to will appear here. Starting a new one is done by an admin or the master admin — ask them to create it for your cluster and name you as one of its designers, and it will show up here ready for all 22 stages."
+                      : "Design workshops you have access to will appear here."
               }
             />
+            {/*
+              ── WHERE YOUR WORKSHOPS ARE ───────────────────────────────────────────────────────
+
+              NOT GATED ON A FILTER BEING CLEAR, AND THAT IS THE POINT OF THE WORDING. Everything in
+              this panel is a fact about the SCOPE — what the list can ever contain and where the
+              rest of this account's work lives — so it is as true with a search term applied as
+              without one. It makes no claim about counts, which is what would have had to be
+              qualified; the sentence "you have none" is the one this page must never print, and it
+              does not appear here or in the body above.
+
+              AN ADMIN NEVER SEES IT, and the `isAdmin` arm that decides so lives on
+              `emptyScopeDoors` rather than here, beside the reason: the server composes
+              `visible_to_clause` under `elif not is_admin(current_user)`, so an admin's list is not
+              scoped at all and an empty one means an empty repository. `/officers` WOULD pass
+              `canAccessRoute` for them, which is exactly why the door list is not the whole test.
+            */}
+            {emptyScopeDoors.length ? (
+              <div className="mt-4 rounded-md border border-line-200 bg-surface-50 p-4">
+                <h3 className="text-sm font-medium text-ink-900">Where your workshops are</h3>
+                <p className="mt-1 text-sm leading-6 text-ink-700">
+                  The repository scopes this list to what you opened yourself and what you were named on. Supervision is
+                  recorded on a different table and read on a different screen:
+                </p>
+                <ul className="mt-3 grid gap-2">
+                  {emptyScopeDoors.map((door) => (
+                    <li key={door.href} className="text-sm leading-6">
+                      <Link
+                        href={door.href}
+                        className="font-medium text-purple-700 underline-offset-2 hover:underline"
+                      >
+                        {door.label}
+                      </Link>
+                      <span className="text-ink-muted"> — {door.note}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
           </div>
         ) : (
           <div className="overflow-x-auto">

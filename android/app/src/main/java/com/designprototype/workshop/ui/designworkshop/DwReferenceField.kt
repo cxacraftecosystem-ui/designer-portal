@@ -2017,6 +2017,12 @@ private fun heldOption(token: String): SelectOption =
  * would be applied on top of the server's, and the handset would report a product 2.54 times the
  * size the browser reports for the same record, in a document that goes to a ministry. The value in
  * `option.data` is already in the unit the target field declares; copy it, do not reason about it.
+ *
+ * `ui/DimensionUnits.kt` DOES convert, and it is not a violation of this rule — it is a different
+ * job on the other side of the wire. That module converts between the tool RECORD FORM's own two
+ * boxes as a designer types into them, before anything is saved, where no server has converted
+ * anything yet. This function copies a value the server has ALREADY converted into a stage entry.
+ * Nothing here may start calling that module, and nothing there may start reading `option.data`.
  */
 internal fun hydratedValues(
     option: DwReferenceOption,

@@ -132,7 +132,15 @@ export function PlanUploadReport({ report }: { report: Report }) {
   return (
     <div className="panel mb-5 p-4">
       <div className="flex items-start gap-3">
-        <span className="mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-purple-50 text-purple-700">
+        {/*
+          The ministry pair, because this panel is only ever drawn on `/annual-plan` — one of the
+          four surfaces `AppShell` stamps `data-surface="ministry"` on. Both halves are required:
+          the ramp is literal and does not invert, so `bg-ministry-50` is a near-white peach in dark
+          as well as light and `text-ministry-700` on a dark card is 2.44:1. The dark pair
+          (`ministry-950/40` ground, `ministry-300` ink) is `CarryContextBanner`'s own device with
+          the hue moved, and measures 10.06:1.
+        */}
+        <span className="mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-ministry-50 text-ministry-700 dark:bg-ministry-950/40 dark:text-ministry-300">
           <FileSpreadsheet className="h-4 w-4" aria-hidden />
         </span>
         <div className="min-w-0">

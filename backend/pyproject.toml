@@ -21,11 +21,11 @@ dependencies = [
     "openpyxl>=3.1.2",
     # PDF rendering for the workshop report (app/services/report_pdf.py). A CORE dependency, not
     # an extra, because app/api/routes/design_workshops.py imports it at module scope and the API
-    # router imports that — so an install without it does not degrade, it fails to boot. Pure
+    # router imports that -- so an install without it does not degrade, it fails to boot. Pure
     # Python with no system libraries, which is what ruled out WeasyPrint: that needs Pango and
     # Cairo installed on the host, and the local Windows development stack has neither.
     #
-    # The .docx path deliberately has NO dependency at all — see app/services/report_docx.py for
+    # The .docx path deliberately has NO dependency at all -- see app/services/report_docx.py for
     # why that matters (the identical algorithm has to run on the phone, where python-docx cannot).
     "reportlab>=4.0.0",
     # The Claude provider (app/services/anthropic_verbs.py), added with designer-supplied API keys.
@@ -45,10 +45,10 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-    # BOUNDED, and the lower bound is not the point — the UPPER one is. `.github/workflows/
+    # BOUNDED, and the lower bound is not the point -- the UPPER one is. `.github/workflows/
     # checks.yml` now FAILS THE BUILD on a ruff finding, so this line decides which linter's
     # opinion can turn main red. `select` below pins the rule FAMILIES; it does not pin their
-    # contents, and ruff adds new checks to existing families in ordinary minor releases — so
+    # contents, and ruff adds new checks to existing families in ordinary minor releases -- so
     # under `>=0.4.0` a release nobody in this repository asked for could redden a pull request
     # that changed no Python at all, which is the same complaint the `[tool.ruff.lint]` header
     # below makes about the gate moving on its own. The floor is 0.16.1 because that is the
@@ -64,15 +64,15 @@ dev = [
     # `async def test_` functions in tests/ run at all, and that setting is inert without this
     # plugin: pytest collects an async test, finds no runner, warns, and reports green. So a clean
     # `pip install -e '.[dev]'` produced an environment in which a hundred and eighteen tests
-    # SILENTLY DID NOT EXECUTE while the suite still said it passed — the exact class of invisible
+    # SILENTLY DID NOT EXECUTE while the suite still said it passed -- the exact class of invisible
     # failure this project's test discipline is built to refuse. It happened to work on every
     # machine anybody used because the plugin was already sitting in `.venv` as a transitive
     # install; nothing declared it.
     "pytest-asyncio>=0.23",
     "httpx>=0.27.0",
     # THE SAME DEFECT AS `pytest-asyncio` ABOVE, ONE ENTRY LATER, AND FOUND THE SAME WAY.
-    # `tests/test_report_pdf.py` imports pypdf to read back the bytes `report_pdf` writes — it is
-    # how the .pdf writer is asserted at all — and nothing declared it. It worked on every machine
+    # `tests/test_report_pdf.py` imports pypdf to read back the bytes `report_pdf` writes -- it is
+    # how the .pdf writer is asserted at all -- and nothing declared it. It worked on every machine
     # anybody used because it was already sitting in `.venv` as a transitive install, exactly as the
     # note above describes, so a clean `pip install -e '.[dev]'` produced an environment where that
     # module could not even be COLLECTED. Locally the suite looked green; the first CI run on a
@@ -84,7 +84,7 @@ dev = [
     # accumulated a dependency nobody wrote down.
     "pypdf>=4.2.0",
 ]
-# Optional AI image features (app/ai_features, all flags default off — see docs/AI_FEATURES.md).
+# Optional AI image features (app/ai_features, all flags default off -- see docs/AI_FEATURES.md).
 # Nothing below is installed by `pip install -e .`, and nothing below is imported unless a
 # capability's flag is on. The split is deliberate: the hosted providers cost 3 MB, local
 # inference costs closer to 400 MB of wheels plus a 176 MB model download, and the 1 GiB
@@ -107,7 +107,7 @@ ai-local = [
 # is in-process and needs nothing installed, so `pip install -e .` stays exactly as light as it was.
 # Nothing imports redis unless that variable is set (app/scale/redis_backend.py imports it inside a
 # function, after the flag check), which is what lets the flag exist on a machine without the
-# package — it logs one line and uses the in-process cache instead of failing to boot.
+# package -- it logs one line and uses the in-process cache instead of failing to boot.
 cache = [
     "redis>=5.0.0",
 ]
@@ -125,7 +125,7 @@ line-length = 100
 target-version = "py311"
 
 # The rule set is pinned HERE, by name, deliberately. With no [tool.ruff.lint] section ruff falls
-# back to its own implicit default, and that default has changed between ruff releases — so this
+# back to its own implicit default, and that default has changed between ruff releases -- so this
 # project's lint gate quietly moved every time someone upgraded the (unpinned) `ruff>=0.4.0` dev
 # dependency, and a file that was clean in one release was dirty in the next without a line of it
 # changing. Everything the gate enforces is now listed in `select`; everything it deliberately
@@ -133,18 +133,18 @@ target-version = "py311"
 # house idiom is settled once here instead of being re-argued every quarter.
 [tool.ruff.lint]
 select = [
-    "F",      # pyflakes — undefined names, unused imports and variables
+    "F",      # pyflakes -- undefined names, unused imports and variables
     "E",      # pycodestyle errors
     "W",      # pycodestyle warnings
-    "I",      # isort — one import order, enforced mechanically rather than by review
-    "UP",     # pyupgrade — requires-python is >=3.11, so write 3.11
-    "B",      # flake8-bugbear — mutable defaults, loop-variable capture, silent truncation
+    "I",      # isort -- one import order, enforced mechanically rather than by review
+    "UP",     # pyupgrade -- requires-python is >=3.11, so write 3.11
+    "B",      # flake8-bugbear -- mutable defaults, loop-variable capture, silent truncation
     "C4",     # flake8-comprehensions
     "SIM",    # flake8-simplify
     "RET",    # flake8-return
-    "DTZ",    # flake8-datetimez — this backend stores aware stamps only
+    "DTZ",    # flake8-datetimez -- this backend stores aware stamps only
     "ISC",    # flake8-implicit-str-concat
-    "BLE",    # flake8-blind-except — the ~45 `# noqa: BLE001` comments in this tree are the
+    "BLE",    # flake8-blind-except -- the ~45 `# noqa: BLE001` comments in this tree are the
               #   point of the rule: every catch-all here is a decision with a written reason
               #   next to it, and a new one has to earn the same sentence
     "PIE",    # flake8-pie
@@ -157,14 +157,14 @@ select = [
 ]
 
 # Deliberately NOT selected, so nobody has to rediscover why:
-#   PLR — the "refactor" family is threshold-based opinion (668 PLR2004 magic-value hits alone,
+#   PLR -- the "refactor" family is threshold-based opinion (668 PLR2004 magic-value hits alone,
 #         plus too-many-arguments on every FastAPI route signature). Nothing it reports here is a
 #         defect; enabling it would mean 848 suppressions.
-#   TRY — 121 of its 134 hits are TRY003 (message text in the `raise`), which is exactly how this
+#   TRY -- 121 of its 134 hits are TRY003 (message text in the `raise`), which is exactly how this
 #         codebase writes HTTPException and ValueError on purpose.
-#   S   — bandit needs its own pass with its own per-file rules (S101 alone fires on every
+#   S   -- bandit needs its own pass with its own per-file rules (S101 alone fires on every
 #         `assert` in tests/, ~3,100 hits) and its findings here are all false positives today.
-#   D, N, ANN, COM, EM, ARG, PTH, ERA, T20 — style/doc families this project has never followed.
+#   D, N, ANN, COM, EM, ARG, PTH, ERA, T20 -- style/doc families this project has never followed.
 
 ignore = [
     # ---------------------------------------------------------------------------------------
@@ -174,7 +174,7 @@ ignore = [
     # *is* a function call in a default argument:
     #     async def list_records(db = Depends(get_db), file: UploadFile = File(...)): ...
     # That is the framework's own documented signature style, and FastAPI re-resolves each of
-    # those defaults per request rather than reusing one object — so the shared-mutable-default
+    # those defaults per request rather than reusing one object -- so the shared-mutable-default
     # hazard B008 exists to catch cannot happen here. Ignored globally and permanently: the
     # alternative is 246 `# noqa: B008` comments that say the same thing 246 times.
     "B008",
@@ -183,20 +183,20 @@ ignore = [
     # House idioms, each visible all over the tree.
     # ---------------------------------------------------------------------------------------
     # PLC0415 (236 hits): imports inside functions are load-bearing here, for three reasons that
-    # are documented at the call sites — optional dependencies that must not be imported unless
+    # are documented at the call sites -- optional dependencies that must not be imported unless
     # their feature flag is on (Pillow, rembg, vtracer, redis), import cycles between
     # app.ai_features and app.services, and keeping heavy modules off the boot path of a 1 GiB
     # box. See the [project.optional-dependencies] comments above for the sizes involved.
     "PLC0415",
 
-    # PLW0603 (25 hits): the process-wide singletons — the cache backend, the read-replica
-    # client, the user-cache epoch — are intentionally module-level and are installed through
+    # PLW0603 (25 hits): the process-wide singletons -- the cache backend, the read-replica
+    # client, the user-cache epoch -- are intentionally module-level and are installed through
     # `global` from their one initialiser. That IS the pattern; the rule cannot tell it from an
     # accident.
     "PLW0603",
 
-    # RUF001/002/003 (101 hits): this codebase is written with real typography — en dashes in
-    # numeric ranges, em dashes in prose, ₹ in user-facing strings. Every hit is intentional, and
+    # RUF001/002/003 (101 hits): this codebase is written with real typography -- en dashes in
+    # numeric ranges, em dashes in prose, INR  in user-facing strings. Every hit is intentional, and
     # "did you mean HYPHEN-MINUS?" is wrong every time.
     "RUF001",
     "RUF002",
@@ -204,7 +204,7 @@ ignore = [
 
     # ISC002/ISC004 (9 hits): long prose strings are split across lines inside tuples and lists
     # deliberately, to stay inside line-length. Wrapping each one in a second layer of
-    # parentheses buys nothing. (ISC001 and ISC003 stay on — those catch real mistakes.)
+    # parentheses buys nothing. (ISC001 and ISC003 stay on -- those catch real mistakes.)
     "ISC002",
     "ISC004",
 
@@ -223,7 +223,7 @@ ignore = [
     "UP042",
 
     # B905 (21 hits): `zip(a, b)` truncates to the shorter side. `strict=True` turns that into a
-    # ValueError — a real behaviour change that has to be decided per call site — and
+    # ValueError -- a real behaviour change that has to be decided per call site -- and
     # `strict=False` is just this comment, repeated 21 times, saying nothing.
     "B905",
 
@@ -234,22 +234,22 @@ ignore = [
     "E501",
 ]
 
-# ─── noqa CODES THAT NAME A RULE THIS PROJECT DELIBERATELY DOES NOT SELECT ──────────────
+# --- noqa CODES THAT NAME A RULE THIS PROJECT DELIBERATELY DOES NOT SELECT --------------
 # RUF100 flags a `# noqa: X` as dead when X is not enabled, and it is right: those directives
 # suppress nothing. It is listed in `select` above for exactly that reason and it stays there. The
 # one hit it finds outside this list is a real dead suppression worth catching, and it is NOT
-# excused here — it is recorded in the dated per-file baseline below, on
+# excused here -- it is recorded in the dated per-file baseline below, on
 # app/api/routes/design_workshops.py, so clearing it is a one-line deletion from that entry once
 # somebody rewrites the comment at :516 by hand. Be clear-eyed about what that entry costs while
-# it stands: it hides EVERY RUF100 in that route module — 4,078 lines, measured — future dead
+# it stands: it hides EVERY RUF100 in that route module -- 4,078 lines, measured -- future dead
 # suppressions included. `external` costs nothing of the kind: it only ever excuses the two codes
 # named on it, anywhere they appear.
 #
 # These two are different, and the difference is what the fix does to the file. MEASURED
 # 2026-08-22 on a scratch copy: `ruff check --select RUF100 --fix` does not strip the `noqa:`
 # token and leave the comment, it DELETES THE WHOLE COMMENT. At app/services/user_ai_keys.py the
-# three directives carry one sentence spread across three trailing comments — "one probe per
-# provider, deliberately shared with the Settings hub" — and the fix removed every word of it;
+# three directives carry one sentence spread across three trailing comments -- "one probe per
+# provider, deliberately shared with the Settings hub" -- and the fix removed every word of it;
 # at tests/test_questionnaire_write_path_access.py it removed "mirrors the real signature".
 # SLF001 and ANN001 are both in the "deliberately NOT selected" list above, so nothing about
 # those four sites is going to change; the choice is between keeping a directive that documents
@@ -257,7 +257,7 @@ ignore = [
 #
 # `external` is ruff's own knob for "a code some other tool owns, leave it alone". Stretching it
 # to cover ruff codes this project chose not to enable is a small stretch, and it is stated here
-# rather than hidden: if either family is ever added to `select`, DELETE THE MATCHING ENTRY —
+# rather than hidden: if either family is ever added to `select`, DELETE THE MATCHING ENTRY --
 # otherwise the directives would silently be doing nothing again with nothing left to say so.
 external = ["SLF001", "ANN001"]
 
@@ -279,11 +279,11 @@ external = ["SLF001", "ANN001"]
 # not a safe assumption when clearing the I001 entries in the baseline below: read the diff.
 combine-as-imports = true
 
-# ═══════════════════════════════════════════════════════════════════════════════════════════
-# THE BASELINE — WRITTEN 2026-08-22, AND MEANT TO SHRINK TO NOTHING
-# ═══════════════════════════════════════════════════════════════════════════════════════════
+# ===========================================================================================
+# THE BASELINE -- WRITTEN 2026-08-22, AND MEANT TO SHRINK TO NOTHING
+# ===========================================================================================
 # Every entry below is a finding that is REAL and is NOT FIXED. None of them is a rule this
-# project disagrees with — those are argued out in `ignore` above and are permanent. These are
+# project disagrees with -- those are argued out in `ignore` above and are permanent. These are
 # thirty-seven live findings in thirteen files, listed one file at a time so that removing one is a
 # one-line diff and adding one has to be justified in review.
 #
@@ -297,7 +297,7 @@ combine-as-imports = true
 # cannot be turned green either. So the findings are named instead.
 #
 # HOW TO USE IT. Fix the finding, delete the entry, in one commit. Do not extend an entry to cover
-# a NEW finding of the same rule in the same file — that is how a baseline becomes a permanent
+# a NEW finding of the same rule in the same file -- that is how a baseline becomes a permanent
 # `ignore` with a date on it. A per-file entry does hide later hits of that rule in that file,
 # which is the honest cost of the mechanism and the reason each list is as short as it is.
 #
@@ -306,8 +306,8 @@ combine-as-imports = true
 #       modified in the working tree by a concurrent wave. Reordering an import block underneath
 #       an agent that has the file open loses one of the two edits, and app/services/design_workshops.py
 #       was left alone on instruction for exactly that reason. NONE OF THESE IS SOMEBODY ELSE'S NEW
-#       MISTAKE: every finding marked (a) was re-measured against the COMMITTED copy of its file —
-#       `git show HEAD:<path>` written out to a scratch file and linted there — and is present in
+#       MISTAKE: every finding marked (a) was re-measured against the COMMITTED copy of its file --
+#       `git show HEAD:<path>` written out to a scratch file and linted there -- and is present in
 #       that copy too, so the in-flight edits did not introduce any of them. These entries should
 #       die as soon as somebody runs the autofix on a quiet tree; `ruff check --select I001
 #       --fix .` from backend/ is the whole job for the I001s.
@@ -315,7 +315,7 @@ combine-as-imports = true
 #       AND THE DIRTY TREE ADDS NOTHING BEYOND WHAT IS LISTED. RE-MEASURED 2026-08-22 after review,
 #       on a clean export of HEAD (`git archive HEAD backend`, linted with this same pyproject but
 #       `lint.per-file-ignores={}` and `lint.external=[]`): HEAD carries the same 51 findings, and
-#       HEAD's app/services/design_workshops.py carries exactly ONE of them — the I001 at line 32
+#       HEAD's app/services/design_workshops.py carries exactly ONE of them -- the I001 at line 32
 #       that the entry below already names. So no entry here is pre-exempting somebody's in-flight
 #       mistake, and none of them disappears when the working tree is committed.
 #   (b) NOT MECHANICAL. The rule is right and the fix is a decision about behaviour, in a file this
@@ -323,7 +323,7 @@ combine-as-imports = true
 [tool.ruff.lint.per-file-ignores]
 
 # (a) in flight, and (b) for RUF100: the directive is `# noqa: BLE001 - the storage message is not
-# for the caller`, on an `except Exception` that BLE001 does not flag at all — MEASURED with
+# for the caller`, on an `except Exception` that BLE001 does not flag at all -- MEASURED with
 # `ruff check app/api/routes/design_workshops.py --select BLE --ignore-noqa`, which reports nothing
 # in the whole file, because the handler re-raises as a 502 rather than swallowing. So the
 # suppression really is dead and RUF100 is right. But its autofix deletes the sentence along with
@@ -343,7 +343,7 @@ combine-as-imports = true
 
 # (b) SIM113 wants `enumerate()` for the `printed` counter in the annexure loop. That loop `break`s
 # on truncation and flushes per section label, so the counter and the iteration index are not the
-# same number by accident — swapping them is a rewrite of the truncation logic, not a lint fix.
+# same number by accident -- swapping them is a rewrite of the truncation logic, not a lint fix.
 "app/services/report_questionnaires.py" = ["SIM113"]
 
 # (b) DTZ001: naive `datetime(...)` literals standing in for Prisma columns in fixtures. Giving them
@@ -361,13 +361,13 @@ combine-as-imports = true
 "tests/test_process_step_authorization.py" = ["RUF005"]
 
 # (b) RUF015 prefers `next(...)` over `[... for ...][0]`. Same value, different failure when the
-# comprehension is empty — IndexError today, StopIteration after. In a test, that message matters.
+# comprehension is empty -- IndexError today, StopIteration after. In a test, that message matters.
 "tests/test_record_media_urls.py" = ["RUF015"]
 
 # (b) PLW0108 fires twice on `ids=lambda v: str(v)` in a `@pytest.mark.parametrize`. `ids=str`
 # would satisfy the rule and is not obviously the same thing to read at a parametrize call, and
 # these ids name the rows of the hydration table in the test report. PLW2901 is
-# `row = dict(row, _entryId=...)` rebinding the loop variable — deliberate, and a second name
+# `row = dict(row, _entryId=...)` rebinding the loop variable -- deliberate, and a second name
 # for it would have to be threaded through the rest of the loop body.
 "tests/test_report_carry_forward.py" = ["PLW0108", "PLW2901"]
 

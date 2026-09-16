@@ -1281,11 +1281,19 @@ data class ToolCreateRequest(
     val breadthInches: Double? = null,
     /**
      * The THIRD of the triple, 2026-08-27. `ToolDocumentation` gained `heightInches` that day;
-     * before it, an accepted height reading had nowhere to go but the unit-less `height` above,
+     * before it, an accepted height reading had nowhere to go but the then-unit-less `height` above,
      * and the server's own carry recorded that a measured tool height "is recorded as nothing".
      *
-     * `height` above is NOT this and is not being replaced: it holds whatever was typed, in a unit
-     * nothing can name. This one only ever holds inches, which is why the column says so.
+     * ── AND SINCE 2026-09-15 IT HAS A PARTNER, WHICH REVERSES WHAT THIS COMMENT USED TO SAY ────
+     *
+     * It read: *"`height` above is NOT this and is not being replaced: it holds whatever was typed,
+     * in a unit nothing can name."* `height` is CENTIMETRES now and the two are one measurement in
+     * two units — the forms fill either from the other, by real conversion, on user input only.
+     * Nothing about the WIRE changed: two keys, two columns, two `Decimal(10,2)`s, same names. What
+     * changed is what a client may infer from one about the other, and the answer is still "nothing,
+     * on load": rows saved before the pairing hold genuinely unrelated numbers in the two columns,
+     * and only a keystroke may convert. `width` ↔ [breadthInches] pair the same way; [lengthInches]
+     * has no centimetre partner and gets no new column.
      */
     val heightInches: Double? = null,
     val thickness: Double? = null,
@@ -1298,8 +1306,11 @@ data class ToolCreateRequest(
      *
      * IT MAY NAME ONLY THOSE THREE. The five boxes directly above — [height], [width], [thickness],
      * [weight], [radius] — are NOT markable, and the server refuses a marker naming one of them by
-     * name rather than dropping it. [height] in particular is the trap: it is a second, unit-less
-     * height that no measurement route writes into, which is exactly why `heightInches` exists.
+     * name rather than dropping it. [height] and [width] are the trap, and the pairing of 2026-09-15
+     * made it a slightly different one: a measurement route DOES now reach them, because an accepted
+     * inch reading fills its centimetre partner. It fills it by CONVERSION, which is arithmetic on a
+     * number already recorded and not a second measurement — so the partner carries no method, and
+     * naming it here would be a 422 on the whole save for a claim nobody made.
      */
     val measurementMethods: JsonObject? = null,
     /**
@@ -1325,6 +1336,55 @@ data class ToolCreateRequest(
     val remarks: String? = null,
     val artisanId: String? = null,
     val craftId: String? = null,
+    /**
+     * THE CRAFTS AND ARTISANS THIS TOOL IS LINKED TO, PLURAL — and they are not columns.
+     *
+     * The route pops them off the body and writes `ToolCraft` / `ToolArtisan` rows. `craftId` and
+     * `artisanId` above stay, and the server DERIVES them from element 0 whenever these are present
+     * and non-empty: `craftId := craftIds[0]`, `craftName := ", ".join(names, in this order)`,
+     * `artisanId := artisanIds[0]`. `artisanName` and `place` are NOT derived — the body's values
+     * stand, which is what lets a researcher's hand correction to either box survive a save.
+     *
+     * ORDER IS THE CONTRACT, which is why the form holds a `List` and not a `Set`. The server keeps
+     * the order it is sent and makes it readable back through `craftName`; a set's iteration order
+     * would make "the first craft" — the one every existing filter reads — whichever one the
+     * hashing happened to put first.
+     *
+     * `artisanIds` is spelled exactly as [ToolArtisanAssignRequest.artisanIds] and as
+     * [WorkshopCreateRequest.artisanIds] already spell it, because it is the same list of the same
+     * ids meaning the same thing.
+     *
+     * ── NULL MEANS "LEAVE THE LINKS ALONE"; `[]` MEANS "NO LINKS" ────────────────────────────
+     *
+     * NO [EncodeDefault], deliberately, and the reason `maker` carries one does not apply. There the
+     * one edit that could not be saved was the edit BACK to the default, because absent and default
+     * were the same value. Here they are two DIFFERENT instructions and the server refuses to guess:
+     * an absent key leaves the stored rows standing, an empty array deletes them, and an explicit
+     * `null` is a 422 with a field-level message telling the caller to pick one. `ApiClient.json` has
+     * `explicitNulls = false`, so a null here is DROPPED from the encoded body rather than sent — and
+     * that is what makes every one of these safe:
+     *
+     *   · An OUTBOX ENTRY QUEUED BY AN OLDER BUILD has neither key in its stored payload. It decodes
+     *     to null (the default), encodes to nothing, and replays exactly as it does today — no link
+     *     rows on a create, stored links untouched on a correction.
+     *   · A CORRECTION QUEUED BY THIS BUILD carries the lists the designer actually chose, including
+     *     `[]` when they cleared them. The outbox stores what the form built (`offlineFormJson`,
+     *     `encodeDefaults = true`), so a null round-trips through the file as a literal `null`,
+     *     decodes back to null, and is dropped again on the way out. `[]` survives as `[]`.
+     *   · `patchBodyWithClearances` never manufactures a null for either: both are absent from
+     *     `WORKSHOP_LINK_KEYS` and from `Offline.REFERENCE_FIELD_NOUNS`, and neither belongs in
+     *     those — they are not foreign-key columns and the sentence about a dangling reference is
+     *     already carried by `craftId` / `artisanId`, which the form sends beside them.
+     *
+     * ── DEPLOY ORDER ────────────────────────────────────────────────────────────────────────
+     *
+     * The server's `ToolCreate` / `ToolUpdate` are `extra="forbid"`, so an APK that sends these to a
+     * deployment that has not taken them yet is refused with `extra_forbidden` — a 422, which this
+     * outbox will not re-queue. The API must be deployed before this build reaches a handset, the
+     * same ordering [WorkshopCreateRequest.clientKey] records for the same reason.
+     */
+    val craftIds: List<String>? = null,
+    val artisanIds: List<String>? = null,
     val workshopId: String? = null,
     /** The design & prototype workshop this record is filed under. See [ArtisanCreateRequest]. */
     val designWorkshopId: String? = null,
@@ -1714,6 +1774,47 @@ data class ProductDetailDto(
     val extraMetadata: JsonObject? = null
 )
 
+/**
+ * One row of `ToolCraft` — the join table that lets a documented tool cover SEVERAL crafts.
+ *
+ * ── WHY THE TABLE EXISTS BESIDE `craftId` RATHER THAN INSTEAD OF IT ───────────────────────────
+ *
+ * `ToolDocumentation.craftId` and `.craftName` are not retired and are not going to be: every
+ * existing filter, index, report, carry-forward and data-browser branch reads that column. It holds
+ * the FIRST of the selected crafts and `craftName` holds every selected name joined ", " in link
+ * order; this list holds all of them. A client that only knows the scalar therefore keeps working
+ * and keeps seeing something true, which is the whole compatibility story of the change.
+ *
+ * [craft] is the embedded record, sent with the link by the same read that fills the form. It is
+ * what lets the tool form draw an honest row for a craft the register could not list — see
+ * `ui/RecordPickers.offPageLinkRow`, which falls back to an anonymous sentence only when this is
+ * null. Nullable because an older server, or a craft deleted since the save, may not carry one.
+ */
+@Serializable
+data class ToolCraftLinkDto(
+    val craftId: String,
+    val craft: CraftDto? = null
+)
+
+/**
+ * One row of `ToolArtisan` — the join table that has always existed and that this client had never
+ * read.
+ *
+ * `GET /tools/{id}/artisans` returns the same set as a flat artisan list, and that route is what the
+ * assignment screen uses. This DTO is for the tool FORM, which needs the links as they arrive with
+ * the record rather than as a second request: an edit opened with no signal has the record from the
+ * offline cache and no opportunity to ask again.
+ *
+ * `tool.artisanId` / `.artisanName` / `.place` keep the FIRST selected artisan's details, exactly as
+ * `craftId` keeps the first craft — and unlike `craftName`, the name and place are NOT re-derived by
+ * the server from this list, so a researcher's hand correction to either box survives a save.
+ */
+@Serializable
+data class ToolArtisanLinkDto(
+    val artisanId: String,
+    val artisan: ArtisanDto? = null
+)
+
 @Serializable
 data class ToolDetailDto(
     val id: String,
@@ -1744,6 +1845,39 @@ data class ToolDetailDto(
     val remarks: String? = null,
     val artisanId: String? = null,
     val craftId: String? = null,
+    /**
+     * EVERY craft and artisan this tool is linked to, in the server's own order.
+     *
+     * ── EMPTY IS A REAL ANSWER AND MUST NOT BE READ AS "USE THE SCALAR" ──────────────────────
+     *
+     * The routes send both keys on every tool, always present and never null, so an empty list means
+     * this tool has no link rows. Three things produce one and all three are ordinary: a record
+     * saved before the join table existed and never re-saved since (the migration backfills
+     * `craftLinks` from `craftId`, so this is rarer for crafts than for artisans), a record created
+     * from an outbox entry queued by a build that had never heard of these keys, and a tool that
+     * genuinely names no craft.
+     *
+     * ── SO THE TOOL FORM SEEDS THE SCALAR FIRST AND THEN THESE, WHICH IS NOT THE SAME THING ──
+     *
+     * THIS PARAGRAPH SAID THE OPPOSITE UNTIL 2026-09-16 and is replaced rather than deleted, because
+     * the reasoning in it was half right and the half that was wrong cost a record: *"The tool form
+     * therefore seeds its multi-selects from these lists and falls back to `craftId`/`artisanId`
+     * when they are empty — never the other way round. Reading the scalar FIRST would throw away the
+     * second and third selected craft of every multi-craft tool."* Reading the scalar INSTEAD OF
+     * these lists would throw those away. Reading it first and then appending them, deduplicated,
+     * throws nothing away — and it keeps the record's own `artisanId` in the selection, which the
+     * links alone do not: `POST /tools/{id}/artisans` writes `ToolArtisan` rows without it and
+     * `unassign_tool_artisan` deletes one without touching it, so `artisanLinks` routinely does not
+     * contain `artisanId`. Seeded from the links alone, opening such a tool and saving it repointed
+     * `tool.artisanId` at a different artisan while `artisanName` went on naming the old one. See
+     * `ui/RecordPickers.initialLinkIds`, which is the rule and is where a test can reach it.
+     *
+     * Defaulted rather than nullable so a server that predates the keys decodes to the same empty
+     * list a server that has them sends for an unlinked tool. `ApiClient.json` sets
+     * `coerceInputValues`, so an explicit null would land here as the default too.
+     */
+    val craftLinks: List<ToolCraftLinkDto> = emptyList(),
+    val artisanLinks: List<ToolArtisanLinkDto> = emptyList(),
     val workshopId: String? = null,
     /** The design & prototype workshop this record is filed under. See [ArtisanCreateRequest]. */
     val designWorkshopId: String? = null,

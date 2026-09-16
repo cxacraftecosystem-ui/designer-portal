@@ -105,19 +105,38 @@ assertion behind it in ``tests/test_dw_inspector_scope_gate.py``:
 WHO MAY CREATE AN INSPECTION, AND THE HONEST REFUSAL WHEN THEY MAY NOT
 =======================================================================================
 
-**ADMIN ONLY**, and the argument is stronger here than the one that makes the viewers screen
-admin-only. That module's reason is handover — an owner who chooses their own readers leaves their
-workshop's access frozen when they go. This module's reason is the point of the tier:
+**THE OVERSIGHT ASSIGNERS ONLY** — ``require_workshop_assigner`` = ``OVERSIGHT_ASSIGNER_ROLES`` =
+``{MINISTRY_ADMIN, ADMIN, MASTER_ADMIN}`` — and the argument is stronger here than the one that
+makes the viewers screen admin-only. That module's reason is handover — an owner who chooses their
+own readers leaves their workshop's access frozen when they go. This module's reason is the point of
+the tier:
 
     **THE INSPECTED MUST NOT CHOOSE THE INSPECTOR.** If a designer could put somebody on their own
     workshop as its inspector, or take somebody off it, the inspection is worth nothing. That is not
     a workflow preference; it is the entire value of an independent review, and it is why
-    ``replace_inspectors`` is reached only through ``Depends(require_admin)`` and why the workshop's
-    creator gets no say at all — not even a "suggest an inspector" route.
+    ``replace_inspectors`` is reached only through ``Depends(require_workshop_assigner)`` and why
+    the workshop's creator gets no say at all — not even a "suggest an inspector" route.
+
+⚠ **THE GATE WAS ``Depends(require_admin)`` UNTIL 0.0.12 AND THIS MODULE WENT ON SAYING SO IN FOUR
+PLACES.** The three administration routes moved to ``require_workshop_assigner`` on the owner's
+ruling; the argument for the move is written out in full at
+``api/routes/design_workshop_inspections.py`` under "THE TWO DOORS" and is not restated here. What
+matters to a reader of THIS module is that the widening did not touch the invariant above.
+MINISTRY_ADMIN is outside ``INSPECTION_ROLES`` (a frozenset of one, ``{INSPECTOR}``), so a ministry
+administrator may appoint an inspector and can never be one; refusal 2 below still turns away
+anybody already on the workshop; and a REGIONAL_DIRECTOR is still refused outright, because
+``OVERSIGHT_ASSIGNER_ROLES`` excludes them for the same reason one rung up — the supervised must not
+choose the supervisor.
+
+The stale sentences were worth correcting rather than leaving as a nit, because this is the module
+somebody opens to AUDIT that gate. Read as written, an auditor either signs off on a widening they
+never actually reviewed, or "restores" ``require_admin`` on the routes to match the documentation —
+silently taking the inspector panel on /officers away from the tier the owner had just given it to.
 
 Two refusals follow from it, and both are enforced rather than documented:
 
-1. A non-admin calling the administration routes gets a 403 from ``require_admin``.
+1. An account outside ``OVERSIGHT_ASSIGNER_ROLES`` calling the administration routes gets a 403 from
+   ``require_workshop_assigner``.
 2. **An account that is on the workshop cannot inspect it.** The creator, and anybody holding a
    ``DesignWorkshopViewer`` row for the same workshop, is refused by name — see
    :func:`_assert_every_id_may_inspect`. Today the role sets make that nearly unreachable
@@ -452,8 +471,11 @@ async def replace_inspectors(
 ) -> list[dict[str, Any]]:
     """Make the inspection set for this workshop exactly ``user_ids``, and answer with it.
 
-    ADMIN ONLY, enforced by the route. The inspected must not choose the inspector — see the module
-    docstring for why that is the whole value of the tier and not a workflow preference.
+    THE OVERSIGHT ASSIGNERS ONLY (``require_workshop_assigner`` =
+    ``{MINISTRY_ADMIN, ADMIN, MASTER_ADMIN}``), enforced by the route — it was ``require_admin``
+    until 0.0.12. The inspected must not choose the inspector — see the module docstring for why
+    that is the whole value of the tier and not a workflow preference, and why widening the gate to
+    the tier that appoints a workshop's designer and its two officers did not weaken it.
 
     VALIDATION RUNS TO COMPLETION BEFORE ANY WRITE. One bad id refuses the whole call rather than
     applying the good half: an admin who named two inspectors and is shown one has been told nothing

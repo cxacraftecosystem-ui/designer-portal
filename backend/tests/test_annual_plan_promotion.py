@@ -494,7 +494,31 @@ def world():
             # repeatable and a shared row would make this module order-dependent.
             for key in ("plain", "twice", "withdraw_refused"):
                 entries[key] = await entry()
-            entries["boundary"] = await entry(**BOUNDARY)
+            # ⚠ THE ONE ROW IN THIS MODULE WHOSE `workshopNo` IS NOT RANDOM, AND WHY IT IS STAMPED
+            # HERE RATHER THAN IN `BOUNDARY`.
+            #
+            # Every other row gets `DPW/2099/<uuid>`; this one takes `BOUNDARY`'s literal `"w" * 60`,
+            # because sixty IS the assertion — these tests exist to catch a cap that is wrong only at
+            # the boundary, and a short string passes with every cap wrong. But a LITERAL is unique
+            # exactly once: `@@unique([planYear, workshopNoKey])` means the first run of this module
+            # against a persistent database stores `WWW…W`, and every run afterwards dies in the
+            # fixture with a UniqueViolationError before a single test body is reached — nine errors
+            # whose message says nothing about the boundary and everything about the constraint.
+            #
+            # That is not hypothetical and it is not old: it went unseen because the local Postgres
+            # was stopped, so this module had NEVER RUN TWICE. The day the container came back it
+            # passed once and then failed nine times, which reads exactly like a regression and is
+            # not one.
+            #
+            # So the length is kept and the tail is made the module's own: 52 w's plus the 8-hex
+            # stamp is still exactly sixty characters, so the boundary is unchanged and the row is
+            # new on every run. Keep the arithmetic if you edit either half.
+            stamped_boundary = {**BOUNDARY, "workshopNo": ("w" * 52) + stamp}
+            assert len(stamped_boundary["workshopNo"]) == len(BOUNDARY["workshopNo"]), (
+                "the boundary row must stay exactly as long as BOUNDARY declares — that length is "
+                "the assertion these tests exist to make"
+            )
+            entries["boundary"] = await entry(**stamped_boundary)
             entries["withdrawn"] = await entry(withdrawnAt=datetime.now(UTC))
 
             # The rows whose promotion has to be read back out of the tables afterwards.

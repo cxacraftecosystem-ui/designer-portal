@@ -373,6 +373,20 @@ def workshop_summary(record: Any) -> dict[str, Any]:
     being named here. That is deliberate — the row carries columns no client has any business reading —
     and it is also the trap: a column added to ``schema.prisma`` and not to this dict is invisible on
     every surface, and looks from the outside exactly like a column that is never written.
+
+    ── WHERE THIS WORKSHOP CAME FROM IS NOT IN HERE, AND THAT IS THE RULE RATHER THAN AN OMISSION ──
+
+    The ministry's registers point AT a workshop — the row that opened it, the order that authorised
+    it — and since 2026-09-16 the single-record read hands the reverse direction back, under
+    ``sanctionOrder``, to a reader who keeps that register. It is not in this dict and must not move
+    into it, for the reason the consent block at the foot of this dict gives about
+    ``dictationConsentByName`` and ``reviewNotes`` repeats about ``inspectionFeedback``: this
+    function is serialised ONCE PER ROW by the paged list, and a register lookup here
+    would be a query per workshop to print something no list shows. It is also per-READER, and this
+    dict takes no user — a payload that varied by caller would have to, and every list row would then
+    be paying for a gate decision as well as a query. ``api/routes/design_workshops._register_provenance``
+    is the whole of it, in the single read, and the keys it adds are refused by name in
+    ``_NEVER_PATCHABLE`` beside it so that a form hydrating from that read is told what they are.
     """
     return {
         "id": record.id,
@@ -2084,6 +2098,17 @@ REFERENCE_MODELS: dict[str, ReferenceModel] = {
             "yearsInUse": r.yearsInUse,
             "maker": _translated(_MAKER_TYPE_TO_MAKER, r.maker),
             "traditionType": _translated(_TRADITION_TYPE_TO_TRADITION, r.traditionType),
+            # EVERY LINKED CRAFT, NOT ONE, SINCE 2026-09-15 — and this is the only place the whole
+            # selection reaches a workshop. A tool may now be linked to several crafts (`ToolCraft`,
+            # migration 20260915100000): `craftId` keeps the FIRST of them for every filter and index
+            # that reads it, and `craftName` is written by `routes/tools._resolve_craft_links` as
+            # every linked craft's name joined ", " in link order. So this line carries the joined
+            # string and needs no change to do it — which is exactly why it gets a comment instead of
+            # an edit. A future reader tempted to "fix" a multi-craft tool's box by splitting on the
+            # comma would be re-deriving a list the server already flattened on purpose, and would
+            # then have to decide what `craftId` means beside it. `RELATION_LEDGER` in
+            # `tests/test_reference_carry.py` records the same decision from the relation's side:
+            # `craftLinks` crosses BY VALUE, through this string, and its ids never cross.
             "craftName": r.craftName,
             "place": r.place,
             "artisanName": r.artisanName,
@@ -2103,14 +2128,50 @@ REFERENCE_MODELS: dict[str, ReferenceModel] = {
             # `ToolDocumentation` also has a separate unitless `width` column and collapsing the
             # two into one "width" would silently merge two different measurements.
             #
-            # `height`, `width`, `thickness`, `weight` and `radius` DECLARE NOTHING. The Prisma
-            # columns carry no unit suffix, the form's labels are the bare words "Height",
-            # "Weight", "Radius", and the record sheet prints them bare too. Nobody knows whether
-            # a 12 is inches, centimetres or kilograms. So they are carried into fields that make
-            # the same claim the source makes — none — rather than into a box labelled "cm" that
-            # would turn an unknown unit into a stated wrong one. Inventing a unit is the failure
-            # `_inches_to_cm` exists to prevent, and guessing one is the same failure with a
-            # shrug in front of it.
+            # `thickness`, `weight` and `radius` DECLARE NOTHING. The Prisma columns carry no unit
+            # suffix, the form's labels are the bare words "Thickness", "Weight", "Radius", and the
+            # record sheet prints them bare too. Nobody knows whether a 12 is inches, centimetres or
+            # kilograms. So they are carried into fields that make the same claim the source makes —
+            # none — rather than into a box labelled "cm" that would turn an unknown unit into a
+            # stated wrong one. Inventing a unit is the failure `_inches_to_cm` exists to prevent,
+            # and guessing one is the same failure with a shrug in front of it.
+            #
+            # THIS SENTENCE NAMED FIVE COLUMNS AND NOW NAMES THREE, and the two that left are
+            # `height` and `width`. The clause it leaned on — "the form's labels are the bare words"
+            # — stopped being true of them when the centimetre pairing shipped: all four clients now
+            # label those boxes "Height (cm)" and "Width (cm)", each paired with an inch box that
+            # fills it. A row saved since then holds centimetres. THE CARRY IS UNCHANGED ANYWAY, and
+            # deliberately: nothing rewrote the values already in those columns, so an older row
+            # still holds a number in an unknown unit and `heightAsRecorded`/`widthAsRecorded` are
+            # still the only honest destination for both kinds. What changed is the help text those
+            # two boxes carry — see `stage_definitions`, where the unit is now explained per row
+            # rather than denied outright.
+            #
+            # AND THEY NOW DUPLICATE THE CONVERTED FIGURES FOR ANY ROW SAVED SINCE THE PAIRING —
+            # BOTH OF THEM, WHICH IS TWO OF THE THREE CONVERTED KEYS AND NOT ONE:
+            #
+            #     `heightCm`  (from `heightInches`)  ==  `heightAsRecorded` (from `height`)
+            #     `breadthCm` (from `breadthInches`) ==  `widthAsRecorded`  (from `width`)
+            #
+            # Those are the two pairs `components/forms/dimensionUnits.ts` binds — "Height (cm)" to
+            # "Height (inches)", "Width (cm)" to "Breadth (inches)" — and the key rename across the
+            # second one (`breadth` on the inch side, `width` on the centimetre side) is exactly why
+            # it reads as two unrelated measurements here and is not. `lengthCm` is NOT affected and
+            # is the reason this is a list rather than a sentence: `lengthInches` is standalone, the
+            # tool has no plain `length` column, and so the third converted figure has no twin to
+            # disagree with.
+            #
+            # HOW FAR APART THE TWO HALVES OF A PAIR CAN BE: ONE HUNDREDTH, MEASURED RATHER THAN
+            # REASONED ABOUT — every hundredth of a centimetre from 0.01 to 2000.00 through
+            # `inchesTextFromCm` and back through `_inches_to_cm` diverges by at most 0.01. It is not
+            # only the two halfway rules (`floor(v * 2.54 * 100 + 0.5)` on the clients, Python's
+            # banker's `round(v * 2.54, 2)` here); it is mostly the ROUND TRIP, because the inch box
+            # holds two decimals too. 10 cm is stored as 3.94 in and comes back out of `heightCm` as
+            # 10.01.
+            #
+            # Said to the designer over `heightAsRecorded` in `stage_definitions`; retiring either
+            # duplicate — or remapping the "(as recorded)" box onto the converted one — is a
+            # schema-version change with its own blast radius and is not this note's to make.
             #
             # WHAT CROSSES WITH THE THREE CONVERTED NUMBERS: see the same note on
             # `ProductDocumentation` above. Their METHOD does, now, in `measurementMethodNote` below;
@@ -2121,8 +2182,9 @@ REFERENCE_MODELS: dict[str, ReferenceModel] = {
             # `measurement_provenance.DIMENSION_FIELDS` is `{lengthInches, breadthInches,
             # heightInches}`, so `method_stamps` drops a marker naming `height`, `width`,
             # `thickness`, `weight` or `radius` and nothing ever writes a stamp for them. These
-            # five therefore state neither their unit nor their method, and the second silence is
-            # the record's, not this carry's. They are the five keys carried below — `heightAsRecorded`,
+            # five therefore carry no method, and that silence is the record's, not this carry's.
+            # (Their UNIT silence is now only three deep — see the paragraph above.) They are the
+            # five keys carried below — `heightAsRecorded`,
             # `widthAsRecorded`, `thicknessAsRecorded`, `weightAsRecorded`, `radiusAsRecorded` —
             # counted off those five lines. The note above `_METHOD_CARRIED_DIMENSIONS` says FIVE
             # of the same columns, and so does the help text on the tool's `measurementMethodNote`

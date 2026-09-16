@@ -8,22 +8,41 @@ import type { GuideTrack } from "@/components/guide/tracks";
 import { useAppReducedMotion } from "@/components/guide/useAppReducedMotion";
 
 /**
- * WHICH WALKTHROUGH — the control that makes the role-chosen deck a default rather than a gate.
+ * WHICH WALKTHROUGH — the control that moves between the decks an account may read.
  *
- * ── WHY IT EXISTS AT ALL, GIVEN THE ROLE ALREADY ANSWERED ───────────────────────────────────────
+ * ── WHO SEES IT, AND WHY THAT IS NOT EVERYBODY ANY MORE — 2026-09-16 ────────────────────────────
  *
- * Because `/guide` is deliberately ungated, and the reason is written out at length in
- * `steps.ts`: the walkthrough teaches the process to people who have not earned the capability yet.
- * That argument does not stop applying once there are three decks — it applies three times over. A
- * designer whose workshop is about to be read back by an Inspector / Reviewer has every reason to
- * read what that person is looking at; a researcher hoping to be empanelled has every reason to
- * read the designer's deck; an Assistant Director has every reason to know what the designer they
- * just named is being asked to do. Choosing a deck FOR somebody and then hiding the other two would
- * convert an ungated teaching surface into a per-role one, which is a narrowing, and this repository
- * does not narrow a teaching surface to match a capability.
+ * The page renders this only when `guideTracksFor(user)` returns more than one deck, which today
+ * means an ADMIN or a MASTER ADMIN and nobody else. Every other tier is scoped to the single deck
+ * its role owns and never meets this panel. The owner ruled on 2026-09-16 that "except for admins
+ * and master admins, the walkthrough that the people get to see should be the ones that are relevant
+ * to their roles"; `components/guide/tracks.ts` carries the ruling, the tier-by-tier map and the
+ * record of which tiers have no deck written for them.
  *
- * So: the role decides which deck OPENS (`guideTrackFor`), and this control reaches all three,
- * always, for everybody.
+ * ⚠ WHAT THIS HEADER ARGUED UNTIL THEN, KEPT BECAUSE THE REVERSAL IS A PRODUCT DECISION RATHER THAN
+ * A CORRECTION. It read: "Because `/guide` is deliberately ungated … the walkthrough teaches the
+ * process to people who have not earned the capability yet. That argument does not stop applying
+ * once there are three decks — it applies three times over. A designer whose workshop is about to be
+ * read back by an Inspector / Reviewer has every reason to read what that person is looking at; a
+ * researcher hoping to be empanelled has every reason to read the designer's deck; an Assistant
+ * Director has every reason to know what the designer they just named is being asked to do. Choosing
+ * a deck FOR somebody and then hiding the other two would convert an ungated teaching surface into a
+ * per-role one, which is a narrowing, and this repository does not narrow a teaching surface to match
+ * a capability." That reasoning was not found to be wrong; it was overruled. It is left here because
+ * the day somebody proposes putting the other decks back, this is the argument they are making, and
+ * it deserves to be read in its own words rather than reconstructed.
+ *
+ * The half of it that still binds, and is not the switcher's to give away: `/guide` stays out of
+ * `ROUTE_GUARDS` and its nav entry stays `can: everyone`. The scoping is about WHICH DECK, never
+ * about whether the page opens.
+ *
+ * ── THIS COMPONENT IS NOT THE GATE AND MUST NOT BECOME ONE ──────────────────────────────────────
+ *
+ * It renders whatever `tracks` it is handed and knows nothing about the reader. The page decides,
+ * once, and also clamps the ACTIVE deck to the same list — so a second gate in here would be a
+ * second copy of a permission rule, which is the failure this repository has paid for repeatedly.
+ * Hand it the whole of `GUIDE_TRACKS` again and the buttons come back; the page is the one place
+ * that stops that.
  *
  * ── IT IS NOT IN THE RAIL, AND THAT IS ARITHMETIC RATHER THAN TASTE ─────────────────────────────
  *
@@ -80,13 +99,41 @@ export function GuideTrackSwitch({
       <motion.p variants={riseItem(reduce, 8)} className="mt-1 text-xs leading-5 text-ink-500">
         {/*
           The sentence says the mechanism out loud, because a page that silently re-shapes itself per
-          account is a page two colleagues cannot compare notes about. "Opened on" rather than "is
-          for": what the role decided is which one you are looking at, not which one you may read.
+          account is a page two colleagues cannot compare notes about — and it now has MORE to say
+          out loud, not less: the reader of this panel is holding a view of the product that their
+          colleagues do not have, and nothing else on the page would tell them so.
+
+          ⚠ IT SAID THE OPPOSITE UNTIL 2026-09-16 — "This one opened on the deck that matches your
+          access. All three are readable by anybody — the screens each teaches are not." — and that
+          second sentence became false for nine of the eleven tiers on the day the decks were scoped.
+          It is the only place on screen where the old rule was written down, which is exactly why a
+          product reversal has to reach the copy and not only the code.
+
+          AND IT NAMES THE EXCEPTION RATHER THAN LEAVING IT AT "YOUR ACCESS". A reader of this panel
+          is an admin; "you see all three because of your access" tells them nothing they can act on,
+          while "an admin account is not scoped to one" tells them what every colleague is looking at
+          instead. It states no count either — `tracks.length` is what the buttons below already say,
+          and a number typed here is the "Ten steps" defect in a smaller font.
         */}
-        This one opened on the deck that matches your access. All three are readable by anybody — the
-        screens each teaches are not.
+        This one opened on the deck that matches your access, and you can read the others because an
+        admin account is not scoped to one. Every other tier sees only the walkthrough that matches
+        its own role.
       </motion.p>
 
+      {/*
+        ⚠ `sm:grid-cols-3` IS HARDCODED AND THE PAGE ONLY EVER HANDS THIS PANEL 1 DECK OR 3. At one
+        it is not rendered at all (the page's own condition), and at three the row is full; the two
+        cases the literal serves are the only two that occur. A future audience granted exactly two
+        decks would get a three-column row with a hole in it — noted rather than built for, because
+        `grid-cols-${n}` cannot be a concatenated Tailwind class (the content globs never see it) and
+        a length-to-class map written today for an audience that does not exist is a second rule to
+        keep in step with `guideTracksFor`. Whoever grants that audience changes this line.
+
+        AND THE KEY HERE IS CORRECT AS IT STANDS. It is inside a `.map()` over one list, where a key
+        is unique among the siblings it is a key for. The duplicate-key defect fixed on 2026-09-16
+        was two `key={track.id}` SIBLINGS in the page's fragment, not this — see the comment beside
+        `<GuideHero>` in `app/(protected)/guide/page.tsx` before "tidying" anything here.
+      */}
       <motion.div variants={staggerParent(reduce, 0.04)} className="mt-4 grid gap-2.5 sm:grid-cols-3">
         {tracks.map((track) => {
           const selected = track.id === active.id;

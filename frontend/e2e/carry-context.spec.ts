@@ -39,6 +39,35 @@ async function chooseOption(page: Page, fieldName: string, optionLabel: string |
   await page.getByRole("option", { name: optionLabel }).first().dispatchEvent("click");
 }
 
+/**
+ * THE TOOL FORM'S LINK PICKERS ARE MULTI-SELECTS — found by their GROUP, not by a hidden input.
+ *
+ * `ToolForm`'s "Linked crafts" and "Linked artisans" became `MultiSelectDropdown`s on 2026-09-15,
+ * and a multi-select submits nothing through `FormData`: the ids are React state that the payload
+ * reads directly. So there is no `input[name="craftId"]` to hang a selector off, and the wrapper is
+ * `FieldBlock` (a `<div role="group">`) rather than `Field` (a `<label>`) — which is also why the
+ * group has an accessible name to find it by.
+ *
+ * A tick applies IMMEDIATELY (`onChange` fires per toggle; Confirm only closes the panel), so this
+ * leaves the panel open exactly as `chooseOption` does.
+ */
+async function tickOption(page: Page, groupLabel: string, optionLabel: string) {
+  await page.getByRole("group", { name: groupLabel }).locator("button[data-searchable-select]").click();
+  // `exact: false`, because an artisan row's accessible name is its LABEL PLUS ITS HINT — the name
+  // and then the place, which is what makes the picker searchable on a village. An exact match on
+  // the name alone would find nothing, and spelling the pair out here would pin a separator this
+  // spec has no business knowing about.
+  await page.getByRole("option", { name: optionLabel, exact: false }).first().dispatchEvent("click");
+  // Close the panel before the next control is reached: the popover is portalled to <body> and the
+  // next trigger would otherwise be under it.
+  await page.keyboard.press("Escape");
+}
+
+/** What the tool form's linked-artisan trigger reads back — "N selected" plus the names, sr-only. */
+function toolArtisanTrigger(page: Page) {
+  return page.getByRole("group", { name: "Linked artisans (fills artisan + place)" }).locator("button[data-searchable-select]");
+}
+
 /** Two real artisans of the same craft: one to carry, one to switch to. */
 async function twoArtisans(page: Page): Promise<[ArtisanRow, ArtisanRow]> {
   // Read through the app's own origin and token rather than a second config: whatever API the
@@ -99,7 +128,11 @@ test.describe("Carry-forward artisan context", () => {
     await expect(banner).toContainText(/you documented/);
     await expect(page.locator('input[name="artisanName"]')).toHaveValue(first.name);
     await expect(page.locator('input[name="place"]')).toHaveValue(first.place);
-    await expect(page.locator('input[name="artisanId"]')).toHaveValue(first.id);
+    // The carried artisan reaches the LINK PICKER too, and the picker is a multi-select now, so the
+    // assertion is what it reads back rather than a hidden input's value — see `tickOption`. One
+    // carried artisan is one tick: the carry bag is singular and stays so.
+    await expect(toolArtisanTrigger(page)).toContainText("1 selected");
+    await expect(toolArtisanTrigger(page)).toContainText(first.name);
 
     // 4. One action clears it, and the fields go with the banner.
     await banner.getByRole("button", { name: "Change" }).click();
@@ -108,8 +141,8 @@ test.describe("Carry-forward artisan context", () => {
     await expect(page.locator('input[name="place"]')).toHaveValue("");
 
     // 5. Choose somebody else, and confirm THAT is what comes back next time.
-    await chooseOption(page, "craftId", second.craft?.name ?? "");
-    await chooseOption(page, "artisanId", `${second.name} · ${second.place}`);
+    await tickOption(page, "Linked crafts (fills craft name)", second.craft?.name ?? "");
+    await tickOption(page, "Linked artisans (fills artisan + place)", second.name);
     await expect(page.locator('input[name="artisanName"]')).toHaveValue(second.name);
     // An explicit pick is the researcher's own choice, so nothing claims to have prefilled it.
     await expect(page.getByRole("status").filter({ hasText: "Continuing with" })).toHaveCount(0);
@@ -306,8 +339,10 @@ test.describe("Carry-forward across record types", () => {
     // Choosing somebody else is a contradiction, not an addition: the product belonged to the
     // artisan being replaced, so keeping it would file it under a person who never made it.
     await page.goto("/tools/new");
-    await chooseOption(page, "craftId", other.craft?.name ?? "");
-    await chooseOption(page, "artisanId", `${other.name} · ${other.place}`);
+    // The tool form's link pickers are multi-selects — see `tickOption`. A tick is still an explicit
+    // pick, which is what retires the banner and re-points the bag at the person chosen.
+    await tickOption(page, "Linked crafts (fills craft name)", other.craft?.name ?? "");
+    await tickOption(page, "Linked artisans (fills artisan + place)", other.name);
 
     await page.goto("/dashboard");
     await page.goto("/processes?new=1");

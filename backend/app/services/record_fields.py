@@ -520,6 +520,18 @@ TOOL = RecordSpec(
         _f("Local name", lambda t: t.localName),
         _f("English name", lambda t: t.englishName),
         _f("Workshop", lambda t: _rel(t, "workshop", "title")),
+        # THE CELL IS SINGULAR AND ITS VALUE MAY NOT BE, AND THAT IS THE CORRECT READING. Since
+        # 2026-09-15 a tool can be linked to several crafts (`ToolCraft`), and `craftName` holds every
+        # linked craft's name joined ", " in link order — written by the server from the link rows, so
+        # the string cannot disagree with them. This cell therefore prints "Bandhani, Block Printing"
+        # for a two-craft tool and nothing here has to change to make that true.
+        #
+        # IT IS NOT SPLIT INTO ONE COLUMN PER CRAFT and it must not be: `sheet_columns` is a FIXED
+        # header row shared by the data browser, the workbook and /export/tools.csv, so a
+        # per-craft column would make the header depend on the rows underneath it. `Artisan` beside it
+        # has had exactly this shape since `ToolArtisan` shipped — it names whoever the record was
+        # first documented against, while `usedByArtisans` in the workshop report names all of them —
+        # and the two boxes are different questions for the same reason.
         _f("Craft", lambda t: t.craftName),
         _f("Artisan", lambda t: t.artisanName),
         _f("Place", lambda t: t.place),
@@ -552,11 +564,28 @@ TOOL = RecordSpec(
         # 2026-08-27 — the product's column, the tool's, and a doc comment above the tool's.
         #
         # THE HEIGHT BELOW IS A DIFFERENT COLUMN FROM THE THIRD NUMBER IN THE CELL ABOVE, which is
-        # why both print and neither is redundant. ``height`` is the OLD unit-less column, kept
-        # because rows already hold values in it and nothing in the database can say what unit those
-        # are in. It is outside ``DIMENSION_FIELDS`` and stays an ordinary typed input, so it prints
-        # bare and carries no method clause, exactly as ``width``/``thickness``/``weight``/``radius``
-        # do.
+        # why both print and neither is redundant. ``height`` is the OLD column, kept because rows
+        # already hold values in it. It is outside ``DIMENSION_FIELDS`` and stays an ordinary typed
+        # input, so it carries no method clause, exactly as
+        # ``width``/``thickness``/``weight``/``radius`` do.
+        #
+        # THIS PARAGRAPH SAID ``height`` IS "the OLD unit-less column … nothing in the database can
+        # say what unit those are in", AND THAT IS NOW TRUE OF OLD ROWS ONLY. The tool form's
+        # centimetre/inch pairing shipped: all four clients label these two boxes "Height (cm)" and
+        # "Width (cm)", each paired with an inch box that fills it (1 in = 2.54 cm), so a tool
+        # documented since then holds centimetres here. Nothing rewrote or converted the values
+        # already in the columns — the form seeds each box from its own column and never converts on
+        # load — so an older row still holds a number in an unknown unit, and the database still
+        # cannot tell a reader which kind it is looking at.
+        #
+        # THE TWO CELLS ARE THEREFORE STILL PRINTED BARE, DELIBERATELY. A submitted document that
+        # said "Height (cm)" over a column holding a pre-pairing figure would state a unit the
+        # record does not have, which is the failure ``stage_definitions``' five "(as recorded)"
+        # boxes exist to refuse, one surface along. Renaming these labels is part of the
+        # cross-client label change (all four clients, both walkthrough registers, this file, in ONE
+        # commit) and needs the older rows answered for first — it is not a cell that can be
+        # relabelled here alone. Re-check the client half with
+        # ``grep -n "Height (cm)" frontend/components/forms/ToolForm.tsx``.
         _f("Height", lambda t: num(t.height)),
         _f("Width", lambda t: num(t.width)),
         _f("Thickness", lambda t: num(t.thickness)),

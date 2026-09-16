@@ -22,6 +22,7 @@
 """
 
 import os
+import socket
 import sys
 from ipaddress import ip_address
 from pathlib import Path
@@ -214,14 +215,75 @@ def is_local_dsn(url: str) -> bool:
         return False
 
 
-#: Whether this run may create and destroy rows.
+#: Whether this run is POINTED AT a database it may create and destroy rows in.
+#:
+#: This answers "am I allowed to write here", which is a question about the DSN's SHAPE. It says
+#: nothing about whether anything is actually listening — see ``DATABASE_REACHABLE`` below, and the
+#: afternoon that distinction cost.
 HAS_LOCAL_DATABASE = is_local_dsn(DATABASE_URL)
+
+
+def database_is_listening(url: str, timeout: float = 1.0) -> bool:
+    """Is anything actually accepting connections at this DSN's host and port?
+
+    ── WHY A REACHABILITY PROBE EARNS ITS PLACE BESIDE A SHAPE CHECK ──────────────────────────────
+    ``is_local_dsn`` asks "may I write here"; this asks "is it there". They were one question in
+    this file until a run proved they are not: ``.env`` pointed at 127.0.0.1:55442, the compose
+    stack publishes ``${POSTGRES_HOST_PORT:-55432}``, and Docker was not running at all. The DSN was
+    loopback, so ``HAS_LOCAL_DATABASE`` was True, so the header announced "database-backed tests
+    WILL run" — and then every one of them spent about NINETY-SEVEN SECONDS reaching a TCP connect
+    timeout before erroring. Eleven tests took seventeen minutes; the ~800 database-backed tests in
+    this suite would have taken the better part of a day to report, one connection refusal at a
+    time, under a header that said they were running.
+
+    A suite that cannot reach its database must say so ONCE, in a sentence naming the port and the
+    remedy, and skip. It must never discover the same absence eight hundred times.
+
+    ── ONE CONNECT, LOOPBACK ONLY, ONE SECOND ────────────────────────────────────────────────────
+    Called once at import, never per test. Guarded to loopback by its only caller, and that is not
+    an optimisation: a probe is a connection, and this file's whole posture is that the suite does
+    not touch a database it was not invited into. A remote DSN is refused by shape before it ever
+    reaches here, and nothing in this module may open a socket to one.
+
+    One second, because a local port either answers at once or is not there — the failure this
+    exists to catch is a closed port, which loopback reports immediately, not a slow one. It fails
+    CLOSED in the same direction as everything else here: anything it cannot parse or connect to
+    reads as "not available", and the tests skip with a sentence rather than hang.
+    """
+    # ``urlsplit`` and not ``urlparse``, matching ``is_local_dsn`` above — the two must agree about
+    # what the host of a DSN is, or the gate and the probe could disagree about which machine they
+    # are talking about, which is the one way this pair could be worse than either alone.
+    parsed = urlsplit(url)
+    try:
+        host, port = parsed.hostname, parsed.port
+    except ValueError:  # a malformed port is not a database anybody can reach
+        return False
+    if not host:
+        return False
+    try:
+        with socket.create_connection((host, port or 5432), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+#: Whether this run may create and destroy rows AND has somewhere to do it.
+#:
+#: The probe runs only for a DSN that already passed the shape gate, so a remote or absent DSN is
+#: never connected to — it short-circuits to False on ``HAS_LOCAL_DATABASE`` alone.
+DATABASE_REACHABLE = HAS_LOCAL_DATABASE and database_is_listening(DATABASE_URL)
 
 #: Mark a test (or a module, via ``pytestmark``) that cannot run without Postgres.
 #: Prefer this over a hand-rolled ``os.environ`` read: ``from conftest import needs_db``.
+#:
+#: Keyed on REACHABILITY and not merely on shape, so "the database is not running" is a skip with a
+#: reason rather than eight hundred connect timeouts.
 needs_db = pytest.mark.skipif(
-    not HAS_LOCAL_DATABASE,
-    reason="needs a LOCAL database; refuses to run against a remote DATABASE_URL",
+    not DATABASE_REACHABLE,
+    reason=(
+        "needs a LOCAL database that is actually running; refuses a remote DATABASE_URL, and skips "
+        "when nothing is listening at the configured host and port"
+    ),
 )
 
 
@@ -352,8 +414,19 @@ def _remote_database_refusal_stays_armed() -> None:
 
 def _gate_sentence() -> str:
     """The one sentence both reporting hooks below print. Written once so they cannot drift apart."""
-    if HAS_LOCAL_DATABASE:
+    if DATABASE_REACHABLE:
         return "database: local DSN resolved — database-backed tests WILL run"
+    if HAS_LOCAL_DATABASE:
+        # The branch that did not exist, and whose absence turned a stopped container into a day.
+        # It names the host, the port and the remedy, because "will SKIP" on its own sends somebody
+        # looking at the gate logic above instead of at Docker.
+        parsed = urlsplit(DATABASE_URL)
+        where = f"{parsed.hostname}:{parsed.port or 5432}"
+        return (
+            f"database: NOTHING IS LISTENING on {where} — database-backed tests will SKIP. "
+            "Start it with `docker compose up -d postgres` from the repository root, and check "
+            "POSTGRES_HOST_PORT matches the port in backend/.env."
+        )
     if DATABASE_URL:
         return "database: DSN is not local — database-backed tests will SKIP (by design)"
     return "database: none configured — database-backed tests will SKIP (by design)"

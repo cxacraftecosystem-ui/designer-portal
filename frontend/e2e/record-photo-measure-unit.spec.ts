@@ -373,10 +373,13 @@ for (const [name, path, keys] of [
       migration) and `ToolCreate` / `ToolUpdate` declare it, so the tool panel proposes into the
       inches column now and the note has nothing left to disclose.
 
-      THE PLAIN `height` BOX IS STILL ON THE TOOL FORM and still saves — it is not migrated, it
-      holds what people typed in a unit nothing can name. What it must no longer be is a MACHINE
-      destination, because it is not in `DIMENSION_FIELDS` and a reading accepted into it is recorded
-      as having no method at all. That is what the two ToolForm assertions below hold shut.
+      THE `height` BOX IS STILL ON THE TOOL FORM and still saves. This paragraph said it "holds what
+      people typed in a unit nothing can name", and on 2026-09-15 that stopped being true: it is the
+      CENTIMETRE half of `heightInches`, labelled "Height (cm)", and an accepted inch reading now
+      fills it as a CONVERSION. What it must still never be is a MACHINE destination in its own
+      right, because it is not in `DIMENSION_FIELDS` and a reading accepted INTO it would be recorded
+      as having no method at all — so the marker names the inch box and the centimetre box carries no
+      provenance. That is what the ToolForm assertions below hold shut.
       Re-check: `grep -n heightInches backend/prisma/schema.prisma backend/app/schemas/records.py`.
     */
     const source = read(path);
@@ -445,21 +448,45 @@ for (const [name, path, keys] of [
       "rememberAcceptance(current, key, text, method)"
     );
     // And every one of the three boxes forgets its acceptance when a person types in it, through the
-    // one handler that does both — see `typeInto` in each form for why it is a factory.
+    // one handler that does both — see the typing factory in each form for why it is a factory.
     expect(source, "the typing handler forgets the acceptance").toContain("forgetAcceptance(current, key)");
+    /*
+      ── THE TOOL FORM'S HANDLER GAINED A THIRD ARGUMENT ON 2026-09-15, AND A NEW NAME WITH IT ─────
+      `ToolDocumentation.height` and `.width` became the CENTIMETRE halves of `heightInches` and
+      `breadthInches`, so the inch boxes now write their centimetre partner as well as forgetting the
+      acceptance — hence `typeInches(setBreadth, "breadthInches", setWidth)`. `lengthInches` still
+      passes two arguments, because it is standalone and has no centimetre column.
+
+      `ProductForm` is untouched and still calls `typeInto` with two: it has no centimetre columns at
+      all. The regex is therefore per-form rather than shared, and the partner argument is asserted
+      rather than merely allowed — a pairing that silently stopped writing its partner would leave
+      the two columns disagreeing with nothing on screen to say so.
+    */
+    const handler = name === "ToolForm" ? "typeInches" : "typeInto";
+    const partners: Record<string, string> = { breadthInches: "setWidth", heightInches: "setHeight" };
     for (const key of keys) {
-      expect(source, `${key} is wired through it`).toMatch(new RegExp(`onChange=\\{typeInto\\(set\\w+, "${key}"\\)\\}`));
+      const partner = name === "ToolForm" ? partners[key] : undefined;
+      const tail = partner ? `, ${partner}` : "";
+      expect(source, `${key} is wired through it`).toMatch(
+        new RegExp(`onChange=\\{${handler}\\(set\\w+, "${key}"${tail}\\)\\}`)
+      );
     }
     if (name === "ToolForm") {
-      // The unit-less `height` is not in `DIMENSION_FIELDS`; a marker naming it is a REJECTED SAVE,
-      // not a dropped hint. `"heightInches"` does not match `"height"` — the closing quote separates
-      // them — so this is an exact test for the legacy box and not a prefix match on the new one.
-      expect(source, "the legacy height column never records an acceptance").not.toMatch(
+      // The centimetre columns are not in `DIMENSION_FIELDS`; a marker naming one is a REJECTED
+      // SAVE, not a dropped hint. `"heightInches"` does not match `"height"` — the closing quote
+      // separates them — so this is an exact test for the centimetre box, not a prefix match.
+      expect(source, "the centimetre height column never records an acceptance").not.toMatch(
         /rememberAcceptance\(current, "height"[,)]/
       );
-      expect(source, "and is not wired through the forgetting handler either").not.toMatch(
-        /typeInto\(set\w+, "height"\)/
+      expect(source, "nor the centimetre width column").not.toMatch(/rememberAcceptance\(current, "width"[,)]/);
+      expect(source, "and neither is wired through the forgetting handler").not.toMatch(
+        /typeInches\(set\w+, "(height|width)"[,)]/
       );
+      // The centimetre boxes have their own factory, which forgets nothing because there is nothing
+      // to forget — and they are wired through it rather than through a bare inline setter, so the
+      // partner write can never be dropped by an edit that only meant to change the state setter.
+      expect(source, "the centimetre boxes write their inch partner").toContain("typeCm(setHeight, setHeightInches)");
+      expect(source).toContain("typeCm(setWidth, setBreadth)");
     }
   });
 }

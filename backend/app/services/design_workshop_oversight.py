@@ -5,13 +5,25 @@ ASSISTANT_DIRECTOR (42), REGIONAL_DIRECTOR (45) and MINISTRY_ADMIN (48). All thr
 PROFESSOR (40), which is a first for this ladder and is why the rank consequences are listed at the
 foot of this docstring rather than left to be discovered.
 
-This module answers two questions and refuses to answer a third:
+This module answers four questions and refuses to answer a fifth:
 
 * **WHO SUPERVISES THIS WORKSHOP** — one Assistant Director and one Regional Director, named per
   workshop, stored in ``DesignWorkshopOversight``.
 * **WHICH WORKSHOPS DOES THIS OFFICER SUPERVISE** — the scope clause their own list is built from.
+* **WHO IS THE WORKSHOP FOR** — the designer team and which of them the report names
+  (:func:`named_designer_rows`, :func:`reassign_designer`, :func:`set_named_designers`).
+* **WHO IS ON ITS ARTISAN ROSTER** — and how one of them is taken off again
+  (:func:`linked_artisan_rows`, :func:`unlink_artisan_from_workshop`).
 * It does NOT answer "may this officer WRITE anything", because the answer is no and there is no
-  argument a request could carry that changes it. See the read-only paragraph below.
+  argument a request could carry that changes it. See the read-only paragraph below — and note that
+  **an ASSIGNER is not an OFFICER**: the two write paths above belong to
+  :data:`OVERSIGHT_ASSIGNER_ROLES`, and every route an officer can reach is still a GET.
+
+**THE LAST TWO LANDED IN 0.0.12 AND THIS LIST SAID "two questions" BEFORE THEM.** The reason they
+landed together is one sentence: assignment on this prefix was ADD-ONLY. It could name a designer,
+could not show who else held the workshop, could not take anybody off it, and had no read of the
+artisan roster at all — so the screen that decides who a workshop is for could add and could never
+correct.
 
 =======================================================================================
 WHY A NEW TABLE AND NOT A `capacity` COLUMN ON THE FIFTH SCOPE'S TABLE — SIX REASONS
@@ -70,8 +82,18 @@ whole feature that would be silent. ``design_workshops.load_workshop_or_404(for_
 no role check of its own beyond DESIGN_WORKSHOP_ROLES membership on its grant arm; a viewer row
 confers every stage save, the AI-layer accept/withdraw, the dictation consent and the export
 ledger. Everything would appear to work; the officer would simply have more power than anyone
-intended. The ONE place this module writes a viewer row is :func:`reassign_designer`, and the
-account it names there is a DESIGNER — never an officer.
+intended.
+
+**TWO FUNCTIONS HERE WRITE VIEWER ROWS — :func:`reassign_designer` AND :func:`set_named_designers`
+— AND EVERY ACCOUNT EITHER OF THEM NAMES IS A DESIGNER.** (This sentence said "The ONE place" until
+0.0.12, when the plural set write landed; it is corrected rather than deleted because the property
+it defends is unchanged and is the one that matters.) Neither writes the table directly: both go
+through ``design_workshops.attach_the_named_designer`` and
+``design_workshop_viewers.remove_one_viewer``, both validate the ADDED ids through
+``assert_every_designer_may_be_named`` — the viewers screen's own rule, imported and never copied —
+and ``tests/test_workshop_oversight_unit.py`` runs an AST sweep over the three files of this feature
+forbidding ``db.designworkshopviewer.*`` outright. **An officer must never appear in that table**,
+and ``OVERSIGHT_CAPACITY_ROLES`` plus the empanelment rule are what keep the two sets apart.
 
 =======================================================================================
 WHO MAY ASSIGN, AND WHY IT IS NOT "THE MOST SENIOR OFFICER"
@@ -825,7 +847,10 @@ async def reassign_designer(workshop: Any, user_id: str, *, actor: Any) -> dict[
     **2. A WORKSHOP WHOSE REPORT HAS BEEN FILED IS REFUSED**, 422, naming the status and the
     remedy. That is PRE_SUBMISSION, NEEDS_REVISION, APPROVED, SUBMITTED and ARCHIVED — see
     :data:`_CLOSED_STATUSES`, which is derived from the review loop rather than typed out, and
-    which carries the whole account of what the hand-typed version cost.
+    which carries the whole account of what the hand-typed version cost. The check itself is
+    :func:`assert_the_report_is_not_filed`, shared with :func:`set_named_designers` so that the
+    plural door cannot grow a second, drifting copy of the one guard this module most needs to be
+    right.
 
     **3. The viewer row**, through ``attach_the_named_designer`` — which is ``add_one_viewer`` and
     emphatically not ``replace_viewers``: the whole-set replace deletes whatever it did not read, so
@@ -859,40 +884,13 @@ async def reassign_designer(workshop: Any, user_id: str, *, actor: Any) -> dict[
     and ``stillHaveAccess`` in the answer are what make the residue visible to the one screen the
     assigner can open; a silent stale grant was the whole defect.
 
-    **4. The profile values**, ``prefill_from_profile(user_id)`` — **NEVER ``user_id or actor.id``.**
-    ``seed_designer_prefill``'s docstring names that one plausible extra word as the defect: an
-    administrator who picked a designer off a list and got their OWN name back into a ministry
-    report, with completeness scoring 100% and the only detector being a human reading the cover.
-
-    ⚠ **THE PROFILE ROW IS MINTED FIRST, AND THAT IS NOT A TIDY-UP.** ``prefill_from_profile``
-    returns ``{}`` OUTRIGHT for an account with no ``DesignerProfile`` row — its account-name
-    fallback for ``designerName`` lives after that early return and is unreachable from there.
-    Profile rows are created lazily, by ``GET /designers/profile`` or by the sanction flow, so a
-    designer minted through ``POST /api/users`` who has never opened their own profile screen has
-    none. On the CREATE path an empty designer block is honest, and ``seed_designer_prefill`` argues
-    at length that a blank a machine can see beats a confident wrong name. **On THIS path it is not
-    a blank.** Nothing empties the block: ``by_entity`` comes back empty, the loop below writes no
-    stage at all, and the promoted ``designerName`` column KEEPS THE PREVIOUS DESIGNER'S NAME — so
-    the route answered 200 with ``stagesWritten: []`` while the cover page, the .docx ``dc:creator``
-    and every list that sorts on that column went on attributing the workshop to the designer who
-    had just been replaced. ``get_or_create_profile`` is the same call
-    ``sanction_orders.create_from_sanction`` makes before it seeds, for the same reason, and the
-    empty row it upserts is enough for the account-name fallback to fire.
-
-    **5. The write goes through ``save_stage`` and NOT through a third ``dwstageentry.create``.**
-    Four things a direct write would silently lose: the promoted-column recompute (so
-    ``designerName`` lands on the column correctly), ``searchText`` (NULL means "not computed yet"
-    and can never match, so the row would be invisible to search for the workshop's whole life), the
-    version guard, and provenance attribution. ``tests/test_design_workshop_search_text.py`` fails
-    on a third writer of that table and **this module deliberately adds none**.
-
-    ``merge=True`` IS MANDATORY. A wholesale replace would delete every other field the designer has
-    typed into stage 1 — and ``_coerce_promoted`` nulls a promoted column whose contributing entity
-    came back blank, so the craft name, the cluster, the state, the district and both dates would go
-    with it, under a 200 reading "Stage saved".
-
-    ``replaceCollections=False`` so no collection is swept, and ``submit=False`` because a
-    required-field 422 raised by an assignment is a stage nobody can fix from this screen.
+    **4 AND 5. The profile values and the stage write**, both inside
+    :func:`move_the_leads_profile_onto_the_workshop` — the lead's ``DesignerProfile`` minted if it
+    does not exist, read through ``prefill_from_profile(user_id)`` and never
+    ``user_id or actor.id``, and written through ``save_stage`` with ``merge=True``. That function
+    carries the three defects it is written against, because it is now called from TWO places: here,
+    and from :func:`set_named_designers` whenever a set write moves the lead. It answers with the
+    stage keys it wrote, which is what ``stagesWritten`` below is.
 
     ── WHY THERE IS NO `designer` MEMBER OF `DwOversightCapacity` ────────────────────────────────
     Who a workshop is FOR already has an owner: the promoted ``DesignWorkshop.designerName`` column,
@@ -900,27 +898,7 @@ async def reassign_designer(workshop: Any, user_id: str, *, actor: Any) -> dict[
     a column saying "the designer is Y" is two answers to one question, and the report prints the
     column.
     """
-    from app.schemas.design_workshops import StageEntryIn, StageSaveIn
-    from app.services.designers import PREFILL_MAP, get_or_create_profile, prefill_from_profile
-    from app.services.stage_schema import stages
-
-    workshop_status = str(getattr(workshop, "status", "DRAFT") or "DRAFT")
-    if workshop_status in _CLOSED_STATUSES:
-        # ``_LABELS`` AND NOT ``.title()``. A private name in another module, imported here for the
-        # same reason ``assert_every_designer_may_be_named`` imports one: it is the ONE place this
-        # product decides how a status token is spoken, and the alternative is a second copy that
-        # drifts. ``.title()`` stood here until this line was corrected and rendered the token that
-        # matters most as "Pre_Submission" — a column name shown to a ministry administrator, in a
-        # sentence whose whole job is to say what is true of their report.
-        spoken = design_workshop_review_loop._LABELS.get(workshop_status, workshop_status)
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=(
-                f"This workshop is {spoken}, and its report already names a designer. Changing it "
-                f"now would re-attribute a filed document. Withdraw it from inspection first — or "
-                f"reopen it — if the designer on it is genuinely wrong."
-            ),
-        )
+    assert_the_report_is_not_filed(workshop)
 
     await design_workshops.assert_every_designer_may_be_named({user_id})
 
@@ -944,9 +922,307 @@ async def reassign_designer(workshop: Any, user_id: str, *, actor: Any) -> dict[
         # assigner cannot escalate to from this screen.
         await design_workshop_viewers.remove_one_viewer(workshop.id, outgoing["userId"])
 
-    # THE PROFILE ROW FIRST — see step 4 of the docstring. Without it a profileless designer's
-    # reassignment writes no stage at all and the promoted ``designerName`` column silently keeps
-    # the OUTGOING designer's name on a ministry document.
+    stages_written = await move_the_leads_profile_onto_the_workshop(
+        workshop.id, user_id, actor=actor
+    )
+
+    record = await db.designworkshop.find_unique(where={"id": workshop.id})
+    # THE SURVIVING SET IS READ BACK RATHER THAN COMPUTED FROM WHAT WE JUST DID, for the reason
+    # ``apply_oversight`` gives about its own answer: two administrators on one screen must not each
+    # end up believing their own payload was the outcome. It is also the only way the one screen the
+    # assigner can open can say who ELSE still holds write access to this workshop — a co-designer,
+    # a redeemed join card, a granted access request — none of which this route removes.
+    surviving = [
+        row
+        for row in await design_workshop_viewers.viewer_rows(workshop.id)
+        if row["userId"] != user_id
+    ]
+    return {
+        "designerId": user_id,
+        "designerName": getattr(record, "designerName", None),
+        "stagesWritten": stages_written,
+        # WHO LOST ACCESS, AND WHO STILL HAS IT. ``None`` here means "nobody was identifiable as
+        # the outgoing lead", which is a different fact from "nobody had access" — the list below
+        # is what says which.
+        "removedDesigner": outgoing,
+        "stillHaveAccess": surviving,
+    }
+
+
+async def set_named_designers(
+    workshop: Any, *, user_ids: list[str], lead_user_id: str | None, actor: Any
+) -> dict[str, Any]:
+    """Set the whole team a workshop is FOR, and answer with it as the SERVER now holds it.
+
+    ══ WHY THIS EXISTS: ASSIGNMENT HERE WAS ADD-ONLY, AND THAT WAS THREE GAPS AT ONCE ═════════════
+
+    Until 0.0.12 this prefix could name ONE designer and nothing else. A workshop is run by two
+    designers alongside a master craftsperson and a reviewing officer; every one of them needs the
+    22 stages, and a Ministry Admin could grant access to exactly one of them. Worse, they could not
+    take it AWAY: the only viewer removal in the backend reachable from any screen was
+    ``replace_viewers`` behind ``require_admin`` = {ADMIN, MASTER_ADMIN}, which is a set a Ministry
+    Admin is outside — so the officer who performed a replacement had no route anywhere that could
+    withdraw a co-designer's access, and no screen that would even have shown it to them.
+    ``remove_one_viewer``'s own docstring names that defect verbatim; this is the second half of it.
+
+    ══ A WHOLE-SET BODY, AND EMPHATICALLY NOT A WHOLE-SET WRITE ═══════════════════════════════════
+
+    ⚠ **``replace_viewers`` IS FORBIDDEN FROM THIS FEATURE AND IS NOT CALLED HERE.**
+    ``services/design_workshop_grants.py`` is a FOURTH writer of ``DesignWorkshopViewer`` — a
+    redeemed join card and a granted access request both mint rows — so a whole-set replace deletes
+    a row a concurrent redemption created in the same second, on a table where a deleted row IS the
+    loss of access. This diffs the body against the rows that exist and then calls
+    ``attach_the_named_designer`` (which is ``add_one_viewer``) per ADDED id and
+    ``remove_one_viewer`` per REMOVED id — the same refusal ``attach_the_named_designers``' own
+    docstring makes, for the same reason.
+
+    ══ THE ORDER, AND WHY EACH STEP IS WHERE IT IS ════════════════════════════════════════════════
+
+    **1. A FILED REPORT IS REFUSED FIRST**, through :func:`assert_the_report_is_not_filed` — the
+    SAME guard :func:`reassign_designer` uses, sharing :data:`_CLOSED_STATUSES` rather than
+    re-deriving it. A hand-typed copy of that set has already cost this repository a report under
+    inspection having its authorship rewritten and a sent-back report being silently re-submitted,
+    burning a round and permanently mis-stamping every later ``DwInspectionFeedback.round``.
+
+    **2. THE CREATOR IS DROPPED FROM THE WANTED SET, NOT REFUSED.** Their access comes from
+    ``createdById``; ``attach_the_named_designer`` refuses to mint a second, redundant source of
+    truth for it, and ``_deduplicate`` drops them on the viewers PUT for the same stated reason. A
+    body that names them is a no-op about them, never an error.
+
+    **3. "NOBODY IS THE DESIGNER" IS STILL NOT AN EXPRESSIBLE STATE**, and this door does not become
+    the way to reach it. ``DesignWorkshopDesignerIn``'s docstring is the argument — the promoted
+    ``designerName`` column would have to be blanked, which is the write ``_coerce_promoted`` exists
+    to stop happening by accident. So two refusals, both 422, both naming the remedy: an empty set
+    on a workshop that names a designer, and a set that drops the LEAD without ``leadUserId``
+    naming their replacement. **Removing a CO-designer is a different act and is always allowed** —
+    their name is on no document, and this is the whole gap the feature was missing.
+
+    **4. ELIGIBILITY IS ASKED OF THE ADDED IDS ONLY, AND BEFORE ANY WRITE.** ``added`` goes through
+    ``assert_every_designer_may_be_named`` — one call for the whole set, so the 422 names every
+    account it objected to and the officer makes one trip rather than N.
+    ⚠ **REMOVALS ARE DELIBERATELY NOT VALIDATED.** ``remove_one_viewer`` says why in as many words:
+    refusing to REMOVE somebody because their empanelment has lapsed strands access precisely on the
+    accounts it is most urgent to take it away from.
+
+    **5. ADD, THEN REMOVE, THEN MOVE THE LEAD'S PROFILE.** Adds first so the workshop never passes
+    through a moment with no designer on it at all — the same ordering, and the same sentence,
+    :func:`reassign_designer` carries. The prefill/stage-save arm runs **only when the lead actually
+    changes**: adding a co-designer must not rewrite stage 1 and must not restamp the report's
+    cover, and a save that moved the lead every time would make "add Rekha" quietly re-attribute the
+    document.
+
+    ══ NOT A TRANSACTION, AND THAT IS INHERITED RATHER THAN CHOSEN ════════════════════════════════
+
+    ``attach_the_named_designers``' docstring argues at length why viewer rows are not transactional
+    with their surroundings, and ``save_stage`` is a dozen writes of its own. Wrapping this loop in
+    a ``db.tx()`` would silently reverse both decisions and would issue ``assert_every_designer_may_
+    be_named``'s roster reads through a client that has just written what they read. The exposure is
+    stated rather than hidden: a driver fault between the third add and the fourth answers 500 with
+    three rows written, which is visible on the next read of this same screen and repairable from
+    it. ``apply_oversight`` IS transactional because its two statements are an ACCESS SWAP under one
+    button; this one is a set of independent grants.
+
+    Answers with the set as the server now holds it — never an echo of the payload — for the reason
+    every sibling write on this prefix gives: two administrators on one screen must not each end up
+    believing their own body was the outcome.
+    """
+    assert_the_report_is_not_filed(workshop)
+
+    workshop_id = getattr(workshop, "id", "")
+    creator_id = str(getattr(workshop, "createdById", "") or "")
+
+    # Blanks dropped, duplicates collapsed, the creator dropped — see step 2. Order is preserved
+    # because the FIRST named designer is promoted to lead on a workshop that has never had one,
+    # exactly as ``named_designer_team`` promotes the first ticked on the create doors.
+    wanted: list[str] = []
+    seen: set[str] = set()
+    for raw in user_ids:
+        candidate = (raw or "").strip()
+        if not candidate or candidate == creator_id or candidate in seen:
+            continue
+        seen.add(candidate)
+        wanted.append(candidate)
+
+    lead = (lead_user_id or "").strip() or None
+    if lead and lead not in seen:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                "The designer named to lead this workshop is not among the designers it is for. "
+                "A lead who is not on the workshop would have their name on its report and no way "
+                "to open it. Tick them in the list as well, or choose a lead from the list. "
+                "Nothing was changed."
+            ),
+        )
+
+    held_rows = await design_workshop_viewers.viewer_rows(workshop_id)
+    held = {row["userId"] for row in held_rows}
+    current_lead = await _the_lead_among(workshop, held_rows)
+    current_lead_id = current_lead["userId"] if current_lead else None
+
+    added = [uid for uid in wanted if uid not in held]
+    removed_rows = [row for row in held_rows if row["userId"] not in seen]
+
+    designer_named = bool(str(getattr(workshop, "designerName", "") or "").strip())
+    if designer_named and not wanted:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                "Removing a workshop's designer altogether is not something this product can "
+                "express: its report already carries their name, and leaving the workshop with "
+                "nobody named would blank the cover page. Name the designer it is for instead — "
+                "replacing them takes the outgoing designer's access away in the same act. "
+                "Nothing was changed."
+            ),
+        )
+    if current_lead_id is not None and current_lead_id not in seen and not lead:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"{current_lead.get('name') or current_lead.get('email') or 'That designer'} is the "
+                f"designer this workshop's report names, so taking them off it means naming who "
+                f"leads it instead rather than leaving it with nobody. Choose the designer whose "
+                f"name the report should carry and save again. Nothing was changed."
+            ),
+        )
+
+    if added:
+        await design_workshops.assert_every_designer_may_be_named(set(added))
+
+    for user_id in added:
+        await design_workshops.attach_the_named_designer(
+            workshop_id,
+            user_id,
+            granted_by_id=getattr(actor, "id", ""),
+            creator_id=creator_id,
+        )
+    for row in removed_rows:
+        # AFTER every add and never before. A workshop must never pass through a moment with no
+        # designer on it at all: a failure in the gap would leave the outgoing designer removed, the
+        # incoming one not yet granted, and the only account able to repair it an ADMIN the assigner
+        # cannot escalate to from this screen.
+        await design_workshop_viewers.remove_one_viewer(workshop_id, row["userId"])
+
+    stages_written: list[str] = []
+    if lead and lead != current_lead_id:
+        stages_written = await move_the_leads_profile_onto_the_workshop(
+            workshop_id, lead, actor=actor
+        )
+    elif not designer_named and not current_lead_id and wanted:
+        # THE FIRST DESIGNER ON A WORKSHOP THAT HAS NEVER NAMED ONE, and without this branch the
+        # ordinary case would be silently half-done: the grant lands, the report still names
+        # whoever opened the workshop, and the only detector is a human reading the cover. The first
+        # of the set is promoted, which is what ``named_designer_team`` does on both create doors
+        # when a body names a team and no lead.
+        stages_written = await move_the_leads_profile_onto_the_workshop(
+            workshop_id, wanted[0], actor=actor
+        )
+
+    record = await db.designworkshop.find_unique(where={"id": workshop_id})
+    return {
+        # READ BACK, NEVER COMPUTED FROM WHAT WE JUST DID — see the closing paragraph. It is also
+        # the only way this screen can show a row a concurrent join-card redemption added while the
+        # officer was choosing.
+        "designers": await named_designer_rows(record),
+        "designerName": getattr(record, "designerName", None),
+        "stagesWritten": stages_written,
+        # WHO LOST ACCESS, NAMED. The rows are the BASELINE snapshot rather than a re-read, because
+        # by now they are gone and a re-read could only answer with their absence.
+        "removedDesigners": [
+            {
+                "userId": row["userId"],
+                "name": row.get("name") or "",
+                "email": row.get("email") or "",
+                "role": row.get("role") or "",
+            }
+            for row in removed_rows
+        ],
+    }
+
+
+def assert_the_report_is_not_filed(workshop: Any) -> None:
+    """422 if this workshop's report has been handed in. :data:`_CLOSED_STATUSES` is the rule.
+
+    **EXTRACTED IN 0.0.12 BECAUSE A SECOND WRITE PATH NEEDED IT, AND A HAND-TYPED SECOND COPY OF
+    THIS GUARD IS EXACTLY WHAT COST THIS REPOSITORY A RE-ATTRIBUTED REPORT ONCE ALREADY** — read
+    :data:`_CLOSED_STATUSES`, which carries the whole account. :func:`reassign_designer` and
+    :func:`set_named_designers` both call this; neither re-derives the set and neither re-words the
+    sentence, so the two doors cannot tell a ministry administrator two different stories about one
+    report.
+
+    ``_LABELS`` AND NOT ``.title()``. A private name in another module, imported for the same reason
+    ``assert_every_designer_may_be_named`` imports one: it is the ONE place this product decides how
+    a status token is spoken, and the alternative is a second copy that drifts. ``.title()`` stood
+    here until this line was corrected and rendered the token that matters most as "Pre_Submission"
+    — a column name shown to a ministry administrator, in a sentence whose whole job is to say what
+    is true of their report.
+    """
+    workshop_status = str(getattr(workshop, "status", "DRAFT") or "DRAFT")
+    if workshop_status not in _CLOSED_STATUSES:
+        return
+    spoken = design_workshop_review_loop._LABELS.get(workshop_status, workshop_status)
+    raise HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        detail=(
+            f"This workshop is {spoken}, and its report already names a designer. Changing it "
+            f"now would re-attribute a filed document. Withdraw it from inspection first — or "
+            f"reopen it — if the designer on it is genuinely wrong."
+        ),
+    )
+
+
+async def move_the_leads_profile_onto_the_workshop(
+    workshop_id: str, user_id: str, *, actor: Any
+) -> list[str]:
+    """Copy the LEAD designer's profile into the stages the registry says it belongs on.
+
+    Answers with the stage keys that were written, sorted — which is what both callers hand back to
+    the client as ``stagesWritten``.
+
+    **EXTRACTED IN 0.0.12, AND THE EXTRACTION IS THE WHOLE POINT RATHER THAN TIDYING.**
+    :func:`set_named_designers` performs the same act whenever the lead changes, and the two
+    defects this block is written against are both defects of a SECOND COPY:
+
+    **1. ``prefill_from_profile(user_id)`` — NEVER ``user_id or actor.id``.**
+    ``seed_designer_prefill``'s docstring names that one plausible extra word as the defect: an
+    administrator who picked a designer off a list and got their OWN name back into a ministry
+    report, with completeness scoring 100% and the only detector being a human reading the cover.
+    ``tests/test_workshop_oversight_unit.py`` asserts it against this function's source, which is
+    why the call must stay spelled out here rather than behind a parameter.
+
+    ⚠ **2. THE PROFILE ROW IS MINTED FIRST, AND THAT IS NOT A TIDY-UP.** ``prefill_from_profile``
+    returns ``{}`` OUTRIGHT for an account with no ``DesignerProfile`` row — its account-name
+    fallback for ``designerName`` lives after that early return and is unreachable from there.
+    Profile rows are created lazily, by ``GET /designers/profile`` or by the sanction flow, so a
+    designer minted through ``POST /api/users`` who has never opened their own profile screen has
+    none. On the CREATE path an empty designer block is honest. **On THIS path it is not a blank.**
+    Nothing empties the block: ``by_entity`` comes back empty, the loop below writes no stage at
+    all, and the promoted ``designerName`` column KEEPS THE PREVIOUS DESIGNER'S NAME — so the route
+    answers 200 with ``stagesWritten: []`` while the cover page, the .docx ``dc:creator`` and every
+    list that sorts on that column go on attributing the workshop to the designer who was just
+    replaced. ``get_or_create_profile`` is the same call ``sanction_orders.create_from_sanction``
+    makes before it seeds, for the same reason, and the empty row it upserts is enough for the
+    account-name fallback to fire.
+
+    **3. The write goes through ``save_stage`` and NOT through a third ``dwstageentry.create``.**
+    Four things a direct write would silently lose: the promoted-column recompute (so
+    ``designerName`` lands on the column correctly), ``searchText`` (NULL means "not computed yet"
+    and can never match, so the row would be invisible to search for the workshop's whole life), the
+    version guard, and provenance attribution. ``tests/test_design_workshop_search_text.py`` fails
+    on a third writer of that table and **this module deliberately adds none**.
+
+    ``merge=True`` IS MANDATORY. A wholesale replace would delete every other field the designer has
+    typed into stage 1 — and ``_coerce_promoted`` nulls a promoted column whose contributing entity
+    came back blank, so the craft name, the cluster, the state, the district and both dates would go
+    with it, under a 200 reading "Stage saved".
+
+    ``replaceCollections=False`` so no collection is swept, and ``submit=False`` because a
+    required-field 422 raised by an assignment is a stage nobody can fix from this screen.
+    """
+    from app.schemas.design_workshops import StageEntryIn, StageSaveIn
+    from app.services.designers import PREFILL_MAP, get_or_create_profile, prefill_from_profile
+    from app.services.stage_schema import stages
+
     await get_or_create_profile(user_id)
     values = await prefill_from_profile(user_id)
     targets = _prefill_targets()
@@ -971,7 +1247,7 @@ async def reassign_designer(workshop: Any, user_id: str, *, actor: Any) -> dict[
         if spec is None:  # pragma: no cover - the registry disagreeing with itself
             continue
         await design_workshops.save_stage(
-            workshop.id,
+            workshop_id,
             spec,
             StageSaveIn(
                 entries=[StageEntryIn(entityKey=entity_key, data=data, merge=True)],
@@ -981,28 +1257,7 @@ async def reassign_designer(workshop: Any, user_id: str, *, actor: Any) -> dict[
             ),
             actor,
         )
-
-    record = await db.designworkshop.find_unique(where={"id": workshop.id})
-    # THE SURVIVING SET IS READ BACK RATHER THAN COMPUTED FROM WHAT WE JUST DID, for the reason
-    # ``apply_oversight`` gives about its own answer: two administrators on one screen must not each
-    # end up believing their own payload was the outcome. It is also the only way the one screen the
-    # assigner can open can say who ELSE still holds write access to this workshop — a co-designer,
-    # a redeemed join card, a granted access request — none of which this route removes.
-    surviving = [
-        row
-        for row in await design_workshop_viewers.viewer_rows(workshop.id)
-        if row["userId"] != user_id
-    ]
-    return {
-        "designerId": user_id,
-        "designerName": getattr(record, "designerName", None),
-        "stagesWritten": sorted({stage for stage, _entity in by_entity}),
-        # WHO LOST ACCESS, AND WHO STILL HAS IT. ``None`` here means "nobody was identifiable as
-        # the outgoing lead", which is a different fact from "nobody had access" — the list below
-        # is what says which.
-        "removedDesigner": outgoing,
-        "stillHaveAccess": surviving,
-    }
+    return sorted({stage for stage, _entity in by_entity})
 
 
 async def _the_designer_being_replaced(workshop: Any, *, incoming_id: str) -> dict[str, Any] | None:
@@ -1030,22 +1285,223 @@ async def _the_designer_being_replaced(workshop: Any, *, incoming_id: str) -> di
     whose Designer Page says "Rashmi Mohanty" has the second on the cover, and matching the first
     would find nobody and remove nobody on every workshop they have ever led.
     """
+    rows = await design_workshop_viewers.viewer_rows(workshop.id)
+    return await _the_lead_among(workshop, rows, exclude={incoming_id})
+
+
+async def _the_lead_among(
+    workshop: Any, rows: list[dict[str, Any]], *, exclude: set[str] | None = None
+) -> dict[str, Any] | None:
+    """Which of these viewer rows is the workshop's LEAD designer, or ``None`` when it is not knowable.
+
+    **ONE RULE, TWO READERS, AND THAT IS WHY IT IS A FUNCTION.**
+    :func:`_the_designer_being_replaced` asks it to decide whose access a reassignment takes away;
+    :func:`named_designer_rows` asks it to draw ``isLead`` on the assignment screen. A second copy
+    would be a screen that marks one person as the lead and a write that removes another, which is
+    the worst possible pair of answers to one question.
+
+    The match is THE NAME because there is no id to match, and that is the arrangement
+    :func:`reassign_designer`'s closing note defends. ``prefill_from_profile`` AND NOT ``user.name``,
+    because ``designerName`` is promoted from the profile's ``displayName`` when there is one — a
+    designer whose account name is "R. Mohanty" and whose Designer Page says "Rashmi Mohanty" has the
+    second on the cover, and matching the first would find nobody on every workshop they have led.
+
+    **AMBIGUITY ANSWERS NOBODY.** Two viewers whose prefills answer the same name, a blank
+    ``designerName``, or a name no viewer's profile accounts for all return ``None``. On the removal
+    side a revocation made on a guess is worse than a stale grant the caller is TOLD about; on the
+    display side an ``isLead`` stamped on a guess is a screen asserting something it does not know.
+
+    **THE CREATOR IS NEVER A CANDIDATE** and cannot be: their access is ``createdById`` and they
+    hold no viewer row (``attach_the_named_designer`` refuses to write one, ``_deduplicate`` drops
+    them on the viewers PUT). The id test is belt-and-braces for a row an older deployment may have
+    written before that rule held.
+
+    ``exclude`` is the removal side's extra guard — the INCOMING designer, whose row this same call
+    may have just created. It is a parameter rather than an assumption because the display side has
+    nobody to exclude, and a shared helper that silently skipped an id would be answering a
+    different question for each caller.
+
+    ⚠ COST: one ``prefill_from_profile`` per viewer row. A workshop has a handful; the cap is
+    ``MAX_DESIGN_WORKSHOP_VIEWERS`` (100), and the loop stops at nothing. If this ever becomes the
+    slow half of the oversight read, the fix is a lead column on ``DesignWorkshopViewer`` — a
+    migration and a written decision, not a cache here.
+    """
     from app.services.designers import prefill_from_profile
 
     wanted = str(getattr(workshop, "designerName", "") or "").strip().casefold()
     if not wanted:
         return None
     creator_id = str(getattr(workshop, "createdById", "") or "")
+    skip = {creator_id} | (exclude or set())
 
     matches: list[dict[str, Any]] = []
-    for row in await design_workshop_viewers.viewer_rows(workshop.id):
-        if row["userId"] in {incoming_id, creator_id}:
+    for row in rows:
+        if row["userId"] in skip:
             continue
         values = await prefill_from_profile(row["userId"])
         theirs = str(values.get("designerName") or row.get("name") or "").strip().casefold()
         if theirs and theirs == wanted:
             matches.append(row)
     return matches[0] if len(matches) == 1 else None
+
+
+async def named_designer_rows(workshop: Any) -> list[dict[str, Any]]:
+    """Who may open this workshop, and which of them the report names. **THE READ THE SCREEN OWED.**
+
+    Five keys per row — ``userId``, ``name``, ``email``, ``role``, ``isLead`` — over
+    ``design_workshop_viewers.viewer_rows``, which is the SERVICE and never
+    ``db.designworkshopviewer.*``: ``tests/test_workshop_oversight_unit.py`` runs an AST sweep over
+    the three oversight files forbidding the latter, and the reason is in this module's header.
+
+    ── WHY THIS EXISTS AT ALL ────────────────────────────────────────────────────────────────────
+
+    Until 0.0.12 ``GET /design-workshop-oversight/{id}`` answered ``designerName`` — a STRING — and
+    no ids at all, so the one screen that decides who a workshop is for could not see who currently
+    holds it. The assigner could add and could not compare, could not pre-tick a picker and could
+    not take anybody off. The information was on the wire exactly once, in the ``PUT …/designer``
+    RESPONSE (``removedDesigner``/``stillHaveAccess``), i.e. only to somebody who had already
+    changed something.
+
+    ── AND WHY IT IS NOT ``GET /design-workshops/{id}/viewers`` WIDENED ──────────────────────────
+
+    That route is ``require_admin`` and widening it would widen the table that confers STAGE
+    WRITES — ``load_workshop_or_404(for_edit=True)`` reads the same relation. A read on THIS prefix
+    is the smaller blast radius and is the same trade ``GET /design-workshop-oversight/designers``
+    already documents: two doors, one query, two payloads.
+
+    **THE CREATOR IS NOT IN HERE**, because they hold no viewer row — their access is
+    ``createdById``. So an empty list means "nobody but whoever opened it", never "nobody at all",
+    and the screen over this has to say so. ``viewer_rows``' own docstring makes the same point.
+    """
+    rows = await design_workshop_viewers.viewer_rows(getattr(workshop, "id", ""))
+    lead = await _the_lead_among(workshop, rows)
+    lead_id = lead["userId"] if lead else None
+    return [
+        {
+            "userId": row["userId"],
+            "name": row.get("name") or "",
+            "email": row.get("email") or "",
+            "role": row.get("role") or "",
+            # A BOOLEAN AND NOT AN ABSENCE. Every row carries the key, so a client can tell "this
+            # person is not the lead" from "this server does not answer the question" — the second
+            # of which is what an omitted key on a stale deployment means.
+            "isLead": row["userId"] == lead_id,
+        }
+        for row in rows
+    ]
+
+
+# --------------------------------------------------------------------------------------
+# The artisan roster — the one assignment on this screen that had no read and no removal
+# --------------------------------------------------------------------------------------
+
+#: How many roster rows one read answers with.
+#:
+#: A CEILING WITH A SENTENCE ON THE WIRE, exactly as :data:`ELIGIBLE_OFFICER_LIMIT` carries one. The
+#: pro-forma is fifteen rows of typing and a workshop's roster is fifteen to forty people, so this is
+#: not a limit anybody meets by working — but a list that quietly stops is indistinguishable from a
+#: workshop with nothing on it, which is this repository's most repeated bug class, and the ``take``
+#: is what bounds the work one request can ask for.
+ROSTER_TAKE = 200
+
+
+async def linked_artisan_rows(workshop_id: str) -> dict[str, Any]:
+    """The artisans filed against this workshop, newest first, plus whether the list was cut.
+
+    ══ WHY THIS READ EXISTS, AND WHY IT IS NOT ``GET /artisans?designWorkshopId=`` ═════════════════
+
+    That filter exists (``routes/artisans.py``) and **no client anywhere reads it**, so the roster
+    an officer has just imported has never been visible on any screen in this product — which is why
+    the removal gap below went unnoticed: there was no list to remove anybody FROM. Pointing this
+    panel at that route instead would have put the oversight screen on a general record endpoint
+    whose payload, whose visibility clause and whose PII rules are owned by another feature and
+    change for reasons that have nothing to do with supervision.
+
+    ══ SIX KEYS, AND THE ABSENCES ARE THE POINT ═══════════════════════════════════════════════════
+
+    ``id``, ``name``, ``place``, ``craftName``, ``status``, ``createdAt``. **NO ``aadhaarNumber``, NO
+    ``pehchanCardNumber``, NO ``phone``, NO ``address``, NO ``dateOfBirth``.** An officer already
+    reads unmasked Aadhaar through ``GET /artisans/{id}`` — ``artisans._may_read_full_aadhaar`` is
+    ``has_rank(user, "PROFESSOR")`` and all three ministry posts clear it — so this is not a
+    capability they lack. It is the frontend contract's own rule: *never render a regulated identity
+    number in a list, a card or an export view.* This panel answers "who is on this workshop", and
+    the answer to that question does not need a single regulated column. Same construction, same
+    argument, as ``assignable_designers_payload``: two doors, one table, two payloads.
+
+    ``status`` IS CARRIED because an imported artisan is created PENDING and enters the review queue
+    — the header of this module measures that and says why — so an officer looking at a roster of
+    fifteen PENDING rows is looking at the normal state of a fresh import and must not read it as a
+    fault.
+    """
+    rows = await db.artisan.find_many(
+        where={"designWorkshopId": workshop_id},
+        include={"craft": True},
+        order={"createdAt": "desc"},
+        take=ROSTER_TAKE + 1,
+    )
+    truncated = len(rows) > ROSTER_TAKE
+    rows = rows[:ROSTER_TAKE]
+    return {
+        "artisans": [
+            {
+                "id": row.id,
+                "name": row.name,
+                "place": row.place,
+                "craftName": getattr(getattr(row, "craft", None), "name", None),
+                "status": str(getattr(row.status, "value", row.status)),
+                "createdAt": row.createdAt.isoformat() if row.createdAt else None,
+            }
+            for row in rows
+        ],
+        # REPORTED RATHER THAN INFERRED FROM THE LENGTH, for the reason the designer directory gives
+        # beside its own flag: a client inferring "cut" from a hard-coded copy of the ceiling is
+        # sound only while every filter is inside the query, and is exactly what breaks the day one
+        # is not.
+        "truncated": truncated,
+    }
+
+
+async def unlink_artisan_from_workshop(workshop_id: str, artisan_id: str) -> bool:
+    """Take one artisan off this workshop's roster. Answers whether a row actually changed.
+
+    ══ IT UNFILES, IT DOES NOT DELETE, AND THOSE ARE NOT NEARLY THE SAME ACT ═══════════════════════
+
+    ``Artisan.designWorkshopId`` is a NULLABLE FK with ``onDelete: SetNull`` — a link, not
+    ownership — so clearing it leaves the artisan's record, its photographs, its products, its tools
+    and its interviews exactly as they were. That is the whole of what an officer is entitled to
+    change here: they did not author the record, ``Artisan.createdBy`` is ``Restrict`` and is
+    untouched, and a roster correction must never be a way to destroy a regulated person-record.
+    ``schemas/records.assert_payload_workshop`` already documents the same clearing on the artisan
+    form — *"an explicit ``None`` unfiles the record and is always allowed"* — so this is that rule
+    reached from the screen that actually holds the roster.
+
+    ⚠ **THE STAGE-3 PARTICIPANT ROW IS DELIBERATELY LEFT STANDING, AND THE SCREEN SAYS SO.**
+    ``services/artisan_import`` writes a second thing per imported artisan: a ``DwStageEntry`` row
+    under ``WORKSHOP_PLAN_PARTICIPANTS_OPENING`` / ``participant``. Deleting it from here would be a
+    STAGE WRITE performed by an officer — on a report that may be in PRE_SUBMISSION under an
+    inspector's eye, through the same ``save_stage`` path whose ``NEEDS_REVISION`` arm silently
+    RE-SUBMITS a sent-back report and burns a round. This module refuses stage writes except the one
+    the lead's prefill needs, and it is not about to grow a second for a roster tidy-up. **These are
+    two deletions and nothing links them**; the participant row belongs to the designer's stage 3
+    and is removed there. Whether it SHOULD be removed with the link is a product decision that has
+    not been taken, so the honest answer is to do one thing, say what was not done, and let the
+    officer act.
+
+    ``update_many`` AND NOT ``update``: the ``designWorkshopId`` predicate is what stops an artisan
+    being unfiled from a workshop they were never on — a bare ``update`` on the primary key would
+    clear the link to a DIFFERENT workshop if a stale screen sent the wrong pair. It also answers a
+    COUNT, so "that artisan is already off this roster" is ``False`` rather than a 500 from
+    ``RecordNotFoundError``.
+
+    NO TOMBSTONE, for the reason every removal in this feature gives: there is no decision here to
+    audit beyond the fact of the change, and ``DwArtisanImport`` — the one durable ledger in this
+    feature — already records how each row arrived.
+    """
+    changed = await db.artisan.update_many(
+        where={"id": artisan_id, "designWorkshopId": workshop_id},
+        data={"designWorkshopId": None},
+    )
+    return bool(changed)
 
 
 # THE INVARIANT, CHECKED AT IMPORT RATHER THAN HOPED FOR. If the capacity map and the Postgres enum

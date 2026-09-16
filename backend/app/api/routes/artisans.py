@@ -14,7 +14,11 @@ from app.services.artisan_identity import mask_aadhaar, normalize_aadhaar
 from app.services.concurrency import gather_reads
 from app.services.pagination import normalize_pagination, page_payload
 from app.services.record_design_workshop import assert_payload_workshop
-from app.services.record_filters import artisan_workshop_clause, resolve_workshop_ids
+from app.services.record_filters import (
+    artisan_workshop_clause,
+    resolve_craft_ids,
+    resolve_workshop_ids,
+)
 from app.services.records import (
     RECORD_STATUSES,
     Relation,
@@ -318,6 +322,17 @@ async def list_artisans(
     search: str | None = None,
     craft: str | None = None,
     craftId: str | None = None,
+    # THE CRAFT SCOPE, PLURAL — repeatable or comma-joined ids, the shape ``workshopIds`` below
+    # already has. Distinct from the singular ``craftId`` above, which stays because every existing
+    # form-picker link uses it; WHEN BOTH ARE SENT BOTH NARROW.
+    #
+    # It exists because a MULTI-craft picker cannot be served by the singular one. Issuing one
+    # request per ticked craft is not a substitute — "Select all 178" would fire 178 of them — and
+    # filtering one 100-row page in the browser gives the intersection of N crafts with the newest
+    # hundred artisans overall, which is the ceiling defect ``frontend/components/forms/
+    # recordPickers`` was written about. ``ToolAssignmentSection.tsx`` carried a paragraph calling
+    # this the one unclosed gap in that pass; this parameter is what closed it.
+    craftIds: list[str] | None = Query(None),
     workshopId: str | None = None,
     designWorkshopId: str | None = None,
     place: str | None = None,
@@ -363,6 +378,13 @@ async def list_artisans(
         where["craft"] = {"is": {"name": contains(craft)}}
     if craftId:
         where["craftId"] = craftId
+    resolved_crafts = resolve_craft_ids(craftIds)
+    if resolved_crafts is not None:
+        # Into ``and_filters``, never ``where["craftId"]``: the singular filter above assigns that key
+        # directly, and a second assignment would silently discard whichever was written first. An id
+        # the caller cannot see, or one that does not exist, matches nothing and is not an error —
+        # this is a filter, not a lookup, and the same is true of every other narrowing on this route.
+        and_filters.append({"craftId": {"in": resolved_crafts}})
     if workshopId:
         # Either reading counts: the artisan's own workshopId column, or the WorkshopArtisan join
         # (relation named ``workshops``) that carried the link before the column existed.

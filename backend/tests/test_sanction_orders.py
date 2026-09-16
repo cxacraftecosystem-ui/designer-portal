@@ -1195,19 +1195,40 @@ def test_the_sanction_order_admits_nobody_to_the_pending_queue(world) -> None:
 
 
 def test_a_throttled_link_does_not_roll_back_the_sanction_order(world, client) -> None:
-    """A throttle on the fifth account of the morning must not undo a ministry sanction order.
+    """A throttle on the fifth link of the morning must not undo a ministry sanction order.
 
     The 201 stands, ``credentialLink`` is null and ``credentialLinkProblem`` says what happened and
     what to do — which is the difference between "no link was offered" and "no link was possible".
 
-    The account and its spent budget are seeded in the fixture; both requests are live, because
-    nothing here has to read a row back.
+    ⚠ **THE THROTTLE IS MET ON THE RE-ISSUE ARM, AND SINCE 2026-09-16 THAT ARM ONLY ANSWERS FOR AN
+    ACCOUNT THIS REGISTER CREATED.** ``reissue_credential_link`` now refuses an order whose
+    ``accountCreated`` is false — see its docstring for the privilege escalation that refusal closes
+    — so the budget has to be spent the way an officer really spends it: one link minted by the
+    create, three re-issues, and the fifth request refused. Driving it through the fixture's
+    pre-spent RESEARCHER account would now measure the new refusal rather than the throttle.
+
+    The pre-spent account is still asserted here, on the thing it can still prove: an order naming
+    an account that already exists is recorded with NO link and NO problem sentence, because none
+    was ever due. Every request is live; nothing here has to read a row back.
     """
-    # The account exists, so no link would be offered anyway — the throttle is exercised through the
-    # RE-ISSUE arm, which is where an officer actually meets it.
-    answer = _post(world, _body(designerEmail=world["throttle_address"]))
-    assert answer.status_code == 201, answer.text
-    order_id = answer.json()["sanctionOrder"]["id"]
+    existing = _post(world, _body(designerEmail=world["throttle_address"]))
+    assert existing.status_code == 201, existing.text
+    assert existing.json()["credentialLink"] is None
+    assert existing.json()["credentialLinkProblem"] is None, (
+        "an account that already existed has no link to fail to issue, so there is nothing to report"
+    )
+
+    fresh = _post(world, _body())
+    assert fresh.status_code == 201, fresh.text
+    assert fresh.json()["sanctionOrder"]["accountCreated"] is True
+    order_id = fresh.json()["sanctionOrder"]["id"]
+
+    # The create spent one of the four; three re-issues spend the rest.
+    for _ in range(credential_links.ISSUE_BUDGET - 1):
+        spent = client.post(
+            f"/api/sanction-orders/{order_id}/credential-link", headers=_headers(world)
+        )
+        assert spent.status_code == 200, spent.text
 
     again = client.post(
         f"/api/sanction-orders/{order_id}/credential-link", headers=_headers(world)
@@ -1215,6 +1236,35 @@ def test_a_throttled_link_does_not_roll_back_the_sanction_order(world, client) -
     assert again.status_code == 429, again.text
     assert again.headers.get("retry-after")
     assert "hour" in again.json()["detail"]
+
+
+def test_the_reissue_arm_refuses_an_account_this_register_did_not_create(world, client) -> None:
+    """THE SECOND DOOR ONTO ``POST /auth/password-links``, CLOSED.
+
+    An order naming an account that already existed passes every phase-0 refusal — it is not the
+    officer's mailbox, it has no barred allow-list row, it has no ``DesignerRoster`` row to have
+    ended, and every admin tier is inside ``DESIGN_WORKSHOP_ROLES`` so ``cannot_run_reason`` accepts
+    it. Until 2026-09-16 the re-issue arm would then mint a RESET link for that account and hand the
+    URL back in the response body, letting any Assistant Director set the password of a MASTER_ADMIN
+    and sign the real holder out of every device. ``POST /api/auth/password-links`` is the honest
+    door for that and it is ``Depends(require_admin)``.
+
+    The create path already refused: ``_issue_first_credential`` returns nothing at all when
+    ``account_created`` is false. This asserts the same invariant on the other door, which is what
+    ``create_from_sanction``'s gate docstring has claimed all along.
+    """
+    answer = _post(world, _body(designerEmail=world["throttle_address"]))
+    assert answer.status_code == 201, answer.text
+    assert answer.json()["sanctionOrder"]["accountCreated"] is False
+    order_id = answer.json()["sanctionOrder"]["id"]
+
+    refused = client.post(
+        f"/api/sanction-orders/{order_id}/credential-link", headers=_headers(world)
+    )
+    assert refused.status_code == 422, refused.text
+    detail = refused.json()["detail"]
+    assert "did not create" in detail
+    assert "users screen" in detail, "the officer is not told where the honest door is"
 
 
 def test_a_designer_may_not_record_a_sanction_order(world, client) -> None:

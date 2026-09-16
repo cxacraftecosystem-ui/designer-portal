@@ -1033,6 +1033,17 @@ that router lands `APPROVED` is simply unreachable. That is the safe direction: 
 approved by accident and no header edit can manufacture an approval in the meantime. True as of
 «2026-09-13»; check `grep -rn "design-workshop-approvals" backend/app/api/`.
 
+**The router was RULED into 0.0.13 on 2026-09-15, so the sentence above is now a scheduled state
+rather than a race**, and one consequence of it is worth spelling out because the table does not show
+it. `SUBMITTED` — which since 2026-09-13 means *the approved report has been handed on* — has exactly
+one inbound edge, `APPROVED → SUBMITTED`, and that edge is one of the three above. So **`SUBMITTED` is
+unreachable too, transitively**, and a report's forward journey today ends at `PRE_SUBMISSION`, with
+`NEEDS_REVISION` and back as often as anyone likes. Rows that still read `SUBMITTED` are ones carrying
+the pre-2026-09-13 meaning of the word; they can still leave that state and cannot re-enter it. The
+deferral, what 0.0.13 owes beyond the three verbs, and why the gap is stated on the ministry desk
+rather than left to be discovered are in [OPEN_FINDINGS.md](OPEN_FINDINGS.md) under
+*Design-workshop approvals were not built*.
+
 Operation counts for the whole API are generated into [REPO_FACTS.md](REPO_FACTS.md).
 
 ---

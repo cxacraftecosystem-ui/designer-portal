@@ -2254,9 +2254,11 @@ test("the record pickers say a failed read failed, on both forms, from one place
   // The roster catch used to be silent as well as harmless: it deliberately leaves the mount load's
   // artisans on screen and deliberately does not move `artisansLoadedForCraft`, so nothing at all
   // was printed and "this roster never arrived" looked exactly like "this craft has few artisans".
-  expect(hook).toContain("setArtisansFailedForCraft(craftId);");
-  // A craft id, not a boolean, for the same reason `artisansLoadedForCraft` is one: a stale flag
-  // would describe this craft's roster with the previous craft's outcome.
+  // A ROSTER KEY since the tool form's craft picker became a multi-select — the ticked craft ids
+  // sorted and joined, which for a single-craft caller is that craft's id and nothing else.
+  expect(hook).toContain("setArtisansFailedForCraft(craftRosterKey);");
+  // A key, not a boolean, for the same reason `artisansLoadedForCraft` is one: a stale flag would
+  // describe this selection's roster with the previous selection's outcome.
   expect(hook).toContain("const [artisansFailedForCraft, setArtisansFailedForCraft] = useState<string | null>(null);");
   expect(hook).toContain("craftNotice: workshopListNotice(craftList, craftVoice)");
 
@@ -2269,9 +2271,21 @@ test("the record pickers say a failed read failed, on both forms, from one place
     expect(formSource, form).toContain("emptyLabel={craftArtisanEmptyLabel || undefined}");
     expect(formSource, form).toContain("{craftNotice ?");
     expect(formSource, form).toContain("{craftArtisanNotice ?");
-    // The claim about the craft still waits for the craft's own answer — unchanged, and pinned here
-    // because the new sentence sits directly beneath it and the two are easy to conflate.
-    expect(formSource, form).toContain("artisansLoadedForCraft === craftId && artisansForCraft.length === 0");
+    /*
+      The claim about the craft still waits for the craft's own answer — unchanged in substance, and
+      pinned here because the new sentence sits directly beneath it and the two are easy to conflate.
+
+      IT IS COMPARED AGAINST A ROSTER KEY ON `ToolForm`, whose craft picker became a multi-select on
+      2026-09-15: the hook's `artisansLoadedForCraft` now holds the ticked craft ids sorted and
+      joined, which for a single-craft caller like `ProductForm` IS the craft id it always was. The
+      rule did not move — a claim about a roster may only be made off the answer for the selection
+      currently on screen — only the selection it is about got bigger.
+    */
+    const answered =
+      form === "ToolForm.tsx"
+        ? "artisansLoadedForCraft === craftRosterKey && artisansForCraft.length === 0"
+        : "artisansLoadedForCraft === craftId && artisansForCraft.length === 0";
+    expect(formSource, form).toContain(answered);
   }
 });
 

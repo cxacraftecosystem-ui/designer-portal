@@ -86,13 +86,28 @@ def test_a_relation_neither_list_names_still_gets_an_honest_sentence() -> None:
 def test_both_halves_of_the_sanction_relation_are_registered() -> None:
     """One row in each list, and NOT two rows in one.
 
-    The pairing is the whole design: same table, two columns, two verbs. A future edit that moved
-    ``designerUserId`` into ``_CREATOR_RELATIONS`` for tidiness would compile, pass every other test,
-    and start telling admins that designers authored the orders issued to them.
+    The pairing is the whole design: two verbs, two sentences. A future edit that moved the designer
+    relation into ``_CREATOR_RELATIONS`` for tidiness would compile, pass every other test, and
+    start telling admins that designers authored the orders issued to them.
+
+    ⚠ **THE NAMED-ON HALF MOVED TABLE IN 0.0.12 AND THIS ASSERTION MOVED WITH IT.** It read
+    ``("sanctionorder", "designerUserId", "sanction order")`` until multi-designer sanction orders
+    landed. ``SanctionOrderDesigner`` now carries a row for every designer an order names INCLUDING
+    the lead, so the two are no longer interchangeable and the join is the one to count: the scalar
+    knows only leads, and a co-designer — the second and third names, which is the whole point of
+    the release — has no row on ``SanctionOrder`` at all and would have been answered "0".
+
+    The authorship half is UNCHANGED and still reads ``SanctionOrder.createdById``: the officer who
+    recorded an order is on the order itself and has no row in the join, which is correct — they are
+    not one of the designers it names.
     """
     assert ("sanctionorder", "createdById", "sanction order") in _CREATOR_RELATIONS
-    assert ("sanctionorder", "designerUserId", "sanction order") in _NAMED_ON_RELATIONS
+    assert ("sanctionorderdesigner", "designerUserId", "sanction order") in _NAMED_ON_RELATIONS
     assert all(column != "designerUserId" for _model, column, _noun in _CREATOR_RELATIONS)
+    # AND NOT BOTH. The lead has a row in each table, so a tuple for each would report a designer
+    # who leads one order as named on two — see the block above `_NAMED_ON_RELATIONS` itself.
+    assert ("sanctionorder", "designerUserId", "sanction order") not in _NAMED_ON_RELATIONS
+    assert len(_NAMED_ON_RELATIONS) == 1, _NAMED_ON_RELATIONS
 
 
 def test_the_plural_is_right_at_one_and_at_more_than_one() -> None:
