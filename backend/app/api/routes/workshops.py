@@ -13,6 +13,31 @@ Endpoints come in two families:
 
 Nothing here DELETEs an assignment. A refusal or a withdrawal of access is history worth keeping, so
 rows move to DENIED/REVOKED and stay put; see :func:`revoke_workshop_assignment`.
+
+**OPENING A WORKSHOP AND CORRECTING ONE ARE TWO ACTS WITH TWO GATES**, and the split is recent
+enough to be worth stating before anybody greps for one answer:
+
+* CREATING one is :func:`require_workshop_opener` — a rank floor at MINISTRY_ADMIN (48), so exactly
+  ``{MINISTRY_ADMIN, ADMIN, MASTER_ADMIN}``. **A DESIGNER MAY NOT OPEN A WORKSHOP**, and neither may
+  a professor, an assistant director or a regional director. A workshop is not a record, it is the
+  container the records are filed under and the unit the ministry indexes and funds.
+* EDITING one is still ``require_workshop_manager`` — Professor and above, unchanged, and
+  deliberately looser. Correcting the date or the place of a workshop somebody else opened is
+  ordinary repository work; bringing a new one into existence is not.
+* DELETING one is ``assert_can_delete`` (admin), as it always was.
+
+The refusal a designer reads is :data:`WORKSHOP_CREATE_REFUSAL`, and it names the next move rather
+than stopping at "forbidden": the ministry opens the workshop, it appears in their list the moment
+they are added to it, and every record they came to make still saves against it. The web list page
+and the handset's workshop card carry the same sentence and drop the same control;
+``tests/test_workshop_creation_rights.py`` holds all three copies to this one and asserts the 403
+itself, because a hidden button over an open endpoint is not a permission.
+
+The sibling rule on the OTHER workshop table is ``assert_can_create_design_workshops`` in
+``api/routes/design_workshops.py`` — ``{ADMIN, MASTER_ADMIN}``, narrower still, and a MINISTRY_ADMIN
+is deliberately outside it: they open a design & prototype workshop through the annual plan's
+``POST /annual-plan/{id}/promote``, which carries the planned row behind it. Two tables, two doors,
+and neither gate is the other's.
 """
 
 from datetime import UTC, datetime
@@ -26,6 +51,7 @@ from app.core.deps import (
     assert_can_delete,
     get_current_user,
     get_value,
+    has_rank,
     require_admin,
     require_workshop_manager,
 )
@@ -342,10 +368,92 @@ async def list_workshops(
     return page_payload(public_encode(items), total, page, page_size)
 
 
+#: What an account that may not OPEN a workshop is told when it tries to. In ONE place because it is
+#: said on three surfaces — this module's 403, the web list page's create form, and the handset's
+#: workshop card — and a refusal that names a different next move depending on where you met it is
+#: not a rule, it is three rumours. ``DESIGN_WORKSHOP_CREATE_REFUSAL`` in ``app/core/deps.py`` is its
+#: opposite number on the other workshop table and this sentence is deliberately built to its shape.
+#:
+#: IT NAMES THE NEXT MOVE, AND THE NEXT MOVE IS NOT "ASK FOR A PROMOTION". A designer reading this is
+#: standing in a courtyard with participants in front of them. "Forbidden" tells them to stop
+#: working; the truth is that every record they came to make still saves, against a workshop that
+#: appears in their list the moment the ministry adds them to it. Both halves are said, because a
+#: refusal that omits the second is read as "your afternoon is cancelled".
+#:
+#: ``tests/test_workshop_creation_rights.py`` holds this string to the copies on the two clients.
+WORKSHOP_CREATE_REFUSAL = (
+    "Workshops are created by the ministry — a Ministry Admin, an admin or the master admin. Ask "
+    "them to open the workshop for your cluster; it will appear in your list as soon as you are "
+    "added to it, and you can then record artisans, products, tools, processes and interviews "
+    "against it exactly as before. Any workshop you already have access to is open to you now."
+)
+
+
+async def require_workshop_opener(current_user: Any = Depends(get_current_user)) -> Any:
+    """Gates ``POST /workshops`` — THE MINISTRY AND ADMIN TIERS, AND NOBODY ELSE.
+
+    ── WHAT THIS REPLACED, AND WHY IT IS NOT ``require_workshop_manager`` ────────────────────────
+    This route was ``Depends(require_workshop_manager)`` — ``can_manage_workshops``, a rank floor at
+    PROFESSOR (40). That predicate answers "may this account ADD OR EDIT a workshop", one question
+    over two acts, and the owner's ruling splits the two: **designers may not create workshops;
+    ministry and admin tiers create; designers participate in them.** A designer (35) was already
+    below the old floor and is still refused — the BEFORE state was half-right and this is said
+    plainly rather than dressed up as a fix — but PROFESSOR (40), ASSISTANT_DIRECTOR (42) and
+    REGIONAL_DIRECTOR (45) sat above it and are now out, because a workshop is the container the
+    ministry indexes and funds and opening one is an administrative act performed by whoever holds
+    the sanction order.
+
+    ``require_workshop_manager`` IS STILL ON ``PATCH /workshops/{id}`` and is deliberately untouched.
+    A professor correcting the date or the place of a workshop somebody else opened is the ordinary
+    repository work that predicate has always been for; what they no longer do is bring a new one
+    into existence. The two acts now have two gates, which is the whole of the change. ANYBODY
+    "tidying" this by putting the create back on the manager dependency is reverting the ruling.
+
+    ── WHY A RANK FLOOR AT MINISTRY_ADMIN (48), WHICH IS EXISTING VOCABULARY AND NOT A NEW RULE ──
+    ``has_rank(user, "MINISTRY_ADMIN")`` is the same shape and the same threshold
+    ``services/annual_plan.can_manage_annual_plan`` already uses for the ministry's own directory,
+    and it resolves to exactly ``{MINISTRY_ADMIN 48, ADMIN 50, MASTER_ADMIN 60}`` — "ministry and
+    admin tiers", said in the ladder's own words. No new predicate is minted for it: a second named
+    capability meaning what ``has_rank`` already says is how two rules that must agree start
+    disagreeing.
+
+    AND IT IS NOT ``can_manage_annual_plan`` ITSELF, although the two agree today and would go on
+    agreeing. That function answers "may this account read and correct the ministry's annual plan",
+    a different question over a different table; gating a workshop create on it would mean the day
+    the plan's own rule moves — to a scope table, which its docstring already argues is the likely
+    next step — this route moves with it silently. ``frontend/lib/permissions.ts`` makes the same
+    argument one rung over about ``OVERSIGHT_ASSIGNER_ROLES`` versus ``hasRank(user,
+    "MINISTRY_ADMIN")``: predicates that happen to agree are not the same predicate.
+
+    WHY NOT THE WIDER ``can_record_sanction_orders`` FLOOR AT ASSISTANT_DIRECTOR (42), which was the
+    other candidate and reads plausibly as "the ministry tiers". It was rejected because the ruling
+    names two tiers and that floor admits four: an Assistant Director and a Regional Director would
+    gain an untracked create they have never had. The sanction-order route is where those two tiers
+    initiate a workshop, and it carries an instrument — a number, a date, an amount, a named officer
+    — behind every one they open. This door has no instrument behind it at all, which is precisely
+    why it is the narrower of the two.
+
+    ── AND IT IS ENFORCED HERE RATHER THAN ONLY IN THE BROWSER ──────────────────────────────────
+    Both clients also drop the control (``frontend/app/(protected)/workshops/page.tsx``, and
+    ``canCreate(EntryMode.WORKSHOP)`` on the handset) so that nobody fills in a form that ends in a
+    403. Those are courtesy. THIS is the rule: a hidden button over an open endpoint hides the link
+    and leaves the URL, the API and an APK a fortnight behind.
+    """
+    if not has_rank(current_user, "MINISTRY_ADMIN"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=WORKSHOP_CREATE_REFUSAL,
+        )
+    return current_user
+
+
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def create_workshop(
     payload: WorkshopCreate,
-    current_user: Any = Depends(require_workshop_manager),
+    # THE CREATE GATE, AND IT IS NARROWER THAN THE EDIT GATE BELOW IT ON PURPOSE. See
+    # `require_workshop_opener` for the whole argument; the one-line version is that the ministry
+    # opens a workshop and everybody with `require_workshop_manager` may still correct one.
+    current_user: Any = Depends(require_workshop_opener),
 ) -> dict[str, Any]:
     # ── THE IDEMPOTENT REPLAY, ABOVE EVERY WRITE IN THIS ROUTE ──────────────────────────────────
     #
@@ -849,11 +957,17 @@ async def get_workshop(
 async def update_workshop(
     workshop_id: str,
     payload: WorkshopUpdate,
-    # Professor and above, the same floor as creating one. A workshop is the container the whole
-    # submission window and assignment ladder hang off — moving its dates changes who is late — so
-    # it is not a record anyone may contribute a field to. The workshop-access check below is a
-    # SECOND, orthogonal gate (scoping, not rank): a professor still needs CONTRIBUTE on a curated
-    # workshop, exactly as before.
+    # Professor and above, AND NO LONGER THE SAME FLOOR AS CREATING ONE — that sentence stood here
+    # until 2026-09-16 and `require_workshop_opener` made it false. Opening a workshop is the
+    # ministry's act now (MINISTRY_ADMIN and above); CORRECTING one is still this, deliberately
+    # looser, because a professor fixing the date or the place of a workshop somebody else opened is
+    # ordinary repository work and always has been. Nothing about this route changed; only the
+    # comparison did.
+    #
+    # A workshop is the container the whole submission window and assignment ladder hang off — moving
+    # its dates changes who is late — so it is still not a record anyone may contribute a field to.
+    # The workshop-access check below is a SECOND, orthogonal gate (scoping, not rank): a professor
+    # still needs CONTRIBUTE on a curated workshop, exactly as before.
     current_user: Any = Depends(require_workshop_manager),
 ) -> dict[str, Any]:
     workshop = await require_record(db.workshop, workshop_id)

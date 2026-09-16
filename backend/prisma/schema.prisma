@@ -6348,3 +6348,159 @@ model SanctionOrderImport {
   /// Postgres also uses for the ON DELETE SET NULL scan it is on the wrong end of.
   @@index([uploadedById, createdAt])
 }
+
+/// ONE OPTION IN THE RECORD FORM'S "TYPE OF WORKSHOP" DROPDOWN, AND THE ROUTING RULE THAT GOES WITH
+/// IT. Administrator-managed data, seeded from the six tokens the registry already knows.
+///
+/// ══ THE NAME. IT IS NOT `WorkshopType`, AND THAT IS NOT A PREFERENCE ═════════════════════════════
+///
+/// `WorkshopType` IS ALREADY TAKEN, TWICE OVER, AND THE COLLISION IS FATAL RATHER THAN CONFUSING.
+/// `enum WorkshopType { DESIGN_PROTOTYPE, OTHER }` is declared near the top of this file and sits on
+/// `Workshop.workshopType`; Prisma emits it as a real Postgres enum, and Postgres keeps enums and
+/// tables in ONE type namespace, so `CREATE TABLE "WorkshopType"` on this database answers:
+///
+///     ERROR:  type "WorkshopType" already exists
+///     HINT:   A relation has an associated type of the same name, so you must use a name that
+///             doesn't conflict with any existing type.
+///
+/// Verified against the live local database on 2026-09-16 (`select typname, typtype from pg_type
+/// where typname = 'WorkshopType'` answers `WorkshopType|e`), and re-checkable in one line. The same
+/// word is taken a third time in the web client — `frontend/lib/types.ts` exports
+/// `type WorkshopType = "DESIGN_PROTOTYPE" | "OTHER"` — and the picker on the record form has to
+/// hold BOTH meanings at once, so a shared spelling there would mean an import alias at every call
+/// site. `WorkshopTypeOption` says what a row is: one option the "Type of workshop" dropdown offers.
+/// The API prefix is still `/api/workshop-types`, the admin screen is still `/admin/workshop-types`,
+/// and the wire type is still `WorkshopTypeOption` — the ONLY thing that differs from the obvious
+/// name is the identifier Postgres refuses to create.
+///
+/// ══ WHY THIS COEXISTS WITH `stage_schema.ENUMS["WORKSHOP_KIND"]` ════════════════════════════════
+///
+/// THEY ANSWER TWO DIFFERENT QUESTIONS AND NEITHER CAN BE DERIVED FROM THE OTHER.
+///
+///   `WORKSHOP_KIND` (backend/app/services/stage_schema.py) answers **"what kind of design workshop
+///   is THIS one?"** — a field inside stage 1 of a design workshop's own 22-stage questionnaire,
+///   answered by the designer running it, promoted onto `DesignWorkshop.workshopKind` so the
+///   workshop list can narrow without opening every stage document. It stays exactly where it is,
+///   and nothing in this change touches `stage_schema.py`.
+///
+///   THIS TABLE answers **"which lists may a record form's workshop picker offer, and which table
+///   does each list come from?"** — a question about the SHAPE OF A FORM, asked on the artisan,
+///   product, process, tool, craft and questionnaire pages, none of which has a stage 1 and none of
+///   which is a design workshop. It is administrator-managed AT RUNTIME, because the list of
+///   sanctioning programmes grows whenever the ministry announces one and an administrator has to be
+///   able to add it without a deploy.
+///
+/// AND THE REGISTRY IS EXACTLY THE WRONG PLACE FOR A LIST THAT GROWS BETWEEN DEPLOYS — WHICH IS A
+/// SHARPER ARGUMENT THAN "IT WOULD FORCE A RE-SYNC", AND THE OPPOSITE OF IT. Verified against
+/// `_registry_fingerprint` on 2026-09-16: the digest reads `f.enum`, which is the NAME of the shared
+/// list ("WORKSHOP_KIND"), and never its members. So adding a seventh member to that dict DOES NOT
+/// MOVE `registry_version()` at all, while `field_to_dict` still ships the members to both clients
+/// as `options`. A handset running off its bundled `android/.../assets/design-workshop-schema.json`
+/// would therefore go on offering the old six, and
+/// `test_the_bundled_android_asset_matches_the_registry_it_was_dumped_from` — which compares the
+/// VERSION, not the content — would report agreement. A vocabulary an administrator extends on a
+/// Tuesday would reach the browser, silently not reach the field, and have a version string saying
+/// everything was fine. `registry_version()`'s own docstring records that exact failure happening
+/// four times over for other inputs; the remedy there was to widen the digest, and widening it for
+/// enum MEMBERS would then mean every administrator's edit staled every handset's asset and demanded
+/// a re-cut APK. Neither half of that trade is acceptable for a list that is meant to change, so the
+/// list that is meant to change lives in a table the clients read over HTTP instead.
+///
+/// The six seeded rows carry the SAME KEYS as the registry's six tokens, and that is deliberate: it
+/// is what makes every `DesignWorkshop.workshopKind` value already in the database resolve to a
+/// label on the new screen, and what lets the two vocabularies be compared row by row if they ever
+/// drift. It is a SEED, NOT A SYNCHRONISATION — nothing copies one into the other in either
+/// direction, ever. A registry token with no row here is simply not offered as a form type; a row
+/// here with no registry token is a type a designer cannot file a design workshop under. Both are
+/// legitimate states, which is why `tests/test_workshop_types.py` pins the seeded OVERLAP rather
+/// than asserting the two lists stay equal forever.
+///
+/// ══ `routesToDesignWorkshop` — THE WHOLE POINT OF THE TABLE ══════════════════════════════════════
+///
+/// See the field's own comment. In one sentence: it is the flag the record form's picker reads to
+/// decide whether the workshop the researcher chose is written to `Record.designWorkshopId` or to
+/// `Record.workshopId`. Exactly one seeded row carries it.
+///
+/// ══ THE TYPE ITSELF IS NOT STORED ON ANY RECORD, AND THAT IS WORTH SAYING HERE ═══════════════════
+///
+/// No record column points at a row of this table and none should. A record stores the WORKSHOP it
+/// belongs to; the workshop already knows its own type, so storing the type beside it would be a
+/// second copy that can disagree with the first — and the disagreement would be invisible, because
+/// nothing would ever read them together. The dropdown above the workshop dropdown is a NARROWING
+/// CONTROL and nothing else, which is exactly what `DesignWorkshopCascade` already says of the
+/// filter it replaces: "Narrows the workshops below. It is not saved on this record."
+///
+/// The consequence to keep in mind: THERE IS NO FOREIGN KEY ONTO THIS TABLE, so "which records use
+/// this type" is not a join — it is a count of the workshops filed under its key. See
+/// `routes/workshop_types.py::_design_workshops_under` for the count the delete refusal is built on.
+model WorkshopTypeOption {
+  id String @id @default(cuid())
+
+  /// THE STABLE TOKEN. `DESIGN_PROTOTYPE_DEVELOPMENT`, `SKILL_UPGRADATION`, and so on — the thing
+  /// code compares against, and the thing `DesignWorkshop.workshopKind` already holds for 24 rows on
+  /// the live database. `@unique` because it IS the identity as far as every reader is concerned;
+  /// the cuid above exists only so the admin screen has something stable to PATCH while a label is
+  /// being corrected.
+  ///
+  /// **THE KEY IS NEVER REWRITTEN BY A LABEL EDIT, AND THAT IS THE RULE THE WHOLE SCREEN TURNS ON.**
+  /// Renaming "Exposure / Exhibition" to "Exposure & Exhibition" is the common case — it happens
+  /// because somebody read the ministry's own spelling — and it must be a pure label change, because
+  /// `EXPOSURE_EXHIBITION` is written into 22-stage documents, into `DesignWorkshop.workshopKind`,
+  /// into `AnnualPlanEntry.workshopKind` and into every exported dataset. `WorkshopTypeOptionUpdate`
+  /// does not accept this field AT ALL, so the safe edit cannot be made unsafe by a typo in a client.
+  key String @unique
+
+  /// WHAT A HUMAN READS IN THE DROPDOWN. Free text, edited freely, and the only field an
+  /// administrator changes in the ordinary course of things.
+  label String
+
+  /// WHERE IT SITS IN THE LIST. Low first; `key` breaks a tie, so the order is total and no reader
+  /// can see two different lists from two identical requests.
+  ///
+  /// DELIBERATELY NOT `@@unique`, unlike `QuestionnaireSection.sortOrder`, which this model
+  /// otherwise follows column for column. A unique ordinal makes SWAPPING two rows a
+  /// three-statement dance through a temporary value — the sort of thing that half-completes when a
+  /// request is interrupted and leaves the list in a state the next save cannot repair. Nothing is
+  /// gained by it: duplicates order by `key` and the administrator sees a stable list either way.
+  sortOrder Int @default(0)
+
+  /// OFFERED IN THE DROPDOWN, OR RETIRED. False hides the type from every picker WITHOUT touching a
+  /// single workshop filed under it — which is what makes retiring a type safe, and is the remedy
+  /// the DELETE refusal names when a type is in use. `GET /workshop-types` serves active rows by
+  /// default and every row to a caller that asks for them.
+  isActive Boolean @default(true)
+
+  /// ══ WHICH TABLE A WORKSHOP CHOSEN UNDER THIS TYPE IS WRITTEN TO ══════════════════════════════
+  ///
+  /// TRUE  → the "Workshop" dropdown below the type is filled from `DesignWorkshop`, and the chosen
+  ///         row is saved to `Record.designWorkshopId`.
+  /// FALSE → it is filled from `Workshop`, and the chosen row is saved to `Record.workshopId`.
+  ///
+  /// EXACTLY ONE SEEDED ROW HAS IT: `DESIGN_PROTOTYPE_DEVELOPMENT`. That is not a constraint the
+  /// database enforces and it is not one it should be — a second design-workshop-backed programme is
+  /// a thing the ministry could announce, and a CHECK constraint or a partial unique index would
+  /// make announcing it a migration on every deployment, which is the friction
+  /// `DesignWorkshop.workshopKind`'s own comment argues against at length for the identical reason.
+  /// What the SHAPE does guarantee is that the answer is per TYPE and never per record, so two
+  /// records filed under one type cannot end up written to different columns.
+  ///
+  /// **A BOOLEAN AND NOT AN ENUM OF TABLE NAMES.** The tempting alternative is a `source` column
+  /// holding `"DESIGN_WORKSHOP" | "WORKSHOP"`, which reads better right up to the moment somebody
+  /// adds a third member naming a table that does not exist. There are TWO tables, both of them are
+  /// staying (the owner's ruling: `Workshop` 378 rows, `DesignWorkshop` 13,871 rows, no merge and no
+  /// data movement), and a boolean is the honest shape of a two-valued fact. The NAME says which way
+  /// TRUE points, so no reader has to remember which member of a pair the default stands for.
+  ///
+  /// **IT IS NOT DERIVED FROM `key == "DESIGN_PROTOTYPE_DEVELOPMENT"`, AND MUST NOT BE.** That
+  /// equality is true of the seed and is not the rule; deriving it would put the routing decision in
+  /// whichever client last compared a string, and there are three clients.
+  routesToDesignWorkshop Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  /// The picker's read, in one index: active rows, in order. `QuestionnaireSection`'s exactly, and
+  /// for the same reason — every read of this table filters `isActive` and sorts by `sortOrder`, so
+  /// a bare index on either column alone would leave Postgres doing the other half by hand.
+  @@index([isActive, sortOrder])
+}

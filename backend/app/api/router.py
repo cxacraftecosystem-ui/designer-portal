@@ -41,6 +41,7 @@ from app.api.routes import (
     tools,
     usage,
     users,
+    workshop_types,
     workshops,
 )
 
@@ -68,6 +69,23 @@ api_router.include_router(annual_plan.router)
 api_router.include_router(artisans.router)
 api_router.include_router(crafts.router)
 api_router.include_router(workshops.router)
+# The "Type of workshop" vocabulary — /api/workshop-types. Mounted immediately under `workshops`
+# because the two are read together on every record form: this list fills the FIRST of the form's two
+# workshop dropdowns, and the type chosen there decides whether the second is filled from `Workshop`
+# (above) or from `DesignWorkshop`.
+#
+# ITS OWN PREFIX, AND NOT NESTED UNDER /workshops, for two reasons. The list is not about `Workshop`
+# rows at all — one of its six members routes at `DesignWorkshop` and the rest at `Workshop`, so
+# filing it under either table's prefix would assert something false about the other half. And
+# /workshops already carries GET /{workshop_id}, which would swallow any literal path mounted after
+# it; that is the hazard the notes further down this file record for /design-workshops.
+#
+# IT IS ALSO NOT PART OF `reference`, WHICH IS THE OTHER TEMPTING HOME. Everything on /reference is a
+# pure server-side CONSTANT with no database read — the state list, the districts, the pincode rule —
+# and this is a TABLE an administrator edits at runtime. Putting a mutable, admin-written list behind
+# a prefix whose whole contract is "cache this and re-fetch only when `version` changes" would leave
+# every client serving a vocabulary an admin had already corrected. See routes/workshop_types.py.
+api_router.include_router(workshop_types.router)
 api_router.include_router(products.router)
 api_router.include_router(processes.router)
 api_router.include_router(tools.router)

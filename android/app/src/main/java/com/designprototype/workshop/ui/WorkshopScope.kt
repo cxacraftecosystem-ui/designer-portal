@@ -63,6 +63,28 @@ import kotlinx.coroutines.CancellationException
  * not the question anybody opened them to ask. "All records" is one tap away and says so. The one
  * screen where that default would be WRONG passes `defaultToMostRecent = false` — see
  * [rememberWorkshopScope].
+ *
+ * ── THIS IS NOT THE RECORD FORMS' WORKSHOP PICKER, AND IT GAINED NO TYPE BOX WHEN THAT ONE DID ──
+ *
+ * Said out loud because the two now look alike from a distance and one of them acquired a control in
+ * the release that added this paragraph. A record form asks *"which workshop does this record belong
+ * to"* and writes the answer to one of two columns, which is why `RecordWorkshopField` grew a "Type
+ * of workshop" box above it: the type decides the destination (R3). This control asks *"which
+ * workshops am I reading about"* and writes nothing at all — it produces a `workshopIds` query
+ * parameter that `record_filters.resolve_workshop_ids` parses, over a corpus that is open to every
+ * signed-in account.
+ *
+ * A type box here would therefore be a filter on top of a filter, narrowing an analysis screen by a
+ * vocabulary none of its records carry: `Workshop` has no per-type column at all (its two-member
+ * `workshopType` enum reads OTHER on every live row), so five of the six types would narrow nothing
+ * and the sixth would silently drop every `Workshop`-linked record from a matrix. The scope this
+ * control produces is deliberately about WORKSHOPS and not about kinds of workshop, and the web's
+ * `components/WorkshopScopeSelect.tsx` did not grow one either.
+ *
+ * The one string the two share is the unassigned row's, *"Not linked to a workshop"* —
+ * `NO_FIELD_WORKSHOP` in `WorkshopOptions.kt` — and that is correct rather than a coincidence: a
+ * researcher who files a record under no workshop and then goes looking for it in a scope has to
+ * meet the same words in both places or conclude the record is gone.
  */
 
 /**

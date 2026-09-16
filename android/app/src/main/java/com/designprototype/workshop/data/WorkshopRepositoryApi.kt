@@ -5,6 +5,7 @@ package com.designprototype.workshop.data
 // ui/ConsolidatedQuestionnaireScreen.kt while this file and ApiModels.kt were being edited
 // concurrently, so re-declaring them here would give the app two incompatible spellings of one wire
 // format. If they are ever moved into ApiModels.kt, this import is the only line to delete.
+import android.content.Context
 import com.designprototype.workshop.ui.ConsolidatedQuestionnaireDto
 import okhttp3.ResponseBody
 import retrofit2.Response
@@ -19,6 +20,7 @@ import retrofit2.http.Part
 import retrofit2.http.Path
 import retrofit2.http.Query
 import retrofit2.http.Streaming
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 
@@ -193,6 +195,59 @@ interface WorkshopRepositoryApi {
         // pickers use: it also counts an artisan who merely SAT IN an interview taken at the
         // workshop, so this list and the completion matrix cannot disagree about who was there.
         @Query("workshopIds") workshopIds: String? = null,
+        /*
+         * THE DESIGN & PROTOTYPE WORKSHOP SCOPE, AND THE OTHER HALF OF ONE FILTER.
+         *
+         * ── WHY IT IS HERE AT ALL, WHICH IS A DEFECT REPORT AND NOT A FEATURE ─────────────────
+         *
+         * `QuestionnaireForm` offered EVERY ARTISAN IN THE DEPLOYMENT under whichever workshop its
+         * own picker was showing, and had since it was written. The browser closed the same defect
+         * in `frontend/components/questionnaires/interviewArtisans.ts`; this client could close only
+         * half of it, because the two-dropdown ruling routes a record at EITHER a `Workshop` or a
+         * `DesignWorkshop` and this interface could express only the first. The parameter was never
+         * blocked by the server: `backend/app/api/routes/artisans.py::list_artisans` has declared
+         * `designWorkshopId` beside `workshopId` and `workshopIds` the entire time. Nothing was
+         * added to that route for this; the absence was on this side of the wire.
+         *
+         * `shared/questionnaire-form-contract.json` carried the whole thing as the
+         * `handset-artisan-register-is-unscoped` row of `openDrifts`, whose own text says why
+         * closing the ordinary arm alone would have been worse than leaving it open: a deleted row
+         * reads as a closed defect, and the design arm would have gone on offering the whole
+         * deployment with nothing saying so.
+         *
+         * ── WHAT THE SERVER ARM ACTUALLY MATCHES, WHICH IS NOT WHAT `workshopId` MATCHES ──────
+         *
+         * A PLAIN EQUALITY ON `Artisan.designWorkshopId` AND NOTHING ELSE — `where["designWorkshopId"]
+         * = designWorkshopId`, one column, no OR. The singular `workshopId` arm a few lines above it
+         * on the route counts TWO readings (`{"OR": [{"workshopId": …}, {"workshops": {"some": …}}]}`:
+         * the artisan's own column or the `WorkshopArtisan` join that carried the link before the
+         * column existed), and the plural `workshopIds` counts THREE (`artisan_workshop_clause` adds
+         * having sat in an interview taken at the workshop). This one has never had anything but the
+         * column, because it has never had a join table.
+         *
+         * So it is the NARROWEST of the three, and a design workshop whose roster is built only out
+         * of interviews will answer empty here. That is the honest answer rather than a gap to paper
+         * over: an artisan is linked to a design workshop by that column and by nothing else, and a
+         * picker that invented a wider reading would be offering people the record does not link.
+         * Measured on the local corpus on 2026-09-16: of 774 artisans, 204 carry a `workshopId` and
+         * 4 carry a `designWorkshopId`. The reserved word "none" is deliberately NOT accepted by the
+         * route on this parameter — that vocabulary belongs to the plural scope.
+         *
+         * ── IT IS NEVER SENT WITH `workshopIds`, AND THAT IS THE REJECTED ALTERNATIVE ─────────
+         *
+         * "Send both and let the server sort it out" is wrong twice over. `list_artisans` ANDs its
+         * filters, so both spellings together narrow to the artisans linked BOTH ways — 4 rows of
+         * 774 on the corpus above — and an empty picker under a named workshop is this repository's
+         * most repeated bug class (`craft_workshop_clause`'s own docstring: "a scope that renders
+         * empty over a full corpus and looks exactly like having no data"). And it would be a claim
+         * the form cannot support: the two-dropdown ruling files a record under exactly one of the
+         * two columns, so a roster scoped by both is scoped by a workshop the record is not in.
+         *
+         * `interviewArtisanScope` in `WorkshopRepository.kt` is the one place that decides which,
+         * off the routing flag the type box already exposes. Callers that want everyone's rows keep
+         * passing null and are unaffected — every existing caller of this function does.
+         */
+        @Query("designWorkshopId") designWorkshopId: String? = null,
         // WHOSE RECORDS, ASKED FOR BY NAME — and it must be asked for, never sifted for.
         //
         // Reading the repository is OPEN (`backend/app/services/records.py` viewable_where returns
@@ -2292,4 +2347,87 @@ interface WorkshopRepositoryApi {
         @Path("entryId") entryId: String,
         @Body body: CustomAnswerBatchBody
     ): CustomAnswerSaveResultDto
+
+    /**
+     * THE "TYPE OF WORKSHOP" VOCABULARY — the first of the two dropdowns on every record form, and
+     * the flag that decides where the second one's answer is saved.
+     *
+     * `GET /api/workshop-types`, `get_current_user`, six rows, NOT PAGINATED — the route says so
+     * out loud and the reason is that a picker which could only see page one of its own vocabulary
+     * is the silent-truncation failure this repository keeps rediscovering. There is therefore no
+     * `page`/`pageSize` here to leave off by mistake.
+     *
+     * NO `includeInactive` PARAMETER ON THIS CLIENT, and that is a refusal rather than an omission.
+     * The server takes one and defaults it to false; it exists for the admin screen, which this
+     * handset does not have. A retired type absent from the dropdown is the entire meaning of
+     * retiring one, so a picker that could ask for the inactive rows is a picker that can offer a
+     * type an administrator has already taken away.
+     *
+     * NOT `reference/…` AND NOT THE STAGE REGISTRY, though it looks like both. Everything under
+     * `/reference` is a compiled-in server constant a client is told to cache until `version` moves,
+     * and `stage_schema.ENUMS["WORKSHOP_KIND"]` is a vocabulary baked into the APK. This is a TABLE
+     * an administrator edits at runtime, which is why it has an endpoint of its own — see
+     * `backend/app/api/router.py`, which argues both exclusions at length.
+     */
+    @GET("workshop-types")
+    suspend fun workshopTypes(): List<WorkshopTypeOptionDto>
 }
+
+/**
+ * One row of the administrator-managed "Type of workshop" list.
+ *
+ * ── THE NAME IS `WorkshopTypeOption` AND `WorkshopType` IS ALREADY SOMETHING ELSE ────────────────
+ *
+ * `WorkshopDetailDto.workshopType` carries the two-member legacy enum `DESIGN_PROTOTYPE | OTHER`,
+ * which says whether one particular `Workshop` ROW was a design & prototype visit. This is the
+ * ADMINISTRATOR'S LIST of the types a form may offer, and the record-form picker holds both meanings
+ * at once. The backend could not use the shorter name either: `WorkshopType` is a real Postgres enum
+ * on this database and Postgres keeps enums and tables in ONE type namespace, so
+ * `CREATE TABLE "WorkshopType"` answers *ERROR: type "WorkshopType" already exists*. The Prisma model
+ * records the verification; `frontend/lib/workshopTypes.ts` carries the same paragraph for the web.
+ *
+ * ── EVERY FIELD HAS A DEFAULT, WHICH IS NOT LAZINESS ─────────────────────────────────────────────
+ *
+ * `ApiClient.json` sets `ignoreUnknownKeys` but NOT `explicitNulls = true`, and a deployment running
+ * a server older than this table answers 404 rather than a short row — so the defaults are not about
+ * that. They are about the opposite direction: a column ADDED to this table server-side must not
+ * make every handset's record form fail to decode its own type list, which is the failure mode
+ * `ManifestStream`'s note describes for a much larger payload. A row that arrives without
+ * [routesToDesignWorkshop] therefore reads as an ordinary-`Workshop` type, which is the safe half of
+ * that guess: it offers the list every signed-in account can already reach rather than one gated by
+ * a viewer grant.
+ */
+@Serializable
+data class WorkshopTypeOptionDto(
+    val id: String = "",
+    /**
+     * The stable token — `DESIGN_PROTOTYPE_DEVELOPMENT`, `SKILL_UPGRADATION`, … — and the value
+     * `DesignWorkshop.workshopKind` and `AnnualPlanEntry.workshopKind` already store.
+     *
+     * PERMANENT. `PATCH /workshop-types/{id}` does not accept this field and answers 422 if a client
+     * sends it, which is what makes editing a label always safe.
+     *
+     * READ IT, DO NOT ROUTE ON IT. See [routesToDesignWorkshop].
+     */
+    val key: String = "",
+    /** What a person reads in the dropdown. The field an administrator edits. */
+    val label: String = "",
+    /** Low first. NOT unique — `key` breaks the tie, which is what makes the order total. */
+    val sortOrder: Int = 0,
+    /** False = retired: absent from every picker, with every workshop filed under it untouched. */
+    val isActive: Boolean = true,
+    /**
+     * TRUE  -> the "Workshop" dropdown is filled from `DesignWorkshop`, saved to `designWorkshopId`.
+     * FALSE -> it is filled from `Workshop`, saved to `workshopId`.
+     *
+     * **THIS FLAG IS THE ROUTING DECISION AND [key] IS NOT.** A `key == "DESIGN_PROTOTYPE_DEVELOPMENT"`
+     * test in a picker is the bug the constant's own doc comment on the web exists to prevent:
+     * nothing in the database constrains "exactly one true row", deliberately, so that an
+     * administrator can announce a second design-workshop-backed programme without a migration on
+     * every deployment and without either client shipping.
+     */
+    val routesToDesignWorkshop: Boolean = false,
+    val createdAt: String? = null,
+    val updatedAt: String? = null,
+)
+

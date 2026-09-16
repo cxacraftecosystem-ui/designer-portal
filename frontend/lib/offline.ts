@@ -246,12 +246,22 @@ export type OutboxEntry = {
    *     this and says what happens without it — *"the save would return 200, the form would show it
    *     unfiled, and the old link would survive in the database."*
    *
-   *   * THERE WAS NOTHING TO CHOOSE. The laptop was in a courtyard with no signal, an access list
-   *     is never cached (R6 — a stale grant set is wrong in the permissive direction), so the
-   *     picker was EMPTY. {@link UNFILED_NO_OPTIONS}. The researcher made no decision at all, and
-   *     reading their empty box as one is how a correction composed on the bus home silently strips
-   *     a link nobody was ever shown. That absence sends NOTHING for the column and the stored
-   *     value stands.
+   *   * THERE WAS NOTHING TO CHOOSE. The laptop was in a courtyard with no signal and the picker
+   *     had no rows, so the box was EMPTY. {@link UNFILED_NO_OPTIONS}. The researcher made no
+   *     decision at all, and reading their empty box as one is how a correction composed on the bus
+   *     home silently strips a link nobody was ever shown. That absence sends NOTHING for the
+   *     column and the stored value stands.
+   *
+   *     THE REASON USED TO BE STATED AS A LAW AND IT IS NOW A FACT ABOUT THIS CLIENT. This read
+   *     "an access list is never cached (R6 — a stale grant set is wrong in the permissive
+   *     direction)". R6 was narrowed on 2026-09-16 on the OWNER'S instruction, and only on the
+   *     handset: `android/.../data/DwLocalWorkshops.kt` keeps a designer's allotted, not-yet-ended
+   *     workshops on the device, re-testing the window on every read, because a phone in a courtyard
+   *     with an empty picker files a fortnight of fieldwork under nothing. A browser is not that
+   *     device and nothing here is asking to become one — see `lib/referenceCache.ts`, which makes
+   *     the web's refusal a type error rather than a sentence. What survives on both clients is the
+   *     half about PREFILLING: a cached list may be OFFERED, a stale answer may never be WRITTEN
+   *     onto a record nobody looked at.
    *
    * That is R1 — *empty means everything BY ABSENCE* — with its sign flipped for a form field:
    * absence means "no change" UNLESS it was chosen. Collapsing the two gives the column two

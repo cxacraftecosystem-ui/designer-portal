@@ -296,7 +296,16 @@ object FieldPermissions {
      */
     fun canManageCrafts(user: UserDto): Boolean = rank(user.role) >= RANK_PROFESSOR
 
-    /** `require_workshop_manager` — Professor and above, rank alone; see [canManageCrafts]. */
+    /**
+     * EDIT a workshop — `require_workshop_manager`, Professor and above, rank alone; see
+     * [canManageCrafts].
+     *
+     * IT COVERED CREATING ONE TOO UNTIL 2026-09-16. `POST /workshops` is now
+     * `require_workshop_opener` (a MINISTRY_ADMIN floor) because designers participate in workshops
+     * and the ministry and admin tiers open them; `UserDto.canOpenAWorkshop()` in `MainActivity.kt`
+     * is that predicate. This one is the edit gate, and it is deliberately looser — a professor
+     * correcting the date of a workshop somebody else opened is ordinary repository work.
+     */
     fun canManageWorkshops(user: UserDto): Boolean = rank(user.role) >= RANK_PROFESSOR
 
     /** `require_professor` on GET/PATCH /users. */

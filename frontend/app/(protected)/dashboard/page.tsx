@@ -43,6 +43,7 @@ import { apiFetch } from "@/lib/api";
 import { formatDateTime } from "@/lib/format";
 import {
   canCreateRecords,
+  canCreateWorkshops,
   canDownloadDataset,
   canManageCrafts,
   canManageUsers,
@@ -86,7 +87,12 @@ type DashboardStats = StatTotals & {
 type Tile = {
   label: string;
   icon: LucideIcon;
-  newHref: string;
+  /**
+   * Where "New" goes, and OPTIONAL: a tile may offer Update and no New. See `DashboardCard`, which
+   * carries the case that made it so — a professor may correct a workshop and may no longer open
+   * one, so drawing both buttons offered them a form they would be refused.
+   */
+  newHref?: string;
   updateHref?: string;
   /**
    * The primary button's wording. Defaults to "New"; the exceptions are copied verbatim from
@@ -94,9 +100,15 @@ type Tile = {
    */
   newLabel?: string;
   /**
-   * Whether this tile is offered at all. Every tile leads with a "New …" action, so the predicate
-   * is the CREATE entitlement for that record type — the same one DynamicIslandNav's NAV_ITEMS use,
-   * so the dashboard and the menu can never disagree about what a user may do.
+   * Whether this tile is offered at all — the predicate for REACHING this record type, which is the
+   * same one DynamicIslandNav's NAV_ITEMS use, so the dashboard and the menu can never disagree
+   * about where a user may go.
+   *
+   * IT USED TO SAY "the CREATE entitlement", AND THAT STOPPED BEING TRUE OF ONE TILE. Every tile did
+   * lead with a "New …" action until the workshop create moved to the ministry floor; the Workshop
+   * tile now leads with Update for a professor, who may reach and correct a workshop and may not
+   * open one. Where the two halves differ, this stays the WIDER predicate and the create half is
+   * expressed by omitting `newHref` — hiding the tile would take away an Update somebody has.
    */
   visible?: boolean;
 };
@@ -480,9 +492,17 @@ function DashboardView() {
     { label: "Settings", icon: Settings, newHref: "/admin", visible: adminSurface(isAdmin(user)), newLabel: "Open" },
     { label: "Craft", icon: Brush, newHref: "/crafts?new=1", updateHref: "/crafts", visible: canManageCrafts(user) },
     {
+      // TWO PREDICATES ON ONE TILE, since 2026-09-16, and the split is the ruling rather than a
+      // refinement. Opening a workshop is the ministry's act (`require_workshop_opener`, a
+      // MINISTRY_ADMIN floor); correcting one somebody else opened is still Professor and above. A
+      // single `visible: canManageWorkshops` left a professor with a "New" button that landed on the
+      // explanatory panel instead of a form — the right answer, one wasted click and one moment of
+      // believing the app was broken. `newVisible` is what the tile takes to say which half is
+      // theirs; `updateHref` stays on the wider predicate, because Edit is exactly what a professor
+      // still has.
       label: "Workshop",
       icon: UsersRound,
-      newHref: "/workshops?new=1",
+      newHref: canCreateWorkshops(user) ? "/workshops?new=1" : undefined,
       updateHref: "/workshops",
       visible: canManageWorkshops(user)
     }

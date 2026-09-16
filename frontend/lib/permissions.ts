@@ -239,9 +239,40 @@ export function canManageCrafts(user: User | null | undefined) {
   return hasRank(user, "PROFESSOR");
 }
 
-/** Add or edit a workshop — `require_workshop_manager`. Professor+; deleting one is admin-only. */
+/**
+ * EDIT a workshop — `require_workshop_manager`. Professor+; deleting one is admin-only.
+ *
+ * IT SAID "ADD OR EDIT" UNTIL 2026-09-16 AND THE "ADD" HALF MOVED. `POST /workshops` is now
+ * `require_workshop_opener`, a rank floor at MINISTRY_ADMIN, because R6 of the dropdown ruling is
+ * that designers participate in workshops and the ministry and admin tiers open them — and that
+ * floor also takes the create away from professors, assistant directors and regional directors, who
+ * all keep the edit. {@link canCreateWorkshops} is the create predicate; this is the edit one, and
+ * the two are separate functions precisely because they are now separate rules.
+ */
 export function canManageWorkshops(user: User | null | undefined) {
   return hasRank(user, "PROFESSOR");
+}
+
+/**
+ * OPEN a new workshop — `require_workshop_opener` (backend/app/api/routes/workshops.py).
+ *
+ * MINISTRY_ADMIN and above: `{MINISTRY_ADMIN, ADMIN, MASTER_ADMIN}`. The refusal a designer reads is
+ * the server's own `WORKSHOP_CREATE_REFUSAL`, printed verbatim by
+ * `app/(protected)/workshops/page.tsx` and by the handset's refusal card — never re-worded on a
+ * client, because three copies of one sentence is not a rule, it is three rumours.
+ *
+ * A TWIN OF {@link canManageWorkshops} AND NOT A NARROWING OF IT. The edit gate genuinely is looser
+ * and that is the ruling: opening a workshop is the ministry's act, correcting one somebody else
+ * opened is ordinary repository work. A page that wants "may this account reach the form at all"
+ * wants `canManageWorkshops && (editing || canCreateWorkshops)`, which is what the workshops page
+ * spells out, because a professor must still reach every field through Edit.
+ *
+ * NOT THE SAME AS `canCreateDesignWorkshops`, which is `{ADMIN, MASTER_ADMIN}` on the other workshop
+ * table — a MINISTRY_ADMIN opens a `Workshop` here and reaches a `DesignWorkshop` through
+ * `POST /annual-plan/{id}/promote`. Two doors, two gates, one creation path.
+ */
+export function canCreateWorkshops(user: User | null | undefined) {
+  return hasRank(user, "MINISTRY_ADMIN");
 }
 
 /** Anyone with somebody ranked below them may peer-review (plus grantees of canReview). */

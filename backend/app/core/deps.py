@@ -700,8 +700,21 @@ def can_read_person_usage(user: Any) -> bool:
 
 
 def can_manage_workshops(user: Any) -> bool:
-    """Create or update a workshop: Professor and above, RANK ALONE — see ``can_manage_crafts`` for
-    why the ``canManageWorkshops`` grant is no longer consulted."""
+    """UPDATE a workshop: Professor and above, RANK ALONE — see ``can_manage_crafts`` for why the
+    ``canManageWorkshops`` grant is no longer consulted.
+
+    IT SAID "CREATE OR UPDATE" UNTIL 2026-09-16 AND THAT HALF MOVED. Opening a workshop is now
+    ``workshops.require_workshop_opener`` — a rank floor at MINISTRY_ADMIN (48), so exactly
+    ``{MINISTRY_ADMIN, ADMIN, MASTER_ADMIN}`` — because R6 of the dropdown ruling is that designers
+    participate in workshops and the ministry and admin tiers open them. CORRECTING one stayed here,
+    deliberately looser: a professor fixing the date or the place of a workshop somebody else opened
+    is ordinary repository work and always has been.
+
+    So this predicate is now the EDIT gate and nothing else. ``frontend/lib/permissions.ts``'s
+    ``canManageWorkshops`` and the handset's ``FieldPermissions.canManageWorkshops`` mirror it and
+    say the same; the create predicate on those two clients is ``hasRank(user, "MINISTRY_ADMIN")``
+    and ``UserDto.canOpenAWorkshop()``.
+    """
     return has_rank(user, "PROFESSOR")
 
 

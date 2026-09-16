@@ -1,9 +1,30 @@
 "use client";
 
 /**
- * The ONE design-and-prototype-workshop picker every record form mounts, beside its `WorkshopSelect`.
+ * THE DESIGN-WORKSHOP HALF OF ONE PICKER. Not a control a record form mounts on its own any more.
  *
- * ── WHY IT IS A SECOND PICKER AND NOT A SECOND KIND OF ROW IN THE FIRST ─────────────────────────
+ * ── WHERE THIS IS DRAWN NOW, AND WHAT STOPPED DRAWING IT ───────────────────────────────────────
+ *
+ * `forms/WorkshopPicker.tsx` is the one workshop control on a record form. It draws a "Type of
+ * workshop" box and then ONE workshop box: this component when the chosen type's
+ * `routesToDesignWorkshop` flag is true, and `forms/WorkshopSelect.tsx` when it is false. A record
+ * form no longer carries two workshop dropdowns and a third box narrowing one of them; the owner's
+ * ruling is two dropdowns, never three, and `WorkshopPicker`'s header carries the whole argument.
+ *
+ * THERE IS EXACTLY ONE OTHER MOUNT AND IT IS NOT A RECORD FORM: the miscellaneous-media upload
+ * (`app/(protected)/media/page.tsx`) draws this box ALONE, with no type box above it, because
+ * `MediaCompleteRequest` declares `designWorkshopId` and no `workshopId` — a type box there would
+ * offer five types whose answer the upload cannot carry. That mount writes the argument out, and
+ * Android's `AndroidMediaForm` draws the identical single box for the identical reason.
+ *
+ * `DesignWorkshopCascade` — the retired kind box plus this one — was DELETED on 2026-09-16 once
+ * both of its callers (the media page and the interview page) were converted, and the
+ * `workshopKind` prop that only it ever passed went with it. What narrows this list now is the
+ * choice of TABLE one level up, which is what R2 means by "the workshops of that type"; nothing
+ * narrows WITHIN the table, because 13,847 of 13,871 `DesignWorkshop` rows hold no `workshopKind`
+ * at all and a narrowing by it would answer "no workshops of this type" about a table full of them.
+ *
+ * ── IT IS STILL ITS OWN COMPONENT, AND THE REASON IS THE SAME ONE AS BEFORE ────────────────────
  *
  * `forms/WorkshopSelect.tsx` picks a `Workshop` — the ordinary field/training workshop, gated by
  * `WorkshopAssignment` through `resolve_workshop_access`, and subject to the submission window and
@@ -11,7 +32,15 @@
  * record, gated by `load_workshop_or_404` through creator/admin/`DesignWorkshopViewer`. They are
  * two different tables, two different scopes and two different access systems, and
  * `Artisan.designWorkshopId` in `schema.prisma` carries the full argument for why one column could
- * not carry both. A record may be filed under either, both, or neither.
+ * not carry both. R1 keeps both tables and both columns; what the release changed is the FORM, not
+ * the schema. Folding these two files into one control that fetched from either table would have
+ * put two access systems behind one code path, which is how a scope comes to be checked by
+ * whichever of them the caller remembered.
+ *
+ * WHAT DID CHANGE IS THAT A RECORD NO LONGER CARRIES BOTH. The columns are still two and still
+ * nullable, but one picker gives one answer, so `WorkshopPicker` writes the id into the column the
+ * chosen type routes to and `null` into the other. It says so, with the row counts it measured
+ * first.
  *
  * The visible consequence for a designer is small and worth stating on screen rather than in this
  * comment: **filing a record under a design workshop does not restrict who may read it.**
@@ -155,7 +184,28 @@ export type DesignWorkshopSelectState = {
  * where the box is drawn, and threading a ref through JSX to get at it is how the two come to
  * disagree.
  */
-export function useDesignWorkshopSelection(initial?: string | null): DesignWorkshopSelectState {
+export function useDesignWorkshopSelection(
+  initial?: string | null,
+  /**
+   * The record currently in the form, when ONE MOUNTED FORM IS USED FOR SEVERAL RECORDS. Pass the
+   * record's id; omit it entirely when the form is remounted per record, which is what every caller
+   * outside `forms/WorkshopPicker.tsx` does.
+   *
+   * ── THE BUG THIS CLOSES, WHICH IS THE ONE THE PICKER EXISTS TO PREVENT ───────────────────────
+   *
+   * `useWorkshopSelection` has taken a `resetKey` since it was written and this hook never did, so
+   * the two halves of what is now one control disagreed about what happens when the record under
+   * the form changes: the ordinary-workshop box re-seeded and this one kept the PREVIOUS record's
+   * design workshop, in state, invisible, and on the next payload. That is a record silently
+   * re-filed under a workshop nobody chose for it — exactly the failure the picker's defaulting
+   * rules are written against, arriving through the one door those rules do not watch.
+   *
+   * Two records that both store no design workshop are told apart by this key and not by `initial`,
+   * which is `null` for both: without it, a workshop picked by hand on record A would still be in
+   * the box when record B arrived.
+   */
+  resetKey?: string | null
+): DesignWorkshopSelectState {
   const [workshopId, setId] = useState<string>(initial ?? "");
   const [touched, setTouched] = useState(false);
   const setWorkshopId = useCallback((id: string) => {
@@ -164,6 +214,19 @@ export function useDesignWorkshopSelection(initial?: string | null): DesignWorks
   }, []);
   // No `setTouched` at all, which is the entire difference. See the type's own note.
   const prefillWorkshopId = useCallback((id: string) => setId(id), []);
+  /*
+    Same shape and same dependencies as `useWorkshopSelection`'s reset, so the two halves of the
+    picker cannot drift again. It fires once on mount with the values `useState` already holds,
+    which costs nothing: React bails out of a setter called with the value it already has.
+
+    `touched` GOES BACK TO FALSE, because it is a fact about what a PERSON did to the record in the
+    form, and the record in the form has just been replaced. Leaving it true would tell the create
+    branch that somebody had already chosen, and the new record would open with no default at all.
+  */
+  useEffect(() => {
+    setId(initial ?? "");
+    setTouched(false);
+  }, [resetKey, initial]);
   return { workshopId, setWorkshopId, prefillWorkshopId, touched };
 }
 
@@ -191,31 +254,25 @@ export function DesignWorkshopSelect({
   onDirty,
   label = "Design & prototype workshop",
   /**
-   * The `WORKSHOP_KIND` token the list is narrowed to, from the KIND box mounted above this one.
+   * The wording of the `value: ""` row.
    *
-   * ── IT GOES TO THE SERVER, AND THAT IS R5 AND NOT A PREFERENCE ────────────────────────────────
-   *
-   * `GET /design-workshops` has taken `workshopKind` since the column landed, so the narrowing is a
-   * query parameter and never a `.filter()` over the page this control already holds. One page is
-   * at most {@link WORKSHOP_OPTION_PAGE_SIZE} rows out of a table with far more: a client-side
-   * narrowing would answer "no workshops of this kind" about kinds that plainly have some, which is
-   * the failure DROPDOWN_DESIGN R5 is written against and the one this box already pays a debounce
-   * to avoid for `search`.
-   *
-   * ── `undefined` IS NOT A KIND, IT IS THE ABSENCE OF ONE ───────────────────────────────────────
-   *
-   * R1: empty means everything, BY ABSENCE. A caller that has no kind box passes nothing and gets
-   * the unnarrowed list it has always got, which is what keeps this prop additive for the mounts
-   * that do not want the cascade. `buildQuery` drops `undefined`, so no parameter reaches the wire.
+   * ONE PROP, ONE DEFAULT, AND IT EXISTS FOR EXACTLY ONE CALLER. `NO_DESIGN_WORKSHOP` ("Not filed
+   * under a design workshop") is right when this box is the SECOND of two workshop controls on a
+   * form and the reader has to be told which of them they are declining. It is wrong when this box
+   * is the ONLY one — which is what `forms/WorkshopPicker.tsx` made it — because there the reader is
+   * answering one question, and a "no" row whose wording changes when the type box changes is the
+   * six-spellings-of-one-question problem `lib/workshopOptions.ts` was written to end. The picker
+   * passes `NO_FIELD_WORKSHOP` for both of its branches; every other mount keeps the default and is
+   * unchanged.
    */
-  workshopKind
+  noneLabel = NO_DESIGN_WORKSHOP
 }: {
   state: DesignWorkshopSelectState;
   initial?: string | null;
   saving?: boolean;
   onDirty?: () => void;
   label?: string;
-  workshopKind?: string | null;
+  noneLabel?: string;
 }) {
   /** What the read answered. Three states, and the middle one is the whole of change (1) above. */
   const [list, setList] = useState<WorkshopListState<DwSummary>>({ kind: "loading" });
@@ -275,8 +332,7 @@ export function DesignWorkshopSelect({
           // NEVER 100 INTO A CONTROL THAT DRAWS 80. One number governs the fetch and the render, so
           // two truncation sentences with two different totals cannot both be true at once.
           pageSize: WORKSHOP_OPTION_PAGE_SIZE,
-          search: trimmed || undefined,
-          workshopKind: workshopKind || undefined
+          search: trimmed || undefined
         })
           .then((page) => {
             if (generation.current !== mine) return;
@@ -296,12 +352,14 @@ export function DesignWorkshopSelect({
       trimmed ? SEARCH_DEBOUNCE_MS : 0
     );
     return () => window.clearTimeout(timer);
-    // `workshopKind` BELONGS IN HERE. Without it the kind box changes, the request is never re-sent,
-    // and the panel goes on drawing the previous kind's rows under the new kind's label -- a picker
-    // that is confidently wrong rather than merely stale, because nothing on screen says the list
-    // did not move. The debounce is keyed off the SEARCH TERM only (`trimmed ? … : 0`), so a kind
-    // change re-reads immediately: it is a click, not typing, and there is no burst to absorb.
-  }, [term, workshopKind]);
+    // THE SEARCH TERM IS THE WHOLE DEPENDENCY LIST NOW, and the `workshopKind` that used to sit
+    // beside it went out with the box that fed it. That dependency was load-bearing while a KIND
+    // box sat above this one: without it the box changed, no request was sent, and the panel went
+    // on drawing the previous kind's rows under the new kind's label. There is no such box any
+    // more — R2 is two dropdowns, and the type box one level up chooses which TABLE is read rather
+    // than narrowing this one — so re-adding a `workshopKind` here without re-adding the control
+    // that answers it would narrow every mount of this component by a token nothing sets.
+  }, [term]);
 
   useEffect(() => {
     if (!isCreate) return;
@@ -455,8 +513,11 @@ export function DesignWorkshopSelect({
           would produce two rows sharing the key "" and a control that cannot say which is selected.
           No `placeholder` beside it: with a `noneLabel` the trigger reads this row back whenever the
           value is "", so a placeholder would be a string nothing can ever draw.
+
+          The WORDING is the caller's (see the prop); the OWNERSHIP of the row is still the
+          primitive's, which is the part that was the defect.
         */
-        noneLabel={NO_DESIGN_WORKSHOP}
+        noneLabel={noneLabel}
         /*
           "There is nothing here" is not "your query matched nothing", and it is not "the read failed"
           either. All three used to be one sentence claiming the account had no workshops.

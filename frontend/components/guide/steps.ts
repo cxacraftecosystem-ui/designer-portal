@@ -338,28 +338,51 @@ export type GuideStep = {
 };
 
 /**
- * ONE WORDING FOR THE PICKER THAT LANDED ON SIX RECORD FORMS AT ONCE, AND NOT SIX PARAPHRASES.
+ * ONE WORDING FOR THE WORKSHOP QUESTION ON THE FIVE RECORD FORMS, AND NOT FIVE PARAPHRASES.
  *
- * `DesignWorkshopSelect` is mounted on the artisan, product, process and tool forms and on the media
- * and interview pages, and NOT on crafts or workshops, which have no such column. (It said "six of
- * the TEN record steps below" until the same pass that wrote that clause added an eleventh, `scan`,
- * and left the ten standing — which is the failure the header four screens up spends a paragraph
- * on: a count in a comment goes stale as silently as one in copy and is worse, because the next
- * agent reads it as a fact about the file. Six is a fact about `DesignWorkshopSelect` and is checked
- * by `grep -rl DesignWorkshopSelect frontend/components/forms frontend/app`; the denominator was a
- * fact about an array that grows, and is gone.) A designer meets the same control on six screens in a fortnight, so it has to
- * read as one rule; six near-misses of the same sentence read as six unrelated warnings and the
- * reader stops trusting any of them. This is the same treatment, for the same reason, that the
- * "Designer access required" sentence already gets on every card whose route is gated on
- * `canRunDesignWorkshops`.
+ * ── IT DESCRIBED THREE CONTROLS UNTIL 2026-09-16, AND IT IS THE SENTENCE THAT HAD TO MOVE ─────
  *
- * WHAT IT DELIBERATELY DOES NOT SAY: that the picker narrows anything. It does not.
+ * It read: ““Design & prototype workshop” is a second, separate question from “Workshop” above it,
+ * and a record may carry either, both or neither.” Every clause of that was true of the form it
+ * described and none of it is true now. The owner's ruling is two dropdowns and never three: a
+ * “Type of workshop” box, and under it one “Workshop” box listing the workshops of that type. One
+ * control gives ONE answer, and the type decides which of the record's two columns it is saved in —
+ * so “either, both or neither” became “one, or neither”, and the reader who went looking for a
+ * second workshop box on the strength of this sentence would not find one.
+ *
+ * WHAT STAYS TRUE AND IS WORTH KEEPING: the prefill. A new record still opens on the most recent
+ * workshop the account can reach and still prints one line underneath saying why it filled itself
+ * in, and “Not linked to a workshop” is still a real answer (R5).
+ *
+ * `DesignWorkshopSelect` is still mounted on the five record forms — through
+ * `forms/WorkshopPicker.tsx`, as the second box, whenever the chosen type routes at a
+ * `DesignWorkshop` — and directly on the media page, which has its own sentence below because that
+ * form genuinely draws one box and no type box at all. A designer meets this control on six screens
+ * in a fortnight, so it has to read as one rule; five near-misses of one sentence read as five
+ * unrelated warnings and the reader stops trusting any of them.
+ *
+ * WHAT IT DELIBERATELY DOES NOT SAY: that the picker narrows who may READ the record. It does not.
  * `lib/designWorkshopDefault.ts` is explicit that the answer is a SUGGESTION and never a scope —
  * every write is still checked server-side — and a guide sentence implying otherwise would teach a
- * client-side permission the API does not have.
+ * client-side permission the API does not have. It also does not say the type box narrows a list
+ * WITHIN a table: it chooses which table the box below reads from, and nothing else.
  */
 const DESIGN_WORKSHOP_FIELD =
-  "“Design & prototype workshop” is a second, separate question from “Workshop” above it, and a record may carry either, both or neither. On a new record it opens on the design workshop you were most recently added to and prints one line underneath saying why it filled itself in — change it if this record belongs somewhere else, or leave it on “Not filed under a design workshop”.";
+  "The workshop question is two boxes and one answer. “Type of workshop” chooses which list the “Workshop” box below it shows — pick “Design & Prototype Development” and it lists your design and prototype workshops, pick any other type and it lists the recorded workshops you may submit to. The type itself is not saved on the record; the workshop you choose already carries its own type. On a new record it opens on the most recent workshop you can reach and prints one line underneath saying why it filled itself in — change it if this record belongs somewhere else, or leave it on “Not linked to a workshop”.";
+
+/**
+ * THE MEDIA FORM'S OWN SENTENCE, because that form is the one place this control stands alone.
+ *
+ * A loose upload can be filed under a design and prototype workshop and under nothing else:
+ * `MediaCompleteRequest` (backend/app/schemas/media.py) declares `designWorkshopId` and no
+ * `workshopId`, and so do the web and Android request bodies. So there is no type box above it, no
+ * second list to choose between, and the record-form sentence above — which is entirely about
+ * choosing between two lists — would send a reader hunting for a box this screen does not draw.
+ * Both clients draw exactly one box here, which is why this is a second wording rather than a
+ * second screen's worth of drift.
+ */
+const MEDIA_DESIGN_WORKSHOP_FIELD =
+  "“Design & prototype workshop” is the only workshop question on this screen, because a loose upload can be filed under a design and prototype workshop and under nothing else. On a new upload it opens on the design workshop you were most recently added to and prints one line underneath saying why — change it if this file belongs somewhere else, or leave it on “Not filed under a design workshop”.";
 
 /**
  * THE MICROPHONE SENTENCE, likewise one wording rather than one paraphrase per card.
@@ -387,10 +410,12 @@ const DESIGN_WORKSHOP_FIELD =
  *
  * ⚠ ITS USER LIST IS NOT `DESIGN_WORKSHOP_FIELD`'S, AND ASSUMING IT WAS IS HOW THIS SENTENCE CAME TO
  * BE MISSING FROM TWO CARDS. The two constants landed in the same pass and read as a matched pair,
- * so the second was mounted wherever the first was — the six forms carrying `DesignWorkshopSelect`.
- * But they are answers to two different questions. `grep -rl DesignWorkshopSelect "app/(protected)"
- * components/forms` returns six files and does NOT return `crafts/page.tsx` or `workshops/page.tsx`,
- * because neither record has that column; `grep -rl DictatedTextInput` over the same tree DOES
+ * so the second was mounted wherever the first was — the six forms that carried `DesignWorkshopSelect`
+ * directly before `forms/WorkshopPicker.tsx` folded five of them behind it.
+ * But they are answers to two different questions. `grep -rl "Design & prototype workshop"
+ * "app/(protected)" components/forms` returns the five record forms (through `WorkshopPicker`) and
+ * the media page, and does NOT return `crafts/page.tsx` or `workshops/page.tsx`, because neither
+ * record has that column; `grep -rl DictatedTextInput` over the same tree DOES
  * return both, and their own comments say why they are dictated at all — five boxes on the craft
  * form (`Craft name`, `Local name`, `Category`, `Place`, `Description`) and three plus the notes on
  * the workshop one. Two forms in, two forms out, and one list borrowed for both.
@@ -556,8 +581,8 @@ export const GUIDE_STEPS: GuideStep[] = [
     // "Experience" is the FieldBlock heading over the Years and Months pair, which is how this file
     // already names a two-box group (see the designer profile card's "Designer’s experience").
     fields: [
+      "Type of workshop",
       "Workshop",
-      "Design & prototype workshop",
       "Name (required)",
       "Local name",
       "Craft (required)",
@@ -614,8 +639,8 @@ export const GUIDE_STEPS: GuideStep[] = [
     // are instruments rather than boxes — they PROPOSE a number into the three dimension fields
     // already listed, and the watch bullets below name both.
     fields: [
+      "Type of workshop",
       "Workshop",
-      "Design & prototype workshop",
       "Product name (required)",
       "Local name",
       "Product type",
@@ -688,8 +713,8 @@ export const GUIDE_STEPS: GuideStep[] = [
     // the box the card promised was, for most readers, genuinely not on the screen. Three rows now,
     // in the order the step draws them.
     fields: [
+      "Type of workshop",
       "Workshop",
-      "Design & prototype workshop",
       "Name of the process (required)",
       "Artisan (required)",
       "Product (required)",
@@ -726,8 +751,8 @@ export const GUIDE_STEPS: GuideStep[] = [
     // the product card gives: they propose into boxes already named here, and the watch bullets say
     // which boxes (this form is the one with two of them called "Height").
     fields: [
+      "Type of workshop",
       "Workshop",
-      "Design & prototype workshop",
       "Toolkit name (required)",
       "Local name",
       "English name",
@@ -820,11 +845,10 @@ export const GUIDE_STEPS: GuideStep[] = [
       "Interview title (required)",
       "Place",
       "Language",
+      "Type of workshop",
       "Workshop",
-      "Design & prototype workshop",
       "Status",
-      "Primary artisan",
-      "Additional artisans",
+      "Artisans interviewed",
       "Recording mode",
       "Do not display answer text boxes",
       "Interview audio",
@@ -869,7 +893,11 @@ export const GUIDE_STEPS: GuideStep[] = [
       "Upload stays disabled until you pick a Linked record type. If the file belongs to nothing in particular, pick \"Miscellaneous Media\" and leave the entry blank.",
       "Audio uploaded here is queued for transcription after upload, exactly like interview audio.",
       "If the file does turn out to belong to a record, link it — misc media can be attached to a record afterwards.",
-      DESIGN_WORKSHOP_FIELD,
+      // THE MEDIA FORM'S OWN WORDING AND NOT THE RECORD FORMS', since 2026-09-16. This screen draws
+      // ONE workshop box and no type box; the record-form sentence is entirely about choosing
+      // between two lists, and printing it here would send a reader hunting for a box that is not
+      // drawn. See both constants for the wire reason the two screens differ.
+      MEDIA_DESIGN_WORKSHOP_FIELD,
       DICTATION_ON_THIS_FORM
     ]
   },

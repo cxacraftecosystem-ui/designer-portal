@@ -1,0 +1,1104 @@
+{
+  "contract": "questionnaire-capture-form",
+  "version": 4,
+  "enforcedBy": "backend/tests/test_questionnaire_form_contract.py",
+  "authority": "frontend/app/(protected)/questionnaire/page.tsx",
+  "whatThisIs": [
+    "The questionnaire capture form, declared ONCE. Every client and every guide that claims to",
+    "describe this form is measured against this file, and never against each other.",
+    "",
+    "The sibling field repository shipped the same file hours before this one, for the same reason and",
+    "against the same three defects. This is not a copy of it: that repository's form has a",
+    "questionnaire picker and free-text Language, this one has a closed Language vocabulary and had",
+    "THREE workshop controls until 2026-09-16 and now has two, and the handset's capture form lives",
+    "in a different file under a different",
+    "package. What is ported is the SHAPE — a single declaration, an equality rather than a",
+    "containment, and the artisan control pinned structurally so swapping the widget back fails rather",
+    "than merely renaming it."
+  ],
+  "whyAContractAndNotAParityTest": [
+    "This repository already owns the two-way parity test, and it is good:",
+    "`backend/tests/test_walkthrough_fields_parity.py` is 870 lines that parse TypeScript on one side",
+    "and Kotlin on the other and hold `frontend/components/guide/steps.ts` equal to",
+    "`android/.../ui/WalkthroughJourney.kt`, plus both against `docs/WALKTHROUGH.md`. It is green.",
+    "",
+    "AND IT CANNOT SEE THE FORM. Every edge it draws is register-to-register or register-to-document;",
+    "not one of them touches the screen those documents describe. So it was green on 2026-09-16 over",
+    "three registers that all three omit the \"Type of workshop\" box the form has drawn since the",
+    "design-workshop cascade landed — a control the owner is, right now, asking questions about. Two",
+    "copies agreeing is not evidence about a third thing; it is evidence about each other.",
+    "",
+    "THE MISSING EDGE IS REGISTER-TO-FORM, and that is what this file declares and what the enforcing",
+    "test draws. The register-to-register edge is deliberately NOT repeated: it exists, it is",
+    "maintained, and a second copy of it here would be the failure this file is about.",
+    "",
+    "THE REJECTED ALTERNATIVE, and why it is not enough: generate the handset's form from this file at",
+    "build time, so drift is impossible rather than merely detected. It would work, and it is the right",
+    "shape for a product whose two clients draw the same widgets — which these do not. A Compose column",
+    "and a CSS grid disagree about what \"order\" even means at a breakpoint; the web's status control is",
+    "a `<Select>` or a locked chip by role and the handset's is a dropdown or a chip by the same role",
+    "through different primitives. A generator would have to model both widget sets to emit either, and",
+    "the first control that did not fit would be written by hand beside it, unguarded, which is where",
+    "this started."
+  ],
+  "howOrderIsPartOfIt": [
+    "The `fields` array is in WEB SCREEN ORDER and that order is contractual, not incidental.",
+    "",
+    "A form whose boxes appear in one sequence on a laptop and another on a handset is a form a",
+    "researcher has to re-learn on each device, and they re-learn it in a courtyard with an artisan",
+    "waiting. It is also the thing a printed guide gets wrong most usefully: `docs/WALKTHROUGH.md` gets",
+    "read with the form open beside it, so a list in the wrong sequence sends the reader hunting for a",
+    "box two fields further down and, finding the wrong one, filling it in.",
+    "",
+    "THE TWO CLIENTS DISAGREED ABOUT THIS UNTIL 2026-09-16 AND THE WEB WAS THE REGISTER. The handset",
+    "opened with the two workshop boxes and only then drew the three text boxes (`MainActivity.kt`:",
+    "`RecordWorkshopField` preceded `RequiredInput(\"Interview title\", …)`); the web drew the text",
+    "first. Both orders were defensible in isolation and exactly one of them could be the contract —",
+    "and all three registers were already written in the WEB’s order, so the handset was the odd one",
+    "out against four surfaces rather than one. The workshop control moved below Language and kept",
+    "everything else it does: it is still what the interview is filed under, still what its dictation",
+    "consent is read from, and still the FIRST control on the other EIGHT of the ten record forms (four on each client),",
+    "none of which has a declared web twin to be measured against.",
+    "",
+    "IT IS ENFORCED ON BOTH CLIENTS NOW, not declared and held off.",
+    "`test_the_android_form_draws_exactly_the_contract_fields_in_order` reads the handset’s form the",
+    "way its twin reads the browser’s, and both compare an EQUALITY against this array."
+  ],
+  "controls": {
+    "why": [
+      "THE CONTROL VOCABULARY, declared once: which component on each client draws which kind of",
+      "control, and how that component says its own label.",
+      "",
+      "IT LIVES HERE AND NOT ON THE FIELDS because how a control labels itself is a property of the",
+      "CONTROL, not of the field it happens to be drawing. `MultiNoteInput` defaults its label to",
+      "\"Notes\" for every caller in the application, not only for this form, and a copy of that fact on",
+      "each field would be a register with as many copies as there are fields using it.",
+      "",
+      "IT IS ALSO WHAT KEEPS THE CONTRACT FROM CONTRADICTING ITSELF. A field names a `control` kind AND",
+      "the component each client draws it with; the enforcing test checks that the named component is",
+      "registered under the named kind. Without that join a field could declare `\"control\": \"text\"` and",
+      "`\"component\": \"MultiSelectDropdown\"` in the same breath and nothing would catch it."
+    ],
+    "labelFromMeanings": {
+      "prop": "The label is written at the call site as `label=\"…\"` on the control itself.",
+      "wrapper": "The control is wrapped by `<Field label=\"…\">` or `<FieldBlock label=\"…\">`, which is where the string lives.",
+      "componentDefault": [
+        "The call site passes NO label and the string lives in the component's own file. `defaults` names",
+        "the file, the exported function and the parameter to read it out of, IN DRAW ORDER — a list",
+        "rather than a single entry because `WorkshopPicker` draws TWO labelled boxes from one element in",
+        "the form. `nth` picks which occurrence of that parameter, because both of this component's boxes",
+        "spell their label `label=` and the first is the type box.",
+        "",
+        "A scan of the form for quoted labels alone reports both workshop fields as MISSING FROM THE WEB,",
+        "which is the parser lying about the reference client — and that failure reads as \"the contract is",
+        "wrong\", which gets the fields deleted from this file to make it green.",
+        "",
+        "IT USED TO BE THREE BOXES FROM TWO ELEMENTS (`WorkshopSelect`, then `DesignWorkshopCascade`",
+        "drawing its kind box and the design-workshop box). Both components are named in `absent` now; the",
+        "cascade was deleted outright."
+      ],
+      "positional": "Kotlin only. The label is the composable’s FIRST POSITIONAL ARGUMENT — RequiredInput(\"Interview title\", …), TextInput(\"Place\", …). Two of the handset’s controls are written this way and neither can be read by a `label =` scan, which is how a parser reports one client as missing a field both clients draw.",
+      "named": "The label is written at the call site as `label = \"…\"` — Kotlin’s spelling of `prop`.",
+      "composableDefault": [
+        "THE CALL SITE PASSES NO LABEL AND THE STRING LIVES INSIDE THE COMPOSABLE. `defaults` names the",
+        "file, the composable and the LITERAL, IN DRAW ORDER — a list rather than a single entry because",
+        "`RecordWorkshopField` draws TWO labelled boxes from one element in the form.",
+        "",
+        "IT NAMES THE LITERAL WHERE THE WEB’S TWIN NAMES A PARAMETER, and that is a difference between the",
+        "two languages rather than a weaker check. A React component writes its own label exactly one way",
+        "— `label = \"Workshop\"` in the signature — so `param` plus `nth` finds it. Kotlin writes it three",
+        "ways and this form meets all three: a default parameter (`label: String = \"Notes\"`), a named",
+        "argument handed to the control underneath (`label = \"Type of workshop\"`), and a bare",
+        "`Text(\"Status\", …)` in one branch of the body. One regex cannot read all three, and a `param`",
+        "spelling that silently matched none of them would resolve to nothing and report a field the",
+        "handset draws as missing — which reads as “the contract is wrong” and gets the field deleted from",
+        "this file to make it green.",
+        "",
+        "SO THE ENFORCING TEST ASSERTS THE LITERAL IS IN THAT COMPOSABLE’S OWN BRACE-BALANCED BODY. That is",
+        "a stronger claim than the web’s rather than a weaker one — the web reads whatever string it finds",
+        "and compares it to the field, so a renamed component label reports as a field mismatch; this",
+        "reports as a missing literal in a named composable, and names the file to open. Bounding it to the",
+        "BODY is the other half: the web’s regex runs from the declaration to the end of the file, which is",
+        "survivable in a 200-line component and is not in a 20,000-line one.",
+        "",
+        "A CALL-SITE `label = \"…\"` STILL WINS, on both clients and for the same reason. A control that takes",
+        "its default everywhere else and is overridden here is drawing the override; reading it as the",
+        "default would report the field twice and in the wrong place."
+      ]
+    },
+    "web": [
+      {
+        "component": "DictatedTextInput",
+        "kinds": [
+          "text"
+        ],
+        "labelFrom": "prop"
+      },
+      {
+        "component": "Select",
+        "kinds": [
+          "select",
+          "status"
+        ],
+        "labelFrom": "wrapper"
+      },
+      {
+        "component": "MultiSelectDropdown",
+        "kinds": [
+          "searchable-multiselect"
+        ],
+        "labelFrom": "wrapper"
+      },
+      {
+        "component": "MultiNoteField",
+        "kinds": [
+          "textarea"
+        ],
+        "labelFrom": "prop"
+      },
+      {
+        "component": "RichTextField",
+        "kinds": [
+          "richtext"
+        ],
+        "labelFrom": "prop"
+      },
+      {
+        "component": "WorkshopPicker",
+        "kinds": [
+          "select"
+        ],
+        "labelFrom": "componentDefault",
+        "defaults": [
+          {
+            "source": "frontend/components/forms/WorkshopPicker.tsx",
+            "symbol": "WorkshopPicker",
+            "param": "label",
+            "nth": 0,
+            "why": "The `<Field label=\"Type of workshop\">` that wraps the first box."
+          },
+          {
+            "source": "frontend/components/forms/WorkshopPicker.tsx",
+            "symbol": "WorkshopPicker",
+            "param": "label",
+            "nth": 1,
+            "why": "The `label=\"Workshop\"` handed to whichever of the two workshop boxes is drawn. Both arms pass the same string, deliberately: the reader is answering one question, and a label that changed with the type would be the two-pickers-for-one-question problem this release exists to end."
+          }
+        ]
+      }
+    ],
+    "android": [
+      {
+        "composable": "RequiredInput",
+        "kinds": [
+          "text"
+        ],
+        "labelFrom": "positional"
+      },
+      {
+        "composable": "TextInput",
+        "kinds": [
+          "text"
+        ],
+        "labelFrom": "positional"
+      },
+      {
+        "composable": "DropdownField",
+        "kinds": [
+          "select"
+        ],
+        "labelFrom": "named"
+      },
+      {
+        "composable": "RecordWorkshopField",
+        "kinds": [
+          "select"
+        ],
+        "labelFrom": "composableDefault",
+        "defaults": [
+          {
+            "source": "android/app/src/main/java/com/designprototype/workshop/ui/DesignWorkshopPicker.kt",
+            "symbol": "WorkshopTypeField",
+            "literal": "Type of workshop",
+            "why": "The first of the two boxes `RecordWorkshopField` mounts. IT IS A HOP, and the hop is the point: `RecordWorkshopField`’s own body holds no strings at all — it draws `WorkshopTypeField` and then one of two workshop boxes — so a scan of the composable the field names would find nothing and report both workshop boxes as absent from the handset."
+          },
+          {
+            "source": "android/app/src/main/java/com/designprototype/workshop/MainActivity.kt",
+            "symbol": "WorkshopField",
+            "literal": "Workshop",
+            "why": "The second box, whichever of the two arms is drawn. `DesignWorkshopField` is the other arm and declares the same string as `label: String = \"Workshop\"`; ONE of them is named here deliberately rather than both, because the claim being made is that this form asks ONE workshop question under ONE word — naming both would let the contract pass by matching whichever half still agreed with it if the two ever drifted apart. `WorkshopField` is the arm on screen for every workshop type but one, and `ui/DesignWorkshopPicker.kt`’s own KDoc carries the argument that both must say it."
+          }
+        ]
+      },
+      {
+        "composable": "StatusControl",
+        "kinds": [
+          "status"
+        ],
+        "labelFrom": "composableDefault",
+        "defaults": [
+          {
+            "source": "android/app/src/main/java/com/designprototype/workshop/MainActivity.kt",
+            "symbol": "StatusControl",
+            "literal": "Status",
+            "why": "Written as a bare `Text(\"Status\", …)` in the locked-chip branch, which is the spelling that made this registry read a literal out of a body rather than a parameter out of a signature — see `labelFromMeanings.composableDefault`. The other branch draws `StatusDropdown`, which labels itself with the same word: the control is one control chosen by role, and the contract declares one field for it."
+          }
+        ]
+      },
+      {
+        "composable": "MultiNoteInput",
+        "kinds": [
+          "textarea"
+        ],
+        "labelFrom": "composableDefault",
+        "defaults": [
+          {
+            "source": "android/app/src/main/java/com/designprototype/workshop/MainActivity.kt",
+            "symbol": "MultiNoteInput",
+            "literal": "Notes",
+            "why": "THE DEFAULT, AND THIS FORM DOES NOT TAKE IT. This entry is what the handset’s notes box would be called if its call site stopped passing `label = \"Interview notes\"`, and it is declared so that the day somebody deletes that argument the order assertion goes red naming both strings rather than comparing \"Notes\" against nothing. The default itself is correct and must not be changed: four other record forms take it, and four forms that say \"Notes\" about notes are not wrong."
+          }
+        ]
+      },
+      {
+        "composable": "SearchableMultiSelectField",
+        "kinds": [
+          "searchable-multiselect"
+        ],
+        "labelFrom": "named"
+      },
+      {
+        "composable": "ArtisanMultiSelectField",
+        "kinds": [
+          "checkbox-wall"
+        ],
+        "labelFrom": "named",
+        "why": [
+          "A SENTINEL, AND NO FIELD OF THIS FORM MAY DECLARE IT. `checkbox-wall` is a control kind that",
+          "exists so the scanner can FIND a control this form is forbidden to draw, not to describe one it",
+          "draws — and the registry’s own join (a field’s `control` must be a kind the named composable is",
+          "registered under) is what turns `controlPins.forbiddenAndroidComposables` from a string",
+          "comparison into a statement about the control vocabulary.",
+          "",
+          "THE COMPOSABLE STILL EXISTS AND STILL HAS TWO CALLERS, on purpose. The workshop record form’s own",
+          "“Linked artisans” box is the roster a researcher is ASSEMBLING for a workshop they are writing —",
+          "short, ticked in bulk, read at a glance — and the browse screen’s “Involved artisan(s)” is a",
+          "filter over records that already exist. The wall’s real cost is that it has no summary line, so",
+          "the only way to see what is ticked is to scroll the form back over it; that is what made it wrong",
+          "on a capture form a thousand lines long and is the least bad thing about it on a short one.",
+          "Whether those two should move as well is a decision to take with those forms in front of you, not",
+          "one to take by extension from this form’s contract. This pin is about which control draws THIS",
+          "field, not about deleting a composable from the application."
+        ]
+      }
+    ]
+  },
+  "fields": [
+    {
+      "key": "title",
+      "label": "Interview title",
+      "control": "text",
+      "required": true,
+      "note": "What this sitting is called in every list that shows it; title-cased by the server on save (`TITLE_CASE_FIELDS`, backend/app/services/records.py).",
+      "web": {
+        "component": "DictatedTextInput"
+      },
+      "android": {
+        "composable": "RequiredInput"
+      }
+    },
+    {
+      "key": "place",
+      "label": "Place",
+      "control": "text",
+      "required": false,
+      "note": "Where the interview happened; title-cased by the server, like the title.",
+      "web": {
+        "component": "DictatedTextInput"
+      },
+      "android": {
+        "composable": "TextInput"
+      }
+    },
+    {
+      "key": "language",
+      "label": "Language",
+      "control": "select",
+      "required": false,
+      "note": [
+        "The language the interview was conducted in, as a CLOSED VOCABULARY of twenty-four plus",
+        "whatever the record already holds.",
+        "",
+        "THIS IS THE OPPOSITE RULING FROM THE SIBLING FIELD REPOSITORY, which declares its Language a",
+        "free-text box and argues the case at length ('\"Kutchi, and some Gujarati\" is a perfectly good",
+        "value that no list of language names can hold'). It is worth saying so here, because a reader",
+        "who knows that file will read this line as a drift. It is not. The two products store the same",
+        "`str | None` and reached different answers for a stated reason: on THIS deployment the column",
+        "was arriving as \"Bangla\", \"Bengali\" and \"bengali\" for one fact, and the consolidated",
+        "questionnaire and every export GROUP BY it — so a closed list is what makes those surfaces",
+        "answer one question once. The list and the preserve-what-is-stored rule live in",
+        "`frontend/lib/interviewLanguages.ts` and `dwInterviewLanguageOptions` so neither client",
+        "transcribes them twice, and a stored value the list does not hold is offered first and never",
+        "overwritten.",
+        "",
+        "Drawn with `FieldBlock` and not `Field`: `Field` is a `<label>`, and a `<label>` cannot name a",
+        "`<button>`, which is what a themed dropdown is."
+      ],
+      "web": {
+        "component": "Select"
+      },
+      "android": {
+        "composable": "DropdownField"
+      }
+    },
+    {
+      "key": "workshopType",
+      "label": "Type of workshop",
+      "control": "select",
+      "required": false,
+      "note": [
+        "THE FIRST OF EXACTLY TWO WORKSHOP BOXES, and the one the owner asked for by name: \"we do not",
+        "need one separately for each of the type of the workshops\".",
+        "",
+        "WHAT IT IS. A row of `WorkshopTypeOption` — a real table an administrator edits at",
+        "/admin/workshop-types — read through `GET /api/workshop-types`. Six rows are seeded. It is NOT",
+        "`stage_schema.ENUMS[\"WORKSHOP_KIND\"]`, which is a different question (stage 1 of a design",
+        "workshop's own questionnaire, \"what kind of design workshop is this\") whose registry gates",
+        "handset re-sync and must not be moved. The two coexist and both say why.",
+        "",
+        "WHAT IT DOES. It chooses which TABLE the \"Workshop\" box below it lists, by the row's",
+        "`routesToDesignWorkshop` flag, and therefore which of the record's two nullable columns the save",
+        "writes (R3). It narrows NOTHING within a table: 13,847 of 13,871 `DesignWorkshop` rows carry no",
+        "`workshopKind` at all and `Workshop` has no per-type column, so a narrowing by type would answer",
+        "\"no workshops of this type\" about a table full of them.",
+        "",
+        "IT IS NOT STORED ON THE RECORD, and both clients say so under the box in words — R3 asks for that",
+        "sentence by name. No foreign key points at `WorkshopTypeOption` from any record table and none",
+        "should: the workshop the record names already carries its own type, and a second copy beside the",
+        "record could disagree with its own source.",
+        "",
+        "THIS REPLACED A BOX THAT SAID THE OPPOSITE. Until 2026-09-16 the third control on this form was",
+        "`DesignWorkshopCascade`'s kind box, whose own hint read \"Narrows the workshops below. It is not",
+        "saved on this record.\" — true of what it did and wrong about what it was for. That component has",
+        "been DELETED; the retired label lives on in `absent`."
+      ],
+      "web": {
+        "component": "WorkshopPicker"
+      },
+      "android": {
+        "composable": "RecordWorkshopField"
+      }
+    },
+    {
+      "key": "workshop",
+      "label": "Workshop",
+      "control": "select",
+      "required": false,
+      "note": [
+        "THE SECOND OF EXACTLY TWO, AND THERE IS NEVER A THIRD. One list, chosen by the box above:",
+        "`DesignWorkshop` rows when the type routes to design (saved to",
+        "`QuestionnaireInterview.designWorkshopId`), `Workshop` rows otherwise (saved to `workshopId`).",
+        "R1 keeps both tables and both foreign keys; what changed is the FORM.",
+        "",
+        "THREE FIELDS BECAME TWO HERE. Until 2026-09-16 this form declared `workshop` (the ordinary",
+        "`Workshop`, `<WorkshopSelect>`), `workshopKind` (the filter) and `designWorkshop` (the",
+        "`DesignWorkshop`, drawn by the same element as the filter). A record could hold BOTH ids; one",
+        "control gives one answer and the picker blanks the column it is not filing in. Measured on this",
+        "database before the change: of 207 `QuestionnaireInterview` rows, 84 carry a `workshopId`, 0",
+        "carry a `designWorkshopId` and 0 carry both — so the consolidation moves nothing that exists.",
+        "",
+        "\"NOT LINKED TO A WORKSHOP\" IS STILL AN ANSWER (R5), in both arms, in those exact words. The",
+        "design half's own default row reads \"Not filed under a design workshop\", which is right when it",
+        "is one of two boxes and wrong when it is the only one; `WorkshopPicker` overrides it with",
+        "`NO_FIELD_WORKSHOP` for both branches.",
+        "",
+        "IT IS ALSO THE SCOPE FOR THE ARTISAN ROSTER BELOW, and the two-dropdown ruling is what made that",
+        "scope unambiguous — see `artisanScope.singular`.",
+        "",
+        "NEITHER CLIENT WRITES EITHER LABEL AT THE CALL SITE. `<WorkshopPicker state={workshop} …/>` and",
+        "`RecordWorkshopField(link = link, …)` carry no label props at all: both strings live inside those",
+        "components. That is why `controls` resolves a `componentDefault` label out of the component's own",
+        "file, and why one registered component carries an ordered LIST of two defaults."
+      ],
+      "web": {
+        "component": "WorkshopPicker"
+      },
+      "android": {
+        "composable": "RecordWorkshopField"
+      }
+    },
+    {
+      "key": "status",
+      "label": "Status",
+      "control": "status",
+      "required": false,
+      "note": [
+        "The record's review state. A control kind of its own rather than a `select`, because on both",
+        "clients it is TWO controls chosen by role and a contract that called it a dropdown would be",
+        "describing only the half that professors see.",
+        "",
+        "Web: a `<Select>` of DRAFT/PENDING/APPROVED/REJECTED defaulting to APPROVED when",
+        "`canPickStatus` (PROFESSOR+), otherwise a locked \"Pending\" chip carrying the sentence \"New",
+        "interviews are submitted for review as Pending.\" Handset: `StatusControl` makes the same split",
+        "on `canSetStatus`. Both label the whole control \"Status\", in both arms."
+      ],
+      "web": {
+        "component": "Select"
+      },
+      "android": {
+        "composable": "StatusControl"
+      }
+    },
+    {
+      "key": "artisans",
+      "label": "Artisans interviewed",
+      "control": "searchable-multiselect",
+      "required": false,
+      "note": [
+        "Everybody this interview is with. ONE control for the whole set, searchable — see",
+        "`controlPins` below, which is where that is made structural rather than a matter of what this",
+        "note says.",
+        "",
+        "IT WAS TWO CONTROLS UNTIL 2026-09-16: a single-select “Primary artisan” and a multi-select",
+        "“Additional artisans”, for a join that has no rank column. `QuestionnaireInterviewArtisan` is",
+        "`@@id([interviewId, artisanId])` plus `createdAt` — no ordinal, no `isPrimary` — and",
+        "`artisan_set_key` SORTS and de-duplicates the ids on the server before they reach the `@unique`",
+        "index, so the split could not have survived a round trip even if anything downstream had wanted",
+        "it. The page already flattened both controls into one array before every request it sent. What",
+        "the split actually did was let a researcher tick somebody under “Additional” with “Primary”",
+        "left blank and get the RESP respondent block prefilled from nobody.",
+        "",
+        "THE TWO THINGS THAT STILL NEED ONE ARTISAN take element 0 of the selection, in the researcher's",
+        "own tick order: the RESP block and the carry-forward bag. That is this repository's existing",
+        "rule (`tools.py` derives a tool's scalar `artisanId` from `artisan_ids[0]`), not a new one —",
+        "`primaryInterviewArtisanId` in `frontend/components/questionnaires/interviewArtisans.ts`. The",
+        "handset reaches the same answer through the sheet's own `LinkedHashSet` draft, so the first id",
+        "that ARRIVES in a selection change is the one the researcher just ticked.",
+        "",
+        "THE EMPTY MESSAGE IS PART OF THIS FIELD AND SURVIVED THE WIDGET SWAP. An empty roster means one",
+        "of four different things — the request is in flight, the request failed, nobody is recorded at",
+        "this workshop, nobody is recorded at all — and only two of them are facts about the repository.",
+        "Printing “No artisans are recorded at this workshop yet” off an empty array while the answer is",
+        "still coming makes a claim before it exists, and the researcher who believes it goes off to",
+        "create a duplicate of an artisan who is already there. The web decides this in",
+        "`artisanPickerEmptyLabel`.",
+        "",
+        "THE HANDSET SAYS FIVE OF THEM AND THE FOURTH BECAME SAYABLE ON 2026-09-17. Until 2026-09-16 it",
+        "printed ONE sentence off no facts at all (`ArtisanMultiSelectField` hard-coded “No artisans",
+        "available yet. Create an artisan first.” and took no `emptyMessage` parameter to override it",
+        "with). It then printed THREE — `loadingListLine` / `couldNotListLine` / `unscopedEmptyLine` from",
+        "`ui/WorkshopOptions.kt`, the house sentences both clients share — and stopped there on purpose:",
+        "“nobody is recorded at THIS workshop” is the one sentence a control may only say from a list",
+        "that was FETCHED per workshop, and the handset's was still the whole offline register.",
+        "",
+        "ITS ROSTER IS FETCHED PER WORKSHOP NOW, so the fact exists and the sentence is said:",
+        "`atWorkshopEmptyLine`, declared beside the other seven in the module that owns this wording.",
+        "The handset ends up with FIVE rather than the browser's four because its “the read failed”",
+        "splits where the browser's does not — an answered refusal (`couldNotListLine`) is not a device",
+        "that could not be reached (`offlineListLine`), and on this client the second is the ordinary",
+        "condition. `artisanScope.android.emptyState` holds all five PAIRWISE DISTINCT, because a lazy",
+        "fix that pointed the new state at an existing sentence would pass a presence check.",
+        "",
+        "IT IS NOT `scopedEmptyLine`, though the closing drift row named that function. That one reads",
+        "“No artisans are open to this account. An administrator can give you access to one.” — a claim",
+        "about a GRANT TABLE. A workshop whose roster is empty is not a permission the reader is",
+        "missing, and sending them to an administrator over it is the same class of wrong answer as the",
+        "defect being closed."
+      ],
+      "web": {
+        "component": "MultiSelectDropdown"
+      },
+      "android": {
+        "composable": "SearchableMultiSelectField"
+      }
+    },
+    {
+      "key": "notes",
+      "label": "Interview notes",
+      "control": "textarea",
+      "required": false,
+      "note": [
+        "Free notes about the sitting, as a repeating group: one textarea per note with an “Add note”",
+        "button and a per-note remove, joined into the single `notes` column.",
+        "",
+        "PRESENT ON BOTH CLIENTS AND LABELLED THE SAME SINCE 2026-09-16, which was the quietest of the",
+        "drifts here. The web writes the label at the call site (`<MultiNoteField name=\"notes\"",
+        "label=\"Interview notes\" />`); the handset called `MultiNoteInput(value = notes) { notes = it }`",
+        "with no label at all and took that composable's default, which is “Notes” (`private fun",
+        "MultiNoteInput`, MainActivity.kt — named rather than cited by line, because that file is edited",
+        "in several lanes and a line number that is already wrong is worse than none at all). Nothing was",
+        "missing and nothing was broken; the two screens simply called one box two names — exactly the",
+        "class of difference a reader dismisses as cosmetic until they are trying to explain a form over a",
+        "phone line.",
+        "",
+        "THE FIX WAS AT THE CALL SITE AND NOT IN THE DEFAULT: changing `label: String = \"Notes\"` would",
+        "have renamed the notes box on every other record form in the application to fix one screen, and",
+        "four forms that say “Notes” about notes are not wrong. The default is still declared in",
+        "`controls.android` so that deleting the call site's argument fails loudly instead of quietly",
+        "restoring the drift."
+      ],
+      "web": {
+        "component": "MultiNoteField"
+      },
+      "android": {
+        "composable": "MultiNoteInput"
+      }
+    }
+  ],
+  "controlPins": [
+    {
+      "field": "artisans",
+      "pin": "searchable-multiselect",
+      "why": [
+        "PINNED BY THE CONTROL AND BY THE COUNT, not by the label, because neither a label check nor a",
+        "single control check can see this defect on its own.",
+        "",
+        "A label check goes green over a re-split: add a second box called anything and both halves",
+        "still carry their own true label. A single “is it a MultiSelectDropdown” check goes green with",
+        "“Primary artisan” restored beside it. So the pin is three assertions — the field is drawn with",
+        "`MultiSelectDropdown`; the form contains NO control called “Primary artisan” or “Additional",
+        "artisans”; and the page holds no `additionalArtisanIds` / `selectedArtisanId` state to hold",
+        "half a selection in. The third is what makes the pin structural: the two controls were two",
+        "pieces of state before they were two boxes, and a re-split starts there.",
+        "",
+        "ON THE HANDSET THE SAME PIN NAMES A WIDGET, AND IT NAMES IT AS FORBIDDEN. Until 2026-09-16 this",
+        "field was drawn by `ArtisanMultiSelectField` (`private fun ArtisanMultiSelectField`,",
+        "MainActivity.kt) — a Column of checkboxes, one row per artisan in the whole offline register,",
+        "under a “(n selected)” caption and with no summary line, so the only way to see what was ticked",
+        "was to scroll a thousand-line form back over it. It is drawn by `SearchableMultiSelectField`",
+        "(`android/.../ui/SearchableSelect.kt`) now, which already existed and which",
+        "`CheckboxMultiSelectField` had itself already been rewritten onto. There was no third control to",
+        "write, and writing one would have been the whole problem again.",
+        "",
+        "`forbiddenAndroidComposables` IS WHAT KEEPS IT FROM COMING BACK, and it is a different assertion",
+        "from the positive one beside it. The positive check — this field is drawn by the composable the",
+        "contract names — goes green over a wall RENAMED to `SearchableMultiSelectField`. The negative",
+        "one names the composable that must not appear in this form's body at all, so a call restored",
+        "under any label fails as the widget change it is. Both are needed and neither is redundant.",
+        "",
+        "IT FORBIDS A COMPOSABLE FROM ONE FORM AND NOT FROM THE APPLICATION. `ArtisanMultiSelectField`",
+        "still has two callers and they are deliberately untouched — see its row in `controls.android`."
+      ],
+      "forbiddenLabels": [
+        "Primary artisan",
+        "Additional artisans"
+      ],
+      "forbiddenWebState": [
+        "additionalArtisanIds",
+        "selectedArtisanId"
+      ],
+      "forbiddenAndroidComposables": [
+        "ArtisanMultiSelectField"
+      ]
+    }
+  ],
+  "artisanScope": {
+    "why": [
+      "DEFECT (1) OF THE THREE, AND THE RULES THAT CLOSE IT: the picker offered artisans from every",
+      "workshop because the list came down once at mount with no workshop parameter on it.",
+      "",
+      "MEASURED BEFORE ANYTHING MOVED. `loadMeta()` ran",
+      "`listResource<Artisan>(\"/artisans\", { pageSize: RENDER_CAP })` inside a `Promise.all` with the",
+      "sections, fed the whole answer to both artisan controls, and never asked again when either",
+      "workshop picker moved. `GET /artisans` has declared `workshopId`, `designWorkshopId` AND the",
+      "plural `workshopIds` the entire time (`backend/app/api/routes/artisans.py`, `list_artisans`).",
+      "",
+      "THE RULES LIVE IN ONE FILE so the handset has one thing to copy rather than a page component to",
+      "re-read: `frontend/components/questionnaires/interviewArtisans.ts`. What is declared HERE is",
+      "only the part a test can hold without re-implementing the hook.",
+      "",
+      "BOTH CLIENTS ARE HELD NOW. `singular` below is the browser's rule, read out of",
+      "`workshopArtisanParams`; `android` is the handset's, closed on 2026-09-17 and read out of three",
+      "places at once — the Retrofit interface, the rule that picks a parameter, and the form that calls",
+      "it. The two sections say the same thing about the same route in two languages, and neither is",
+      "derived from the other: what is shared is the ROUTE and the ruling, not a generated file.",
+      "",
+      "WHAT IS STILL NOT PORTED TO THE HANDSET, recorded so it is a known gap rather than an assumed",
+      "equivalence: `workshopScopeSettling` (the handset needs no guard — its scope is derived from the",
+      "picker state on every recomposition, so there is no window in which a workshop is named above an",
+      "unnarrowed list), `artisansNotAtWorkshop` and `outOfWorkshopNotice` (the sentence naming ticked",
+      "artisans the roster does not hold — the handset RESCUES those rows into the picker so no chip",
+      "blanks, but says nothing about them), and paging: the browser reads up to `ARTISAN_PAGE_BUDGET`",
+      "pages and prints a capped-list sentence, the handset takes one page of a hundred as every other",
+      "register on that client does."
+    ],
+    "rules": "frontend/components/questionnaires/interviewArtisans.ts",
+    "requiredSymbols": [
+      "useWorkshopArtisans",
+      "workshopArtisanParams",
+      "workshopScopeSettling",
+      "artisanPickerOptions",
+      "artisanPickerEmptyLabel",
+      "primaryInterviewArtisanId",
+      "artisanSetKey",
+      "artisansNotAtWorkshop",
+      "outOfWorkshopNotice"
+    ],
+    "onlyArtisanFetch": {
+      "file": "frontend/app/(protected)/questionnaire/page.tsx",
+      "why": [
+        "THE PAGE ITSELF MUST NOT FETCH ARTISANS. Not \"should not\" — the defect was one unscoped",
+        "`/artisans` call, and a second one added beside the hook would restore it in a form nobody",
+        "reviewing the hook would see. The completion matrix and the funnel on this page reach artisans",
+        "through their own scoped components; the capture form reaches them through the hook and through",
+        "nothing else."
+      ]
+    },
+    "singular": {
+      "why": [
+        "ONE SCOPE AT A TIME, NEVER TWO. `list_artisans` ANDs its filters, and the ordinary workshop's",
+        "roster and the design workshop's are different populations out of different tables: measured on",
+        "the local corpus on 2026-09-16, of 774 artisans, 204 carry a `workshopId` and 4 carry a",
+        "`designWorkshopId`. Sending both narrows to the artisans linked BOTH ways, which is a handful of",
+        "rows — and an empty picker under a named workshop is this repository's most repeated bug class",
+        "(`craft_workshop_clause`'s own docstring: \"a scope that renders empty over a full corpus and",
+        "looks exactly like having no data\").",
+        "",
+        "AND THE PLURAL `workshopIds`, NOT THE SINGULAR `workshopId`. They are not the same filter on",
+        "this route: the singular narrows on the column OR the `WorkshopArtisan` roster, the plural goes",
+        "through `artisan_workshop_clause` and counts having SAT IN an interview taken at the workshop as",
+        "well. The handset sends the plural (`ConsolidatedQuestionnaireScreen.kt`), so sending both",
+        "spellings would silently intersect down to the singular's narrower answer and break parity.",
+        "",
+        "AND THE TWO-DROPDOWN RULING MADE THE CHOICE UNAMBIGUOUS, which is worth recording because it",
+        "reads like the rule above going away and it is not. `forms/WorkshopPicker.tsx` writes AT MOST ONE",
+        "of `workshopId` / `designWorkshopId`, so the roster is no longer arbitrating between two rival",
+        "answers — it is choosing between an id and nothing. The precedence line is kept exactly as it is",
+        "anyway: `workshopArtisanParams` is the one place that knows the plural goes with a `Workshop` and",
+        "the singular with a `DesignWorkshop`, the handset still draws two ids out of its own picker, and",
+        "a rule that happens to be unreachable today is not the same thing as a rule that is wrong."
+      ],
+      "mustSend": [
+        "workshopIds",
+        "designWorkshopId"
+      ],
+      "mustNotSend": [
+        "workshopId"
+      ]
+    },
+    "android": {
+      "why": [
+        "THE HANDSET HALF OF THE SAME SCOPE, DECLARED STRUCTURALLY BECAUSE A LABEL CHECK CANNOT SEE",
+        "IT. This was the last row of `openDrifts` and it was open for six weeks: the capture form",
+        "offered the WHOLE DEPLOYMENT'S artisans under whichever workshop its picker was showing,",
+        "because `loadArtisanRegister`'s fetch is a bare `repository.artisans()` and nothing re-asked",
+        "when the workshop box moved.",
+        "",
+        "WHAT IS ASSERTED IS THE REQUEST AND NOT THE SCREEN. Every version of this defect has the",
+        "right TYPE: the picker holds a `List<ArtisanDto>` whether the list is the workshop's roster or",
+        "the whole table, nothing errors, and nothing is missing — the control simply answers a wider",
+        "question than the one on screen. So the pin is the parameter on the wire, the rule that",
+        "chooses it, and the form actually calling that rule. Each is a way the fix can be undone",
+        "without any other assertion in this repository noticing.",
+        "",
+        "THE WIRE HALF COULD NOT BE WRITTEN AT ALL UNTIL 2026-09-17, which is why the row stood so",
+        "long: `WorkshopRepositoryApi.artisans()` declared `workshopIds` and no `designWorkshopId`,",
+        "though `backend/app/api/routes/artisans.py::list_artisans` has accepted one the entire time.",
+        "Scoping only the ordinary arm and deleting the row would have closed half a defect and taught",
+        "the next reader that a deleted row means a closed one.",
+        "",
+        "THE ROUTING IS WHAT PICKS, NEVER 'WHATEVER IS NON-BLANK'. `RecordWorkshopLink` mounts BOTH",
+        "halves at once and each computes its own default while the other is on screen, so a",
+        "design-routed form is routinely holding a perfectly good ordinary `workshopId` too. Choosing",
+        "by emptiness would scope the roster by a workshop the record is not being filed under — the",
+        "same defect with the sign flipped, and harder to spot because the list would look narrowed."
+      ],
+      "wire": {
+        "file": "android/app/src/main/java/com/designprototype/workshop/data/WorkshopRepositoryApi.kt",
+        "symbol": "artisans",
+        "mustDeclare": [
+          "workshopIds",
+          "designWorkshopId"
+        ],
+        "mustNotDeclare": [
+          "workshopId"
+        ]
+      },
+      "rule": {
+        "file": "android/app/src/main/java/com/designprototype/workshop/data/WorkshopRepository.kt",
+        "symbol": "interviewArtisanScope",
+        "routesOn": "routesToDesignWorkshop",
+        "mustSend": [
+          "workshopIds",
+          "designWorkshopId"
+        ],
+        "mustNotSend": [
+          "workshopId"
+        ]
+      },
+      "form": {
+        "calls": [
+          "interviewArtisanScope",
+          "interviewArtisans"
+        ],
+        "passes": "routesToDesignWorkshop",
+        "mustNotPass": [
+          "typeKey"
+        ]
+      },
+      "emptyState": {
+        "why": [
+          "THE FOURTH SENTENCE, AND IT IS ONLY SAYABLE NOW. An empty roster means one of four things —",
+          "the request is in flight, it failed, nobody is recorded at THIS workshop, nobody is recorded",
+          "at all — and until the list was actually fetched per workshop the handset was entitled to say",
+          "only three of them. Saying the fourth from an unscoped read would have been the defect",
+          "wearing the fix's clothes.",
+          "",
+          "COLLAPSING ANY TWO IS THE FAILURE. A researcher told 'there are no artisans' under a workshop",
+          "that simply has none goes off and creates a duplicate of somebody who already exists — which",
+          "happened in the sibling repository on 2026-09-17, which is why these are asserted PAIRWISE",
+          "DISTINCT rather than merely present.",
+          "",
+          "IT IS A NEW SENTENCE AND NOT `scopedEmptyLine`, which is the one thing a reader of the old",
+          "`openDrifts.edit` would get wrong. That function says 'No artisans are open to this account.",
+          "An administrator can give you access to one.' — a claim about a GRANT TABLE whose next move",
+          "is an administrator. A workshop whose roster is empty is not a permission the reader is",
+          "missing, and sending them to an administrator over it is the same class of wrong answer as",
+          "the one above.",
+          "",
+          "FIVE ARE LISTED AND NOT FOUR, because the handset's 'the read failed' splits where the",
+          "browser's does not: `couldNotListLine` is an ANSWERED refusal and `offlineListLine` is a",
+          "device that could not be reached, and the second is the ordinary condition this whole client",
+          "exists for. `RegisterLoad.online` is what tells them apart, and it is the outbox's own",
+          "classification rather than a second network probe."
+        ],
+        "file": "android/app/src/main/java/com/designprototype/workshop/ui/WorkshopOptions.kt",
+        "sentences": [
+          "loadingListLine",
+          "couldNotListLine",
+          "offlineListLine",
+          "unscopedEmptyLine",
+          "atWorkshopEmptyLine"
+        ]
+      }
+    }
+  },
+  "interviewListScope": {
+    "why": [
+      "DEFECT (2) OF THE THREE, AND IT WAS ALREADY CLOSED ON THE WEB HERE — recorded so it cannot be",
+      "re-opened. `loadInterviews` sends `workshopId: funnel.workshopId` and the refetch effect depends",
+      "on it; both halves are needed and `e2e/questionnaire-workshop-filter-unit.spec.ts` carries the",
+      "argument. This contract repeats only the assertion, because the sibling repository's report was",
+      "about the same control on a client where it was still open.",
+      "",
+      "IT HAS NEVER HAD AN `openDrifts` ROW HERE and the sentence above used to point at one, which was",
+      "always loose and became plainly wrong when the last row closed on 2026-09-17. The four rows this",
+      "file ever carried were all about the CAPTURE FORM; this filter was already correct on the web",
+      "when the contract was written, and there is no handset surface for it to drift on — the handset",
+      "has no interviews table with a workshop filter above it."
+    ],
+    "file": "frontend/app/(protected)/questionnaire/page.tsx",
+    "request": "listResource<QuestionnaireInterview>(\"/questionnaire/interviews\"",
+    "mustCarry": [
+      "workshopId: funnel.workshopId",
+      "artisanId: funnel.artisanId"
+    ]
+  },
+  "absent": [
+    {
+      "key": "date",
+      "labelsThatMustNotAppear": [
+        "Date",
+        "Interview date",
+        "Recorded at",
+        "Record time"
+      ],
+      "why": [
+        "THERE IS NO DATE CONTROL ON THIS FORM, ON EITHER CLIENT, AND THAT IS A DECISION.",
+        "",
+        "The server derives `interviewDate` from `recordedAt`, which is when the interview was actually",
+        "captured (`default_interview_date`, backend/app/api/routes/questionnaire.py, which writes the",
+        "argument out). The web says so in a comment where the box used to be and the handset says it",
+        "again beside its own title field.",
+        "",
+        "IT IS IN THIS CONTRACT AS A NEGATIVE because a contract that only ever said what SHOULD be there",
+        "could not catch a guide inventing a box. All three registers named a \"Date\" here until",
+        "2026-08-31 and the printed guide still records that it did; the check is kept so it cannot come",
+        "back."
+      ]
+    },
+    {
+      "key": "retiredWorkshopControls",
+      "labelsThatMustNotAppear": [
+        "Design & prototype workshop",
+        "Primary artisan",
+        "Additional artisans"
+      ],
+      "why": [
+        "THREE LABELS THIS FORM DREW UNTIL 2026-09-16 AND MUST NOT DRAW AGAIN, each retired by a ruling",
+        "rather than by a rename, and each with a live surface that still uses the same words correctly.",
+        "That is exactly why they are asserted as negatives HERE, scoped to this form and to the three",
+        "registers that describe it, instead of being grepped for across the tree.",
+        "",
+        "“Design & prototype workshop” — retired by R2. It was the third control's second box; the",
+        "workshop question is now “Type of workshop” over one “Workshop” box. THE LABEL IS STILL",
+        "CORRECT ON THE MISCELLANEOUS-MEDIA FORM, which draws that box alone and no type box, because",
+        "`MediaCompleteRequest` declares `designWorkshopId` and no `workshopId`. `app/(protected)/media`",
+        "and both walkthroughs' `media` cards keep it, and `DesignWorkshopSelect` still defaults to it",
+        "for that one caller.",
+        "",
+        "“Primary artisan” and “Additional artisans” — retired by the single-control ruling for a join",
+        "with no rank column; see `controlPins`, which forbids them structurally as well as by name.",
+        "",
+        "PUTTING THEM HERE WAS BLOCKED UNTIL THE REGISTERS MOVED, and that was the whole content of two",
+        "`openDrifts` rows: the ceiling assertion reads the three registers, so declaring these absent",
+        "while `steps.ts`, `WalkthroughJourney.kt` and `docs/WALKTHROUGH.md` still named them would have",
+        "gone red on three files in other lanes. All three were corrected in the same commit as this",
+        "line, `test_walkthrough_fields_parity.py` holds them equal, and both rows are gone."
+      ]
+    }
+  ],
+  "alsoDrawn": {
+    "why": [
+      "The labelled controls each form draws that are NOT fields of this contract, declared per client",
+      "with a reason, so that the enforcing test can compare an EQUALITY instead of a containment.",
+      "",
+      "Without this list the only assertion available is \"every contract field appears somewhere\", which",
+      "is silent about a NEW box appearing on one client and not the other — the drift that started this,",
+      "running in the other direction. With it, any labelled control on either form that is neither a",
+      "contract field nor a line below fails, and the person who added it has to say which it is."
+    ],
+    "web": [
+      {
+        "label": "Answer",
+        "component": "RichTextField",
+        "why": [
+          "The typed answer to ONE question, drawn once per question inside the sections loop and named",
+          "on screen by the question prompt (`labelledBy={`question-label-${question.id}`}`) rather than",
+          "by this string, which is the accessible name of last resort.",
+          "",
+          "It belongs to the instrument rather than to this form: there are as many of these as the",
+          "questionnaire has questions, they are keyed by question id, and no fixed register could list",
+          "them. All three guides describe them in the one line they can — \"per question either a",
+          "'Record this question' audio clip or a typed answer\"."
+        ]
+      }
+    ],
+    "android": [
+      {
+        "label": "Recording mode",
+        "composable": "DropdownField",
+        "why": [
+          "How answers are captured — per question, or one take for a whole section. The web asks the",
+          "same question through `QuestionnaireCaptureControls`, a component that lives outside the form",
+          "file and whose labels are therefore invisible to a scan of the form region. It is a capture",
+          "PREFERENCE and not a property of the interview: nothing it sets is stored on the record, which",
+          "is why it is not a field of this contract on either client. Both walkthrough registers list it",
+          "anyway, and rightly — it is a decision made before the artisan sits down."
+        ]
+      }
+    ]
+  },
+  "distinctLabels": [
+    {
+      "site": "frontend/components/FunnelFilters.tsx",
+      "label": "Filter by artisan",
+      "control": "searchable-multiselect",
+      "why": [
+        "THE BROWSE FILTER OVER THE INTERVIEWS TABLE KEEPS ITS OWN WORD, DELIBERATELY. It is a different",
+        "control on a different part of the screen doing a different job: it narrows a list of interviews",
+        "that already exist, and choosing somebody there asserts nothing about any record.",
+        "",
+        "The capture form's label is a claim about the interview being written — these are the artisans",
+        "this interview is with. \"Artisans interviewed\" on a filter row would read as a claim of the same",
+        "kind about rows the researcher is merely looking through, and the two controls would then use",
+        "one phrase for a statement and for a query.",
+        "",
+        "IT IS WRITTEN DOWN HERE, RATHER THAN LEFT UNSAID, so that the enforcing test can hold it: the",
+        "site must still exist and must still use this word. A licence nobody checks reads as a",
+        "considered decision long after the screen it describes has been renamed."
+      ]
+    }
+  ],
+  "registers": {
+    "why": [
+      "The three places that DESCRIBE this form to a researcher. Each is joined to the field list above,",
+      "and none of them is joined to another here — the register-to-register edge already exists in",
+      "`backend/tests/test_walkthrough_fields_parity.py`, which holds `WALKTHROUGH_FIELDS` equal to",
+      "`GUIDE_STEPS` field for field and both against the printed guide, and which was green over three",
+      "registers that all omitted the same box until 2026-09-16.",
+      "",
+      "A FLOOR AND A CEILING, NOT AN EQUALITY. Every field in this contract must be NAMED in each",
+      "register; a register may name MORE, because it describes a whole SCREEN and this contract",
+      "describes the interview's own boxes — \"Recording mode\", \"Interview audio\" and \"Location (GPS fix",
+      "or map pin)\" are true things to tell a researcher and belong to shared components with their own",
+      "registers. The ceiling is `absent` above: what a register may not do is name a field the form",
+      "deliberately does not have.",
+      "",
+      "THE FLOOR IS ENFORCED as of 2026-09-16. It was declared and held off while three registers in other lanes omitted “Type of workshop” and still named the two split artisan controls; all three",
+      "were corrected in the same commit that collapsed the three workshop fields into two, both `openDrifts` rows were deleted, and this boolean was turned on."
+    ],
+    "floorEnforced": true,
+    "web": {
+      "file": "frontend/components/guide/steps.ts",
+      "anchor": "id: \"questionnaire\"",
+      "shape": "GuideStep.fields — the real form labels, in screen order, with (required) marked"
+    },
+    "android": {
+      "file": "android/app/src/main/java/com/designprototype/workshop/ui/WalkthroughJourney.kt",
+      "anchor": "\"questionnaire\" to listOf(",
+      "shape": "WALKTHROUGH_FIELDS[\"questionnaire\"] — the web's GuideStep.fields verbatim"
+    },
+    "printed": {
+      "file": "docs/WALKTHROUGH.md",
+      "heading": "Questionnaire",
+      "marker": "**What the screen asks for:**",
+      "shape": [
+        "One prose sentence, markdown, hard-wrapped. Compared loosely — lowercased with punctuation",
+        "collapsed — because the guide writes \"**Interview title** *(required)*\" for a register's",
+        "\"Interview title (required)\" and that emphasis is typography, not a different claim about the",
+        "form.",
+        "",
+        "This is the copy that gets printed and carried into a village with no signal, which is why it is",
+        "held at all: it is the only rendering whose reader cannot check it against the screen."
+      ]
+    }
+  },
+  "openDrifts": {
+    "why": [
+      "SURFACES THIS CONTRACT DESCRIBES AND DOES NOT YET HOLD, each with the measurement that found it",
+      "and the edit that closes it.",
+      "",
+      "THE LIST IS EMPTY AS OF 2026-09-17, and it is kept — with its argument — rather than deleted.",
+      "The mechanism is the point and it will be needed again: a row here is a fact that is TRUE TODAY",
+      "and must stop being true, `test_every_open_drift_is_still_open` checks that it is still true, and",
+      "so the moment somebody lands the fix the assertion FAILS and says “this drift is closed, delete",
+      "the row and turn the real check on”. A list of known problems that nobody checks is the third",
+      "register again — it reads as a considered account of where the product is wrong long after the",
+      "product has moved.",
+      "",
+      "THE FACT A ROW RECORDS MUST BE THE ONE ITS OWN FIX MOVES. This is the hardest part of the shape",
+      "and this file got it wrong TWICE on the same row, which is worth recording in full because the",
+      "second time was after it had been noticed once and corrected:",
+      "",
+      "  * FIRST MISS. `handset-artisan-register-is-unscoped` originally recorded only",
+      "    `androidFetchesArtisansVia: loadArtisanRegister` — read as “`loadArtisanRegister` is still",
+      "    declared and still fetches with a bare `repository.artisans()`”. But that row's own `edit`",
+      "    FORBIDS narrowing that function, because five other forms share it. So no correct fix could",
+      "    ever have made it red. A second fact was added beside it:",
+      "    `androidFormSendsNoWorkshopScope: workshopIds` — “the capture form's own body does not",
+      "    contain the string `workshopIds`” — on the reasoning that the fix would write",
+      "    `repository.artisans(workshopIds = …)` into the form.",
+      "",
+      "  * SECOND MISS, AND IT IS THE INSTRUCTIVE ONE. The fix landed on 2026-09-17 and BOTH facts were",
+      "    still true, so the ratchet stayed silent over a closed drift. `loadArtisanRegister` is",
+      "    untouched, exactly as the row demanded. And the form does not spell `workshopIds` because the",
+      "    scope rule is not written inline: the form calls `interviewArtisanScope(routesToDesignWorkshop",
+      "    = …, workshopId = …, designWorkshopId = …)` and the plural appears one layer down, in",
+      "    `data/WorkshopRepository.kt`, which is where this contract's own `controls` section would have",
+      "    said it belongs. The row predicted the SPELLING of a fix it could not see, and a well-factored",
+      "    fix spelled it somewhere else.",
+      "",
+      "THE LESSON, for whoever writes the next row: record a fact about the SURFACE THE DEFECT IS ON, in",
+      "terms of what the user-visible behaviour requires, and not a guess at which line the fix will",
+      "occupy. “The form's artisan read carries no workshop” is a fact about the request; “the form's",
+      "body contains the string `workshopIds`” is a fact about one possible diff. The first cannot be",
+      "satisfied by a correct fix; the second was, twice.",
+      "",
+      "WHAT REPLACED THE ROW, because a closed drift that leaves no assertion behind is a drift waiting",
+      "to reopen: `artisanScope.android` and the two tests that read it —",
+      "`test_the_handset_sends_the_workshop_scope_on_its_artisan_read` and",
+      "`test_the_handset_keeps_the_four_empty_roster_sentences_apart`. They are ordinary assertions and",
+      "not exceptions, which is the whole difference: they hold the WIRE (the interface declares",
+      "`designWorkshopId`), the RULE (exactly one spelling, chosen by the routing, never the singular",
+      "`workshopId` and never the type key) and the FORM (it actually calls the rule) — the three places",
+      "this fix can be undone without anything else in either build noticing.",
+      "",
+      "FOUR ROWS STOOD HERE ON 2026-09-16 AND NONE STANDS NOW. Three closed that day — the handset drew",
+      "the workshop boxes first, drew the artisan field as a wall of checkboxes labelled “Linked",
+      "artisans”, and let the notes box take `MultiNoteInput`'s own default — and the fourth, this one,",
+      "closed on 2026-09-17. Each is an ordinary assertion in `test_questionnaire_form_contract.py` now,",
+      "because a contract that keeps its own exceptions after they are fixed teaches the next reader",
+      "that exceptions are permanent."
+    ],
+    "rows": []
+  },
+  "maintenance": [
+    "WHEN THE WEB FORM CHANGES, this file changes in the same commit, and then the handset and all",
+    "three registers. Not the other way round: an edit that changes a client to match a form is a fix,",
+    "an edit that changes this file to match a client is a decision, and they should not look alike in",
+    "a diff.",
+    "",
+    "THE OWNER'S TWO-DROPDOWN RULING LANDED ON 2026-09-16 AND THIS FILE FAILED WHEN IT DID, exactly as",
+    "the paragraph that stood here said it would. What it moved, recorded so the next reader can tell a",
+    "decision from a fix: fields 4, 5 and 6 (“Workshop”, “Type of workshop” as a FILTER, “Design &",
+    "prototype workshop”) became two (“Type of workshop” as the ROUTER, then “Workshop”);",
+    "`WorkshopSelect` and `DesignWorkshopCascade` became one `WorkshopPicker` and the cascade file was",
+    "deleted; the retired labels moved into `absent`; and the artisan roster's scope became unambiguous",
+    "because at most one of the two ids is ever set. The failure was the reminder and not a defect.",
+    "",
+    "THE HANDSET WAS BUILT TO THIS FILE ON 2026-09-16 AND THE FILE DID NOT MOVE TO MEET IT, which is",
+    "the direction the paragraph above asks for, recorded so the next reader can tell a fix from a",
+    "decision. Three of the four `openDrifts` rows closed in that pass and all three were edits to",
+    "`MainActivity.kt`: the two workshop boxes moved from the head of the form to below Language; the",
+    "artisan field stopped being a wall of checkboxes labelled “Linked artisans” and became the",
+    "`SearchableMultiSelectField` this repository already had, labelled “Artisans interviewed”; and",
+    "the notes box stopped taking `MultiNoteInput`'s own default. `page.tsx` is byte-untouched — the",
+    "web was already right, which is what being the reference means.",
+    "",
+    "WHAT THE ENFORCING TEST GAINED IN THE SAME COMMIT, because a closed drift that leaves no",
+    "assertion behind is a drift waiting to reopen: an Android field-ORDER equality, an Android",
+    "control check, and the handset half of the artisan pin. The three were written against the",
+    "un-fixed tree first and each named the thing that had moved — “first difference at #1 …",
+    "contract: 'Interview title' / android: 'Type of workshop'”, and the widget check still red over a",
+    "wall of checkboxes RENAMED to the contract's own word, which is the one perturbation a label",
+    "assertion cannot see.",
+    "",
+    "THE LAST ROW CLOSED ON 2026-09-17, AND IT WAS A WIRE CHANGE RATHER THAN A FORM CHANGE, which is",
+    "why it outlived the other three by a day and a wave. `WorkshopRepositoryApi.artisans()` gained the",
+    "`designWorkshopId` the route had accepted all along; `WorkshopRepository` gained",
+    "`interviewArtisanScope` (the routing rule) and `fetchInterviewArtisans` (the request);",
+    "`QuestionnaireForm` gained a workshop-scoped read of its own, with its own cache key under a model",
+    "name that cannot collide with the shared register's; and `ui/WorkshopOptions.kt` gained",
+    "`atWorkshopEmptyLine`, the sentence the picker was forbidden to say while its list was unscoped.",
+    "NOTHING WAS ADDED TO THE SERVER and nothing in `frontend/` moved: the browser was already right,",
+    "again, and the route was already right, which is the third time this file has recorded that the",
+    "missing half was on the handset.",
+    "",
+    "THE SHARED ARTISAN REGISTER WAS NOT NARROWED, and that is the load-bearing half of the edit. The",
+    "obvious fix — put a workshop on `loadArtisanRegister` — would have narrowed the offline register",
+    "five other record forms and the search screen read, AND the list `carryScope(CarryNode.ARTISAN, …)`",
+    "uses to decide whether a carried artisan is still reachable: an artisan alive, visible and merely",
+    "documented at another workshop would have been pruned from the carry bag as deleted, taking the",
+    "workshop the bag was carrying with them. The capture form got a second read instead.",
+    "",
+    "WHAT THE ENFORCING TEST GAINED THIS TIME, and why it is two tests rather than one: the scope is",
+    "asserted at the WIRE, at the RULE and at the FORM",
+    "(`test_the_handset_sends_the_workshop_scope_on_its_artisan_read`) because each is a place the fix",
+    "can be undone with nothing else going red — a parameter deleted from the interface, a rule that",
+    "starts choosing by whichever id is non-blank, or a form that stops calling it — and the five",
+    "empty-roster sentences are asserted PAIRWISE DISTINCT",
+    "(`test_the_handset_keeps_the_four_empty_roster_sentences_apart`) because collapsing two of them",
+    "passes every presence check and is what sent a researcher off to create a duplicate artisan in the",
+    "sibling repository on the day this landed. Both were written against the un-fixed tree first: the",
+    "wire assertion read “`artisans()` declares no `@Query(\"designWorkshopId\")`” and the sentence",
+    "assertion read “the handset's capture form does not print `offlineListLine(`”.",
+    "",
+    "AND THE RATCHET DID NOT FIRE, which is the finding worth carrying forward. `openDrifts.why` sets",
+    "out why in full: both facts the row recorded were still true after a correct fix, because one of",
+    "them was about a function the row itself forbade touching and the other was a guess at which line",
+    "the fix would occupy. A row must record a fact about the SURFACE — what the behaviour requires —",
+    "and not a fact about a diff.",
+    "",
+    "THE SAVE PATH ITSELF IS A SECOND CONTRACT AND NOT THIS ONE. `shared/record-save-contract.json`",
+    "declares where a record goes when it is saved — the endpoint, the payload keys, the destination",
+    "rule and the offline queue shape — and asserts that the standalone record pages and the",
+    "design-workshop INTEGRATED surfaces use all of it identically (R7). It holds the two-box SHAPE as",
+    "well, across every record form on both clients, which is what stops R2 regressing on a form this",
+    "file does not describe. This file stays the authority on what the INTERVIEW form asks for; that",
+    "one is the authority on what any record form DOES with the answer.",
+    "",
+    "WHAT THIS FILE DELIBERATELY DOES NOT COVER, each because it is already one register somewhere else",
+    "and a second copy here would be the failure this file exists to prevent:",
+    "",
+    "  * THE LOCATION GROUP. The web draws `<LocationFields />` and the handset `LocationAddressEditor`;",
+    "    both are shared components used by every record form, both carry their own stated-address /",
+    "    captured-fix split and their own argument for it.",
+    "  * MEDIA CAPTURE. `MediaCaptureField` / `MediaCaptureSection`, same argument.",
+    "  * THE CAPTURE PREFERENCES. \"Recording mode\" and \"Do not display answer text boxes\" live in",
+    "    `QuestionnaireCaptureControls` on the web and are stored on nothing; both walkthrough registers",
+    "    list them and `alsoDrawn` explains why they are not fields.",
+    "  * THE QUESTIONS THEMSELVES. They come from the instrument, which the server publishes; a",
+    "    hand-kept list of them is the exact thing the instrument exists to make unnecessary."
+  ]
+}

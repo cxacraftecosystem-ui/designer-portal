@@ -1999,6 +1999,18 @@ async def create_design_workshop(
     # draft store (`frontend/lib/designWorkshopStore.ts`) — because a designer who only found out at
     # sync time would have already filled 22 stages into a workshop that can never be accepted.
     # Those are for the designer's benefit; THIS is the one that is load-bearing.
+    #
+    # THE OTHER WORKSHOP TABLE'S CREATE IS A DIFFERENT SET, AND THE DIFFERENCE IS DELIBERATE. Since
+    # 2026-09-16 `POST /workshops` is `require_workshop_opener` in `api/routes/workshops.py` — a rank
+    # floor at MINISTRY_ADMIN (48), so `{MINISTRY_ADMIN, ADMIN, MASTER_ADMIN}`. THIS gate is the
+    # strictly narrower `{ADMIN, MASTER_ADMIN}` and STAYS THAT WAY. A MINISTRY_ADMIN opens a design &
+    # prototype workshop through `POST /annual-plan/{entry_id}/promote`, which has the planned row
+    # behind it — a cluster, a craft, dates and a sanctioned intent the ministry published before the
+    # year began. Widening `DESIGN_WORKSHOP_CREATOR_ROLES` to match the sibling route instead would
+    # hand every ministry admin the ordinary untracked create as well; that was considered and
+    # rejected twice, in `services/sanction_orders.can_record_sanction_orders` and at the promote
+    # route itself, and `tests/test_directorate_tiers.py` pins the set so it cannot drift back.
+    # Two tables, two doors, two gates — and BOTH refuse a designer, which is the rule they share.
     assert_can_create_design_workshops(current_user)
     # ── WHO THIS WORKSHOP IS FOR, DECIDED BEFORE A SINGLE ROW EXISTS ────────────────────────────
     #

@@ -72,6 +72,33 @@ Two more, specific to this cluster, derived below and used throughout:
   I submit to" still reads a revoked grant as a grant. `WorkshopRepository.kt:3918-3923`,
   `DesignWorkshopPicker.kt:46-49`, `AdoptLocalDraftDialog.tsx:30-40`. **This makes req 31's option
   "cache the last successful fetch" FORBIDDEN for the two workshop pickers, not merely unattractive.**
+
+> **⚠ R6 WAS NARROWED BY THE OWNER ON 2026-09-16, ON THE HANDSET ONLY. READ THIS BEFORE CITING IT.**
+>
+> The owner's instruction: *"The info for the designer workshop needs to be saved locally for the
+> upcoming/ongoing workshops the particular designer has been allotted to, so that they can attribute
+> their work to the same."* The clause of R6 that forbade caching the two workshop lists outright is
+> therefore **repealed for Android**, and `android/.../data/DwLocalWorkshops.kt` is the cache. What
+> replaced it is narrower and is the rule to cite now:
+>
+> * **A cached access list may be OFFERED. A stale answer may never be PREFILLED.** Offering is a list
+>   a person then chooses from and the server still refuses at the pre-flight and again at the save;
+>   prefilling writes an id onto a record nobody looked at. `designWorkshopDefaultForMe` stays
+>   uncached for exactly that reason.
+> * The cache keeps only workshops that have **not ended**, re-tests that window against the device
+>   clock on **every read**, is filed **per account**, and is **replaced** by every answered refresh.
+> * It hands back `RegisterLoad`, so the screen says how old the list is.
+>
+> **THE WEB DID NOT CHANGE AND THAT IS DELIBERATE.** `frontend/lib/referenceCache.ts` still makes the
+> refusal a TYPE ERROR rather than a sentence, and its header now says why the two clients differ: the
+> argument for the cache is a phone argument — a designer in a courtyard with no signal and an empty
+> picker files a fortnight of fieldwork under nothing — and a browser is not in that courtyard.
+>
+> **AND NOTHING READS THE CACHE YET.** It is written and tested; `rememberWorkshopPicker`
+> (`MainActivity.kt`) and `rememberDesignWorkshopPicker` (`ui/DesignWorkshopPicker.kt`) are the two
+> call sites that have to change. Until they do, an offline workshop box on the handset is still
+> empty, so every "Disable with a reason" row below still describes the shipped behaviour.
+
 - **R7 — An empty picker and a dangling foreign key are opposite failures with opposite remedies.**
   The first is fixed *before* the save, by offering something answerable or standing the field down.
   The second is fixed *after* the drain, on the record already on the device, by re-picking.
@@ -791,6 +818,36 @@ versus edit (`:116-123`).
 
 ## 2.10a The two-tier cascade — "Type of workshop", then the workshop
 
+> **⚠ RETIRED 2026-09-16. THE CONTROL DESCRIBED BELOW NO LONGER EXISTS. READ THIS FIRST.**
+>
+> This section describes a THREE-box arrangement: `WorkshopSelect` over the `Workshop` table, then a
+> `WORKSHOP_KIND` box that narrowed the list under it and saved nothing, then a `DesignWorkshop` box.
+> The owner ruled it down to TWO, in these words: *"we do not need one separately for each of the
+> type of the workshops"* and *"Do not invent complexity."* What a record form draws now is:
+>
+> 1. **"Type of workshop"** — rows of the new `WorkshopTypeOption` table (`GET /workshop-types`), an
+>    administrator's list rather than `stage_schema.ENUMS["WORKSHOP_KIND"]`.
+> 2. **"Workshop"** — the workshops of that type, most recent first, and exactly one box.
+>
+> The type chooses which TABLE the second box reads and therefore which of the record's two columns
+> the save writes: `routesToDesignWorkshop` true → `designWorkshopId`, false → `workshopId`. It does
+> NOT narrow within a table — 13,847 of 13,871 `DesignWorkshop` rows hold no `workshopKind` at all, so
+> a narrowing by it would answer "no workshops of this type" about a table full of them. Rule 1 and
+> rule 2 in the table below are therefore **gone with the box that needed them**, not violated.
+>
+> `components/forms/DesignWorkshopCascade.tsx`, `frontend/e2e/design-workshop-cascade-unit.spec.ts`
+> and `android/.../ui/DesignWorkshopPickerTest.kt` were all DELETED. What is live now:
+> `frontend/components/forms/WorkshopPicker.tsx`, `android/.../MainActivity.kt`'s
+> `RecordWorkshopField` / `rememberRecordWorkshopLink`, and `android/.../ui/DesignWorkshopPicker.kt`'s
+> type half. The declaration and its enforcing test are `shared/record-save-contract.json` and
+> `backend/tests/test_record_save_contract.py`.
+>
+> WHAT SURVIVES AND IS STILL WORTH READING HERE: rule 3 (the offline floor), rule 4 (the type is
+> never saved on the record — now doubly true, since it is not even a filter), rule 5 and rule 6.
+> The section is kept rather than deleted because those four arguments were carried into the new
+> control deliberately, and a reader who meets them there should be able to find where they came
+> from.
+
 The six record forms open on a TYPE box above the workshop box, defaulting to
 `DESIGN_PROTOTYPE_DEVELOPMENT`, and the type narrows the workshop list **on the server**. Web:
 `components/forms/DesignWorkshopCascade.tsx`, mounted on `ArtisanForm`, `ProductForm`, `ToolForm`,
@@ -990,6 +1047,14 @@ list MEANS, not by how big it is.**
 > `DesignWorkshopPicker.kt:46-49`, `WorkshopSelect.tsx:38-44`, and argued at length for the adopt
 > dialog at `AdoptLocalDraftDialog.tsx:30-40`.
 
+**⚠ AMENDED 2026-09-16 — see the note under R6 in §1.** On the handset the two workshop lists are now
+cached by `DwLocalWorkshops` (allotted, not-yet-ended, per account, re-tested on every read), and what
+survives of R6 is "a cached list may be offered, a stale answer may never be prefilled". The web is
+unchanged. **Both handset pickers were wired to that cache later the same day** — `rememberWorkshopPicker`
+(`MainActivity.kt`) and `rememberDesignWorkshopPicker` (`ui/DesignWorkshopPicker.kt`) each read the disk
+before they issue their fetch, and the screen says which list it is drawing (`cachedListLine`). The table
+below is written as the shipped behaviour; the "never cache" column below is **the web's** rule now.
+
 So: **caching is forbidden for the access-scoped lists and correct for the register-scoped ones.**
 The design document says so rather than listing "cache it in Room" as an open option, and there is no
 Room to list it in anyway (searched `android/**` for `androidx.room`, `RoomDatabase`, `@Entity`,
@@ -998,8 +1063,8 @@ Room to list it in anyway (searched `android/**` for `androidx.room`, `RoomDatab
 
 | List | Decision | Why |
 |---|---|---|
-| `Workshop` — "workshops I may submit to" (`MainActivity.kt:5891`, `WorkshopSelect.tsx`) | **Disable with a reason.** Never cache. | R6. `accessibleOnly=true` resolves `WorkshopAssignment` rows the client never sees. |
-| `DesignWorkshop` (`DesignWorkshopPicker.kt:245`, `DesignWorkshopSelect.tsx`) | **Disable with a reason.** Never cache. | R6. `visible_to_clause` is a grant set. |
+| `Workshop` — "workshops I may submit to" (`MainActivity.kt:5891`, `WorkshopSelect.tsx`) | **Disable with a reason.** Never cache — **web only, amended 2026-09-16.** | R6 as originally written. `accessibleOnly=true` resolves `WorkshopAssignment` rows the client never sees. Android caches the allotted, not-yet-ended rows (`DwLocalWorkshops`) and `rememberWorkshopPicker` reads them before its fetch, labelled with `cachedListLine`; the create-time default still comes from a read that answered. |
+| `DesignWorkshop` (`DesignWorkshopPicker.kt:245`, `DesignWorkshopSelect.tsx`) | **Disable with a reason.** Never cache — **web only, amended 2026-09-16.** | R6 as originally written. `visible_to_clause` is a grant set. Same amendment, and `rememberDesignWorkshopPicker` reads that cache before its fetch; the PREFILL (`default-for-me`) stays uncached on both clients. |
 | Eligible viewers / inspectors / designer directory / user lists | **Disable with a reason.** Never cache. | R6. These are permissions controls. |
 | Craft register | **Cache**, via the ALL-scoped `DwReferenceStore` key. Plus the free-text escape that already exists. | Not an access list. The artisan form already accepts a typed `newCraftName` (`MainActivity.kt:7903-7912`) and `hasCraft` (`:7657`) is satisfied by it — req 31's option (b), already shipped, in one place. |
 | Artisan register | **Cache**, ALL-scoped `DwReferenceStore` key. | `DwReferenceStore.kt:39-51` already shares this list across every workshop on the device *for exactly this reason*: *"A designer who starts a brand-new workshop in a village… still gets the artisan register that some earlier workshop on this same phone downloaded."* |
@@ -1877,7 +1942,10 @@ fetchers at `:3849-3868` only), `android/.../data/DwReferenceStore.kt`.
    ALL-scoped `DwReferenceStore` entries (`DwReferenceStore.kt:39-51`), which are already keyed by
    model alone and already shared across every workshop on the device. **No new storage layer, no
    Room, no KSP.** Leave `workshopsIMaySubmitTo()` (`:3929-3930`) and `designWorkshops()` alone — R6
-   forbids caching them, and `:3918-3923` says so.
+   forbids caching them, and `:3918-3923` says so. **⚠ SUPERSEDED 2026-09-16:** that call still has
+   no fallback of its own, but `DwLocalWorkshops` now holds a designer's allotted, not-yet-ended
+   workshops beside it — same store (`DwReferenceStore`), new keys, no new storage layer, which is
+   what kept this step's "no Room, no KSP" constraint intact. See the note under R6 in §1.
 2. **R2b:** the four required-closed-list validators stand down when their list is empty —
    artisan `:9432`, product `:9433`, tool `:10139`, craft `:7726`. §3.3 gives the expression.
    `:9445-9447` currently returns before the save coroutine is launched; that is the
@@ -1971,7 +2039,9 @@ rather than a call-site sweep:
 
 - ☑ **The web keeps the four registers on the device, and keeps NEITHER access list.** `grep -n
   "ReferenceRegister" frontend/lib/referenceCache.ts` — the type is a closed union of the four, so
-  R6 is enforced by the compiler and not by a comment. A `designWorkshop` cache does not compile.
+  R6 is enforced by the compiler and not by a comment, **on the web**. A `designWorkshop` cache does
+  not compile there, and that is still true and still wanted — see the amendment under R6 in §1 for
+  why the handset went the other way and why the two clients now differ on purpose.
   The stage-picker half added 2026-09-03 enforces R6 differently, because it cannot use the same
   instrument: those models are the REGISTRY's and arrive as wire strings, so a closed union would
   fail open at the first cast. It is a closed allow-list, `DW_CACHEABLE_REFERENCE_MODELS`, plus a

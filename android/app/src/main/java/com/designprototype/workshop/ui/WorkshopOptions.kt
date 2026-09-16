@@ -7,7 +7,14 @@ import java.time.LocalDate
 
 /**
  * ONE VOCABULARY FOR EVERY WORKSHOP PICKER ON THIS HANDSET — the labels, the order, the "none" row
- * and the six sentences an empty one is allowed to say.
+ * and the sentences an empty one is allowed to say.
+ *
+ * SIX OF THOSE SENTENCES ARE `DROPDOWN_DESIGN.md` §3.5'S AND TWO ARE THIS MODULE'S OWN, added when a
+ * control reached a state §3.5 had no word for: [narrowedEmptyLine] for a list the READER narrowed,
+ * and [atWorkshopEmptyLine] for a roster narrowed to the workshop a record is being filed under.
+ * Each says at its own declaration which of the six it is NOT, and why the nearest one would be a
+ * false claim — which is the only reason a module that exists to stop eleven copies of one sentence
+ * is allowed to grow an eighth.
  *
  * ══════════════════════════════════════════════════════════════════════════════════════════════════
  * WHY THIS FILE EXISTS, WHICH IS NOT TIDINESS
@@ -204,7 +211,7 @@ sealed interface WorkshopListState {
 }
 
 // ---------------------------------------------------------------------------------------------
-// The six sentences (DROPDOWN_DESIGN §3.5)
+// The sentences — §3.5's six, plus the two this module added and argued for at their declarations
 // ---------------------------------------------------------------------------------------------
 
 /*
@@ -235,11 +242,25 @@ internal val BUNDLED_LIST_HAS_NO_SENTENCE: String? = null
  * caller that cannot produce a real [refreshedOn] must not use this sentence — a made-up or omitted
  * date turns the one sentence that lets a designer judge the list into the one that stops them.
  *
- * NOT USED BY EITHER WORKSHOP PICKER, and that is R6 rather than an oversight: a stale ACCESS list
- * is wrong in the PERMISSIVE direction — a revoked grant still reads as a grant — so caching is
- * FORBIDDEN for both workshop lists, not merely unattractive. It is here for the register-scoped
- * lists (artisans, crafts, tools, products), where §3.3 rules the opposite way and where
- * `DwReferenceStore` already stamps `fetchedAt` on every write.
+ * BOTH WORKSHOP PICKERS PRINT IT NOW, and that was the last thing missing from the offline cache.
+ *
+ * It used to be forbidden to them: R6 held that caching an access list is FORBIDDEN because a stale
+ * one is wrong in the PERMISSIVE direction, a revoked grant still reading as a grant. The owner
+ * narrowed that on 2026-09-16 (`WorkshopRepository.workshopsIMaySubmitTo`'s KDoc carries the whole
+ * argument) and `data/DwLocalWorkshops.kt` keeps the allotted, not-yet-ended workshops per account,
+ * re-testing the window on every read. What survives of R6 is the half about PREFILLING: a cached
+ * list may be OFFERED to a person who then chooses from it, and a stale answer may never be WRITTEN
+ * onto a record nobody looked at — which is why the two pickers take their ROWS from the cache and
+ * leave their DEFAULT on the live path.
+ *
+ * Offering rows off the disk is the act this sentence exists to label. `rememberWorkshopPicker` and
+ * `rememberDesignWorkshopPicker` read the cache before their fetch and pass what it answered to
+ * [workshopListNotice], which prints this line whenever the rows on screen came off the device: a
+ * list served from a nine-day-old file and a list that arrived a second ago must not look identical,
+ * because what a MISSING workshop means is the whole difference between them.
+ *
+ * It is still the register-scoped lists' sentence too (artisans, crafts, tools, products), where
+ * §3.3 always ruled this way and where `DwReferenceStore` already stamps `fetchedAt` on every write.
  */
 internal fun cachedListLine(count: Int, noun: String, refreshedOn: String): String =
     "$count $noun on this device, last refreshed $refreshedOn. If the one you want is missing, " +
@@ -322,6 +343,56 @@ internal fun narrowedEmptyLine(noun: String): String =
  * looking for the wrong person.
  */
 internal fun unscopedEmptyLine(noun: String): String = "No $noun have been recorded yet."
+
+/**
+ * GENUINELY EMPTY, AT THE WORKSHOP ON SCREEN — the read succeeded, was narrowed to ONE WORKSHOP, and
+ * that workshop's roster is empty. The eighth sentence, and the one the questionnaire's artisan
+ * picker was forbidden to say until 2026-09-17.
+ *
+ * ── WHY IT COULD NOT BE SAID BEFORE, WHICH IS THE WHOLE REASON IT IS A SEPARATE FUNCTION ───────
+ *
+ * `QuestionnaireForm` printed three sentences off `lookupState` — still coming, the read failed,
+ * there really are none — and its call site said in as many words why it stopped at three: its
+ * roster was `loadArtisanRegister`'s ALL-scoped register, so an empty list there means the REGISTER
+ * is empty whatever the workshop box says. A per-workshop sentence printed off a deployment-wide
+ * read would have been the unscoped-register defect wearing the fix's clothes. The roster is fetched
+ * per workshop now (`interviewArtisanScope` / `fetchInterviewArtisans`), so the fact exists and the
+ * sentence is sayable.
+ *
+ * ── AND WHY IT IS NOT [scopedEmptyLine], WHICH IS WHAT THE DRIFT ROW NAMED ─────────────────────
+ *
+ * `shared/questionnaire-form-contract.json`'s closing row said *"add the fourth empty-state sentence
+ * at the picker (`scopedEmptyLine`)"*, and taking that literally would have been wrong. That
+ * sentence reads *"No artisans are open to this account. An administrator can give you access to
+ * one."* — a claim about a GRANT TABLE whose next move is an administrator. A workshop whose roster
+ * is empty is not a permission the reader is missing: nobody has been recorded there yet, and the
+ * next move is to record somebody. Sending a researcher to an administrator over it is the same
+ * class of wrong answer as the one this whole wave is about, and [unscopedEmptyLine]'s own note
+ * already states the general rule — *"one is a statement about a scope whose remedy is an
+ * administrator, the other a statement about the repository whose remedy is a record."*
+ *
+ * ── AND WHY IT IS NOT [narrowedEmptyLine] EITHER, WHICH IS THE NEARER MISS ─────────────────────
+ *
+ * That one is for a read the READER narrowed with a control whose narrowing they can undo — it names
+ * the way back (*"choose ANY_WORKSHOP_KIND to see them all"*). Here the narrowing is the workshop the
+ * interview is being filed under, which is not a filter the reader should be talked out of: telling
+ * somebody to widen the workshop box to find more artisans would be telling them to file the
+ * interview somewhere it did not happen.
+ *
+ * ── WHAT THE SENTENCE HAS TO DO ───────────────────────────────────────────────────────────────
+ *
+ * Say it is about THIS workshop, so the reader does not read it as a claim about the repository, and
+ * name the next move. The cost of collapsing it into [unscopedEmptyLine] is not hypothetical: a
+ * researcher in the sibling repository read "there are no artisans" under a workshop that simply had
+ * none, and went off and created a duplicate of somebody who already existed.
+ *
+ * WORD FOR WORD THE BROWSER'S, whose `artisanPickerEmptyLabel` prints *"No artisans are recorded at
+ * this workshop yet"* for exactly this state, plus the next action this client's sentences always
+ * carry — the browser has a create-artisan route beside the control and the handset does not.
+ */
+internal fun atWorkshopEmptyLine(noun: String): String =
+    "No $noun are recorded at this workshop yet. That is not a claim about your other $noun — " +
+        "record one here, or file this under a different workshop."
 
 /**
  * STILL LOADING — asked for, no answer yet.
@@ -524,7 +595,16 @@ internal fun readableStamp(iso: String?): String {
  *   that have nothing to do with the filter on it, and dressing that as "none of this type" would
  *   hide a dead connection behind a control the designer would then go on fiddling with.
  *
- * @return null ONLY when the list arrived with rows in it. A caller may print the result
+ * @param cached what the DEVICE'S OWN COPY said, from `DwLocalWorkshops`. Defaulted to a PENDING
+ *   [RegisterLoad] — nothing read off the disk — so every control that has no cache behind it reads
+ *   exactly as it did. See the block above the `when` for the three facts this arm keeps apart.
+ *
+ * @param cachedRows how many rows the cache actually offered, which is not [cached]'s business to
+ *   know: the window is re-tested on every read, so a file with four workshops in it answers with
+ *   none on the morning after the last of them ended, and [cachedListLine] would then print "0
+ *   workshops on this device" over a picker that is telling the truth about a real, dated answer.
+ *
+ * @return null ONLY when the list arrived, live, with rows in it. A caller may print the result
  *   unconditionally with `?.let`, and a null is the state in which the control needs no explanation
  *   because it is doing the obvious thing.
  */
@@ -533,22 +613,61 @@ internal fun workshopListNotice(
     kind: WorkshopListKind,
     online: Boolean,
     narrowed: Boolean = false,
-): String? = when (state) {
-    WorkshopListState.Loading -> loadingListLine(kind.noun)
-    WorkshopListState.Failed -> if (online) couldNotListLine(kind.noun) else offlineListLine(kind.noun)
-    is WorkshopListState.Listed ->
-        // ANSWERED, AND THE ANSWER IS NONE. Both workshop lists are scoped by a grant — a
-        // `DesignWorkshopViewer` row on one, a `WorkshopAssignment` on the other — so the honest
-        // sentence names an administrator and never the repository. Neither picker may ever print
-        // [unscopedEmptyLine]: this account seeing none is not the platform holding none, and a
-        // designer told to "create one" when the real remedy is a grant goes and makes a duplicate.
-        //
-        // UNLESS THE READER NARROWED IT, in which case neither claim is available: the read that
-        // answered "none" answered about one type, and what the account holds under the others was
-        // not asked. See [narrowedEmptyLine], which is the whole of the difference.
-        if (state.count > 0) null
-        else if (narrowed) narrowedEmptyLine(kind.noun)
-        else scopedEmptyLine(kind.noun)
+    cached: RegisterLoad = RegisterLoad(),
+    cachedRows: Int = 0,
+): String? {
+    /*
+     * THE DISK ONLY GETS A SENTENCE WHILE THE SERVER HAS NOT GIVEN ONE — the same precedence
+     * `dwLoadAllotted` applies to the rows themselves, said again here so the words and the list can
+     * never disagree. A read that ANSWERED is about today; a file is about the day it was written,
+     * and describing today's answer with yesterday's provenance is the one way this sentence can do
+     * more harm than no sentence at all.
+     */
+    if (state !is WorkshopListState.Listed && cached.source == RegisterSource.CACHED) {
+        /*
+         * THREE FACTS, THREE SENTENCES, AND THE COLLAPSE THAT IS BEING PREVENTED. A picker with no
+         * rows in it is in one of three completely different situations, and the field repository
+         * shipped all three as one empty dropdown:
+         *
+         *   · THIS DEVICE HAS NEVER BEEN GIVEN THE LIST — no file at all, [RegisterSource.NONE].
+         *     Falls through to [offlineListLine] below, whose next move is a connection.
+         *   · THE READ FAILED — the two arms below, which already tell a refusal from a tunnel.
+         *   · THE SERVER ANSWERED AND THIS ACCOUNT IS ON NONE — a file that exists and holds no
+         *     current rows. That is [scopedEmptyLine], whose next move is an administrator, and it
+         *     is the mapping `DwLocalWorkshops`' own header publishes for this state.
+         *
+         * A cached list WITH rows says so and says when, because a workshop missing from a list
+         * refreshed an hour ago means something different from one missing from a nine-day-old
+         * file — `DwReferenceStore`'s argument, and the reason [cachedListLine] refuses to be
+         * printed without a real date. Where the stamp will not format, nothing is said rather than
+         * a sentence with a hole in it; `DwReferenceStore` stamps every write and the cache key
+         * carries a generation, so no file this build can read is in that state.
+         */
+        return if (cachedRows > 0) {
+            readableStamp(cached.fetchedAt)
+                .takeIf { it.isNotEmpty() }
+                ?.let { cachedListLine(cachedRows, kind.noun, it) }
+        } else {
+            scopedEmptyLine(kind.noun)
+        }
+    }
+    return when (state) {
+        WorkshopListState.Loading -> loadingListLine(kind.noun)
+        WorkshopListState.Failed -> if (online) couldNotListLine(kind.noun) else offlineListLine(kind.noun)
+        is WorkshopListState.Listed ->
+            // ANSWERED, AND THE ANSWER IS NONE. Both workshop lists are scoped by a grant — a
+            // `DesignWorkshopViewer` row on one, a `WorkshopAssignment` on the other — so the honest
+            // sentence names an administrator and never the repository. Neither picker may ever print
+            // [unscopedEmptyLine]: this account seeing none is not the platform holding none, and a
+            // designer told to "create one" when the real remedy is a grant goes and makes a duplicate.
+            //
+            // UNLESS THE READER NARROWED IT, in which case neither claim is available: the read that
+            // answered "none" answered about one type, and what the account holds under the others was
+            // not asked. See [narrowedEmptyLine], which is the whole of the difference.
+            if (state.count > 0) null
+            else if (narrowed) narrowedEmptyLine(kind.noun)
+            else scopedEmptyLine(kind.noun)
+    }
 }
 
 /**

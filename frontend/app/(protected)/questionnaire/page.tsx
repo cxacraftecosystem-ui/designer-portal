@@ -9,20 +9,31 @@ import { deleteConfirm, useConfirm } from "@/components/dialogs/ConfirmDialog";
 import { OnDeviceDictationButton } from "@/components/dictation/OnDeviceDictationButton";
 import { EmptyState } from "@/components/EmptyState";
 import { Field, MultiNoteField, Select, TextArea, TextInput } from "@/components/FormControls";
-import { CarryContextBanner, carryScope, useCarryContext, type CarryScopeState } from "@/components/forms/CarryContextBanner";
+import { CarryContextBanner, carryScope, useCarryContext } from "@/components/forms/CarryContextBanner";
 import { LocationFields } from "@/components/forms/LocationFields";
 import { MediaCaptureField } from "@/components/forms/MediaCaptureField";
 import { QuestionnaireCaptureControls, useCapturePrefs } from "@/components/forms/QuestionnaireCaptureControls";
-import { useWorkshopSelection, WorkshopSelect } from "@/components/forms/WorkshopSelect";
+import { useWorkshopPicker, WorkshopPicker } from "@/components/forms/WorkshopPicker";
 import { appendDictatedPhrase } from "@/components/richtext/dictatedValue";
 import { DictatedTextArea } from "@/components/richtext/DictatedTextArea";
 import { EditedFlag, MarkdownDocument } from "@/components/richtext/MarkdownDocument";
 import { RichTextField } from "@/components/richtext/RichTextField";
 import { appendDictatedToStored, plainFromStoredRichText } from "@/components/richtext/storedRichText";
 import { readableError } from "@/components/review/reviewErrors";
+import {
+  artisanPickerEmptyLabel,
+  artisanPickerOptions,
+  artisansNotAtWorkshop,
+  artisanSetKey,
+  interviewScopeIsNarrowed,
+  interviewScopeKey,
+  outOfWorkshopNotice,
+  primaryInterviewArtisanId,
+  useWorkshopArtisans,
+  workshopScopeSettling,
+  type InterviewWorkshopScope
+} from "@/components/questionnaires/interviewArtisans";
 import { dictateAudio, dictationAnswerSentence } from "@/lib/designWorkshops";
-import { DesignWorkshopCascade } from "@/components/forms/DesignWorkshopCascade";
-import { useDesignWorkshopSelection } from "@/components/forms/DesignWorkshopSelect";
 import { MediaLightbox, MediaPreviewTile, type PreviewMedia } from "@/components/media/MediaLightbox";
 import { UploadProgress } from "@/components/media/UploadProgress";
 import { UploadTray } from "@/components/media/UploadTray";
@@ -57,7 +68,7 @@ import {
   type BatchResult
 } from "@/lib/media";
 import { saveOrQueue } from "@/lib/offline";
-import { RENDER_CAP } from "@/components/ui/selectFilter";
+import { cappedListNotice } from "@/components/data/cappedList";
 import { canManageQuestionnaire, hasRank, isAdmin } from "@/lib/permissions";
 import { UploadsProvider, useEagerStaging, useUploads } from "@/lib/uploads";
 import type { Artisan, PageResult, QuestionnaireInterview, QuestionnaireQuestion, QuestionnaireSection } from "@/lib/types";
@@ -65,6 +76,17 @@ import type { Artisan, PageResult, QuestionnaireInterview, QuestionnaireQuestion
 /** Section ids the two questionnaire upload paths publish under, for the page-level tray. */
 const INTERVIEW_SECTION = "interview-audio";
 const INTERVIEW_SECTION_LABEL = "Interview audio";
+
+/**
+ * The two sentences under the artisan picker, as ids a screen reader can be pointed at.
+ *
+ * Module constants and not `useId()`, because they are referenced from a `describedBy` string that
+ * is assembled beside the control rather than inside it, and a hook value threaded through two
+ * props is one rename away from naming nothing. Only ever one capture form on this page, so a fixed
+ * id cannot collide — the questionnaire BUILDER further down draws no artisan picker.
+ */
+const ARTISAN_CUT_HINT = "questionnaire-artisan-cut";
+const ARTISAN_SCOPE_HINT = "questionnaire-artisan-scope";
 
 /**
  * Recorded clips are keyed by what they answer: a question id, or `section:<id>` for one take that
@@ -162,7 +184,6 @@ function QuestionnairePageBody() {
   const { addCompleted } = useUploads();
   const searchParams = useSearchParams();
   const [sections, setSections] = useState<QuestionnaireSection[]>([]);
-  const [artisans, setArtisans] = useState<Artisan[]>([]);
   const [data, setData] = useState<PageResult<QuestionnaireInterview> | null>(null);
   const [answers, setAnswers] = useState<Record<string, string>>({});
   /**
@@ -186,11 +207,31 @@ function QuestionnairePageBody() {
   const [place, setPlace] = useState("");
   const [language, setLanguage] = useState("");
   const [questionAudioFiles, setQuestionAudioFiles] = useState<Record<string, File[]>>({});
-  const [selectedArtisanId, setSelectedArtisanId] = useState(searchParams.get("artisanId") ?? "");
-  // "Can I see this artisan?" and "is there any signal?" are different answers, and the carry-
-  // forward prefill treats them differently — see useCarryContext.
-  const [artisanListState, setArtisanListState] = useState<CarryScopeState>("pending");
-  const [additionalArtisanIds, setAdditionalArtisanIds] = useState<string[]>([]);
+  /**
+   * EVERYBODY THIS INTERVIEW IS WITH — ONE ordered array, and one control that draws it.
+   *
+   * IT WAS TWO CONTROLS AND TWO PIECES OF STATE: a single-select "Primary artisan" and a
+   * multi-select "Additional artisans", de-duplicated into one set by `selectedArtisanIds` before
+   * every request the page made. `QuestionnaireInterviewArtisan` is `@@id([interviewId, artisanId])`
+   * plus `createdAt` — no rank column, no ordinal, nothing that could store which of them was
+   * "primary" — and `artisan_set_key` sorts the ids on the server before they reach the unique
+   * index, so the split could not survive a round trip even in principle. What it DID do was let a
+   * researcher tick somebody under "Additional" with "Primary" left blank and get the RESP block
+   * prefilled from nobody.
+   *
+   * THE ORDER IS THE RESEARCHER'S AND IT IS LOAD-BEARING, which is why this is an array and not a
+   * `Set`. Two things still need exactly one artisan — the RESP respondent block and the carry-
+   * forward bag — and both take element 0 (`primaryInterviewArtisanId`). The SET key that decides
+   * which interview a save folds into is sorted separately (`artisanSetKey`), so the two orderings
+   * never have to be the same array. See `components/questionnaires/interviewArtisans.ts`.
+   *
+   * The deep link (`/questionnaire?artisanId=…`) seeds it with one id, exactly as it seeded the old
+   * "Primary artisan" box.
+   */
+  const [selectedArtisanIds, setSelectedArtisanIds] = useState<string[]>(() => {
+    const deepLinked = searchParams.get("artisanId") ?? "";
+    return deepLinked ? [deepLinked] : [];
+  });
   const [existingEntry, setExistingEntry] = useState<QuestionnaireInterview | null>(null);
   // Whole-section vs per-question capture, and whether the written-answer boxes are on screen.
   // Remembered across sections and across visits — see useCapturePrefs.
@@ -288,19 +329,77 @@ function QuestionnairePageBody() {
   // (mirrors the backend, which silently drops an unauthorized status on create).
   const canPickStatus = hasRank(user, "PROFESSOR");
 
-  // The workshop this interview was taken at. Create-only form, so it always defaults to the most
-  // recent workshop the interviewer may submit to (see components/forms/WorkshopSelect).
-  const workshop = useWorkshopSelection();
   /*
-    THE DESIGN & PROTOTYPE WORKSHOP this interview is filed under — one of the seven record types the
-    owner named on 2026-08-28. Its own hook beside the ordinary workshop's: `workshopId` is gated by
-    `WorkshopAssignment` and carries a submission window; `designWorkshopId` is gated by
-    `load_workshop_or_404` and has neither.
+    ── THE WHOLE WORKSHOP QUESTION, IN ONE CONTROL WITH TWO BOXES ────────────────────────
 
-    NO `initial`, because this page's form is CREATE-only for the workshop question — an interview is
-    edited through the review panel rather than re-opened here — so the picker may always prefill.
+    `forms/WorkshopPicker.tsx` owns all of it: "Type of workshop", the "Workshop" box below it whose
+    list comes from whichever table that type routes at, the most-recent defaulting, the
+    late-submission gate, and the rule that decides whether the chosen workshop is written to
+    `workshopId` or to `designWorkshopId`.
+
+    IT REPLACED THREE CONTROLS WITH TWO, and this page was the last web surface still drawing all
+    three: `<WorkshopSelect>` over the 378-row `Workshop` table, then `<DesignWorkshopCascade>`,
+    which was a KIND box that saved nothing and said so in its own hint plus a second workshop box
+    under it. The owner's ruling: "we do not need one separately for each of the type of the
+    workshops". The four record forms were converted first; this one and the misc-media form were
+    left behind because they were being edited in another lane on the same day.
+
+    WHAT THE CONVERSION CHANGED ABOUT WHAT IS SAVED, said plainly because it is not nothing: those
+    two controls could each hold an answer, so an interview could be filed under an ordinary
+    workshop AND a design workshop at once. One control gives one answer, and the picker blanks the
+    column it is not filing in. Measured on the local corpus on 2026-09-16 before the change:
+    of 207 `QuestionnaireInterview` rows, 84 carry a `workshopId`, 0 carry a `designWorkshopId`
+    and 0 carry both — so this consolidates nothing that exists here either.
+
+    IT IS ALSO WHAT MAKES THE ARTISAN ROSTER'S SCOPE UNAMBIGUOUS. `artisanScope.singular` in
+    `shared/questionnaire-form-contract.json` already said so: `list_artisans` ANDs its filters, and
+    while two boxes could both be full the roster had to CHOOSE which of the two ids to scope by.
+    Now at most one of them is ever set, so `workshopArtisanParams` is picking between an id and
+    nothing rather than between two rival answers.
+
+    CREATE-ONLY, so `isEdit` is left false and the picker may always prefill: an interview is edited
+    through the review panel rather than re-opened in this form.
   */
-  const designWorkshop = useDesignWorkshopSelection(null);
+  const workshop = useWorkshopPicker();
+
+  /**
+   * THE WORKSHOP THIS INTERVIEW IS FILED UNDER, as the one thing the artisan roster is scoped by.
+   *
+   * BOTH IDS ARE STILL READ, AND AT MOST ONE OF THEM IS EVER SET. The record keeps two nullable
+   * columns (R1: both tables stay) and the one picker above writes to exactly one of them, chosen
+   * by the type box. `workshopArtisanParams` therefore no longer arbitrates between two rival
+   * answers — it picks between an id and nothing — but it is kept exactly as it is: it is the one
+   * place that knows the plural `workshopIds` goes with a `Workshop` and the singular
+   * `designWorkshopId` with a `DesignWorkshop`, and the argument for never sending both spellings
+   * is in `components/questionnaires/interviewArtisans.ts`.
+   */
+  const artisanWorkshopScope: InterviewWorkshopScope = useMemo(
+    () => ({ workshopId: workshop.workshopId, designWorkshopId: workshop.designWorkshopId }),
+    [workshop.workshopId, workshop.designWorkshopId]
+  );
+  /**
+   * THE ARTISANS THIS WORKSHOP'S INTERVIEWS MAY BE WITH, re-fetched whenever the workshop moves.
+   *
+   * This page used to run ONE request at mount — `listResource<Artisan>("/artisans", …)` inside
+   * `loadMeta()`, with no workshop parameter of any kind — and feed the whole repository to the
+   * artisan pickers under a workshop name that was sitting in the box directly above them. The
+   * endpoint has accepted `workshopIds` and `designWorkshopId` the entire time; nothing was blocking
+   * the filter but the absence of the parameter. The whole rule set — which spelling and why, what
+   * an unselected workshop means, why the roster REPLACES rather than merges, why the request is
+   * held until the workshop picker has settled, and why a workshop change never unticks anybody —
+   * lives in `components/questionnaires/interviewArtisans.ts`. It is a separate file because a rule
+   * the handset cannot read is a rule the handset will not match.
+   */
+  const artisanScope = useWorkshopArtisans({
+    scope: artisanWorkshopScope,
+    settling: workshopScopeSettling(workshop)
+  });
+  /**
+   * Every artisan row this page has loaded, from the repository-wide reachability probe and from
+   * every workshop's roster. Used for LABELS and for the RESP block — never as the picker's offer,
+   * which is `artisanScope.scoped` and only that.
+   */
+  const knownArtisans = artisanScope.known;
 
   /**
    * The four values the transcript path must read as they are NOW, not as they were at Record.
@@ -316,7 +415,7 @@ function QuestionnairePageBody() {
    *     overwrite the owner's "offer it, do not impose it" rule forbids, arriving through the back
    *     door of a closure rather than through the rule.
    *   * `machineText` — the edited flag is computed against it, so a stale copy mis-states the flag.
-   *   * `designWorkshop.workshopId` — the picker sits at the top of a long form and is very often
+   *   * `workshop.designWorkshopId` — the picker sits at the top of a long form and is very often
    *     filled in AFTER the first clip. A stale empty id would refuse a transcript this interview is
    *     entitled to, and say the workshop was not named while it is on screen.
    *
@@ -328,17 +427,17 @@ function QuestionnairePageBody() {
   const liveRef = useRef({
     answers,
     machineText,
-    workshopId: designWorkshop.workshopId,
+    workshopId: workshop.designWorkshopId,
     language
   });
   useEffect(() => {
     liveRef.current = {
       answers,
       machineText,
-      workshopId: designWorkshop.workshopId,
+      workshopId: workshop.designWorkshopId,
       language
     };
-  }, [answers, machineText, designWorkshop.workshopId, language]);
+  }, [answers, machineText, workshop.designWorkshopId, language]);
 
   const questions = useMemo(() => sections.flatMap((section) => section.questions), [sections]);
   const questionsById = useMemo(() => new Map(questions.map((question) => [question.id, question])), [questions]);
@@ -362,16 +461,28 @@ function QuestionnairePageBody() {
    */
   const languageOptions = useMemo(() => interviewLanguageOptions(language), [language]);
 
-  const selectedArtisan = useMemo(() => artisans.find((artisan) => artisan.id === selectedArtisanId), [artisans, selectedArtisanId]);
-
-  // The exact set of artisans this interview covers (primary + additional), de-duplicated. There is a
-  // single shared questionnaire entry per such set — we look it up so the researcher sees that it has
-  // already been started and which sections others have answered, instead of making a duplicate.
-  const selectedArtisanIds = useMemo(
-    () => Array.from(new Set([selectedArtisanId, ...additionalArtisanIds].filter(Boolean))),
-    [selectedArtisanId, additionalArtisanIds]
+  /**
+   * THE ONE ARTISAN THE RESP BLOCK IS ABOUT: the head of the selection, in the researcher's own tick
+   * order. `primaryInterviewArtisanId` carries the argument for that rule and its in-repo precedent
+   * (`tools.py` derives a tool's scalar `artisanId` from `artisan_ids[0]`, and the handset's tool
+   * sheet mirrors it).
+   *
+   * Looked up in `knownArtisans` and NOT in the workshop's roster: the RESP details must draw for
+   * whoever is actually ticked, including the row rescued for a deep-linked artisan the roster does
+   * not hold. An empty respondent block over a ticked name is a form that looks broken.
+   */
+  const primaryArtisanId = primaryInterviewArtisanId(selectedArtisanIds);
+  const selectedArtisan = useMemo(
+    () => knownArtisans.find((artisan) => artisan.id === primaryArtisanId),
+    [knownArtisans, primaryArtisanId]
   );
-  const selectedSetKey = useMemo(() => [...selectedArtisanIds].sort().join(","), [selectedArtisanIds]);
+
+  // There is a single shared questionnaire entry per exact SET of artisans — we look it up so the
+  // researcher sees that it has already been started and which sections others have answered,
+  // instead of making a duplicate. `artisanSetKey` sorts, because ticking A then B is the same
+  // interview as ticking B then A and the server's own `artisan_set_key` sorts for that reason; the
+  // SENT order stays the researcher's, which is what `primaryArtisanId` above reads.
+  const selectedSetKey = artisanSetKey(selectedArtisanIds);
 
   useEffect(() => {
     if (selectedArtisanIds.length === 0) {
@@ -442,26 +553,24 @@ function QuestionnairePageBody() {
     });
   }, [questions, selectedArtisan, user]);
 
-  // Sections + artisans back the capture form and the builder; they change only when an admin edits
-  // the questionnaire, so they load once (and again on `onChanged`) rather than per list page/filter.
+  /**
+   * The instrument — the sections and questions the rest of this screen draws. They change only when
+   * an admin edits the questionnaire, so they load once (and again on `onChanged`) rather than per
+   * list page or filter.
+   *
+   * THE ARTISAN LIST USED TO COME DOWN HERE TOO, in the same `Promise.all`, unscoped, once, at mount.
+   * That was the whole of defect (1): one repository-wide page offered to two artisan pickers under
+   * whichever workshop the boxes above them happened to be showing, never asked again when the
+   * workshop moved. It now belongs to `useWorkshopArtisans`, which is keyed on the workshop and is
+   * the only thing on this page that fetches artisans. Nothing about the instrument depends on the
+   * roster, so splitting them costs no round trip that was not already being made.
+   */
   async function loadMeta() {
     try {
-      const [sectionList, artisanResult] = await Promise.all([
-        apiFetch<QuestionnaireSection[]>("/questionnaire/sections"),
-      // `RENDER_CAP` and not the round `100` this used to ask for. Both dropdowns below draw
-      // at most `RENDER_CAP` rows, so a hundred-row page put twenty artisans on the wire that
-      // no reader could ever reach and let the panel print one truncation total while a notice
-      // underneath printed another. One number governs the fetch and the render, which is the
-      // only arrangement in which two such sentences cannot disagree -- see
-      // `WORKSHOP_OPTION_PAGE_SIZE`, the same alias every workshop picker already uses.
-        listResource<Artisan>("/artisans", { pageSize: RENDER_CAP })
-      ]);
+      const sectionList = await apiFetch<QuestionnaireSection[]>("/questionnaire/sections");
       setSections(sectionList);
-      setArtisans(artisanResult.items);
-      setArtisanListState("loaded");
       setError(null);
     } catch (err) {
-      setArtisanListState("unavailable");
       setError(err instanceof Error ? err.message : "Unable to load questionnaire");
     }
   }
@@ -470,21 +579,31 @@ function QuestionnairePageBody() {
    * Open on the artisan this researcher was last documenting.
    *
    * An interview is the record most often taken straight after a product or a tool — the artisan is
-   * sitting right there — so the primary artisan is the one thing worth carrying in. Nothing narrower
+   * sitting right there — so the artisan is the one thing worth carrying in. Nothing narrower
    * transfers: an interview covers a person, not their products, and this form has no field for one.
+   *
+   * THE SCOPE IS THE REPOSITORY-WIDE PROBE (`artisanScope.referenceState` / `knownArtisans`) AND NOT
+   * THE WORKSHOP'S ROSTER, which is the whole reason `useWorkshopArtisans` keeps two loads. This list
+   * answers "is the carried artisan still REACHABLE" — an artisan who is alive, visible and simply
+   * documented at another workshop must not be pruned as though they had been deleted, and the
+   * carried bag also carries a WORKSHOP that `onApply` is about to write into the picker.
    */
   const carry = useCarryContext({
-    scopes: [carryScope("artisan", artisanListState, artisans)],
+    scopes: [carryScope("artisan", artisanScope.referenceState, knownArtisans)],
     applies: ["artisan", "workshop"],
     onApply: (context) => {
-      if (context.artisanId) setSelectedArtisanId(context.artisanId);
+      // Seeds the SET, and only when nothing is ticked yet — a carried suggestion must not push a
+      // name into a selection the researcher has already started building.
+      if (context.artisanId) {
+        setSelectedArtisanIds((current) => (current.length > 0 ? current : [context.artisanId as string]));
+      }
       if (context.workshopId && !workshop.touched) workshop.setWorkshopId(context.workshopId);
     }
   });
-  /** "Change": drop the carried artisan so the researcher picks from scratch. */
+  /** "Change": drop the carried artisans so the researcher picks from scratch. */
   function clearCarriedContext() {
     carry.change();
-    setSelectedArtisanId("");
+    setSelectedArtisanIds([]);
   }
 
   async function loadInterviews() {
@@ -785,12 +904,21 @@ function QuestionnairePageBody() {
    *
    * SO THE ANSWER IS: THE INTERVIEW'S OWN DESIGN WORKSHOP, OR NOTHING IS SENT.
    *
-   * This form already asks which design and prototype workshop an interview is filed under
-   * (`useDesignWorkshopSelection`), and where it names one there is an id whose consent column
-   * governs exactly this artisan, this cluster, this week. That id is what goes in the URL. Where the
-   * picker is empty — which is legitimate, an interview is often taken outside any design workshop —
+   * This form already asks which design and prototype workshop an interview is filed under — since
+   * 2026-09-16 through `useWorkshopPicker`'s second box, reached by choosing the Design & Prototype
+   * type in the first one — and where it names one there is an id whose consent column governs
+   * exactly this artisan, this cluster, this week. That id is what goes in the URL. Where the picker
+   * is empty — which is legitimate, an interview is often taken outside any design workshop —
    * NO REQUEST IS MADE AT ALL, and the box says so in one line. The clip still uploads and the queue
    * still transcribes it, exactly as before this feature existed.
+   *
+   * THE TWO-DROPDOWN RULING MADE THAT EMPTY STATE REACHABLE BY CHOOSING A TYPE, which it was not
+   * when two workshop boxes stood side by side: a researcher who picks "Skill Upgradation" is
+   * filing at a `Workshop`, so `designWorkshopId` is blank and there is no consent column to read.
+   * That is the same state an interview filed under nothing has always been in, it is covered by
+   * the same one-line notice, and it is NOT closed by falling back to some other workshop's
+   * consent — which is the whole argument above, one door along. Android's `QuestionnaireForm`
+   * reaches the identical state through `link.designWorkshopId()` and says so at its own call site.
    *
    * ── THE TWO ALTERNATIVES, AND WHY BOTH ARE WORSE ───────────────────────────────────────────────
    * A WORKSHOP-LESS DICTATION ROUTE WITH ITS OWN GATE would be a second consent regime to keep in
@@ -921,7 +1049,7 @@ function QuestionnairePageBody() {
           notes: textValue(form, "notes"),
           status: canPickStatus ? textValue(form, "status") || "APPROVED" : "PENDING",
           workshopId: workshop.workshopId || null,
-          designWorkshopId: designWorkshop.workshopId || null,
+          designWorkshopId: workshop.designWorkshopId || null,
           artisanIds,
           responses,
           recordedAt,
@@ -979,7 +1107,12 @@ function QuestionnairePageBody() {
         clearQuickTranscripts();
         setMediaFiles([]);
         setQuestionAudioFiles({});
-        setAdditionalArtisanIds([]);
+        // KEEP THE HEAD, DROP THE REST — the behaviour the two old controls had between them, now
+        // that they are one array. "Primary artisan" was never cleared here and "Additional
+        // artisans" always was, and the asymmetry was deliberate: the researcher is still sitting
+        // with the same person, so the next interview opens on them, while the others in a group
+        // sitting are not carried into a sitting they were not part of.
+        setSelectedArtisanIds((current) => current.slice(0, 1));
         setSaving(false);
         if (typeof window !== "undefined") window.scrollTo({ top: 0, behavior: "smooth" });
         return;
@@ -1181,7 +1314,10 @@ function QuestionnairePageBody() {
       }
       // Bank the sitting: the interview does not become part of the carried context (nothing else
       // links to one) but the artisan it was taken with is exactly where the researcher still is.
-      const interviewed = artisans.find((artisan) => artisan.id === selectedArtisanId);
+      // ONE artisan, and it is element 0 of the selection — see `primaryInterviewArtisanId`. Read
+      // out of `knownArtisans` rather than the workshop's roster so a deep-linked or carried artisan
+      // the roster does not hold is still banked with their name, craft and place.
+      const interviewed = knownArtisans.find((artisan) => artisan.id === primaryArtisanId);
       if (interviewed) {
         carry.remember({
           artisanId: interviewed.id,
@@ -1203,7 +1339,8 @@ function QuestionnairePageBody() {
       clearQuickTranscripts();
       setMediaFiles([]);
       setQuestionAudioFiles({});
-      setAdditionalArtisanIds([]);
+      // Keep the head, drop the rest — same rule and same reason as the queued branch above.
+      setSelectedArtisanIds((current) => current.slice(0, 1));
       // Show the freshly saved (most recent) interview at the top of page one.
       if (page !== 1) setPage(1);
       else await loadInterviews();
@@ -1233,12 +1370,40 @@ function QuestionnairePageBody() {
     }
   }
 
-  const additionalArtisanOptions = useMemo(
+  /**
+   * WHAT THE ONE ARTISAN CONTROL OFFERS: this workshop's roster, plus any ticked row the roster does
+   * not hold so a selection is never drawn as a blank chip. Built in
+   * `components/questionnaires/interviewArtisans.ts` so the handset has one rule to copy rather than
+   * a `.map()` to re-derive.
+   */
+  const artisanScopeKey = interviewScopeKey(artisanWorkshopScope);
+  const artisanNarrowed = interviewScopeIsNarrowed(artisanWorkshopScope);
+  const artisanOptions = useMemo(
     () =>
-      artisans
-        .filter((artisan) => artisan.id !== selectedArtisanId)
-        .map((artisan) => ({ value: artisan.id, label: `${artisan.name} - ${artisan.craft?.name ?? "No craft"} - ${artisan.place}` })),
-    [artisans, selectedArtisanId]
+      artisanPickerOptions({
+        scoped: artisanScope.scoped,
+        known: knownArtisans,
+        selectedIds: selectedArtisanIds
+      }),
+    [artisanScope.scoped, knownArtisans, selectedArtisanIds]
+  );
+  /**
+   * The ticked artisans this workshop's roster does not account for, as a SENTENCE and never as a
+   * deletion. A workshop change unticks nobody: the roster is the offer, and it cannot prove a tick
+   * wrong — filing this very interview is one of the three ways an artisan comes to belong to a
+   * workshop (`artisan_workshop_clause`). See `artisansNotAtWorkshop` for the three cases in which
+   * this deliberately stays silent.
+   */
+  const outOfWorkshopIds = artisansNotAtWorkshop({
+    selectedIds: selectedArtisanIds,
+    offeredIds: artisanScope.scoped.map((artisan) => artisan.id),
+    loadedForScope: artisanScope.loadedForScope,
+    scopeKey: artisanScopeKey,
+    narrowed: artisanNarrowed,
+    cut: artisanScope.cut
+  });
+  const outOfWorkshopSentence = outOfWorkshopNotice(
+    outOfWorkshopIds.map((id) => knownArtisans.find((artisan) => artisan.id === id)?.name ?? "")
   );
 
   return (
@@ -1273,13 +1438,17 @@ function QuestionnairePageBody() {
           · Every answer box — the longest prose on the page; see the button beside each one.
 
         DID NOT, AND WHY:
-          · Workshop, Status, Primary artisan, Additional artisans, Language — CLOSED VOCABULARIES
-            and record pickers. A recogniser returns a sentence, not a row of a list; the value it
-            produced would then have to be matched back against options, and a near-miss would
-            select the WRONG record silently. On this page in particular the primary artisan decides
-            `artisanSetKey` — which interview a submission folds into — so a mis-heard name does not
-            produce a typo, it merges an interview into another artisan's set. Language became a
-            dropdown in this same change precisely so it would STOP being free text.
+          · Workshop, Type of workshop, Design & prototype workshop, Status, Artisans interviewed,
+            Language — CLOSED VOCABULARIES and record pickers. A recogniser returns a sentence, not a
+            row of a list; the value it produced would then have to be matched back against options,
+            and a near-miss would select the WRONG record silently. On this page in particular the
+            set chosen in "Artisans interviewed" decides `artisanSetKey` — which interview a
+            submission folds into — so a mis-heard name does not produce a typo, it merges an
+            interview into another artisan's set. Language became a dropdown in this same change
+            precisely so it would STOP being free text.
+            (This list named "Primary artisan" and "Additional artisans" until those two controls
+            were collapsed into the one multi-select above. The exclusion is unchanged and the
+            reason is the same; only the number of boxes it covers moved.)
           · Recorded-at date/time and the location fields (`LocationFields`) — dates, coordinates and
             a device GPS fix. "Twenty-third of the eighth" is not a date the parser takes, digits
             come back spelled as words, and a captured fix is a measurement rather than an answer.
@@ -1404,13 +1573,23 @@ function QuestionnairePageBody() {
               ))}
             </Select>
           </FieldBlock>
-          {/* The workshop leads every other dropdown: it is the context the interview belongs to. */}
-          <WorkshopSelect state={workshop} saving={saving} />
           {/*
-            The design & prototype workshop, directly under the ordinary one — see the hook above.
-            Its default is the server's answer to "most recently allocated"; `lib/designWorkshopDefault.ts`.
+            THE WORKSHOP QUESTION, TWO BOXES, ONE ANSWER — "Type of workshop" and then the workshop
+            of that type. The type decides which of the record's two columns the answer lands in
+            (R3): Design & Prototype writes `designWorkshopId`, every other type writes `workshopId`.
+
+            FOURTH ON THIS FORM AND FIRST ON THE OTHER FOUR, which is a declared order and not an
+            accident. This used to read "it leads every other dropdown", which was never true here —
+            Language is a `<Select>` and sits above it — and the sequence is now written down once,
+            in `shared/questionnaire-form-contract.json`, with this page as its authority.
+            `backend/tests/test_questionnaire_form_contract.py` holds this form AND the handset's
+            `QuestionnaireForm` to it as an equality, so moving a box here without moving it there is
+            a red build rather than a drift.
+
+            NO `onDirty`, and that is not an omission — see the note on the Language box above: this
+            form has no dirty tracking to raise. The grep there covers this control too.
           */}
-          <DesignWorkshopCascade state={designWorkshop} saving={saving} />
+          <WorkshopPicker state={workshop} saving={saving} />
           <Field label="Status">
             {canPickStatus ? (
               <Select name="status" defaultValue="APPROVED">
@@ -1428,23 +1607,76 @@ function QuestionnairePageBody() {
               </span>
             )}
           </Field>
-          <Field label="Primary artisan">
-            {/*
-              `searchable`, and this is the picker in the app where it matters most: the artisan
-              chosen here is what decides `artisanSetKey` — WHICH INTERVIEW this submission folds
-              into — and the labels are `name - craft - place` triples that differ by one word.
-              Reaching the right one by scrolling past near-identical rows is how the wrong set gets
-              picked. `Select` could not pass this prop at all until this pass; it can now.
-            */}
-            <Select
-              name="primaryArtisanId"
-              searchable
-              value={selectedArtisanId}
-              onChange={(event) => {
-                setSelectedArtisanId(event.target.value);
+          {/*
+            ── ONE CONTROL FOR THE WHOLE SET, AND THE TWO IT REPLACED ───────────────────────────
+            This was a single-select "Primary artisan" and a multi-select "Additional artisans",
+            for a join that has no rank column: `QuestionnaireInterviewArtisan` is
+            `@@id([interviewId, artisanId])` plus `createdAt`, and `artisan_set_key` sorts the ids
+            on the server before they reach the `@unique` index, so nothing downstream could have
+            told the two apart even if the form had wanted it to. The page already de-duplicated
+            both controls into one array before every request it sent. What the split actually did
+            was let a researcher tick somebody under "Additional" with "Primary" left blank and get
+            the RESP block prefilled from nobody.
+
+            `searchable`, forced rather than left to an option count: this is the picker in the app
+            where it matters most — the SET chosen here is what decides `artisanSetKey`, WHICH
+            INTERVIEW a submission folds into — and the labels are `name - craft - place` triples
+            that differ by one word. One workshop on this deployment, forty on the next, and a
+            control that changed shape between two workshops for reasons the researcher cannot see
+            would be a second thing to learn.
+
+            THE EMPTY MESSAGE IS FOUR SENTENCES OFF THREE FACTS and must survive any widget swap:
+            an empty roster means the request is in flight, the request failed, nobody is recorded
+            at this workshop, or nobody is recorded at all — and only two of those are facts about
+            the repository. `artisanPickerEmptyLabel` is where the choice is made, beside the rules
+            the handset has to copy.
+
+            `FieldBlock`, NOT `Field` — the same ruling the Language box above makes and for the
+            same reason (SKILL.md §12.3): `Field` is a `<label>`, a `<label>` cannot name a
+            `<button>`, and a themed dropdown is a button, so the trigger would announce its VALUE
+            and never its question. The control this replaced used `Field`, which was already wrong
+            and is not worth carrying across a rewrite of the same box. `FieldBlock` also owns the
+            `hint` slot, which is where the two sentences under the control belong: `describedBy`
+            joins them to the trigger, so a reader who tabs onto it hears that the list is cut and
+            that somebody ticked is not on this workshop's roster — the two facts most likely to
+            change what they do next, and the two a visual-only paragraph never reaches.
+          */}
+          <FieldBlock
+            label="Artisans interviewed"
+            hint={
+              <>
+                {/* What the roster could not reach, in the repository's standing wording. `"none"`
+                    because this control filters the array it was handed and the term never goes to
+                    the server — typing cannot reach past the cut — so the sentence must not tell
+                    somebody to do something impossible. */}
+                {artisanScope.cut ? (
+                  <p id={ARTISAN_CUT_HINT} className="text-xs text-ink-700">
+                    {cappedListNotice(artisanScope.cut, "none")}
+                  </p>
+                ) : null}
+                {outOfWorkshopSentence ? (
+                  <p id={ARTISAN_SCOPE_HINT} className="text-xs text-ink-700">
+                    {outOfWorkshopSentence}
+                  </p>
+                ) : null}
+              </>
+            }
+          >
+            <MultiSelectDropdown
+              describedBy={
+                [artisanScope.cut ? ARTISAN_CUT_HINT : null, outOfWorkshopSentence ? ARTISAN_SCOPE_HINT : null]
+                  .filter(Boolean)
+                  .join(" ") || undefined
+              }
+              values={selectedArtisanIds}
+              onChange={(next) => {
+                const added = next.find((id) => !selectedArtisanIds.includes(id));
+                setSelectedArtisanIds(next);
                 // An explicit pick replaces the remembered context and retires the banner: from here
-                // on the artisan on screen is the researcher's own choice, not a suggestion.
-                const artisan = artisans.find((candidate) => candidate.id === event.target.value);
+                // on the selection is the researcher's own choice, not a suggestion. Only on the way
+                // IN — unticking says who the interview is not about, which is no statement about
+                // where the researcher is sitting.
+                const artisan = added ? knownArtisans.find((candidate) => candidate.id === added) : undefined;
                 if (artisan) {
                   carry.remember(
                     {
@@ -1458,25 +1690,17 @@ function QuestionnairePageBody() {
                   );
                 }
               }}
-            >
-              <option value="">Select artisan</option>
-              {artisans.map((artisan) => (
-                <option key={artisan.id} value={artisan.id}>
-                  {artisan.name} - {artisan.craft?.name ?? "No craft"} - {artisan.place}
-                </option>
-              ))}
-            </Select>
-          </Field>
-          <Field label="Additional artisans">
-            <MultiSelectDropdown
-              values={additionalArtisanIds}
-              onChange={setAdditionalArtisanIds}
-              options={additionalArtisanOptions}
+              options={artisanOptions}
               searchable
-              placeholder="Add more artisans to this set"
-              emptyLabel="No other artisans"
+              placeholder="Select the artisans this interview is with"
+              emptyLabel={artisanPickerEmptyLabel({
+                loadedForScope: artisanScope.loadedForScope,
+                scopeKey: artisanScopeKey,
+                failed: artisanScope.failed,
+                narrowed: artisanNarrowed
+              })}
             />
-          </Field>
+          </FieldBlock>
         </div>
         {/* The theme defines exactly three amber tokens (100/500/800); 50/200/300/700 are not
             Tailwind classes here and silently render as nothing. */}

@@ -203,12 +203,27 @@ data class PendingEntry(
      *     and says what happens without it, "the save would return 200, the form would show it
      *     unfiled, and the old link would survive in the database".
      *
-     *   * THERE WAS NOTHING TO CHOOSE. The device was in a courtyard with no signal, the access list
-     *     is never cached (`WorkshopRepository.kt:3918-3923` — "a picker is the one control that
-     *     must not offer what it cannot honour"), so the picker was EMPTY. [UNFILED_NO_OPTIONS]. The
-     *     designer made no decision at all, and reading their empty box as one is how a correction
-     *     composed on the bus home silently strips a link nobody was ever shown. So this absence
-     *     sends NOTHING for the column and the stored value stands.
+     *   * THERE WAS NOTHING TO CHOOSE. The device was in a courtyard with no signal and the picker
+     *     had no rows, so the box was EMPTY. [UNFILED_NO_OPTIONS]. The designer made no decision at
+     *     all, and reading their empty box as one is how a correction composed on the bus home
+     *     silently strips a link nobody was ever shown. So this absence sends NOTHING for the column
+     *     and the stored value stands.
+     *
+     *     THIS CASE IS NARROWER THAN IT WAS, AND IT NARROWED AGAIN THE DAY THE PICKERS WERE WIRED.
+     *     The sentence here read "the access list is never cached", citing R6, and that was true of
+     *     the whole product until 2026-09-16. `DwLocalWorkshops` keeps the allotted, not-yet-ended
+     *     workshops on the device (`WorkshopRepository.workshopsIMaySubmitTo`'s KDoc carries the
+     *     argument) and BOTH record-form pickers now read it — `rememberWorkshopPicker` and
+     *     `rememberDesignWorkshopPicker`, off the disk before they ask the server. So a handset that
+     *     has fetched once and then lost signal reaches the OTHER branch: the rows are there, the
+     *     box is answerable, and an empty one is a decision.
+     *
+     *     THIS BRANCH IS STILL NOT GOING AWAY, and the two states it now separates are worth naming
+     *     because they are easy to conflate. A handset that has NEVER been online has nothing cached
+     *     by definition — that is the case here. A handset whose cached file says the account is on
+     *     nothing current is a DIFFERENT state, and it also lands here, correctly: there was still
+     *     nothing to pick. What has gone is the third case, the one that used to be the common one —
+     *     a device holding a perfectly good list and offering none of it.
      *
      * That is R1 — *empty means everything BY ABSENCE, never by an all-ticked state* — with its sign
      * flipped for a form field: absence means "no change" UNLESS it was chosen. Collapsing the two

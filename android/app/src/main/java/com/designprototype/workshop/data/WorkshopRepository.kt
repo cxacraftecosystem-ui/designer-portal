@@ -717,6 +717,166 @@ private const val DW_REFERENCE_CACHE_GENERATION = 2
 internal fun dwReferenceCacheOwner(workshopId: String): String =
     if (workshopId.isBlank()) workshopId else "$workshopId-$DW_REFERENCE_CACHE_GENERATION"
 
+// ═════════════════════════════════════════════════════════════════════════════════════════════════
+// THE INTERVIEW FORM'S ARTISAN SCOPE — one workshop, one parameter, decided by the routing
+// ═════════════════════════════════════════════════════════════════════════════════════════════════
+//
+// WHAT THIS CLOSES. `QuestionnaireForm` offered EVERY ARTISAN IN THE DEPLOYMENT under whichever
+// workshop its own picker was showing. The roster came from `loadArtisanRegister`, whose fetch is a
+// bare `repository.artisans()` — the shared, ALL-scoped, offline-cached register that five other
+// record forms read — and nothing re-asked when the workshop box moved. It was the last row of
+// `shared/questionnaire-form-contract.json`'s `openDrifts`; the browser closed the same defect in
+// `frontend/components/questionnaires/interviewArtisans.ts`.
+//
+// WHY THE RULE LIVES HERE AND NOT AT THE CALL SITE. It is the one place on this client that knows
+// the plural `workshopIds` goes with a `Workshop` and the singular `designWorkshopId` with a
+// `DesignWorkshop`, and that exactly one of them is ever sent. That is a decision with one right
+// answer and several plausible wrong ones, and a copy of it per form is how the field repository's
+// tracer ended up wired into five of nine mounts. `workshopArtisanParams` is the browser's twin and
+// carries the same rule for the same reasons.
+//
+// WHY THE SHARED REGISTER IS NOT NARROWED IN PLACE, which is the obvious edit and is wrong.
+// `loadArtisanRegister` is the OFFLINE register: `loadCachedRegister` writes it to disk so a handset
+// with no signal still has a picker, and ArtisanForm, ProductForm, ToolForm, ProcessForm and the
+// search screen all read it. Narrowing it here would narrow theirs, and it would narrow the very
+// list `carryScope(CarryNode.ARTISAN, …)` reads to decide whether a CARRIED artisan is still
+// reachable — so an artisan who is alive, visible and simply documented at another workshop would be
+// pruned from the carry bag as though they had been deleted. The capture form gets its own read.
+
+/**
+ * The workshop an interview is being filed under, in the shape `GET /artisans` takes it.
+ *
+ * WIRE-SHAPED RATHER THAN ID-SHAPED, deliberately: the two fields ARE the two query parameters, so
+ * there is nowhere between this object and the URL for a spelling to be decided a second time. Both
+ * null is the legal unnarrowed state, not a missing answer — see [interviewArtisanScope].
+ */
+internal data class InterviewArtisanScope(
+    /** The plural scope's comma-joined value for an ordinary `Workshop`, or null. */
+    val workshopIds: String?,
+    /** The singular scope for a `DesignWorkshop`, or null. */
+    val designWorkshopId: String?,
+) {
+    /** Is any workshop named at all? `false` is the legitimate "not linked to a workshop" state (R5). */
+    val narrowed: Boolean get() = workshopIds != null || designWorkshopId != null
+
+    /**
+     * The scope as one comparable string, so a load effect can depend on "which workshop" rather
+     * than on an object identity that changes on every recomposition.
+     *
+     * IT CARRIES WHICH TABLE AS WELL AS WHICH ROW. Two ids that happened to be equal across the two
+     * tables are still two different scopes, and a key that collapsed them would leave the previous
+     * workshop's roster standing under the new workshop's name — the reported defect surviving its
+     * own fix.
+     */
+    val key: String get() = "w:${workshopIds.orEmpty()}|dw:${designWorkshopId.orEmpty()}"
+
+    /**
+     * The cache owner this scope's offline copy is filed under, or `""` when there is nothing to
+     * file. Prefixed by table for the reason [key] is: one directory holds both, and an id collision
+     * across two tables would serve one workshop's roster as another's, offline, for ever.
+     */
+    val cacheOwner: String get() = when {
+        workshopIds != null -> "w-$workshopIds"
+        designWorkshopId != null -> "dw-$designWorkshopId"
+        else -> ""
+    }
+}
+
+/**
+ * WHICH PARAMETER THE CHOSEN WORKSHOP TRAVELS AS — the routing rule, and the whole of it.
+ *
+ * ── THE ROUTING DECIDES, NEVER "WHICHEVER ID IS NON-BLANK" ─────────────────────────────────────
+ *
+ * [routesToDesignWorkshop] is `RecordWorkshopLink.routesToDesignWorkshop`, which is the flag on the
+ * type the reader picked (`WorkshopTypeOptionDto.routesToDesignWorkshop`). It is the same fact that
+ * decides which of the record's two nullable columns the save writes (R3), so the roster and the
+ * record cannot disagree about which workshop this interview is at.
+ *
+ * Choosing by emptiness instead would be wrong in a state the form is routinely in, not a corner
+ * one: `RecordWorkshopLink` mounts BOTH halves at once and each computes its own default while the
+ * other is on screen — that is deliberate, so switching the type box shows an answer instead of a
+ * spinner. A design-routed form is therefore usually holding a perfectly good ordinary `workshopId`
+ * as well, and sending it would scope the roster by a workshop the record is not being filed under:
+ * the reported defect with the sign flipped, and harder to see, because the list would look narrowed
+ * and plausible.
+ *
+ * ── ONE SCOPE AT A TIME, NEVER TWO ─────────────────────────────────────────────────────────────
+ *
+ * `list_artisans` ANDs its filters and the two rosters are different populations out of different
+ * tables — measured on the local corpus on 2026-09-16, of 774 artisans 204 carry a `workshopId` and
+ * 4 carry a `designWorkshopId`. Sending both narrows to the artisans linked BOTH ways, which is a
+ * handful of rows, and an empty picker under a named workshop is this repository's most repeated bug
+ * class (`craft_workshop_clause`: *"a scope that renders empty over a full corpus and looks exactly
+ * like having no data"*).
+ *
+ * ── THE PLURAL FOR THE ORDINARY WORKSHOP, AND THE SINGULAR `workshopId` NEVER ──────────────────
+ *
+ * They are not the same filter on this route. The singular narrows on the artisan's own column OR
+ * the `WorkshopArtisan` join; the plural goes through `artisan_workshop_clause`, which also counts
+ * having SAT IN an interview taken at the workshop — three readings against two. Since the filters
+ * AND, sending both spellings would silently intersect down to the singular's narrower answer.
+ * `ConsolidatedQuestionnaireScreen` already sends the plural, so this is also what keeps the two
+ * surfaces on this handset answering one question once.
+ *
+ * ── AND NO WORKSHOP AT ALL MEANS EVERY ARTISAN ─────────────────────────────────────────────────
+ *
+ * Both null, and the request goes out unscoped. That is the browser's settled ruling and it is
+ * ported rather than re-argued: an interview carries a NULLABLE workshop and *"Not linked to a
+ * workshop"* is a real answer this product stores (R5), so an empty picker under "choose a workshop
+ * first" would make a legal record unfileable — and the researcher's only way out would be to attach
+ * the interview to a workshop it was not taken at, corrupting the very scoping this exists to
+ * establish. "Absent means all" is also what the server already reads: `resolve_workshop_ids`
+ * returns `None` for an absent, empty or all-blank scope and says so in as many words.
+ *
+ * A BLANK ID IS ABSENT AND NOT A NARROWING. `""` is this repository's spelling of "no workshop" and
+ * is what both picker states hold before anybody answers; sent as a parameter it would be one blank
+ * id, matching nothing — the empty-picker-over-a-full-corpus failure again, this time with a
+ * workshop name sitting above it.
+ *
+ * THE TYPE KEY IS NEVER SENT. It is a router stored on nothing: no foreign key points at
+ * `WorkshopTypeOption` from any record table, and `GET /artisans` has no parameter for it. FastAPI
+ * drops an unknown query parameter silently, so a key sent "for completeness" would read as a filter
+ * that works right up until somebody relied on it.
+ */
+internal fun interviewArtisanScope(
+    routesToDesignWorkshop: Boolean,
+    workshopId: String?,
+    designWorkshopId: String?,
+): InterviewArtisanScope = if (routesToDesignWorkshop) {
+    InterviewArtisanScope(workshopIds = null, designWorkshopId = designWorkshopId?.blankToNull())
+} else {
+    InterviewArtisanScope(workshopIds = listOf(workshopId.orEmpty()).toQueryCsv(), designWorkshopId = null)
+}
+
+/**
+ * ONE PAGE OF THE ROSTER THIS SCOPE DESCRIBES — the request itself, and the only one the capture
+ * form makes for artisans.
+ *
+ * TOP-LEVEL AND TAKING THE API, rather than a second method on [WorkshopRepository], for one reason:
+ * `WorkshopRepository` needs a `TokenStore`, which needs an Android `Context`, which a JVM unit test
+ * does not have — and the assertion that matters here is a URL. `InterviewArtisanScopeWireTest`
+ * drives THIS function over a canned transport and reads the query string off the real Retrofit
+ * interface, so nothing between the scope and the wire is mocked or re-spelled. The repository's own
+ * [WorkshopRepository.interviewArtisans] is one delegating line onto it, which is what keeps the
+ * screen talking to the repository as every other screen does.
+ *
+ * ONE PAGE OF A HUNDRED, which is the ceiling `GET /artisans` enforces and what every other register
+ * on this client takes. The browser pages this roster up to `ARTISAN_PAGE_BUDGET` and prints a
+ * capped-list sentence when it cuts; this client does not page any register yet, so a workshop with
+ * more than a hundred artisans is offered the newest hundred — the same reach the unscoped register
+ * had, now narrowed to the right workshop. That gap is smaller than the one being closed and is
+ * recorded rather than hidden: paging here alone would be a second pagination story on a client that
+ * has none.
+ */
+internal suspend fun fetchInterviewArtisans(
+    api: WorkshopRepositoryApi,
+    scope: InterviewArtisanScope,
+): List<ArtisanDto> = api.artisans(
+    pageSize = 100,
+    workshopIds = scope.workshopIds,
+    designWorkshopId = scope.designWorkshopId,
+).items
+
 class WorkshopRepository(
     private val api: WorkshopRepositoryApi,
     private val tokenStore: TokenStore
@@ -881,6 +1041,21 @@ class WorkshopRepository(
      * wrong in the permissive direction, which is the one direction a picker must never be wrong in
      * (`WorkshopSelect.tsx` states the rule for the ordinary workshop list and it holds here).
      * A failure is the caller's to swallow: a record form must open on a bad connection.
+     *
+     * THAT STILL HOLDS AFTER [DwLocalWorkshops] LANDED, and the two are not in tension because
+     * OFFERING AND PREFILLING ARE NOT THE SAME ACT. A cached list puts rows in front of a person who
+     * then chooses one; a prefill writes an id onto a record nobody has looked at, and a stale prefill
+     * is therefore a workshop nobody chose, filed silently, on every record made that afternoon. So
+     * this read keeps its rule.
+     *
+     * WHICH MEANS THE OFFLINE ANSWER TO "WHICH IS SELECTED WHEN THE FORM OPENS" IS: NOTHING IS. An
+     * earlier revision of this note said it was the first row of the cached list, "the default
+     * falling out of the order rather than being remembered separately" — and that would be this
+     * function's own rule broken by the back door, because a row picked by position is still a row
+     * nobody chose. `rememberDesignWorkshopPicker` and `rememberWorkshopPicker` both draw the cached
+     * rows and select none of them; the box says whose list it is (`cachedListLine`) and waits for a
+     * person. A designer with no signal makes one tap they would have had to check anyway, and no
+     * record is filed under a workshop by accident.
      */
     suspend fun designWorkshopDefaultForMe(): DesignWorkshopDefaultDto = api.designWorkshopDefaultForMe()
 
@@ -4290,8 +4465,45 @@ class WorkshopRepository(
      * So the ownership test belongs in the query. Callers that want everyone's rows keep passing
      * null and are unaffected.
      */
-    suspend fun artisans(workshopIds: List<String>? = null, createdBy: String? = null): List<ArtisanDto> =
-        api.artisans(pageSize = 100, workshopIds = workshopIds.toQueryCsv(), createdBy = createdBy?.blankToNull()).items
+    /**
+     * [designWorkshopId] — THE OTHER TABLE'S SCOPE, and the parameter this client did not have.
+     *
+     * It is threaded through rather than folded into [workshopIds] because the two are not the same
+     * filter and not even the same population: the plural goes through `artisan_workshop_clause` and
+     * counts three readings of "was at this workshop", this one is a plain equality on
+     * `Artisan.designWorkshopId` with no join table behind it. See the parameter's own note on
+     * [WorkshopRepositoryApi.artisans], which sets out both arms of the route and why sending both
+     * spellings at once narrows to a handful of rows.
+     *
+     * Every existing caller passes neither and is byte-unaffected: `ApiClient` drops a null query
+     * parameter, so the URL those callers produce is what it always was.
+     */
+    suspend fun artisans(
+        workshopIds: List<String>? = null,
+        designWorkshopId: String? = null,
+        createdBy: String? = null,
+    ): List<ArtisanDto> =
+        api.artisans(
+            pageSize = 100,
+            workshopIds = workshopIds.toQueryCsv(),
+            designWorkshopId = designWorkshopId?.blankToNull(),
+            createdBy = createdBy?.blankToNull(),
+        ).items
+
+    /**
+     * The interview capture form's artisan roster, narrowed to the workshop its picker has chosen.
+     *
+     * One delegating line onto [fetchInterviewArtisans] so the rule, the request and the screen are
+     * three separate things that can each be read on their own — see that function for why the fetch
+     * is top-level and takes the api rather than living inside this class.
+     *
+     * `internal` where every other list on this class is public, and that follows from
+     * [InterviewArtisanScope] being internal rather than being a second decision: the scope type is
+     * a statement about one form's two query parameters and has no reader outside this module, and a
+     * public method taking an internal parameter does not compile anyway.
+     */
+    internal suspend fun interviewArtisans(scope: InterviewArtisanScope): List<ArtisanDto> =
+        fetchInterviewArtisans(api, scope)
 
     suspend fun crafts(createdBy: String? = null): List<CraftDto> =
         api.crafts(pageSize = 100, createdBy = createdBy?.blankToNull()).items
@@ -4360,11 +4572,35 @@ class WorkshopRepository(
      * to say which of the two it means.
      *
      * The narrowing is the SERVER'S — `accessibleOnly=true`, resolved from `WorkshopAssignment` rows
-     * this client never sees, at the same CONTRIBUTE level the save demands. There is deliberately no
-     * cached, bundled or last-known fallback behind it: a stale access list is wrong in the
-     * PERMISSIVE direction (a revoked grant still reads as a grant), and a picker is the one control
-     * that must not offer what it cannot honour. A failure leaves the dropdown EMPTY — see
-     * `rememberWorkshopPicker`, which is the same choice the web control makes.
+     * this client never sees, at the same CONTRIBUTE level the save demands.
+     *
+     * ── THIS CALL HAS NO FALLBACK. ONE NOW EXISTS BESIDE IT, AND THE DIFFERENCE IS THE POINT ─────
+     *
+     * What stood here until 2026-09-16 was a flat refusal: *"There is deliberately no cached, bundled
+     * or last-known fallback behind it… a picker is the one control that must not offer what it
+     * cannot honour. A failure leaves the dropdown EMPTY."* That is `DROPDOWN_DESIGN.md` R6, it was
+     * quoted across both clients, and half of it still holds: THIS function is still one live read
+     * with nothing behind it, and a failure here still answers with nothing rather than with a guess.
+     *
+     * The half that did not survive contact with the owner is the conclusion. *"The info for the
+     * designer workshop needs to be saved locally for the upcoming/ongoing workshops the particular
+     * designer has been allotted to, so that they can attribute their work to the same"* — because
+     * the alternative, which is what this KDoc used to describe with approval, is a designer in a
+     * courtyard being shown an empty picker and filing a fortnight of fieldwork under nothing.
+     *
+     * [DwLocalWorkshops] is that cache and its header carries the whole argument. What makes it a
+     * narrowing of R6 rather than a repeal: it keeps only the workshops that have NOT ended, it
+     * re-tests that window against today's date on every read, it is filed per account, it is
+     * REPLACED by every answered refresh, and it hands back the provenance so the screen says how old
+     * the list is. It grants nothing — the server still decides, at the pre-flight and again at the
+     * save — so a revoked grant costs a refusal the designer is told about, where the old rule cost
+     * the record itself.
+     *
+     * WHO READS IT: `rememberWorkshopPicker` (`MainActivity.kt`) through
+     * `WorkshopRepository.loadAllottedFieldWorkshops`, and `rememberDesignWorkshopPicker`
+     * (`ui/DesignWorkshopPicker.kt`) through `loadAllottedDesignWorkshops`. Each answers from the
+     * disk, then issues the read it was already issuing, then replaces its half of the file with the
+     * answer — so the cache costs no request that a record form did not already make.
      *
      * The pre-flight is still called on the selection, and is now what it should always have been:
      * not the access gate, but the answer to the two questions a scoped list cannot give — has this
@@ -4372,6 +4608,27 @@ class WorkshopRepository(
      */
     suspend fun workshopsIMaySubmitTo(): List<WorkshopDetailDto> =
         workshops(accessibleOnly = true).sortedByDescending { it.occurrenceDate() }
+
+    /**
+     * THE ADMINISTRATOR'S LIST OF WORKSHOP TYPES — the vocabulary behind the FIRST of the two
+     * dropdowns on every record form. `GET /workshop-types`, active rows only.
+     *
+     * A PASSTHROUGH AND NOTHING ELSE, deliberately. Every rule about this list lives in
+     * `ui/DesignWorkshopPicker.kt`: the offline floor, what an empty served answer means, which row
+     * the type box opens on, and — the one that matters — that the ROUTING is read off each row's
+     * `routesToDesignWorkshop` flag and never off its `key`. Caching, sorting or filtering here
+     * would be a second copy of decisions that file owns, in a class no picker test opens.
+     *
+     * IT EXISTS SO THERE IS ONE HTTP SERVICE IN THIS PROCESS. The picker reached
+     * `WorkshopTypeClient` — a second `@Volatile` double-checked `ApiClient.create` — only because
+     * [api] is private and this file was being edited in another lane on the day that control
+     * landed. That object's own KDoc named this line as the one that would delete it, and it did.
+     *
+     * NO `includeInactive`. A retired type absent from the dropdown is the whole meaning of
+     * retiring one; that parameter belongs to the web admin screen, which this handset does not
+     * have.
+     */
+    suspend fun workshopTypes(): List<WorkshopTypeOptionDto> = api.workshopTypes()
 
     /**
      * The same scoped list, WITH THE NUMBER THE SERVER HOLDS — the one fact [workshopsIMaySubmitTo]
@@ -6497,10 +6754,15 @@ class WorkshopRepository(
                         // THE THIRD OUTCOME, AND THE ONLY ONE THAT ENDS IN SUCCESS — which is
                         // precisely why it has to be said out loud. This record went up filed under
                         // nothing because the picker that would have filed it was EMPTY when the
-                        // designer filled the form in: no signal, and the access lists are never
-                        // cached because a stale one is wrong in the permissive direction
-                        // (`WorkshopRepository.kt` `designWorkshops`, `MainActivity`'s
-                        // `rememberWorkshopPicker`). Every visible sign now says the record arrived
+                        // designer filled the form in. This used to read "no signal, and the access
+                        // lists are never cached"; since 2026-09-16 `data/DwLocalWorkshops.kt` keeps
+                        // the allotted, not-yet-ended workshops per account and both record-form
+                        // pickers read it first (`MainActivity`'s `rememberWorkshopPicker`,
+                        // `ui/DesignWorkshopPicker.kt`'s `rememberDesignWorkshopPicker`), so the
+                        // common case that produced this sentence is gone. It is REACHED LESS AND
+                        // NOT RETIRED: a handset that has never been online has nothing to read, and
+                        // a cached file whose rows have all ended answers with none, and both file
+                        // under nothing exactly as before. Every visible sign now says the record arrived
                         // intact — it did, unfiled — and without this sentence the absence is
                         // discovered weeks later as a record missing from a workshop's lists, by
                         // which time nobody can tell it from a record deliberately filed under

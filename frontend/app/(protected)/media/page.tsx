@@ -7,8 +7,7 @@ import { CappedListNotice } from "@/components/data/CappedListNotice";
 import { DictatedTextArea } from "@/components/richtext/DictatedTextArea";
 import { DictatedTextInput } from "@/components/richtext/DictatedTextInput";
 import { DictationUnavailableNotice } from "@/components/richtext/DictationUnavailableNotice";
-import { DesignWorkshopCascade } from "@/components/forms/DesignWorkshopCascade";
-import { useDesignWorkshopSelection } from "@/components/forms/DesignWorkshopSelect";
+import { DesignWorkshopSelect, useDesignWorkshopSelection } from "@/components/forms/DesignWorkshopSelect";
 import { LIST_PAGE_CEILING, listCut, type ListCut } from "@/components/data/cappedList";
 import { deleteConfirm, useConfirm } from "@/components/dialogs/ConfirmDialog";
 import { EmptyState } from "@/components/EmptyState";
@@ -648,8 +647,37 @@ function MediaPageBody() {
         {/*
           Under the two link controls and above the caption — see the hook for why it is a separate
           question from "Linked record type".
+
+          ── ONE BOX HERE, AND NOT THE RECORD FORMS' TWO ─────────────────────────────────
+
+          This mounted `<DesignWorkshopCascade>` until 2026-09-16 — a "Type of workshop" KIND box
+          that narrowed the list below it and saved nothing, plus this box. The owner's ruling
+          retired that control everywhere ("we do not need one separately for each of the type of
+          the workshops"), and the four record forms plus the questionnaire replaced it with
+          `<WorkshopPicker>`: a type box whose answer decides which TABLE the workshop box reads
+          from, and therefore which of the record's two columns the save writes.
+
+          THIS FORM CANNOT USE THAT PICKER, AND THE REASON IS THE WIRE RATHER THAN A PREFERENCE.
+          `MediaCompleteRequest` (backend/app/schemas/media.py) declares `designWorkshopId` and no
+          `workshopId`; so do `lib/media.ts`'s body and Android's `ApiModels.MediaCompleteRequest`.
+          A type box here would offer five types whose answer the upload physically cannot carry —
+          a control that changes nothing, which is the exact complaint the kind box earned. The
+          `MediaFile` model does have both columns, so this is a wire gap and not a data one; adding
+          `workshopId` to the three request shapes is what would have to come FIRST, and then this
+          becomes `<WorkshopPicker>` like the other six. Until then: one box, one destination.
+
+          ANDROID ALREADY DRAWS EXACTLY THIS — `AndroidMediaForm` kept one `DesignWorkshopField`
+          labelled "Design & prototype workshop" through the same sweep, for the same reason, and
+          said so at its own mount. This mount is what makes the two clients agree again; before it
+          the browser drew two boxes here and the handset one.
         */}
-        <DesignWorkshopCascade state={designWorkshop} saving={uploading} />
+        {/*
+          NO `initial` PROP, and that is deliberate rather than an omission: `undefined` there means
+          "this is a new record, fill it in for me" and `null` means "this record is stored with no
+          workshop, leave it alone". This form only ever uploads, so the prefill is wanted — which
+          is exactly what the retired cascade mount passed down, byte for byte.
+        */}
+        <DesignWorkshopSelect state={designWorkshop} saving={uploading} />
         {/*
           THE LAST BARE PROSE BOX ON A WEB RECORD PAGE, dictated 2026-08-28.
 

@@ -17,6 +17,7 @@ import {
   ShieldCheck,
   ShieldUser,
   SlidersHorizontal,
+  Tags,
   Undo2,
   UserCog,
   Wrench,
@@ -225,6 +226,26 @@ export default function AdminHubPage() {
       icon: ShieldUser,
       visible: canManageAccessRoster(user),
       badge: pendingAccess?.pending || null
+    },
+    {
+      // THE VOCABULARY BEHIND THE FIRST OF THE TWO DROPDOWNS ON EVERY RECORD FORM.
+      //
+      // A TILE AND DELIBERATELY NO NAV ENTRY, which is the same ruling the designer roster above
+      // gets and for the same reason: `DynamicIslandNav`'s note is that nav entries are for
+      // DESTINATIONS, not for configuration. An admin comes here twice a year to rename a programme
+      // or add one; a researcher never comes here at all and meets the result of it on every form.
+      //
+      // NO NEW `ROUTE_GUARDS` ROW EITHER, and that is argued rather than skipped: `routeMatches`
+      // compares whole segments, so the `/admin` row (`isAdmin`, mirroring `require_admin`) already
+      // covers this path, and this route's SERVER gate IS `require_admin` — the identical predicate
+      // that row mirrors. /admin/analytics, /admin/designers and /admin/access carry their own rows
+      // only because their server gates are different predicates that could drift from it.
+      label: "Types of workshop",
+      description:
+        "The list behind the “Type of workshop” dropdown on every record form, and which table each type’s workshops come from.",
+      href: "/admin/workshop-types",
+      icon: Tags,
+      visible: isAdmin(user)
     },
     {
       label: "Designer roster",

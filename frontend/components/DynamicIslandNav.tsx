@@ -245,6 +245,12 @@ export const NAV_ITEMS: NavItem[] = [
   { href: "/questionnaire", label: "Take interview", icon: ClipboardList, group: "Record", can: everyone, gate: "get_current_user" },
   { href: "/media", label: "Upload media", icon: ImageIcon, group: "Record", can: everyone, gate: "get_current_user" },
   { href: "/crafts", label: "Add craft", icon: Brush, group: "Record", can: canManageCrafts, gate: "require_craft_manager" },
+  // `canManageWorkshops` AND NOT `canCreateWorkshops`, which is the destination-versus-act
+  // distinction this table has always made. /workshops is a LIST a professor can still reach and
+  // still edit from; only the create button behind it moved to the ministry floor on 2026-09-16
+  // (`require_workshop_opener`). Gating the nav row on the narrower predicate would take the whole
+  // screen away from the people who correct the rows on it. The `gate` label names the route's
+  // read/edit gate, which is what this row grants reach to.
   { href: "/workshops", label: "Record workshop", icon: Users, group: "Record", can: canManageWorkshops, gate: "require_workshop_manager" },
   // The 22-stage Design & Prototype Workshop record.
   //

@@ -1722,7 +1722,18 @@ test("the un-file row has one owner and one word at every field that files a rec
   ] as const;
   for (const [name, path] of filing) {
     const source = withoutComments(read(...path));
-    expect(source, `${name} must pass the shared constant`).toContain("noneLabel={NO_DESIGN_WORKSHOP}");
+    /*
+      `DesignWorkshopSelect` DEFAULTS THE PROP RATHER THAN BEING PASSED IT, since the two-dropdown
+      ruling made it the SECOND half of one control: `noneLabel = NO_DESIGN_WORKSHOP` in the
+      signature, `noneLabel={noneLabel}` at the row. `forms/WorkshopPicker.tsx` overrides it with
+      `NO_FIELD_WORKSHOP` for BOTH of its branches, because a "no" row whose wording changes when
+      the type box moves is the six-spellings-of-one-question problem this sweep exists to end.
+      What is asserted is therefore the same thing in both shapes — the shared constant reaches the
+      row — and never a hand-built `{value: "", label: …}`, which the sibling assertion below bans.
+    */
+    const passesTheConstant =
+      source.includes("noneLabel={NO_DESIGN_WORKSHOP}") || source.includes("noneLabel = NO_DESIGN_WORKSHOP");
+    expect(passesTheConstant, `${name} must name the shared constant, not a literal`).toBe(true);
     /*
       TWO LAYERS MUST NOT BOTH BUILD IT. A hand-built `{ value: "", label: … }` beside `noneLabel`
       gives two options sharing the React key "" — a duplicate-key warning, a list offering one
@@ -2336,8 +2347,22 @@ test("a picker's fetch asks for exactly the number of rows the panel can draw", 
     different totals about one list. `WORKSHOP_OPTION_PAGE_SIZE` is the same alias under the workshop
     pickers, and it is `RENDER_CAP` for this reason and no other.
   */
+  /*
+    THE INTERVIEW FORM'S ARTISAN READ MOVED, AND IT TAKES THE OTHER CEILING ON PURPOSE. It used to
+    be one unscoped `listResource<Artisan>("/artisans", { pageSize: RENDER_CAP })` at mount in
+    `questionnaire/page.tsx`; it is now `components/questionnaires/interviewArtisans.ts`, scoped by
+    the workshop the interview is filed under. The dead-band rule above is about `serverQuery`
+    pickers, where rows 81-100 are fetched and unreachable because the SERVER did the narrowing.
+    This control filters a LOCAL array before the 80-row window, so every fetched row is reachable
+    by typing and cutting the fetch to 80 would hide artisans who are at the workshop. The argument
+    is written out at `ARTISAN_PAGE_BUDGET` in that file.
+  */
+  const artisanRules = withoutComments(read("components", "questionnaires", "interviewArtisans.ts"));
+  expect(artisanRules).toContain("pageSize: LIST_PAGE_CEILING");
   const questionnaire = withoutComments(read("app", "(protected)", "questionnaire", "page.tsx"));
-  expect(questionnaire).toContain('listResource<Artisan>("/artisans", { pageSize: RENDER_CAP })');
+  expect(questionnaire, "the page itself must not fetch artisans again beside the hook").not.toContain(
+    'listResource<Artisan>("/artisans"'
+  );
   const workshops = withoutComments(read("app", "(protected)", "workshops", "page.tsx"));
   expect(workshops).toContain('listResource<Artisan>("/artisans", { pageSize: RENDER_CAP })');
   expect(workshops).toContain('listResource<Craft>("/crafts", { pageSize: RENDER_CAP })');

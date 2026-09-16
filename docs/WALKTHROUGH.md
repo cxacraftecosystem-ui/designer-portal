@@ -148,7 +148,7 @@ contents by craft. Adding it once keeps spellings consistent across everyone's r
 
 Record the person: who they are, where they work, how to reach them, and what they have learnt.
 
-**What the screen asks for:** Workshop, Design & prototype workshop, Name *(required)*, Local name,
+**What the screen asks for:** Type of workshop, Workshop, Name *(required)*, Local name,
 **Craft** *(required)*, Or new craft name, Place *(required)*, Gender, **Date of birth**,
 **Practising since**, Experience (in whole years and months), Phone, Email, Address, Notes,
 **Aadhaar number** *(required)*, **Artisan Pehchan Card available**, **Artisan Pehchan Card number**
@@ -190,7 +190,7 @@ own hard-won craft knowledge: the part of the archive that cannot be reconstruct
 
 Record one thing this artisan makes, with its measurements, economics and photographs.
 
-**What the screen asks for:** Workshop, Design & prototype workshop, Product name *(required)*,
+**What the screen asks for:** Type of workshop, Workshop, Product name *(required)*,
 Local name, Product type, Linked craft (fills craft name), Craft name *(required)*, Linked artisan
 (fills artisan + place), Artisan name *(required)*, Place *(required)*, Time taken to complete, Size,
 Length (inches), Breadth (inches), Height (inches), Cost of making, Selling price, Market demand,
@@ -227,7 +227,7 @@ making, selling price and market demand are the fields researchers compare acros
 
 Walk through how that product is made, one step at a time, filming each step as it happens.
 
-**What the screen asks for:** Workshop, Design & prototype workshop, Name of the process
+**What the screen asks for:** Type of workshop, Workshop, Name of the process
 *(required)*, Artisan *(required)*, Product *(required)*, What happens in this process, Pre-processes
 available, Status — then per step: Name of the step *(required)*, a **Record additional information**
 tick, the **Additional context for this step** notes it opens, and **Attach media**.
@@ -253,7 +253,7 @@ the judgement calls that a text description always loses.
 Record the toolkit the artisan uses: what it is made of, how big it is, who made it, what it costs
 to replace.
 
-**What the screen asks for:** Workshop, Design & prototype workshop, Toolkit name *(required)*,
+**What the screen asks for:** Type of workshop, Workshop, Toolkit name *(required)*,
 Local name, English name, Linked crafts (fills craft name), Craft name *(required)*, Linked artisans
 (fills artisan + place), Artisan name *(required)*, Place *(required)*, Process used in, Material,
 Years in use, Height (cm), Width (cm), Length (inches), Breadth (inches), Height (inches),
@@ -281,8 +281,8 @@ record whether the toolchain behind the craft is still alive.
 
 Sit down with the artisan and work through the interview sections, recording each answer as audio.
 
-**What the screen asks for:** Interview title *(required)*, Place, Language, Workshop, Design &
-prototype workshop, Status, Primary artisan, Additional artisans, **Recording mode**, **Do not
+**What the screen asks for:** Interview title *(required)*, Place, Language, Type of workshop,
+Workshop, Status, Artisans interviewed, **Recording mode**, **Do not
 display answer text boxes**, Interview audio and Location (GPS fix or map pin) — then per question
 either a **"Record this question"** audio clip or a typed answer, and Interview notes at the foot.
 

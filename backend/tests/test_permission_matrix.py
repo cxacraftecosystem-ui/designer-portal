@@ -341,17 +341,68 @@ def test_the_old_per_user_grant_no_longer_opens_that_door(api: _Api, path: str, 
 
 
 @pytest.mark.parametrize("path,body", TAXONOMY)
-def test_a_professor_creates_and_updates_but_may_not_delete(api: _Api, path: str, body: dict) -> None:
+def test_a_professor_updates_but_may_not_delete(api: _Api, path: str, body: dict) -> None:
+    """The half of the taxonomy rule that is TRUE OF BOTH ROWS: a professor corrects, and cannot
+    destroy. Creating is asked separately below, because the two rows stopped agreeing about it."""
     caller = api.as_(_user("PROFESSOR"))
 
-    created = caller.call("POST", path, body)
     updated = caller.call("PATCH", f"{path}/x1", body)
     api.tripwire.reset()
     deleted = caller.call("DELETE", f"{path}/x1")
 
-    assert created.reached and updated.reached, (created, updated)
+    assert updated.reached, updated
     assert deleted.refused, deleted
     assert api.tripwire.touched is False, "the delete was refused before reading the record"
+
+
+def test_a_professor_still_creates_a_craft(api: _Api) -> None:
+    """THE CREATE HALF, SPLIT OUT OF THE ROW ABOVE ON 2026-09-16, and the split is the ruling.
+
+    This was parametrised over `TAXONOMY` — both `/crafts` and `/workshops` — and asserted that a
+    professor's POST reached the handler on each. `POST /workshops` moved to `require_workshop_opener`
+    (a MINISTRY_ADMIN floor) because the owner ruled that designers participate in workshops and the
+    ministry and admin tiers open them; a professor is now refused there and that refusal is the
+    feature. A craft is untouched: it is a shared taxonomy row, not a funded container, and Professor
+    and above still mint one.
+
+    SPLIT RATHER THAN NARROWED TO A SINGLE ROW WITH A CONDITIONAL, because a `if path == "/workshops"`
+    inside a parametrised test is a test that asserts two different things under one name and reports
+    the wrong one when it fails. Two tests, two sentences, and the workshop's own create is asserted
+    in full — all eleven tiers — in `tests/test_workshop_creation_rights.py`.
+    """
+    caller = api.as_(_user("PROFESSOR"))
+
+    created = caller.call("POST", "/crafts", CRAFT_BODY)
+
+    assert created.reached, created
+
+
+def test_a_professor_may_no_longer_open_a_workshop(api: _Api) -> None:
+    """The other side of that split, asserted HERE as well as in the dedicated suite.
+
+    Not a duplicate: this file is the matrix a reader consults to learn what a rank may do, and a
+    capability that silently left one of its rows would leave the matrix claiming a professor still
+    creates workshops. The refusal happens in the dependency, before the route reads a row.
+    """
+    caller = api.as_(_user("PROFESSOR"))
+
+    created = caller.call("POST", "/workshops", WORKSHOP_BODY)
+
+    assert created.refused, created
+    assert api.tripwire.touched is False
+
+
+def test_a_ministry_admin_opens_a_workshop(api: _Api) -> None:
+    """The tier the ruling names, at the floor it names it at — MINISTRY_ADMIN, rank 48.
+
+    Asserted beside the refusal above because a gate that refuses everybody is not a gate, it is an
+    outage, and a matrix that only ever records refusals cannot tell the two apart.
+    """
+    caller = api.as_(_user("MINISTRY_ADMIN"))
+
+    created = caller.call("POST", "/workshops", WORKSHOP_BODY)
+
+    assert created.reached, created
 
 
 @pytest.mark.parametrize("role", ["ADMIN", "MASTER_ADMIN"])

@@ -28,10 +28,18 @@ import java.io.IOException
  *     answered 200 and the old link survived. `DesignWorkshopPicker`'s own KDoc has been describing
  *     this since the picker was written: *"a designer clearing the box, pressing Save, being told it
  *     saved, and finding the workshop still there."*
- *  2. THERE WAS NOTHING TO CHOOSE. No signal, and the access lists are never cached because a stale
- *     one is wrong in the permissive direction, so the picker was EMPTY. The designer made no
- *     decision at all — and reading their empty box as one is how a correction composed on the bus
- *     home silently strips a link nobody was ever shown.
+ *  2. THERE WAS NOTHING TO CHOOSE. The picker was EMPTY, the designer made no decision at all — and
+ *     reading their empty box as one is how a correction composed on the bus home silently strips a
+ *     link nobody was ever shown.
+ *
+ *     THIS CASE NARROWED ON 2026-09-16 AND DID NOT GO AWAY. This paragraph used to say "the access
+ *     lists are never cached because a stale one is wrong in the permissive direction, so the picker
+ *     was EMPTY". The owner narrowed R6 for the handset: `data/DwLocalWorkshops.kt` keeps the
+ *     allotted, not-yet-ended workshops per account and BOTH record-form pickers read it before they
+ *     ask the server, so a phone that has fetched once and then lost signal has rows and an empty box
+ *     there is a decision. What still reaches this kind is a phone that has never been online, and
+ *     one whose cached file holds nothing current — `Offline.kt`'s `UNFILED_NO_OPTIONS` note carries
+ *     the full version of this argument.
  *  3. THE ID IS NOT ON THE SERVER. A 404 on the drain. Not transient, not a 409, not
  *     `extra_forbidden`, so it fell to kind 3 — REFUSED, ON A PERSON — and was parked for the life of
  *     the installation behind a Try again that fetches the identical 404 and a Throw away that

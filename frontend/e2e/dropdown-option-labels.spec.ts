@@ -81,11 +81,14 @@ function expectReadable(labels: string[], separator: string) {
 }
 
 test.describe("Dropdown labels", () => {
-  test("/questionnaire — the primary artisan reads as a name, craft and place", async ({ page }) => {
+  // "Artisans interviewed" and no longer "Primary artisan": the single-select and the multi-select
+  // beside it became ONE searchable multi-select on 2026-09-16, for a join with no rank column.
+  // `shared/questionnaire-form-contract.json` (`controlPins`) forbids the old two by name.
+  test("/questionnaire — the artisans interviewed read as a name, craft and place", async ({ page }) => {
     await signIn(page);
     await page.goto("/questionnaire");
     // `{artisan.name} - {artisan.craft?.name ?? "No craft"} - {artisan.place}`
-    expectReadable(await readOptions(page, "Primary artisan"), " - ");
+    expectReadable(await readOptions(page, "Artisans interviewed"), " - ");
   });
 
   test("/processes — the required artisan picker reads as a name and place", async ({ page }) => {

@@ -135,6 +135,56 @@ class WorkshopOptionsTest {
     }
 
     /**
+     * THE FOURTH SENTENCE THE INTERVIEW FORM'S ARTISAN PICKER WAS FORBIDDEN TO SAY, and the three it
+     * must not be collapsed into.
+     *
+     * It became sayable on 2026-09-17, when that roster stopped being the whole deployment's: a
+     * per-workshop claim printed off a deployment-wide read is the unscoped-register defect wearing
+     * the fix's clothes, and the picker's own call site said so while it stopped at three.
+     *
+     * EACH OF THE THREE COLLAPSES BELOW HAS A DIFFERENT COST, which is why they are asserted one at
+     * a time rather than as one "is it distinct" check:
+     *
+     *  * into [unscopedEmptyLine] — a researcher is told the REPOSITORY has no artisans when one
+     *    workshop's roster is empty, and goes off to create a duplicate of somebody who already
+     *    exists. That report is what closed this drift in the sibling repository.
+     *  * into [scopedEmptyLine] — they are sent to an ADMINISTRATOR for a grant they already have.
+     *    This is the collapse the drift row's own `edit` line invited by naming that function, and
+     *    the one a reader working from it would make.
+     *  * into [narrowedEmptyLine] — they are told to widen the box above, which here means filing
+     *    the interview under a workshop it was not taken at.
+     */
+    @Test
+    fun `a workshop with no roster is not a repository with no artisans`() {
+        val line = atWorkshopEmptyLine("artisans")
+
+        assertTrue("it says WHICH workshop it is about", line.contains("at this workshop"))
+        assertTrue(
+            "and it refuses to be read as a claim about the rest",
+            line.contains("not a claim about your other artisans")
+        )
+
+        assertNotEquals(
+            "an empty roster is not an empty repository — that is the duplicate-artisan report",
+            unscopedEmptyLine("artisans"),
+            line
+        )
+        assertNotEquals(
+            "an empty roster is not a missing grant — nobody needs an administrator for this",
+            scopedEmptyLine("artisans"),
+            line
+        )
+        assertNotEquals(
+            "and the way out is not to widen the workshop box, which would misfile the interview",
+            narrowedEmptyLine("artisans"),
+            line
+        )
+        assertNotEquals("nor a read that has not answered", loadingListLine("artisans"), line)
+        assertNotEquals("nor a read that was refused", couldNotListLine("artisans"), line)
+        assertNotEquals("nor a list this device has never received", offlineListLine("artisans"), line)
+    }
+
+    /**
      * The cached sentence carries the count AND the date, and it is refused to any caller that
      * cannot produce a real one.
      *

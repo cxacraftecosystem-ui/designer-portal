@@ -78,8 +78,13 @@ class OutboxUnfiledSentinelTest {
 
     @Test
     fun `a box that was never filled and had nothing to offer is not a decision`() {
-        // The courtyard case. No signal, the access lists are never cached, so the picker was empty
-        // and the designer made no choice at all. This is the one arm the drain has to speak about.
+        // The courtyard case, and it is NARROWER than it was. This comment used to say "the access
+        // lists are never cached, so the picker was empty"; since 2026-09-16 both record-form
+        // pickers read `data/DwLocalWorkshops.kt` before they ask the server, so a handset that has
+        // fetched once has rows and reaches the `hadOptions = true` arm above. What still lands
+        // here is a handset that has NEVER been online, and one whose cached file holds nothing
+        // current — in both the box really was empty, the designer made no choice at all, and this
+        // is the one arm the drain has to speak about.
         assertEquals(
             UNFILED_NO_OPTIONS,
             unfiledLinkReason(selectedId = "", baselineId = "", hadOptions = false),

@@ -974,9 +974,11 @@ data class CraftCreateRequest(
     val category: String? = null,
     val description: String? = null,
     val place: String? = null,
-    // The workshop this craft was documented at. Every record form now opens with the workshop
-    // picker, so the field is sent for craft too. NOTE: the API's Pydantic base sets
-    // `extra="forbid"`, so this key is NOT optional at the wire level — a backend that predates
+    // The workshop this craft was documented at. Every record form ASKS the workshop question — four
+    // of the five open with it, the questionnaire draws it fourth under its own declared order (see
+    // `RecordWorkshopField`), and `CraftForm` mounts `WorkshopField` alone because a Craft has no
+    // `designWorkshopId` column to route to — so the field is sent for craft too. NOTE: the API's
+    // Pydantic base sets `extra="forbid"`, so this key is NOT optional at the wire level — a backend that predates
     // `CraftCreate.workshopId` rejects the whole request with 422. Ship the two together. When no
     // workshop is selected the value is null and `explicitNulls = false` omits the key entirely,
     // which is the backwards-compatible "no workshop named" path.

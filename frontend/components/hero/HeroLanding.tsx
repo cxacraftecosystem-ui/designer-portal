@@ -1001,20 +1001,30 @@ export default function HeroLanding({ census }: { census?: CorpusCensus }) {
         </p>
         {/*
           WHAT CHANGED UNDER THIS SECTION, AND WHY IT IS A SECOND PARAGRAPH RATHER THAN A CLAUSE.
-          Six of the eight forms above now also carry a "Design & prototype workshop" box
-          (`forms/DesignWorkshopSelect.tsx` sets those words as the default `label`, so they are
-          quoted and not paraphrased) with the workshop this account was most recently given access
-          to already chosen (`lib/designWorkshopDefault.ts`). That is not one more field on a list
-          of fields — it is a change to what "one connected repository" MEANS, because it is the
-          join between the two halves of this page: the records above and the workshop three
-          sections below. A clause bolted onto the sentence above would have buried the one fact
-          that connects them.
+          Six of the eight forms above now also ask which workshop the record belongs to, with the
+          most recent one this account can reach already chosen
+          (`lib/designWorkshopDefault.ts` on the design side, `forms/WorkshopSelect.tsx`'s probe on
+          the other). That is not one more field on a list of fields — it is a change to what "one
+          connected repository" MEANS, because it is the join between the two halves of this page:
+          the records above and the workshop three sections below. A clause bolted onto the sentence
+          above would have buried the one fact that connects them.
 
-          ⚠ SIX, NOT EIGHT, AND THIS PARAGRAPH SAID "ALL EIGHT" UNTIL IT WAS COUNTED. There are six
-          `<DesignWorkshopSelect>` mount sites and the grep that finds them is
-          `grep -rn "<DesignWorkshopSelect" components app`: Artisan, Product, Process and Tool in
-          `components/forms/`, plus Miscellaneous Media (`app/(protected)/media/page.tsx`) and
-          Questionnaire (`app/(protected)/questionnaire/page.tsx`).
+          ⚠ SIX, NOT EIGHT, AND THIS PARAGRAPH SAID "ALL EIGHT" UNTIL IT WAS COUNTED. Five of them
+          mount `<WorkshopPicker>` — Artisan, Product, Process and Tool in `components/forms/`, plus
+          Questionnaire (`app/(protected)/questionnaire/page.tsx`) — and the sixth, Miscellaneous
+          Media (`app/(protected)/media/page.tsx`), mounts `<DesignWorkshopSelect>` on its own. The
+          grep is `grep -rn "<WorkshopPicker\|<DesignWorkshopSelect" components app`.
+
+          ⚠⚠ AND THE SENTENCE ABOVE NO LONGER QUOTES A LABEL, WHICH IS THE POINT OF THIS NOTE. It
+          read: six forms "carry a ‘Design & prototype workshop’ box (`DesignWorkshopSelect.tsx` sets
+          those words as the default `label`, so they are quoted and not paraphrased)". On 2026-09-16
+          the owner ruled the record forms down to TWO dropdowns — "Type of workshop", then
+          "Workshop" — with the type deciding which of the record's two columns the answer is saved
+          in, so on five of the six that label is no longer on screen at all. Quoting a label is the
+          right instinct and it is what made this paragraph go stale loudly rather than quietly; the
+          replacement describes the QUESTION, which is what this section is actually about, and
+          leaves the label to the contract that owns it
+          (`shared/record-save-contract.json`, `workshopControls.labels`).
 
           CRAFT AND WORKSHOP ARE NOT AMONG THEM, and the reason is a missing COLUMN rather than a
           missing box — so this is not a gap somebody can close by mounting the control. In

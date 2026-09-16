@@ -47,7 +47,7 @@ import {
   type WorkshopListState,
   type WorkshopListVoice
 } from "@/lib/workshopOptions";
-import { canManageWorkshops, hasRank, isAdmin } from "@/lib/permissions";
+import { canCreateWorkshops, canManageWorkshops, hasRank, isAdmin } from "@/lib/permissions";
 import { UploadsProvider, useUploads } from "@/lib/uploads";
 import { WORKSHOP_TYPE_LABELS } from "@/lib/types";
 import type {
@@ -115,6 +115,27 @@ function WorkshopsPageBody() {
   const { adminMode } = useAdminView();
   const { addCompleted } = useUploads();
   const allowManage = canManageWorkshops(user);
+  /**
+   * OPENING a workshop is a narrower question than MANAGING one, and this page is where the two
+   * separate. `canManageWorkshops` (Professor and above) still decides who may CORRECT a workshop —
+   * `PATCH /workshops/{id}` is unchanged — and this decides who may bring a new one into existence:
+   * a rank floor at MINISTRY_ADMIN, so `{Ministry Admin, Admin, Master Admin}`.
+   *
+   * IT MIRRORS `require_workshop_opener` IN `backend/app/api/routes/workshops.py` AND MUST KEEP
+   * MIRRORING IT. The server is the rule; this is the courtesy that stops somebody filling in a form
+   * that ends in a 403. Looser here and a professor types out a workshop and loses it on Save;
+   * stricter and the ministry admin the feature exists for is left staring at a list.
+   *
+   * THE NAMED TWIN LANDED, and this line is the one that was promised. It read
+   * `hasRank(user, "MINISTRY_ADMIN")` while the create affordance and the shared predicate file were
+   * in different slices; `canCreateWorkshops` in `lib/permissions.ts` now holds the threshold, beside
+   * `canManageWorkshops`, with the argument for why the two are separate rules rather than one rule
+   * and a narrowing. The dashboard's Workshop tile reads the same twin for its "New" button.
+   *
+   * NOT `isAdmin`: that is set membership, `{ADMIN, MASTER_ADMIN}`, and a Ministry Admin at rank 48
+   * is NOT an admin by it — the same trap `canManageAnnualPlan` documents at length one file over.
+   */
+  const allowCreate = canCreateWorkshops(user);
   const allowAssign = isAdmin(user);
   // Status policy (mirrors the backend): professor+ may pick any status (default APPROVED on
   // create); everyone below sees a locked Pending chip and the server forces/keeps the status.
@@ -572,7 +593,20 @@ function WorkshopsPageBody() {
         </div>
       ) : null}
 
-      {allowManage ? (
+      {/*
+        THE FORM SLOT, AND IT NOW ANSWERS TWO QUESTIONS RATHER THAN ONE.
+
+        `allowManage` alone used to decide it, which was right while "add" and "edit" were one
+        capability. They are not any more: the ministry opens a workshop and Professor-and-above
+        corrects one. So the form is drawn when the account may create (a blank form, as before) OR
+        when there is a workshop loaded into it to edit — which is how a professor, an assistant
+        director and a regional director still reach every field on this page, through the row's Edit
+        button and through `?edit=<id>`.
+
+        A GREYED-OUT "Create workshop" WAS THE OTHER OPTION AND IS WORSE: it says "no" and names
+        neither who can nor what to do instead. The panel below this form says both.
+      */}
+      {allowManage && (editing || allowCreate) ? (
       <form
         ref={formRef}
         key={editing?.id ?? "new"}
@@ -771,8 +805,43 @@ function WorkshopsPageBody() {
         </div>
       </form>
       ) : (
+        /*
+          WHAT STANDS WHERE THE FORM WAS, AND IT IS TWO DIFFERENT SENTENCES FOR TWO DIFFERENT
+          AUDIENCES, because "you cannot do this" and "you cannot do this ONE thing any more" are
+          different facts and one sentence covering both would be false for everybody.
+
+          THE SENTENCE THESE TWO REPLACED SENT PEOPLE TO ASK THE MASTER ADMIN FOR "workshop creation
+          access", AND IT WAS WRONG rather than merely stale: creating a workshop has not been a
+          per-user grant for a long time. There is no `canManageWorkshops` column anybody can set —
+          the server reads rank alone — so it directed people to request something nobody can hand
+          out, and they came back to the same empty panel. Both replacements name a TIER and a next
+          move instead.
+
+          (The old wording is described here and not quoted, deliberately. The test that keeps it
+          from coming back searches this file for it as plain text, and a sentence reproduced inside
+          a comment reads to that search exactly like a sentence still on the screen — the same trap
+          `create_design_workshop` documents about naming its own retired gates in prose.)
+
+          IT IS A STANDING PANEL AND NOT A DISMISSIBLE NOTICE, unlike the design-workshops page's,
+          because it is not answering a navigation — it occupies the slot a form used to occupy, and
+          a blank gap where a professor remembers a form is the thing that generates the support
+          question.
+        */
         <div className="panel mb-5 p-4 text-sm text-ink-muted">
-          Browse workshops below. Ask the master admin for workshop creation access to add or edit workshops.
+          {allowManage ? (
+            <>
+              Workshops are opened by the ministry — a Ministry Admin, an admin or the master admin.
+              You can still correct any workshop below: press Edit on its row and every field on this
+              form opens for it.
+            </>
+          ) : (
+            <>
+              Browse workshops below. Workshops are created by the ministry — a Ministry Admin, an
+              admin or the master admin. Ask them to open the one for your cluster; it appears in
+              this list as soon as you are added to it, and every record you make can then be filed
+              against it.
+            </>
+          )}
         </div>
       )}
       {/* The workshop's own code, drawn live for the workshop in the form. A workshop is edited

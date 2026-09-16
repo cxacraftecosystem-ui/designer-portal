@@ -20,9 +20,7 @@ import { LocationFields, type LocationInitialValues } from "@/components/forms/L
 import { MediaCaptureField } from "@/components/forms/MediaCaptureField";
 import { PhoneField } from "@/components/forms/PhoneField";
 import { useRecordOffPage } from "@/components/forms/recordPickers";
-import { useWorkshopSelection, WorkshopSelect } from "@/components/forms/WorkshopSelect";
-import { DesignWorkshopCascade } from "@/components/forms/DesignWorkshopCascade";
-import { useDesignWorkshopSelection } from "@/components/forms/DesignWorkshopSelect";
+import { useWorkshopPicker, WorkshopPicker } from "@/components/forms/WorkshopPicker";
 import { ExistingMedia } from "@/components/media/ExistingMedia";
 import { UploadProgress } from "@/components/media/UploadProgress";
 import { RecordCodeCard } from "@/components/RecordCode";
@@ -591,37 +589,39 @@ export function ArtisanForm({
    * mask straight back.
    */
   const aadhaarRequired = !initial || Boolean(initial.aadhaarNumber?.trim());
-  // The workshop this artisan was documented at: shared picker, shared most-recent defaulting, and
-  // the late-submission gate (see components/forms/WorkshopSelect).
-  const workshop = useWorkshopSelection({
-    /*
-      THE SEED IS THE DESIGN WORKSHOP'S OWN LINKED WORKSHOP, and it outranks both the "most recent
-      workshop" probe and the carry bag — an artisan created from stage 3 of a workshop was in THAT
-      room, and a WORKSHOP-scoped picker narrows on exactly this column, so a seedless create files
-      a person the picker that made them can never show. Passing it as `initialWorkshopId` also
-      marks the selection `touched`, which is what stops the probe and `carry.onApply` below
-      overwriting it a moment later.
+  /*
+    THE WORKSHOP THIS ARTISAN WAS DOCUMENTED AT — ONE CONTROL, TWO DROPDOWNS.
 
-      Absent — an unlinked design workshop — and everything behaves exactly as it did.
-    */
+    `forms/WorkshopPicker.tsx` owns all of it: the "Type of workshop" box, the "Workshop" box below
+    it, the most-recent defaulting, the late-submission gate, and the rule that decides whether the
+    chosen workshop is written to `workshopId` or to `designWorkshopId`.
+
+    IT REPLACED THREE CONTROLS WITH TWO. This form used to mount `WorkshopSelect`, then a KIND box,
+    then a second workshop box under it — three dropdowns for one question, one of which saved
+    nothing and said so in its own hint. The owner's ruling: "we do not need one separately for each
+    of the type of the workshops".
+
+    THE DEFAULT IS FOR A NEW RECORD AND FOR NOTHING ELSE. `isEdit` and the two `initial*` ids are how
+    the picker learns that this form is open on a record that ALREADY NAMES a workshop; it then opens
+    the type box on whichever of the two columns that record uses and never applies "the most recent
+    workshop this account can reach" over it. A record filed last month must not be silently re-filed
+    under this month's workshop because somebody fixed a typo in a phone number.
+
+    THE SEED OUTRANKS EVERY DEFAULT. `seed.workshopId` is the design workshop's own linked
+    `Workshop` — an artisan created from stage 3 of a workshop was in THAT room, and a WORKSHOP-scoped
+    picker narrows on exactly this column, so a seedless create files a person the picker that made
+    them can never show. It arrives as `initialWorkshopId`, which is the same door a STORED id comes
+    through, so the picker treats it as an answer somebody already gave: the type box opens on the
+    ordinary-workshop side and the probe and `carry.onApply` below are both kept off it.
+
+    Absent — an unlinked design workshop — and everything behaves exactly as it did.
+  */
+  const workshop = useWorkshopPicker({
     initialWorkshopId: initial?.workshopId ?? seed?.workshopId,
+    initialDesignWorkshopId: initial?.designWorkshopId,
     isEdit: Boolean(initial),
     resetKey: initial?.id ?? null
   });
-
-  /*
-    THE DESIGN & PROTOTYPE WORKSHOP this artisan is filed under. Its own hook beside the ordinary
-    workshop's, never folded into it: `workshopId` is gated by `WorkshopAssignment` and carries a
-    submission window and a late-submission dialog; `designWorkshopId` is gated by
-    `load_workshop_or_404` and has neither. Two access systems on one control is how a scope comes to
-    be checked by whichever of them the caller remembered.
-
-    `initial` is `undefined` on a CREATE and the stored value (or null) on an EDIT, which is what
-    tells the picker whether it may prefill — the same convention `LocationFields` uses to decide
-    whether it may auto-capture, and for the same reason: a record filed last month must not be
-    silently re-filed under this month's workshop because somebody fixed a typo.
-  */
-  const designWorkshop = useDesignWorkshopSelection(initial?.designWorkshopId ?? null);
 
   /*
    * THE ONE EMAIL RULE, READ RATHER THAN RESTATED.
@@ -902,7 +902,7 @@ export function ArtisanForm({
         craftId,
         craftName: craftId ? null : newCraftName,
         workshopId: workshop.workshopId || null,
-        designWorkshopId: designWorkshop.workshopId || null,
+        designWorkshopId: workshop.designWorkshopId || null,
         // Below professor no status control is rendered: create submits PENDING, edit resubmits the
         // current status (the backend drops unauthorized changes either way).
         status: requiredText(form, "status") || initial?.status || "PENDING",
@@ -1176,25 +1176,20 @@ export function ArtisanForm({
         */}
         <DictationUnavailableNotice />
         <div className="grid gap-3 md:grid-cols-2">
-          {/* Android parity (ArtisanForm): the workshop opens the form, because it is the context
-              every other answer belongs to — not merely the first dropdown. */}
-          <WorkshopSelect state={workshop} onDirty={markDirty} saving={saving} />
           {/*
-            THE DESIGN & PROTOTYPE WORKSHOP, directly under the ordinary one and never instead of it.
-            Two tables, two access systems, and a record may carry either, both or neither — see
-            `Artisan.designWorkshopId` in schema.prisma. The default it opens on is the server's
-            answer to "most recently allocated" rather than this form's guess, so all seven forms and
-            both clients agree; see `lib/designWorkshopDefault.ts`.
+            Android parity (ArtisanForm): the workshop opens the form, because it is the context every
+            other answer belongs to — not merely the first dropdown. ONE cell of this grid holds both
+            boxes, because they are one question: the type, then the workshop of that type.
 
-            `markDirty` BY HAND, as every themed control on this form must: the picker is a
+            TWO TABLES AND TWO ACCESS SYSTEMS ARE STILL BEHIND IT — see `Artisan.designWorkshopId` in
+            schema.prisma for why one column could not carry both, and R1, which keeps both. What
+            changed is that an artisan now names ONE of them, chosen in one control, rather than
+            being offered two workshop dropdowns and a third box narrowing one of them.
+
+            `markDirty` BY HAND, as every themed control on this form must: a dropdown is a
             `<button>` and fires no native input event for the form's `onInput` to catch.
           */}
-          <DesignWorkshopCascade
-            state={designWorkshop}
-            initial={initial ? (initial.designWorkshopId ?? null) : undefined}
-            onDirty={markDirty}
-            saving={saving}
-          />
+          <WorkshopPicker state={workshop} onDirty={markDirty} saving={saving} />
           {/* Name, new craft name and place are title-cased by the API on write, so the box says
               what will actually be stored (Android parity — see components/forms/TitleCasedInput);
               `titleCased` mounts that exact component inside the dictated box rather than a copy of

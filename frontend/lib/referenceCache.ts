@@ -20,11 +20,22 @@
  * `android/.../data/DwReferenceStore.kt` beside this; where the two disagree, that file is right and
  * this one is a defect.
  *
- * ── R6: THE TWO ACCESS LISTS ARE NOT CACHEABLE, AND THE COMPILER IS WHAT SAYS SO ──────────────
+ * ── R6: THE TWO ACCESS LISTS ARE NOT CACHEABLE **ON THE WEB**, AND THE COMPILER SAYS SO ───────
  *
  * A stale ACCESS list is wrong in the PERMISSIVE direction — a cache of "which workshops may I file
  * under" reads a revoked grant as a grant — so caching is FORBIDDEN for `Workshop` and
- * `DesignWorkshop`, not merely unattractive. `WorkshopRepository.kt` puts it as *"a picker is the
+ * `DesignWorkshop`, not merely unattractive.
+ *
+ * THE TWO CLIENTS NOW DIFFER HERE AND THE HEADING SAYS SO, because this file opens by declaring
+ * `DwReferenceStore.kt` the authority where the two disagree, and on this one rule it no longer is.
+ * The owner narrowed R6 on 2026-09-16 FOR THE HANDSET ONLY: `android/.../data/DwLocalWorkshops.kt`
+ * keeps a designer's allotted, not-yet-ended workshops per account, re-tested against the device
+ * clock on every read. The argument is written out at `WorkshopRepository.workshopsIMaySubmitTo`
+ * and it is a phone argument — a designer in a courtyard with no signal and an empty picker files a
+ * fortnight of fieldwork under nothing. A browser is not in that courtyard: it is used at a desk or
+ * on a laptop that reconnects, its outbox already carries the record, and nothing in this product
+ * asks it to offer a grant set it cannot check. So the refusal below stands on the web, by type
+ * rather than by sentence, and the divergence is deliberate rather than an omission. `WorkshopRepository.kt` puts it as *"a picker is the
  * one control that must not offer what it cannot honour"*, and `lib/workshopOptions.ts` carries the
  * web's own divergent sentence for the same rule (the `accessList` arm of `workshopListNotice`,
  * which ends *"this list is never kept on the device, because a stored copy of who may file where

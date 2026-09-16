@@ -33,10 +33,20 @@ import HeroLanding from "@/components/hero/HeroLanding";
  *   recogniser returns the nearest dictionary word and a respondent's name is the string sittings
  *   are searched by. Seventeen numeric and code boxes on Android opt out by hand.
  *
- *   the six things "filed under the workshop they were captured at" — the "Design & prototype
- *   workshop" box, mounted at six places: `ArtisanForm`, `ProductForm`, `ProcessForm` and
- *   `ToolForm`, plus `app/(protected)/media/page.tsx` and `app/(protected)/questionnaire/page.tsx`
- *   (`grep -rn "<DesignWorkshopSelect" components app` is the count).
+ *   the six things "filed under the workshop they were captured at" — the workshop question, asked
+ *   at six places: `ArtisanForm`, `ProductForm`, `ProcessForm`, `ToolForm` and
+ *   `app/(protected)/questionnaire/page.tsx`, which each mount `<WorkshopPicker>`, plus
+ *   `app/(protected)/media/page.tsx`, which mounts `<DesignWorkshopSelect>` alone. The count is
+ *   `grep -rn "<WorkshopPicker\|<DesignWorkshopSelect" components app`.
+ *
+ *   ⚠ THE CONTROL CHANGED SHAPE ON 2026-09-16 AND THE GREP CHANGED WITH IT. It was one
+ *   `<DesignWorkshopSelect>` per form beside an ordinary `<WorkshopSelect>` and a KIND box that
+ *   saved nothing — three dropdowns — and the owner ruled it down to two: "Type of workshop", then
+ *   the workshop OF THAT TYPE, with the type deciding which of the record's two columns the answer
+ *   is saved in. Five of the six now ask it through one `<WorkshopPicker>`; the media form keeps a
+ *   single box because `MediaCompleteRequest` declares `designWorkshopId` and no `workshopId`. SIX
+ *   IS STILL SIX, which is why the sentence above did not have to move — but the old grep now
+ *   returns two, and a count nobody can re-run is the thing this whole paragraph exists against.
  *
  *   ⚠ THEY ARE NAMED ONE BY ONE BECAUSE THIS STRING SAID "EVERY RECORD" AND THAT IS FALSE. Craft
  *   and Workshop — two of the eight types the page's own heading counts — have no

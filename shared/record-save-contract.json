@@ -1,0 +1,776 @@
+{
+  "contract": "record-save",
+  "version": 1,
+  "enforcedBy": "backend/tests/test_record_save_contract.py",
+  "authority": [
+    "frontend/components/forms/WorkshopPicker.tsx",
+    "android/app/src/main/java/com/designprototype/workshop/MainActivity.kt"
+  ],
+  "whatThisIs": [
+    "WHERE A RECORD GOES WHEN SOMEBODY PRESSES SAVE, declared ONCE, and asserted against BOTH places",
+    "a record can be created from.",
+    "",
+    "The owner's words, which are the whole of R7: \"the records created through the design and",
+    "prototype workshop as well as through the record pages should utilise the same endpoints and",
+    "should be saved in the same manner, which is why there should be parity contract between the",
+    "integrated record pages and the record pages as well\".",
+    "",
+    "A record has TWO doors. The STANDALONE record pages (/tools/new, /artisans/[id]/edit, the",
+    "handset's own create and edit screens) and the INTEGRATED surfaces inside a design workshop (the",
+    "dialog a stage's reference picker opens, and the record form a stage EMBEDS in the page). This",
+    "file declares the endpoint, the payload keys, the destination rule, the validation and the",
+    "offline queue shape ONCE, and the enforcing test holds both doors to all five.",
+    "",
+    "IT ALSO HOLDS THE SHAPE OF THE CONTROL ITSELF, and that half is not about R7 at all. R2 is two",
+    "dropdowns and never three; the third control was deleted in this release and the two labels are",
+    "asserted here, on both clients, in order, with the retired ones forbidden by name. That is what",
+    "stops R2 regressing on the seventh form somebody adds."
+  ],
+  "whyAContractAndNotJustTests": [
+    "BECAUSE THE PARITY IS TRUE BY CONSTRUCTION TODAY, AND THAT IS EXACTLY WHY IT NEEDS WRITING DOWN.",
+    "",
+    "Measured on 2026-09-16 before a line was written: there is no second endpoint. The integrated",
+    "surfaces mount the REAL record form — `components/designworkshop/InlineRecordDialog.tsx` says so",
+    "in its own header (\"IT MOUNTS THE REAL FORM, NOT A SIMPLER ONE\") and",
+    "`components/designworkshop/StageRecordEmbed.tsx` was written for it (\"this mounts the ACTUAL",
+    "COMPONENT … the same one its own route mounts, with nothing removed, reordered or restyled\").",
+    "Android does the same through `DwInlineRecordDialog`. `backend/app/api/routes/design_workshops.py`",
+    "declares no record-creating route of any kind: every POST under `/design-workshops` is a",
+    "dictation, an AI layer, a report or an export.",
+    "",
+    "SO THE DEFECT R7 GUARDS AGAINST IS NOT PRESENT, AND THE CONTRACT IS A RATCHET RATHER THAN A FIX.",
+    "The thing that would break it is the obvious next feature: a \"quick create\" with four boxes",
+    "inside a stage, so a designer does not have to meet the full artisan form in a room. Both hosts'",
+    "headers argue against it at length and neither argument is enforced by anything. A second write",
+    "path would be a second answer to what an artisan IS, drifting from the first, and the records it",
+    "made would be the ones missing the fields nobody could see were missing.",
+    "",
+    "WHAT A TEST ALONE COULD NOT DO, which is the reason this is a declaration and not thirty",
+    "assertions: the assertions have to know which differences between the two doors are LEGITIMATE.",
+    "Three are (see `declaredDifferences`), and a test with no declaration beside it either fails on",
+    "all three or is written so loosely it would pass over a fourth nobody argued for."
+  ],
+  "theTwoDoors": {
+    "why": [
+      "The files that mount a record form, per client, per door. Spelled out rather than globbed,",
+      "because the thing this list protects against is a THIRD host arriving with its own form — and a",
+      "glob over \"files that mount ArtisanForm\" would grow to include it the moment it existed.",
+      "",
+      "A DOOR IS NOT A ROUTE. `StageRecordEmbed` is neither a page nor a modal: it renders the record",
+      "form inline underneath a stage's picker, with the stage's own questions in the form's",
+      "`footerFields` slot. It is a third host with two hosts' worth of chrome differences and zero",
+      "differences in what it saves, which is the distinction this whole file is about."
+    ],
+    "web": {
+      "standalone": {
+        "files": [
+          "frontend/app/(protected)/artisans/new/page.tsx",
+          "frontend/app/(protected)/artisans/[id]/edit/page.tsx",
+          "frontend/app/(protected)/products/new/page.tsx",
+          "frontend/app/(protected)/products/[id]/edit/page.tsx",
+          "frontend/app/(protected)/tools/new/page.tsx",
+          "frontend/app/(protected)/tools/[id]/edit/page.tsx",
+          "frontend/app/(protected)/processes/page.tsx",
+          "frontend/app/(protected)/questionnaire/page.tsx"
+        ]
+      },
+      "integrated": {
+        "files": [
+          "frontend/components/designworkshop/InlineRecordDialog.tsx",
+          "frontend/components/designworkshop/StageRecordEmbed.tsx"
+        ],
+        "mountsThrough": "InlineRecordForm",
+        "why": [
+          "ONE MOUNT SHARED BY TWO HOSTS. `InlineRecordForm` lives in `InlineRecordDialog.tsx` and both",
+          "hosts render it: which of the four components answers a `refModel`, fetching the record for",
+          "an edit and not mounting until it is in hand, refusing to seed a parent over an existing",
+          "record. What differs is the chrome — a `FieldDialog` here, a panel section there — and",
+          "whether the host closes on save. A second copy of that mount is the failure",
+          "`forms/inlineRecordHost.ts` already exists to prevent, one level up."
+        ]
+      }
+    },
+    "android": {
+      "standalone": {
+        "file": "android/app/src/main/java/com/designprototype/workshop/MainActivity.kt",
+        "anchors": [
+          "is Screen.Create -> when (s.mode)",
+          "private fun EditScreen("
+        ],
+        "why": [
+          "THE ANCHOR MATCHES TWICE, AND THAT IS A PROPERTY OF THE FILE RATHER THAN A LOOSE ANCHOR. There",
+          "are two `is Screen.Create -> when (s.mode)` blocks in MainActivity.kt: one maps the mode to a",
+          "`NavDestination` for the nav rail, the other mounts the forms. The enforcing test reads EVERY",
+          "match and requires that exactly one of them mounts all five forms — which is a stronger check",
+          "than a hand-tightened anchor, because a second create screen mounting different forms fails it."
+        ]
+      },
+      "integrated": {
+        "file": "android/app/src/main/java/com/designprototype/workshop/MainActivity.kt",
+        "anchors": [
+          "private fun DwInlineRecordDialog("
+        ],
+        "why": [
+          "ONE HOST, AND IT REUSES THE APP'S OWN EDIT LOADER WHOLESALE. `DwInlineRecordDialog` mounts",
+          "`ArtisanForm` / `ProductForm` / `ToolForm` / `ProcessForm` for a create and calls",
+          "`EditScreen` for an edit — \"which is one place for that decision rather than two that can",
+          "disagree\", in its own words. The handset has no third host: there is no stage EMBED on the",
+          "phone, only the dialog."
+        ]
+      }
+    }
+  },
+  "records": [
+    {
+      "key": "artisan",
+      "model": "Artisan",
+      "columns": [
+        "workshopId",
+        "designWorkshopId"
+      ],
+      "web": {
+        "form": "frontend/components/forms/ArtisanForm.tsx",
+        "endpoint": "initial ? `/artisans/${initial.id}` : \"/artisans\"",
+        "create": "POST /artisans",
+        "update": "PATCH /artisans/{id}"
+      },
+      "android": {
+        "form": "ArtisanForm",
+        "create": "repository.createArtisan",
+        "update": "repository.updateArtisan",
+        "offlineType": "artisan",
+        "queueVia": "trySaveOffline",
+        "createVia": "form",
+        "createCall": "repository.createArtisan"
+      }
+    },
+    {
+      "key": "product",
+      "model": "ProductDocumentation",
+      "columns": [
+        "workshopId",
+        "designWorkshopId"
+      ],
+      "web": {
+        "form": "frontend/components/forms/ProductForm.tsx",
+        "endpoint": "initial ? `/products/${initial.id}` : \"/products\"",
+        "create": "POST /products",
+        "update": "PATCH /products/{id}"
+      },
+      "android": {
+        "form": "ProductForm",
+        "create": "repository.createProduct",
+        "update": "repository.updateProduct",
+        "offlineType": "product",
+        "queueVia": "trySaveOffline",
+        "createVia": "form",
+        "createCall": "repository.createProduct"
+      }
+    },
+    {
+      "key": "tool",
+      "model": "ToolDocumentation",
+      "columns": [
+        "workshopId",
+        "designWorkshopId"
+      ],
+      "web": {
+        "form": "frontend/components/forms/ToolForm.tsx",
+        "endpoint": "initial ? `/tools/${initial.id}` : \"/tools\"",
+        "create": "POST /tools",
+        "update": "PATCH /tools/{id}"
+      },
+      "android": {
+        "form": "ToolForm",
+        "create": "repository.createTool",
+        "update": "repository.updateTool",
+        "offlineType": "tool",
+        "queueVia": "queueOfflineEntry",
+        "createVia": "form",
+        "createCall": "repository.createTool"
+      }
+    },
+    {
+      "key": "process",
+      "model": "Process",
+      "columns": [
+        "workshopId",
+        "designWorkshopId"
+      ],
+      "web": {
+        "form": "frontend/components/forms/ProcessForm.tsx",
+        "endpoint": "isEdit ? `/processes/${initial!.id}` : \"/processes\"",
+        "create": "POST /processes",
+        "update": "PATCH /processes/{id}"
+      },
+      "android": {
+        "form": "ProcessForm",
+        "create": "repository.createProcess",
+        "update": "repository.updateProcess",
+        "offlineType": "process",
+        "queueVia": "queueOfflineEntry",
+        "createVia": "form",
+        "createCall": "repository.createProcess"
+      }
+    },
+    {
+      "key": "interview",
+      "model": "QuestionnaireInterview",
+      "columns": [
+        "workshopId",
+        "designWorkshopId"
+      ],
+      "web": {
+        "form": "frontend/app/(protected)/questionnaire/page.tsx",
+        "endpoint": "\"/questionnaire/interviews\"",
+        "create": "POST /questionnaire/interviews",
+        "update": null
+      },
+      "android": {
+        "form": "QuestionnaireForm",
+        "create": "repository.createQuestionnaireInterview",
+        "update": "repository.updateQuestionnaireInterview",
+        "offlineType": "questionnaire",
+        "queueVia": "queueOfflineEntry",
+        "createVia": "onSubmit",
+        "createCall": "onSubmit(",
+        "mountSupplies": "onSubmit = { repository.createQuestionnaireInterview(it).id }"
+      },
+      "note": [
+        "THE ONE RECORD WITH NO INTEGRATED DOOR, and that is a fact about the stage registry rather",
+        "than a gap in this contract: `INLINE_CREATABLE` on both clients is Artisan, Product, Tool and",
+        "Process, because those are the four reference models a stage field can point at. There is no",
+        "`refModel` of `QuestionnaireInterview`, so no picker can offer to create one.",
+        "",
+        "ITS WEB FORM IS CREATE-ONLY, which is why `update` is null there: an interview is corrected",
+        "through the review panel, never re-opened in the capture form. The handset DOES edit one in",
+        "place, and refuses to queue that edit offline for a stated reason — see `declaredDifferences`."
+      ]
+    }
+  ],
+  "savePath": {
+    "why": [
+      "ONE FUNCTION PER CLIENT STANDS BETWEEN A RECORD FORM AND THE NETWORK, and both doors go",
+      "through it. That is the whole of \"saved in the same manner\": not that the two hosts happen to",
+      "call the same endpoint today, but that neither of them has anywhere else to call it from.",
+      "",
+      "THE ASSERTION IS A COUNT AND NOT A PRESENCE. \"The form calls `saveOrQueue`\" is satisfied by a",
+      "form that calls it once and `apiFetch(\"/artisans\", {method: \"POST\"})` beside it for the",
+      "embedded case. What is held is that each form has EXACTLY ONE record write and that it is this",
+      "one."
+    ],
+    "web": {
+      "function": "saveOrQueue",
+      "module": "frontend/lib/offline.ts",
+      "call": "saveOrQueue<",
+      "arguments": [
+        "label",
+        "endpoint",
+        "method",
+        "body",
+        "media"
+      ],
+      "onlineCall": "apiFetch<T>(endpoint, { method, body: payload })",
+      "forbiddenInForms": [
+        "apiFetch(\"/artisans\"",
+        "apiFetch(\"/products\"",
+        "apiFetch(\"/tools\"",
+        "apiFetch(\"/processes\"",
+        "apiFetch(\"/questionnaire/interviews\""
+      ]
+    },
+    "android": {
+      "queueFunctions": [
+        "trySaveOffline",
+        "queueOfflineEntry"
+      ],
+      "queueFunction": "queueOffline",
+      "module": "android/app/src/main/java/com/designprototype/workshop/data/WorkshopRepository.kt",
+      "why": [
+        "TWO CALLS AND NOT ONE, and the shape is the browser's inverted rather than a second design.",
+        "`trySaveOffline` answers null when the device is online and the form then calls the repository's",
+        "own create/update; `saveOrQueue` makes the same decision inside itself. The consequence that",
+        "matters is identical on both: a 4xx is never queued (“the server saw it and said no”), and a",
+        "request that never reached the server always is.",
+        "",
+        "AND THE HANDSET SPELLS THE OFFLINE HALF TWO WAYS, WHICH IS MEASURED HERE RATHER THAN TIDIED.",
+        "`trySaveOffline` is the short form — it takes a `MediaCaptureState` and builds the media specs",
+        "itself — and the artisan, product and craft forms use it. The tool, process and interview forms",
+        "call `repository.queueOfflineEntry` directly because they have media the short form cannot",
+        "describe: a tool routes graph-paper shots into the same `uris` list and must carry the grid",
+        "`purpose` with each FILE, a process attaches media per numbered step, an interview carries a",
+        "clip per question. Both land in `WorkshopRepository.queueOffline` and both write the same",
+        "`PendingEntry`, which is the only thing this contract is about. `queueVia` per record says",
+        "which, so a form that quietly stops queueing is a red test rather than a silent loss of a day's",
+        "fieldwork.",
+        "",
+        "AND ONE FORM'S CREATE IS INJECTED AT THE MOUNT. `QuestionnaireForm` takes",
+        "`onSubmit: suspend (QuestionnaireInterviewCreateRequest) -> String` and both of its mounts",
+        "supply `repository.createQuestionnaireInterview`. `createVia` per record says which shape to",
+        "expect, so the difference is declared rather than parsed around."
+      ]
+    }
+  },
+  "payloadKeys": {
+    "why": [
+      "THE TWO KEYS THAT CARRY THE WORKSHOP, in every record body on both clients and through both",
+      "doors. R1 keeps both tables and both nullable foreign keys; what the picker guarantees is that",
+      "AT MOST ONE of them is ever non-empty.",
+      "",
+      "BOTH ARE ALWAYS SENT, AND THAT IS THE HALF THAT LOOKS REDUNDANT AND IS NOT. The update routes",
+      "dump with `exclude_unset=True`, so a key omitted means \"leave the stored value alone\" — and the",
+      "single edit that could never be saved would be the one that UN-FILES a record. An explicit null",
+      "is what empties the column. The handset says the same thing in its own vocabulary through",
+      "`PendingEntry.clearedLinkKeys`, because a queued body is built once and replayed later.",
+      "",
+      "NEITHER CLIENT SENDS THE TYPE. There is no `workshopType`, `workshopTypeId` or `workshopKind`",
+      "key in any record body and there must not be (R3): the workshop the record names already",
+      "carries its own type, and a second copy beside the record could disagree with its own source",
+      "the first time somebody corrects it. That is asserted as a negative, per form, per client."
+    ],
+    "workshop": "workshopId",
+    "designWorkshop": "designWorkshopId",
+    "mustNotAppear": [
+      "workshopTypeId",
+      "workshopTypeKey",
+      "workshopType",
+      "workshopKind"
+    ],
+    "web": {
+      "readsFrom": [
+        "workshop.workshopId",
+        "workshop.designWorkshopId"
+      ],
+      "shape": [
+        "workshopId: workshop.workshopId || null",
+        "designWorkshopId: workshop.designWorkshopId || null"
+      ]
+    },
+    "android": {
+      "readsFrom": [
+        "link.workshopId()",
+        "link.designWorkshopId()"
+      ],
+      "shape": [
+        "workshopId = link.workshopId()",
+        "designWorkshopId = link.designWorkshopId()"
+      ]
+    }
+  },
+  "destinationRule": {
+    "why": [
+      "R3, DECLARED ONCE PER CLIENT AND NOWHERE ELSE. The type box chooses which of the record's two",
+      "columns the chosen workshop is written to, by the type row's own `routesToDesignWorkshop` flag:",
+      "true fills `designWorkshopId` and blanks `workshopId`, false does the reverse.",
+      "",
+      "READ THE FLAG, NEVER THE KEY. A `key === \"DESIGN_PROTOTYPE_DEVELOPMENT\"` test in a picker is",
+      "the bug the constant's own doc comment exists to prevent: an administrator may add a second",
+      "design-workshop-backed programme, and nothing in the database constrains \"exactly one true",
+      "row\". The key is licensed in three places on each client — the import, the offline FLOOR (which",
+      "has no served row to read a flag off), and NAMING a retired programme a record is still filed",
+      "under — and every SERVED row is read through the flag.",
+      "",
+      "IT LIVES IN THE PICKER AND NOT IN THE FORMS, which is what makes the two doors identical for",
+      "free: a form reads two ids off one control and writes them into two keys. A form that re-derived",
+      "the routing would be a sixth copy of this rule, and the integrated host would be the seventh."
+    ],
+    "flag": "routesToDesignWorkshop",
+    "web": {
+      "file": "frontend/components/forms/WorkshopPicker.tsx",
+      "expressions": [
+        "workshopId: routesToDesignWorkshop ? \"\" : field.workshopId",
+        "designWorkshopId: routesToDesignWorkshop ? design.workshopId : \"\""
+      ]
+    },
+    "android": {
+      "file": "android/app/src/main/java/com/designprototype/workshop/MainActivity.kt",
+      "expressions": [
+        "fun workshopId(): String? = if (routesToDesignWorkshop) null else field.value()",
+        "fun designWorkshopId(): String? = if (routesToDesignWorkshop) design.value() else null"
+      ]
+    },
+    "notLinkedSurvives": {
+      "why": [
+        "R5. Both branches of both clients draw a \"no workshop\" row and it is a real answer that",
+        "reaches the wire. `NO_FIELD_WORKSHOP` is the one wording, on both halves, on both clients:",
+        "the design half's own default (\"Not filed under a design workshop\") is right when it is one",
+        "of two boxes and wrong when it is the only one, so the picker overrides it."
+      ],
+      "label": "Not linked to a workshop",
+      "webConstant": "NO_FIELD_WORKSHOP",
+      "androidConstant": "NO_FIELD_WORKSHOP"
+    },
+    "existingRecordIsPinned": {
+      "why": [
+        "R4 IS A RULE FOR A NEW RECORD AND FOR NOTHING ELSE. On an EDIT the type box opens on whichever",
+        "type routes the way the STORED columns already do, and \"the most recent workshop this account",
+        "can reach\" is never applied over it. Getting that wrong re-files historic records under",
+        "whatever is newest, invisibly, on the next save of a form somebody merely opened.",
+        "",
+        "Both clients pin it the same way and both name the function: the routing is derived from the",
+        "two stored ids, and `isEdit` blocks each half's own prefill."
+      ],
+      "web": {
+        "file": "frontend/components/forms/WorkshopPicker.tsx",
+        "symbol": "storedRoutingOf"
+      },
+      "android": {
+        "file": "android/app/src/main/java/com/designprototype/workshop/ui/DesignWorkshopPicker.kt",
+        "symbol": "storedWorkshopRouting"
+      }
+    }
+  },
+  "workshopControls": {
+    "why": [
+      "R2: EXACTLY TWO BOXES ON A RECORD FORM, IN THIS ORDER, WITH THESE WORDS, ON BOTH CLIENTS.",
+      "",
+      "The third control is gone. It was a `WORKSHOP_KIND` filter whose own hint read \"Narrows the",
+      "workshops below. It is not saved on this record.\" — a box that changed a list and saved nothing,",
+      "borrowed from a vocabulary that answers stage 1 of a design workshop's own questionnaire. The",
+      "components that drew it (`frontend/components/forms/DesignWorkshopCascade.tsx` on the web, the",
+      "kind half of `ui/DesignWorkshopPicker.kt` on the handset) were DELETED, not merely unmounted:",
+      "an unmounted component is a control the next form will find and use.",
+      "",
+      "COUNTED STRUCTURALLY AND NOT BY LABEL. A label check goes green over a third box called",
+      "anything; what is asserted is that each record form mounts exactly ONE picker element, that the",
+      "picker draws exactly two labelled boxes, and that no record form reaches the halves directly."
+    ],
+    "labels": [
+      "Type of workshop",
+      "Workshop"
+    ],
+    "web": {
+      "picker": "WorkshopPicker",
+      "file": "frontend/components/forms/WorkshopPicker.tsx",
+      "halves": [
+        "WorkshopSelect",
+        "DesignWorkshopSelect"
+      ],
+      "forms": [
+        "frontend/components/forms/ArtisanForm.tsx",
+        "frontend/components/forms/ProductForm.tsx",
+        "frontend/components/forms/ToolForm.tsx",
+        "frontend/components/forms/ProcessForm.tsx",
+        "frontend/app/(protected)/questionnaire/page.tsx"
+      ]
+    },
+    "android": {
+      "picker": "RecordWorkshopField",
+      "file": "android/app/src/main/java/com/designprototype/workshop/MainActivity.kt",
+      "typeControl": "WorkshopTypeField",
+      "typeControlFile": "android/app/src/main/java/com/designprototype/workshop/ui/DesignWorkshopPicker.kt",
+      "halves": [
+        "WorkshopField",
+        "DesignWorkshopField"
+      ],
+      "forms": [
+        "ArtisanForm",
+        "ProductForm",
+        "ToolForm",
+        "ProcessForm",
+        "QuestionnaireForm"
+      ]
+    },
+    "deletedComponents": [
+      {
+        "path": "frontend/components/forms/DesignWorkshopCascade.tsx",
+        "why": "The web's kind box plus the design-workshop box. Deleted 2026-09-16 once its last two callers (the misc-media form and the interview form) were converted."
+      },
+      {
+        "path": "frontend/e2e/design-workshop-cascade-unit.spec.ts",
+        "why": "Nine assertions pinning the cascade, five of them about the `workshopKind` narrowing R2 removes. Deleted with the component it described rather than left red."
+      },
+      {
+        "path": "android/app/src/test/java/com/designprototype/workshop/ui/DesignWorkshopPickerTest.kt",
+        "why": "The handset twin, seven of whose assertions describe the kind filter. Its live rulings were re-asserted in `ui/WorkshopPickerTest.kt` before it was deleted."
+      }
+    ],
+    "forbiddenSymbols": {
+      "why": [
+        "NAMES THAT MUST NOT COME BACK, asserted across both client trees rather than per form,",
+        "because the way a third box returns is a helper that survives the form that used it.",
+        "`workshopKind` is deliberately NOT on this list: it is a real column on `DesignWorkshop`,",
+        "answered in stage 1 of its own questionnaire and read by the workshop list, the annual plan",
+        "and the stage registry. What is forbidden is a RECORD FORM narrowing by it."
+      ],
+      "web": [
+        "DesignWorkshopCascade",
+        "DEFAULT_WORKSHOP_KIND"
+      ],
+      "android": [
+        "chooseKind",
+        "offerKinds",
+        "kindChoices"
+      ],
+      "inRecordFormsOnly": [
+        "workshopKind"
+      ]
+    }
+  },
+  "validation": {
+    "why": [
+      "THE ONE PRE-FLIGHT A RECORD FORM RUNS BEFORE IT SAVES, and it runs on both doors because it",
+      "lives in the picker rather than in the host. `confirmSubmission()` asks",
+      "`GET /workshops/{id}/submission-check` and surfaces two answers a researcher has to learn",
+      "BEFORE the save rather than after: that they are not on a curated workshop's roster, and that",
+      "the workshop's submission window has closed (which is accepted, but pinned to PENDING and",
+      "flagged so only an admin can approve it).",
+      "",
+      "IT IS A NO-OP WHEN THE TYPE ROUTES AT A DESIGN WORKSHOP, on both clients, and that is not a",
+      "weakening of the gate. The window and the assignment roster are properties of a `Workshop`; a",
+      "`DesignWorkshop` has neither, and nothing is being filed against the ordinary workshop the",
+      "field half may still be holding. Asking anyway would raise the late-submission dialog about a",
+      "workshop the save will not name.",
+      "",
+      "ASSERTED AS \"CALLED BEFORE THE WRITE\" AND NOT MERELY \"CALLED\": a pre-flight after the POST is",
+      "a confirmation dialog about work already saved."
+    ],
+    "web": {
+      "call": "confirmSubmission()",
+      "before": "saveOrQueue"
+    },
+    "android": {
+      "call": "link.confirmSubmission()",
+      "before": "trySaveOffline"
+    }
+  },
+  "offlineQueue": {
+    "why": [
+      "THE QUEUE SHAPE IS PART OF \"SAVED IN THE SAME MANNER\", and it is the half a reviewer skips.",
+      "A record created in a courtyard with no signal is not saved by the same code path as one",
+      "created at a desk — it is serialised, banked, and replayed hours later against a server that",
+      "has moved on. If the integrated door queued a different shape, or did not queue at all, the two",
+      "doors would agree online and diverge in exactly the conditions this application exists for.",
+      "",
+      "ONE ENTRY SHAPE PER CLIENT AND BOTH DOORS WRITE IT. Neither host disables queueing and neither",
+      "adds a field: the entry is built by the FORM, which is the same component on both doors.",
+      "",
+      "THE ONE THING THE DIALOG ADDS IS A MESSAGE, NOT A SHAPE. `onQueued` exists because",
+      "`OutboxBanner` sits at the top of the protected layout, behind `FieldDialog`'s overlay on a body",
+      "whose scroll the dialog has locked — so a queued save inside a dialog was indistinguishable from",
+      "one that failed, which is how a designer banks three copies of one artisan. It changes what the",
+      "host SAYS and nothing about what is stored."
+    ],
+    "web": {
+      "type": "OutboxEntry",
+      "file": "frontend/lib/offline.ts",
+      "keys": [
+        "label",
+        "createdAt",
+        "endpoint",
+        "method",
+        "body",
+        "media",
+        "attempts",
+        "failure"
+      ],
+      "queuedNotice": "onQueued"
+    },
+    "android": {
+      "type": "PendingEntry",
+      "file": "android/app/src/main/java/com/designprototype/workshop/data/Offline.kt",
+      "keys": [
+        "id",
+        "type",
+        "payloadJson",
+        "label",
+        "media",
+        "createdAt",
+        "targetId",
+        "unfiled"
+      ],
+      "unfiledMap": {
+        "why": [
+          "THE HANDSET'S ONE EXTRA FIELD, AND IT HAS NO BROWSER TWIN BECAUSE A BROWSER HAS NO OUTBOX",
+          "ENTRY TO CARRY IT. A queued body is built once and sent later, so it has to record WHY a",
+          "workshop box was empty: `UNFILED_BY_CHOICE` (somebody cleared it — reaches the server as an",
+          "explicit null) or `UNFILED_NO_OPTIONS` (the picker had nothing in it — sends nothing, so a",
+          "stored link is not destroyed by a device that simply could not list the workshops).",
+          "",
+          "The browser settles the same question at submit time, in the payload, because it is never",
+          "more than one request away from the server. Same outcome, different moment."
+        ],
+        "byChoice": "UNFILED_BY_CHOICE",
+        "noOptions": "UNFILED_NO_OPTIONS"
+      }
+    }
+  },
+  "declaredDifferences": {
+    "why": [
+      "DIFFERENCES BETWEEN THE TWO DOORS, OR BETWEEN THE TWO CLIENTS, THAT ARE LEGITIMATE — each with",
+      "the reason, and each ASSERTED so it cannot go stale.",
+      "",
+      "WHY THE ROWS ARE THEMSELVES CHECKED. This is `openDrifts`' ratchet from",
+      "`shared/questionnaire-form-contract.json`, turned the other way up. There a row names a defect",
+      "that must stop being true; here a row names a DIFFERENCE that is allowed to be true, and the",
+      "test asserts it still is. Either way a row cannot rot: the moment somebody converges the two",
+      "sides, the assertion fails and says to delete the row. A list of licensed exceptions that",
+      "nothing checks reads as a considered account long after the product has moved, and the next",
+      "person widens it.",
+      "",
+      "\"DECLARED, NOT TOLERATED SILENTLY\" IS THE WHOLE POINT. A difference nobody wrote down is",
+      "indistinguishable from a bug nobody noticed."
+    ],
+    "rows": [
+      {
+        "id": "web-integrated-seeds-the-linked-workshop",
+        "between": "the two web doors",
+        "stillTrue": {
+          "fileContains": [
+            "frontend/components/designworkshop/StageReferenceField.tsx",
+            "if (linkedWorkshopId) seed.workshopId = linkedWorkshopId;"
+          ]
+        },
+        "why": [
+          "THE INTEGRATED DOOR FILLS THE WORKSHOP BOX IN; THE STANDALONE DOOR PROBES FOR IT. A stage's",
+          "reference picker knows which ordinary `Workshop` the design workshop is linked to, so it",
+          "seeds that id and the picker treats it exactly as a STORED id: the type box opens on the",
+          "ordinary-workshop side with that workshop chosen, and the most-recent probe and the carry bag",
+          "are kept off it.",
+          "",
+          "IT IS NOT A DIFFERENT SAVE. The seed lands in the same control a designer would have used,",
+          "showing the same name, and they can change it before saving — `inlineRecordHost.ts` requires",
+          "that of every seed (\"a seed is only allowed to be a DEFAULT they can see, never a claim made",
+          "behind the form\"). The endpoint, the keys, the routing rule and the queue are untouched.",
+          "",
+          "WHAT IT FIXES IS WORSE THAN WHAT IT COSTS: a tool created from a workshop-scoped picker and",
+          "filed against a different sitting is a tool that picker can never show again, and the",
+          "designer who created it is looking at an empty control seconds later."
+        ]
+      },
+      {
+        "id": "android-integrated-refuses-to-seed-a-workshop",
+        "between": "the two clients' integrated doors",
+        "stillTrue": {
+          "kotlinDataClassFields": {
+            "file": "android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/DwReferenceField.kt",
+            "symbol": "DwInlineSeed",
+            "exactly": [
+              "artisanId",
+              "artisanName"
+            ]
+          }
+        },
+        "why": [
+          "`DwInlineSeed` carries an artisan and nothing else, so the handset's integrated door leaves",
+          "the workshop question to the form's own defaulting. The browser seeds it (row above).",
+          "",
+          "THE TWO ARE BOTH DEFENSIBLE AND ONLY ONE OF THEM IS WRITTEN DOWN AS A DECISION, which is why",
+          "this row exists rather than a fix. Android's inline host states the principle — \"asserting a",
+          "parent this picker never saw the form choose would be a claim about whose product it is\" —",
+          "and applies it to the workshop as well as the artisan; the browser draws the line at values",
+          "the designer can see and change. Converging them is a product call and not a defect: the",
+          "handset's default (the most recent workshop the account can reach) is a good answer, and the",
+          "browser's (the workshop this design workshop is linked to) is a better one.",
+          "",
+          "IT CHANGES NO PART OF THE SAVE. Same endpoint, same keys, same routing, same queue — only",
+          "which workshop is already in the box when the form opens, in a control that says what it",
+          "holds."
+        ]
+      },
+      {
+        "id": "android-refuses-to-queue-an-interview-edit",
+        "between": "the two clients",
+        "stillTrue": {
+          "androidFormContains": {
+            "form": "QuestionnaireForm",
+            "text": "A correction to an interview cannot be saved on this device."
+          }
+        },
+        "why": [
+          "THE HANDSET EDITS AN INTERVIEW IN PLACE AND WILL NOT QUEUE THAT EDIT OFFLINE. It refuses, in",
+          "the room, with the answers still on screen, and says why.",
+          "",
+          "The reason is `responsesToSend`: it is a DIFF computed against what the server held when the",
+          "form was opened, and `QuestionnaireInterviewUpdateRequest` reads a present `responses` as",
+          "\"replace\". Replaying that diff hours later, against a sitting a second interviewer may have",
+          "added answers to, would drop theirs without either person being told. `artisanIds` has the",
+          "same shape and the same hazard.",
+          "",
+          "THE BROWSER NEVER MEETS THIS because its capture form is create-only — an interview is",
+          "corrected through the review panel — so there is no web behaviour to match. Closing it",
+          "properly needs the interview's own version as a precondition, which is what the custom",
+          "questionnaire's write already does, and not a queue."
+        ]
+      },
+      {
+        "id": "craft-and-media-draw-one-box",
+        "between": "record forms and the two forms that are not",
+        "stillTrue": {
+          "singleBoxForms": [
+            {
+              "client": "web",
+              "file": "frontend/app/(protected)/crafts/page.tsx",
+              "control": "WorkshopSelect"
+            },
+            {
+              "client": "web",
+              "file": "frontend/app/(protected)/media/page.tsx",
+              "control": "DesignWorkshopSelect"
+            },
+            {
+              "client": "android",
+              "form": "CraftForm",
+              "control": "WorkshopField"
+            },
+            {
+              "client": "android",
+              "form": "AndroidMediaForm",
+              "control": "DesignWorkshopField"
+            }
+          ]
+        },
+        "why": [
+          "TWO SURFACES HAVE ONE DESTINATION EACH, SO THEY DRAW ONE BOX AND NO TYPE BOX. Both clients",
+          "agree, and the agreement is new: the browser drew the retired cascade's TWO boxes on the",
+          "misc-media form until 2026-09-16 while the handset had already dropped to one.",
+          "",
+          "CRAFT: `model Craft` in `backend/prisma/schema.prisma` has `workshopId` and no",
+          "`designWorkshopId`. A type box there would offer six rows, five of which could change nothing",
+          "and the sixth of which would route at a column that does not exist.",
+          "",
+          "MISCELLANEOUS MEDIA: `MediaFile` has BOTH columns, but `MediaCompleteRequest`",
+          "(backend/app/schemas/media.py) declares only `designWorkshopId`, and so do `frontend/lib`'s",
+          "upload body and Android's `ApiModels.MediaCompleteRequest`. So this is a WIRE gap and not a",
+          "data one, and the fix is three request shapes rather than a form: add `workshopId` to all",
+          "three and both mounts become the two-box picker like the other five. Until then a type box",
+          "would offer five types whose answer the upload physically cannot carry — which is the exact",
+          "complaint the retired kind box earned.",
+          "",
+          "NEITHER IS A RECORD FORM FOR THE PURPOSES OF R2, and saying so here is what stops the next",
+          "reader 'fixing' them into three-box forms or reading their single box as a regression."
+        ]
+      }
+    ]
+  },
+  "notCoveredHere": [
+    "WHAT THIS FILE DELIBERATELY DOES NOT DECLARE, each because it is already one register somewhere",
+    "else and a second copy here would be the failure this file exists to prevent:",
+    "",
+    "  * WHAT THE INTERVIEW FORM ASKS FOR, field by field, in screen order, on both clients and in all",
+    "    three walkthrough registers. That is `shared/questionnaire-form-contract.json`, which is the",
+    "    authority on the SHAPE of that one form; this file is the authority on what any record form",
+    "    DOES with the answer. The two overlap on exactly two rows — \"Type of workshop\" and",
+    "    \"Workshop\" — and both read them from the same components rather than from each other.",
+    "  * THE WORKSHOP-TYPE TABLE ITSELF: its columns, its five endpoints, the admin screen and the",
+    "    refusal that names how many workshops are filed under a type. That is",
+    "    `backend/tests/test_workshop_types.py` and the model comment on `WorkshopTypeOption`.",
+    "  * WHO MAY CREATE A WORKSHOP (R6). `backend/tests/test_workshop_creation_rights.py` holds the",
+    "    route, both clients' controls and the refusal sentence, in 29 tests.",
+    "  * THE OFFLINE QUEUE'S BEHAVIOUR — retry, skew, dangling references, media replay. Both clients",
+    "    have their own suites for it. What is declared here is only its SHAPE, and only so far as the",
+    "    two doors must share it."
+  ],
+  "maintenance": [
+    "WHEN A RECORD FORM GAINS A NEW WAY TO BE SAVED, this file changes in the same commit. A third",
+    "host, a second endpoint, a form that writes without the picker — each of those is a decision, and",
+    "a decision that arrives as a green test is a decision nobody made.",
+    "",
+    "THE ORDER MATTERS AND IT IS NOT THE OBVIOUS ONE. An edit that changes a client to match this file",
+    "is a FIX; an edit that changes this file to match a client is a DECISION. They should not look",
+    "alike in a diff, and the second should never be the way a red test is turned green.",
+    "",
+    "IF THIS FILE IS EVER RED BECAUSE A DIFFERENCE IS GONE, the row in `declaredDifferences` says so",
+    "in its failure message and the edit is to delete the row. That is the good direction."
+  ]
+}

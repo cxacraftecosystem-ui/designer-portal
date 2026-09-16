@@ -2037,7 +2037,19 @@ function trackedTextFiles() {
       // A checker that reports its own rule definitions reports five findings on its first run and
       // teaches its reader that the whole section is noise. Everything else it says about itself
       // still applies — its paths, its citations and its links are checked like any other file's.
-      .filter((p) => p !== "docs/tools/check-docs.mjs");
+      .filter((p) => p !== "docs/tools/check-docs.mjs")
+      // A TRACKED PATH IS NOT ALWAYS A FILE, and every sweep below opens these with a bare
+      // `readFileSync`. `git ls-files` lists what the INDEX holds, so a file deleted in the working
+      // tree and not yet staged is still on that list — which is the ordinary state of any tree
+      // mid-change, and it made this whole checker die with an ENOENT stack trace naming the
+      // deleted file rather than reporting anything at all. Measured 2026-09-16, when the retired
+      // `DesignWorkshopCascade` and its two pinning test files were removed: `node
+      // docs/tools/check-docs.mjs` crashed in §8c before §1 had printed a line.
+      //
+      // Skipping them is also the RIGHT answer rather than merely a survivable one: these sweeps
+      // ask what the tree SAYS, and a path with nothing behind it says nothing. The counts in §1
+      // are derived from the sources themselves and are unaffected.
+      .filter((p) => existsSync(join(REPO, p)));
   } catch {
     // No git in the environment (a tarball export, some CI images). The sweeps below then have
     // nothing to walk, and each says so rather than reporting a clean result it never measured.

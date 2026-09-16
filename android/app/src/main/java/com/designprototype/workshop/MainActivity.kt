@@ -154,12 +154,21 @@ import androidx.core.content.FileProvider
 import com.designprototype.workshop.data.ApiClient
 import com.designprototype.workshop.data.OfflineQueueResult
 import com.designprototype.workshop.data.unfiledLinkReason
+import com.designprototype.workshop.data.UNFILED_BY_CHOICE
 import com.designprototype.workshop.data.workshopUnfiledReasons
 // C1: the cache-first record registers, and the store their four keys live beside — DwReferenceStore
 // already backs every design-workshop stage's REF field; see the section header above HomeScreen.
 import com.designprototype.workshop.data.DwReferenceStore
 import com.designprototype.workshop.data.DwReferenceList
 import com.designprototype.workshop.data.DwReferenceOption
+// The questionnaire capture form's artisan scope: which of `GET /artisans`' two workshop parameters
+// the chosen workshop travels as, decided by the routing flag on the chosen TYPE. The rule lives in
+// the data layer because it is a statement about the wire and because a copy of it per form is how
+// four of nine mounts came to disagree in the sibling repository. See `QuestionnaireForm`.
+import com.designprototype.workshop.data.interviewArtisanScope
+// The offline workshop cache's reader — the `Workshop` half. `rememberWorkshopPicker` answers from
+// the device's copy before it asks the server; `data/DwLocalWorkshops.kt` carries the argument.
+import com.designprototype.workshop.data.loadAllottedFieldWorkshops
 import com.designprototype.workshop.data.OutboxCounts
 import com.designprototype.workshop.data.offlineSavedMessage
 import com.designprototype.workshop.data.outboxDeviceBanner
@@ -262,7 +271,13 @@ import com.designprototype.workshop.ui.Coral
 import com.designprototype.workshop.ui.ConsolidatedQuestionnaireScreen
 import com.designprototype.workshop.ui.DataBrowserScreen
 import com.designprototype.workshop.ui.DesignWorkshopField
+import com.designprototype.workshop.ui.DesignWorkshopPickerState
 import com.designprototype.workshop.ui.rememberDesignWorkshopPicker
+// The FIRST of the two dropdowns every record form now carries — see [RecordWorkshopField], which is
+// the only thing in this file that mounts it, and `ui/DesignWorkshopPicker.kt` for the whole ruling.
+import com.designprototype.workshop.ui.WorkshopTypePickerState
+import com.designprototype.workshop.ui.rememberWorkshopTypePicker
+import com.designprototype.workshop.ui.WorkshopTypeField
 import com.designprototype.workshop.ui.WorkshopListState
 import com.designprototype.workshop.ui.WorkshopListKind
 import com.designprototype.workshop.ui.workshopListNotice
@@ -273,6 +288,15 @@ import com.designprototype.workshop.ui.fieldWorkshopOptions
 // designer may request access to): the repository's own worked example, quoted in that
 // function's KDoc, is "No crafts available." — the exact string one of them used to be.
 import com.designprototype.workshop.ui.unscopedEmptyLine
+// Its neighbours, for the questionnaire form's artisan picker: an empty list is "still coming", "the
+// read was refused", "this device has never received one", "nobody is recorded at THIS WORKSHOP" or
+// "there really are none", and that control prints whichever of the five its own scoped read says.
+// The fourth became sayable on 2026-09-17, when that roster stopped being the whole deployment's —
+// see the call site, which carries the argument for each arm.
+import com.designprototype.workshop.ui.loadingListLine
+import com.designprototype.workshop.ui.couldNotListLine
+import com.designprototype.workshop.ui.offlineListLine
+import com.designprototype.workshop.ui.atWorkshopEmptyLine
 // The register half of the same file: where a cached list came from, and the five sentences one is
 // allowed to say about itself. See `loadCachedRegister`, which returns the first of these.
 import com.designprototype.workshop.ui.RegisterLoad
@@ -281,6 +305,10 @@ import com.designprototype.workshop.ui.registerListNotice
 // The named absence a class-(a) vocabulary passes rather than falling through to null — §3.1.
 import com.designprototype.workshop.ui.BUNDLED_LIST_HAS_NO_SENTENCE
 import com.designprototype.workshop.ui.NO_FIELD_WORKSHOP
+// The media screen's own "no workshop" row. It is the ONE mount of [DesignWorkshopField] that is
+// not one of the two boxes on a record form, so it is the one that still names the table — see
+// [AndroidMediaForm], which carries the argument.
+import com.designprototype.workshop.ui.NO_DESIGN_WORKSHOP
 import com.designprototype.workshop.ui.workshopCapLine
 import com.designprototype.workshop.ui.RecordCodeLookupPanel
 import com.designprototype.workshop.ui.RecordCodeSection
@@ -2083,6 +2111,43 @@ private fun LoginScreen(
 // C1 — the four record registers, cached the way the design-workshop stage's
 // REF fields already cache theirs: through DwReferenceStore, ALL-scoped, no
 // expiry, cache-first-then-refresh. See DROPDOWN_DESIGN.md §3.3.
+//
+// ── WHAT THIS BLOCK USED TO SAY ABOUT THE WORKSHOP PICKERS, AND WHY IT NO LONGER SAYS IT ─────
+//
+// It cited R6 and ruled that a `Workshop`/`DesignWorkshop` picker "must NEVER get this treatment"
+// because a stale access list reads a revoked grant as a grant. That was the law until 2026-09-16
+// and the owner repealed half of it: the allotted, not-yet-ended workshops ARE now kept on the
+// device, by [com.designprototype.workshop.data.DwLocalWorkshops], because the alternative is a
+// designer in a courtyard with an empty picker filing a fortnight of fieldwork under nothing.
+// `WorkshopRepository.workshopsIMaySubmitTo`'s KDoc carries the whole argument for why that is a
+// NARROWING of R6 rather than a repeal — the window is re-tested on every read, the file is per
+// account, an answered refresh REPLACES it, and it grants nothing because the server still decides
+// at the pre-flight and again at the save.
+//
+// BOTH PICKERS READ IT NOW — 2026-09-16, later the same day, and this paragraph is the one that
+// said they did not. `rememberWorkshopPicker` below and `rememberDesignWorkshopPicker` in
+// `ui/DesignWorkshopPicker.kt` each answer from the device's copy first and then let the server's
+// answer replace both the list and the file, through `loadAllottedFieldWorkshops` and
+// `loadAllottedDesignWorkshops`. Check it with
+// `grep -rn "loadAllottedFieldWorkshops\|loadAllottedDesignWorkshops" android/app/src/main`.
+//
+// WHAT IS DIFFERENT ABOUT THE WORKSHOP HALF, and it is three things a reader of this block should
+// not have to derive from the four registers below:
+//
+//   * THE LIVE ANSWER OUTRANKS THE CACHED ONE IN BOTH DIRECTIONS, and a SHORTER live answer is the
+//     true one. The registers' rule is the opposite — `DwReferenceStore.store` refuses to let an
+//     empty fetch wipe an artisan list — so the workshop cache writes a reserved row to express
+//     "the server answered, and it is none". Without it a revoked allotment could never be retired.
+//   * ONLY THE UPCOMING AND ONGOING ARE KEPT, and the window is re-tested against the device's own
+//     today on every read. A register has no such notion; an access list does, and it is what bounds
+//     how long a stale row can be offered.
+//   * THE PREFILL IS NOT CACHED. The rows are OFFERED off the disk; the create-time default still
+//     comes from a read that answered. A stale offer is a row somebody chooses, a stale default is
+//     an id written onto a record nobody looked at.
+//
+// So this block's four registers keep their own rule, and the workshop pickers keep a narrower one
+// next door. `WorkshopRepository.workshopsIMaySubmitTo`'s KDoc carries the whole argument for why
+// that is a NARROWING of R6 rather than a repeal.
 // ===========================================================================
 
 /**
@@ -2101,9 +2166,7 @@ private fun LoginScreen(
  * a designer correcting a craft record on the bus home, offline, previously had nothing to pick from
  * at all. §3.3 rules that this class of list — a shared vocabulary open to every signed-in account,
  * never an access grant — is exactly the kind [DwReferenceStore] exists to survive a dead connection
- * for, and R6 (`WorkshopRepository.kt:3918-3923`) rules that a `Workshop`/`DesignWorkshop` picker is
- * the opposite kind and must NEVER get this treatment: a stale access list reads a revoked grant as a
- * grant. Craft, artisan and product registers carry no access meaning at all — `records.viewable_where`
+ * for. Craft, artisan and product registers carry no access meaning at all — `records.viewable_where`
  * already opens every one of them to every signed-in account — so caching them costs nothing R6 cares
  * about and buys back exactly the offline afternoon [WorkshopPickerState] already refuses to.
  *
@@ -2134,6 +2197,14 @@ private fun LoginScreen(
  * A distinct prefix keeps the two ALL-scoped caches in two different files under the one store, which
  * is the entire fix — see [DwReferenceStore.cacheKey]'s own note on why its three segments must never
  * collide across unrelated callers.
+ *
+ * THERE IS A THIRD ARTISAN MODEL AS OF 2026-09-17 and it follows the same rule for a third reason:
+ * `QuestionnaireForm`'s workshop-scoped roster writes under `"InterviewWorkshopArtisan"` rather than
+ * [REGISTER_ARTISAN] with a WORKSHOP owner. Sharing the model string would put a NARROWED list and
+ * this un-narrowed one under names that differ only by owner segment, which is exactly the pair
+ * `DwReferenceStore.anyForModel` once merged across — serving the whole deployment's register as one
+ * workshop's roster, offline, with no request to see it happen. Read that function's block comment
+ * before giving any narrowed list a model name that an un-narrowed one already uses.
  */
 // internal, not private: RecordRegisterCacheTest pins these against each other and against the
 // design-workshop stage's own bare model names, which is the whole safety argument above in code.
@@ -2245,6 +2316,17 @@ internal fun optionToTool(o: DwReferenceOption): ToolDetailDto? =
  * too. Deriving both from one string in one place is what keeps the key `store` writes under and the
  * `model` field it stamps on the file from being two values a future edit could change independently
  * and silently disagree.
+ *
+ * ── "ALL-SCOPED" IS A PROPERTY OF THIS FUNCTION'S FOUR CALLERS, NOT OF THE APP ─────────
+ *
+ * Read as of 2026-09-17, when `QuestionnaireForm` grew a WORKSHOP-scoped artisan roster of its own.
+ * That roster does its own cache-first read inline rather than coming through here, and the reason is
+ * the paragraph above: this function's key is `cacheKey(model, "ALL", "", "")` by construction, so
+ * serving a narrowed list would mean a scope parameter on a function whose other four callers have no
+ * scope — changing the shape of five registers to serve one. It also writes under a model name of its
+ * own (`"InterviewWorkshopArtisan"`, not [REGISTER_ARTISAN]) so that a narrowed roster and the
+ * deployment-wide register can never be served for one another, offline, by a future edit to
+ * [DwReferenceStore.anyForModel]'s prefix matching.
  */
 internal suspend fun <T> loadCachedRegister(
     context: Context,
@@ -2297,7 +2379,21 @@ internal suspend fun loadCraftRegister(
     onList = onList,
 )
 
-/** The artisan register, ALL-scoped and offline-cached — see the section header above for why. */
+/**
+ * The artisan register, ALL-scoped and offline-cached — see the section header above for why.
+ *
+ * IT IS DELIBERATELY NOT NARROWED BY WORKSHOP AND MUST NOT BECOME SO. Six callers read it: five
+ * record forms plus the search screen, none of which is scoped to a workshop — and, more sharply, it
+ * is what `carryScope(CarryNode.ARTISAN, …)` is handed to decide whether a CARRIED artisan is still
+ * REACHABLE. Narrowing it would answer a different question with the same array: an artisan who is
+ * alive, visible and merely documented at another workshop would be read as deleted and pruned out of
+ * the carry bag, taking the workshop the bag was carrying with them.
+ *
+ * `QuestionnaireForm`'s artisan picker WAS scoped, on 2026-09-17, and it was scoped BESIDE this rather
+ * than inside it: that form keeps reading this register for its carry scope and for the arm where no
+ * workshop is named, and does a second, workshop-scoped read for the roster it offers. See the load
+ * effect in that form, which carries the whole argument.
+ */
 internal suspend fun loadArtisanRegister(
     context: Context,
     repository: WorkshopRepository,
@@ -2687,9 +2783,13 @@ private fun HomeScreen(
     // A volunteer is deliberately allowed to answer interviews, upload media, browse, use tasks and
     // sharing, and request workshop access — everything `require_record_creator` does NOT cover.
     fun canCreate(mode: EntryMode): Boolean = when (mode) {
-        // require_craft_manager / require_workshop_manager: Professor+ by rank, no grant.
+        // require_craft_manager: Professor+ by rank, no grant.
         EntryMode.CRAFT -> user.canManageTheCrafts()
-        EntryMode.WORKSHOP -> user.canManageTheWorkshops()
+        // require_workshop_opener: MINISTRY_ADMIN and above, and NOT the Professor floor the craft
+        // card beside it still uses. Opening a workshop and correcting one are two acts with two
+        // gates now; this table is the CREATE one, so it asks the create question. See
+        // [UserDto.canOpenAWorkshop].
+        EntryMode.WORKSHOP -> user.canOpenAWorkshop()
         // require_professor on GET/PATCH /users, AND admin chrome: /users is listed in the web's
         // ADMIN_CHROME_ROUTES, so an admin with admin view off loses it while a professor — who has
         // no toggle — keeps it. Role first, toggle second: the toggle can only ever subtract.
@@ -3483,14 +3583,48 @@ private fun HomeScreen(
                     onDone = { message = "Artisan saved"; refresh(); refreshLookups(); goDashboard() },
                     onError = { showMessage(it) }
                 )
-                EntryMode.WORKSHOP -> WorkshopForm(
-                    repository = repository,
-                    artisans = artisans,
-                    prefill = s.prefill,
-                    adminView = adminView,
-                    onDone = { message = "Workshop saved"; refresh(); goDashboard() },
-                    onError = { showMessage(it) }
-                )
+                /*
+                 * THE ONE ARM IN THIS `when` THAT CAN REFUSE, and it has to be here rather than only
+                 * on the dashboard card, because the card is not the only door into this screen.
+                 * `FieldPermissions.canManageWorkshops` still opens the drawer's "Record workshop"
+                 * row at Professor and above — correctly, since that row also reaches the workshop
+                 * LIST and the edit form — and `NavDestination.RECORD_WORKSHOP` lands on
+                 * `Screen.Create`. Without this arm a professor would tap a row they are entitled to,
+                 * get a blank create form, fill it in with a title, a place, two dates, an artisan
+                 * roster and a photograph, and meet the 403 on Save with the whole lot in memory.
+                 *
+                 * IT ASKS `canCreate` AND NOT THE PREDICATE BENEATH IT, so the form slot and the
+                 * dashboard card cannot drift apart: one call, one answer, two surfaces. The card is
+                 * already filtered by the same function at the grid.
+                 *
+                 * EDITING IS NOT GATED HERE — this is `Screen.Create`, and `Screen.Edit` mounts the
+                 * same form with `editing` set, ungated, exactly as before, because the server's edit
+                 * rule did not move. What DID move is the way IN to it from the dashboard: that card
+                 * is filtered by `canCreate`, so its "Update existing" button left with the "New"
+                 * button beside it. The refusal card below hands that door back — see
+                 * [WorkshopCreateRefusedCard], which is where the whole of that argument lives.
+                 */
+                EntryMode.WORKSHOP -> if (canCreate(EntryMode.WORKSHOP)) {
+                    WorkshopForm(
+                        repository = repository,
+                        artisans = artisans,
+                        prefill = s.prefill,
+                        adminView = adminView,
+                        onDone = { message = "Workshop saved"; refresh(); goDashboard() },
+                        onError = { showMessage(it) }
+                    )
+                } else {
+                    // THE EDIT DOOR, HANDED TO THE ACCOUNTS THAT STILL HOLD IT — see the card's own
+                    // note. `FieldPermissions.canManageWorkshops` and NOT a local copy of the same
+                    // threshold: this file deleted its duplicate of that rule for the reason the
+                    // deleted `can_run_design_workshops` twin above states, and one spelling of
+                    // `require_workshop_manager` on this client is the whole point of that deletion.
+                    WorkshopCreateRefusedCard(
+                        onOpenExisting = if (FieldPermissions.canManageWorkshops(user)) {
+                            ({ message = null; screen = Screen.Browse(EntryMode.WORKSHOP) })
+                        } else null
+                    )
+                }
                 EntryMode.PRODUCT -> ProductForm(
                     repository = repository,
                     crafts = crafts,
@@ -3673,6 +3807,9 @@ private fun HomeScreen(
                     recordId = s.recordId,
                     sections = sections,
                     artisans = artisans,
+                    // The same fact the CREATE branch above passes. The edit screen used to let the
+                    // parameter default, which the artisan picker's empty message now reads.
+                    lookupState = lookupState,
                     canManageQuestionnaire = isQuestionnaireManager,
                     adminView = adminView,
                     // Every record Delete on the web is `{adminMode ? … : null}` — the role is what
@@ -5905,6 +6042,12 @@ private const val RANK_RESEARCHER = 30
 // duplicate of `can_run_design_workshops` below, and that rule is a set membership rather than a
 // threshold — keeping the constant would invite the threshold to be rewritten.
 private const val RANK_PROFESSOR = 40
+// 48 — the Ministry Admin, and this handset needs the number for exactly ONE rule: who may OPEN a
+// workshop (`require_workshop_opener`). It sits between PROFESSOR and ADMIN, which is the whole
+// reason a constant is necessary at all: neither of the two thresholds this file already had can
+// express "the ministry and the admins and nobody in between", and spelling it as `>= RANK_PROFESSOR
+// && something` would have been a second rule wearing the first one's clothes.
+private const val RANK_MINISTRY_ADMIN = 48
 private const val RANK_ADMIN = 50
 
 /**
@@ -5998,8 +6141,28 @@ private fun UserDto.canManageTheQuestionnaire(): Boolean =
  */
 private fun UserDto.canManageTheCrafts(): Boolean = roleRank(role) >= RANK_PROFESSOR
 
-/** `can_manage_workshops` / `require_workshop_manager` — Professor+, rank alone; see above. */
-private fun UserDto.canManageTheWorkshops(): Boolean = roleRank(role) >= RANK_PROFESSOR
+/**
+ * `require_workshop_opener` — OPENING a workshop. A rank floor at MINISTRY_ADMIN (48), so
+ * `{Ministry Admin, Admin, Master Admin}`.
+ *
+ * THIS REPLACED A COPY OF `can_manage_workshops` (Professor and above) THAT ANSWERED THE WRONG
+ * QUESTION. That predicate is "may this account add OR EDIT a workshop", one name over two acts, and
+ * the owner's ruling splits them: the ministry opens a workshop and a designer participates in it.
+ * A designer (35) was below the old floor too, so the handset never offered them this card — the
+ * card that actually goes away here belongs to a professor, an assistant director and a regional
+ * director, and the 403 they would otherwise meet on Save is the reason it goes.
+ *
+ * THE EDIT HALF IS UNCHANGED AND IS NOT THIS FUNCTION. `FieldPermissions.canManageWorkshops` in
+ * ui/AppNavigation.kt still opens the "Record workshop" row at Professor and above, because
+ * `PATCH /workshops/{id}` is still `require_workshop_manager`; what that row reaches for an account
+ * below this floor is the workshop LIST and the edit form, never a blank create form — see the
+ * `Screen.Create` arm, which draws [WORKSHOP_CREATE_REFUSAL] in the form's place.
+ *
+ * NOT RENAMED-AND-KEPT ALONGSIDE ITS OLD SELF: a wrong duplicate with no callers is how a
+ * permission defect comes back, exactly as the deleted `can_run_design_workshops` copy a few lines
+ * up argues at length. One rule, one spelling, one call site.
+ */
+private fun UserDto.canOpenAWorkshop(): Boolean = roleRank(role) >= RANK_MINISTRY_ADMIN
 
 /** `require_professor` on GET/PATCH /users — the user table opens for Professor and above. */
 private fun UserDto.canManageUsers(): Boolean = roleRank(role) >= RANK_PROFESSOR
@@ -6992,13 +7155,25 @@ private fun StatusControl(canSetStatus: Boolean, value: String, onSelect: (Strin
     }
 }
 
-// ---------------------------------------------------------------------------
-// Workshop linkage. Field work happens at a workshop, so the workshop is the
-// primary context for every record: each form opens with the same picker, above
-// the craft / artisan / product (secondary, tertiary) selects. The loading and
-// defaulting rules live here once, in [rememberWorkshopPicker], rather than
-// being re-typed on each form.
-// ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------------------------
+// WORKSHOP LINKAGE — TWO DROPDOWNS, NEVER THREE
+//
+// Field work happens at a workshop, so the workshop is the primary context for every record: each
+// form opens with the same control, above the craft / artisan / product selects. What that control
+// IS changed in this release. It used to be up to three boxes — an ordinary `Workshop` picker, a
+// `WORKSHOP_KIND` filter that saved nothing, and a `DesignWorkshop` picker — and it is now exactly
+// two:
+//
+//     "Type of workshop"   the administrator's list (`WorkshopTypeOption`, GET /workshop-types)
+//     "Workshop"           the workshops OF THAT TYPE, most recent first
+//
+// [RecordWorkshopField] is that control and [rememberRecordWorkshopLink] is its state. A form mounts
+// one of each and reads two ids off it; nothing else in this file decides anything about workshops.
+// The type box, the routing and the defaulting live in `ui/DesignWorkshopPicker.kt`, whose header
+// carries the whole argument. What stays HERE is [WorkshopPickerState] and [WorkshopField] — the
+// ordinary-`Workshop` half — because they own the submission pre-flight and the late-submission
+// dialog, which a `DesignWorkshop` has no equivalent of.
+// ---------------------------------------------------------------------------------------------
 
 /**
  * The workshops offered by a record form's picker plus the one currently linked.
@@ -7061,6 +7236,20 @@ private class WorkshopPickerState(private val repository: WorkshopRepository, in
      * of what "offline" means on this handset.
      */
     var online by mutableStateOf(true)
+        private set
+
+    /**
+     * WHAT THE DEVICE'S OWN COPY SAID, and when it was written — `PENDING` until the disk is read.
+     *
+     * [workshops] may hold rows that came off `data/DwLocalWorkshops.kt` rather than off the wire,
+     * and the two must not look the same on screen: whether a MISSING workshop means "it is not
+     * yours" or "refresh before concluding that" turns entirely on how old the list is. This is the
+     * value that makes `cachedListLine`'s dated sentence sayable — the same field
+     * `loadCachedRegister` returns for the four record registers, in the same type. Set by
+     * [markCached]; see [DesignWorkshopPickerState.cached], which is the identical field on the
+     * other half of the control.
+     */
+    var cached by mutableStateOf(RegisterLoad())
         private set
 
     /**
@@ -7188,6 +7377,25 @@ private class WorkshopPickerState(private val repository: WorkshopRepository, in
         awaitingConfirm = null
     }
 
+    /**
+     * THE DEVICE'S OWN COPY ANSWERED — before the network has, which is the whole point of it.
+     *
+     * Called first and at most once per load, from `dwLoadAllotted`'s `onCached`. [listState] is
+     * deliberately NOT moved: the network has still not been asked or has still not answered, and
+     * saying "Listed" over rows that came off a file would be the screen claiming a read it never
+     * made. [cached] is what tells the reader where these rows came from, through
+     * `workshopListNotice` and `cachedListLine`'s dated sentence.
+     *
+     * NOTHING IS SELECTED AND NO PRE-FLIGHT IS ISSUED. A cached list may be OFFERED to a person who
+     * then chooses from it; a stale answer may never be WRITTEN onto a record nobody looked at, so
+     * [applyMostRecentSubmittable] stays on the live path where the `submission-check` it walks can
+     * actually be answered.
+     */
+    internal fun markCached(rows: List<WorkshopDetailDto>, load: RegisterLoad) {
+        workshops = rows
+        cached = load
+    }
+
     /** The read answered. An empty page is an ANSWER and is recorded as one. */
     internal fun markListed(page: PageResponse<WorkshopDetailDto>) {
         workshops = page.items
@@ -7199,7 +7407,10 @@ private class WorkshopPickerState(private val repository: WorkshopRepository, in
      * The read did not answer, and whether the phone ever reached the server.
      *
      * [workshops] is deliberately left as it was: on a re-open of a form whose list arrived once, a
-     * later request failing must not blank what is already on screen and already usable.
+     * later request failing must not blank what is already on screen and already usable. Since the
+     * offline cache landed that is the ORDINARY path rather than the rare one — [markCached] has
+     * usually just put this account's allotted workshops in the box, and they must survive the
+     * failure that follows.
      */
     internal fun markFailed(transient: Boolean) {
         online = !transient
@@ -7223,6 +7434,28 @@ private class WorkshopPickerState(private val repository: WorkshopRepository, in
  * so opening an existing record leaves its linkage exactly as saved (and a record deliberately left
  * unlinked stays unlinked, because [isEdit] blocks the default outright). [resetKey] should be the
  * `editing` record so switching records rebuilds the state.
+ *
+ * ── AND IT NOW ANSWERS FROM THE DEVICE FIRST, WHICH IS THE WHOLE OF THIS CHANGE ────────────────
+ *
+ * The rows are read off `data/DwLocalWorkshops.kt` before the request is issued, so a record form
+ * opened with no signal shows the workshops this account is allotted to instead of an empty box.
+ * That cache was written and tested and then read by nothing, which meant a designer in a courtyard
+ * filed a fortnight of fieldwork under no workshop at all — the exact thing the owner asked for and
+ * did not get.
+ *
+ * THREE RULES COME WITH IT, and all three are `dwLoadAllotted`'s rather than this composable's, so
+ * that the design half in `ui/DesignWorkshopPicker.kt` cannot come to disagree with this one:
+ *
+ *  · THE LIVE ANSWER OUTRANKS THE CACHED ONE IN BOTH DIRECTIONS and the two are never merged, so a
+ *    workshop this account has been taken off disappears the moment any read answers — and the file
+ *    is replaced with that shorter answer rather than keeping the row alive.
+ *  · ONLY THE UPCOMING AND ONGOING ARE OFFERED, re-tested against the device's own today on every
+ *    read, so a workshop that ended while the phone was away stops being offered the next morning
+ *    with no request at all.
+ *  · THE PREFILL STAYS ON THE LIVE PATH. Offering rows is not the same act as writing one onto a
+ *    record: [WorkshopPickerState.applyMostRecentSubmittable] walks the `submission-check`
+ *    pre-flight, which no cached list can answer, and a default chosen from a stale list would file
+ *    every record made that afternoon under a workshop nobody looked at.
  */
 @Composable
 private fun rememberWorkshopPicker(
@@ -7232,38 +7465,54 @@ private fun rememberWorkshopPicker(
     resetKey: Any? = null
 ): WorkshopPickerState {
     val state = remember(resetKey) { WorkshopPickerState(repository, initialId.orEmpty()) }
+    val context = LocalContext.current
     LaunchedEffect(resetKey) {
         /*
-          EMPTY AND NEVER A CACHED LIST ON FAILURE: this device keeps no copy of the workshop table,
-          and if it did, a stale access list would be wrong in the permissive direction in the one
-          control that must not offer what the save will then refuse.
+          THE DEVICE'S COPY, THEN THE SERVER'S. `loadAllottedFieldWorkshops` reads this account's
+          cached `Workshop` rows off the disk and hands them to `onCached` BEFORE the request below
+          is attempted — the difference between a dropdown that fills in at once and one that is
+          empty for a thirty-second timeout and then empty for good — and, on an answer, replaces
+          the file with the upcoming and ongoing rows of it. A `CancellationException` is rethrown
+          from in there rather than classified, exactly as this effect did for itself: a form the
+          researcher navigated away from mid-fetch must never report "the list could not be loaded"
+          about a request that was never really one.
 
           [WorkshopRepository.workshopsIMaySubmitToPage] OVER [WorkshopRepository.workshopsIMaySubmitTo],
           specifically because the plain list throws the server's `total` away — see that function's
           own note — and a picker that only ever knows `items.size` cannot print [workshopCapLine]'s
           sentence honestly. The page is still the scoped, `accessibleOnly=true` read; nothing here
-          widens what the last patch narrowed.
+          widens what an earlier patch narrowed, and the cache is filled from that same scoped read
+          rather than from a list of its own.
+
+          THE PAGE AND NOT `half.rows`. The page is the server's own answer, unfiltered and with its
+          total: the live picker draws an ended workshop with the word "Ended" beside it, because a
+          researcher correcting last month's record has to see the workshop it is filed under.
+          `half.rows` is the narrower set the CACHE is allowed to keep, and is not what a screen
+          shows.
         */
-        runCatching { repository.workshopsIMaySubmitToPage() }
-            .onSuccess { page ->
-                state.markListed(page)
-                // The list is ordered most-recent-occurrence-first; the default is the most recent one
-                // this user may actually submit to (see applyMostRecentSubmittable).
-                if (!isEdit && state.selectedId.isBlank()) {
-                    state.applyMostRecentSubmittable(page.items)
-                }
+        val half = repository.loadAllottedFieldWorkshops(
+            context = context,
+            fetch = { repository.workshopsIMaySubmitToPage() },
+            rowsOf = { it.items },
+            onCached = { rows, load -> state.markCached(rows, load) },
+        )
+        val page = half.page
+        if (page != null) {
+            state.markListed(page)
+            // The list is ordered most-recent-occurrence-first; the default is the most recent one
+            // this user may actually submit to (see applyMostRecentSubmittable). LIVE ONLY — see the
+            // third rule in this function's note for why a cached list may not choose for anybody.
+            if (!isEdit && state.selectedId.isBlank()) {
+                state.applyMostRecentSubmittable(page.items)
             }
-            .onFailure { error ->
-                // Leaving the screen is not a failure. Rethrown, as every other load on this client
-                // does, so a dead composable never writes state — AND, since this arm now writes a
-                // sentence, so that a form the researcher simply navigated away from mid-fetch never
-                // reports "the list could not be loaded" about a request that was never actually one.
-                if (error is CancellationException) throw error
-                // WHICH FAILURE, BECAUSE THE TWO HAVE DIFFERENT NEXT MOVES — see
-                // [DesignWorkshopPickerState.online] and [WorkshopRepository.isTransient] for the
-                // full case against a second, private idea of what "offline" means here.
-                state.markFailed(transient = repository.isTransient(error))
-            }
+        } else {
+            // WHICH FAILURE, BECAUSE THE TWO HAVE DIFFERENT NEXT MOVES — see
+            // [DesignWorkshopPickerState.online] and [WorkshopRepository.isTransient] for the
+            // full case against a second, private idea of what "offline" means here. Read back off
+            // `half.load` rather than re-asked: that verdict was already made, in the one place
+            // both pickers make it.
+            state.markFailed(transient = !half.load.online)
+        }
     }
     // Keep the pre-flight answer in step with whatever is selected, including the auto-default, so
     // the warning is already on screen by the time the researcher reaches the save button.
@@ -7272,12 +7521,28 @@ private fun rememberWorkshopPicker(
 }
 
 /**
- * The workshop field every record form mounts as its FIRST field: the picker itself, plus whatever
- * the submission pre-flight has to say about the current pick, plus the late-submission confirmation
- * that [WorkshopPickerState.confirmSubmission] opens. Web parity with `<WorkshopSelect>`, and that
- * now includes the LIST: both sides ask for `accessibleOnly=true` and neither falls back to a cache.
- * The claim was false for as long as this loaded the unscoped list — the two clients agreed about
- * every warning and disagreed about which workshops were on offer at all.
+ * THE ORDINARY-`Workshop` HALF OF THE SECOND BOX: the picker itself, plus whatever the submission
+ * pre-flight has to say about the current pick, plus the late-submission confirmation that
+ * [WorkshopPickerState.confirmSubmission] opens.
+ *
+ * It used to be the FIRST field on every record form and it is not mounted by a record form any
+ * more. [RecordWorkshopField] draws it, and only when the chosen type routes at `Workshop`; the one
+ * form that still mounts it directly is [CraftForm], whose table has no `designWorkshopId` column
+ * and therefore no routing decision to make. Nothing about the control itself changed — its label,
+ * its "not linked" row, its two warnings and its cap sentence are exactly as they were, which is the
+ * point: this release moved WHICH box is on screen and rewrote none of the ones that were.
+ *
+ * Web parity with `<WorkshopSelect>`, and that includes the LIST: both sides ask for
+ * `accessibleOnly=true`. The claim was false for as long as this loaded the unscoped list — the two
+ * clients agreed about every warning and disagreed about which workshops were on offer at all.
+ *
+ * THE ONE PLACE THE TWO CLIENTS NO LONGER MATCH IS THE FALLBACK, and it is a difference in what the
+ * two devices ARE rather than a drift. A browser that has never reached this API holds nothing; a
+ * handset carried into a village for a fortnight holds the list it was given before it left, and
+ * `data/DwLocalWorkshops.kt` is that list — bounded to the upcoming and ongoing, per account, with
+ * the window re-tested on every read. So this picker answers from the disk while the browser's
+ * shows nothing, and says so out loud with `cachedListLine` rather than passing an old list off as
+ * today's.
  *
  * The two warnings are mutually exclusive by design: "you are not assigned" is the harder problem
  * and stating both at once would only bury it.
@@ -7309,8 +7574,22 @@ private fun WorkshopField(state: WorkshopPickerState, saving: Boolean = false) {
       empty and knows nothing whatever about WHY; only this composable holds `listState`, so only
       this composable can say which of "still loading", "the read failed" or "the read answered and
       the answer is none" is true right now.
+
+      `cached` IS THE STATE THAT SPEAKS OVER A WORKING CONTROL. The rows may have come off
+      `DwLocalWorkshops` while the request is in flight or after it failed, and then the sentence is
+      `cachedListLine` — the count and the day the file was refreshed — because a workshop missing
+      from an hour-old list means something different from one missing from a nine-day-old file. It
+      is passed with the ROW COUNT as well as the provenance: the window is re-tested on every read,
+      so a file holding four workshops answers with none the morning after the last of them ended,
+      and that state is "no workshops are open to this account", not "0 workshops on this device".
     */
-    val notice = workshopListNotice(state.listState, WorkshopListKind.FIELD, state.online)
+    val notice = workshopListNotice(
+        state = state.listState,
+        kind = WorkshopListKind.FIELD,
+        online = state.online,
+        cached = state.cached,
+        cachedRows = state.workshops.size,
+    )
 
     /*
       R2 — A FIELD MAY ONLY BE MANDATORY WHERE IT IS ANSWERABLE, Android half: a control with nothing
@@ -7399,6 +7678,214 @@ private fun WorkshopField(state: WorkshopPickerState, saving: Boolean = false) {
             onConfirm = { state.settleConfirm(true) },
             onCancel = { state.settleConfirm(false) }
         )
+    }
+}
+
+/**
+ * ONE CONTROL, ONE ANSWER, TWO DESTINATIONS - everything a record form knows about workshops.
+ *
+ * -- WHAT IT HOLDS, AND WHY IT HOLDS BOTH HALVES AT ONCE -----------------------------------------
+ *
+ * [type] decides which of [field] and [design] is on screen and which of the record's two nullable
+ * columns the answer is written to. Both halves load whichever is showing, and that is the behaviour
+ * rather than an accident of how state is built: each computes its own default while the other is
+ * visible, so switching the type box shows an answer immediately instead of a blank box and a
+ * spinner, and a designer who switches back finds the workshop they had. It costs exactly the two
+ * list requests this form issued before this release, when both controls were visible at once.
+ *
+ * -- AT MOST ONE COLUMN IS EVER NON-NULL, AND THAT WAS MEASURED BEFORE IT WAS WRITTEN ------------
+ *
+ * R3: *"Type is Design & Prototype -> the chosen workshop is written to `designWorkshopId`. Any
+ * other type -> `workshopId`."* So the half that is not on screen contributes nothing to the
+ * payload - its id stays in its own state so switching back restores it, and the form writes null
+ * over the column the record is not filed in.
+ *
+ * "Clears the other column" is the kind of sentence that sounds harmless and is not, so it was
+ * checked against the live database on 2026-09-16 rather than reasoned about: **no record of any
+ * type holds both columns at once.** ToolDocumentation 92 rows / 51 with a workshop / 0 with a
+ * design workshop; Artisan 774 / 204 / 4; ProductDocumentation 473 / 153 / 0; Process 897 / 51 / 0;
+ * QuestionnaireInterview 207 / 84 / 0 - both-set is 0 in every one, which is the same count
+ * `frontend/components/forms/WorkshopPicker.tsx` records for the browser. Consolidating to one
+ * answer therefore moves nothing that exists; what it prevents is a record naming two different
+ * workshops with nothing on screen to say which one it belongs to.
+ *
+ * And an existing record cannot be re-routed on the way past, because the type box is PINNED to the
+ * routing the record already has - see `openingWorkshopTypeKey`, where that is the whole of the
+ * defaulting argument. Only a person moves it.
+ */
+private class RecordWorkshopLink(
+    val type: WorkshopTypePickerState,
+    val field: WorkshopPickerState,
+    val design: DesignWorkshopPickerState,
+) {
+    /** True when the chosen type's workshops come from `DesignWorkshop`. Decides both ids below. */
+    val routesToDesignWorkshop: Boolean get() = type.routesToDesignWorkshop
+
+    /** What to put in a create/update body as `workshopId`. Null when the type routes elsewhere. */
+    fun workshopId(): String? = if (routesToDesignWorkshop) null else field.value()
+
+    /** What to put in a create/update body as `designWorkshopId`. Null when the type routes elsewhere. */
+    fun designWorkshopId(): String? = if (routesToDesignWorkshop) design.value() else null
+
+    /**
+     * `PendingEntry.unfiled` for this form - the offline half of the two ids above, and the one
+     * thing on this class the browser has no equivalent of.
+     *
+     * THE COLUMN THE RECORD IS FILED IN answers with its own picker's `unfiledLinkReason`, exactly
+     * as it did when the two controls were separate.
+     *
+     * THE COLUMN IT IS NOT reports a clearance ONLY IF IT HELD A WORKSHOP WHEN THE FORM OPENED, and
+     * that condition is the whole of the safety here. A non-blank baseline over a null value is a
+     * real un-filing - somebody moved the type box off the column their record was filed in - and it
+     * has to reach the server as an explicit null or the save answers 200 and changes nothing (the
+     * `exclude_unset` trap [WorkshopRepository.patchBodyWithClearances] exists to close). A BLANK
+     * baseline is not a clearance of anything: the column is null on the server and null in the
+     * body, so naming it in `clearedLinkKeys` would be manufacturing a decision nobody took, which
+     * is precisely what [workshopUnfiledReasons]'s own note forbids.
+     *
+     * [UNFILED_BY_CHOICE] and never `UNFILED_NO_OPTIONS` for that arm, because a baseline exists:
+     * there was something there, a person's act removed it, and "there was nothing to pick" would be
+     * false. The drain's sentence follows from that word, so getting it wrong is not cosmetic.
+     */
+    fun unfiledReasons(): Map<String, String> = workshopUnfiledReasons(
+        designWorkshop = if (routesToDesignWorkshop) design.unfiledReason() else displaced(design.baselineId),
+        workshop = if (routesToDesignWorkshop) displaced(field.baselineId) else field.unfiledReason(),
+    )
+
+    private fun displaced(baselineId: String): String? =
+        if (baselineId.isNotBlank()) UNFILED_BY_CHOICE else null
+
+    /**
+     * True once a PERSON has touched any part of this control - the type box or either workshop box.
+     *
+     * Never true for a default the app applied or an answer the carry bag brought: this client's
+     * rule, stated at [WorkshopPickerState.applyDefault] and again at
+     * `DesignWorkshopPickerState.applyDefault`, is that a form filling itself in is not an edit, and
+     * a blank new form announcing unsaved work before anybody types is what teaches a designer to
+     * click through a guard that has to still mean something an hour later.
+     */
+    fun isDirty(): Boolean = type.touched || field.isDirty() || design.isDirty()
+
+    /**
+     * Call FIRST inside a form's save coroutine, before it sets `saving`, exactly as
+     * [WorkshopPickerState.confirmSubmission] was called before this class existed.
+     *
+     * **A NO-OP WHEN THE TYPE ROUTES TO A DESIGN WORKSHOP**, and that is not a weakening of the
+     * gate. The window and the assignment roster are properties of a `Workshop`
+     * (`GET /workshops/{id}/submission-check`); a `DesignWorkshop` has neither, and nothing is being
+     * filed against the ordinary workshop the field half may still be holding.
+     */
+    suspend fun confirmSubmission(): Boolean =
+        if (routesToDesignWorkshop) true else field.confirmSubmission()
+
+    /**
+     * The carry bag brought the ordinary workshop this researcher was last working in.
+     *
+     * IT MOVES THE TYPE BOX TOO, which is the only thing that makes it work now that the box above
+     * decides which list is on screen: applying a `workshopId` while the type sat on Design &
+     * Prototype would put a workshop in a state nothing shows and nothing saves. A carried answer is
+     * a real, recent, human answer and outranks a computed default - but it is still the app filling
+     * a box in, so neither half of this marks the form dirty. See
+     * `WorkshopTypePickerState.applyCarriedRouting` for the one deliberate difference from the
+     * browser here.
+     *
+     * Only while the picker still holds whatever it defaulted to itself: a workshop the researcher
+     * chose outranks one this app remembered.
+     */
+    fun applyCarriedWorkshop(workshopId: String) {
+        if (field.isDirty()) return
+        field.applyDefault(workshopId)
+        type.applyCarriedRouting()
+    }
+
+    /**
+     * Treat the current selection as saved - for a form that stays on screen afterwards (the
+     * questionnaire), so the workshop carries over to the next record without still reading as an
+     * unsaved change. Only the ordinary half has one; the design half's baseline moves with its own
+     * prefill and there is nothing here to re-base.
+     */
+    fun markSaved() {
+        field.markSaved()
+    }
+}
+
+/**
+ * The one workshop control a record form mounts, and the only place either half is remembered.
+ *
+ * -- ONE MOUNT, ONE DECISION ---------------------------------------------------------------------
+ *
+ * Pairing the boxes at each call site would be one copy per form of a decision with a right answer
+ * and several wrong ones: which type a new record opens on, what a type change does to a chosen
+ * workshop, whether the type reaches the payload, and which of the two id columns is cleared. The
+ * field repository learnt this the expensive way with its tracer - wired form by form, four of nine
+ * mounts were missed, and a researcher reported the feature as simply absent.
+ *
+ * [preferDesignWorkshops] IS ANSWERED HERE, ONCE. R4: a DESIGNER opens on Design & Prototype. The
+ * predicate is `FieldPermissions.canRunDesignWorkshops` - `deps.DESIGN_WORKSHOP_ROLES` byte for
+ * byte, and a SET rather than a rank floor - and asking it here rather than inside the type state
+ * keeps one copy of a ladder `test_role_ladder_parity.py` exists to keep singular. An account that
+ * has not loaded answers false, which opens the form on the first ordinary type: the safe half of
+ * that guess, because the ordinary list is the one every signed-in account can already reach.
+ */
+@Composable
+private fun rememberRecordWorkshopLink(
+    repository: WorkshopRepository,
+    isEdit: Boolean,
+    initialWorkshopId: String?,
+    initialDesignWorkshopId: String?,
+    resetKey: Any? = null,
+): RecordWorkshopLink {
+    val preferDesignWorkshops = remember(resetKey) {
+        repository.cachedUser()?.let { FieldPermissions.canRunDesignWorkshops(it) } ?: false
+    }
+    val type = rememberWorkshopTypePicker(
+        repository = repository,
+        storedWorkshopId = initialWorkshopId,
+        storedDesignWorkshopId = initialDesignWorkshopId,
+        preferDesignWorkshops = preferDesignWorkshops,
+        resetKey = resetKey,
+    )
+    val field = rememberWorkshopPicker(repository, isEdit, initialWorkshopId, resetKey)
+    val design = rememberDesignWorkshopPicker(repository, isEdit, initialDesignWorkshopId, resetKey)
+    return remember(type, field, design) { RecordWorkshopLink(type, field, design) }
+}
+
+/**
+ * THE TWO BOXES. Mounted as the first control on FOUR of the five record forms that draw it -
+ * [ArtisanForm], [ProductForm], [ToolForm], [ProcessForm] - because on those screens the workshop is
+ * the context every other answer belongs to, which is web parity and not merely an ordering
+ * preference.
+ *
+ * THE QUESTIONNAIRE IS THE FIFTH AND ITS ORDER IS DECLARED RATHER THAN PREFERRED. [QuestionnaireForm]
+ * draws this control FOURTH, below Interview title, Place and Language, because that form's field
+ * order is written down once in `shared/questionnaire-form-contract.json` - the browser is its
+ * authority, the owner ruled the browser correct, and `test_questionnaire_form_contract.py` holds
+ * both clients to it as an equality. Nothing about this control changed there; only its place did,
+ * and the argument is at that call site. Do not "tidy" the questionnaire back into line with the
+ * other four: that is a red build, and the contract is where the disagreement gets settled.
+ *
+ * The second box is [WorkshopField] or [DesignWorkshopField], one at a time and never both, decided
+ * by the flag on the chosen type. Both are labelled "Workshop" and both offer "Not linked to a
+ * workshop": the reader is answering ONE question, and a label that changed with the type would be
+ * the two-pickers-for-one-question problem this release exists to end, wearing one control.
+ *
+ * NEITHER HALF IS RE-IMPLEMENTED HERE. Between them those two composables carry the late-submission
+ * gate, the pre-flight assignment warning, the sentences that tell a list still loading from a
+ * refused read from an unreachable server from an account on no workshops - and, since
+ * `data/DwLocalWorkshops.kt` was wired in, from a dated list read off this device's own disk - the
+ * capped-list notice with a real total, the "already on this record" recovery of an off-page
+ * workshop, and the stand-down rule for a list with nothing in it. Every one closed a defect that
+ * shipped. A third composable re-deriving them would have re-opened them one at a time.
+ */
+@Composable
+private fun RecordWorkshopField(link: RecordWorkshopLink, saving: Boolean = false) {
+    Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        WorkshopTypeField(state = link.type, saving = saving)
+        if (link.routesToDesignWorkshop) {
+            DesignWorkshopField(state = link.design, saving = saving)
+        } else {
+            WorkshopField(state = link.field, saving = saving)
+        }
     }
 }
 
@@ -8879,6 +9366,20 @@ private fun InterviewEditLoader(
     recordId: String,
     sections: List<QuestionnaireSectionDto>,
     artisans: List<ArtisanDto>,
+    /**
+     * Whether [artisans] arrived, could not be reached, or is still coming — FORWARDED AND NOT
+     * DEFAULTED, which it was until this parameter existed.
+     *
+     * `QuestionnaireForm` defaults it to `PENDING`, and this composable was letting that default
+     * stand. That was survivable while the only reader was the carry banner, which says nothing at
+     * all when it has nothing to say. It stopped being survivable when the artisan picker's empty
+     * message started reading the same fact: an edit screen opened with an unreachable register
+     * printed *"Looking for your artisans…"* and went on printing it, which is the one sentence of
+     * the three that promises something is still happening. A form that cannot list the roster has
+     * to say so on the EDIT screen too — that is where a correction composed on the bus home
+     * happens.
+     */
+    lookupState: CarryScopeState,
     canManageQuestionnaire: Boolean,
     adminView: Boolean,
     canDelete: Boolean,
@@ -8900,6 +9401,7 @@ private fun InterviewEditLoader(
             repository = repository,
             sections = sections,
             artisans = artisans,
+            lookupState = lookupState,
             canManageQuestionnaire = canManageQuestionnaire,
             editing = d,
             adminView = adminView,
@@ -8997,6 +9499,20 @@ private fun CraftForm(
         if (adminView && editing != null) {
             ProvenanceSection(meta = editing.extraMetadata, createdByName = editing.createdBy?.name)
         }
+        /*
+          ONE BOX HERE, AND NOT THE TWO EVERY OTHER RECORD FORM NOW CARRIES — because `Craft` has no
+          `designWorkshopId` column. There is no second destination for a "Type of workshop" box to
+          route to (R3), so a type box on this form would offer six rows of which five could change
+          nothing and one could change nothing either. R2's third control is what went away in this
+          release; adding a first one here would be inventing the complexity that ruling forbids.
+
+          THE WEB AGREES BY CONSTRUCTION: there is no `components/forms/CraftForm.tsx`, and the four
+          forms that mount `<WorkshopPicker>` are the four whose tables carry both columns.
+
+          If `Craft.designWorkshopId` is ever added, this line becomes [RecordWorkshopField] and the
+          three call sites below it become `link.workshopId()` / `link.designWorkshopId()`; nothing
+          else on this form changes.
+        */
         WorkshopField(state = workshop, saving = saving)
         RequiredInput("Craft name", name, nameError, nameFocus, titleCased = true) { name = it }
         TextInput("Local name", localName) { localName = it }
@@ -9177,12 +9693,19 @@ private fun ArtisanForm(
     var dontsItems by remember(editing) { mutableStateOf(splitNumbered(editing?.donts)) }
     var craftId by remember(editing) { mutableStateOf(editing?.craftId ?: prefill?.craftId ?: "") }
     var newCraftName by remember(editing) { mutableStateOf("") }
-    val workshop = rememberWorkshopPicker(repository, isEdit, editing?.workshopId, editing)
-    // The DESIGN & PROTOTYPE workshop, beside the ordinary one and never instead of it — two
-    // tables, two access systems, and a record may carry either, both or neither. See
-    // [DesignWorkshopPickerState]; the default it opens on is the server's answer and not this
-    // form's guess, so all seven forms and both clients agree about "most recently allocated".
-    val designWorkshop = rememberDesignWorkshopPicker(repository, isEdit, editing?.designWorkshopId, editing)
+    // THE WHOLE WORKSHOP QUESTION, IN ONE CONTROL: "Type of workshop", then "Workshop". The type
+    // decides which register the second box lists and which of this record's two nullable columns
+    // the answer is written to (R3), and it is NOT stored on the record — the workshop already
+    // knows its own type. See [RecordWorkshopLink] and `ui/DesignWorkshopPicker.kt`. This replaced
+    // three controls: an ordinary workshop picker, a `WORKSHOP_KIND` filter that saved nothing, and
+    // a second workshop picker beneath it.
+    val link = rememberRecordWorkshopLink(
+        repository = repository,
+        isEdit = isEdit,
+        initialWorkshopId = editing?.workshopId,
+        initialDesignWorkshopId = editing?.designWorkshopId,
+        resetKey = editing,
+    )
     /**
      * The craft and the workshop carry into a new artisan; the ARTISAN in the bag never does.
      *
@@ -9203,7 +9726,7 @@ private fun ArtisanForm(
         // Only while the picker still holds whatever it defaulted to itself: a workshop the
         // researcher chose outranks one we remembered, and moving the baseline along with the value
         // is what stops a prefill reading as an unsaved edit on the way out.
-        carried.workshopId?.let { if (!workshop.isDirty()) workshop.applyDefault(it) }
+        carried.workshopId?.let { link.applyCarriedWorkshop(it) }
     }
     /** "Change": drop the carried craft so the researcher picks from scratch. */
     fun clearCarriedContext() {
@@ -9329,7 +9852,7 @@ private fun ArtisanForm(
         // helpers reach. See newRecordLocationError for why an edit is never asked.
         newRecordLocationError(isEdit, media.location)?.let { onError(it); return }
         scope.launch {
-            if (!workshop.confirmSubmission()) return@launch
+            if (!link.confirmSubmission()) return@launch
             saving = true
             val body = ArtisanCreateRequest(
                 name = name.trim(),
@@ -9364,8 +9887,8 @@ private fun ArtisanForm(
                 donts = dontsText,
                 craftId = craftId.ifBlank { null },
                 craftName = if (craftId.isBlank()) newCraftName.blankToNull() else null,
-                workshopId = workshop.value(),
-                designWorkshopId = designWorkshop.value(),
+                workshopId = link.workshopId(),
+                designWorkshopId = link.designWorkshopId(),
                 status = status,
                 recordedAt = if (isEdit) null else Instant.now().toString(),
                 location = locationForBody(isEdit, media.location, editing?.location)
@@ -9378,10 +9901,7 @@ private fun ArtisanForm(
                 trySaveOffline(repository, context, isEdit, "artisan", offlineFormJson.encodeToString(body),
                     name.trim(), media, name.trim(), "Field media for ${name.trim()}",
                     editingId = editing?.id,
-                    unfiled = workshopUnfiledReasons(
-                        designWorkshop = designWorkshop.unfiledReason(),
-                        workshop = workshop.unfiledReason(),
-                    ))
+                    unfiled = link.unfiledReasons())
             }.getOrNull()
             if (queuedOffline != null) {
                 media.reset()
@@ -9436,7 +9956,7 @@ private fun ArtisanForm(
     val initialSig = remember(editing) { formSignature() }
     val dirty = !saving && (
         formSignature() != initialSig ||
-            workshop.isDirty() || designWorkshop.isDirty() || media.uris.isNotEmpty()
+            link.isDirty() || media.uris.isNotEmpty()
     )
 
     RecordCard(title = if (isEdit) "Edit artisan" else "Add artisan") {
@@ -9446,8 +9966,7 @@ private fun ArtisanForm(
         }
         // Above the workshop picker, so what was filled in is read before any of the fields it filled.
         CarryPrefillBanner(state = carry, onChange = { clearCarriedContext() })
-        WorkshopField(state = workshop, saving = saving)
-        DesignWorkshopField(state = designWorkshop, saving = saving)
+        RecordWorkshopField(link = link, saving = saving)
         RequiredInput("Name", name, nameError, nameFocus, titleCased = true) { name = it }
         TextInput("Local name", localName) { localName = it }
         /*
@@ -9720,6 +10239,61 @@ private fun ArtisanForm(
     }
 }
 
+/**
+ * What an account that may not OPEN a workshop reads where the create form would have been.
+ *
+ * BYTE FOR BYTE THE SERVER'S OWN 403, which is `WORKSHOP_CREATE_REFUSAL` in
+ * `backend/app/api/routes/workshops.py`, and `tests/test_workshop_creation_rights.py` holds the two
+ * strings to each other. Three surfaces say this — the route, the web list page and this card — and
+ * a refusal that names a different next move depending on where you met it is not a rule, it is
+ * three rumours.
+ *
+ * IT NAMES THE NEXT MOVE AND BOTH HALVES OF IT. Who opens a workshop, and what happens afterwards:
+ * the workshop appears in this account's own list the moment the ministry adds them to it, and every
+ * record they came out to capture still files against it. A card that stopped at "you cannot do
+ * this" would read, to somebody standing in a courtyard with participants in front of them, as "your
+ * afternoon is cancelled".
+ */
+internal const val WORKSHOP_CREATE_REFUSAL =
+    "Workshops are created by the ministry — a Ministry Admin, an admin or the master admin. Ask " +
+        "them to open the workshop for your cluster; it will appear in your list as soon as you are " +
+        "added to it, and you can then record artisans, products, tools, processes and interviews " +
+        "against it exactly as before. Any workshop you already have access to is open to you now."
+
+/**
+ * The refusal in the form's own slot, under the form's own heading — and the door that is still open.
+ *
+ * "Add workshop" AND NOT "Not allowed": the card keeps the title the form would have carried, so
+ * somebody who navigated here on purpose can see they arrived where they meant to and that the thing
+ * they wanted has moved, rather than wondering whether the tap registered. A greyed-out Save button
+ * was the other option and says "no" while naming neither who can nor what to do instead.
+ *
+ * ── [onOpenExisting] IS NOT DECORATION; IT IS THE HALF THAT KEEPS A PROFESSOR WORKING ──────────
+ * The drawer's "Record workshop" row is `FieldPermissions.canManageWorkshops` — Professor and above
+ * — and it lands on `Screen.Create`, because that is the only destination an [EntryMode] row has.
+ * Narrowing the CREATE gate therefore pointed that row at this card, and a professor who may still
+ * correct every workshop in the repository would have had no way left to reach one from the handset:
+ * the dashboard card is filtered by `canCreate`, so its "Update existing" button went with the
+ * "New" button it sits beside. THAT WOULD HAVE BEEN A BIGGER DEFECT THAN THE RULE IS WORTH — the
+ * create rule was never meant to cost anybody an edit.
+ *
+ * So the card carries the browse door for exactly the accounts that hold it, and is a plain sentence
+ * for everybody else. Null for a designer, who has no edit right over a workshop either; present for
+ * Professor and above, which is `require_workshop_manager` and therefore the same set the server lets
+ * through `PATCH /workshops/{id}`.
+ */
+@Composable
+private fun WorkshopCreateRefusedCard(onOpenExisting: (() -> Unit)? = null) {
+    RecordCard(title = "Add workshop") {
+        Text(WORKSHOP_CREATE_REFUSAL, color = Muted, fontSize = 13.sp)
+        if (onOpenExisting != null) {
+            TextButton(onClick = onOpenExisting, contentPadding = PaddingValues(0.dp)) {
+                Text("Open an existing workshop")
+            }
+        }
+    }
+}
+
 @Composable
 private fun WorkshopForm(
     repository: WorkshopRepository,
@@ -9984,12 +10558,19 @@ private fun ProductForm(
     var remarks by remember(editing) { mutableStateOf(editing?.remarks ?: "") }
     val canSetStatus = remember { canSetRecordStatus(repository.cachedUser()?.role) }
     var status by remember(editing) { mutableStateOf(editing?.status ?: defaultCreateStatus(repository.cachedUser()?.role)) }
-    val workshop = rememberWorkshopPicker(repository, isEdit, editing?.workshopId, editing)
-    // The DESIGN & PROTOTYPE workshop, beside the ordinary one and never instead of it — two
-    // tables, two access systems, and a record may carry either, both or neither. See
-    // [DesignWorkshopPickerState]; the default it opens on is the server's answer and not this
-    // form's guess, so all seven forms and both clients agree about "most recently allocated".
-    val designWorkshop = rememberDesignWorkshopPicker(repository, isEdit, editing?.designWorkshopId, editing)
+    // THE WHOLE WORKSHOP QUESTION, IN ONE CONTROL: "Type of workshop", then "Workshop". The type
+    // decides which register the second box lists and which of this record's two nullable columns
+    // the answer is written to (R3), and it is NOT stored on the record — the workshop already
+    // knows its own type. See [RecordWorkshopLink] and `ui/DesignWorkshopPicker.kt`. This replaced
+    // three controls: an ordinary workshop picker, a `WORKSHOP_KIND` filter that saved nothing, and
+    // a second workshop picker beneath it.
+    val link = rememberRecordWorkshopLink(
+        repository = repository,
+        isEdit = isEdit,
+        initialWorkshopId = editing?.workshopId,
+        initialDesignWorkshopId = editing?.designWorkshopId,
+        resetKey = editing,
+    )
     /**
      * Offer the sitting this researcher was last working in, however they got here — the in-memory
      * [Prefill] only survives a tap made straight off the save screen, and the route they actually
@@ -10016,7 +10597,7 @@ private fun ProductForm(
         carried.artisanId?.let { artisanId = it }
         carried.artisanName?.let { artisanName = it }
         carried.place?.let { place = it }
-        carried.workshopId?.let { if (!workshop.isDirty()) workshop.applyDefault(it) }
+        carried.workshopId?.let { link.applyCarriedWorkshop(it) }
     }
     /** "Change": drop every carried value in one action so the researcher picks from scratch. */
     fun clearCarriedContext() {
@@ -10051,7 +10632,7 @@ private fun ProductForm(
             ))) { onError("Please fill the required field highlighted above."); return }
         newRecordLocationError(isEdit, media.location)?.let { onError(it); return }
         scope.launch {
-            if (!workshop.confirmSubmission()) return@launch
+            if (!link.confirmSubmission()) return@launch
             saving = true
             val body = ProductCreateRequest(
                 productName = productName.trim(),
@@ -10090,8 +10671,8 @@ private fun ProductForm(
                 remarks = remarks.blankToNull(),
                 artisanId = artisanId.ifBlank { null },
                 craftId = craftId.ifBlank { null },
-                workshopId = workshop.value(),
-                designWorkshopId = designWorkshop.value(),
+                workshopId = link.workshopId(),
+                designWorkshopId = link.designWorkshopId(),
                 status = status,
                 recordedAt = if (isEdit) null else Instant.now().toString(),
                 location = locationForBody(isEdit, media.location, editing?.location)
@@ -10104,17 +10685,17 @@ private fun ProductForm(
                 place = place.trim(),
                 craftId = craftId.ifBlank { null },
                 craftName = craftName.trim(),
-                workshopId = workshop.value(),
-                workshopName = workshop.workshops.firstOrNull { it.id == workshop.value() }?.title
+                // The ORDINARY workshop only, and null while the type box routes at a design
+                // workshop — the bag's `workshopId` is a `Workshop` id and it has no column that
+                // could carry the other kind. Same answer as the browser's `state.workshopId`.
+                workshopId = link.workshopId(),
+                workshopName = link.field.workshops.firstOrNull { it.id == link.workshopId() }?.title
             )
             val queuedOffline = runCatching {
                 trySaveOffline(repository, context, isEdit, "product", offlineFormJson.encodeToString(body),
                     productName.trim(), media, productName.trim(), "Field media for ${productName.trim()}",
                     editingId = editing?.id,
-                    unfiled = workshopUnfiledReasons(
-                        designWorkshop = designWorkshop.unfiledReason(),
-                        workshop = workshop.unfiledReason(),
-                    ))
+                    unfiled = link.unfiledReasons())
             }.getOrNull()
             if (queuedOffline != null) {
                 // Offline is the normal case, but a queued NEW product has no id yet, so no process
@@ -10169,7 +10750,7 @@ private fun ProductForm(
     }
     val initialSig = remember(editing) { productSig() }
     val dirty = !saving && (
-        productSig() != initialSig || workshop.isDirty() || designWorkshop.isDirty() || media.uris.isNotEmpty()
+        productSig() != initialSig || link.isDirty() || media.uris.isNotEmpty()
     )
 
     RecordCard(title = if (isEdit) "Edit product" else "Add product") {
@@ -10179,8 +10760,7 @@ private fun ProductForm(
         }
         // Above the workshop picker, so what was filled in is read before any of the fields it filled.
         CarryPrefillBanner(state = carry, onChange = { clearCarriedContext() })
-        WorkshopField(state = workshop, saving = saving)
-        DesignWorkshopField(state = designWorkshop, saving = saving)
+        RecordWorkshopField(link = link, saving = saving)
         RequiredInput("Product name", productName, productNameError, productNameFocus, titleCased = true) { productName = it }
         TextInput("Local name", localName) { localName = it }
         DropdownField("Product type", productTypeOptions.map { it to it }, productType, includeNone = false) { productType = it }
@@ -10443,12 +11023,19 @@ private fun ToolForm(
     var replacementCost by remember(editing) { mutableStateOf(numToText(editing?.replacementCost)) }
     var suggestions by remember(editing) { mutableStateOf(editing?.suggestionsForToolImprovement ?: "") }
     var remarks by remember(editing) { mutableStateOf(editing?.remarks ?: "") }
-    val workshop = rememberWorkshopPicker(repository, isEdit, editing?.workshopId, editing)
-    // The DESIGN & PROTOTYPE workshop, beside the ordinary one and never instead of it — two
-    // tables, two access systems, and a record may carry either, both or neither. See
-    // [DesignWorkshopPickerState]; the default it opens on is the server's answer and not this
-    // form's guess, so all seven forms and both clients agree about "most recently allocated".
-    val designWorkshop = rememberDesignWorkshopPicker(repository, isEdit, editing?.designWorkshopId, editing)
+    // THE WHOLE WORKSHOP QUESTION, IN ONE CONTROL: "Type of workshop", then "Workshop". The type
+    // decides which register the second box lists and which of this record's two nullable columns
+    // the answer is written to (R3), and it is NOT stored on the record — the workshop already
+    // knows its own type. See [RecordWorkshopLink] and `ui/DesignWorkshopPicker.kt`. This replaced
+    // three controls: an ordinary workshop picker, a `WORKSHOP_KIND` filter that saved nothing, and
+    // a second workshop picker beneath it.
+    val link = rememberRecordWorkshopLink(
+        repository = repository,
+        isEdit = isEdit,
+        initialWorkshopId = editing?.workshopId,
+        initialDesignWorkshopId = editing?.designWorkshopId,
+        resetKey = editing,
+    )
     /**
      * Offer the sitting this researcher was last working in, however they got here.
      *
@@ -10478,7 +11065,7 @@ private fun ToolForm(
         carried.artisanId?.let { id -> artisanIds = artisanIds.ifEmpty { listOf(id) } }
         carried.artisanName?.let { artisanName = it }
         carried.place?.let { place = it }
-        carried.workshopId?.let { if (!workshop.isDirty()) workshop.applyDefault(it) }
+        carried.workshopId?.let { link.applyCarriedWorkshop(it) }
         // DELIBERATELY NOT `englishName`, and deliberately not `toolkitName`. The bag carries no
         // toolkit name to mirror, and a programmatic write to the English box must never count as
         // the designer editing it — see `applyToolkitName` below for the half of that rule that
@@ -10706,7 +11293,7 @@ private fun ToolForm(
             ))) { onError("Please fill the required field highlighted above."); return }
         newRecordLocationError(isEdit, media.location)?.let { onError(it); return }
         scope.launch {
-            if (!workshop.confirmSubmission()) return@launch
+            if (!link.confirmSubmission()) return@launch
             saving = true
             val body = ToolCreateRequest(
                 toolkitName = toolkitName.trim(),
@@ -10760,8 +11347,8 @@ private fun ToolForm(
                  */
                 craftIds = craftIds,
                 artisanIds = artisanIds,
-                workshopId = workshop.value(),
-                designWorkshopId = designWorkshop.value(),
+                workshopId = link.workshopId(),
+                designWorkshopId = link.designWorkshopId(),
                 status = status,
                 recordedAt = if (isEdit) null else Instant.now().toString(),
                 location = locationForBody(isEdit, media.location, editing?.location)
@@ -10779,8 +11366,11 @@ private fun ToolForm(
                 // two crafts as though somebody had typed one. Falls back to the box for a tool with
                 // no craft linked at all, where the box is the only thing that knows.
                 craftName = craftIds.firstOrNull()?.let { knownCraftNames[it] } ?: craftName.trim(),
-                workshopId = workshop.value(),
-                workshopName = workshop.workshops.firstOrNull { it.id == workshop.value() }?.title
+                // The ORDINARY workshop only, and null while the type box routes at a design
+                // workshop — the bag's `workshopId` is a `Workshop` id and it has no column that
+                // could carry the other kind. Same answer as the browser's `state.workshopId`.
+                workshopId = link.workshopId(),
+                workshopName = link.field.workshops.firstOrNull { it.id == link.workshopId() }?.title
             )
             // AN EDIT TAKES THIS DOOR TOO now — see `trySaveOffline`, which the four simpler forms
             // reach the same conclusion through. `editing?.id` is what makes it a correction rather
@@ -10811,10 +11401,7 @@ private fun ToolForm(
                         // design-workshop box cleared would replay indistinguishably from one where
                         // the picker never had anything to offer, and `patchBodyWithClearances` would
                         // have nothing to tell the two apart with.
-                        unfiled = workshopUnfiledReasons(
-                            designWorkshop = designWorkshop.unfiledReason(),
-                            workshop = workshop.unfiledReason(),
-                        ),
+                        unfiled = link.unfiledReasons(),
                     )
                 }.getOrNull()
                 if (queued != null) {
@@ -10895,7 +11482,7 @@ private fun ToolForm(
     }
     val initialSig = remember(editing) { toolSig() }
     val dirty = !saving && (
-        toolSig() != initialSig || workshop.isDirty() || designWorkshop.isDirty() ||
+        toolSig() != initialSig || link.isDirty() ||
             media.uris.isNotEmpty() || stages.uris.isNotEmpty()
     )
 
@@ -10906,8 +11493,7 @@ private fun ToolForm(
         }
         // Above the workshop picker, so what was filled in is read before any of the fields it filled.
         CarryPrefillBanner(state = carry, onChange = { clearCarriedContext() })
-        WorkshopField(state = workshop, saving = saving)
-        DesignWorkshopField(state = designWorkshop, saving = saving)
+        RecordWorkshopField(link = link, saving = saving)
         RequiredInput("Toolkit name", toolkitName, toolkitNameError, toolkitNameFocus, titleCased = true) { applyToolkitName(it) }
         TextInput("Local name", localName) { localName = it }
         // TYPING HERE IS THE STICKY DIVORCE, and it counts even when what was typed is nothing:
@@ -11285,12 +11871,19 @@ private fun ProcessForm(
     var artisanError by remember { mutableStateOf<String?>(null) }
     var preProcessAvailable by remember(editing) { mutableStateOf(editing?.preProcessAvailable ?: false) }
     var notes by remember(editing) { mutableStateOf(editing?.notes ?: "") }
-    val workshop = rememberWorkshopPicker(repository, isEdit, editing?.workshopId, editing)
-    // The DESIGN & PROTOTYPE workshop, beside the ordinary one and never instead of it — two
-    // tables, two access systems, and a record may carry either, both or neither. See
-    // [DesignWorkshopPickerState]; the default it opens on is the server's answer and not this
-    // form's guess, so all seven forms and both clients agree about "most recently allocated".
-    val designWorkshop = rememberDesignWorkshopPicker(repository, isEdit, editing?.designWorkshopId, editing)
+    // THE WHOLE WORKSHOP QUESTION, IN ONE CONTROL: "Type of workshop", then "Workshop". The type
+    // decides which register the second box lists and which of this record's two nullable columns
+    // the answer is written to (R3), and it is NOT stored on the record — the workshop already
+    // knows its own type. See [RecordWorkshopLink] and `ui/DesignWorkshopPicker.kt`. This replaced
+    // three controls: an ordinary workshop picker, a `WORKSHOP_KIND` filter that saved nothing, and
+    // a second workshop picker beneath it.
+    val link = rememberRecordWorkshopLink(
+        repository = repository,
+        isEdit = isEdit,
+        initialWorkshopId = editing?.workshopId,
+        initialDesignWorkshopId = editing?.designWorkshopId,
+        resetKey = editing,
+    )
     val canSetStatus = remember { canSetRecordStatus(repository.cachedUser()?.role) }
     var status by remember(editing) { mutableStateOf(editing?.status ?: defaultCreateStatus(repository.cachedUser()?.role)) }
     var saving by remember { mutableStateOf(false) }
@@ -11345,7 +11938,7 @@ private fun ProcessForm(
     ) { carried ->
         carried.artisanId?.let { artisanId = it }
         carried.productId?.let { carriedProduct.value = it }
-        carried.workshopId?.let { if (!workshop.isDirty()) workshop.applyDefault(it) }
+        carried.workshopId?.let { link.applyCarriedWorkshop(it) }
     }
     /** "Change": drop the carried artisan and product in one action. */
     fun clearCarriedContext() {
@@ -11435,7 +12028,7 @@ private fun ProcessForm(
         if (blocked) { onError("Please fill the required fields highlighted above."); return }
 
         scope.launch {
-            if (!workshop.confirmSubmission()) return@launch
+            if (!link.confirmSubmission()) return@launch
             saving = true
             val stepRequests = steps.mapIndexed { i, s ->
                 ProcessStepRequest(
@@ -11453,8 +12046,8 @@ private fun ProcessForm(
                 notes = notes.blankToNull(),
                 status = status,
                 steps = stepRequests,
-                workshopId = workshop.value(),
-                designWorkshopId = designWorkshop.value(),
+                workshopId = link.workshopId(),
+                designWorkshopId = link.designWorkshopId(),
                 recordedAt = if (isEdit) null else Instant.now().toString()
             )
             // Bank the sitting the moment the record is accepted — queued counts, offline being the
@@ -11470,8 +12063,11 @@ private fun ProcessForm(
                 // product is the next thing a researcher does, and it should not need finding again.
                 productId = productId.ifBlank { null },
                 productName = artisanProducts.firstOrNull { it.id == productId }?.productName,
-                workshopId = workshop.value(),
-                workshopName = workshop.workshops.firstOrNull { it.id == workshop.value() }?.title
+                // The ORDINARY workshop only, and null while the type box routes at a design
+                // workshop — the bag's `workshopId` is a `Workshop` id and it has no column that
+                // could carry the other kind. Same answer as the browser's `state.workshopId`.
+                workshopId = link.workshopId(),
+                workshopName = link.field.workshops.firstOrNull { it.id == link.workshopId() }?.title
             )
             // Offline: queue the process with its pre-process media (linked to the process) and each
             // step's media (linked to that step on sync, by index), preserving the step nomenclature.
@@ -11508,10 +12104,7 @@ private fun ProcessForm(
                         // form mounts both [workshop] and [designWorkshop], and both boxes need their
                         // own answer to "why was this empty" carried into the outbox, not just the
                         // three forms that happen to route through `trySaveOffline`.
-                        unfiled = workshopUnfiledReasons(
-                            designWorkshop = designWorkshop.unfiledReason(),
-                            workshop = workshop.unfiledReason(),
-                        ),
+                        unfiled = link.unfiledReasons(),
                     )
                 }.getOrNull()
                 if (queued != null) {
@@ -11598,7 +12191,7 @@ private fun ProcessForm(
     }
     val initialSig = remember(editing) { procSig() }
     val dirty = !saving && (
-        procSig() != initialSig || workshop.isDirty() || designWorkshop.isDirty() ||
+        procSig() != initialSig || link.isDirty() ||
             preMedia.uris.isNotEmpty() || steps.any { it.media.uris.isNotEmpty() }
     )
 
@@ -11614,8 +12207,7 @@ private fun ProcessForm(
         )
         // Above the workshop picker, so what was filled in is read before any of the fields it filled.
         CarryPrefillBanner(state = carry, onChange = { clearCarriedContext() })
-        WorkshopField(state = workshop, saving = saving)
-        DesignWorkshopField(state = designWorkshop, saving = saving)
+        RecordWorkshopField(link = link, saving = saving)
         RequiredInput("Name of the process", name, nameError, nameFocus, titleCased = true) { name = it }
         /*
           THE CONTROL §3.3 NAMES AS THE WORST LIVE DEFECT IN ITS CLASS, and this is the second half
@@ -15168,9 +15760,28 @@ private fun AndroidMediaForm(
     var pendingCaptureUri by remember { mutableStateOf<Uri?>(null) }
     var savedMedia by remember { mutableStateOf<List<com.designprototype.workshop.data.MediaFileDto>>(emptyList()) }
     var localMessage by remember { mutableStateOf<String?>(null) }
-    // THE DESIGN & PROTOTYPE WORKSHOP this loose upload is filed under — "Miscellaneous Media" is one
-    // of the seven record types the owner named on 2026-08-28. `isEdit = false` because this screen
-    // only ever uploads: there is no stored value to protect from the prefill.
+    /*
+      THE DESIGN & PROTOTYPE WORKSHOP this loose upload is filed under — "Miscellaneous Media" is one
+      of the seven record types the owner named on 2026-08-28. `isEdit = false` because this screen
+      only ever uploads: there is no stored value to protect from the prefill.
+
+      ONE BOX AND NOT THE TWO EVERY RECORD FORM NOW CARRIES, and the reason is a column that does not
+      exist rather than a screen that was missed. A media row has `designWorkshopId` and NO
+      `workshopId`: `MediaCompleteRequest` in `backend/app/schemas/media.py` declares one and not the
+      other, and so does this client's [MediaCompleteRequest] and `WorkshopRepository.uploadMedia`.
+      So this screen has ONE destination and no routing decision to make, and a "Type of workshop"
+      box above this one would offer five ordinary types whose answer the upload physically cannot
+      carry — a control that can silently lose the thing a person just chose.
+
+      **THIS IS THE ONE PLACE THE TWO CLIENTS ARE NOT YET THE SAME CONTROL**, and it needs a ruling
+      rather than a quiet fix on one side: the browser's `app/(protected)/media/page.tsx` still mounts
+      the retired `<DesignWorkshopCascade>` (a `WORKSHOP_KIND` lens over this same list), which
+      `WorkshopPicker.tsx` records as a caller outside its own slice. Converge by DELETING that
+      cascade mount so the browser also shows one box — or, if a loose upload is genuinely meant to
+      be fileable against an ordinary `Workshop`, by adding `workshopId` to the media schema, the
+      request model and `uploadMedia`, at which point this line becomes [RecordWorkshopField] like
+      the other five. Both of those are outside this change's files.
+    */
     val designWorkshop = rememberDesignWorkshopPicker(repository, isEdit = false, initialId = null)
     // Bumped after a batch lands so the jobs card below re-reads: an audio upload enqueues its
     // transcription job during /media/complete, so the row exists the moment the upload returns.
@@ -15319,7 +15930,18 @@ private fun AndroidMediaForm(
         // UNDER the two link dropdowns and never merged with them: "which record is this a picture
         // OF" and "which design workshop is it filed UNDER" are different questions with different
         // answers, and a file may legitimately have one, both or neither.
-        DesignWorkshopField(state = designWorkshop, saving = uploading)
+        //
+        // BOTH WORDS ARE PASSED EXPLICITLY, and they are the ones this mount says differently from
+        // the record forms'. There they are "Workshop" and "Not linked to a workshop", because the
+        // reader is answering one question under a type box that has already said which register is
+        // being listed. There is no type box here (see the picker above), so the only thing that can
+        // name the register is the control itself.
+        DesignWorkshopField(
+            state = designWorkshop,
+            saving = uploading,
+            label = "Design & prototype workshop",
+            noneLabel = NO_DESIGN_WORKSHOP,
+        )
         // A media caption. Dictation only — a caption is one sentence describing a photograph, and it
         // is printed as a single run under the picture in the media annexure, where a heading or a
         // bullet has nowhere to go.
@@ -16005,12 +16627,150 @@ private fun QuestionnaireForm(
     var language by remember(editing) { mutableStateOf(editing?.language?.takeIf { it.isNotBlank() } ?: "Hindi") }
     var notes by remember(editing) { mutableStateOf(editing?.notes ?: "") }
     var capturedLocation by remember(editing) { mutableStateOf(editing?.location?.toRequest()) }
-    val workshop = rememberWorkshopPicker(repository, isEdit, editing?.workshopId, editing)
-    // The DESIGN & PROTOTYPE workshop, beside the ordinary one and never instead of it — two
-    // tables, two access systems, and a record may carry either, both or neither. See
-    // [DesignWorkshopPickerState]; the default it opens on is the server's answer and not this
-    // form's guess, so all seven forms and both clients agree about "most recently allocated".
-    val designWorkshop = rememberDesignWorkshopPicker(repository, isEdit, editing?.designWorkshopId, editing)
+    // THE WHOLE WORKSHOP QUESTION, IN ONE CONTROL: "Type of workshop", then "Workshop". The type
+    // decides which register the second box lists and which of this record's two nullable columns
+    // the answer is written to (R3), and it is NOT stored on the record — the workshop already
+    // knows its own type. See [RecordWorkshopLink] and `ui/DesignWorkshopPicker.kt`. This replaced
+    // three controls: an ordinary workshop picker, a `WORKSHOP_KIND` filter that saved nothing, and
+    // a second workshop picker beneath it.
+    val link = rememberRecordWorkshopLink(
+        repository = repository,
+        isEdit = isEdit,
+        initialWorkshopId = editing?.workshopId,
+        initialDesignWorkshopId = editing?.designWorkshopId,
+        resetKey = editing,
+    )
+
+    /* ══════════════════════════════════════════════════════════════════════════════════════════
+     * THE ARTISAN ROSTER, NARROWED TO THE WORKSHOP THE BOX ABOVE HAS CHOSEN
+     * ══════════════════════════════════════════════════════════════════════════════════════════
+     *
+     * WHAT THIS CLOSES. This form offered EVERY ARTISAN IN THE DEPLOYMENT under whichever workshop
+     * its own picker was showing, and had since it was written: [artisans] is
+     * `loadArtisanRegister`'s ALL-scoped register and nothing re-asked when the workshop box moved.
+     * It was the last row of `shared/questionnaire-form-contract.json`'s `openDrifts`
+     * (`handset-artisan-register-is-unscoped`) and the owner raised it more than once. The browser
+     * closed the same defect in `frontend/components/questionnaires/interviewArtisans.ts`.
+     *
+     * WHY THIS FORM GETS ITS OWN READ INSTEAD OF NARROWING THE SHARED ONE, which is the obvious
+     * edit and is wrong. [loadArtisanRegister] is the OFFLINE register five other record forms and
+     * the search screen read, and it is also what [carry] below hands `carryScope` to decide whether
+     * a CARRIED artisan is still reachable. Narrowing it in place would narrow all of them, and it
+     * would prune an artisan who is alive, visible and merely documented at ANOTHER workshop out of
+     * the carry bag as though they had been deleted — with the workshop the bag is carrying going
+     * with them. So [artisans] stays exactly what it was, and this is a second read beside it.
+     *
+     * ONE SCOPE, ONE PARAMETER, CHOSEN BY THE ROUTING. `interviewArtisanScope` is the whole rule and
+     * carries the argument: the plural `workshopIds` for an ordinary `Workshop`, the singular
+     * `designWorkshopId` for a `DesignWorkshop`, never both, never the type key, and NEITHER when no
+     * workshop is chosen — because "Not linked to a workshop" is a legal answer (R5) and an empty
+     * picker under "choose a workshop first" would make that record unfileable.
+     */
+    val artisanScope = interviewArtisanScope(
+        routesToDesignWorkshop = link.routesToDesignWorkshop,
+        workshopId = link.workshopId(),
+        designWorkshopId = link.designWorkshopId(),
+    )
+    /** This workshop's roster, server order. Empty and meaningless while [loadedArtisanScope] disagrees. */
+    var workshopArtisans by remember(editing) { mutableStateOf<List<ArtisanDto>>(emptyList()) }
+    /** Where that roster came from — the fact the four empty-state sentences are chosen off. */
+    var workshopArtisanLoad by remember(editing) { mutableStateOf(RegisterLoad()) }
+    /**
+     * WHICH scope the roster above describes, or null.
+     *
+     * Null is the common case and not only the first one: null before the first read, null again
+     * from the instant the workshop changes, and null while one is in flight. Every reader has to
+     * treat "null" and "some other workshop" alike, which is what stops a stale roster standing
+     * under a fresh workshop's name — a lie that type-checks.
+     */
+    var loadedArtisanScope by remember(editing) { mutableStateOf<String?>(null) }
+
+    // KEYED ON [editing] AS WELL AS ON THE SCOPE, and the second key is not redundant. The three
+    // state holders above are `remember(editing)`, so opening a different record empties them — and
+    // if that record happens to be filed under the same workshop the form was already showing, the
+    // scope key does not change, the effect does not re-run, and the picker sits on "Looking for your
+    // artisans…" for ever over a roster it had a moment ago. That is a state a reader cannot get out
+    // of without leaving the form.
+    LaunchedEffect(editing, artisanScope.key) {
+        /*
+         * INVALIDATED HERE, BEFORE ANY AWAIT — the browser's rule 4, and the half that is easy to
+         * leave out. The roster describes ONE workshop and the workshop it describes has just
+         * changed; assigning the replacement on success and leaving the old rows up until then looks
+         * like caution and is not. For the whole length of a field connection's round trip the
+         * picker would list the PREVIOUS workshop's people under the new workshop's name — the
+         * reported defect exactly, reachable on every single workshop change rather than only on a
+         * failure.
+         *
+         * SHOWING NOBODY IS SAFE, which is what makes clearing possible at all: a ticked artisan is
+         * drawn from [artisans] whatever the roster holds (see the picker below), nothing unticks
+         * anybody, and the empty state has its own sentences. The rejected alternative — keep the
+         * previous rows and dim the control — leaves the wrong names on screen and apologises.
+         */
+        workshopArtisans = emptyList()
+        workshopArtisanLoad = RegisterLoad()
+        loadedArtisanScope = null
+
+        val scope = artisanScope
+        if (!scope.narrowed) {
+            /*
+             * NO WORKSHOP NAMED: the whole register is the right answer and this device already has
+             * it, cached, in [artisans]. Firing an identical unscoped request here would be a second
+             * copy of a list the form is already holding, and it would be the copy WITHOUT the
+             * offline cache behind it — so a handset with no signal would go from a working picker
+             * to an empty one by "fixing" its scoping. The browser makes this request because its
+             * two loads have different lifetimes and it has no disk; this client has neither
+             * problem.
+             */
+            loadedArtisanScope = scope.key
+            return@LaunchedEffect
+        }
+
+        /*
+         * CACHE-FIRST, THEN REFRESH — [loadCachedRegister]'s own order of operations, written out
+         * here rather than reused because that function is ALL-scoped by construction (its key is
+         * `cacheKey(model, "ALL", "", "")`, and its own note explains that every register it serves
+         * is un-narrowed). Giving it a scope parameter would change the shape of the five other
+         * registers to serve this one caller.
+         *
+         * A MODEL NAME OF ITS OWN, NOT `REGISTER_ARTISAN` UNDER A WORKSHOP OWNER. The ALL-scoped
+         * artisan register is already on disk under `RecordFormArtisan__ALL__…` on every installed
+         * device, and `DwReferenceStore.anyForModel` merges by model-and-owner prefix. A scoped key
+         * sharing the model string is one refactor away from serving the whole deployment's register
+         * as a workshop's roster, offline, for ever — which is this defect with a cache in front of
+         * it and no request to see. A different model can never collide with it.
+         */
+        val model = "InterviewWorkshopArtisan"
+        val key = DwReferenceStore.cacheKey(model, "WORKSHOP", scope.cacheOwner, "")
+        var load = RegisterLoad(source = RegisterSource.NONE)
+        DwReferenceStore.load(context, key)?.let { cached ->
+            workshopArtisans = cached.items.mapNotNull(::optionToArtisan)
+            load = RegisterLoad(source = RegisterSource.CACHED, fetchedAt = cached.fetchedAt)
+        }
+        val attempt = runCatching { repository.interviewArtisans(scope) }
+        attempt.exceptionOrNull()?.let { if (it is CancellationException) throw it }
+        val fetched = attempt.getOrNull()
+        if (fetched != null) {
+            // LIVE OUTRANKS CACHED even when the fresh list is shorter — a narrower answer IS the
+            // point here. `DwReferenceStore.store` refuses to let an empty fetch overwrite a
+            // populated file, so the one answer that could empty an offline picker cannot reach the
+            // disk; what is on SCREEN is always the server's own answer for this workshop.
+            workshopArtisans = fetched
+            load = RegisterLoad(source = RegisterSource.LIVE, online = true)
+            DwReferenceStore.store(
+                context,
+                key,
+                DwReferenceList(model = model, items = fetched.map(::artisanToOption)),
+            )
+        } else {
+            // ANSWERED-AND-REFUSED versus COULD-NOT-BE-REACHED, from the outbox's own classification
+            // rather than a second network probe — the two get different sentences below.
+            val cause = attempt.exceptionOrNull()
+            load = load.copy(online = cause != null && !repository.isTransient(cause))
+        }
+        workshopArtisanLoad = load
+        loadedArtisanScope = scope.key
+    }
+
     /**
      * Open on the artisan this researcher was last documenting.
      *
@@ -16018,6 +16778,14 @@ private fun QuestionnaireForm(
      * is sitting right there — so the artisan is the one thing worth carrying in. Nothing narrower
      * transfers: an interview covers a person, not their products, and this form has no field for
      * one.
+     *
+     * IT IS HANDED THE UNSCOPED REGISTER AND MUST STAY THAT WAY. `carryScope` answers "is this
+     * carried artisan still REACHABLE", and the workshop-scoped roster above answers a different
+     * question with the same array: an artisan who is alive, visible and simply documented at
+     * another workshop would be read as deleted and pruned — and the bag carries a WORKSHOP too, so
+     * the prune would happen while the form was still on its opening workshop and would destroy the
+     * very context that was about to move it. The browser states the same asymmetry at
+     * `useWorkshopArtisans`, whose repository-wide load exists for this and for nothing else.
      */
     val carry = rememberFormCarry(
         repository = repository,
@@ -16027,7 +16795,7 @@ private fun QuestionnaireForm(
         handoff = prefill
     ) { carried ->
         carried.artisanId?.let { selectedArtisans = setOf(it) }
-        carried.workshopId?.let { if (!workshop.isDirty()) workshop.applyDefault(it) }
+        carried.workshopId?.let { link.applyCarriedWorkshop(it) }
     }
     /** "Change": drop the carried artisan so the researcher picks from scratch. */
     fun clearCarriedContext() {
@@ -16167,7 +16935,13 @@ private fun QuestionnaireForm(
      */
     fun quickTranscribe(key: String, clip: File) {
         quickProblem = quickProblem - key
-        val workshopId = designWorkshop.value()
+        // DICTATION IS A DESIGN-WORKSHOP ROUTE AND HAS NO ORDINARY-WORKSHOP TWIN.
+        // `POST /design-workshops/{id}/dictate` bills the clip against that workshop's allowance, so
+        // this asks the picker for the DESIGN column specifically rather than for "the workshop" —
+        // which is null whenever the type box is routing at an ordinary `Workshop`. That is not a
+        // new state: an interview filed under no workshop at all has always reached this line with
+        // nothing, and [questionnaireNoWorkshopLine] is the sentence that already covers it.
+        val workshopId = link.designWorkshopId()
         if (workshopId.isNullOrBlank()) {
             quickProblem = quickProblem + (key to questionnaireNoWorkshopLine())
             return
@@ -16377,14 +17151,40 @@ private fun QuestionnaireForm(
         if (isEdit) {
             Text("Add or update answers below. Existing answers from other interviewers are preserved unless you change them.", color = Muted, fontSize = 12.sp)
         }
-        // Above the workshop picker, so what was filled in is read before any of the fields it filled.
+        // ABOVE EVERY FIELD IT FILLS, so what was carried in is read before any of them. This line
+        // used to say "above the workshop picker", which was true while the workshop opened this
+        // form; the order below is the web's now and the title leads. The banner still comes first,
+        // for the reason it always did — it fills the artisan box as well as the workshop one.
         CarryPrefillBanner(state = carry, onChange = { clearCarriedContext() })
-        WorkshopField(state = workshop, saving = saveState == SaveState.SAVING)
-        DesignWorkshopField(state = designWorkshop, saving = saveState == SaveState.SAVING)
+        /*
+          ── THE FIELD ORDER BELOW IS THE WEB'S, AND IT IS CONTRACTUAL ──────────────────────────────
+
+          Interview title, Place, Language, Type of workshop, Workshop, Status, Artisans interviewed
+          — then the capture preferences, the sections, and Interview notes at the foot. That
+          sequence is declared ONCE, in `shared/questionnaire-form-contract.json` under `fields`, and
+          `backend/tests/test_questionnaire_form_contract.py` holds this form to it field for field.
+          Moving a box here without moving it there is now a red build rather than a drift.
+
+          THIS FORM USED TO OPEN WITH THE WORKSHOP AND THE BROWSER OPENS WITH THE TITLE, and both are
+          defensible in isolation — the workshop is the container every other record form leads with,
+          and it is still what this interview is filed under and what its dictation consent is read
+          from. Exactly one of the two orders can be the contract. A form whose boxes come in one
+          sequence on a laptop and another on a handset is a form a researcher re-learns per device,
+          in a courtyard with an artisan waiting; and `docs/WALKTHROUGH.md` is read with the form open
+          beside it, so a list in the wrong sequence sends the reader two boxes further down and,
+          finding the wrong one, filling it in. All three registers were already written in the WEB's
+          order, so this form was the odd one out against four surfaces rather than one. The owner
+          ruled the web correct. The workshop keeps its job and loses its place.
+
+          THE OTHER NINE RECORD FORMS ARE NOT TOUCHED and this is not an inconsistency to tidy up
+          later. `RecordWorkshopField` opens those forms because on those screens the workshop really
+          is the first question asked, and no contract declares their order against a browser. This
+          is the one form whose web twin has been declared, so it is the one form that moves.
+        */
         RequiredInput("Interview title", title, titleError, titleFocus, titleCased = true) { title = it }
-        // Web parity (app/(protected)/questionnaire/page.tsx): title → place → language → status →
-        // the artisans this interview is about. There is deliberately NO date field: the server
-        // derives interviewDate from recordedAt, which is when the interview was actually captured.
+        // There is deliberately NO date field: the server derives interviewDate from recordedAt,
+        // which is when the interview was actually captured. `absent` in the form contract holds all
+        // three registers to that, so the box cannot come back through a guide.
         TextInput("Place", place, titleCased = true) { place = it }
         /*
           THE LIST IS NO LONGER WRITTEN HERE — see [DW_INTERVIEW_LANGUAGES], 2026-08-28.
@@ -16411,20 +17211,170 @@ private fun QuestionnaireForm(
             placeholder = DW_INTERVIEW_LANGUAGE_PLACEHOLDER,
             includeNone = false
         ) { language = it }
+        RecordWorkshopField(link = link, saving = saveState == SaveState.SAVING)
+        // FOURTH AND FIFTH, not first: "Type of workshop" then "Workshop", drawn by the one control
+        // every record form mounts. Nothing about what it does changed — see the order note above
+        // for why only its PLACE did.
         StatusControl(canSetStatus = canSetStatus, value = status) { status = it }
-        ArtisanMultiSelectField(
-            label = "Linked artisans",
-            artisans = artisans,
-            selectedIds = selectedArtisans
-        ) { id ->
-            val adding = !selectedArtisans.contains(id)
-            selectedArtisans = if (adding) selectedArtisans + id else selectedArtisans - id
-            // Naming an artisan is an explicit pick, so it replaces the remembered context and
-            // retires the banner: from here on the selection is the researcher's own, not a
-            // suggestion. Only on the way IN — unticking says who the interview is not about, which
-            // is no statement about where the researcher is sitting.
-            if (adding) {
-                artisans.firstOrNull { it.id == id }?.let {
+        /*
+          ── THE WALL OF CHECKBOXES IS GONE ─────────────────────────────────────────────────────────
+
+          What stood here was [ArtisanMultiSelectField], which paints a Column of checkboxes — one
+          row per artisan in the whole offline register, straight into a form that is already over a
+          thousand lines of screen. It has no summary line, so the only way to see who is ticked is
+          to scroll the form back over them, and no room for a Select-all row without pushing the
+          next field further down.
+
+          [SearchableMultiSelectField] ALREADY EXISTED (`ui/SearchableSelect.kt`) and is what this
+          field must use: a summary trigger, the chosen rows as chips, and a searchable sheet with
+          "Select all N matching". It is also what `CheckboxMultiSelectField` was itself rewritten
+          onto, and what the tool form's own artisan box already draws. There was no third control to
+          write, and writing one would have been this whole problem again. The browser reaches the
+          same control by the same route — `MultiSelectDropdown` over `SearchableSelect`, with
+          `searchable` forced ON rather than left to an option count.
+
+          THE LABEL IS THE WEB'S WORD. "Linked artisans" stood here; "Artisans interviewed" is what
+          the browser, both walkthrough registers and the printed guide all say. One box with two
+          names across two devices a researcher may use on the same day is the quietest of the drifts
+          and the longest-lived. `shared/questionnaire-form-contract.json` pins BOTH the word and the
+          composable, the second structurally, so restoring the wall under the new label fails.
+
+          THE OTHER TWO CALLERS OF THE WALL ARE DELIBERATELY NOT TOUCHED. The workshop record form's
+          own "Linked artisans" box is the roster a researcher is ASSEMBLING for a workshop they are
+          writing, and the browse screen's "Involved artisan(s)" is a filter over records that
+          already exist. Both are different screens with different lists; whether they should move
+          too is a decision to take with those forms in front of you, not one to take by extension
+          from this form's contract. This commit means one thing.
+        */
+        // NAME AND PLACE IN THE LABEL, CRAFT IN THE HINT. The wall drew "name · place" and that is
+        // what a researcher already reads, so it is kept; the craft goes to [SelectOption.hint],
+        // which `SelectOption.matches` searches as well as the label, so typing a craft name filters
+        // the sheet to that craft. A three-part label would instead turn four ticked artisans into
+        // four chips that all begin with a name and end in "…", because the chips are one line each.
+        //
+        // NOT SORTED — [toolArtisanOptions] is right next door and is deliberately NOT reused, for
+        // the reason it exists: it groups by craft name, and this list is the server's own answer in
+        // the server's own order (`createdAt desc`). Re-sorting it here would make the handset and
+        // the browser offer the same people in two different orders.
+        //
+        // THE OFFER IS THE WORKSHOP'S ROSTER AND NOTHING IS FOLDED INTO IT, which is the fix: the
+        // defect was a repository-wide list standing in for a workshop's. `mergeById` is the right
+        // rule for a record form's picker, where three requests describe one world and a narrower
+        // answer must not look like a shorter one — and it is exactly the wrong rule here, where a
+        // narrower answer is the entire point. With no workshop named there is nothing to narrow to
+        // and the whole register IS the right answer; see the load effect above for why that arm
+        // reads [artisans] rather than re-requesting it.
+        //
+        // THE ONE EXCEPTION IS NOT AN OFFER. An id that is ALREADY TICKED and that this roster does
+        // not hold is drawn anyway, out of the unscoped register. A multi-select builds its chips
+        // from the options matching its values, so a ticked id with no option is a blank chip for
+        // somebody who IS on the record and is about to be saved onto it. That row is not a gap that
+        // closes itself: a carried context, a handoff prefill, or a researcher who ticked somebody
+        // and then corrected the workshop all leave a permanently ticked row this roster will never
+        // hold — and NOTHING HERE UNTICKS ANYBODY (the browser's rule 6). Correcting a workshop is
+        // not a statement about who the interview was with, and a picker that silently dropped a
+        // selection on a workshop change would lose an answer the researcher had already given.
+        val offeredArtisans = if (artisanScope.narrowed) workshopArtisans else artisans
+        val artisanPickerOptions = remember(offeredArtisans, artisans, selectedArtisans) {
+            val offeredIds = offeredArtisans.mapTo(mutableSetOf()) { it.id }
+            val rescued = selectedArtisans
+                .filterNot { it in offeredIds }
+                .mapNotNull { id -> artisans.firstOrNull { it.id == id } }
+            (offeredArtisans + rescued).map { artisan ->
+                SelectOption(
+                    value = artisan.id,
+                    label = "${artisan.name} · ${artisan.place}",
+                    hint = artisan.craft?.name,
+                )
+            }
+        }
+        SearchableMultiSelectField(
+            label = "Artisans interviewed",
+            options = artisanPickerOptions,
+            selected = selectedArtisans,
+            placeholder = "Select the artisans this interview is with",
+            /*
+              FIVE SENTENCES AND NOT ONE, because an empty roster means one of five different things
+              — the answer has not arrived, the read was refused, this device has never received one,
+              nobody is recorded at THIS workshop, nobody is recorded at all — and only the last two
+              are facts about the repository. The wall this control replaced printed a single
+              hard-coded line off no facts at all — "No artisans available yet. Create an artisan
+              first." — which is a claim about the register manufactured out of a claim about the
+              network, and the researcher who believes it goes off to create a duplicate of an
+              artisan who is already there.
+
+              THE HOUSE SENTENCES AND NOT NEW ONES. `ui/WorkshopOptions.kt` owns this wording for
+              every list on both clients, so a researcher meets the same words here that the workshop
+              box above them uses.
+
+              THE FOURTH IS NEW HERE AND IS ONLY SAYABLE NOW. Until 2026-09-17 this control printed
+              three and its comment said why it stopped: its roster was `loadArtisanRegister`'s
+              ALL-scoped register, so an empty list meant the REGISTER was empty whatever the
+              workshop box said, and `atWorkshopEmptyLine` printed off that read would have been the
+              unscoped-register defect wearing the fix's clothes. The roster IS fetched per workshop
+              now, so "nobody is recorded at this workshop" is a fact this control holds and a
+              different one from "nobody is recorded at all" — different remedy, different person to
+              go and see. Collapsing the two is what produced the duplicate-artisan report that
+              closed this drift, so `test_the_handset_keeps_the_four_empty_roster_sentences_apart`
+              holds them pairwise distinct rather than merely present.
+
+              WHICH FACT EACH ARM READS, because they are not the same fact and two of them look
+              alike from here:
+
+                * NO WORKSHOP NAMED — the offer is the whole register and [lookupState] is what
+                  settles it, exactly as it did before this change. This arm is unchanged.
+                * `loadedArtisanScope != artisanScope.key` — a roster for THIS workshop has not
+                  landed. It covers the first read, every workshop change (rule 4 clears the scope
+                  before awaiting) and the in-flight window, which is the one state where waiting IS
+                  the next move.
+                * LIVE — the server answered, for this workshop, and answered empty. The only arm
+                  entitled to say anything about this workshop's roster.
+                * anything else — the read did not answer. `RegisterLoad.online` splits an answered
+                  refusal from a device that could not be reached, and CACHED lands here too: an
+                  empty file from an earlier connection plus a failed refresh is not today's answer
+                  about this workshop, and saying it was would be the same manufactured claim one
+                  cache older.
+            */
+            emptyMessage = when {
+                !artisanScope.narrowed -> when (lookupState) {
+                    CarryScopeState.PENDING -> loadingListLine("artisans")
+                    CarryScopeState.UNAVAILABLE -> couldNotListLine("artisans")
+                    CarryScopeState.LOADED -> unscopedEmptyLine("artisans")
+                }
+                loadedArtisanScope != artisanScope.key -> loadingListLine("artisans")
+                workshopArtisanLoad.source == RegisterSource.LIVE -> atWorkshopEmptyLine("artisans")
+                workshopArtisanLoad.online -> couldNotListLine("artisans")
+                else -> offlineListLine("artisans")
+            },
+        ) { next ->
+            /*
+              THE SHEET HANDS BACK THE WHOLE SELECTION, so this handler is pure replacement and there
+              is nothing to reconcile: `selectedArtisans` IS the answer. That is the difference from
+              the wall, which reported one id at a time and left the arithmetic here.
+
+              THE CARRIED CONTEXT STILL MOVES ONLY ON THE WAY IN, unchanged from the toggle this
+              replaces: unticking says who the interview is NOT about, which is no statement about
+              where the researcher is sitting. `next - selectedArtisans` is the ids that just
+              arrived, and both `Set.plus` (inside the sheet's `draft`) and `Set.minus` here return
+              `LinkedHashSet`, so that difference is in TICK ORDER and its head is the artisan the
+              researcher just chose — the same rule `primaryInterviewArtisanId` states for the
+              browser.
+
+              ONE CHANGE CAN NOW CARRY SEVERAL IDS, which the toggle could not, and the head is the
+              answer for that too. "Select all N matching" is the case; its head is the first row of
+              the filtered list rather than a row anybody pointed at. That is the honest reading of a
+              bulk action — nobody named one artisan — and it is the same thing the wall did when a
+              researcher ticked their way down it from the top.
+            */
+            val added = next - selectedArtisans
+            selectedArtisans = next
+            added.firstOrNull()?.let { id ->
+                // THE ROSTER FIRST AND THE REGISTER SECOND, because since this list became
+                // workshop-scoped the two are no longer the same set. An artisan on this workshop's
+                // roster but past page one of the deployment-wide register would otherwise be ticked
+                // and remembered as nobody, and the next form would open with no carried context at
+                // all — a silent loss of the one prefill this form exists to hand on.
+                (offeredArtisans.firstOrNull { it.id == id } ?: artisans.firstOrNull { it.id == id })?.let {
                     carry.remember(
                         CarryContext(
                             artisanId = it.id,
@@ -16436,6 +17386,25 @@ private fun QuestionnaireForm(
                         explicit = true
                     )
                 }
+            }
+        }
+        // WHERE A NARROWED ROSTER CAME FROM, and only while it has rows. `registerListNotice` prints
+        // nothing for a list that arrived this session and the dated "last refreshed" line for one
+        // served off this device's own disk — a state this control did not have until its roster was
+        // fetched per workshop, and the one state where a designer needs a sentence over a control
+        // that is working perfectly: whether a missing name means "create this artisan" or "refresh
+        // first" turns entirely on how old the copy is.
+        //
+        // BELOW THE CONTROL, WHICH IS WHERE BOTH WORKSHOP BOXES PUT THEIRS. A provenance line above a
+        // field arrives before the reader knows what it is about.
+        //
+        // AND DELIBERATELY NOT ASKED OF AN EMPTY LIST. `registerListNotice`'s empty arms answer a
+        // different question from the five sentences above — it has no way to say "this WORKSHOP has
+        // nobody", because it was written for registers that are never narrowed — so asking it here
+        // would print a second, contradicting sentence under the first.
+        if (artisanScope.narrowed && workshopArtisans.isNotEmpty()) {
+            registerListNotice("artisans", workshopArtisans.size, workshopArtisanLoad)?.let { notice ->
+                Text(notice, color = Muted, fontSize = 11.sp, lineHeight = 15.sp)
             }
         }
         DropdownField(
@@ -16806,7 +17775,13 @@ private fun QuestionnaireForm(
          * with nothing stored and nothing sent. The screen's default of hiding the answer boxes is
          * untouched, so a researcher who never opens them never meets this control at all.
          */
-        MultiNoteInput(value = notes) { notes = it }
+        // THE LABEL IS WRITTEN HERE AND NOT CHANGED IN THE DEFAULT. This call used to pass none and
+        // take [MultiNoteInput]'s own "Notes" while the browser wrote `label="Interview notes"` at
+        // its call site — one box, two names, across two devices a researcher may use on the same
+        // day. Moving `label: String = "Notes"` instead would have renamed the notes box on the
+        // artisan, workshop and process forms to fix this one screen, and four forms that say
+        // "Notes" about notes are not wrong.
+        MultiNoteInput(label = "Interview notes", value = notes) { notes = it }
         fun submit() {
             if (!validateRequired(listOf(
                     RequiredCheck(title.isBlank(), { titleError = it }, titleFocus)
@@ -16818,7 +17793,7 @@ private fun QuestionnaireForm(
                 scope.launch {
                     // Late-submission gate first, so the save button does not sit in "Saving…" while
                     // the confirmation is on screen.
-                    if (!workshop.confirmSubmission()) return@launch
+                    if (!link.confirmSubmission()) return@launch
                     saveState = SaveState.SAVING
                     val now = Instant.now().toString()
                     // Only send answers this interviewer actually added or changed; untouched answers
@@ -16869,8 +17844,8 @@ private fun QuestionnaireForm(
                                 notes = notes.blankToNull(),
                                 status = status,
                                 artisanIds = selectedArtisans.toList(),
-                                workshopId = workshop.value(),
-                                designWorkshopId = designWorkshop.value(),
+                                workshopId = link.workshopId(),
+                                designWorkshopId = link.designWorkshopId(),
                                 location = capturedLocation,
                                 responses = responsesToSend,
                                 recordedAt = now
@@ -16920,10 +17895,7 @@ private fun QuestionnaireForm(
                                 // this form mounts both [workshop] and [designWorkshop], so a cleared
                                 // box needs to reach the outbox as a real clearance rather than
                                 // vanishing into the same silence as a picker that never had options.
-                                unfiled = workshopUnfiledReasons(
-                                    designWorkshop = designWorkshop.unfiledReason(),
-                                    workshop = workshop.unfiledReason(),
-                                ))
+                                unfiled = link.unfiledReasons())
                         }.getOrNull()
                         if (queued != null) {
                             media.reset(); qMedia.reset(); questionAudio = emptyMap()
@@ -16936,7 +17908,7 @@ private fun QuestionnaireForm(
                             capturedLocation = null; answers.values.forEach { it.value = "" }
                             // Interviews are usually captured back-to-back at one workshop, so the
                             // selection carries over — re-baselined so it isn't flagged as unsaved.
-                            workshop.markSaved()
+                            link.markSaved()
                             saveState = SaveState.SAVED
                             // SAID EVEN ON THE HAPPY PATH, because this form clears itself and
                             // navigates away — so a clip whose bytes could not be read is a clip the
@@ -16974,8 +17946,8 @@ private fun QuestionnaireForm(
                                     status = status,
                                     artisanIds = if (selectedArtisans != originalArtisans) selectedArtisans.toList() else null,
                                     responses = responsesToSend.ifEmpty { null },
-                                    workshopId = workshop.value(),
-                                    designWorkshopId = designWorkshop.value(),
+                                    workshopId = link.workshopId(),
+                                    designWorkshopId = link.designWorkshopId(),
                                     location = locationForBody(true, capturedLocation, original.location)
                                 )
                             )
@@ -16989,8 +17961,8 @@ private fun QuestionnaireForm(
                                     notes = notes.blankToNull(),
                                     status = status,
                                     artisanIds = selectedArtisans.toList(),
-                                    workshopId = workshop.value(),
-                                    designWorkshopId = designWorkshop.value(),
+                                    workshopId = link.workshopId(),
+                                    designWorkshopId = link.designWorkshopId(),
                                     location = capturedLocation,
                                     responses = responsesToSend,
                                     recordedAt = now
@@ -17096,8 +18068,9 @@ private fun QuestionnaireForm(
                                 place = interviewed.place,
                                 craftId = interviewed.craftId,
                                 craftName = interviewed.craft?.name,
-                                workshopId = workshop.value(),
-                                workshopName = workshop.workshops.firstOrNull { it.id == workshop.value() }?.title
+                                // The ORDINARY workshop only — see the other three forms' note.
+                                workshopId = link.workshopId(),
+                                workshopName = link.field.workshops.firstOrNull { it.id == link.workshopId() }?.title
                             )
                         )
                     }
@@ -17112,7 +18085,7 @@ private fun QuestionnaireForm(
                         answers.values.forEach { it.value = "" }
                         // The workshop stays selected for the next interview (same field session),
                         // re-baselined so the carry-over isn't reported as an unsaved change.
-                        workshop.markSaved()
+                        link.markSaved()
                     }
                     saveState = SaveState.SAVED
                     delay(SAVED_CONFIRM_MS)
@@ -17131,7 +18104,7 @@ private fun QuestionnaireForm(
         val initialSig = remember(editing) { qSig() }
         // Any changed field, an unsaved general attachment, or an unsaved recorded clip makes the
         // interview "dirty" so an accidental Back offers to save it (including in-progress recordings).
-        val dirty = qSig() != initialSig || workshop.isDirty() || designWorkshop.isDirty() || qMedia.uris.isNotEmpty() || media.uris.isNotEmpty()
+        val dirty = qSig() != initialSig || link.isDirty() || qMedia.uris.isNotEmpty() || media.uris.isNotEmpty()
         RegisterUnsavedGuard(dirty = dirty) { submit() }
         SaveButton(
             state = saveState,

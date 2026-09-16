@@ -17,9 +17,7 @@ import { CarryContextBanner, carryScope, useCarryContext, type CarryScopeState }
 import type { InlineRecordSurfaceProps } from "@/components/forms/inlineRecordHost";
 import { MediaCaptureField } from "@/components/forms/MediaCaptureField";
 import { optionToProduct, productToOption, useRecordOffPage } from "@/components/forms/recordPickers";
-import { useWorkshopSelection, WorkshopSelect } from "@/components/forms/WorkshopSelect";
-import { DesignWorkshopCascade } from "@/components/forms/DesignWorkshopCascade";
-import { useDesignWorkshopSelection } from "@/components/forms/DesignWorkshopSelect";
+import { useWorkshopPicker, WorkshopPicker } from "@/components/forms/WorkshopPicker";
 import { MediaLightbox, MediaPreviewTile, type PreviewMedia } from "@/components/media/MediaLightbox";
 import { StatusBadge } from "@/components/StatusBadge";
 import { Dropdown } from "@/components/ui/Dropdown";
@@ -385,21 +383,29 @@ export function ProcessForm({
     that file's header is about exactly this.
   */
   const canPickStatus = hasRank(user, "PROFESSOR");
-  // The workshop this process was documented at: shared picker, shared most-recent defaulting, and
-  // the late-submission gate (see components/forms/WorkshopSelect).
-  const workshop = useWorkshopSelection({ initialWorkshopId: initial?.workshopId, isEdit, resetKey: initial?.id ?? null });
   /*
-    THE DESIGN & PROTOTYPE WORKSHOP this record is filed under. Its own hook beside the ordinary
-    workshop's, never folded into it: `workshopId` is gated by `WorkshopAssignment` and carries a
-    submission window and a late-submission dialog; `designWorkshopId` is gated by
-    `load_workshop_or_404` and has neither. Two access systems on one control is how a scope comes to
-    be checked by whichever of them the caller remembered.
+    THE WORKSHOP THIS PROCESS WAS DOCUMENTED AT — ONE CONTROL, TWO DROPDOWNS.
 
-    `initial` on the control below is `undefined` on a CREATE and the stored value (or null) on an
-    EDIT, which is what tells the picker whether it may prefill — the same convention
-    `LocationFields` uses to decide whether it may auto-capture.
-  */
-  const designWorkshop = useDesignWorkshopSelection(initial?.designWorkshopId ?? null);
+    `forms/WorkshopPicker.tsx` owns all of it: the "Type of workshop" box, the "Workshop" box below
+    it, the most-recent defaulting, the late-submission gate, and the rule that decides whether the
+    chosen workshop is written to `workshopId` or to `designWorkshopId`.
+
+    IT REPLACED THREE CONTROLS WITH TWO. This form used to mount `WorkshopSelect`, then a KIND box,
+    then a second workshop box under it — three dropdowns for one question, one of which saved
+    nothing and said so in its own hint. The owner's ruling: "we do not need one separately for each
+    of the type of the workshops".
+
+    THE DEFAULT IS FOR A NEW RECORD AND FOR NOTHING ELSE. `isEdit` and the two `initial*` ids are how
+    the picker learns that this form is open on a record that ALREADY NAMES a workshop; it then opens
+    the type box on whichever of the two columns that record uses and never applies "the most recent
+    workshop this account can reach" over it. Getting that wrong re-files historic records under
+    whatever is newest, and nothing on screen would say a link had moved.  */
+  const workshop = useWorkshopPicker({
+    initialWorkshopId: initial?.workshopId,
+    initialDesignWorkshopId: initial?.designWorkshopId,
+    isEdit,
+    resetKey: initial?.id ?? null
+  });
 
   const [name, setName] = useState(initial?.name ?? "");
   const [artisanId, setArtisanId] = useState(initial?.product?.artisanId ?? "");
@@ -772,11 +778,14 @@ export function ProcessForm({
     artisanId: artisanId && artisanId === carriedArtisanId ? "" : artisanId,
     productId: productId && productId === carriedProductId ? "" : productId,
     workshopId: workshop.touched ? workshop.workshopId : "",
-    // The same `touched` gate, for the same reason: this form's guard is a DIFF of state, so a value
-    // the app prefilled would otherwise read as work the researcher had done, and a blank new form
-    // announcing unsaved changes before anybody types is what teaches people to click through the
-    // guard. `touched` is false for the prefill and true only once a person has picked.
-    designWorkshopId: designWorkshop.touched ? designWorkshop.workshopId : "",
+    // ONE `touched` FOR BOTH IDS NOW, because one control owns both: it is false for either half's
+    // automatic default and true the moment a person picks a workshop OR changes the type. Same
+    // reason as ever — this form's guard is a DIFF of state, so a value the app prefilled would
+    // otherwise read as work the researcher had done, and a blank new form announcing unsaved
+    // changes before anybody types is what teaches people to click through the guard. The TYPE is in
+    // the signature only through these two ids, which is right: it is not saved on the record, and
+    // changing it with nothing picked changes nothing to lose.
+    designWorkshopId: workshop.touched ? workshop.designWorkshopId : "",
     status,
     // IN THE SIGNATURE, because this form's unsaved-changes guard is a diff of state rather than an
     // `onDirty` event — so a box left out of it is a box a researcher can fill in, navigate away
@@ -976,7 +985,7 @@ export function ProcessForm({
         name: trimmedName,
         productId,
         workshopId: workshop.workshopId || null,
-        designWorkshopId: designWorkshop.workshopId || null,
+        designWorkshopId: workshop.designWorkshopId || null,
         preProcessAvailable,
         notes: notes.trim() || null,
         // Unauthorized status changes are silently dropped server-side.
@@ -1248,18 +1257,14 @@ export function ProcessForm({
       <DictationUnavailableNotice />
 
       {/* Android parity (ProcessForm): the workshop opens the form, because it is the context
-          every other answer belongs to — not merely the first dropdown. */}
-      <WorkshopSelect state={workshop} saving={saving} />
-      {/*
-        The design & prototype workshop, directly under the ordinary one — see the hook above.
-        Its default is the server's answer to "most recently allocated" rather than this form's
-        guess, so all seven forms and both clients agree; `lib/designWorkshopDefault.ts`.
-      */}
-      <DesignWorkshopCascade
-        state={designWorkshop}
-        initial={initial ? (initial.designWorkshopId ?? null) : undefined}
-        saving={saving}
-      />
+          every other answer belongs to — not merely the first dropdown. Two boxes, one question:
+          the type, then the workshop of that type.
+
+          NO `onDirty` HERE, and that is this form's own rule rather than an omission: its
+          unsaved-changes guard is a DIFF of a signature rather than an event, and both ids are in
+          that signature below, gated on `workshop.touched` so a default the app applied does not
+          read as work a researcher did. */}
+      <WorkshopPicker state={workshop} saving={saving} />
 
       <div>
         {/*

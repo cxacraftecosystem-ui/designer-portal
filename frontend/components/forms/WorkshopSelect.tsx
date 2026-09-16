@@ -26,10 +26,23 @@ import {
 } from "@/lib/workshopOptions";
 
 /**
- * The ONE workshop picker every record form mounts, above its craft / artisan / product dropdowns.
+ * THE ORDINARY-`Workshop` HALF OF ONE PICKER, and five other screens' workshop box.
  *
- * Every record type carries a workshop now (artisan, craft, product, tool, process, questionnaire),
- * and the workshop decides two things the researcher must learn BEFORE saving, not after:
+ * ── WHERE THIS IS DRAWN NOW ────────────────────────────────────────────────────────────────────
+ *
+ * On the four record forms it is no longer mounted directly. `forms/WorkshopPicker.tsx` draws a
+ * "Type of workshop" box and then ONE workshop box: this component when the chosen type's
+ * `routesToDesignWorkshop` flag is false, and `forms/DesignWorkshopSelect.tsx` when it is true. Two
+ * dropdowns, never three — that file's header carries the argument and the rulings.
+ *
+ * IT IS STILL MOUNTED ON ITS OWN by the crafts page and the interview page, and its exported helpers
+ * (`loadAccessibleWorkshops`, `workshopOccurrenceDate`, `sortWorkshopsByOccurrence`) are read by the
+ * design-workshops page, `WorkshopScopeSelect`, `FunnelFilters` and `StageWorkshopField`. Those two
+ * mounts are outside the slice that introduced the picker and are the reason this file was folded
+ * in rather than deleted; everything below is unchanged and still load-bearing.
+ *
+ * Every record type carries a workshop (artisan, craft, product, tool, process, questionnaire), and
+ * the workshop decides two things the researcher must learn BEFORE saving, not after:
  *
  * 1. **Assignment.** Once a workshop has assignments only those researchers (and admins) may file
  *    records against it — the API answers 403. This warns at select time instead.
@@ -105,9 +118,11 @@ import {
  * ── AND THE VOCABULARY IS NOT THIS FILE'S ANY MORE ──────────────────────────────────────────────
  *
  * The label, the grouping, the sort, the "none" row, the four state sentences and the truncation
- * sentence all come from `lib/workshopOptions` and `components/ui/selectFilter`, because the four
- * record forms mount this picker directly above the DESIGN-workshop picker and every one of those
- * six facts used to be spelled differently in the two files. See `DROPDOWN_DESIGN.md` §2.
+ * sentence all come from `lib/workshopOptions` and `components/ui/selectFilter`, because every one
+ * of those six facts used to be spelled differently in this file and in the design-workshop picker.
+ * That mattered when the two boxes sat one above the other on four record forms; it matters MORE now
+ * that `WorkshopPicker` swaps between them inside one control, where a difference in wording would
+ * read as the control changing its mind. See `DROPDOWN_DESIGN.md` §2.
  */
 
 /** How far down the list the auto-default walks looking for a workshop the user may submit to. */
@@ -191,7 +206,9 @@ export function loadAccessibleWorkshops(): Promise<Workshop[]> {
   say which of the two is selected — and the primitive has to own it anyway, because the other
   picker on these same four forms could not draw one at all: `DesignWorkshopSelect` prepended
   nothing, so a record filed under the wrong design workshop by mistake could not be un-filed on the
-  web at any point. One row, one owner, one spelling on both pickers.
+  web at any point. One row, one owner, one spelling on both pickers — which is now literal rather
+  than aspirational: `WorkshopPicker` draws one workshop box at a time and passes this same
+  `NO_FIELD_WORKSHOP` to whichever half it is.
 */
 
 /**
@@ -592,8 +609,10 @@ export function useWorkshopSelection({
 /**
  * The workshop field itself: a searchable ComboBox (workshop lists get long), the assignment and
  * late-submission warnings for the current pick, and the confirmation dialog its `confirmSubmission`
- * opens. Mount it as the first dropdown in the form and hang `onDirty` on it — picking a workshop
- * only updates React state and never fires a form event, so the unsaved-changes guard needs telling.
+ * opens. On a record form it is drawn by `forms/WorkshopPicker.tsx` under the type box, with
+ * `label="Workshop"`; on the crafts and interview pages it is still mounted directly, first in the
+ * form. Hang `onDirty` on it either way — picking a workshop only updates React state and never
+ * fires a form event, so the unsaved-changes guard needs telling.
  *
  * The reverse also has to be handled: the ComboBox's search box IS a real `<input type="text">`, and
  * the record forms mark themselves dirty from `<form onInput={markDirty}>`. Left alone, merely TYPING

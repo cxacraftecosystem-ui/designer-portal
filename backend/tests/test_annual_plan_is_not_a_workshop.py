@@ -109,9 +109,37 @@ ALLOWED_CLIENT_MODULES = {
 #: this module the name in advance, for a comment, would have retired the guard that makes anyone
 #: stop and choose. THE DAY AN ORDER GENUINELY NEEDS A PLAN ROW, ADD IT HERE AND SAY SO; a
 #: citation is not that day.
+#: ── AND THIS IS THAT DAY, FOR A DIFFERENT MODULE THAN THE ONE ABOVE EXPECTED ──────────────────
+#:
+#: ``api/routes/workshop_types.py`` joined on 2026-09-17, and it is the first entry here that names
+#: the table because it MUST QUERY IT rather than because it wanted to describe it.
+#:
+#: Workshop types became rows that an administrator can create and delete. A type cannot be deleted
+#: while anything is filed under it, and ``AnnualPlanEntry.workshopKind`` STORES THAT TOKEN — so a
+#: guard that counted only ``DesignWorkshop`` would let an administrator delete a type that a
+#: hundred planned rows still render, and the annual-plan directory would start showing a kind
+#: nothing can resolve. That is precisely the failure this file's own header calls out by name: a
+#: row rendering with no type at all, indistinguishable from one whose type was never answered.
+#:
+#: SO THE BOUNDARY MOVED, AND IT MOVED IN THE DIRECTION THIS GUARD ALWAYS ALLOWED FOR. The rule was
+#: never "no module may know the plan exists"; it is "no module may know WITHOUT SAYING SO HERE,
+#: with the reason". Two things keep it a boundary rather than an opening:
+#:
+#:   * The module reads ONE COLUMN, ``workshopKind``, and only to COUNT. It never reads a plan row's
+#:     contents, never joins to one, never writes one, and never learns what a plan IS — it asks
+#:     "how many rows carry this token" and renders the number in a refusal. A future edit that
+#:     reaches past the count is the edit this entry does not license.
+#:   * It counts WITHDRAWN rows on purpose, which is the opposite of what a workshop-reading service
+#:     would want and is stated at ``_count_use``: a withdrawn plan row is still on screen, still
+#:     rendering its kind, because the plan is the record of what WAS intended. A module that had
+#:     wandered in here by accident would have copied ``DesignWorkshop``'s ``deletedAt`` narrowing
+#:     without noticing the two retirements differ.
+#:
+#: If the type registry ever stops being shared between the two features, this entry goes with it.
 ALLOWED_MENTION_MODULES = ALLOWED_CLIENT_MODULES | {
     "services/annual_plan_xlsx.py",
     "schemas/annual_plan.py",
+    "api/routes/workshop_types.py",
 }
 
 

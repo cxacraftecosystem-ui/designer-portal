@@ -30,9 +30,7 @@ import {
 } from "@/components/forms/recordPickers";
 import { FieldBlock } from "@/components/tasks/TaskPrimitives";
 import { MultiSelectDropdown } from "@/components/ui/Dropdown";
-import { useWorkshopSelection, WorkshopSelect } from "@/components/forms/WorkshopSelect";
-import { DesignWorkshopCascade } from "@/components/forms/DesignWorkshopCascade";
-import { useDesignWorkshopSelection } from "@/components/forms/DesignWorkshopSelect";
+import { useWorkshopPicker, WorkshopPicker } from "@/components/forms/WorkshopPicker";
 import { ExistingMedia } from "@/components/media/ExistingMedia";
 import { GridMeasurement, MEASUREMENT_GRID_PURPOSE, type GridFiles, type GridGroup } from "@/components/media/GridMeasurement";
 import { RecordPhotoMeasure, type MeasureColumn } from "@/components/media/RecordPhotoMeasure";
@@ -596,30 +594,36 @@ export function ToolForm({
     ? ((initial as ToolDocumentation & { location?: LocationInitialValues | null }).location ?? null)
     : undefined;
   const isEdit = Boolean(initial);
-  // The workshop this tool was documented at: shared picker, shared most-recent defaulting, and the
-  // late-submission gate (see components/forms/WorkshopSelect).
-  //
-  // `seed.workshopId` is the design workshop's own linked Workshop and outranks the most-recent
-  // probe: a tool created from a WORKSHOP-scoped picker that is filed against a different sitting is
-  // a tool that picker can never show again. Passing it here also marks the selection `touched`,
-  // which is what keeps the probe and the carry bag off it. See {@link InlineHostSeed}.
-  const workshop = useWorkshopSelection({
+  /*
+    THE WORKSHOP THIS TOOL WAS DOCUMENTED AT — ONE CONTROL, TWO DROPDOWNS.
+
+    `forms/WorkshopPicker.tsx` owns all of it: the "Type of workshop" box, the "Workshop" box below
+    it, the most-recent defaulting, the late-submission gate, and the rule that decides whether the
+    chosen workshop is written to `workshopId` or to `designWorkshopId`.
+
+    IT REPLACED THREE CONTROLS WITH TWO. This form used to mount `WorkshopSelect`, then a KIND box,
+    then a second workshop box under it — three dropdowns for one question, one of which saved
+    nothing and said so in its own hint. The owner's ruling: "we do not need one separately for each
+    of the type of the workshops".
+
+    THE DEFAULT IS FOR A NEW RECORD AND FOR NOTHING ELSE. `isEdit` and the two `initial*` ids are how
+    the picker learns that this form is open on a record that ALREADY NAMES a workshop; it then opens
+    the type box on whichever of the two columns that record uses and never applies "the most recent
+    workshop this account can reach" over it. Getting that wrong re-files historic records under
+    whatever is newest, and nothing on screen would say a link had moved.
+    THE SEED OUTRANKS EVERY DEFAULT. `seed.workshopId` is the design workshop's own linked
+    `Workshop`, and a tool created from a WORKSHOP-scoped picker that is filed against a different
+    sitting is a tool that picker can never show again. It arrives as `initialWorkshopId`, which is
+    the same door a STORED id comes through — so the picker treats it as an answer somebody already
+    gave, opens the type box on the ordinary-workshop side, and keeps the probe and the carry bag off
+    it. See {@link InlineHostSeed}.
+  */
+  const workshop = useWorkshopPicker({
     initialWorkshopId: initial?.workshopId ?? seed?.workshopId,
+    initialDesignWorkshopId: initial?.designWorkshopId,
     isEdit,
     resetKey: initial?.id ?? null
   });
-  /*
-    THE DESIGN & PROTOTYPE WORKSHOP this record is filed under. Its own hook beside the ordinary
-    workshop's, never folded into it: `workshopId` is gated by `WorkshopAssignment` and carries a
-    submission window and a late-submission dialog; `designWorkshopId` is gated by
-    `load_workshop_or_404` and has neither. Two access systems on one control is how a scope comes to
-    be checked by whichever of them the caller remembered.
-
-    `initial` on the control below is `undefined` on a CREATE and the stored value (or null) on an
-    EDIT, which is what tells the picker whether it may prefill — the same convention
-    `LocationFields` uses to decide whether it may auto-capture.
-  */
-  const designWorkshop = useDesignWorkshopSelection(initial?.designWorkshopId ?? null);
 
   /**
    * FINISH WHAT THE SEED (OR THE QUERY STRING) STARTED — an artisan id alone is not a usable answer.
@@ -1289,7 +1293,7 @@ export function ToolForm({
         craftIds,
         artisanIds,
         workshopId: workshop.workshopId || null,
-        designWorkshopId: designWorkshop.workshopId || null,
+        designWorkshopId: workshop.designWorkshopId || null,
         // Below professor no status control is rendered: create submits PENDING, edit resubmits the
         // current status (the backend drops unauthorized changes either way).
         status: requiredText(form, "status") || initial?.status || "PENDING",
@@ -1585,19 +1589,11 @@ export function ToolForm({
         <DictationUnavailableNotice />
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
           {/* Android parity (ToolForm): the workshop opens the form, because it is the context
-              every other answer belongs to — not merely the first dropdown. */}
-          <WorkshopSelect state={workshop} onDirty={markDirty} saving={saving} />
-          {/*
-            The design & prototype workshop, directly under the ordinary one — see the hook above.
-            Its default is the server's answer to "most recently allocated" rather than this form's
-            guess, so all seven forms and both clients agree; `lib/designWorkshopDefault.ts`.
-          */}
-          <DesignWorkshopCascade
-            state={designWorkshop}
-            initial={initial ? (initial.designWorkshopId ?? null) : undefined}
-            onDirty={markDirty}
-            saving={saving}
-          />
+              every other answer belongs to — not merely the first dropdown. ONE cell of this grid
+              holds both boxes, because they are one question: the type, then the workshop of that
+              type. `markDirty` by hand, as every themed control on this form must — a dropdown is a
+              `<button>` and fires no native input event for the form's `onInput` to catch. */}
+          <WorkshopPicker state={workshop} onDirty={markDirty} saving={saving} />
           {/* Toolkit/English/craft/artisan names and place are title-cased by the API on write, so
               the box says what will be stored (Android parity — see forms/TitleCasedInput);
               `titleCased` mounts that exact component inside the dictated box rather than copying
