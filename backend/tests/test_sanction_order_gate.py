@@ -462,8 +462,7 @@ def test_the_designer_directory_offers_no_admin_account_to_an_officer(monkeypatc
     "no admin row can come back", not "a keyword argument is spelled". A fake client captures the
     query; nothing here touches a database.
     """
-    from app.services import designers as designers_service
-    from app.services import design_workshop_viewers
+    from app.services import design_workshop_viewers, designers as designers_service
 
     captured: dict[str, Any] = {}
 
