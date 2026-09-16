@@ -193,11 +193,34 @@ def test_only_the_host_decides_and_an_unparseable_dsn_is_remote():
 
 
 def test_needs_db_is_a_skip_marker_that_agrees_with_the_resolved_gate():
-    """The shared marker modules are meant to migrate onto, rather than re-deriving the gate."""
+    """The shared marker modules are meant to migrate onto, rather than re-deriving the gate.
+
+    ── IT KEYS ON ``DATABASE_REACHABLE`` NOW, AND THIS TEST IS WHY THAT CHANGE WAS NOTICED ────────
+
+    It read ``HAS_LOCAL_DATABASE`` until 2026-09-17, which was the whole gate when the gate asked
+    one question. It now asks two, because they are two questions: ``HAS_LOCAL_DATABASE`` is "may I
+    write here", decided by the DSN's SHAPE, and ``DATABASE_REACHABLE`` adds "is it there", decided
+    by one connect. A marker keyed on the first skips nothing when the DSN is loopback and the
+    container is stopped — which is the state that had ~800 tests spending ninety-seven seconds each
+    on a TCP timeout under a header announcing they were running.
+
+    THE TWO FLAGS AGREE ON EVERY DEVELOPER MACHINE WITH POSTGRES UP, which is exactly why this
+    assertion is worth having: locally ``HAS_LOCAL_DATABASE == DATABASE_REACHABLE == True`` and
+    either spelling passes. They diverge in precisely one place — a runner with a loopback DSN in a
+    dotenv and nothing listening — and that is where this test caught the change and refused the
+    deploy. It is doing its job; the gate moved and the assertion had not.
+
+    So it pins the RESOLVED gate, which is the one ``needs_db`` is actually built from. If a third
+    question is ever added, this line moves again, and it should.
+    """
     marker = conftest.needs_db.mark
     assert marker.name == "skipif"
-    assert marker.args == (not conftest.HAS_LOCAL_DATABASE,)
+    assert marker.args == (not conftest.DATABASE_REACHABLE,)
     assert "LOCAL database" in marker.kwargs["reason"]
+    # The shape gate still exists and still decides what the probe is even allowed to touch: a
+    # non-loopback DSN is refused before anything opens a socket, so reachability can never be the
+    # thing that admits a remote database. Pinned here so the two cannot be collapsed back into one.
+    assert conftest.DATABASE_REACHABLE is False or conftest.HAS_LOCAL_DATABASE is True
 
 
 def test_the_refusal_cannot_be_swallowed_by_the_layers_that_catch_exception():
