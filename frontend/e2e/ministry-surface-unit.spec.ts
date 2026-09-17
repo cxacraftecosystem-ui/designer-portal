@@ -14,8 +14,15 @@ import { ROUTE_GUARDS, canRunDesignWorkshops, ministrySurface } from "@/lib/perm
  * `ROUTE_GUARDS` rows carry an optional `ministry` flag. `ministrySurface(pathname)` resolves a path
  * to the row that GUARDS it (longest match, `routeGuardFor`) and reads the flag. `AppShell` asks that
  * once per navigation and stamps `data-surface="ministry"` on <main>. One scoped block at the end of
- * `app/globals.css` hangs off the attribute and repaints three recipe classes — the page header's
- * icon chip, a rule down the left edge of every panel, the eyebrow. Nothing else joins the two.
+ * `app/globals.css` hangs off the attribute and repaints two recipe classes — the page header's
+ * icon chip and the eyebrow. Nothing else joins the two.
+ *
+ * It repainted a third until 2026-09-17: `.panel` carried a 2px accent stroke down its left edge —
+ * the "ministry spine" — on all 22 panels of the four routes plus the desk card that opts in on
+ * /dashboard. It was removed at the product owner's direction; the tombstone left in its place in
+ * `globals.css` carries the argument, including why nothing is lost by its absence. Do not read the
+ * count above as a budget: the block may carry one recipe class or five, and the tests below are
+ * written to hold either way.
  *
  * ── THE THREE FAILURES THIS PINS, AND WHY EACH IS THE ONE THAT ACTUALLY HAPPENS ─────────────────
  *
@@ -244,13 +251,37 @@ test("every ministry rule carries its dark pair", () => {
 test("the block matches both the descendant and the self case", () => {
   /*
     A component OUTSIDE the four routes opts in by putting `data-surface="ministry"` on its own root
-    — the ministry desk card on /dashboard does exactly that, and its root IS the `.panel`. A
+    — the ministry desk card on /dashboard does exactly that, and its root IS a `.panel`. A
     descendant combinator alone would not match an element that carries the attribute itself, and
     the symptom is the worst kind: no error, no warning, a rule that simply never applies.
+
+    ASKED OF EVERY RECIPE CLASS THE BLOCK CARRIES, RATHER THAN OF ONE NAMED EXAMPLE. This test used
+    to pin `.panel` by name, and when the ministry spine was removed on 2026-09-17 it failed for a
+    reason that had nothing to do with the duality it exists to defend: a rule had been DELETED, not
+    written wrong. A test that goes red when a rule is legitimately retired teaches the next reader
+    to edit the test, which is how the real assertion gets weakened on the way past. Derived from the
+    block itself it cannot be outlived — it says nothing about WHICH classes the block chooses to
+    repaint, and everything about the one way each of them silently fails.
   */
-  const panelSelectors = ministrySelectors().filter((line) => line.includes(".panel"));
-  expect(panelSelectors).toContain('[data-surface="ministry"] .panel,');
-  expect(panelSelectors).toContain('.panel[data-surface="ministry"] {');
+  const selectors = ministrySelectors();
+  const recipes = new Set<string>();
+  for (const line of selectors) {
+    const descendant = line.match(/^\[data-surface="ministry"\]\s+\.([\w-]+)/);
+    const self = line.match(/^\.([\w-]+)\[data-surface="ministry"\]/);
+    if (descendant) recipes.add(descendant[1]);
+    if (self) recipes.add(self[1]);
+  }
+
+  expect(recipes.size, "the ministry block targets no recipe class at all").toBeGreaterThan(0);
+
+  for (const recipe of recipes) {
+    expect(selectors, `.${recipe} is repainted with no descendant form`).toContain(
+      `[data-surface="ministry"] .${recipe},`
+    );
+    expect(selectors, `.${recipe} is repainted with no self-match form`).toContain(
+      `.${recipe}[data-surface="ministry"] {`
+    );
+  }
 });
 
 test("AppShell stamps the attribute, and only on a page it is serving", () => {

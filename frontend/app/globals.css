@@ -539,9 +539,9 @@ input[type="number"] {
    ── APPENDED AT END OF FILE, DELIBERATELY ─────────────────────────────────────────────────────
    Not inside `@layer components`, and not wedged between the layers. Tailwind v3's layers are
    build-time ORDERING and emit no real `@layer` at-rule, so what decides these rules is selector
-   weight: `[data-surface="ministry"] .panel` is (0,2,0) and both the `.panel` recipe and any single
-   utility are (0,1,0). End-of-file is the one placement that needs no reasoning about layer
-   hoisting at all, and this file already ends in un-layered blocks.
+   weight: `[data-surface="ministry"] .field-header-chip` is (0,2,0) and both the recipe class on its
+   own and any single utility are (0,1,0). End-of-file is the one placement that needs no reasoning
+   about layer hoisting at all, and this file already ends in un-layered blocks.
 
    ── SURFACE ACCENT ONLY. NO ORANGE ON ANY ACTION CONTROL. ─────────────────────────────────────
    `.field-button`, `.field-button-secondary`, `.field-input`, `.file-trigger`, the global
@@ -597,26 +597,25 @@ input[type="number"] {
 }
 
 /*
- * The ministry spine — a rule down the left edge of every panel on the surface.
+ * THE MINISTRY SPINE WAS REMOVED ON 2026-09-17, and this note stands in its place so that the next
+ * reader does not reinstate it from the argument that used to be written here.
  *
- * ONLY `border-left-color`, never `border-color`: the other three edges stay `line-200` and keep
- * inverting with the theme, so the panel is still a themed neutral card wearing one accent stroke.
- * `border-ministry-300` (no `-l-`) would have painted all four and turned each panel into an orange
- * box — which is a ground, and grounds are what the address-bar note above rules out.
+ * It was `[data-surface="ministry"] .panel, .panel[data-surface="ministry"] { @apply border-l-2
+ * border-l-ministry-300 dark:border-l-ministry-700 }` — a 2px accent stroke down the left edge of
+ * EVERY panel on the surface, which is 22 of them across /annual-plan, /officers,
+ * /officers/monitored and /sanction-orders, plus the desk card that opts in on /dashboard. Removed
+ * at the product owner's direction: on a real screen it did not read as the quiet rule the old
+ * comment argued for, it read as an orange streak beside the search bar and down the ministry card.
  *
- * 1.75:1 on a light card and 2.44:1 on a dark one. Both read as decoration rather than as text, and
- * that is the correct reading: this stroke is the SECOND channel. The screens already say what they
- * are in words — the header titles, "Your ministry desk" — and rule 5 of the frontend contract says
- * a signal carried only by colour is a signal some readers never get. Nothing here replaces wording.
+ * NOTHING IS LOST BY ITS ABSENCE, which is why it could go at all. The stroke was by its own
+ * account the SECOND channel, never the first: the surface still names itself in the header chip
+ * above, in every ministry page title and in "Your ministry desk". Rule 5 of the frontend contract
+ * — a signal carried only by colour is a signal some readers never get — was already satisfied
+ * without the stroke and is still satisfied now.
  *
- * The rung flips in dark for the reason the chip's does. Against the panel's own `line-200` border
- * the accent has to stay the stronger of the two strokes: 1.75 against 1.19 in light, 2.44 against
- * roughly 1.4 in dark. `ministry-300` in dark would have been a bright stripe, not a rule.
+ * The `ministry` ramp itself stays, and so do the two rules around this one. If a future ministry
+ * screen needs to announce itself harder, add a mark that carries WORDS. Not another stroke.
  */
-[data-surface="ministry"] .panel,
-.panel[data-surface="ministry"] {
-  @apply border-l-2 border-l-ministry-300 dark:border-l-ministry-700;
-}
 
 /*
  * PROVISION, NOT REPAIR, and said out loud so the next reader does not go looking for the screen it
