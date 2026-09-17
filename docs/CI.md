@@ -123,7 +123,7 @@ Three properties of that wait are worth knowing before you rely on it:
 
 | # | Workflow | File | Trigger | What it does |
 |---|---|---|---|---|
-| 1 | Deploy backend to EC2 | `.github/workflows/deploy-backend.yml` | `push` to `main` | `wait-for-checks` (§1.1) → rsync into `releases/<sha>` → write that release's `.env` → build or reuse a venv from `requirements.lock` → `prisma migrate deploy` → **flip the `current` symlink** → restart `fieldrepo` + `fieldrepo-queue` → poll `/health`. See §1.2 for the release layout and the rollback command. |
+| 1 | Deploy backend to EC2 | `.github/workflows/deploy-backend.yml` | `push` to `main` | `wait-for-checks` (§1.1) → rsync into `releases/<sha>-<run_id>.<attempt>` (per deploy ATTEMPT, so a re-run never writes into the tree that is serving) → write that release's `.env` → build or reuse a venv from `requirements.lock` → `prisma migrate deploy` → **flip the `current` symlink** → restart `fieldrepo` + `fieldrepo-queue` → poll `/health`. See §1.2 for the release layout and the rollback command. |
 | 2 | Deploy frontend to Vercel | `.github/workflows/deploy-frontend.yml` | `workflow_run` on **1** completing | gate → `wait-for-checks` (§1.1, and it runs exactly where **1**'s copy could not) → `vercel pull` → **assert the pulled env carries what the app needs** → `vercel build --prod` → **assert those values actually reached the bundle** → `vercel deploy --prebuilt --prod` → smoke-check the alias → **assert the bundle the CDN serves is the one that was verified** |
 | 3 | Android build | `.github/workflows/android-build.yml` | `workflow_run` on **2** completing, plus `pull_request` | JDK 17 → `compileDebugKotlin` → `testDebugUnitTest` → `lintDebug` (advisory) → `assembleDebug` → upload APK |
 | — | Checks | `.github/workflows/checks.yml` | **every** `pull_request`, `push` to `main`, `workflow_dispatch` — **no `paths:` filter, deliberately** | Four independent jobs plus a packaging job. The three that gate: `Backend tests` (whole pytest suite, DSN `ci.invalid` so the database-backed modules skip — and, despite the job's name, a last step that runs `ruff check .` over `backend/` and can fail the build on its own; the dated baseline in `backend/pyproject.toml` is what keeps it green), `Web typecheck, lint and unit specs` (`tsc --noEmit`, `eslint . --max-warnings=0`, `npm run test:unit`), `Docs check` (`node docs/tools/check-docs.mjs`). **`Backend integration tests` is the fourth and is deliberately advisory** — a `postgres:16` service container, `prisma migrate deploy`, then the *whole* suite with a loopback DSN so the database-backed modules that skip in job 1 actually run. Its last step asserts that `conftest` reported a local database, because a job that silently ran the same DB-less suite would prove nothing while looking green. It is not in `GATING_JOBS` and must not be added to branch protection until somebody has watched a few runs and knows what it costs. |
@@ -294,22 +294,29 @@ which would turn the emergency override into "nothing deploys ever".
 over itself in place.
 
 ```
-/home/ubuntu/app/releases/<git-sha>/backend/     one directory per deployed commit, its own .venv inside
-/home/ubuntu/app/current -> releases/<git-sha>   the symlink both systemd units point through
+/home/ubuntu/app/releases/<sha>-<run_id>.<attempt>/backend/   one directory per deploy ATTEMPT, its own .venv inside
+/home/ubuntu/app/current -> releases/<sha>-<run_id>.<attempt>  the symlink both systemd units point through
 ```
 
 Each release carries the `.env` it was deployed with, so the `.env` of the release that is currently
-serving is never touched by a deploy that may yet fail. **The last three releases are kept** — the
+serving is never touched by a deploy that may yet fail. **The last three RELEASES are kept** — the
 live one, the obvious rollback target, and one more for the case where the obvious target is what
-caused the problem. `current` is never pruned whatever its age, because a deploy that failed its
-migration leaves it pointing at an older release than the three newest directories on disk.
+caused the problem. Since 2026-09-17 a directory is not the same thing as a release: directories are
+named per deploy ATTEMPT, so a run that failed before the symlink flip leaves one behind that was
+never served. Those are not rollback targets and are not counted — the deploy marks a release
+`.released` at the moment it flips onto it, the prune keeps the three most recently marked, and it
+sweeps unmarked directories separately once they are an hour old. So `ls /home/ubuntu/app/releases`
+can show more than three; `ls /home/ubuntu/app/releases/*/.released` is the list you can roll back to.
+`current` is never pruned whatever its age or its marker, because a deploy that failed its migration
+leaves it pointing at an older release than the newest directories on disk.
 
 **Rollback**, over SSM (there is no standing SSH access to this box — §2 and
 [SECURITY.md](SECURITY.md) explain why):
 
 ```bash
 aws ssm start-session --target i-0e091ca8e6b417b52
-ln -sfn /home/ubuntu/app/releases/<older-sha> /home/ubuntu/app/current
+ls -lt /home/ubuntu/app/releases            # newest first; the one below `current` is the target
+ln -sfn /home/ubuntu/app/releases/<older-release> /home/ubuntu/app/current
 sudo systemctl restart fieldrepo fieldrepo-queue
 ```
 

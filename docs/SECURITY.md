@@ -294,7 +294,7 @@ first because it is the one that changed under this document's feet.
 | Media object keys / public URLs | `MediaFile.url` in Postgres, and in every client | Plaintext, and the URL alone grants read access |
 | Auth token (web) | `localStorage["field_repo_token"]` | Plaintext, readable by any script on the origin |
 | Auth token (Android) | `SharedPreferences("field_repository_auth")`, `MODE_PRIVATE` | Plaintext file in app-private storage; readable on a rooted device, and `android:allowBackup="true"` means it can leave the device in a backup |
-| `.env` on EC2 | `/home/ubuntu/app/current/backend/.env`, `EnvironmentFile=` | Plaintext on an unencrypted-by-default EBS volume; holds `DATABASE_URL`, `JWT_SECRET`, AWS keys, every AI provider key. `current` is a symlink to the live release ([CI.md](CI.md) §1.2), and **each retained release keeps the `.env` it was deployed with** — so up to three plaintext copies exist on the volume at once, not one |
+| `.env` on EC2 | `/home/ubuntu/app/current/backend/.env`, `EnvironmentFile=` | Plaintext on an unencrypted-by-default EBS volume; holds `DATABASE_URL`, `JWT_SECRET`, AWS keys, every AI provider key. `current` is a symlink to the live release ([CI.md](CI.md) §1.2), and **each release directory keeps the `.env` it was deployed with** — three retained releases, plus any directory a failed deploy attempt left behind since 2026-09-17, so the number of plaintext copies is `ls /home/ubuntu/app/releases \| wc -l` and not a constant |
 | Temporary media during processing | `tempfile` on the EC2 disk (ffmpeg/transcription) | Plaintext; removed after the job |
 | CSV / dataset exports | Streamed to the downloader | Plaintext; once downloaded the data is outside every control in this document |
 
@@ -839,9 +839,12 @@ served to another. This is a data-leak class bug, not a performance one.
 
 `/home/ubuntu/app/current/backend/.env` holds `DATABASE_URL`, `JWT_SECRET` and every provider key in
 plaintext, on a volume that AWS does not encrypt unless asked. **Since the release layout landed on
-2026-09-03 there is more than one copy**: every retained release under `/home/ubuntu/app/releases/`
-carries the `.env` it was deployed with, and three releases are kept. A rotation therefore has to
-reach the older copies too, or a rollback restores the old credential along with the old code.
+2026-09-03 there is more than one copy, and since 2026-09-17 the count is not fixed**: every
+directory under `/home/ubuntu/app/releases/` carries the `.env` it was deployed with — three
+**released** ones are kept, plus any attempt directory left by a run that failed after the `.env`
+write and before the next successful deploy's prune swept it. `ls /home/ubuntu/app/releases` is the
+only honest count. A rotation therefore has to reach all of them, or a rollback restores the old
+credential along with the old code.
 
 **Actions:**
 1. **EC2 console → Volumes:** check *Encrypted*. If `Not encrypted`, snapshot → copy snapshot with

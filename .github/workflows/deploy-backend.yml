@@ -435,9 +435,12 @@ jobs:
       #
       # ─── WHY A CONFIG FILE AND NOT `-o` ON EACH COMMAND ──────────────────────────────────────
       #
-      # This job opens ELEVEN ssh sessions and three rsyncs (451, 471, 631, 642, 674, 712, 938,
-      # 1004, 1010, 1017, 1019, 1176, 1276, 1328 as this file stood on 2026-09-17, plus the keyscan
-      # below). Putting flags on each one is fifteen places to get right today and a sixteenth that
+      # This job opens TWELVE ssh sessions and three rsyncs, plus the keyscan below. The line
+      # numbers that used to be listed here are gone on purpose: they were stale within a week of
+      # being written, and a census that has to be re-derived to be trusted is not a census. The
+      # twelfth session is the live-tree check in the sync step, added 2026-09-17 — see it for why it
+      # is a separate round trip immediately before the write rather than a flag on an existing one.
+      # Putting flags on each one is sixteen places to get right today and a seventeenth that
       # somebody adds next month without them — and the sixteenth is the one that will drop, because
       # a rule that has to be remembered is not a rule. A `Host *` block is read by ssh AND by the
       # ssh that rsync shells out to, so one edit covers every invocation in this file, including
@@ -495,6 +498,69 @@ jobs:
           grep -qix 'serveraliveinterval 30' /tmp/sshopts || \
             echo "::warning::~/.ssh/config did not take effect — ssh takes the FIRST value it finds for a keyword and something on this runner set ServerAliveInterval before this block. Every ssh and rsync below will run without an application-level keepalive, which is what dropped this deploy twice on 2026-09-17. Deploying anyway; fix the config ordering."
 
+      # ─── THIS DEPLOY'S RELEASE DIRECTORY IS NAMED FOR THE RUN, NOT FOR THE COMMIT ────────────
+      #
+      # 2026-09-17, and this is a production-safety fix rather than tidying. Release directories were
+      # `releases/<sha>`, and a RE-RUN is the same commit — so every attempt after the first deployed
+      # into the directory the previous attempt had already flipped `current` onto. `rsync -az
+      # --delete` then rewrote and removed files for minutes INSIDE the tree uvicorn and
+      # fieldrepo-queue were executing out of, live, under traffic. That is what the re-runs of run
+      # 35145291959 did while we were chasing the broken pipe: attempt 2 flipped the symlink at
+      # 20:32:18Z, and attempt 3 rsynced --delete into that same directory from 20:38:53Z until the
+      # pipe broke. Nothing broke on the box, because nothing happened to import a module during the
+      # window. That is luck, and luck is not a control.
+      #
+      # `<sha>-<run_id>.<run_attempt>` MAKES IT IMPOSSIBLE RATHER THAN UNLIKELY. Every attempt of
+      # every run gets a directory that has never existed, so `current` cannot already point at it —
+      # the sync, the venv build and the client install all happen in a tree nothing is serving, and
+      # the release becomes live at the symlink flip and not one second earlier, which is what the
+      # release layout was built for. The full SHA stays at the front so `ls releases/` still answers
+      # "which commit is this" at a glance.
+      #
+      # WHAT IT COSTS, NAMED HERE RATHER THAN DISCOVERED LATER:
+      #   • A re-run no longer inherits the live release's venv in place; it takes the `cp -a` branch
+      #     beside it instead. That branch is gated on `requirements.lock` and `pyproject.toml`
+      #     comparing equal against the LIVE release — which for a re-run is the previous attempt of
+      #     the same commit, through the same rsync, so they are byte-identical and it always fires.
+      #     Nothing moves from copying to `pip install`; the ordinary deploy path is untouched.
+      #   • A failed or cancelled attempt leaves a directory behind until a later successful deploy
+      #     prunes it, and that directory carries the `.env` it was deployed with. The prune step
+      #     below sweeps never-released directories for exactly that reason; docs/SECURITY.md's
+      #     credential-rotation runbook is updated to count them.
+      #   • Rollback by hand becomes `ln -sfn releases/<sha>-<run_id>.<attempt> current` — a longer
+      #     name to type. `ls -lt releases/` is still how anybody finds it.
+      #
+      # WRITTEN TO $GITHUB_ENV ONCE AND READ EIGHT TIMES. Eight copies of the same expression is
+      # eight chances for one to drift, and two steps deploying into two different directories is a
+      # failure that would look like almost anything else. The consuming steps keep the variable name
+      # `SHA`: there it is ONLY ever used to build a release path — eighteen references on seventeen
+      # lines, six inside the six remote blocks and twelve on the runner side of the ssh invocation,
+      # every one of them a path component and not one of them a commit — and renaming it means
+      # editing all eighteen to correct a word. Rename it in its own commit if it bothers you; do not
+      # mix a rename into a safety fix. (The two `${{ github.sha }}` uses that DO name a commit are
+      # in `wait-for-checks` and `changes`, in other jobs. They must not move.)
+      #
+      # `GITHUB_SHA`, `GITHUB_RUN_ID` and `GITHUB_RUN_ATTEMPT` are default runner variables, present
+      # in every step without an `env:` block. RUN_ATTEMPT is the one that matters: it increments on
+      # both "re-run all jobs" and "re-run failed jobs", which is the case the incident came from,
+      # and a fresh `gh workflow run` on an unchanged main gets a new RUN_ID, which is the case a
+      # sync guard on its own would have refused.
+      - name: Name this deploy's release directory
+        run: |
+          set -euo pipefail
+          rel_id="${GITHUB_SHA}-${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}"
+          # AN EMPTY RELEASE ID IS THE ONE OUTCOME THAT MUST NOT REACH THE BOX. `releases//backend`
+          # is a path `mkdir -p` accepts perfectly happily, and the whole deploy would then build,
+          # verify and flip into a directory nobody meant — green the entire way. The pattern list
+          # also keeps the id free of anything that would change meaning in the `case` GLOB the
+          # client-install step matches it against: `-` and `.` are literal in a pattern, `*`, `?`
+          # and `[` are not, and hex-plus-digits cannot produce them.
+          case "$rel_id" in
+            ""|-*|*"//"*|*" "*|*"*"*|*"?"*|*"["*) echo "::error::refusing to deploy with a malformed release id '$rel_id'"; exit 1 ;;
+          esac
+          echo "REL_ID=$rel_id" >> "$GITHUB_ENV"
+          echo "this deploy builds /home/ubuntu/app/releases/$rel_id"
+
       # ═══════════════════════════════════════════════════════════════════════════════════
       # THE RELEASE LAYOUT — ADDED 2026-09-03, AND EVERY PATH BELOW MOVED WITH IT
       # ═══════════════════════════════════════════════════════════════════════════════════
@@ -517,12 +583,16 @@ jobs:
       #
       # WHAT IT IS NOW.
       #
-      #   /home/ubuntu/app/releases/<sha>/backend/   one directory per deployed commit, venv inside
-      #   /home/ubuntu/app/current -> releases/<sha> the symlink both systemd units point through
-      #   /home/ubuntu/app/backend                   the LEGACY tree, left alone; see the shim below
+      #   /home/ubuntu/app/releases/<sha>-<run>.<n>/backend/   one directory per deploy ATTEMPT, venv inside
+      #   /home/ubuntu/app/current -> releases/<sha>-<run>.<n>  the symlink both systemd units point through
+      #   /home/ubuntu/app/backend                              the LEGACY tree, left alone; see the shim below
       #
-      # Rolling back is now `ln -sfn releases/<older-sha> current && systemctl restart fieldrepo
-      # fieldrepo-queue`, by hand over SSM, in seconds, with no build and no network. The last three
+      # THE DIRECTORY IS NAMED FOR THE RUN AND NOT FOR THE COMMIT, since 2026-09-17 — see the "Name
+      # this deploy's release directory" step above for the live-tree rsync that forced it.
+      #
+      # Rolling back is now `ln -sfn releases/<older-release> current && systemctl restart fieldrepo
+      # fieldrepo-queue`, by hand over SSM, in seconds, with no build and no network. `ls -lt
+      # /home/ubuntu/app/releases` names the candidates newest-first. The last three
       # releases are kept, so "the one before this one" is always there. NOTE THE ONE THING A
       # SYMLINK FLIP CANNOT UNDO: a migration that has already been applied. The schema only ever
       # moves forward, so rolling the CODE back is only safe while the older code tolerates the
@@ -538,14 +608,32 @@ jobs:
       #     be rewritten to a path that resolves to nothing and the next restart — including an
       #     automatic one, `Restart=always` — would leave the API down. The shim runs FIRST and
       #     makes `current` resolve to the running code before anything else happens.
-      #   • NO LEGACY TREE EITHER (a rebuilt box). `current` is pointed at the release about to be
-      #     created. It dangles for the length of this job, which is harmless: nothing is started
-      #     until the restart step at the end, by which time the release is complete.
-      #   • THE SAME SHA DEPLOYED TWICE (a re-run, or `gh workflow run` on an unchanged main). The
-      #     release directory already exists and is the one `current` already points at. rsync into
-      #     it is idempotent, the venv in it is kept rather than copied onto itself, and the flip is
-      #     a no-op. Every step below is written to survive this; it is the most likely "unusual"
-      #     case, not the least.
+      #   • NO LEGACY TREE EITHER (a rebuilt box). `current` is pointed at an EMPTY
+      #     `releases/bootstrap`, which exists only so the systemd drop-ins below are not written
+      #     against a path that resolves to nothing. It is NOT this run's release, and that is the
+      #     whole point: since 2026-09-17 the sync step refuses to rsync into whatever `current`
+      #     resolves to, so pointing the shim at this run's directory — which is what it used to do —
+      #     would make the guard fire on the first deploy to every rebuilt box. Nothing is started
+      #     until the restart step at the end, by which time `current` has flipped onto a real
+      #     release and the prune has reclaimed the bootstrap.
+      #   • THE SAME COMMIT DEPLOYED TWICE (a re-run, or `gh workflow run` on an unchanged main).
+      #     THE PARAGRAPH THAT STOOD HERE WAS WRONG IN THE EXPENSIVE DIRECTION, so it is corrected
+      #     rather than deleted. It said the release directory "already exists and is the one
+      #     `current` already points at", that "rsync into it is idempotent", and that "every step
+      #     below is written to survive this". The first clause was true and WAS the defect; the
+      #     second is true only of the END state; the third was never tested.
+      #
+      #     WHAT ACTUALLY HAPPENED, on the re-runs of run 35145291959 on 2026-09-17: attempt 2
+      #     flipped `current` onto `releases/<sha>` at 20:32:18Z, and from 20:38:53Z attempt 3 ran
+      #     `rsync -az --delete` into that same directory until the pipe broke — deleting and
+      #     rewriting source files under a live interpreter that imports modules lazily, the first
+      #     time a route asks for one. Idempotent in its end state is not the property that matters
+      #     when the intermediate state is being served to users.
+      #
+      #     SO THE CASE NO LONGER EXISTS. The release directory is named for the RUN ATTEMPT, so a
+      #     re-run builds a new directory beside the live one and `current` moves onto it only after
+      #     every check has passed. A case that cannot arise needs no step "written to survive it",
+      #     which is a much cheaper promise to keep than the one this paragraph used to make.
       #   • A HALF-FINISHED RELEASE from a cancelled run. It is never flipped to, so it is inert. It
       #     is pruned when three newer releases exist. It is not cleaned up eagerly, on purpose: a
       #     directory nobody points at costs disk, and deleting things during a deploy is how a
@@ -600,10 +688,19 @@ jobs:
 
       - name: Prepare the release layout and the systemd units
         env:
-          SHA: ${{ github.sha }}
+          # The per-run release id, not the bare commit — see "Name this deploy's release directory".
+          # The name stays `SHA` because inside the remote block it is only ever a path component.
+          SHA: ${{ env.REL_ID }}
         run: |
           ssh ubuntu@${{ secrets.EC2_HOST }} "SHA='$SHA' bash -s" <<'REMOTE'
           set -euo pipefail
+          # `set -u` above catches an UNSET SHA; it does not catch an EMPTY one, and empty is the
+          # failure this has. If the "Name this deploy's release directory" step is ever deleted or
+          # renamed, `${{ env.REL_ID }}` resolves to the empty string, every path below becomes
+          # `/home/ubuntu/app/releases//backend`, `mkdir -p` creates it without a word, and the
+          # deploy goes green into a directory nobody meant. One line stops that here, in the first
+          # block that touches a release path, rather than at the symlink flip.
+          [ -n "${SHA:-}" ] || { echo "::error::the release id is empty — the 'Name this deploy's release directory' step did not run or did not write REL_ID. Refusing to build a release at /home/ubuntu/app/releases//backend."; exit 1; }
           APP=/home/ubuntu/app
           REL="$APP/releases/$SHA"
           mkdir -p "$APP/releases"
@@ -624,13 +721,90 @@ jobs:
             mv -Tf "$APP/current.tmp" "$APP/current"
           fi
           if [ ! -e "$APP/current" ]; then
-            echo "no legacy tree either — pointing current at the release this run will build"
-            mkdir -p "$REL/backend"
-            ln -sfn "$REL" "$APP/current.tmp"
+            # 2026-09-17: this used to point `current` at THIS RUN'S release directory. That was
+            # harmless while it was only a dangling placeholder — and it stopped being harmless the
+            # moment the sync step started refusing to `rsync --delete` into whatever `current`
+            # resolves to. `mkdir -p "$REL/backend"` made the target real, so on a rebuilt box
+            # `readlink -f current` canonicalized to exactly the rsync destination, the guard would
+            # have fired, and NO DEPLOY TO A FRESHLY REBUILT BOX COULD EVER SUCCEED: a
+            # disaster-recovery path broken by a safety check, which is the worst possible place to
+            # put one. Per-run naming does not save it — the shim and the rsync are in the same run
+            # and share one release id.
+            #
+            # An EMPTY bootstrap release keeps the only property the shim actually needs — that
+            # `current` resolves to something, so the drop-ins below are not written against a path
+            # that does not exist — and it can never collide with a release directory, because no
+            # deploy is ever named `bootstrap`. It is the same name the legacy branch above uses,
+            # deliberately: one bootstrap concept, not two. It carries no interpreter, so the
+            # backfill below will not offer it as a rollback target; `current` moves off it at the
+            # flip, and the prune's second pass reclaims it.
+            echo "no legacy tree either — pointing current at an empty bootstrap release"
+            mkdir -p "$APP/releases/bootstrap/backend"
+            ln -sfn "$APP/releases/bootstrap" "$APP/current.tmp"
             mv -Tf "$APP/current.tmp" "$APP/current"
           fi
           mkdir -p "$REL/backend"
           echo "current -> $(readlink "$APP/current")"
+
+          # ─── WHO IS A ROLLBACK CANDIDATE, WRITTEN DOWN ONCE A DEPLOY ────────────────────────
+          # 2026-09-17: the prune step at the end of this job ranks rollback candidates by a
+          # `.released` marker rather than by mtime — see its comment for why per-attempt directories
+          # broke the old "keep three" rule. Whatever `current` resolves to right now has by
+          # definition been live, so mark it. This also covers the recovery action this file
+          # documents but does not perform: a hand rollback over SSM does not go through `flip()`,
+          # and this is where the release an operator deliberately moved onto gets its marker back.
+          #
+          # THE TWO TESTS ARE NOT DECORATION, AND NEITHER IS A NAME TEST. A rollback target is a
+          # directory somebody can point `current` at and restart into, so it must have its own
+          # interpreter AND its own tree:
+          #   • the EMPTY bootstrap on a rebuilt box has no interpreter — marking it would offer a
+          #     directory with no code as one of the three candidates `ls -lt releases/` lists, and
+          #     picking it takes the API down with the documented recovery command, on a box that was
+          #     just rebuilt. That is the exact shape of failure this whole change removes;
+          #   • the LEGACY bootstrap passes `-x` THROUGH ITS SYMLINK to /home/ubuntu/app/backend, so
+          #     `-x` alone is not enough. It is a pointer at a pre-layout tree whose venv came from
+          #     unpinned ranges and whose Prisma client predates the release layout — not a release,
+          #     and not something to hand an operator mid-incident. `! -L` is what separates them.
+          # A box that has never completed a deploy has no rollback target, and saying so is honest.
+          cur="$(readlink -f "$APP/current")"
+          if [ -x "$cur/backend/.venv/bin/python" ] && [ ! -L "$cur/backend" ]; then
+            touch "$cur/.released" 2>/dev/null || true
+          else
+            echo "not marking $cur as a rollback candidate: it is a bootstrap pointer, not a release this pipeline built"
+          fi
+
+          # ONE TIME ONLY, AND THE SENTINEL IS WHAT MAKES IT ONE TIME. Every directory already on
+          # this box predates the marker, so the prune's second pass would read all of them as
+          # "built, never went live" and sweep the entire rollback history on the first deploy after
+          # this change — leaving one candidate where the policy promises three.
+          #
+          # WITHOUT THE SENTINEL THIS RULE WOULD BE PERMANENT AND WRONG: an attempt that failed AT
+          # the migration has a complete venv too, and marking those every run would put half-built
+          # trees straight back into the ranking, which is the defect the marker exists to remove.
+          # The sentinel is written even if this run later fails, which is deliberate and harmless:
+          # the markers were written in the same block and survive on disk. Do NOT "fix" this by
+          # moving the sentinel after the flip — that makes the one-time pass run again on every
+          # failed deploy, which is exactly the permanence it exists to prevent.
+          #
+          # `touch -r "$d"`, NOT A BARE `touch`. The prune ranks releases by their marker's mtime, so
+          # stamping every backfilled marker with this instant would tell it that five old releases
+          # all went live in the same second, in whatever order `find` happened to walk them.
+          # Inheriting the directory's timestamp keeps the real chronology. Measured on a mock tree:
+          # with a bare touch the first post-change prune deleted the INCUMBENT release, because two
+          # older directories marked a fraction of a second later outranked it.
+          if [ ! -e "$APP/.released-backfill-done" ]; then
+            find "$APP/releases" -maxdepth 1 -mindepth 1 -type d -print \
+              | while IFS= read -r d; do
+                  if [ -e "$d/.released" ]; then continue; fi
+                  if [ -x "$d/backend/.venv/bin/python" ] && [ ! -L "$d/backend" ]; then
+                    echo "backfill: marking $(basename "$d") as released (predates the marker, has an interpreter and a tree of its own)"
+                    touch -r "$d" "$d/.released" 2>/dev/null || true
+                  else
+                    echo "backfill: leaving $(basename "$d") unmarked (nothing a rollback could restart into)"
+                  fi
+                done
+            : > "$APP/.released-backfill-done"
+          fi
 
           # ── SYSTEMD: DROP-INS, NOT REPLACEMENT UNITS ─────────────────────────────────────
           # The base units are written by infra/terraform/user_data.sh at FIRST BOOT ONLY, so the
@@ -779,20 +953,113 @@ jobs:
 
       - name: Sync code to the release directory
         env:
-          SHA: ${{ github.sha }}
+          # The per-run release id, not the bare commit — see "Name this deploy's release directory".
+          # The name stays `SHA` because inside the remote blocks it is only ever a path component;
+          # rename it in its own commit if it bothers you, and do not mix a rename into a safety fix.
+          SHA: ${{ env.REL_ID }}
         run: |
+          # `-u` and `-o pipefail` are NOT on by default — GitHub's default shell is `bash -e {0}`,
+          # so a failing command already ends this step, but an unset variable and a broken pipe do
+          # not. This step now reads a variable and asks the box a question; it should not be able to
+          # lose either answer quietly.
+          set -euo pipefail
+
+          # ─── THE TARGET MUST NOT BE THE TREE THAT IS SERVING TRAFFIC ────────────────────────
+          #
+          # 2026-09-17, the same incident as the SSH keepalives at the top of this job. Run
+          # 35145291959 was re-run three times. Release directories were named for the COMMIT, so
+          # every attempt after the first found `releases/$SHA` already on disk and already the
+          # target of `current`. Attempt 2 migrated and flipped the symlink onto it at 20:32:18Z —
+          # the heartbeat comment on the readiness loop below records the same thing from the log,
+          # "attempt 2, at 299.6 s, having already migrated and flipped the symlink". Attempt 3 then
+          # started THIS rsync into that same directory at 20:38:53Z and ran until the pipe broke.
+          # For those minutes `--delete` was removing and rewriting source files inside the tree
+          # uvicorn and fieldrepo-queue were executing out of, live, under traffic. Nothing broke,
+          # because nothing happened to import a module in the window. That is luck, and luck is not
+          # a control.
+          #
+          # THE REAL FIX IS THAT THE TARGET IS NOW UNIQUE PER RUN ATTEMPT — see "Name this deploy's
+          # release directory". `current` cannot already point at a directory that has never existed.
+          # THIS CHECK IS THE SECOND STATEMENT OF THE SAME RULE, and the duplication is deliberate:
+          # the naming is an arrangement a future edit could quietly undo, and the only thing that
+          # turns "we never rsync --delete into the live tree" from a habit into a property is asking
+          # the box, every time, immediately before writing. It costs one round trip on a step that
+          # is about to spend minutes.
+          #
+          # IT RESOLVES BOTH SIDES ON THE BOX, WITH THE SAME `readlink -f`, AND THAT IS NOT
+          # FUSSINESS. Comparing a resolved path against a path spelled out on the runner compares
+          # two different kinds of thing: the day any component of /home/ubuntu/app becomes a symlink
+          # — moving the volume is the obvious reason, and the extra directories this scheme keeps
+          # are the obvious cause — the two spellings diverge, and the check passes on a real hit,
+          # silently. One spelling, produced on one machine, cannot drift.
+          #
+          # AND IT PRINTS BOTH PATHS ON EVERY RUN, NOT ONLY ON A HIT. A check that says nothing when
+          # it passes is a check nobody can tell is still wired up. Those two lines are the standing
+          # evidence that the release being built is not the release being served.
+          #
+          # THIS CHECK IS ONLY CORRECT WHILE RELEASE IDS ARE UNIQUE PER ATTEMPT. On commit-named
+          # releases it refuses every re-run whose earlier attempt reached the flip, and EVERY
+          # `gh workflow run` on an unchanged main — the documented emergency override this job's
+          # `if:` exists to admit, and which the keepalive assertion above deliberately declines to
+          # break for a lesser reason. If the naming is ever reverted, revert this with it. If it
+          # fires under per-attempt naming, do not weaken it: find out why the release id stopped
+          # being unique. It is also why the bootstrap shim points a rebuilt box at
+          # `releases/bootstrap` and not at this run's release — those two were the same path, and
+          # this check would have made the first deploy to every fresh box impossible.
+          ssh "ubuntu@${{ secrets.EC2_HOST }}" "SHA='$SHA' bash -s" <<'REMOTE'
+          set -euo pipefail
+          APP=/home/ubuntu/app
+
+          # `set -u` catches an UNSET id and not an EMPTY one, and empty is the failure this has:
+          # `releases//backend` is a path rsync and `mkdir -p` both accept without a word, and the
+          # whole deploy would then build, verify and flip into a directory nobody meant.
+          [ -n "${SHA:-}" ] || { echo "::error::the release id is empty — the 'Name this deploy's release directory' step did not run or did not write REL_ID. Refusing to rsync into /home/ubuntu/app/releases//backend."; exit 1; }
+
+          # `[ -d ]` AND NOT a test on `readlink -f`'s output. `readlink -f` needs only the PARENT to
+          # exist, and `releases/` is created unconditionally by infra/terraform/user_data.sh — so it
+          # prints a plausible path and exits 0 for a directory that is not there, and a check
+          # written that way would be dead code under a comment claiming it fires. rsync is not
+          # invoked with `--mkpath`, so this component is made by "Prepare the release layout and the
+          # systemd units" several steps earlier; if that ordering ever breaks, this says so in one
+          # line instead of a bare "No such file or directory" from the far end of an ssh pipe.
+          [ -d "$APP/releases/$SHA" ] || { echo "::error::$APP/releases/$SHA does not exist. It is created by 'Prepare the release layout and the systemd units'; that step did not run, or the release id changed between the two."; exit 1; }
+
+          dest="$(readlink -f "$APP/releases/$SHA")"
+          live=""
+          [ -e "$APP/current" ] && live="$(readlink -f "$APP/current" 2>/dev/null || true)"
+          echo "rsync destination resolves to: $dest"
+          echo "current resolves to:           ${live:-<nothing yet>}"
+
+          if [ "$live" = "$dest" ]; then
+            echo "::error::refusing to rsync --delete into $dest: that is the directory 'current' resolves to, i.e. the tree uvicorn and fieldrepo-queue are running out of right now. Deleting and rewriting source files under a live interpreter that imports lazily is what the re-runs of run 35145291959 did for minutes at a time on 2026-09-17. Nothing has been written and the box is still serving what it was serving. A re-run gets a new run attempt and therefore a different release directory, so it will proceed — but if this fired at all, the release id has stopped being unique per attempt, and that is the thing to fix rather than the thing to retry past."
+            exit 1
+          fi
+          REMOTE
+
           # `--delete` STAYS, and it is safe against the venv for a reason worth stating rather
           # than trusting: rsync does not delete files the transfer EXCLUDED unless it is asked to
           # with --delete-excluded. So `.venv`, `__pycache__` and `.env` on the receiver survive a
           # --delete run, and what --delete actually removes is a source file that this commit
-          # deleted — which is exactly what it is for, and is what makes re-rsyncing into an
-          # existing release directory (the repeat-SHA case) produce the right tree instead of a
-          # union of two commits.
+          # deleted — which is exactly what it is for.
           #
-          # `.env` IS NEWLY EXCLUDED. It is written by the next step, so on a first pass it makes no
-          # difference — but on a redeploy of the same SHA the old behaviour deleted the live .env
-          # and left the release without one for the length of the rsync. Nothing restarts in that
-          # window today; a file the deploy is not allowed to lose should still not depend on that.
+          # THE CLAUSE THAT USED TO END THAT SENTENCE IS DELETED AS WRONG. It said --delete is "what
+          # makes re-rsyncing into an existing release directory (the repeat-SHA case) produce the
+          # right tree instead of a union of two commits". The tree it produced was right; the
+          # directory it produced it in was the one being served. Idempotent in its END state is not
+          # the property that matters when the intermediate state is under traffic. There is no
+          # repeat-SHA case any more, and the check above is what keeps it from coming back.
+          #
+          # `.env` IS EXCLUDED, AND THAT EXCLUSION WAS A PATCH ON ONE SYMPTOM OF THIS SAME DEFECT: on
+          # a redeploy of the same SHA the old behaviour deleted the LIVE .env and left the release
+          # without one for the length of the rsync. It is kept — the next step writes the file and
+          # there is no reason to ship it twice — but it is no longer load-bearing, because the
+          # directory this writes into is never one anything is reading from.
+          #
+          # NOTHING HERE MAKES A FRESH DIRECTORY A FULL REBUILD, and that is the question this scheme
+          # has to answer. The venv is not in this transfer at all: the step below copies it from
+          # whatever `current` resolves to whenever `requirements.lock` and `pyproject.toml` compare
+          # equal — a test on the LIVE release, not on this run's id, so a brand-new directory passes
+          # it exactly as often as a re-used one did.
           rsync -az --delete \
             --exclude '.venv' --exclude '__pycache__' --exclude '*.pyc' --exclude '.env' \
             ./backend/ "ubuntu@${{ secrets.EC2_HOST }}:/home/ubuntu/app/releases/$SHA/backend/"
@@ -800,7 +1067,7 @@ jobs:
       - name: Write .env on the server (piped over the SSH tunnel, never on the command line)
         env:
           BACKEND_ENV: ${{ secrets.BACKEND_ENV }}
-          SHA: ${{ github.sha }}
+          SHA: ${{ env.REL_ID }}
         run: |
           # Into the RELEASE directory, not the shared one. Each release carries the .env it was
           # deployed with, so rolling the symlink back rolls the configuration back with it.
@@ -834,7 +1101,7 @@ jobs:
       # about one.
       - name: Refuse a .env that would start a second queue drain
         env:
-          SHA: ${{ github.sha }}
+          SHA: ${{ env.REL_ID }}
         run: |
           ssh ubuntu@${{ secrets.EC2_HOST }} "SHA='$SHA' bash -s" <<'REMOTE'
           set -euo pipefail
@@ -872,7 +1139,7 @@ jobs:
       # Android client is unaffected either way: a native HTTP client does not do CORS.
       - name: Pin the CORS origins
         env:
-          SHA: ${{ github.sha }}
+          SHA: ${{ env.REL_ID }}
         run: |
           ssh ubuntu@${{ secrets.EC2_HOST }} "SHA='$SHA' bash -s" <<'REMOTE'
           set -euo pipefail
@@ -1098,7 +1365,7 @@ jobs:
 
       - name: Build or reuse the release venv, and generate the Prisma client
         env:
-          SHA: ${{ github.sha }}
+          SHA: ${{ env.REL_ID }}
         run: |
           ssh ubuntu@${{ secrets.EC2_HOST }} "SHA='$SHA' bash -s" <<'REMOTE'
           set -euo pipefail
@@ -1110,10 +1377,34 @@ jobs:
           cd "$REL/backend"
 
           if [ -n "$PREV" ] && [ "$PREV" = "$REL" ] && [ -x .venv/bin/python ]; then
-            # Redeploy of the commit that is already live. The venv in this directory IS the one in
-            # use; rebuilding or copying it onto itself would at best waste minutes and at worst
-            # delete the environment of the running process.
-            echo "same commit already current — keeping the venv that is in this release"
+            # THIS IS NOW UNREACHABLE, AND IT IS KEPT AS A GUARD RATHER THAN AS AN OPTIMISATION.
+            # Until 2026-09-17 this was the RE-RUN path: release directories were named for the
+            # commit, so a re-run found `current` already pointing at this directory, and this branch
+            # is what stopped the venv of the RUNNING process being `rm -rf`'d two lines below.
+            # Release directories are named for the run attempt now, and the bootstrap shim points a
+            # fresh box at `releases/bootstrap` rather than at this run's release, so `PREV = REL`
+            # cannot happen at all.
+            #
+            # WHERE THE COST WENT, since this is the branch that used to make a re-run free. `PREV`
+            # is `readlink -f current` — whatever release is LIVE, never anything derived from this
+            # run's id — so the `elif` below still fires for a re-run: the live release is the
+            # previous ATTEMPT of the same commit, through the same rsync, so its
+            # `requirements.lock` and `pyproject.toml` are byte-identical and the `cmp -s` pair
+            # passes. A re-run therefore pays one `cp -a` of a venv where it used to pay nothing.
+            # That is the branch every ordinary deploy with unchanged dependencies has taken since
+            # 2026-09-03. NO CASE MOVES FROM COPYING TO `pip install` under this scheme — the fresh
+            # directory name enters the predicate only on the line above.
+            #
+            # AND THAT COPY IS ONLY CORRECT BECAUSE OF `--force-reinstall` BELOW. Keeping the venv in
+            # place left the editable install's path file already naming this release; copying it
+            # leaves it naming PREV until pip rewrites it, and without `--force-reinstall` pip
+            # answers "already satisfied" and does not. See that line — do not revert it as redundant.
+            #
+            # It stays because what it prevents — deleting a venv that `current` resolves through —
+            # is unrecoverable without a rebuild, and a currently-unreachable guard costs one string
+            # comparison. Do not delete it on the grounds that it never fires; that is the argument
+            # that would have to be made again the next time somebody changes how releases are named.
+            echo "current already points at this release — keeping the venv that is in it"
           elif [ -n "$PREV" ] && [ -x "$PREV/backend/.venv/bin/python" ] \
                && [ -f "$PREV/backend/requirements.lock" ] && [ -f requirements.lock ] \
                && cmp -s "$PREV/backend/requirements.lock" requirements.lock \
@@ -1136,7 +1427,11 @@ jobs:
           # `python -m pip` and never `./.venv/bin/pip`: a copied venv's console scripts carry a
           # shebang naming the directory they were BUILT in, which is the previous release and may
           # since have been pruned. The interpreter is a symlink to the system python and does not
-          # have that problem.
+          # have that problem. Since 2026-09-17 that shebang is also 14 bytes longer — the release id
+          # gained `-<run_id>.<attempt>` — which is a second reason nothing here, and nothing in the
+          # systemd units, ever invokes a venv console script by name. (Measured at 107 bytes against
+          # a 256-byte kernel limit, so it is headroom and not a hazard; the rule stands on the
+          # pruned-directory argument above, which does not depend on a byte count.)
           #
           # `--force-reinstall` ON THE EDITABLE INSTALL, ADDED 2026-09-15. Without it pip sees the
           # copied venv already carrying this project at this version and answers "already
@@ -1163,7 +1458,7 @@ jobs:
       # the only honest comparison here.
       - name: Install the runner-generated Prisma client into the release venv, and prove it
         env:
-          SHA: ${{ github.sha }}
+          SHA: ${{ env.REL_ID }}
         run: |
           set -euo pipefail
           site="$(ssh ubuntu@${{ secrets.EC2_HOST }} "/home/ubuntu/app/releases/$SHA/backend/.venv/bin/python -c 'import prisma, os; print(os.path.dirname(prisma.__file__))'")"
@@ -1419,7 +1714,7 @@ jobs:
       # migrate left new code on disk with no way back except another deploy.
       - name: Migrate if needed, flip the symlink, restart
         env:
-          SHA: ${{ github.sha }}
+          SHA: ${{ env.REL_ID }}
         run: |
           ssh ubuntu@${{ secrets.EC2_HOST }} "SHA='$SHA' bash -s" <<'REMOTE'
           set -uo pipefail
@@ -1435,6 +1730,25 @@ jobs:
           flip() {
             ln -sfn "$REL" "$APP/current.tmp"
             mv -Tf "$APP/current.tmp" "$APP/current"
+            # 2026-09-17: RELEASE DIRECTORIES ARE NAMED PER RUN ATTEMPT NOW, so `releases/` holds
+            # directories that were BUILT and never SERVED — the three attempts of run 35145291959
+            # would have left three. The prune step at the end of this job used to rank by mtime and
+            # would have counted those among the three it keeps, deleting the last release anybody
+            # could actually roll back to and leaving half-built trees as the only candidates. A
+            # release is a rollback target only once it has been live; this marker is the record of
+            # that, and the prune ranks on nothing else.
+            #
+            # WRITTEN AFTER THE `mv`, NEVER BEFORE, so a flip that fails marks nothing. The prune
+            # ranks by the MARKER'S own mtime rather than the directory's, so this timestamp has to
+            # be the instant the symlink actually moved and not a moment earlier.
+            #
+            # A FAILURE HERE IS A WARNING AND NOT A FAILED DEPLOY — the release is live and about to
+            # pass its health check, and failing after the flip would report a good release as
+            # broken. It is not silent either: an unmarked live release is a rollback target the NEXT
+            # deploy's prune will sweep, which is worth a line in the log rather than a discovery
+            # during an incident. (This block runs under `set -uo pipefail` and not `-e`, so the
+            # `||` is belt-and-braces; leave it, because the next editor may add the `-e`.)
+            touch "$REL/.released" || echo "::warning::could not write $REL/.released. The release is live and fine, but the next deploy's prune will read it as a tree that never went live and will sweep it an hour after it stops being current — so this box may end up with no rollback target. Check the filesystem before the next deploy."
             echo "current -> $(readlink "$APP/current")"
           }
           restart_units() {
@@ -1573,32 +1887,144 @@ jobs:
           exit "$deploy_failed"
           REMOTE
 
-      # Keep three: the one that is live, the one to roll back to, and one more for the case where
-      # the obvious rollback target is the release that caused the problem. Older ones are disk, not
-      # insurance — nobody rolls back four deploys.
+      # ─── RELEASES ARE PRUNED BY WHAT WENT LIVE, NOT BY WHAT IS NEWEST ────────────────────────
       #
-      # `current` IS NEVER PRUNED, whatever its age. That guard is not theoretical: a deploy that
-      # failed its migration leaves `current` pointing at an OLDER release than the three newest
-      # directories on disk, and without the guard the next run would delete the code the box is
-      # running out from under it.
+      # Keep three RELEASES — the one that is live, the one to roll back to, and one more for the
+      # case where the obvious rollback target is the release that caused the problem. Older ones are
+      # disk, not insurance: nobody rolls back four deploys. That policy is unchanged since the
+      # release layout was built; WHAT COUNTS AS A RELEASE CHANGED ON 2026-09-17, and everything
+      # below exists because of it. The reasoning lives in the script rather than up here, so that it
+      # is in front of whoever is reading this step's output on the box during an incident.
       - name: Prune old releases
         run: |
           ssh ubuntu@${{ secrets.EC2_HOST }} 'bash -s' <<'REMOTE'
           set -euo pipefail
           APP=/home/ubuntu/app
-          keep="$(basename "$(readlink -f "$APP/current")")"
+
+          # ─── DECIDED FIRST, BECAUSE NOTHING BELOW MAY DELETE IT: WHAT IS BEING SERVED ───────
+          # Resolved once, as an absolute path, and compared as one. This step used to compare
+          # BASENAMES, which gives the same answer only while `current` points inside releases/ —
+          # true today, and exactly the kind of "true today" that a hand rollback or a future layout
+          # change turns into a deleted live tree with no warning in between.
+          #
+          # `[ ! -d ]` AND NOT JUST `[ -z ]`: `readlink -f` on a DANGLING symlink prints the target
+          # path and exits 0, so an emptiness test alone sails straight past the one state this
+          # guard exists for. Checked on the box's own coreutils, not assumed.
+          #
+          # IF WE CANNOT TELL WHAT IS LIVE, WE DELETE NOTHING — a warning, not a failure. The
+          # release above has already flipped and answered /health, so failing here would report a
+          # good release as broken, which is the lie this pipeline keeps being taught not to tell.
+          live=""
+          [ -e "$APP/current" ] && live="$(readlink -f "$APP/current" 2>/dev/null || true)"
+          if [ -z "$live" ] || [ ! -d "$live" ]; then
+            echo "::warning::readlink -f $APP/current gave '${live:-<nothing>}', which is not a directory, so this step cannot tell which tree is being served and will delete nothing. The release itself is fine — it flipped and answered /health. Look at 'ls -la $APP/current' by hand."
+            exit 0
+          fi
+          echo "current resolves to: $live"
+
           cd "$APP/releases"
+
+          # ONE definition of "this is the tree being served", used by BOTH passes, resolved on both
+          # sides so a release reached through any symlink still compares equal.
+          is_live() { [ "$(readlink -f "./$1")" = "$live" ]; }
+
+          # Named once because it is used twice, and a bound written out twice is a bound that will
+          # one day disagree with itself.
+          keep_released=3
+
+          # ─── PASS 1 · ROLLBACK CANDIDATES, RANKED BY WHEN THEY WENT LIVE ────────────────────
+          #
+          # "THREE RELEASES", NOT "THREE DIRECTORIES", AND THE DIFFERENCE IS NEW ON 2026-09-17.
+          # Release directories used to be named for the commit, so N directories meant N deployed
+          # commits — a re-run landed back in the same one. They are named per RUN ATTEMPT now, so
+          # the three attempts of run 35145291959 would have left THREE directories, two of which
+          # were never flipped onto and have no complete venv. This step does not run on a failed run
+          # (no `if:`, so it is `success()`), so the next successful deploy would have found those
+          # orphans among the three newest and deleted the last known-good release to make room for
+          # them. Pointing `current` at a half-built tree and restarting is the DOCUMENTED rollback,
+          # so that would have taken the API down with no way back except another full deploy —
+          # precisely what the release layout exists to prevent.
+          #
+          # SO THE RANKING IS OVER `.released` MARKERS, AND BY THE MARKER'S OWN mtime RATHER THAN THE
+          # DIRECTORY'S. The marker is written at the instant of the flip, so its timestamp IS "when
+          # this release went live", which is the order this policy wants. A directory's mtime is
+          # not: creating a file inside a directory updates it, so the one-time backfill in the
+          # layout step re-stamps every directory it visits and reorders the whole set by the order
+          # `find` happened to walk it. Measured on a mock tree rather than reasoned about: ranked by
+          # directory mtime, the first post-change prune deleted the INCUMBENT release, because two
+          # four-day-old ones marked a fraction of a second later outranked it. Ranked by marker
+          # mtime, on the identical tree, it deleted the genuinely oldest and kept the incumbent.
+          #
           # find/sort rather than `ls -t`: a glob over an empty directory is an error under `set -e`,
           # and this has to be safe on a box where releases/ has just been created.
-          find . -maxdepth 1 -mindepth 1 -type d -printf '%T@ %f\n' \
-            | sort -rn | tail -n +4 | cut -d' ' -f2- \
-            | while read -r d; do
-                [ -n "$d" ] || continue
-                [ "$d" = "$keep" ] && { echo "keeping $d (current)"; continue; }
-                echo "pruning $d"
+          #
+          # Every branch is an explicit `if`, never `[ … ] && continue`: under `set -e` a false `&&`
+          # as the last command of a loop body ends the whole step, and a prune that stops halfway is
+          # a prune that silently keeps growing.
+          find . -mindepth 2 -maxdepth 2 -type f -name .released -printf '%T@ %h\n' \
+            | sort -rn \
+            | cut -d' ' -f2- \
+            | sed 's#^\./##' \
+            | tail -n "+$((keep_released + 1))" \
+            | while IFS= read -r d; do
+                if [ -z "$d" ]; then continue; fi
+                # `current` IS NEVER PRUNED, whatever its age or its rank. Not theoretical: a deploy
+                # that failed its migration, or an operator who has rolled back by hand, leaves
+                # `current` pointing at a release OLDER than the newest three — so it lands in this
+                # list, and without this line the next run deletes the code the box is executing.
+                if is_live "$d"; then echo "keeping $d (current)"; continue; fi
+                echo "pruning $d (went live, but is older than the $keep_released newest that did)"
                 rm -rf -- "$d"
               done
-          echo "releases now: $(find . -maxdepth 1 -mindepth 1 -type d | wc -l) (current: $keep)"
+
+          # ─── PASS 2 · TREES THAT WERE BUILT AND NEVER SERVED ────────────────────────────────
+          # A cancelled run, or an attempt of a run that failed before the flip. They are not
+          # rollback targets — no complete venv is guaranteed, and "point `current` at it and
+          # restart" is the documented recovery — so leaving them in the ranking is worse than
+          # useless. Each also carries the `.env` it was deployed with, in plaintext at mode 600;
+          # docs/SECURITY.md's rotation runbook counts these.
+          #
+          # `| sort` IS A BARRIER AND NOT AN ORDERING. sort must read all of find's output before it
+          # emits a byte, so every `rm -rf` below happens after find has exited. Without it the loop
+          # unlinks directories find has not stat'd yet — and `! -newermt` forces it to stat every
+          # entry — so find exits 1 on an ENOENT it caused, `pipefail` makes that the pipeline's
+          # status, and `set -e` turns a green, flipped, health-checked deploy red at random. PASS 1
+          # gets this free from its ranking sort; this pass has to ask for it.
+          #
+          # AN HOUR OF GRACE, AND THE REASON IS NOT A CONCURRENT DEPLOY. `concurrency: deploy-backend`
+          # with `cancel-in-progress: false` at the top of this file QUEUES a second run rather than
+          # overlapping it, so this step cannot be deleting a directory another run of this workflow
+          # is filling. The hour buys the other two things: a window in which a human can still open
+          # a failed attempt and read what went wrong, and cover for a `.released` touch that failed.
+          # It does NOT bound a directory whose mtime is in the future (clock skew, or a timestamp
+          # rsync preserved) — such a directory is never matched here at all. That is disk, not
+          # danger, and it is written down rather than discovered.
+          #
+          # `.keep` IS THE HUMAN SAYING "I AM USING THIS", because an hour is a guess about how long
+          # somebody needs and a time window cannot express "in use". backend/DEPLOY_AWS.md's manual
+          # recovery procedure builds `releases/manual` by hand with a `cp -a` that can easily outlast
+          # the window, and a deploy queued during that incident would otherwise delete the tree being
+          # built. That runbook now touches this file as its second step.
+          #
+          # `bootstrap` is swept by this pass once `current` has moved off it, which is intended:
+          # `releases/bootstrap/backend` is either a SYMLINK to the legacy /home/ubuntu/app/backend
+          # tree or an empty directory, and `rm -rf` removes the link and never what it points at.
+          # This finally automates the cleanup the shim above has been describing as manual since
+          # 2026-09-03.
+          find . -maxdepth 1 -mindepth 1 -type d ! -newermt '-60 minutes' -printf '%f\n' \
+            | sort \
+            | while IFS= read -r d; do
+                if [ -z "$d" ]; then continue; fi
+                if [ -e "$d/.keep" ]; then echo "keeping $d (.keep — somebody is working on this)"; continue; fi
+                if [ -e "$d/.released" ]; then continue; fi
+                if is_live "$d"; then echo "keeping $d (current — and it carries no .released marker, which should not be possible after a flip; say so rather than delete it)"; continue; fi
+                echo "pruning $d (built, never went live)"
+                rm -rf -- "$d"
+              done
+
+          total="$(find . -maxdepth 1 -mindepth 1 -type d | wc -l)"
+          released="$(find . -mindepth 2 -maxdepth 2 -type f -name .released -printf '.' | wc -c)"
+          echo "releases now: $total directories, $released of which have been live (current: $(basename "$live"))"
           REMOTE
 
       # ─── THE CHECK THAT WOULD HAVE CAUGHT A THREE-DAY LOGIN OUTAGE ───────────────────────────
@@ -1631,8 +2057,10 @@ jobs:
       # on disk" and "the deployed code" were the same directory either way. Its one path reference
       # moved to `current/` with everything else. It is deliberately still the LAST gate before the
       # SSH window closes: if it fails the run is red, the previous release is still on disk, and the
-      # rollback is `ln -sfn releases/<sha> current && sudo systemctl restart fieldrepo
-      # fieldrepo-queue` over SSM — seconds, no build, no network.
+      # rollback is `ln -sfn releases/<older-release> current && sudo systemctl restart fieldrepo
+      # fieldrepo-queue` over SSM — seconds, no build, no network. Since 2026-09-17 release
+      # directories are named `<sha>-<run_id>.<attempt>`, so `ls -lt /home/ubuntu/app/releases` is
+      # how you read the name off; the one below the current one is the target.
       - name: Assert the API is ready AND answers CORS for the production origin
         run: |
           ssh ubuntu@${{ secrets.EC2_HOST }} 'bash -s' <<'REMOTE'

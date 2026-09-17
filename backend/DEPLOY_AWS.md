@@ -66,6 +66,13 @@ sudo apt update && sudo apt install -y python3.12-venv python3-pip git
 
 # The release layout the deploy expects. See §3.1 — do not clone into /home/ubuntu/app/backend.
 mkdir -p /home/ubuntu/app/releases/manual/backend
+# Say "a human is using this" before the long copy below. Since 2026-09-17 the deploy's prune step
+# sweeps any release directory that is more than an hour old and has never been flipped onto — and
+# `cp -a` of a repo plus a venv, on a t3.micro, can easily outlast the hour. A push to main landing
+# during the incident QUEUES (it does not overlap), so it runs the moment the box is free and would
+# otherwise delete the tree you are half way through building. Remove the file when you are done, or
+# leave it: the first automated deploy after `current` points here marks this release properly.
+touch /home/ubuntu/app/releases/manual/.keep
 git clone <YOUR_REPO_URL> /tmp/repo
 cp -a /tmp/repo/backend/. /home/ubuntu/app/releases/manual/backend/
 ln -sfn /home/ubuntu/app/releases/manual /home/ubuntu/app/current
@@ -90,21 +97,25 @@ Since 2026-09-03 the deploy does not write over a live tree. It rsyncs into a di
 commit and flips a symlink:
 
 ```
-/home/ubuntu/app/releases/<git-sha>/backend/     one directory per deployed commit, its own .venv inside
-/home/ubuntu/app/current -> releases/<git-sha>   the symlink both systemd units point through
+/home/ubuntu/app/releases/<sha>-<run_id>.<attempt>/backend/   one directory per deploy ATTEMPT, its own .venv inside
+/home/ubuntu/app/current -> releases/<sha>-<run_id>.<attempt>  the symlink both systemd units point through
 ```
 
 Every path in the units below therefore names `current`, and every release carries **the `.env` it
 was deployed with** — so the `.env` of the release that is currently serving is never touched by a
-deploy that may yet fail. The last three releases are kept; `current` is never pruned whatever its
-age, because a deploy whose migration failed deliberately leaves it pointing at an older release than
-the three newest directories on disk.
+deploy that may yet fail. The last three RELEASES are kept — releases, not directories: since
+2026-09-17 a directory is named per deploy ATTEMPT, and one left behind by a run that failed before
+the symlink flip was never served, is not a rollback target, and is swept separately once it is an
+hour old. The deploy marks a release `.released` at the instant it flips onto it, and the prune ranks
+on that. `current` is never pruned whatever its age, because a deploy whose migration failed
+deliberately leaves it pointing at an older release than the newest directories on disk.
 
 **Rollback** is the symlink, not a build:
 
 ```bash
 aws ssm start-session --target <INSTANCE_ID>       # there is no standing SSH access to this box
-ln -sfn /home/ubuntu/app/releases/<older-sha> /home/ubuntu/app/current
+ls -lt /home/ubuntu/app/releases                   # newest first; the one below `current` is the target
+ln -sfn /home/ubuntu/app/releases/<older-release> /home/ubuntu/app/current
 sudo systemctl restart fieldrepo fieldrepo-queue
 ```
 
@@ -400,7 +411,7 @@ secret key; never commit them.
 ### 8.2 GitHub Actions secrets (auto-deploy on push)
 
 `.github/workflows/deploy-backend.yml` waits for the same commit's `Checks` run, rsyncs `backend/`
-into `releases/<sha>`, writes that release's `.env`, builds or reuses a venv from
+into `releases/<sha>-<run_id>.<attempt>`, writes that release's `.env`, builds or reuses a venv from
 `requirements.lock`, runs `prisma migrate deploy`, **flips the `current` symlink** and restarts the
 units — on every push to `main` that touches `backend/`. Set these repo secrets
 (**Settings → Secrets and variables → Actions**):

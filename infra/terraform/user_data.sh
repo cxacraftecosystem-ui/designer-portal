@@ -19,7 +19,9 @@
 # They used to name `/home/ubuntu/app/backend` — one directory, overwritten in place by every
 # deploy, with no previous version left on the box and therefore no rollback that was not another
 # deploy. They now name `/home/ubuntu/app/current/backend`, where `current` is a symlink to
-# `/home/ubuntu/app/releases/<git-sha>`. Rolling back becomes flipping that symlink and restarting:
+# `/home/ubuntu/app/releases/<sha>-<run_id>.<attempt>` — named for the deploy RUN and not for the
+# commit since 2026-09-17, so a re-run stages into a fresh directory instead of rewriting the tree
+# that is serving traffic. Rolling back becomes flipping that symlink and restarting:
 # seconds, no build, no network.
 #
 # THIS SCRIPT RUNS AT FIRST BOOT AND NEVER AGAIN, so editing it changes nothing on the box that is
@@ -196,7 +198,8 @@ UNIT
 systemctl daemon-reload
 # ENABLED, NOT STARTED, and on a fresh box `current` does not exist yet — so a start here would
 # fail on a WorkingDirectory that resolves to nothing. That is fine and is the intended order: the
-# deploy workflow creates `releases/<sha>/backend`, points `current` at it, and restarts these
+# deploy workflow creates `releases/<sha>-<run_id>.<attempt>/backend`, points `current` at it, and
+# restarts these
 # units as its last act. Until then the box has nginx answering 502, which is the honest state of a
 # machine that has been provisioned and not yet deployed to.
 systemctl enable fieldrepo || true
