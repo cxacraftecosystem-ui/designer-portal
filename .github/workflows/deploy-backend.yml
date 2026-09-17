@@ -82,10 +82,31 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # Works out which parts of the monorepo this push touched, so each stage of the pipeline
-  # can skip work it does not need. The result is also uploaded as an artifact because the
-  # downstream workflows run in a separate `workflow_run` context and cannot read job
-  # outputs across workflows — only artifacts cross that boundary.
+  # Works out which parts of the monorepo this push touched, so THIS workflow can skip work it
+  # does not need. `backend` is read by the two jobs below (`needs.changes.outputs.backend`) and
+  # is the only one with a consumer today; `frontend` and `android` are computed and currently
+  # read by nothing, which is stated here rather than left for somebody to discover and "tidy up".
+  #
+  # THEY ARE KEPT DELIBERATELY, AND NOT AS A HOOK FOR A NEW GATE. They are the per-push answer, in
+  # the log and the step summary, for a human reading a run and asking what it touched. Anything
+  # that wants to decide whether to DEPLOY must ask what is live instead — see the note below.
+  #
+  # 2026-09-17: this used to also upload `changes.env` as the `pipeline-changes` artifact, because
+  # downstream `workflow_run` workflows cannot read job outputs across a workflow boundary and an
+  # artifact was the only channel. deploy-frontend.yml's gate was the sole consumer, and it no
+  # longer wants the answer: a per-push diff says nothing about whether the LIVE SITE is up to
+  # date, so once a frontend-carrying push was blocked by an unrelated backend failure, every later
+  # backend-only push published `frontend=false` here and the frontend gate skipped on it —
+  # forever. That is what kept production on f4f6740 for two days while main ran seven commits
+  # ahead, with six "successful" frontend runs that published nothing. That gate now diffs against
+  # the commit Vercel is actually serving; the full argument lives on the step that replaced the
+  # download.
+  #
+  # THE UPLOAD IS GONE RATHER THAN LEFT AS A HARMLESS EXTRA, on purpose. An artifact named
+  # `pipeline-changes` sitting in every backend run is an invitation to wire a gate back onto it,
+  # and the next person to do that re-creates the outage without ever reading this. The
+  # per-directory answer still exists where it is legitimate — as job outputs, scoped to the
+  # workflow that computed them and to the push they describe.
   changes:
     runs-on: ubuntu-latest
     outputs:
@@ -124,14 +145,23 @@ jobs:
 
           area() {
             if [ "$all" = "true" ]; then echo true; return; fi
-            if printf '%s\n' "$files" | grep -Eq "$1"; then echo true; else echo false; fi
+            # A HERESTRING, NOT A PIPE — see the long note on the same construction in
+            # deploy-frontend.yml's gate, caught in review on 2026-09-17. `grep -q` exits at its
+            # first match; if `printf` still holds bytes the 64 KiB pipe buffer cannot take it
+            # dies of SIGPIPE, `pipefail` (set at the top of this step) makes the pipeline
+            # non-zero even though grep MATCHED, and this function answers `false` for an area
+            # that did change. Here that silently skips an EC2 deploy for a push that touched
+            # `backend/`. One push range is rarely 64 KiB of filenames, so this is far less
+            # exposed than the gate's live-vs-target diff — but it is the same bug, and it gets
+            # the same fix rather than an argument about why it is unlikely.
+            if grep -Eq "$1" <<< "$files"; then echo true; else echo false; fi
           }
           backend=$(area '^(backend/|\.github/workflows/deploy-backend\.yml$)')
           frontend=$(area '^(frontend/|\.github/workflows/deploy-frontend\.yml$)')
           android=$(area '^(android/|\.github/workflows/android-build\.yml$)')
 
           printf 'backend=%s\nfrontend=%s\nandroid=%s\n' "$backend" "$frontend" "$android" \
-            | tee -a "$GITHUB_OUTPUT" | tee changes.env
+            | tee -a "$GITHUB_OUTPUT"
           {
             echo "### Changed areas"
             echo ""
@@ -142,13 +172,6 @@ jobs:
             echo "| android | $android |"
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Publish the change summary for the downstream workflows
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: pipeline-changes
-          path: changes.env
-          retention-days: 7
-          if-no-files-found: error
 
   # ═══════════════════════════════════════════════════════════════════════════════════════
   # THE GATE THAT DID NOT EXIST UNTIL 2026-09-03
@@ -356,10 +379,121 @@ jobs:
         with:
           ssh-private-key: ${{ secrets.EC2_SSH_KEY }}
 
-      - name: Add EC2 host to known_hosts
+      # ─── KEEPALIVES, AFTER A DEPLOY DIED TWICE ON A CONNECTION NOBODY WAS USING ──────────────
+      #
+      # 2026-09-17, the incident in which production sat on f4f6740 for two days while main was
+      # seven commits ahead. The frontend was stranded because the BACKEND deploy was red, and the
+      # backend deploy was red because of this: run 35145291959 ran three times, and ALL THREE
+      # attempts ended mid-step with
+      #
+      #     client_loop: send disconnect: Broken pipe
+      #     ##[error]Process completed with exit code 255
+      #
+      # after long stretches of OUTPUT SILENCE. Exit 255 is ssh's own "the transport died", not the
+      # remote command's status — the step that was running had not failed, the pipe under it had.
+      #
+      # WHERE EACH ONE DIED, read off the jobs API rather than guessed, because the first draft of
+      # this comment guessed and got it wrong: attempts 1 and 3 died in step 15 (the Prisma client
+      # import and model-accessor check) at 286.8 s and 281.2 s, with step 16 never starting.
+      # Attempt 2 got PAST step 15, applied all three migrations, flipped the symlink at 20:32:18Z
+      # — and then died in step 16's /health poll after 299.6 s. So all three drops sit at roughly
+      # 280-300 s of silence in two DIFFERENT steps, which is the other half of the picture:
+      # whatever kills them is timing, not the work. Both of those steps are heartbeated below.
+      #
+      # THE TWO COMFORTABLE EXPLANATIONS ARE BOTH RULED OUT AND ARE NOT TO BE RE-LITIGATED. It is
+      # not a timeout: this job declares no `timeout-minutes` at all, the runner default is six
+      # hours, and the run lasted 6m19s. It is not memory: the pre-deploy swap reading on the
+      # failing attempt (`/swapfile file 2G 1G -2`) is identical to the reading on the last fully
+      # green deploy, and the swap step above is `continue-on-error` precisely because it is tuning.
+      #
+      # WHAT IS LEFT IS AN IDLE FLOW, AND THIS IS A HYPOTHESIS WRITTEN DOWN AS ONE. Both numbers sit
+      # just past four minutes, and four minutes is the default outbound idle timeout of the Azure
+      # SNAT that every GitHub-hosted runner leaves through. A middlebox that has forgotten a flow
+      # sends no RST anybody sees; the next WRITE after the silence is what discovers it, which is
+      # exactly the shape of "broken pipe on send". Nothing in the logs proves where the flow was
+      # dropped, because nothing was measuring. The heartbeats added further down this file, and the
+      # post-mortem step before the deploy window closes, are what will confirm this or kill it. Do
+      # not read this change landing green as the cause being proven.
+      #
+      # ServerAliveInterval 30 makes the question moot either way: after 30 s with nothing received,
+      # ssh sends an encrypted keepalive the peer must answer, so the flow is never idle for longer
+      # than 30 s and no NAT entry between here and the box can age out under it. Thirty seconds
+      # against a four-minute window is an eightfold margin — chosen for margin, not from
+      # measurement, because there may be a shorter timer in the path that nobody has found yet.
+      #
+      # ServerAliveCountMax 10 is the other half and is deliberately generous: 10 × 30 s is five
+      # minutes of unanswered probes before ssh gives up. A t3.micro that has spent its CPU credits
+      # runs at 10% of one core and can genuinely stop answering for a long time; tearing the deploy
+      # down at the first missed probe would turn a slow box into a failed deploy, which is the
+      # exact failure this change exists to stop causing.
+      #
+      # TCPKeepAlive IS ALREADY THE DEFAULT AND IS NOT THE FIX. It is written here anyway because a
+      # reader who sees ServerAlive* will ask, and the answer belongs beside the question: TCP
+      # keepalive fires on the kernel's timer, and Linux's tcp_keepalive_time is 7200 seconds — the
+      # first probe would arrive two hours after this job has ended. Only the application-level
+      # ServerAlive* keepalive runs on a timescale that matters here.
+      #
+      # ─── WHY A CONFIG FILE AND NOT `-o` ON EACH COMMAND ──────────────────────────────────────
+      #
+      # This job opens ELEVEN ssh sessions and three rsyncs (451, 471, 631, 642, 674, 712, 938,
+      # 1004, 1010, 1017, 1019, 1176, 1276, 1328 as this file stood on 2026-09-17, plus the keyscan
+      # below). Putting flags on each one is fifteen places to get right today and a sixteenth that
+      # somebody adds next month without them — and the sixteenth is the one that will drop, because
+      # a rule that has to be remembered is not a rule. A `Host *` block is read by ssh AND by the
+      # ssh that rsync shells out to, so one edit covers every invocation in this file, including
+      # the ones not written yet. (If you ever do need it per-call, the rsync form is
+      # `-e "ssh -o ServerAliveInterval=30 …"`, not a bare `-o`; rsync has no `-o` of its own and
+      # would hand it to the remote shell.)
+      #
+      # `Host *` RATHER THAN THE HOSTNAME, ON PURPOSE. This runner is destroyed when the job ends
+      # and has exactly one SSH destination, so a wildcard cannot leak settings anywhere, and it
+      # survives the host being spelled as an IP in one place and a DNS name in another. ssh takes
+      # the FIRST value it finds for each keyword, so a more specific block appended after this one
+      # would win — if a future step adds one, put these keywords in it too.
+      #
+      # BatchMode IS NOT COSMETIC. A runner has no terminal, so any prompt ssh decides to show — an
+      # unknown host key, a passphrase — is not an error, it is a hang that burns the job until
+      # somebody cancels it. BatchMode turns every one of those into an immediate non-zero exit.
+      # Host-key policy is deliberately NOT touched: the keyscan below is what makes this host
+      # known, and `StrictHostKeyChecking=no` would throw that away to fix a problem this file does
+      # not have.
+      #
+      # `set -euo pipefail` IS LOAD-BEARING AND IS NEW. Without it a step's status is its LAST
+      # command's — so the moment anything is written after `ssh-keyscan`, a keyscan failure stops
+      # failing the step. That failure is this deploy's oldest fail-safe (see the pinned-home-IP
+      # paragraph above: every run died at keyscan, which is why nothing was ever half-deployed).
+      - name: Add EC2 host to known_hosts, and set the SSH keepalives every step below inherits
         run: |
+          set -euo pipefail
           mkdir -p ~/.ssh
           ssh-keyscan -H "${{ secrets.EC2_HOST }}" >> ~/.ssh/known_hosts
+
+          cat >> ~/.ssh/config <<'SSHCFG'
+          Host *
+            ServerAliveInterval 30
+            ServerAliveCountMax 10
+            TCPKeepAlive yes
+            BatchMode yes
+            ConnectTimeout 30
+          SSHCFG
+          chmod 600 ~/.ssh/config
+
+          # PROVED, NOT TRUSTED. `ssh -G` prints the options ssh would actually use for this
+          # destination after every config file has been merged, which is the only way to notice
+          # that something else on this runner wrote a `Host *` block first and won the
+          # first-value-wins race. It evaluates config without connecting, so it costs nothing.
+          echo "--- effective ssh options for the deploy host ---"
+          ssh -G "ubuntu@${{ secrets.EC2_HOST }}" > /tmp/sshopts || true
+          grep -iE '^(serveraliveinterval|serveralivecountmax|tcpkeepalive|batchmode|connecttimeout) ' /tmp/sshopts || true
+
+          # A WARNING AND NOT A FAILURE, DELIBERATELY. Every other refusal in this job asserts that
+          # the RELEASE is fit to serve. This one asserts that a network-hygiene setting applied,
+          # and if it did not, the worst case is the behaviour every deploy had before 2026-09-17 —
+          # which shipped. Failing here would mean a keepalive that did not take could stop the only
+          # publisher this backend has, including the manual dispatch that is the emergency override
+          # (see the `if:` on this job). The log line is what a reader needs; the red X is not.
+          grep -qix 'serveraliveinterval 30' /tmp/sshopts || \
+            echo "::warning::~/.ssh/config did not take effect — ssh takes the FIRST value it finds for a keyword and something on this runner set ServerAliveInterval before this block. Every ssh and rsync below will run without an application-level keepalive, which is what dropped this deploy twice on 2026-09-17. Deploying anyway; fix the config ordering."
 
       # ═══════════════════════════════════════════════════════════════════════════════════
       # THE RELEASE LAYOUT — ADDED 2026-09-03, AND EVERY PATH BELOW MOVED WITH IT
@@ -1021,6 +1155,74 @@ jobs:
           APP=/home/ubuntu/app
           REL="$APP/releases/$SHA"
           cd "$REL/backend"
+          # ─── A TICK ON THE WIRE WHILE A QUIET COMMAND RUNS ──────────────────────────────────
+          #
+          # 2026-09-17. This is the step the audit reached for first, for a reason visible in the
+          # log rather than in the code: from this `cd` to the last echo it can go minutes without
+          # printing a single character. Importing this client is megabytes of generated Python on a
+          # t3.micro, and `connect()` starts the query-engine subprocess and then waits on a pooler
+          # that may be in another region. Neither says anything while it works, so the deploy log
+          # shows a step start, a long nothing, and — twice on 2026-09-17 — `client_loop: send
+          # disconnect: Broken pipe` with exit 255 at 286.8 s and 281.2 s of silence.
+          #
+          # SILENCE IS BOTH THE SYMPTOM AND (ON THE LEADING HYPOTHESIS) THE CAUSE, which is why one
+          # change addresses both. A line every 30 s puts bytes on the SSH channel, so no NAT or
+          # SNAT entry in the path can age out under a command that is merely slow — and it leaves a
+          # timestamped trail, so the next drop says WHICH command was running and for how long
+          # instead of leaving a four-minute hole for somebody to subtract timestamps across. The
+          # keepalives written into ~/.ssh/config at the top of this job are the transport half of
+          # the same fix; this is the half that is also evidence. Neither alone would have told us
+          # anything on 2026-09-17.
+          #
+          # STDERR, NOT STDOUT, AND THAT IS LOAD-BEARING. One ssh in this file — `site="$(ssh …)"`,
+          # a few lines above — captures a remote command's stdout and uses it as a FILESYSTEM PATH.
+          # A heartbeat on stdout would one day be appended to a path and produce an error nobody
+          # could read. Actions interleaves a step's stdout and stderr in the log, so stderr costs
+          # nothing in readability and removes the whole class of accident.
+          #
+          # IT KILLS ITSELF IF THE SHELL IT IS TICKING FOR GOES AWAY. `kill -0 "$ka_parent"` is
+          # re-checked every cycle and a `trap` on EXIT stops it on every ordinary path. Without the
+          # parent check, a dropped connection would leave a subshell on the box sleeping and
+          # printing into a closed descriptor forever — one per failed deploy, which is exactly the
+          # kind of litter a diagnostic must never become.
+          #
+          # 30 SECONDS. The interval has to be a small fraction of the shortest idle timeout
+          # anywhere in the path; the shortest anybody has named is the four-minute Azure SNAT
+          # default, so this is an eightfold margin for a handful of lines.
+          ka_pid=""
+          ka_start() {
+            ka_label="$1"
+            ka_parent=$$
+            ( t=0
+              while kill -0 "$ka_parent" 2>/dev/null; do
+                sleep 30
+                t=$((t + 30))
+                printf '  … %s: still running after %ds\n' "$ka_label" "$t" >&2
+              done ) &
+            ka_pid=$!
+          }
+          # THE `sleep` IS REAPED BEFORE THE SUBSHELL, AND THAT ORDER IS THE POINT. `kill $ka_pid`
+          # ends the subshell but NOT the `sleep 30` it forked and is blocked in; that orphan is
+          # reparented with this session's stderr still open, and sshd does not close a channel while
+          # anything still holds it. A heartbeat added to stop SSH sessions dying would otherwise
+          # hold one open for up to a full interval after the work finished — and leave a stray
+          # process on the box on every failure path. `pkill` is in procps and is on this image;
+          # both calls are `|| true`-guarded so its absence could never fail a deploy.
+          #
+          # WRITTEN AS AN `if`, NOT AS `[ -n "$ka_pid" ] && kill …`. This heredoc runs under `set -e`
+          # and an `&&` chain whose test is false returns 1 — as the last command of a function that
+          # would end the whole step. A deploy failed by its own heartbeat being switched off is a
+          # failure nobody would find quickly. The explicit `return 0` states the same rule twice.
+          ka_stop() {
+            if [ -n "${ka_pid:-}" ]; then
+              pkill -TERM -P "$ka_pid" 2>/dev/null || true
+              kill "$ka_pid" 2>/dev/null || true
+              wait "$ka_pid" 2>/dev/null || true
+              ka_pid=""
+            fi
+            return 0
+          }
+          trap 'ka_stop' EXIT
           # Stale bytecode would keep the OLD modules importable even though the .py files beside
           # them are new -- a failure that looks exactly like the rsync not having happened.
           find .venv -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/null || true
@@ -1117,7 +1319,18 @@ jobs:
           # the same outage wearing a different hat. Instantiating Prisma exercises client.py,
           # models.py, actions.py and types.py together, and every model in this release's schema is
           # then checked by name, so a missing accessor is named HERE rather than found by a user.
-          ./.venv/bin/python -c 'import re,sys,pathlib;from prisma import Prisma;schema=pathlib.Path("prisma/schema.prisma").read_text(encoding="utf-8");models=sorted({m.lower() for m in re.findall(r"^model ([A-Za-z0-9_]+) *\{",schema,re.M)});missing=[m for m in models if not hasattr(Prisma(),m)];print(("::error::the installed client is missing %d model accessor(s): %s"%(len(missing),", ".join(missing[:12]))) if missing else ("client instantiates and carries all %d model accessors"%len(models)));sys.exit(1 if missing else 0)'
+          # THE EXIT STATUS IS CARRIED BY HAND, because the heartbeat has to be stopped BETWEEN the
+          # command and the decision about it. `cmd || rc=$?` is the form that survives `set -e`
+          # (the left-hand side of `||` is a tested command, so a non-zero status is not fatal
+          # there), and `rc=0` is initialised first because under `set -u` an unset `rc` would abort
+          # the step on the SUCCESS path — the failure mode that looks least like its own cause. The
+          # one-liner below prints its own `::error::` before exiting 1, so `exit "$rc"` is the
+          # whole decision.
+          ka_start "prisma client import + model accessor check"
+          rc=0
+          ./.venv/bin/python -c 'import re,sys,pathlib;from prisma import Prisma;schema=pathlib.Path("prisma/schema.prisma").read_text(encoding="utf-8");models=sorted({m.lower() for m in re.findall(r"^model ([A-Za-z0-9_]+) *\{",schema,re.M)});missing=[m for m in models if not hasattr(Prisma(),m)];print(("::error::the installed client is missing %d model accessor(s): %s"%(len(missing),", ".join(missing[:12]))) if missing else ("client instantiates and carries all %d model accessors"%len(models)));sys.exit(1 if missing else 0)' || rc=$?
+          ka_stop
+          [ "$rc" -eq 0 ] || exit "$rc"
 
           # AND THE ENGINE IS ASSERTED, not assumed. `py fetch` exiting 0 is not the same claim as
           # "the binary this platform needs is on disk and runnable" -- the release that took the
@@ -1144,7 +1357,11 @@ jobs:
           # loop that no longer existed, and a release whose engine and database were both healthy
           # was reported broken. The process exits on the next line and takes the engine subprocess
           # with it; there is nothing for a disconnect to release that the exit does not.
-          ./.venv/bin/python -c 'import asyncio;from prisma import Prisma;asyncio.run(Prisma().connect());print("query engine started and the database answered")'             || { echo "::error::the release cannot connect to its database. Not flipping the symlink."; exit 1; }
+          ka_start "prisma connect(): starting the query engine and reaching the pooler"
+          rc=0
+          ./.venv/bin/python -c 'import asyncio;from prisma import Prisma;asyncio.run(Prisma().connect());print("query engine started and the database answered")' || rc=$?
+          ka_stop
+          [ "$rc" -eq 0 ] || { echo "::error::the release cannot connect to its database. Not flipping the symlink."; exit 1; }
 
           echo "prisma client verified in this release: $client_dir"
           REMOTE
@@ -1254,9 +1471,42 @@ jobs:
           # `--max-time 5` BOUNDS EACH ATTEMPT. Without it a hung connect makes one iteration take
           # far longer than the 2s the arithmetic above assumes, so the real ceiling was never the
           # number written here.
+          # ─── A LINE EVERY TWENTY SECONDS, BECAUSE FIVE MINUTES OF SILENCE KILLS THE SSH ────────
+          #
+          # 2026-09-17. This loop is the longest silent block in the whole deploy: 150 iterations of
+          # `sleep 2` that print NOTHING until /health answers — up to five minutes in which not one
+          # byte crosses the SSH connection. Run 35145291959 dropped twice with `client_loop: send
+          # disconnect: Broken pipe` and exit 255 after ~280-300 s of output silence. ONE of the
+          # three landed inside exactly this window — attempt 2, at 299.6 s, having already
+          # migrated and flipped the symlink; the other two died earlier, in the client-import
+          # step, which is heartbeated separately above. This loop is still the longest silent
+          # block in the deploy and the one most likely to idle a flow out.
+          #
+          # The keepalives in the runner's ~/.ssh/config are the transport-level guard. THIS is the
+          # application-level one, and it is the DIAGNOSTIC that did not exist: with a heartbeat in
+          # the log, the next drop says which iteration it died on and what systemd thought the
+          # units were doing, instead of leaving a five-minute hole. A step that cannot go silent
+          # cannot produce that evidence — and cannot be the thing that idles the flow out either.
+          #
+          # EVERY TENTH ITERATION, so roughly every 20 s — comfortably inside any NAT or stateful
+          # firewall idle window. Fifteen lines in a log nobody reads on a good day, and the only
+          # record that exists on a bad one.
+          #
+          # ON STDERR, so anything that ever pipes this step's stdout keeps reading exactly what it
+          # read before. Nothing does today; a heartbeat must not be the reason that changes.
+          #
+          # AN `if` RATHER THAN `[ … ] && echo`. This heredoc runs `set -uo pipefail` WITHOUT `-e`
+          # today, so a false `&&` would be harmless — but the loop's status would then depend on
+          # which iteration it left on, and the day somebody adds `-e` above, the heartbeat becomes
+          # the thing that fails the deploy. `systemctl is-active` gets `|| true` for the same
+          # reason: it exits non-zero for a unit that is merely still starting, which is the state
+          # this loop exists to wait out.
           for i in $(seq 1 150); do
             if curl -fsS --max-time 5 http://127.0.0.1:8000/health >/dev/null 2>&1; then echo "healthy after ${i} tries"; break; fi
             if [ "$i" = "150" ]; then echo "service did not become healthy:"; sudo journalctl -u fieldrepo -n 80 --no-pager; exit 1; fi
+            if [ "$((i % 10))" -eq 0 ]; then
+              echo "waiting for /health: ${i}/150 (~$((i * 2))s elapsed); fieldrepo is $(systemctl is-active fieldrepo || true), fieldrepo-queue is $(systemctl is-active fieldrepo-queue || true)" >&2
+            fi
             sleep 2
           done
           curl -fsS http://127.0.0.1:8000/health
@@ -1352,6 +1602,112 @@ jobs:
           fi
           echo "CORS: ${origin} is allowed"
           REMOTE
+
+      # ─── WHAT THE BOX SAW, CAPTURED WHILE THE DOOR IS STILL OPEN ─────────────────────────────
+      #
+      # 2026-09-17. When this job died at exit 255 there was nothing to look at. The runner's log
+      # ended mid-step with `client_loop: send disconnect: Broken pipe`; the BOX's account of those
+      # same seconds — whether sshd logged a disconnect, whether anything was OOM-killed, whether a
+      # unit restarted, whether the hypervisor was stealing the CPU because a t3.micro had spent its
+      # credits — was never collected, and by the time anybody thought to look, port 22 was shut and
+      # the journal had rolled. Three attempts produced three identical, useless logs, and the cause
+      # of the failure that stranded two commits of frontend work for two days is STILL not known.
+      # This step is the missing half of that investigation.
+      #
+      # IT MUST RUN BEFORE "Close the deploy window", AND THAT ORDERING IS THE WHOLE TRICK. The
+      # revoke below is `if: always()`, and GitHub runs steps in the order they are written — so a
+      # diagnostic placed after it would find port 22 shut against a security group with no rule for
+      # this runner, and would collect precisely nothing. If either step is ever moved, they move
+      # together, and this sentence is why.
+      #
+      # `continue-on-error: true` AND A TRAILING `exit 0`, WHICH IS BELT AND BRACES ON PURPOSE. A
+      # post-mortem that can fail the job turns one incident into two, and the commonest reason this
+      # would fail is the box being unreachable — which is precisely the case it exists for.
+      # `continue-on-error` keeps its status off the job; the `exit 0` keeps a red X off the step
+      # itself, so nobody reads it as a second, separate fault while triaging the first.
+      #
+      # THE KEEPALIVES HERE ARE SHORTER THAN THE ONES IN ~/.ssh/config, DELIBERATELY. Every other
+      # ssh in this file wants to tolerate a slow box; this one wants to find out quickly whether
+      # the box answers at all. 15 s × 4 gives up after a minute instead of five, and
+      # `timeout-minutes: 3` caps the whole thing — a diagnostic must never become the longest part
+      # of a failed run.
+      #
+      # THE FIRST THING TO READ IN ITS OUTPUT IS THE SSHD JOURNAL. If sshd logged a disconnect for
+      # this runner's address at the second the step died, the BOX tore the session down and the
+      # cause is on the box. If sshd logged nothing at all and the session simply stopped existing,
+      # the flow was dropped somewhere in the middle of the path and the keepalives added at the top
+      # of this job are the fix. That is the one question the 2026-09-17 logs could not answer.
+      - name: What the box saw (only when something above failed)
+        # `|| cancelled()` because a deploy that is CANCELLED — by a human, or by a job timeout —
+        # is exactly as interesting as one that failed, and leaves the box in the same half-known
+        # state. `failure()` alone skips this, the next step then closes the SG window, and the
+        # evidence is gone for good.
+        if: failure() || cancelled()
+        continue-on-error: true
+        timeout-minutes: 3
+        run: |
+          # NO `set -e` ANYWHERE IN THIS STEP, on either side of the connection. Every command below
+          # is allowed to fail — a box where dmesg is restricted, a unit that does not exist on an
+          # older provisioning, a journal that has been vacuumed — and none of those is a reason to
+          # lose the commands that come after it. A post-mortem that stops at its first missing tool
+          # is how you find out three incidents later that the interesting line was two commands
+          # down.
+          set +e
+          ssh -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -o ConnectTimeout=20 \
+            "ubuntu@${{ secrets.EC2_HOST }}" 'bash -s' <<'REMOTE'
+          set +e
+          # THE JOURNALS ARE SCRUBBED, AND THE RULE AT THE .env CHECK ABOVE IS WHY: a deploy log is
+          # not the place to leak a secret while diagnosing one. BACKEND_ENV is ONE multi-line
+          # secret, so Actions masks the whole blob and NOT the DSN inside it — a prisma or asyncpg
+          # connection error that echoes its connection string would otherwise print in clear, on
+          # the log of a failed deploy, which is the log everyone opens. Anything that looks like a
+          # URL with credentials, a JWT, or a long opaque provider key is replaced here rather than
+          # trusted not to appear.
+          scrub() { sed -E -e 's#([a-z+]+)://[^:@/[:space:]]+:[^@[:space:]]+@#\1://***:***@#g' \
+                           -e 's#eyJ[A-Za-z0-9_-]{10,}#<jwt-redacted>#g' \
+                           -e 's#(sk-|AIza|AKIA)[A-Za-z0-9_-]{8,}#<key-redacted>#g'; }
+          echo "=== when, and how loaded ==="
+          date -u; uptime
+          echo "=== steal time: THE t3.micro TELL. A non-zero 'st' column means the hypervisor is"
+          echo "=== throttling this box to its 10% baseline because the CPU credits are spent, which"
+          echo "=== from the runner looks exactly like a step that has stopped producing output."
+          vmstat 1 3
+          echo "=== memory and swap (the swap line is the one compared across attempts, and matched) ==="
+          free -m; swapon --show
+          echo "=== disk, inodes included: a full / fails a deploy in ways that read as anything else ==="
+          df -h /; df -i /
+          echo "=== the ten biggest processes by RSS ==="
+          ps -eo pid,ppid,rss,pcpu,etimes,comm --sort=-rss | head -11
+          echo "=== kernel OOM kills, if any ==="
+          sudo dmesg -T 2>/dev/null | grep -iE 'out of memory|oom-kill|killed process' | tail -20 \
+            || echo "(no OOM lines, or dmesg is not readable from here)"
+          echo "=== fieldrepo ==="
+          systemctl status fieldrepo --no-pager -l 2>&1 | head -30 | scrub
+          systemctl show fieldrepo -p NRestarts -p ExecMainStatus -p MemoryCurrent 2>&1
+          sudo journalctl -u fieldrepo --since '-15 min' --no-pager 2>&1 | tail -120 | scrub
+          echo "=== fieldrepo-queue ==="
+          systemctl status fieldrepo-queue --no-pager -l 2>&1 | head -20 | scrub
+          systemctl show fieldrepo-queue -p NRestarts -p ExecMainStatus -p MemoryCurrent 2>&1
+          sudo journalctl -u fieldrepo-queue --since '-15 min' --no-pager 2>&1 | tail -60 | scrub
+          echo "=== sshd: DID THE BOX DROP US, OR DID THE NETWORK FORGET US? (read this first) ==="
+          sudo journalctl -u ssh --since '-15 min' --no-pager 2>&1 | tail -80
+          sudo journalctl -u 'ssh@*' --since '-15 min' --no-pager 2>&1 | tail -40
+          echo "=== what is live, and what is on disk ==="
+          ls -la /home/ubuntu/app/current; readlink -f /home/ubuntu/app/current
+          ls -la /home/ubuntu/app/releases
+          echo "=== CPU CREDITS ARE NOT READABLE FROM HERE, AND NOT FROM THIS JOB EITHER. They are a"
+          echo "=== CloudWatch metric, and the CI IAM user (designrepo-ci-sg) is scoped to"
+          echo "=== AuthorizeSecurityGroupIngress and RevokeSecurityGroupIngress on one security group"
+          echo "=== ARN and nothing else in the account — a CloudWatch call from this job would be"
+          echo "=== AccessDenied, and widening that IAM user to read metrics is not worth it. Read"
+          echo "=== them by hand: aws cloudwatch get-metric-statistics --namespace AWS/EC2"
+          echo "===   --metric-name CPUCreditBalance --dimensions Name=InstanceId,Value=i-0e091ca8e6b417b52 \\"
+          echo "===   --start-time <t-1h> --end-time <now> --period 300 --statistics Minimum"
+          echo "=== The 'st' column from vmstat above is the box-readable proxy for the same thing."
+          exit 0
+          REMOTE
+          echo "post-mortem ssh exited $? — recorded here and deliberately not acted on."
+          exit 0
 
       # ─── CLOSE IT AGAIN, WHATEVER HAPPENED ───────────────────────────────────────────────────
       #

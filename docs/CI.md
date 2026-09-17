@@ -169,18 +169,36 @@ unrelated infrastructure failure.
 The backend workflow has **no `paths:` filter** — it starts on every push to `main` and decides for
 itself whether to touch EC2. That is the fix for the obvious `workflow_run` dead-lock: if stage 1
 were filtered to `backend/**`, a frontend-only push would never start it, so stage 2 would never be
-triggered and the frontend would never ship. Instead, stage 1's `changes` job diffs the push range,
-publishes the result as the `pipeline-changes` artifact, and stages 1 and 2 skip their own work when
-their area is untouched.
+triggered and the frontend would never ship. Instead, stage 1's `changes` job diffs the push range
+and skips **its own** deploy when `backend/` is untouched.
+
+**Stage 2 no longer asks that question — changed 2026-09-17.** It used to read stage 1's push diff
+out of a `pipeline-changes` artifact and skip on `frontend=false`. Deploy eligibility was therefore a
+pure function of *one push*, and nothing compared it against what was **deployed**: once a
+frontend-carrying push was blocked by an unrelated backend failure, every later backend-only push —
+*including the push that fixed the backend* — reported `frontend=false` and stage 2 skipped,
+permanently. Six consecutive "Deploy frontend to Vercel" runs concluded **success** having published
+nothing, production sat on `f4f6740` for two days while `main` moved seven commits ahead, and only a
+manual `workflow_dispatch` with `force=true` recovered it. Stage 2's gate now reads the commit the
+Vercel **production alias** is serving (`GET /v13/deployments/<project>.vercel.app` →
+`meta.deployedCommitSha`, stamped by the deploy step) and diffs it against the commit it would
+publish. Anything it cannot determine — API down, first ever deploy, force-pushed history —
+**deploys**. The artifact is gone at both ends.
+
+**And a green stage 2 now means one of exactly two things**, with the job summary saying which: it
+published, or *there was nothing to publish*. It can no longer mean "it refused to publish work that
+is merged and not live" — that case **fails the run**. A backend-only push whose backend deploy
+failed still goes green, because it strands nothing. What did **not** change: the `F --> A` edge in
+the diagram above is still *any outcome*, so a red stage 2 does not stop the Android build.
 
 | Push touches | 1 · backend deploy | 2 · frontend deploy | 3 · Android build | — · Checks |
 |---|---|---|---|---|
-| `backend/**` only | **runs**, after Checks is green on that SHA | skipped (nothing to publish) | runs | **runs** |
+| `backend/**` only | **runs**, after Checks is green on that SHA | skipped *only if the live site already serves this tree's `frontend/`* — otherwise it publishes the backlog | runs | **runs** |
 | `frontend/**` only | skipped (run still succeeds) | **runs**, after Checks is green on that SHA | runs | **runs** |
-| `android/**` only | skipped | skipped | **runs** | **runs** |
+| `android/**` only | skipped | skipped *only if the live site already serves this tree's `frontend/`* — otherwise it publishes the backlog | **runs** | **runs** |
 | several areas | **runs** | **runs**, after 1 is green *and* Checks is green | runs | **runs** |
-| docs only | skipped | skipped | runs | **runs** |
-| backend deploy **fails** | ❌ red | **refuses to deploy**, says why in the summary | still runs | unaffected — it is not in the chain |
+| docs only | skipped | skipped *only if the live site already serves this tree's `frontend/`* — otherwise it publishes the backlog | runs | **runs** |
+| backend deploy **fails** | ❌ red | **refuses to deploy**. Green if nothing was stranded; ❌ **red** if `main` carries frontend work the live site is not serving, or if the gate could not find out | still runs | unaffected — it is not in the chain |
 | **Checks red** | **refuses to deploy** *if `backend/` was touched* — its wait is scoped to that, so a push that changed no backend file skips the wait and deploys | **refuses to deploy**, whatever changed | still runs — `android-build.yml` chains on `workflow_run` with **no conclusion filter**, deliberately | ❌ red |
 
 The Checks column has no "skipped" cell and that is the design: it has no `paths:` filter, because a
@@ -532,7 +550,9 @@ PR (§1.3). `pip` also ignores **ruff** (minor and major) and **bcrypt** (entire
 > `.vercel/project.json` at deploy time instead of writing any hostname down at all.
 
 `GITHUB_TOKEN` is **not** something you create — GitHub injects it per run. Stage 2 uses it only to
-download stage 1's change-detection artifact (`permissions: actions: read`).
+read the Checks run and its jobs, and to look up the run that published what is currently
+live (`permissions: actions: read`). Until 2026-09-17 it was also used to download stage 1's
+change-detection artifact; that artifact no longer exists.
 
 **The Vercel project is deliberately NOT linked to the GitHub repository.** It was, and every push
 produced a second, competing build: Vercel's own Git integration cloning the repo and building it
