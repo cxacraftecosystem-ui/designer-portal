@@ -97,3 +97,13 @@ variable "cors_allowed_origins" {
     "http://localhost:3000",
   ]
 }
+
+variable "cost_report_emails" {
+  description = "Addresses that receive the monthly AWS expenditure mail. EACH MUST CONFIRM ITS OWN SNS SUBSCRIPTION before it receives anything — see cost_report.tf."
+  type        = list(string)
+
+  # Not a secret: this address is already in `.env.example` as MASTER_ADMIN_EMAIL, and an SNS
+  # subscription is worthless to anyone who cannot read the mailbox anyway. Kept as a variable
+  # rather than inlined so adding a recipient is a one-line change with a plan behind it.
+  default = ["ankits1802@gmail.com"]
+}

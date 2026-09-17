@@ -201,6 +201,15 @@ terraform {
       source  = "hashicorp/aws"
       version = "~> 5.0"
     }
+    # Added 2026-09-17 for `data.archive_file` in cost_report.tf, which zips the cost-report
+    # Lambda's single source file at plan time. The alternative is committing a binary .zip and
+    # remembering to rebuild it by hand whenever the Python changes — which is the same class of
+    # "two things that must agree and one of them is invisible" this repository keeps removing.
+    # NOTE: adding a provider requires `terraform init` before the next plan will run.
+    archive = {
+      source  = "hashicorp/archive"
+      version = "~> 2.4"
+    }
   }
 }
 
