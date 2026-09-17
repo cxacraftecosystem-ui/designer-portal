@@ -27,7 +27,32 @@ variable "project" {
   #
   # Renaming this is a migration, not an edit: create the new IAM user, roll the new key into the
   # box's .env, confirm uploads, then remove the old one.
-  default = "fieldrepo"
+  #
+  # ─── "designrepo", NOT "fieldrepo", SINCE 2026-09-17 — AND THE OLD DEFAULT WAS A LOADED GUN ───
+  # This defaulted to "fieldrepo", the SIBLING deployment, in the repository whose every resource is
+  # named `designrepo-*`. Nothing passed it, because nothing had to: a default is silent. So
+  # `terraform plan` in this directory did not fail, it proposed RENAMING THE LIVE ESTATE —
+  #
+  #     Plan: 6 to add, 3 to change, 6 to destroy
+  #
+  # — with `aws_security_group.api` replaced (a new sg id, and deploy-backend.yml's port-22 window
+  # is written against the old one) and `aws_iam_user_policy.media` replaced with a fresh
+  # `media_secret_access_key`, which silently breaks every media upload until BACKEND_ENV is
+  # re-pasted. It was caught by reading a plan before applying it, which is the only reason this
+  # comment is about a near miss rather than about an outage.
+  #
+  # Two things changed together and BOTH matter: this default now names the deployment this
+  # repository actually manages, and `designrepo.auto.tfvars` beside it is now COMMITTED (with a
+  # named exception in .gitignore) so the value is explicit rather than inherited. The default is
+  # the belt; the tfvars file is the braces.
+  #
+  # IF YOU COPY THIS DIRECTORY TO A THIRD DEPLOYMENT, change this line in the same commit as the
+  # copy. A default that is right for one estate and silently wrong for another is precisely the
+  # defect being fixed here, and moving it from "fieldrepo" to "designrepo" does not cure that
+  # shape — it only points it at this repository instead of away from it. The safest form is no
+  # default at all, matching `bucket_name` and `ssh_key_name` below, which are required and which
+  # is why a missing value for THEM produced a loud error instead of a destructive plan.
+  default = "designrepo"
 }
 
 variable "bucket_name" {

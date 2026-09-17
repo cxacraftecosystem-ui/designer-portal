@@ -61,6 +61,23 @@ skills-lock.json
 crash.log
 *.tfvars
 *.tfvars.json
+# ONE EXCEPTION, AND IT IS THE FILE THAT STOPS A PLAN DESTROYING THE ESTATE — 2026-09-17.
+# `var.project` defaults to "fieldrepo" (the SIBLING deployment) while every resource in this
+# account is named `designrepo-*`, so a `terraform plan` run without these values does not fail —
+# it proposes renaming the live estate. Measured on the day this line was written:
+#
+#     Plan: 6 to add, 3 to change, 6 to destroy
+#
+# including `aws_security_group.api` REPLACED (a new sg id, which deploy-backend.yml's port-22
+# window is written against) and `aws_iam_user_policy.media` REPLACED with a fresh
+# `media_secret_access_key` — silently breaking every media upload until somebody re-pastes
+# BACKEND_ENV. With the file present the same plan says "No changes."
+#
+# NOTHING IN IT IS SECRET: a project prefix, a bucket name and an EC2 key-pair name, all three
+# already written out in main.tf's own comments. The blanket rule above stays for every other
+# .tfvars — those are where credentials end up — and this is a named exception rather than a
+# loosening of it. `git check-ignore -v` on the path is the check.
+!infra/terraform/designrepo.auto.tfvars
 override.tf
 override.tf.json
 *_override.tf
