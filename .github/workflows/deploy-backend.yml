@@ -725,19 +725,50 @@ jobs:
           # uvicorn deliberately has NO MemoryMax: killing the API to save memory is the outcome
           # these limits exist to prevent.
           #
-          # 400M/550M and 500M are chosen so the two soft ceilings plus headroom fit inside 1 GiB.
-          # They are a first setting, not a measurement — if the queue starts thrashing on real
-          # transcription work, raise MemoryHigh and watch `systemctl status fieldrepo-queue` for
-          # the memory line rather than guessing again.
+          # ─── RESIZED FOR t3.small ON 2026-09-17, AND THE OLD NUMBERS WERE A TOURNIQUET ───────
+          #
+          # These were 500M (API) and 400M/550M (queue): "chosen so the two soft ceilings plus
+          # headroom fit inside 1 GiB", and explicitly "a first setting, not a measurement". The
+          # measurement finally arrived, and it says the first setting was too small for the API.
+          #
+          # WHAT HAPPENED. The backend deploy failed on 2026-09-17 because the API would not answer
+          # /health on its own loopback inside five minutes. The box was thrashing — 1 GiB in swap,
+          # ~14 MB/s paging both ways, 85% iowait — and `systemctl status fieldrepo` showed why:
+          #
+          #     Memory: 499.9M (high: 500.0M available: 100.0K peak: 500.4M swap: 483.9M)
+          #
+          # Pinned to the ceiling, with 484 MB of the cgroup pushed into swap. The instant the
+          # ceiling was raised the same process settled at 634 MB and the service came up in under
+          # 25 seconds instead of six minutes. THE API WANTS ~634 MB. It was never given it, so it
+          # ran every request through swap and called that normal.
+          #
+          # This is why the box moved to t3.small the same day (infra/terraform/main.tf carries the
+          # vmstat figures): 634 MB for uvicorn alone does not fit in 911 MiB beside a 400M queue
+          # worker, nginx and the kernel, and no arrangement of soft ceilings makes it fit. Raising
+          # these on the 1 GiB box would have swapped a throttled API for an OOM-killed one.
+          #
+          # THE SIZING, ON 1906 MiB OF USABLE RAM. 1000M soft for the API — ~1.6x its measured
+          # 634 MB, so ordinary variation never reaches the ceiling. 800M/1100M for the queue,
+          # holding roughly the old 5:4 ratio. The two soft ceilings total 1800M, which is deliberate
+          # and is the same bet the old numbers made: MemoryHigh is a ceiling on ONE cgroup, not a
+          # reservation, and these two do not peak together. The reasoning below about WHICH unit
+          # carries the hard stop is unchanged and still right.
+          #
+          # STILL NOT A FINAL ANSWER FOR THE QUEUE. 400M was never observed to be hit; it was
+          # inherited arithmetic, and 800M is that arithmetic doubled. If real transcription work
+          # thrashes, read the memory line in `systemctl status fieldrepo-queue` and raise it from
+          # the number there — the way the API's was finally set.
           write_dropin fieldrepo.service memory.conf <<'CONF'
           [Service]
-          MemoryHigh=500M
+          MemoryAccounting=yes
+          MemoryHigh=1000M
           CONF
 
           write_dropin fieldrepo-queue.service memory.conf <<'CONF'
           [Service]
-          MemoryHigh=400M
-          MemoryMax=550M
+          MemoryAccounting=yes
+          MemoryHigh=800M
+          MemoryMax=1100M
           CONF
 
           if [ "$changed" = "1" ]; then
@@ -1501,11 +1532,40 @@ jobs:
           # the thing that fails the deploy. `systemctl is-active` gets `|| true` for the same
           # reason: it exits non-zero for a unit that is merely still starting, which is the state
           # this loop exists to wait out.
-          for i in $(seq 1 150); do
+          # ─── THE BOUND IS 10 MINUTES, NOT 5, AND IT IS NAMED ONCE ───────────────────────────
+          #
+          # 2026-09-17, and this is the second half of that day. The bound was 150 tries — five
+          # minutes — and the deploy that first carried the heartbeat above FAILED ON IT, with the
+          # last line reading:
+          #
+          #     waiting for /health: 140/150 (~280s elapsed); fieldrepo is active, fieldrepo-queue is active
+          #
+          # The release was fine. The symlink had flipped, the units were `active`, and the API
+          # answered normally a few minutes later — it simply could not serve a request on its own
+          # loopback inside five minutes, because the 1 GiB box was thrashing (1 GiB in swap,
+          # ~14 MB/s paging both ways, 85% iowait; the numbers are quoted in full on
+          # `instance_type` in infra/terraform/main.tf, which moved to t3.small the same day).
+          #
+          # SO THE REAL FIX IS THE MEMORY, AND THIS IS NOT IT. Doubling the RAM is what makes a
+          # restart fast; this bound only decides how patient the pipeline is when it is not.
+          # Raising it alone would have turned a red deploy into a slow green one and left the box
+          # thrashing under real traffic — which is why both landed together, and why this comment
+          # says so rather than letting the next reader conclude the timeout was the bug.
+          #
+          # Ten minutes is insurance, not an expectation: on t3.small this loop should exit in the
+          # first few tries. A genuinely dead service now costs ten minutes instead of five before
+          # the journal is dumped, which is the right trade against a deploy that reports failure
+          # over a release that is actually live — the failure mode this file has now hit twice.
+          #
+          # ONE NAME, THREE USES. The count was written out three times — the `seq`, the last-try
+          # test and the progress line — and a bound that has to be changed in three places is a
+          # bound that will one day disagree with itself, printing `150/150` while looping to 300.
+          tries=300
+          for i in $(seq 1 "$tries"); do
             if curl -fsS --max-time 5 http://127.0.0.1:8000/health >/dev/null 2>&1; then echo "healthy after ${i} tries"; break; fi
-            if [ "$i" = "150" ]; then echo "service did not become healthy:"; sudo journalctl -u fieldrepo -n 80 --no-pager; exit 1; fi
+            if [ "$i" = "$tries" ]; then echo "service did not become healthy after $((tries * 2))s:"; sudo journalctl -u fieldrepo -n 80 --no-pager; exit 1; fi
             if [ "$((i % 10))" -eq 0 ]; then
-              echo "waiting for /health: ${i}/150 (~$((i * 2))s elapsed); fieldrepo is $(systemctl is-active fieldrepo || true), fieldrepo-queue is $(systemctl is-active fieldrepo-queue || true)" >&2
+              echo "waiting for /health: ${i}/${tries} (~$((i * 2))s elapsed); fieldrepo is $(systemctl is-active fieldrepo || true), fieldrepo-queue is $(systemctl is-active fieldrepo-queue || true)" >&2
             fi
             sleep 2
           done

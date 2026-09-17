@@ -117,15 +117,26 @@ EnvironmentFile=/home/ubuntu/app/current/backend/.env
 # of one that sets it. The deploy workflow refuses a .env that sets it true.
 Environment=MEDIA_QUEUE_WORKER_ENABLED=false
 ExecStart=/home/ubuntu/app/current/backend/.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1
-# A SOFT CEILING AND DELIBERATELY NO HARD ONE. 1 GiB of RAM on this box, shared with the queue
-# worker, nginx and the kernel. Over MemoryHigh the cgroup is throttled and reclaimed hard, so a
-# heavy request gets slower instead of the kernel's OOM killer choosing a victim by badness score —
-# which on this box has meant it choosing UVICORN because the QUEUE was the hungry one, and the API
-# then 502ing for a reason that appears nowhere in its own log. There is no MemoryMax here on
-# purpose: killing the API to save memory is precisely the outcome these limits exist to prevent.
-# The queue's unit below is the one that carries a hard stop, because losing the queue is
-# recoverable and losing the API is an outage.
-MemoryHigh=500M
+# A SOFT CEILING AND DELIBERATELY NO HARD ONE. 2 GiB of RAM on this box (t3.small since
+# 2026-09-17), shared with the queue worker, nginx and the kernel. Over MemoryHigh the cgroup is
+# throttled and reclaimed hard, so a heavy request gets slower instead of the kernel's OOM killer
+# choosing a victim by badness score — which on this box has meant it choosing UVICORN because the
+# QUEUE was the hungry one, and the API then 502ing for a reason that appears nowhere in its own
+# log. There is no MemoryMax here on purpose: killing the API to save memory is precisely the
+# outcome these limits exist to prevent. The queue's unit below is the one that carries a hard stop,
+# because losing the queue is recoverable and losing the API is an outage.
+#
+# 1000M, RAISED FROM 500M ON 2026-09-17, AND THE OLD VALUE IS WHY THE BOX WAS RESIZED. 500M was set
+# to fit two soft ceilings plus headroom inside 1 GiB and was written down as "a first setting, not
+# a measurement". The measurement arrived when a deploy failed with the API unable to answer /health
+# on its own loopback for five minutes: `systemctl status fieldrepo` read
+# `Memory: 499.9M (high: 500.0M available: 100.0K peak: 500.4M swap: 483.9M)` — pinned to the
+# ceiling with 484 MB of the cgroup in swap. Raised, the same process settled at 634 MB and started
+# in under 25s. uvicorn wants ~634 MB and had been running every request through swap to pretend
+# otherwise. 634 MB does not fit in 911 MiB beside a queue worker, so the instance type moved too;
+# `instance_type` in main.tf carries the vmstat evidence. 1000M is ~1.6x the measured figure so
+# ordinary variation never touches the ceiling.
+MemoryHigh=1000M
 Restart=always
 # 10s (not 3s) between restarts so that IF the process ever does exit while the database's
 # pooler is at its client-connection ceiling, restarts don't hammer the pooler
@@ -156,15 +167,23 @@ EnvironmentFile=/home/ubuntu/app/current/backend/.env
 ExecStart=/home/ubuntu/app/current/backend/.venv/bin/python -m app.worker
 # THE ONLY HARD MEMORY STOP ON THIS BOX, and it is on the queue rather than on the API for a
 # reason. This process runs ffmpeg and AI transcription; one large audio job can take it past what
-# is left of 1 GiB after uvicorn and the kernel, and unbounded it is the thing that triggers the OOM
+# is left of 2 GiB after uvicorn and the kernel, and unbounded it is the thing that triggers the OOM
 # killer — which then does not necessarily kill IT. MemoryHigh throttles it first (slow, still
 # working); MemoryMax kills it if it keeps climbing, which is survivable: Restart=always brings it
-# back and the job is retried. 400M/550M leaves the API's 500M soft ceiling room inside 1 GiB.
-# These are a first setting, not a measurement — if real transcription work thrashes here, raise
-# MemoryHigh and read the memory line in `systemctl status fieldrepo-queue` rather than guessing
-# twice.
-MemoryHigh=400M
-MemoryMax=550M
+# back and the job is retried.
+#
+# 800M/1100M since 2026-09-17, the old 400M/550M doubled with the box. STILL NOT A MEASUREMENT, and
+# this one has to say so twice: 400M was never observed to be hit — unlike the API's 500M, which was
+# (see its unit above, and the vmstat figures on `instance_type` in main.tf). So the API's number
+# now comes from a reading and the queue's is still inherited arithmetic. If real transcription work
+# thrashes here, read the memory line in `systemctl status fieldrepo-queue` and raise it from THAT
+# number rather than doubling again.
+#
+# The two soft ceilings total 1800M on 1906 MiB of usable RAM, which is the same bet the old pair
+# made inside 1 GiB: MemoryHigh bounds one cgroup, it does not reserve memory, and these two do not
+# peak together. MemoryMax here is the one hard stop on the box, and it stays on the queue.
+MemoryHigh=800M
+MemoryMax=1100M
 Restart=always
 RestartSec=10
 KillMode=control-group

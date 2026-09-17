@@ -631,8 +631,38 @@ resource "aws_iam_instance_profile" "ssm" {
 }
 
 resource "aws_instance" "api" {
-  ami           = data.aws_ami.ubuntu.id
-  instance_type = "t3.micro"
+  ami = data.aws_ami.ubuntu.id
+
+  # ─── t3.small SINCE 2026-09-17, AND THE 1 GiB BOX IS WHY ────────────────────────────────────
+  # This was `t3.micro` (2 vCPU / 1 GiB) from the first apply until the backend deploy failed on
+  # 2026-09-17 in a way that finally got measured. The deploy's own post-mortem step — added the
+  # same day, and the first thing ever to capture the box's view of a failure — reported, while the
+  # API was refusing to answer a health check on its own loopback:
+  #
+  #     r  b   swpd   free  buff  cache    si     so   us sy id wa st
+  #     0  2 1055280 129772   576  85968 14536  11516   1  5 28 65  0
+  #     0  2 1048572  90408   576  85968 14508      0   1  5  9 85  1
+  #
+  # 1 GiB swapped out of 911 MiB of RAM, ~14 MB/s paging IN AND OUT at once, and 65-85% iowait.
+  # The box was not computing, it was thrashing. `systemctl` called the unit `active` the whole
+  # time and `/health` on 127.0.0.1 still did not answer inside five minutes, because every page
+  # the interpreter touched had to come back off EBS.
+  #
+  # AND THE st COLUMN IS ZERO, which kills the other theory. Spent t3 CPU credits were the standing
+  # explanation for this box going quiet — it is written into the deploy workflow's own comments —
+  # and steal time is how that condition shows from inside the guest. It is 0, 0, 1. Whatever else
+  # is true, the hypervisor is not throttling this instance.
+  #
+  # An earlier investigation had recorded "memory is ruled out", on the grounds that `swapon --show`
+  # printed an identical line on a failing attempt and on the last green one. That compares swap
+  # CONFIGURED, never swap PRESSURE; `free -m` and `vmstat` are the measurements that decide it and
+  # nobody had taken them. Do not re-close this on the old reasoning.
+  #
+  # t3.small is the same 2 vCPU with 2 GiB, so it is a memory change only and roughly doubles the
+  # instance's hourly cost. Applied in place: EC2 stops the instance, swaps the type and starts it,
+  # which is a few minutes of downtime and NOT a replacement — the EBS root volume, the private
+  # address and `aws_eip.api` all survive it. The swap file stays: it is a floor, not the plan.
+  instance_type = "t3.small"
 
   # KEPT, THOUGH PORT 22 IS CLOSED, AND KEPT DELIBERATELY. `key_name` is ForceNew: removing it from
   # this configuration does not detach a key pair, it DESTROYS AND RECREATES the instance — which on

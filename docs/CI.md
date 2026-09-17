@@ -338,15 +338,29 @@ updated to bake the same paths and limits into the base units, so a **rebuilt** 
 deployed one without this step ever having run; the two are deliberately redundant and are not
 allowed to disagree.
 
-**The memory limits, and why they are asymmetric.** This is a t3.micro — 1 GiB of RAM and a 2 GiB
-swap file — and the queue runs ffmpeg and AI transcription. Unbounded, the kernel's OOM killer picks
-by badness score, which on this box has meant **uvicorn dying because the queue was hungry**, with
-the API then 502-ing for a reason that appears nowhere in its own logs. So `fieldrepo` gets
-`MemoryHigh=500M` and deliberately **no** `MemoryMax`: killing the API to save memory is the outcome
-these limits exist to prevent. `fieldrepo-queue` gets `MemoryHigh=400M` and `MemoryMax=550M`, because
-the queue being killed is recoverable — `Restart=always`, and the job is retried. These are a first
-setting, not a measurement; if the queue thrashes on real transcription work, raise `MemoryHigh` and
-read the memory line in `systemctl status fieldrepo-queue` rather than guessing again.
+**The memory limits, and why they are asymmetric.** This is a **t3.small** — 2 GiB of RAM and a
+2 GiB swap file — and the queue runs ffmpeg and AI transcription. Unbounded, the kernel's OOM killer
+picks by badness score, which on this box has meant **uvicorn dying because the queue was hungry**,
+with the API then 502-ing for a reason that appears nowhere in its own logs. So `fieldrepo` gets
+`MemoryHigh=1000M` and deliberately **no** `MemoryMax`: killing the API to save memory is the outcome
+these limits exist to prevent. `fieldrepo-queue` gets `MemoryHigh=800M` and `MemoryMax=1100M`, because
+the queue being killed is recoverable — `Restart=always`, and the job is retried.
+
+**It was a t3.micro with 500M/400M/550M until 2026-09-17, and the day it stopped being one is worth
+recording.** A backend deploy failed with the API unable to answer `/health` on its own loopback for
+five minutes. The post-mortem step added that same day — the first thing ever to capture the box's
+own view of a failed deploy — found it thrashing: 1 GiB in swap, ~14 MB/s paging in *and* out, 85%
+iowait, and **steal time 0**, which retired the standing "spent t3 CPU credits" explanation.
+`systemctl status fieldrepo` showed uvicorn pinned at its 500M ceiling with 484 MB of the cgroup
+swapped out. Released, the same process settled at **634 MB** and started in under 25 seconds
+instead of six minutes. uvicorn alone wants ~634 MB, which does not fit in 911 MiB beside the queue
+worker, nginx and the kernel — so the ceilings were never sizing the API, they were running it
+through swap. The box was resized (`instance_type` in `infra/terraform/main.tf` carries the vmstat
+output) and the ceilings raised together; either alone would have made things worse.
+
+The API's figure is now a measurement. **The queue's is not** — 400M was never observed to be hit,
+and 800M is simply that arithmetic doubled. If the queue thrashes on real transcription work, raise
+`MemoryHigh` from the memory line in `systemctl status fieldrepo-queue` rather than doubling again.
 
 One more thing the drop-in restates: `Environment=MEDIA_QUEUE_WORKER_ENABLED=false` on `fieldrepo`.
 **This paragraph used to claim textual order decides the winner, and that was wrong** (corrected
@@ -388,7 +402,7 @@ docker run --rm -v "$PWD/backend:/w" -w /w python:3.12 sh -c \
 Two traps, both already sprung once:
 
 * **`--extra dev`, and NOT `--all-extras`.** The `ai-local` extra pulls `rembg` and `onnxruntime` —
-  roughly 400 MB of wheels that `backend/pyproject.toml` explicitly forbids on the t3.micro.
+  roughly 400 MB of wheels that `backend/pyproject.toml` explicitly forbids on the API box.
   Measured on the way in on 2026-09-03: `--all-extras` produced a lock carrying `onnxruntime`,
   `rembg`, `numpy` and `scipy`.
 * **Do not paste the command out of the lock's own `pip-compile` header.** That header records
@@ -473,7 +487,7 @@ document does not mention because that laptop's database already had the schema.
 **`.github/workflows/android-emulator.yml` — instrumented tests.** `workflow_dispatch` only, and
 that is a cost decision rather than a taste. An emulator job needs KVM, boots a system image and
 takes fifteen to thirty minutes — an order of magnitude more runner time than everything else here
-put together, on a fleet whose entire infrastructure is one t3.micro. It runs the instrumented test
+put together, on a fleet whose entire infrastructure is one t3.small. It runs the instrumented test
 classes under `android/app/src/androidTest/` — the ASR engine probes, the device-tier probe, the
 language-pack probe, the custom-section store and the stage-authority device tests — which
 `android-build.yml` cannot, because that workflow compiles, lints and assembles on a bare runner with

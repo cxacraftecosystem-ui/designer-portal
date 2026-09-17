@@ -16,16 +16,28 @@ anytime without data loss. That is the whole reason this guide provisions no dat
 
 ## 1. Which EC2 instance
 
-- **Recommended: `t3.micro`** — 2 vCPU (burstable), **1 GiB RAM**, free-tier eligible (750 hrs/month
-  for 12 months). Enough to run the FastAPI/uvicorn API (DB + storage are off-box).
-- `t2.micro` is the older free-tier option; `t3.micro` is newer/faster — pick `t3.micro`.
-- **Do NOT** try to `npm run build` the Next.js frontend on 1 GiB — it OOMs. Either deploy the
-  frontend to **Vercel**, or use a `t3.small` (2 GiB, *not* free) if everything must live on one box.
+- **Recommended: `t3.small`** — 2 vCPU (burstable), **2 GiB RAM**, **not free-tier eligible**
+  (~$0.0224/hr, ~$16/month in `ap-south-1`). This is what production runs on as of 2026-09-17.
+- **`t3.micro` (1 GiB, free-tier eligible) is no longer enough, and that is a measurement rather
+  than caution.** It was the recommendation here until 2026-09-17, when a deploy failed with the
+  API unable to answer `/health` on its own loopback for five minutes. The box was thrashing —
+  1 GiB in swap, ~14 MB/s paging both ways, 85% iowait, and steal time 0, so not CPU credits.
+  `systemctl status fieldrepo` showed uvicorn pinned to its 500M cgroup ceiling with 484 MB of it
+  swapped out; released, the same process settled at **634 MB**. uvicorn alone wants ~634 MB, which
+  does not fit in 911 MiB beside the queue worker, nginx and the kernel. The old cgroup ceilings
+  were not sizing it, they were forcing it through swap.
+- `t2.micro` is the older free-tier option. Both free-tier types are 1 GiB and neither fits this
+  workload any more; choose one only for a cut-down deployment with the media queue worker
+  disabled, and expect to tune the ceilings below downwards.
+- **Do NOT** try to `npm run build` the Next.js frontend on this box either way — deploy the
+  frontend to **Vercel**, which is what this project does (see `docs/DEPLOYMENT_VERCEL.md`).
 - AMI: **Ubuntu Server 24.04 LTS**. Storage: **30 GiB gp3** (free-tier max).
 - Add a **2 GiB swap file** (below) so `pip install` / `prisma generate` don't get OOM-killed.
 
 > The "Free tier eligible" badge on larger types (m7i-flex.large etc.) refers to the new account
-> credits plan, not the classic 750-hour free tier. For a genuinely free box, choose `t3.micro`.
+> credits plan, not the classic 750-hour free tier. There is no genuinely free instance type that
+> fits this workload — `t3.micro` is the only classic-free-tier option and the measurement above
+> is why it was abandoned. Budget for the box.
 
 ---
 
@@ -160,7 +172,11 @@ ExecStart=/home/ubuntu/app/current/backend/.venv/bin/python -m uvicorn app.main:
 # is the outcome these limits exist to prevent — on a 1 GiB box the kernel's OOM killer picks by
 # badness score, and that has meant uvicorn dying because the QUEUE was hungry, with the API then
 # 502ing for a reason that appears nowhere in its own log.
-MemoryHigh=500M
+# 1000M since 2026-09-17, raised from 500M. uvicorn was measured at 634 MB once the old ceiling was
+# lifted; 500M had been holding it there with 484 MB in swap. ~1.6x the measured figure, so ordinary
+# variation never reaches the ceiling. See section 1.
+MemoryAccounting=yes
+MemoryHigh=1000M
 KillMode=control-group
 Restart=always
 RestartSec=10
@@ -186,8 +202,13 @@ ExecStart=/home/ubuntu/app/current/backend/.venv/bin/python -m app.worker
 # after uvicorn. MemoryHigh throttles it first (slow, still working); MemoryMax kills it if it keeps
 # climbing, which is survivable — Restart=always brings it back and the job is retried. The queue is
 # the process that CAN be killed; uvicorn is not, which is why only this unit has a hard stop.
-MemoryHigh=400M
-MemoryMax=550M
+# 800M/1100M since 2026-09-17 — the old 400M/550M doubled with the box, and UNLIKE the API's figure
+# this one is still inherited arithmetic rather than a reading: 400M was never observed to be hit.
+# If transcription work thrashes, raise it from the memory line in `systemctl status
+# fieldrepo-queue`, not by doubling again.
+MemoryAccounting=yes
+MemoryHigh=800M
+MemoryMax=1100M
 KillMode=control-group
 Restart=always
 RestartSec=10
