@@ -233,9 +233,11 @@ def test_each_android_record_form_saves_through_the_repository_and_the_one_queue
         body, at = kotlin_fun_body(android, name)
 
         # THE CREATE, WHICH ONE FORM TAKES AS A PARAMETER. `QuestionnaireForm` is handed
-        # `onSubmit: suspend (QuestionnaireInterviewCreateRequest) -> String` and both of its mounts
-        # supply `repository.createQuestionnaireInterview`. Declared per record as `createVia` so the
-        # difference is read off the contract rather than special-cased here by name.
+        # `onSubmit: suspend (QuestionnaireInterviewCreateRequest) -> String`, and its two mounts supply
+        # two DIFFERENT things: the create screen supplies `repository.createQuestionnaireInterview`,
+        # and `InterviewEditLoader` supplies an `error(…)` because an open edit must PATCH. Declared per
+        # record as `createVia` / `mountSupplies` / `mountRefuses`, so both halves are read off the
+        # contract rather than special-cased here by name.
         assert record["android"]["createCall"] in body, (
             f"the handset's `{name}` (MainActivity.kt:{line_of(android, at)}) no longer calls "
             f"`{record['android']['createCall']}`. The contract declares it as this record's one "
@@ -248,6 +250,21 @@ def test_each_android_record_form_saves_through_the_repository_and_the_one_queue
                 "so a mount that supplies something else is a second save path in the one shape "
                 "this contract cannot see from inside the form."
             )
+            # AND THE OTHER MOUNT MUST REFUSE, which is the half that only exists because the
+            # opposite shipped. `InterviewEditLoader` always passes `editing`, so the form routes
+            # every save to `updateQuestionnaireInterview` and its `onSubmit` is unreachable — which
+            # is precisely why holding a create there was dangerous rather than merely dead. Pinned
+            # separately from `mountSupplies` so that turning one back into the other is two red
+            # tests and not a contract that still passes on the surviving half.
+            refuses = record["android"].get("mountRefuses")
+            if refuses:
+                assert refuses in android, (
+                    f"the mount of `{name}` that opens an existing record no longer refuses to "
+                    f"create: `{refuses}` is gone. A correctly-typed wrong verb there is one "
+                    "refactor away from filing a second record for an interview that already has "
+                    "one — a 409 where the unique index bites, and two half-answered sittings "
+                    "where it does not."
+                )
 
         # THE QUEUE. Which spelling is a property of the form's MEDIA and not of its save: the short
         # form builds the media specs itself, and a tool (grid shots in the same list), a process

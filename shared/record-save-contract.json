@@ -1,6 +1,6 @@
 {
   "contract": "record-save",
-  "version": 1,
+  "version": 2,
   "enforcedBy": "backend/tests/test_record_save_contract.py",
   "authority": [
     "frontend/components/forms/WorkshopPicker.tsx",
@@ -234,7 +234,8 @@
         "queueVia": "queueOfflineEntry",
         "createVia": "onSubmit",
         "createCall": "onSubmit(",
-        "mountSupplies": "onSubmit = { repository.createQuestionnaireInterview(it).id }"
+        "mountSupplies": "val created = repository.createQuestionnaireInterview(body)",
+        "mountRefuses": "onSubmit = { error(\"An open edit must PATCH the interview, never create a second one.\") }"
       },
       "note": [
         "THE ONE RECORD WITH NO INTEGRATED DOOR, and that is a fact about the stage registry rather",
@@ -305,9 +306,20 @@
         "fieldwork.",
         "",
         "AND ONE FORM'S CREATE IS INJECTED AT THE MOUNT. `QuestionnaireForm` takes",
-        "`onSubmit: suspend (QuestionnaireInterviewCreateRequest) -> String` and both of its mounts",
-        "supply `repository.createQuestionnaireInterview`. `createVia` per record says which shape to",
-        "expect, so the difference is declared rather than parsed around."
+        "`onSubmit: suspend (QuestionnaireInterviewCreateRequest) -> String`, and its TWO mounts now",
+        "supply two DIFFERENT things. The create screen supplies `repository.createQuestionnaireInterview`;",
+        "`InterviewEditLoader` supplies an `error(…)`, because that mount always passes `editing` and the",
+        "form routes on it, so its `onSubmit` can only ever be reached by a refactor — and what it used to",
+        "hold was the wrong verb, correctly typed. `createVia` per record says which shape to expect,",
+        "`mountSupplies` pins the create and `mountRefuses` pins the refusal, so neither can quietly",
+        "become the other.",
+        "",
+        "THAT MOVE WAS A DECISION AND NOT A FIX, in the sense `maintenance` below draws. `mountSupplies`",
+        "read `onSubmit = { repository.createQuestionnaireInterview(it).id }` — the edit loader's dead",
+        "line, and the only place that exact spelling ever appeared in the tree. So this contract was",
+        "green on the strength of the one mount that must never create, and would have gone red the day",
+        "somebody deleted that line for exactly the right reason. It now names a line inside the create",
+        "mount, which is the mount the claim was always about."
       ]
     }
   },

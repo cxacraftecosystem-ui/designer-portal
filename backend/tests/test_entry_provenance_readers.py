@@ -1235,6 +1235,94 @@ async def test_the_sanction_register_takes_two_booleans_and_a_list_of_labels(mon
     assert MEENA.id not in served, "a stamp's author reached a reader holding no grant on the workshop"
 
 
+# --------------------------------------------------------------------------------------
+# Reader 15: the ministry register's progress column — EXEMPT, and fenced
+# --------------------------------------------------------------------------------------
+#
+# Landed 2026-09-20 with `/ministry-dashboard`, and the tripwire below is what caught it — the
+# screen could not have, because a register that showed an author would look exactly like a
+# register that did not until somebody read the JSON.
+#
+# `services/ministry_dashboard.progress_for` reads every stage entry of up to a hundred workshops in
+# ONE query to answer one question per workshop: how much of the required work is filled in. It is
+# EXEMPT on `analytics`' grounds rather than Reader 7's — it counts rows across workshops and never
+# shows one field to one person — and the exemption is worth less than the others because the
+# audience is the widest in the product. The register is read by MINISTRY_ADMIN, by the master
+# admin and by the two directorate posts, none of whom hold a grant on any workshop; a stamp
+# reaching this payload would put "Asha Patel typed this" in front of every officer on the platform,
+# in one table, for the whole estate at once.
+#
+# WHAT A ROW IS ALLOWED TO PRODUCE: five figures, a bool and a schema version — `percent`,
+# `stagesTotal`, `stagesComplete`, `requiredTotal`, `requiredFilled`, `definitionRead` and
+# `customSchemaVersion`. No key off `data`, and nobody named. An eighth figure derived from a VALUE
+# rather than from a count is the change that makes the exemption false, and the key-set assertion
+# below is what fails on it.
+#
+# `load_definitions` is deliberately NOT stubbed. It is the second half of the path under test and
+# it reads two more tables; stubbing it would hide a reader added inside it, which is the exact
+# shape of miss this whole file exists to catch.
+
+
+async def test_the_registers_progress_column_is_counts_and_carries_no_value_and_no_author(monkeypatch):
+    """``ministry_dashboard.progress_for`` — driven for real against a stubbed table.
+
+    The rows are this file's own stamped fixtures, so a reader that started copying values or
+    authors off them shows up in the payload rather than in a review.
+    """
+    from app.services import ministry_dashboard as register
+
+    entries = _entries()
+    for row in entries:
+        row.designWorkshopId = "dw_1"
+    queries: list[dict] = []
+
+    async def _find_entries(where=None, order=None):
+        queries.append(where or {})
+        return entries
+
+    async def _no_sections(where=None, order=None):
+        return []
+
+    monkeypatch.setattr(
+        register,
+        "db",
+        SimpleNamespace(
+            dwstageentry=SimpleNamespace(find_many=_find_entries),
+            dwcustomsection=SimpleNamespace(find_many=_no_sections),
+        ),
+    )
+
+    scored = await register.progress_for(["dw_1"])
+
+    assert queries and queries[0].get("deletedAt", "missing") is None, (
+        "the register scored soft-deleted entries. A workshop would then be credited for stage work "
+        "its designer has already taken back."
+    )
+    assert set(scored) == {"dw_1"}
+    figures = scored["dw_1"]
+    assert set(figures) == {
+        "percent",
+        "stagesTotal",
+        "stagesComplete",
+        "requiredTotal",
+        "requiredFilled",
+        "definitionRead",
+        "customSchemaVersion",
+    }, "the register's progress block grew a key — is it a stage-entry field?"
+    assert isinstance(figures["percent"], int) and isinstance(figures["stagesComplete"], int)
+
+    served = repr(scored)
+    assert "Sita Devi" not in served and "9000011111" not in served and "Barpali" not in served, (
+        "a stage-entry field value reached the ministry register. It is EXEMPT from resolving "
+        "provenance because it counts rows and serves figures - see above."
+    )
+    assert "fieldProvenance" not in served and "byName" not in served and "provenance" not in served
+    assert MEENA.id not in served and ASHA.id not in served, (
+        "a stamp's author reached the widest audience in the product, none of whom hold a grant on "
+        "the workshop it came from."
+    )
+
+
 def _blanked_code(path: Path) -> str:
     """One module's source with comment and string spans blanked out, lowercased.
 
@@ -1356,6 +1444,14 @@ def test_no_new_reader_of_stage_entries_appeared_without_resolving_provenance():
         # grant on the workshop.
         "app/services/artisan_import.py",
         "app/services/sanction_orders.py",
+        # Classified 2026-09-20, when the tripwire caught the ministry register. EXEMPT on
+        # `analytics`' grounds — it reads a page of workshops' entries to produce a percentage per
+        # workshop and never shows one field to one person — and FENCED by the test under
+        # "Reader 15" above, which fails if anything but a count, a bool and a schema version
+        # comes out of it. The exemption matters more here than anywhere else on this list: this
+        # is the one reader whose audience is every ministry and directorate account, over the
+        # whole estate, none of them holding a grant on a single workshop in it.
+        "app/services/ministry_dashboard.py",
     }
     root = Path(__file__).resolve().parents[1] / "app"
     found = set()
