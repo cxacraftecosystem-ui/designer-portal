@@ -1,4 +1,11 @@
-import { Binoculars, CalendarRange, DraftingCompass, FileSignature, UserCheck } from "lucide-react";
+import {
+  Binoculars,
+  CalendarRange,
+  DraftingCompass,
+  FileSignature,
+  LayoutDashboard,
+  UserCheck
+} from "lucide-react";
 
 import type { GuideStep } from "@/components/guide/steps";
 
@@ -22,8 +29,8 @@ import type { GuideStep } from "@/components/guide/steps";
  *     the same bargain. `/guide` is ungated so it can teach the process to somebody who has not
  *     earned the capability yet — a researcher reads the workshop arc, meets a padlock, and at
  *     least knows what the padlock is in front of. That argument works because the arc describes
- *     ONE surface with ONE gate and the cards say so in one repeated sentence. The five cards below
- *     have five different gates, three of which are non-monotonic in rank, and two of which refuse
+ *     ONE surface with ONE gate and the cards say so in one repeated sentence. The cards below
+ *     have a different gate EACH — four of them non-monotonic in rank, and three of them refusing
  *     an ADMIN by name. One repeated padlock sentence cannot be written for them, which is why each
  *     card carries its own and why they are not mixed in among cards that share one.
  *  3. ANDROID READS `steps.ts` AS TEXT. `WalkthroughStepsTest.kt` scans from the `GUIDE_STEPS`
@@ -46,7 +53,7 @@ import type { GuideStep } from "@/components/guide/steps";
  *     screens will actually render, because a spotlight anchored to a control on a locked page has
  *     nothing to point at and the tour dead-ends mid-sequence. That is what makes it a second copy
  *     of `ROUTE_GUARDS`, and a copy that is WRONG dead-ends a reader.
- *   * THIS is a copy of nothing. It is prose about five screens, in one file, read by a card
+ *   * THIS is a copy of nothing. It is prose about a handful of screens, in one file, read by a card
  *     renderer that fetches nothing and anchors to nothing. The role picks which deck opens, and
  *     since 2026-09-16 also which decks may be read at all — `guideTrackFor` and `guideTracksFor` in
  *     `tracks.ts`, over predicates already exported by `lib/permissions.ts`. Nothing here can
@@ -63,40 +70,42 @@ import type { GuideStep } from "@/components/guide/steps";
  *     `GuideOutro.tsx` states — this said five until 2026-09-16 and was simply wrong), while THIS
  *     deck no longer is, so the "different gates cannot share one padlock sentence" argument protects
  *     the three posts reading it rather than a wider audience. That makes the per-card "who this
- *     screen is for" sentences MORE necessary, not less: two of these five screens refuse a Regional
+ *     screen is for" sentences MORE necessary, not less: two of these screens refuse a Regional
  *     Director who outranks an Assistant Director, and the reader can no longer step out to another
  *     deck to work out why.
  *
  * The part of cost 5 that stands, and is not being argued away: a reader who opens a card below and
  * presses "Open Annual plan" without the tier lands on a lock panel. That is the same bargain the
  * designer's arc already makes, and it is paid the same way — every card says who its screen is
- * for, in its own words, because no two of these five gates are the same.
+ * for, in its own words, because no two of these gates are the same.
  *
  * ── THE RULES THIS DECK KEEPS, AND THE ONE IT CANNOT ───────────────────────────────────────────
  *
  * `label` IS THE NAV ENTRY'S LABEL, CHARACTER FOR CHARACTER — "Annual plan", "Sanction orders",
  * "Workshop oversight", "Design workshops", "Workshops I monitor" — read off `NAV_ITEMS` in
  * `components/DynamicIslandNav.tsx`. The naming rule in `steps.ts` says the label is the
- * Android-parity feature name; four of these five have no Android name to be parity with, and
+ * Android-parity feature name; none of these has an Android name to be parity with, and
  * `NAV_ITEMS`' own comment says so where it declares them ("THE LABELS ARE THE WEB OWNER'S AND NOT
  * ANDROID `actionTitle` STRINGS … If the handset grows the screen, ITS name wins"). So the rule is
  * followed to the only authority that exists: the web nav. If Android grows these screens, the nav
  * changes first and this file follows it, not the other way round.
  *
- * `action` IS THE SCREEN'S OWN PRIMARY VERB and not a dashboard tile's, because none of these five
+ * `action` IS THE SCREEN'S OWN PRIMARY VERB and not a dashboard tile's, because none of these
  * destinations has a dashboard TILE — the grid is the designer's and is held to Android's
  * `EntryMode` list by two parity tests. `design-workshop-inspection` in `steps.ts` already sets
  * that precedent ("Read a finished workshop"), and the alternative — inventing tile verbs for
- * tiles that do not exist — would put five strings in the product that name nothing.
+ * tiles that do not exist — would put strings in the product that name nothing.
  *
  * `fields` IS THE RULE THIS DECK CANNOT KEEP EVERYWHERE, and the exceptions are named here rather
  * than left to be noticed, because `steps.ts` records that letting a card "quietly join the
- * exception by being easier to paraphrase than to read" is the failure mode. Two of the five below
- * carry real form labels in screen order and were read off the components:
+ * exception by being easier to paraphrase than to read" is the failure mode. Three of the cards
+ * below carry real form labels in screen order and were read off the components:
  *   * Sanction orders — six labelled boxes on one form (`app/(protected)/sanction-orders/page.tsx`),
  *     five of them required, copied with their required marks.
  *   * Annual plan — four filter labels plus the upload dialog's two controls
  *     (`annual-plan/page.tsx`, `annual-plan/UploadPlanDialog.tsx`).
+ *    * Ministry dashboard — the two switches and the search box, which are the whole of what that
+ *     screen asks for; its downloads are acts and are named in `watch`.
  * Three cannot, and each for a different reason that is worth knowing:
  *   * Workshop oversight is four panels of PICKERS and buttons — its only labelled text boxes are
  *     search boxes — so its rows are the panel headings and the buttons that commit each panel.
@@ -116,12 +125,13 @@ import type { GuideStep } from "@/components/guide/steps";
  */
 
 /**
- * The five screens the directorate works on, in the order the work happens.
+ * The screens the directorate works on: the register first, then the five acts in the order the
+ * work happens.
  *
  * THE ORDER IS THE LIFECYCLE OF ONE WORKSHOP AS A MINISTRY SEES IT, which is a different order from
  * the designer's: a workshop is PLANNED (the annual directory), then SANCTIONED (the order that
  * opens it and mints the designer's account), then STAFFED (the designer, the two supervising
- * officers, the artisan roster), then FILLED IN, then READ BACK. Two of those five steps are the
+ * officers, the artisan roster), then FILLED IN, then READ BACK. Two of those five acts are the
  * two ways a workshop comes into existence at all for these tiers, and they are alternatives rather
  * than a sequence — a Ministry Admin promotes a planned row, an Assistant Director records an order
  * — so they sit adjacent and each says which of the two doors it is.
@@ -132,10 +142,61 @@ import type { GuideStep } from "@/components/guide/steps";
  */
 export const DIRECTORATE_STEPS: GuideStep[] = [
   {
-    // FIRST, because a workshop exists on paper before it exists in this product — and because this
-    // is the one screen of the five that a Regional Director and an Assistant Director cannot open
-    // at all. Leading with it means the tier difference inside the directorate is the first thing
-    // the reader meets rather than something they discover at a padlock.
+    /*
+      FIRST, AND IT IS NOT A STEP IN THE LIFECYCLE THE OTHERS DESCRIBE.
+
+      Everything below this card is something an officer DOES to one workshop, in the order it
+      happens. This one is the register of every workshop the other five have already been done to,
+      so it teaches a reading rather than an act — and it leads because an officer arriving at this
+      deck for the first time does not yet know which of the five acts is theirs. The dashboard is
+      where that question is answered: it names each workshop's designer, its standing and how far
+      through the stages it is, so the reader can see the shape of the programme before being taught
+      how to move one row of it.
+
+      IT IS ALSO THE ONE SCREEN OF THE SIX THAT EVERY TIER IN THIS DECK CAN OPEN. The five below have
+      five different gates, three of them non-monotonic in rank — the file header spends a paragraph
+      on why that is why this deck exists at all — and leading with the one nobody is refused means a
+      reader meets a working screen before they meet a padlock.
+
+      ⚠ `MINISTRY_DESK` in `components/dashboard/ministryDesk.ts` carries the matching row at this
+      same index, and `e2e/ministry-desk-unit.spec.ts` asserts the two lists agree href-for-href AND
+      label-for-label, in order. Moving this card obliges moving that row in the same edit.
+    */
+    id: "ministry-dashboard",
+    label: "Ministry dashboard",
+    action: "Read the programme",
+    icon: LayoutDashboard,
+    href: "/ministry-dashboard",
+    summary:
+      "Every workshop on the platform in one register — ongoing, completed and newly registered — with each designer's progress through the stages, and the lists to download.",
+    why:
+      "Every other screen in this deck is about ONE workshop: one plan row, one sanction order, one posting, one report. Nothing in the product answered \"how is the programme going?\" — which workshops are moving, which have stalled on a designer who has not opened stage 1, which are finished and waiting to be read back. Answering it meant opening workshops one at a time and remembering. This screen is that question asked once, and it is the register the ministry's own downloads are taken from, so the number on screen and the number in the spreadsheet cannot disagree.",
+    // Read off `app/(protected)/ministry-dashboard/page.tsx` in screen order. The type switch is two
+    // buttons rather than a dropdown, so it is named as the pair it draws; the standing switch is
+    // the same shape. The downloads are actions and are named in `watch` rather than here.
+    fields: [
+      "Type of workshop — Design & prototype workshops, Other workshops",
+      "Standing — Everything, Ongoing, Completed, Newly registered",
+      "Search (title, workshop code, craft, cluster or place)",
+      "Refresh now — beside the line saying when the register was last read"
+    ],
+    watch: [
+      "WHAT YOU SEE HERE DEPENDS ON YOUR POST, AND THE PAGE SAYS WHICH. A Ministry Administrator and the master admin read every workshop on the platform. An Assistant Director and a Regional Director read the workshops they were named on — the same scope as Workshops I monitor — because a posting is what gives an officer a workshop, and no screen in this product hands an officer workshops nobody named them on. The sentence under the heading says which of the two you are reading, so an empty register is never mistaken for an empty programme.",
+      "“ONGOING”, “COMPLETED” AND “NEWLY REGISTERED” ARE GROUPS OF STANDINGS, NOT NEW ONES, and the page lists the standings inside each. A workshop's own standing is the badge on its row and is the word the designer, the inspector and the report all use; these three are only a way of asking for several at once. Nothing is filed under a standing it does not have.",
+      "PROGRESS IS THE SAME ARITHMETIC THE DESIGNER'S OWN SCREEN USES and not a second opinion — required fields answered, out of required fields asked, rolled up across the stages. It is printed as stages done and fields outstanding as well as a percentage, because a percentage alone cannot tell one missing date from a whole stage nobody has opened, and those are different afternoons' work.",
+      "A ROW WITH NO PROGRESS FIGURE IS NOT A ROW AT ZERO. Where the register could not read a workshop's stages the cell says so in words instead of printing 0%, because “nothing has been done” and “we could not ask” are the two things this screen must never say in place of each other.",
+      "THE REGISTER RE-READS ITSELF WHILE YOU WATCH IT, and the line above the table says when it last did and lets you ask again. It stops while the tab is in the background and reads once when you come back, so a screen left open overnight shows this morning's figures rather than last night's. If a re-read fails, the rows you are looking at stay on screen and the line says the last read failed — the table is never emptied by a dropped connection.",
+      "THE DOWNLOADS ARE A COPY OF THIS REGISTER AND NOT OF THE WORKSHOPS. “Download workshops” carries the columns on screen — the workshop, where and when, its designer, its standing and its progress — and no stage content at all: no answers, no photographs, no recordings, no consent decisions. Taking THOSE out of the product is an admin's, and the page says so where the button is rather than answering you with a refusal after you press it.",
+      "“Download beneficiaries” IS THE ARTISAN LIST, AND THE IDENTITY NUMBERS IN IT ARE MASKED — the last four characters only, which is enough to confirm the right person and useless as an identifier. That is the same masking every shared surface in this product applies and there is no setting here that lifts it.",
+      "EVERY DOWNLOAD SAYS WHETHER IT IS THE WHOLE LIST. Where a file stops at the row cap it says so inside the file as well as on screen, because a spreadsheet outlives the page it came from and a file that quietly stops short reads a year later as a programme that was that small."
+    ]
+  },
+  {
+    // SECOND, because a workshop exists on paper before it exists in this product — and because this
+    // is the one screen among the acts that a Regional Director and an Assistant Director cannot
+    // open at all. Leading the ACTS with it means the tier difference inside the directorate is the
+    // first thing the reader meets once the register above has shown them the programme, rather than
+    // something they discover at a padlock.
     id: "ministry-annual-plan",
     label: "Annual plan",
     action: "Upload the plan",
@@ -165,7 +226,7 @@ export const DIRECTORATE_STEPS: GuideStep[] = [
       "Designers this workshop is for — on Open workshop, with the lead chooser under it once two are ticked"
     ],
     watch: [
-      "THIS SCREEN IS THE MINISTRY ADMIN'S ALONE, and it is the only one of the five that is a rank floor rather than a set: an Assistant Director and a Regional Director are both below it and are refused. The reason is written into the server (`can_manage_annual_plan`) and is worth knowing rather than resenting — the plan is a national instrument and the table carries no per-region column, so the change that let a Regional Director correct their own state's rows would hand them the whole directory. If regional editing is ever wanted it is a scope table, not a promotion.",
+      "THIS SCREEN IS THE MINISTRY ADMIN'S ALONE, and its gate is the only rank floor in this deck rather than a set: an Assistant Director and a Regional Director are both below it and are refused. The reason is written into the server (`can_manage_annual_plan`) and is worth knowing rather than resenting — the plan is a national instrument and the table carries no per-region column, so the change that let a Regional Director correct their own state's rows would hand them the whole directory. If regional editing is ever wanted it is a scope table, not a promotion.",
       "Upload the WHOLE sheet every time. Rows already in the plan are corrected, new rows are added, and uploading the same sheet twice changes nothing at all — that is how you confirm an earlier upload landed. The report afterwards lists every field it changed, from what to what.",
       "The tickbox is the destructive-looking one and it is not destructive. Ticking it marks every planned row the sheet does not mention as withdrawn; nothing is deleted, and a withdrawn row comes back the moment a later sheet names it. Leave it unticked when the sheet is a partial correction.",
       "OPENING A WORKSHOP FROM A ROW CAN ONLY BE DONE ONCE, AND IT MAY NAME THE DESIGNERS AS IT OPENS. Everything in the row is copied onto the new workshop and into its stage 1, and the dialog carries a designer picker: everybody you name is given access to the workshop as it is created, and the one marked lead has their designer profile copied into stage 1 and stage 3. Naming nobody is still a real answer and not a failure — the designer block of stage 1 is then left empty, which is the right empty, and designers are added afterwards.",
@@ -175,8 +236,8 @@ export const DIRECTORATE_STEPS: GuideStep[] = [
     ]
   },
   {
-    // SECOND, and the other door. It is the one act in this product that creates a person's account
-    // as a side effect, so it gets the longest `watch` list of the five and the sharpest warning in
+    // THIRD, and the other door. It is the one act in this product that creates a person's account
+    // as a side effect, so it gets the longest `watch` list in the deck and the sharpest warning in
     // the whole deck sits in it — the clause that refuses the officer who signed the order the
     // right to author the workshop it opened.
     id: "ministry-sanction-order",
@@ -225,7 +286,7 @@ export const DIRECTORATE_STEPS: GuideStep[] = [
     ]
   },
   {
-    // THIRD: the workshop exists and nobody is on it. This card is where the second refusal inside
+    // FOURTH: the workshop exists and nobody is on it. This card is where the second refusal inside
     // the directorate lives — a Regional Director is refused here and OUTRANKS an Assistant
     // Director they might otherwise be naming — so it is stated first in `watch` rather than left
     // to be met at a padlock.
@@ -266,7 +327,7 @@ export const DIRECTORATE_STEPS: GuideStep[] = [
     ]
   },
   {
-    // FOURTH: the write. This is the card the whole deck exists to make honest, because the
+    // FIFTH: the write. This is the card the whole deck exists to make honest, because the
     // capability is three days old on this ladder and nothing anywhere else tells these three tiers
     // they have it — `DESIGN_WORKSHOP_ROLES` gained them on 2026-09-14 and the nav entry, the route
     // guard and the tile all simply started appearing.

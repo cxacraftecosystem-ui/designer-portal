@@ -28,6 +28,7 @@ import {
   Image as ImageIcon,
   KeyRound,
   Layers,
+  LayoutDashboard,
   LogOut,
   MapPinned,
   Menu as MenuIcon,
@@ -76,6 +77,7 @@ import {
   canReadWorkshopOversight,
   canReview,
   canRunDesignWorkshops,
+  canSeeMinistryDashboard,
   isAdmin,
   roleLabel
 } from "@/lib/permissions";
@@ -520,6 +522,36 @@ export const NAV_ITEMS: NavItem[] = [
   // noticed. Android has no oversight screen in the working tree as of 2026-09-13
   // (`grep -rl ASSISTANT_DIRECTOR android/app/src/main` finds nothing), so there was nothing to copy
   // and nothing to check. If the handset grows the screen, ITS name wins and these two change.
+  // ── THE MINISTRY'S OWN WHOLE-ESTATE READ ──────────────────────────────────────────────────────
+  //
+  // `group: "Browse"` AND NOT `group: null`. A standalone bar link is reserved for "the two places a
+  // newcomer starts" — Dashboard and the Walkthrough — and a third would put "Dashboard" and
+  // "Ministry dashboard" side by side in the pill for four tiers, two adjacent links a tap apart
+  // whose labels differ by one word. Browse is also where its two nearest neighbours already are
+  // (Workshop oversight and Workshops I monitor, immediately below), so the menu group and the
+  // ministry desk card's own grouping agree — the property the dashboard's "Scan a code" tile
+  // comment argues is the one worth keeping.
+  //
+  // `canSeeMinistryDashboard` AND NOT `canSeeMinistryDesk`, although the two sets have identical
+  // membership. The desk's literal is a CARD AUDIENCE whose docstring promises that widening it
+  // costs nothing; this one is the GATE and has a server twin. The argument is written out on both
+  // declarations in `lib/permissions.ts` — do not collapse them.
+  //
+  // NOT `adminSurface`. The toggle exists only for accounts `isAdmin` admits, and an ADMIN is
+  // deliberately OUTSIDE this audience — so the flag would fire for nobody it could help and would
+  // be a claim about a tier that never sees the row. `/annual-plan` below carries the same note.
+  //
+  // THE `ROUTE_GUARDS` ROW EXISTS and was written in the same change as this entry rather than owed
+  // afterwards — `/ministry-dashboard` in `lib/permissions.ts`, with its twin row in
+  // `docs/PERMISSIONS.md` §5. A hidden nav entry has never been a guard in this product.
+  {
+    href: "/ministry-dashboard",
+    label: "Ministry dashboard",
+    icon: LayoutDashboard,
+    group: "Browse",
+    can: canSeeMinistryDashboard,
+    gate: "require_ministry_dashboard_reader (MINISTRY_DASHBOARD_ROLES, app/api/routes/ministry_dashboard.py)"
+  },
   {
     href: "/officers",
     label: "Workshop oversight",

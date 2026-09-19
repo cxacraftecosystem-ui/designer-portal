@@ -766,7 +766,22 @@ const BROWSE_TYPES: Record<string, BrowseTypeDef> = {
   questionnaire: {
     label: "Questionnaire",
     linkedType: "questionnaire",
-    editHref: () => "/questionnaire",
+    /*
+      THE LAST OF EIGHT ARMS STILL DISCARDING THE ID ITS OWN SIGNATURE DECLARES, fixed 2026-09-20.
+
+      `editHref` is typed `(id: string) => string` and every sibling spends it — `/crafts?edit=`,
+      `/workshops?edit=`, `/processes?edit=`, `/artisans/{id}/edit`. This one threw it away and
+      returned the bare route, so "Edit record" on an interview a researcher had just drilled into
+      opened the blank CREATE form: the same screen the Questionnaire tile opens, with the clicked
+      record nowhere on it. Filling it in filed a SECOND sitting, which under one-entry-per-artisan-
+      set either folded the answers into a shared entry nobody asked for or came back 409.
+
+      It could not be fixed before now because there was nothing on the receiving end. `/questionnaire`
+      gained its `useEditDeepLink` wiring in the same change as this line, and the two must stay
+      together: this href without that hook is a link that appears to work and goes nowhere, which is
+      worse than the bug it replaced.
+    */
+    editHref: (id) => `/questionnaire?edit=${id}`,
     load: async (page) =>
       browsePage(
         await listResource<QuestionnaireInterview>("/questionnaire/interviews", { page, pageSize: LIST_PAGE_CEILING }),

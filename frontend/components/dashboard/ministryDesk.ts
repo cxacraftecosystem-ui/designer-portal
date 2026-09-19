@@ -3,6 +3,7 @@ import {
   CalendarRange,
   DraftingCompass,
   FileSignature,
+  LayoutDashboard,
   UserCheck,
   type LucideIcon
 } from "lucide-react";
@@ -11,7 +12,8 @@ import {
   canAssignWorkshopOversight,
   canManageAnnualPlan,
   canReadWorkshopOversight,
-  canRunDesignWorkshops
+  canRunDesignWorkshops,
+  canSeeMinistryDashboard
 } from "@/lib/permissions";
 import { canRecordSanctionOrders } from "@/lib/sanctionOrders";
 import type { User } from "@/lib/types";
@@ -38,8 +40,19 @@ export type MinistryDestination = {
 };
 
 /**
- * THE MINISTRY DESK, in the order a workshop reaches these screens: planned, sanctioned, staffed,
- * filled in, read back.
+ * THE MINISTRY DESK: the overview first, then the order a workshop reaches these screens — planned,
+ * sanctioned, staffed, filled in, read back.
+ *
+ * ── WHY AN OVERVIEW LEADS A LIFECYCLE ───────────────────────────────────────────────────────────
+ *
+ * The rows below the first are a SEQUENCE and are asserted as one against the directorate
+ * walkthrough's deck. "Ministry dashboard" is not a step in that sequence — it is the register of
+ * every workshop that has been through it, which is why it sits above rather than inside. An officer
+ * opening this card most often wants to know what is happening before deciding which of the five
+ * acts to perform, and a register filed last would be a register reached after scrolling past the
+ * five things it summarises. `DIRECTORATE_STEPS` carries the matching step at the same index and
+ * `e2e/ministry-desk-unit.spec.ts` holds the two lists to each other, so moving this row obliges
+ * moving that step in the same edit.
  *
  * ── A PURE MODULE BESIDE THE CARD, WHICH IS THIS REPOSITORY'S OWN SPLIT ─────────────────────────
  *
@@ -78,6 +91,13 @@ export type MinistryDestination = {
  * that was not built — and this card answers it without touching the parity-checked grid.
  */
 export const MINISTRY_DESK: readonly MinistryDestination[] = [
+  {
+    label: "Ministry dashboard",
+    href: "/ministry-dashboard",
+    icon: LayoutDashboard,
+    note: "Every workshop on the platform — ongoing, completed and newly registered — with each designer's progress and the lists to download",
+    can: canSeeMinistryDashboard
+  },
   {
     label: "Annual plan",
     href: "/annual-plan",

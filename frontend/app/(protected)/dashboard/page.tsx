@@ -10,6 +10,7 @@ import {
   ClipboardList,
   DraftingCompass,
   Eye,
+  FileSpreadsheet,
   GitBranch,
   Hammer,
   IdCard,
@@ -111,7 +112,89 @@ type Tile = {
    * expressed by omitting `newHref` — hiding the tile would take away an Update somebody has.
    */
   visible?: boolean;
+  /**
+   * WHICH MEGA CARD THIS TILE IS DRAWN IN. A scalar on the tile, and that shape is forced.
+   *
+   * ── WHY THE GROUPING IS NOT NESTED ARRAYS, WHICH IS THE OBVIOUS WAY TO WRITE IT ───────────────
+   *
+   * THIS ARRAY IS READ AS TEXT BY THREE PARSERS IN THREE LANGUAGES, and every one of them assumes
+   * the same two things: that it begins with the exact declaration written below, and that every
+   * top-level element is a single object literal whose `label` is a double-quoted string.
+   *
+   * ⚠ AND THAT DECLARATION MAY NOT BE QUOTED IN PROSE ANYWHERE ABOVE IT. All three parsers find
+   * the array with a plain `indexOf` over the RAW file and only strip comments afterwards, so a
+   * comment repeating the declaration is found FIRST and the scan then runs off the end of the file
+   * looking for a closing bracket. The TypeScript parser fails with "the `tiles` array literal is
+   * not closed" — which names the array and not the sentence, and sends the next reader looking for
+   * an unbalanced brace that does not exist. (Measured: this paragraph did exactly that when it was
+   * first written.)
+   *
+   *   · `frontend/e2e/dashboard-tile-parity-unit.spec.ts` — TypeScript. Its `tileArrayBody` scans
+   *     from that exact declaration and `splitTop` splits on depth-zero commas; a nested array would
+   *     parse as one element with an empty label and be DROPPED, taking `TILES.length > 15` with it
+   *     and failing every assertion in the file with a misleading "the tile is missing" story.
+   *   · `android/.../DashboardTileParityTest.kt` — Kotlin, reaching out of `android/` into
+   *     `frontend/`. It asserts every element `startsWith("{")`, that the web and the handset hold
+   *     the SAME labels in the SAME order with Settings the one exception, and that the first four
+   *     are Design workshop · Sketches & prototypes · Design review · Artisan.
+   *   · `backend/tests/test_annual_plan_web_surface.py` — Python, asserting an ABSENCE.
+   *
+   * So the ORDER of this array is pinned on both clients and may not move. The grouping is therefore
+   * a property ON each tile and the regrouping happens at RENDER time: the array is unchanged, and
+   * `TILE_GROUPS` below decides what the reader sees. A tile's group may be edited freely; its
+   * position may not.
+   *
+   * OPTIONAL, AND AN OMITTED GROUP IS A DECISION THE RENDERER REFUSES TO MAKE FOR YOU. A tile with
+   * no group falls into `Miscellaneous` and the grid still draws it — nothing disappears — because
+   * the one thing worse than a tile in the wrong mega card is a tile in none of them, which is this
+   * repository's silent-emptiness bug wearing a layout change.
+   */
+  group?: TileGroup;
 };
+
+/**
+ * THE FOUR MEGA CARDS, in render order. Owner ruling, 2026-09-20: the grid had grown to twenty-one
+ * tiles and "classify all the myriad number of pages that we have currently into multiple sections".
+ *
+ * ── THE NAMES ARE THE OWNER'S AND THE ORDER IS THE PRODUCT'S ─────────────────────────────────────
+ *
+ * For Designers leads for the same reason the Design workshop tile leads the array: it is what this
+ * app is for, and everything under Records is reference data a workshop draws on. Admin sits last
+ * because it is configuration rather than work — the same place the nav's own `NAV_GROUPS` puts it.
+ *
+ * ── THEY ARE NOT `NAV_GROUPS`, AND THE OVERLAP IS A COINCIDENCE WORTH NOT BUILDING ON ────────────
+ *
+ * `NAV_GROUPS` is `["Record", "Browse", "Admin", "Account"]` and two of these four share a word with
+ * it. Deriving one from the other would be wrong in both directions: the menu files Design review
+ * and Sketches & prototypes under Browse (they are reading surfaces reached without a workshop in
+ * hand) while the grid files them with the workshop they belong to, and the menu has an Account
+ * group the grid has no tile for. Two registers, two jobs — the same reason `NAV_ITEMS` and this
+ * array are two lists at all.
+ */
+const TILE_GROUPS = [
+  {
+    id: "designers" as const,
+    title: "For designers",
+    note: "Running a design & prototype workshop, and the two halves of it reached without one in hand."
+  },
+  {
+    id: "records" as const,
+    title: "Records",
+    note: "The repository a workshop draws on — the people, the things they make, and how they make them."
+  },
+  {
+    id: "misc" as const,
+    title: "Miscellaneous",
+    note: "Reading what is already recorded, and the errands around it."
+  },
+  {
+    id: "admin" as const,
+    title: "Admin",
+    note: "Who may do what, and how this deployment is configured."
+  }
+];
+
+type TileGroup = (typeof TILE_GROUPS)[number]["id"];
 
 /**
  * Where a "recent submission" row goes when it is clicked.
@@ -309,7 +392,8 @@ function DashboardView() {
       // narrowing over an open read — and NOT a refusal the API would make. Widen the tile and you
       // have widened nothing but the browser; narrow the API and narrow this line with it.
       visible: canRunDesignWorkshops(user),
-      newLabel: "New workshop"
+      newLabel: "New workshop",
+      group: "designers"
     },
     // ── THE OTHER TWO FACES OF THE FORTNIGHT ABOVE ───────────────────────────────────────────────
     //
@@ -382,23 +466,25 @@ function DashboardView() {
       icon: PencilRuler,
       newHref: "/sketches-and-prototypes",
       newLabel: "Open",
-      visible: canRunDesignWorkshops(user)
+      visible: canRunDesignWorkshops(user),
+      group: "designers"
     },
     {
       label: "Design review",
       icon: Star,
       newHref: "/design-review",
       newLabel: "Open",
-      visible: canRunDesignWorkshops(user)
+      visible: canRunDesignWorkshops(user),
+      group: "designers"
     },
-    { label: "Artisan", icon: UserIcon, newHref: "/artisans/new", updateHref: "/artisans", visible: creator },
-    { label: "Product", icon: Package, newHref: "/products/new", updateHref: "/products", visible: creator },
-    { label: "Process", icon: GitBranch, newHref: "/processes?new=1", updateHref: "/processes", visible: creator },
-    { label: "Tool", icon: Wrench, newHref: "/tools/new", updateHref: "/tools", visible: creator },
+    { label: "Artisan", icon: UserIcon, newHref: "/artisans/new", updateHref: "/artisans", visible: creator, group: "records" },
+    { label: "Product", icon: Package, newHref: "/products/new", updateHref: "/products", visible: creator, group: "records" },
+    { label: "Process", icon: GitBranch, newHref: "/processes?new=1", updateHref: "/processes", visible: creator, group: "records" },
+    { label: "Tool", icon: Wrench, newHref: "/tools/new", updateHref: "/tools", visible: creator, group: "records" },
     // Answering an interview and uploading media are open to every signed-in user — they are how a
     // volunteer contributes.
-    { label: "Questionnaire", icon: ClipboardList, newHref: "/questionnaire?new=1", updateHref: "/questionnaire", newLabel: "New interview" },
-    { label: "Miscellaneous Media", icon: Images, newHref: "/media", newLabel: "Upload" },
+    { label: "Questionnaire", icon: ClipboardList, newHref: "/questionnaire?new=1", updateHref: "/questionnaire", newLabel: "New interview", group: "records" },
+    { label: "Miscellaneous Media", icon: Images, newHref: "/media", newLabel: "Upload", group: "records" },
     /*
       SCAN A CODE — added 2026-08-28 on the owner's report that scanning was "buried underneath a
       lot of pages", which it was: `RecordCodeScanPanel` was mounted above the search box on
@@ -421,7 +507,7 @@ function DashboardView() {
       UNGATED, matching its nav entry and `/search` — see the page's own header for why a guard here
       would be a client-side rule the API does not have.
     */
-    { label: "Scan a code", icon: QrCode, newHref: "/scan", newLabel: "Open" },
+    { label: "Scan a code", icon: QrCode, newHref: "/scan", newLabel: "Open", group: "misc" },
     /*
       THE DESTINATION FORKS ON THE GRANT; WHETHER THE TILE IS DRAWN AT ALL FORKS ON THE TIER, AND
       THOSE ARE TWO DIFFERENT QUESTIONS.
@@ -447,27 +533,29 @@ function DashboardView() {
       icon: Eye,
       newHref: canDownloadDataset(user) ? "/data" : "/search",
       newLabel: "Open",
-      visible: canSeeDataTile(user)
+      visible: canSeeDataTile(user),
+      group: "misc"
     },
     // The two web-only reading surfaces, which had no entry point anywhere and were reachable only
     // by typing the URL. They sit here, after View Data, because all three answer "show me what is
     // already in the repository" — and a feature a researcher cannot find is a feature that was not
     // built. Both are open to any signed-in user; the map filters its pins per viewer on the server.
-    { label: "Map", icon: MapPinned, newHref: "/map", newLabel: "Open" },
+    { label: "Map", icon: MapPinned, newHref: "/map", newLabel: "Open", group: "misc" },
     {
       label: "Consolidated questionnaire",
       icon: Layers,
       newHref: "/questionnaire/consolidated",
-      newLabel: "Open"
+      newLabel: "Open",
+      group: "misc"
     },
     // Tasks and Workshop access are dashboard tiles on Android and were menu-only here, which is
     // the difference between a new researcher finding "how do I get into this workshop" and not.
-    { label: "Tasks", icon: ListTodo, newHref: "/tasks", newLabel: "Open" },
-    { label: "Sharing", icon: Share2, newHref: "/sharing" },
+    { label: "Tasks", icon: ListTodo, newHref: "/tasks", newLabel: "Open", group: "misc" },
+    { label: "Sharing", icon: Share2, newHref: "/sharing", group: "misc" },
     // Ungated, and now honestly so: the destination forks on the role, opening the admin console
     // only for an admin in admin view and the account's own request page for everyone else. It used
     // to point straight at the console, so this tile — shown to all — was a padlock for most of them.
-    { label: "Workshop access", icon: LockOpen, newHref: "/workshop-access", newLabel: "Open" },
+    { label: "Workshop access", icon: LockOpen, newHref: "/workshop-access", newLabel: "Open", group: "misc" },
     // The designer's own standing details, typed once instead of into stage 1 and stage 3 of every
     // workshop. "Open" and not "New": the row is created empty by the GET itself, so there is never
     // a profile to create — a plus on this button would be a lie, and DashboardCard picks its icon
@@ -477,20 +565,21 @@ function DashboardView() {
       icon: IdCard,
       newHref: "/designers/profile",
       newLabel: "Open",
+      group: "designers",
       // The same predicate as the nav entry, so the dashboard and the menu can never disagree about
       // what this account may do. Not admin chrome: it is the person's own record, and an admin
       // browsing as an ordinary user still has a profile of their own to fill in.
       visible: canRunDesignWorkshops(user)
     },
-    { label: "Users", icon: UserCog, newHref: "/users", visible: adminSurface(canManageUsers(user)), newLabel: "Manage" },
+    { label: "Users", icon: UserCog, newHref: "/users", visible: adminSurface(canManageUsers(user)), newLabel: "Manage", group: "admin" },
     // NO DESIGNER ROSTER TILE HERE, deliberately. It lives in the settings hub (/admin) and
     // nowhere else. The roster is a list of named individuals and their institutional standing —
     // administrative configuration, not something anybody does day to day — and it was previously
     // reachable from three places at once: this dashboard, the nav menu, and the hub. Three
     // entrances to one admin screen is three things to keep gated in step, and the dashboard is
     // where a designer looks for their WORK, not for the panel that decides who is empanelled.
-    { label: "Settings", icon: Settings, newHref: "/admin", visible: adminSurface(isAdmin(user)), newLabel: "Open" },
-    { label: "Craft", icon: Brush, newHref: "/crafts?new=1", updateHref: "/crafts", visible: canManageCrafts(user) },
+    { label: "Settings", icon: Settings, newHref: "/admin", visible: adminSurface(isAdmin(user)), newLabel: "Open", group: "admin" },
+    { label: "Craft", icon: Brush, newHref: "/crafts?new=1", updateHref: "/crafts", visible: canManageCrafts(user), group: "records" },
     {
       // TWO PREDICATES ON ONE TILE, since 2026-09-16, and the split is the ruling rather than a
       // refinement. Opening a workshop is the ministry's act (`require_workshop_opener`, a
@@ -504,7 +593,8 @@ function DashboardView() {
       icon: UsersRound,
       newHref: canCreateWorkshops(user) ? "/workshops?new=1" : undefined,
       updateHref: "/workshops",
-      visible: canManageWorkshops(user)
+      visible: canManageWorkshops(user),
+      group: "records"
     }
   ];
 
@@ -596,19 +686,130 @@ function DashboardView() {
           <div className="absolute -left-12 -top-4 h-72 w-72 rounded-full bg-purple-300/25 blur-3xl" />
           <div className="absolute -right-8 bottom-0 h-80 w-80 rounded-full bg-purple-400/20 blur-3xl" />
         </div>
-        <div className="relative grid grid-cols-2 gap-3 md:grid-cols-3">
-          {tiles
-            .filter((tile) => tile.visible !== false)
-            .map((tile) => (
-              <DashboardCard
-                key={tile.label}
-                label={tile.label}
-                icon={tile.icon}
-                newHref={tile.newHref}
-                updateHref={tile.updateHref}
-                newLabel={tile.newLabel}
-              />
-            ))}
+        {/*
+          ── THE FOUR MEGA CARDS, AND THE ONE EXPRESSION EVERYTHING STILL FLOWS THROUGH ─────────
+
+          `.filter((tile) => tile.visible !== false)` IS THE FIRST STEP AND STAYS SPELLED EXACTLY SO.
+          `dashboard-tile-parity-unit.spec.ts` asserts that literal substring, character for
+          character including the parameter name — because the filter is default-ALLOW, and a tile
+          whose `visible` key was deleted is shown to every signed-in account. Grouping happens
+          AFTER it, so a tile this account may not have cannot reappear inside a mega card.
+
+          THE GROUPS ARE DERIVED FROM `TILE_GROUPS` AND NOT WRITTEN OUT AS FOUR BLOCKS OF JSX. A
+          hand-written block per group is a fifth register of the same fact, and this file already
+          carries the cost of that lesson at length — the tiles array was itself the register nobody
+          enumerated. An unrecognised or absent group falls into Miscellaneous rather than vanishing:
+          nothing this filter admitted may fail to be drawn.
+
+          AN EMPTY GROUP RENDERS NOTHING AT ALL — no heading, no empty card. A researcher has no
+          Admin tiles and a volunteer has no Records tiles, and a heading over nothing reads as a
+          section that failed to load. `DynamicIslandNav` makes the same choice for an empty nav
+          group, for the same reason.
+        */}
+        <div className="relative grid gap-6">
+          {(() => {
+            const visible = tiles.filter((tile) => tile.visible !== false);
+            const seen = new Set<Tile>();
+            return TILE_GROUPS.map((group, index) => {
+              const members = visible.filter((tile) => {
+                const belongs =
+                  tile.group === group.id ||
+                  // The catch-all, and it is the LAST group's job rather than a default on the type,
+                  // so it cannot silently claim a tile that a real group also matched.
+                  (group.id === "misc" && !TILE_GROUPS.some((candidate) => candidate.id === tile.group));
+                if (belongs) seen.add(tile);
+                return belongs;
+              });
+              if (members.length === 0) return null;
+              return (
+                <section key={group.id} aria-labelledby={`dashboard-group-${group.id}`}>
+                  <div className="mb-3 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+                    <h2
+                      id={`dashboard-group-${group.id}`}
+                      className="font-display text-lg font-bold text-ink-900"
+                    >
+                      {group.title}
+                    </h2>
+                    <p className="text-xs text-ink-500">{group.note}</p>
+                  </div>
+                  {/* The grid geometry is unchanged — two per row on phones, three on tablets and
+                      laptops — because it is Android's (`grid-cols-2 md:grid-cols-3`) and the
+                      handset's dashboard is the same product. Only the rows are now grouped. */}
+                  <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
+                    {members.map((tile) => (
+                      <DashboardCard
+                        key={tile.label}
+                        label={tile.label}
+                        icon={tile.icon}
+                        newHref={tile.newHref}
+                        updateHref={tile.updateHref}
+                        newLabel={tile.newLabel}
+                      />
+                    ))}
+                  </div>
+                  {/*
+                    ── THE DESTINATIONS THAT BELONG IN THIS GROUP AND CANNOT BE TILES ─────────────
+
+                    `/questionnaires` — "My questionnaires", the designer's own .xlsx-derived
+                    instrument and its pro-forma — is already open to a DESIGNER: `ROUTE_GUARDS`, the
+                    nav entry and every route in `questionnaire_forms.py` all resolve to
+                    `canRunDesignWorkshops`, and DESIGNER is the first member of that set. What a
+                    designer did NOT have was a way to FIND it. It was reachable only from the nav
+                    sheet — behind a tap, in one scrolling column — which is the exact failure
+                    `e2e/feature-entry-points.spec.ts` opens by naming: a feature a user cannot find
+                    is a feature that was not built. The owner asked for "access"; access was already
+                    there, and this is the half that was missing.
+
+                    ⚠ IT IS NOT A TILE, AND IT MAY NOT BECOME ONE.
+                    `android/.../DashboardTileParityTest.kt` asserts `WEB_ONLY == emptyList()` in BOTH
+                    directions — every web tile label must also be an Android card label — and the
+                    handset has no `EntryMode` for this destination. A tile here would go red on
+                    `main` rather than on the PR that added it, because that suite is not in the
+                    frontend gate. `dashboard-tile-parity-unit.spec.ts`'s closed FAMILY literal says
+                    the same thing from this side: `"/questionnaires": false`, with its own note that
+                    the list is what must change if the owner ever wants it on the grid.
+
+                    A SIBLING ROW INSIDE THE GROUP IS THE ESTABLISHED ANSWER — the shape
+                    `MinistryDeskCard` uses on this same page for the same reason, and it costs the
+                    parity-checked grid nothing.
+                  */}
+                  {group.id === "designers" ? (
+                    <Link
+                      href="/questionnaires"
+                      className="mt-3 flex items-start gap-3 rounded-md border border-line-200 bg-card p-3 transition-shadow hover:border-purple-300 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-700"
+                    >
+                      <span aria-hidden className="grid h-9 w-9 shrink-0 place-items-center rounded-md bg-purple-50 text-purple-700">
+                        <FileSpreadsheet className="h-[18px] w-[18px]" aria-hidden />
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        {/* The nav's label, character for character. This destination already answers
+                            to one name in the menu and a second invented here is a name nobody's grep
+                            finds and nobody's colleague recognises. */}
+                        <span className="block font-display text-sm font-bold text-ink-900">My questionnaires</span>
+                        <span className="mt-0.5 block text-xs leading-5 text-ink-500">
+                          Build your own interview form from the .xlsx pro-forma, and record answers
+                          against it — separate from the shared artisan questionnaire on Take interview.
+                        </span>
+                      </span>
+                    </Link>
+                  ) : null}
+                  {index === TILE_GROUPS.length - 1 && seen.size !== visible.length ? (
+                    /* UNREACHABLE, AND WRITTEN ANYWAY. Every tile the filter admits is claimed by a
+                       real group or by Miscellaneous's catch-all, so this cannot fire today. The day
+                       somebody adds a fifth group id without adding it to `TILE_GROUPS`, the
+                       alternative to this line is a tile that is simply not on the dashboard — which
+                       is exactly the defect `dashboard-tile-parity-unit.spec.ts` exists for, arriving
+                       through the one door that spec does not watch. */
+                    <p className="mt-3 text-xs leading-5 text-ink-500">
+                      {visible.length - seen.size} of your entries could not be filed under a heading
+                      and are not shown above. This is a fault in this screen, not a change to what
+                      you may open — every one of them is still in the navigation menu.
+                    </p>
+                  ) : null}
+                </section>
+              );
+            });
+          })()}
         </div>
       </div>
 

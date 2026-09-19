@@ -27,7 +27,7 @@ Enums: `UserRole`, `AuthProvider`, `RecordStatus`, `WorkshopType`, `MediaType`, 
 
 ## API surface
 
-**338 operations** in the working tree — 162 GET, 106 POST, 28 DELETE,
+**346 operations** in the working tree — 170 GET, 106 POST, 28 DELETE,
 24 PATCH, 18 PUT. 2 of them (`/health`, `/health/ready`) are declared
 on the app rather than on a router; the rest are spread across `backend/app/api/routes/`:
 
@@ -52,10 +52,12 @@ on the app rather than on a router; the rest are spread across `backend/app/api/
 | `design_workshop_access.py` | 7 |
 | `design_workshop_inspections.py` | 7 |
 | `access.py` | 6 |
+| `ministry_dashboard.py` | 6 |
 | `ai_keys.py` | 5 |
 | `crafts.py` | 5 |
 | `data_browser.py` | 5 |
 | `datasets.py` | 5 |
+| `export.py` | 5 |
 | `processes.py` | 5 |
 | `products.py` | 5 |
 | `review.py` | 5 |
@@ -67,7 +69,6 @@ on the app rather than on a router; the rest are spread across `backend/app/api/
 | `asr_models.py` | 3 |
 | `design_ratings.py` | 3 |
 | `design_workshop_viewers.py` | 3 |
-| `export.py` | 3 |
 | `map_points.py` | 2 |
 | `preferences.py` | 2 |
 | `reference.py` | 2 |
@@ -122,14 +123,23 @@ no key is skipped wherever it sits.
 
 | Surface | Files | Cases | Runner |
 |---|---|---|---|
-| Backend unit (`backend/tests/`) | 220 | 4543 `def test_` | `python -m pytest -q` from `backend/` |
-| Web end-to-end (`frontend/e2e/`) | 193 | 2305 `test(` | Playwright, `frontend/playwright.config.ts` |
+| Backend unit (`backend/tests/`) | 221 | 4565 `def test_` | `python -m pytest -q` from `backend/` |
+| Web end-to-end (`frontend/e2e/`) | 195 | 2361 `test(` | Playwright, `frontend/playwright.config.ts` |
 | Android unit (`android/app/src/test/`) | 231 | 3092 `@Test` | `./gradlew :app:testDebugUnitTest` from `android/` |
 | Android instrumented (`android/app/src/androidTest/`) | 8 | 24 `@Test` | needs a device; not run in CI |
 
 The backend case count is `def test_` occurrences; pytest reports a larger number because
-parametrised cases expand. Neither the backend suite nor the e2e suite is a CI gate today — see
-[CI.md](CI.md) and [QA_AUDIT.md](QA_AUDIT.md).
+parametrised cases expand.
+**The backend suite gates the deploy, the web suite half-gates it, and
+neither gates a merge.** `Backend tests` — the job that runs the whole pytest suite — and `Web
+typecheck, lint and unit specs`, which runs `npm run test:unit`, are two of the three names in the
+`GATING_JOBS` list that `deploy-backend.yml` and `deploy-frontend.yml` each poll for at the SHA
+being shipped, and neither workflow hands over to its `deploy` job until all three have concluded
+green. The web one is only **half** a gate because `test:unit` is every `*-unit.spec.ts` bar two
+excluded by name for wanting a dev server: the specs that drive a real screen are gated by nothing.
+Merging is a separate question with a separate answer — required status checks live in branch
+protection, which no file in a checkout can prove — so a red Checks still merges to `main`. See
+[CI.md](CI.md) §1.1 and §5, and [QA_AUDIT.md](QA_AUDIT.md).
 
 **THIS TABLE USED TO SAY `:app:testDebugUnitTest` REPORTS NO-SOURCE, AND IT WAS FALSE.** The string
 was a hard-coded literal in the generator, and the counter beside it only read a flat directory —
@@ -141,11 +151,11 @@ and this one asserted an absence it had never looked for.
 
 | Area | Tracked files | Tracked lines | Tree files | Tree lines |
 |---|---|---|---|---|
-| `backend/app` | 202 | 148,930 | 202 | 148,930 |
-| `frontend/app` | 91 | 49,538 | 91 | 49,538 |
-| `frontend/components` | 296 | 128,314 | 296 | 128,314 |
-| `frontend/lib` | 123 | 65,834 | 123 | 65,834 |
-| `android/app/src/main/java` | 260 | 227,582 | 260 | 227,582 |
+| `backend/app` | 204 | 150,450 | 204 | 150,450 |
+| `frontend/app` | 92 | 51,091 | 92 | 51,091 |
+| `frontend/components` | 296 | 128,453 | 296 | 128,453 |
+| `frontend/lib` | 125 | 66,459 | 125 | 66,459 |
+| `android/app/src/main/java` | 260 | 227,597 | 260 | 227,597 |
 
 Two columns because the two numbers get quoted interchangeably and disagree by however much work is
 uncommitted. **Tracked** is `git ls-files`, which is the figure to use in a write-up — it is

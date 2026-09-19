@@ -9406,7 +9406,22 @@ private fun InterviewEditLoader(
             editing = d,
             adminView = adminView,
             onRefreshSections = onRefreshSections,
-            onSubmit = { repository.createQuestionnaireInterview(it).id },
+            // AN OPEN EDIT MUST PATCH, NEVER CREATE — and this lambda used to be the create call.
+            //
+            // It was never REACHED: `QuestionnaireForm` routes on `isEdit` and calls
+            // `repository.updateQuestionnaireInterview(...)` whenever `editing` is non-null, which this
+            // loader always passes. So the line was dead — and dead in the most dangerous way a line can
+            // be, because what it held was the wrong verb, correctly typed, one refactor away from being
+            // live. A reader tidying that `if (isEdit)` branch, or a future caller passing `editing = null`
+            // to reuse this loader, would have filed a SECOND sitting for an artisan set that already had
+            // one: under `@@unique` on the set that is a 409, and where it is not, it is two records of one
+            // interview with the answers split between them.
+            //
+            // `error(...)` rather than deletion, because the parameter is not optional and something has to
+            // be passed. A crash here is the correct outcome: it can only happen if the routing above has
+            // been changed, and it names what went wrong at the place that decides it. The web half of this
+            // change carries the same rule as `method: editingId ? "PATCH" : "POST"`.
+            onSubmit = { error("An open edit must PATCH the interview, never create a second one.") },
             onError = onError,
             onSaved = onDone
         )

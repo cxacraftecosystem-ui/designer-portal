@@ -524,6 +524,45 @@ export const ROUTE_GUARDS: RouteGuard[] = [
   },
   {
     /*
+      THE MINISTRY DASHBOARD — every workshop on the platform, its designers' progress, and the
+      downloads taken off it.
+
+      A TOP-LEVEL ROUTE, AND THE PATH IS LOAD-BEARING RATHER THAN A NAME. `routeMatches` below
+      compares whole SEGMENTS, so `/ministry-dashboard` is covered by no other rule in this table and
+      covers none — which is exactly what is wanted. The two nestings a reader will reach for both
+      break it: `/admin/dashboard` inherits `isAdmin`, refusing the three directorate tiers the page
+      exists for, twice over (the guard, then the hub page's own re-check); and `/officers/dashboard`
+      inherits `/officers`' `canAssignWorkshopOversight`, a SET that refuses a REGIONAL DIRECTOR and
+      an ASSISTANT DIRECTOR — two thirds of this page's audience. The rule the `/annual-plan` row
+      below states applies here in both directions: a rule WIDER than its would-be parent must not
+      sit underneath it.
+
+      AND IT IS NOT `/dashboard/…` EITHER. `/dashboard` has no row in this table on purpose (the
+      table's default is "open to any signed-in account", which is right for the app's landing
+      screen), and `e2e/ministry-surface-unit.spec.ts` asserts `ministrySurface("/dashboard")` stays
+      false — "a designer's dashboard is the same screen". A ministry page nested under it would
+      inherit nothing and would read as though it had.
+
+      THE GATE IS {@link canSeeMinistryDashboard} AND NOT {@link canSeeMinistryDesk}, although the two
+      literals have the same four members today. The desk's own docstring promises that widening it
+      "widens no capability at all"; borrowing it here would make that sentence false and would let a
+      later edit to a dashboard CARD open a page holding the whole national programme. The argument is
+      written out where the predicate is declared.
+
+      READ IS THE ONLY GATE THERE IS — nothing on this page writes. That does not make it a weaker
+      rule: the page is a register of named places, named designers and how far behind each one is,
+      which is the same reason `/annual-plan` and `/sanction-orders` gate their reads.
+    */
+    path: "/ministry-dashboard",
+    can: canSeeMinistryDashboard,
+    gate: "require_ministry_dashboard_reader",
+    ministry: true,
+    title: "Ministry access required",
+    message:
+      "The ministry dashboard gathers every design & prototype workshop and every other workshop on the platform, with each designer's progress, for the ministry's own posts — Assistant Director, Regional Director and Ministry Administrator — and the master admin. Admins read the same estate on Cross-workshop analytics in the settings hub; designers read the workshops they are on through Design workshops."
+  },
+  {
+    /*
       The ministry's annual directory of planned workshops.
 
       A TOP-LEVEL ROUTE AND NOT `/admin/…`, AND THAT IS A DECISION RATHER THAN A FILING PREFERENCE.
@@ -935,10 +974,17 @@ export function canAccessRoute(user: User | null | undefined, pathname: string):
  * Is this screen one of the ministry's own? — the whole of the ministry surface's gating.
  *
  * `AppShell` asks this once per navigation and stamps `data-surface="ministry"` on <main>, which is
- * what the scoped block at the end of app/globals.css hangs off: the header's icon chip, a rule down
- * the left edge of every panel, the eyebrow. FOUR routes carry the flag today — /annual-plan,
- * /officers, /officers/monitored and /sanction-orders — and a fifth is one `ministry: true` on its
- * row, with no CSS, no component and no second list to touch.
+ * what the scoped block at the end of app/globals.css hangs off: the header's icon chip, the
+ * eyebrow, the section band, and — since the owner's ruling of 2026-09-20 — the action controls.
+ * FIVE routes carry the flag today: /annual-plan, /ministry-dashboard, /officers,
+ * /officers/monitored and /sanction-orders. A sixth is one `ministry: true` on its row, with no CSS,
+ * no component and no second list to touch.
+ *
+ * ⚠ THIS SENTENCE SAID "FOUR … and a fifth" UNTIL /ministry-dashboard LANDED, and the count is the
+ * half of it that rots. `e2e/ministry-surface-unit.spec.ts` types the paths out by hand and asserts
+ * them against the flagged rows in BOTH directions, so the LIST cannot go stale silently — but
+ * nothing reads a number written in prose, which is the same failure docs/PERMISSIONS.md §5 records
+ * having had four times over. If you are counting, count the rows.
  *
  * ── READ THE FLAG. DO NOT COMPARE `guard.can`. ──────────────────────────────────────────
  *
@@ -946,7 +992,7 @@ export function canAccessRoute(user: User | null | undefined, pathname: string):
  * it SILENTLY UNDER-REPORTS: /sanction-orders' `can` is an INLINE ARROW written out on the row
  * (`(user) => hasRank(user, "ASSISTANT_DIRECTOR")`, and its own comment explains that a reference to
  * `canRecordSanctionOrders` would be an import cycle through lib/sanctionOrders.ts), so an identity
- * comparison misses it, finds three of four, and the sanction register quietly stops being a
+ * comparison misses it, leaves the sanction register out, and that register quietly stops being a
  * ministry surface with nothing on screen or in a type to say so. A flag on the row cannot do that.
  *
  * ── LONGEST MATCH, WHICH IS THE TABLE'S OWN RULE AND NOT A SEPARATE ONE ───────────────────
@@ -1401,4 +1447,68 @@ export const MINISTRY_DESK_ROLES: readonly UserRole[] = [
 
 export function canSeeMinistryDesk(user: User | null | undefined) {
   return !!user && MINISTRY_DESK_ROLES.includes(user.role);
+}
+
+/**
+ * WHO MAY OPEN THE MINISTRY DASHBOARD — `/ministry-dashboard`, the ministry's register of every
+ * workshop on the platform, its designers' progress and the downloads taken off it.
+ *
+ * ── IT HAS THE SAME FOUR MEMBERS AS {@link MINISTRY_DESK_ROLES} AND IS NOT THE SAME THING ────────
+ *
+ * The temptation is to write `canSeeMinistryDashboard = canSeeMinistryDesk` and be done, and it is
+ * the one move this pair of functions exists to refuse. {@link MINISTRY_DESK_ROLES}' own docstring
+ * says, in as many words, that it is **a card's audience and NOT an entitlement** — that "widening
+ * THIS predicate therefore widens no capability at all; it would only put a card with no rows in it
+ * on somebody's dashboard", and that it is "mirrored nowhere" on the server. Every one of those
+ * three sentences stops being true the moment the literal is used as a `ROUTE_GUARDS.can`: a later
+ * editor widening the CARD — an edit its own comment promises is free — would silently open a page
+ * that reads the whole national programme.
+ *
+ * So there are two literals with identical membership and two different jobs, and the duplication is
+ * the point rather than a thing to tidy away. This one is the GATE and is mirrored on the server by
+ * `require_ministry_dashboard_reader`
+ * (`backend/app/api/routes/ministry_dashboard.py`, over `can_see_ministry_dashboard` in
+ * `backend/app/core/deps.py`); that one is the LAUNCHER and is mirrored nowhere. The same split
+ * already exists one rung away and for the same reason: {@link canSeeDataTile} decides whether the
+ * View Data TILE is drawn while {@link canDownloadDataset} decides whether `/data` opens, and those
+ * two deliberately disagree for a designer holding an explicit grant.
+ *
+ * ── IT IS A SET, AND NO FLOOR PRODUCES IT ────────────────────────────────────────────────────────
+ *
+ * The identical argument {@link MINISTRY_DESK_ROLES} spells out: the tightest floor admitting
+ * ASSISTANT_DIRECTOR (42) also admits ADMIN (50), which is deliberately OUT, and a floor at
+ * MINISTRY_ADMIN (48) loses the two tiers who supervise the workshops this page is about. The set
+ * has a hole at 50 with MASTER_ADMIN (60) above it, and every threshold instinct closes that hole.
+ *
+ * ── WHY AN ADMIN IS OUT, WHICH IS THE ONLY SURPRISING MEMBERSHIP ─────────────────────────────────
+ *
+ * Not capability — an admin reads more of this repository than any ministry post does. It is that an
+ * admin already has this screen under another name: `/admin/analytics`, Cross-workshop analytics,
+ * gated `isAdmin`, is the admin's whole-estate view and it is reachable from the settings hub the
+ * three directorate tiers cannot open at all. Giving an admin a second whole-estate screen would be
+ * the "fourth entrance to one admin screen" the dashboard's own "NO DESIGNER ROSTER TILE HERE" note
+ * argues against. MASTER_ADMIN is in for the reason it is in the desk's set: it is the account that
+ * must be able to see exactly what a ministry officer sees without holding a ministry post.
+ *
+ * ── WHAT THE ROWS ARE SCOPED TO IS A SECOND QUESTION, AND THE SERVER ANSWERS IT ──────────────────
+ *
+ * This predicate decides only whether the PAGE opens. Which workshops appear on it is decided by
+ * `ministry_dashboard_scope` on the server, which hands MINISTRY_ADMIN and MASTER_ADMIN the whole
+ * estate and narrows ASSISTANT_DIRECTOR and REGIONAL_DIRECTOR to the workshops they are named on —
+ * the same `oversight_by_clause` that already scopes `/officers/monitored`. The page SAYS which of
+ * the two it is showing, because "every workshop on the platform" rendered over an officer's four is
+ * this repository's most repeated bug class with a title on it.
+ *
+ * `backend/tests/test_role_ladder_parity.py` registers this literal as a `partial` mirror beside
+ * {@link MINISTRY_DESK_ROLES}, so a twelfth tier cannot default into or out of it unnoticed.
+ */
+export const MINISTRY_DASHBOARD_ROLES: readonly UserRole[] = [
+  "ASSISTANT_DIRECTOR",
+  "REGIONAL_DIRECTOR",
+  "MINISTRY_ADMIN",
+  "MASTER_ADMIN"
+];
+
+export function canSeeMinistryDashboard(user: User | null | undefined) {
+  return !!user && MINISTRY_DASHBOARD_ROLES.includes(user.role);
 }

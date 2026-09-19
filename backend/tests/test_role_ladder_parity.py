@@ -326,6 +326,47 @@ MIRRORS: tuple[Mirror, ...] = (
             "this card was written to end."
         ),
     ),
+    # THE GATE THAT SITS BESIDE THE CARD ABOVE, AND THE DUPLICATION IS THE POINT.
+    #
+    # `MINISTRY_DASHBOARD_ROLES` has the same four members as `MINISTRY_DESK_ROLES` and is a
+    # different thing: the desk literal is a dashboard CARD'S AUDIENCE, mirrored nowhere on the
+    # server, whose own docstring promises that widening it "widens no capability at all"; this one
+    # is the `ROUTE_GUARDS.can` for `/ministry-dashboard` and has a twin in
+    # `app/core/deps.py::MINISTRY_DASHBOARD_ROLES`. Collapsing them would make that promise false --
+    # a later widening of a card would open a page holding the whole national programme.
+    #
+    # SO IT IS REGISTERED SEPARATELY AND ON PURPOSE. A twelfth tier has to be typed into BOTH, which
+    # is the same friction the desk's row buys, applied to the half that actually opens a door.
+    Mirror(
+        path="frontend/lib/permissions.ts",
+        binding="MINISTRY_DASHBOARD_ROLES",
+        kind="partial",
+        pattern=r"export const MINISTRY_DASHBOARD_ROLES: readonly UserRole\[\] = \[([\s\S]*?)\n\];",
+        absent=frozenset(
+            {
+                "CROWDSOURCE_VOLUNTEER",
+                "FIELD_CONTRIBUTOR",
+                "RESEARCHER",
+                "DESIGNER",
+                "INSPECTOR",
+                "PROFESSOR",
+                "ADMIN",
+            }
+        ),
+        why=(
+            "Who may open `/ministry-dashboard` -- the register of every workshop on the platform, "
+            "its designers' progress, and the downloads taken off it. "
+            "THE SAME HOLE AT RANK 50 the desk row above describes, for a related but distinct "
+            "reason: an ADMIN is out not because they may not read the estate but because they "
+            "already read it under another name, `/admin/analytics`, from a settings hub the three "
+            "ministry posts cannot open at all. A second whole-estate door for the tier that "
+            "already has one is one more thing to keep gated in step and buys nothing.\n"
+            "A NEW TIER DEFAULTING IN reads every named place, every named designer and how far "
+            "behind each one is, for the whole country. A new tier defaulting OUT is a ministry "
+            "post that cannot see its own programme. Neither is a decision that should happen by "
+            "nobody having thought about it, which is what this row exists to prevent."
+        ),
+    ),
     # ── frontend, rendered ──────────────────────────────────────────────────────────────────────
     Mirror(
         path="frontend/components/hero/AccessLadder.tsx",

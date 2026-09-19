@@ -64,18 +64,10 @@
  * composition. Any copy on this feature that says "we have emailed them" would be false.
  */
 
-import {
-  API_BASE,
-  ApiError,
-  apiFetch,
-  assertApiConfigured,
-  buildQuery,
-  describeApiDetail,
-  getToken
-} from "@/lib/api";
+import { ApiError, apiFetch, buildQuery } from "@/lib/api";
 // The anchor dance and the Content-Disposition parse both live in `lib/designWorkshops` and are
 // imported rather than written again — `saveBlobToDisk`'s own docstring records why.
-import { fileNameFromDisposition, saveBlobToDisk } from "@/lib/designWorkshops";
+import { downloadFile } from "@/lib/fileDownload";
 import { hasRank } from "@/lib/permissions";
 import type { DwStatus } from "@/lib/designWorkshops";
 import type { User } from "@/lib/types";
@@ -624,10 +616,11 @@ export async function confirmSanctionImport(body: {
  * where they expected a download. `apiFetch` cannot be used either: it parses JSON, and this is a
  * zip.
  *
- * The shape is `annualPlan.fetchWorkbook`'s, including the error branch that rebuilds the `ApiError`
- * that `apiFetch` would otherwise have thrown — without it a 403 on a download reaches the screen as
- * a blank box. `statusText` is empty over HTTP/2, which every deployed request is, so it can never
- * be the last resort on its own.
+ * IT IS `lib/fileDownload.downloadFile` AND NO LONGER THIS MODULE'S OWN COPY. That helper carries
+ * the error branch that rebuilds the `ApiError` `apiFetch` would otherwise have thrown — without it
+ * a 403 on a download reaches the screen as a blank box — and the note that `statusText` is empty
+ * over HTTP/2, which every deployed request is. This module was one of FOUR that had written that
+ * out; see `lib/fileDownload.ts` for why there is now one.
  *
  * **IT IS NOT AN EXPORT AND MUST NOT GROW INTO ONE.** There is no sanction export in this release.
  * The annual plan's round-trip hazard — a filtered export re-uploaded destructively — does not
@@ -636,36 +629,5 @@ export async function confirmSanctionImport(body: {
  * round trip that cannot lose anything.
  */
 export async function downloadSanctionProForma(): Promise<void> {
-  assertApiConfigured();
-  const headers = new Headers();
-  const token = getToken();
-  if (token) headers.set("Authorization", `Bearer ${token}`);
-
-  const response = await fetch(`${API_BASE}/api/sanction-orders/pro-forma.xlsx`, {
-    headers,
-    cache: "no-store"
-  });
-  if (!response.ok) {
-    const contentType = response.headers.get("content-type") ?? "";
-    const payload = contentType.includes("application/json")
-      ? await response.json()
-      : await response.text();
-    const detail =
-      typeof payload === "object" && payload && "detail" in payload
-        ? (payload as { detail: unknown }).detail
-        : undefined;
-    throw new ApiError(
-      response.status,
-      describeApiDetail(
-        detail,
-        response.statusText || `The server refused the request (HTTP ${response.status}).`
-      ),
-      payload
-    );
-  }
-  saveBlobToDisk(
-    await response.blob(),
-    fileNameFromDisposition(response.headers.get("content-disposition")) ??
-      "sanction-orders-pro-forma.xlsx"
-  );
+  await downloadFile("/sanction-orders/pro-forma.xlsx", "sanction-orders-pro-forma.xlsx");
 }

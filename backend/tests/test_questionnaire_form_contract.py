@@ -109,7 +109,19 @@ ANDROID_MAIN = (
 
 # The declaration each side is read from, named once and quoted in every failure message, so a rename
 # reports itself instead of quietly parsing to nothing.
-WEB_FORM_ANCHOR = "<form onSubmit={submit}"
+#
+# ⚠ A PATTERN AND NOT A LITERAL, since 2026-09-20. The capture form's opening tag became MULTI-LINE
+# when the edit path gave it `key` and `ref`, so its attributes now sit on four separate lines.
+# A literal `"<form onSubmit={submit}"` then matched nothing, taking four assertions down with it.
+# It failed for the right reason and reported the wrong cause: the message says "the form has been
+# rewritten or moved", which a reader would go looking for, when what actually happened is that a
+# formatter wrapped a line. A literal here pins the FORMATTING as hard as it pins the form, and only
+# one of those is worth pinning.
+#
+# A word boundary after `form` so `<formation` cannot match, `[^>]*` so any attribute order and
+# any wrapping is accepted, and `onSubmit={submit}` still required — that handler is what makes
+# this the CAPTURE form rather than the builder's own `<form onSubmit={addSection}>` lower down.
+WEB_FORM_ANCHOR = re.compile(r"<form\b[^>]*onSubmit=\{submit\}")
 ANDROID_FORM_ANCHOR = "private fun QuestionnaireForm("
 
 
@@ -331,16 +343,18 @@ def _web_form_region() -> tuple[str, int]:
     list, just a confident wrong answer about a screen nobody looked at.
     """
     source = _strip_ts_comments(WEB_FORM.read_text(encoding="utf-8"))
-    at = source.find(WEB_FORM_ANCHOR)
-    assert at >= 0, (
-        f"{WEB_FORM_ANCHOR!r} is no longer in {WEB_FORM.name}. That string is how this file finds "
-        "the capture form at all; if the form has been rewritten or moved, this parser moves with "
-        "it — do not delete this test to make a refactor pass."
+    match = WEB_FORM_ANCHOR.search(source)
+    assert match is not None, (
+        f"{WEB_FORM_ANCHOR.pattern!r} matches nothing in {WEB_FORM.name}. That pattern is how this "
+        "file finds the capture form at all; if the form has been rewritten or moved, this parser "
+        "moves with it — do not delete this test to make a refactor pass."
     )
+    at = match.start()
     end = source.find("</form>", at)
     assert end > at, (
-        f"{WEB_FORM.name} has no </form> after {WEB_FORM_ANCHOR!r}. Without a closing tag this "
-        "parser would read the rest of the page, including the questionnaire builder's own fields."
+        f"{WEB_FORM.name} has no </form> after {WEB_FORM_ANCHOR.pattern!r}. Without a closing tag "
+        "this parser would read the rest of the page, including the questionnaire builder's own "
+        "fields."
     )
     return source[at:end], at
 
@@ -746,7 +760,7 @@ def test_the_contract_and_both_forms_still_parse_to_something():
     web = web_form_labels()
     assert len(web) >= 6, (
         f"only {len(web)} labelled controls parsed out of {WEB_FORM.name}'s capture form. The "
-        f"anchor is {WEB_FORM_ANCHOR!r} and the labels are read as `label=\"…\"` plus the components "
+        f"anchor is {WEB_FORM_ANCHOR.pattern!r} and the labels are read as `label=\"…\"` plus the components "
         "that default their own — if the form now writes labels some third way, this parser has to "
         "learn about it before anything below means anything."
     )

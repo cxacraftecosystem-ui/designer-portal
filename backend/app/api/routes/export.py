@@ -50,8 +50,15 @@ router = APIRouter(prefix="/export", tags=["export"])
 # has no defined row set in Postgres: the surviving rows can change with statistics, with a concurrent
 # vacuum, or with an index choice. Two downloads of the same archive a week apart could therefore hold
 # two DIFFERENT five thousands, both reporting ``truncated: true``, and a reviewer diffing them would
-# conclude records had been deleted. The two CSV routes at the bottom of this file always got this
-# right; the manifest's seven reads did not.
+# conclude records had been deleted. The manifest's seven reads did not have it.
+#
+# ⚠ THIS COMMENT CLAIMED "The two CSV routes at the bottom of this file always got this right" UNTIL
+# THE ARTISAN EXPORT WAS ADDED, AND IT WAS FALSE WHEN IT WAS WRITTEN. `export_products` and
+# `export_tools` were both `order={"createdAt": "desc"}` — descending, and with no `id` tiebreaker —
+# so they had neither of the two properties this paragraph says are load-bearing. Both now take
+# `_EXPORT_ORDER`, and the claim is true for the first time. The sentence is corrected rather than
+# deleted because a comment asserting a property the code beneath it does not have is the failure
+# this module keeps recording: it is read as verification, and nobody re-checks a settled question.
 #
 # THE ``id`` TIEBREAKER IS LOAD-BEARING. ``createdAt`` alone is not unique — the closed viewer-picker
 # finding measured 204 accounts sharing one sort key on the live corpus — so a timestamp-only order
@@ -1064,7 +1071,7 @@ async def export_products(current_user: Any = Depends(get_current_user)) -> Resp
         where=await owned_or_granted_where(current_user),
         include=_CSV_INCLUDE,
         take=EXPORT_TAKE,
-        order={"createdAt": "desc"},
+        order=_EXPORT_ORDER,
     )
     body = records_to_csv("product", records, truncated=len(records) >= EXPORT_TAKE)
     return csv_response("products.csv", body)
@@ -1077,7 +1084,105 @@ async def export_tools(current_user: Any = Depends(get_current_user)) -> Respons
         where=await owned_or_granted_where(current_user),
         include=_CSV_INCLUDE,
         take=EXPORT_TAKE,
-        order={"createdAt": "desc"},
+        order=_EXPORT_ORDER,
     )
     body = records_to_csv("tool", records, truncated=len(records) >= EXPORT_TAKE)
     return csv_response("tools.csv", body)
+
+
+#: The relations the artisan sheet reads, copied from ``datasets.DATASETS["artisans"].include``.
+#:
+#: NOT ``_CSV_INCLUDE`` ABOVE, and the difference is not cosmetic. That literal is
+#: ``{"media", "createdBy", "workshop"}`` — a SINGULAR ``workshop`` relation, which products and
+#: tools have and an artisan does not. ``Artisan`` reaches its workshops through the
+#: ``WorkshopArtisan`` join table, and ``record_fields._workshop_titles`` walks
+#: ``record.workshops[].workshop.title``; it also reads ``craft`` and ``location``, neither of which
+#: is in that literal. Handing this route ``_CSV_INCLUDE`` would emit an artisan sheet whose
+#: Workshop, Craft, Village/Place, District and State columns were all silently blank — which is
+#: exactly the defect the "District" field's own comment in ``record_fields`` records having shipped
+#: once already, on sixteen artisans, unnoticed.
+_ARTISAN_CSV_INCLUDE = {
+    "craft": True,
+    "location": True,
+    "createdBy": True,
+    "media": True,
+    "workshops": {"include": {"workshop": True}},
+}
+
+
+@router.get("/artisans.csv")
+async def export_artisans(current_user: Any = Depends(get_current_user)) -> Response:
+    """The beneficiary list — every artisan this account may take out, as a spreadsheet.
+
+    ── IT NEEDED NO NEW PREDICATE, AND THAT IS WHY IT IS HERE RATHER THAN ON THE MINISTRY PREFIX ──
+
+    ``_require_dataset_download`` is ``can_download_dataset`` — *"Professor and above, or an explicit
+    grant"* — and the three ministry posts sit at ranks 42, 45 and 48, above PROFESSOR's 40. So the
+    gate that already governs taking records out of this product admits the ministry dashboard's
+    whole audience without being touched, and this route is the third sibling of two that already
+    exist rather than a ministry-specific door. A route on ``/ministry-dashboard`` would have been a
+    second answer to "who may take the artisan list", and the one in ``export.py`` is the one
+    everybody finds.
+
+    ── THE IDENTITY NUMBERS ARE MASKED BY CONSTRUCTION AND THERE IS NO FLAG HERE THAT LIFTS IT ────
+
+    Every column comes from ``services/record_fields.ARTISAN``, where ``Aadhaar number`` and
+    ``Pehchan card number`` are both emitted through ``mask_aadhaar`` — *"Only the last four
+    characters go out, which is enough to confirm the right person and useless as an identifier."*
+    This route composes no columns of its own, so it cannot drift from that rule, and it deliberately
+    accepts no ``includeIdentityNumbers`` parameter: ``datasets.stream_dataset_csv`` refuses the same
+    thing in the same words — *"A CSV is the format that ends up in a shared drive, and the unmasked
+    path is the one that should have to be asked for by name."*
+
+    ── ``owned_or_granted_where`` AND NOT ``viewable_where`` ───────────────────────────────────────
+
+    Reading the repository is open to every signed-in account; TAKING IT OUT is not. Professor and
+    above get an empty filter — every row — and below that it is the caller's own records plus rows
+    owned by anyone who granted them data access. The two functions are spelled differently at the
+    call site on purpose, so a read site and a download site can be told apart by NAME.
+    """
+    _require_dataset_download(current_user)
+    records = await db.artisan.find_many(
+        where=await owned_or_granted_where(current_user),
+        include=_ARTISAN_CSV_INCLUDE,
+        take=EXPORT_TAKE,
+        order=_EXPORT_ORDER,
+    )
+    body = records_to_csv("artisan", records, truncated=len(records) >= EXPORT_TAKE)
+    return csv_response("artisans.csv", body)
+
+
+@router.get("/workshops.csv")
+async def export_workshops(current_user: Any = Depends(get_current_user)) -> Response:
+    """The recorded-workshop register as a spreadsheet, from the same registry the others use.
+
+    THE FOURTH SIBLING, AND THE REGISTRY ALREADY HAD THE SHEET. ``SPECS["workshop"]`` has existed as
+    long as the registry has — it is what the .xlsx report's Workshops sheet and every
+    ``details.txt`` in ``/export/dataset`` are built from — and nothing served it as a CSV. A
+    hand-written column list here would have been a second description of one table, which is the
+    defect ``datasets.csv_header``'s own comment records: *"the catalogue used to advertise a bare
+    ``sheet_columns(kind)`` while the route emitted this, so every column a client read from the plan
+    was one to the left of the value under it."*
+
+    ⚠ THIS IS THE LEGACY ``Workshop`` TABLE — the recorded field visit — and NOT a design &
+    prototype workshop. The two are different tables with different lifecycles, and the ministry
+    dashboard's own register export (``/api/ministry-dashboard/design-workshops.csv``) is the other
+    one. Naming this file ``workshops.csv`` matches ``SPECS["workshop"]`` and the ``workshops``
+    dataset, so the three agree; the ministry file is named for what it holds.
+    """
+    _require_dataset_download(current_user)
+    # ⚠ NOT `_CSV_INCLUDE`. That literal carries a SINGULAR `workshop` relation, which a Workshop row
+    # does not have — Prisma raises on an unknown relation rather than ignoring it, so the route
+    # would 500 rather than emit a blank column. What `SPECS["workshop"]` actually reads is five
+    # scalar columns plus the two shared blocks, so `createdBy` (the "Created by" provenance cell)
+    # and `media` (the three media cells) are the whole of the include. `location` is deliberately
+    # absent: unlike the artisan sheet, the workshop sheet prints `w.place` and never walks the
+    # Location relation.
+    records = await db.workshop.find_many(
+        where=await owned_or_granted_where(current_user),
+        include={"createdBy": True, "media": True},
+        take=EXPORT_TAKE,
+        order=_EXPORT_ORDER,
+    )
+    body = records_to_csv("workshop", records, truncated=len(records) >= EXPORT_TAKE)
+    return csv_response("workshops.csv", body)

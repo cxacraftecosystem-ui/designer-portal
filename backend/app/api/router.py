@@ -25,6 +25,7 @@ from app.api.routes import (
     feedback,
     map_points,
     media,
+    ministry_dashboard,
     preferences,
     processes,
     products,
@@ -166,6 +167,19 @@ api_router.include_router(designers.router)
 # reader to widen DESIGN_WORKSHOP_CREATOR_ROLES, which is the set tests/test_design_workshop_gate.py
 # reads the create route's SOURCE to protect.
 api_router.include_router(sanction_orders.router)
+# THE MINISTRY'S WHOLE-ESTATE REGISTER, /api/ministry-dashboard. Mounted next to the sanction
+# register and the annual plan because all three are the MINISTRY'S instruments rather than
+# fieldwork, and ON ITS OWN PREFIX for the deciding reason the oversight router gives above: every
+# caller here is by definition somebody `load_workshop_or_404` turns away, so a route sharing the
+# /design-workshops prefix invites the next reader to widen that shared loader — which grants STAGE
+# WRITES rather than reads. That prefix also carries a GET /{workshop_id} that would swallow any
+# literal path mounted after it.
+#
+# IT DECLARES NO PARAMETERISED PATH AT ALL, so the ordering hazard three comments above this one
+# describe cannot arise inside it. Every per-workshop read the ministry has already lives on
+# /design-workshop-oversight, and a second door onto one workshop would be a second place to keep
+# the read-only promise.
+api_router.include_router(ministry_dashboard.router)
 api_router.include_router(dashboard.router)
 # The cross-workshop comparison, /api/analytics/design-workshops. On its own prefix rather than
 # under /design-workshops, which is already shared by two routers and carries a GET /{workshop_id}

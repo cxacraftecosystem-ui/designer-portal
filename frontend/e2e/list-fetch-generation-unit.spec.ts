@@ -76,6 +76,31 @@ const PAGES: Array<{ name: string; path: string[]; from: string; to: string }> =
     path: ["app", "(protected)", "media", "page.tsx"],
     from: "const load = useCallback(",
     to: "// Live search: debounce keystrokes"
+  },
+  {
+    /*
+      THE ONE THAT POLLS, ADDED 2026-09-20, AND IT IS THE ROW WHERE THIS CONVENTION EARNS ITS KEEP.
+
+      The four above race a reader against themselves — a keystroke, a filter, a page turn. The
+      ministry register races a reader against a TIMER: it re-reads itself every thirty seconds for as
+      long as the tab is in front, so the window in which a stale answer can land on top of a fresh one
+      is not a moment of fast typing, it is permanently open. The documented failure at
+      `ExistingMedia.tsx` — "a poll that started before the user's toggle lands after it and reverts
+      the screen, which looks exactly like the button not working" — is on that page the workshop TYPE
+      switch appearing to snap back to the other register, several times an hour, with nothing on
+      screen to explain it.
+
+      Its own spec (`ministry-dashboard-unit.spec.ts`) asserts the same three properties from the
+      other direction. This row is here because this file is the REGISTER of pages that hold the
+      convention, and a page that holds it and is not listed here is a page the next reader will
+      "helpfully" simplify.
+    */
+    name: "/ministry-dashboard",
+    path: ["app", "(protected)", "ministry-dashboard", "page.tsx"],
+    // `between` slices FROM the marker inclusive, so this has to start at the stamp itself rather
+    // than at the request below it — assertion 1 is that the stamp is the first statement.
+    from: "const generation = (currentLoad.current += 1);",
+    to: "/* ── The summary,"
   }
 ];
 

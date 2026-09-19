@@ -29,15 +29,8 @@
  *    import again. Every caller must render it. See {@link QFormUploadResult}.
  */
 
-import {
-  API_BASE,
-  ApiError,
-  apiFetch,
-  assertApiConfigured,
-  buildQuery,
-  describeApiDetail,
-  getToken
-} from "@/lib/api";
+import { ApiError, apiFetch, buildQuery } from "@/lib/api";
+import { fetchFile } from "@/lib/fileDownload";
 import type { PageResult } from "@/lib/types";
 
 /* ────────────────────────────────────────────────────────────────────────────
@@ -660,40 +653,21 @@ export function saveAnswers(id: string, entryId: string, answers: QFormAnswerInp
 export type QFormFile = { blob: Blob; fileName: string };
 
 /**
- * Fetch one .xlsx by hand, because `apiFetch` cannot.
+ * Fetch one .xlsx by hand, because `apiFetch` cannot — now the SHARED helper rather than this
+ * module's own.
  *
- * That helper reads every response as JSON or TEXT, and reading a workbook as text hands back a
- * mangled string cast to the caller's type — a download that "succeeds" and produces a file Excel
- * refuses to open. So the fetch is built here with the same three obligations `apiFetch` discharges:
- * refuse the request when this build has no usable API address, attach the bearer token, and turn a
- * failure body into the sentence the server actually sent rather than "[object Object]".
+ * `lib/fileDownload.fetchFile` is character-for-character what stood here, and its header carries
+ * the three obligations this comment used to list: refuse the request when this build has no usable
+ * API address, attach the bearer token, and turn a failure body into the sentence the server
+ * actually sent rather than "[object Object]". Four modules had each written that out; a fifth was
+ * the alternative when the ministry dashboard needed a download, and `readableError`'s rule —
+ * *"two private re-implementations already exist and a third must not"* — had already been broken
+ * twice over.
+ *
+ * The alias keeps this module's own vocabulary ("workbook") at its call sites while there is exactly
+ * one implementation underneath.
  */
-async function fetchWorkbook(path: string, fallbackName: string): Promise<QFormFile> {
-  assertApiConfigured();
-
-  const headers = new Headers();
-  const token = getToken();
-  if (token) headers.set("Authorization", `Bearer ${token}`);
-
-  const response = await fetch(`${API_BASE}/api${path}`, { headers, cache: "no-store" });
-  if (!response.ok) {
-    const contentType = response.headers.get("content-type") ?? "";
-    const payload = contentType.includes("application/json") ? await response.json() : await response.text();
-    const detail =
-      typeof payload === "object" && payload && "detail" in payload ? (payload as { detail: unknown }).detail : undefined;
-    // `statusText` is empty over HTTP/2 — which every deployed request is — so it can never be the
-    // last resort on its own, or a body-less failure reaches the screen as a blank error box.
-    throw new ApiError(
-      response.status,
-      describeApiDetail(detail, response.statusText || `The server refused the request (HTTP ${response.status}).`),
-      payload
-    );
-  }
-  return {
-    blob: await response.blob(),
-    fileName: fileNameFromDisposition(response.headers.get("content-disposition")) ?? fallbackName
-  };
-}
+const fetchWorkbook = fetchFile;
 
 /** The blank workbook a designer types their own questions into. */
 export function downloadProForma() {
@@ -780,19 +754,6 @@ export function reuploadQuestionnaire(id: string, file: File, options?: { title?
  * file name, and a questionnaire named after a craft is routinely saved onto a departmental share,
  * where a name that fails to save is a file that was not delivered.
  */
-function fileNameFromDisposition(header: string | null): string | null {
-  if (!header) return null;
-  const match = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(header);
-  if (!match) return null;
-  try {
-    return decodeURIComponent(match[1]);
-  } catch {
-    // A name that is not valid percent-encoding is still a usable name; `decodeURIComponent` throws
-    // on a bare "%", and losing the download over a literal percent sign in a craft name is absurd.
-    return match[1];
-  }
-}
-
 /* ────────────────────────────────────────────────────────────────────────────
  * Small shared readings of the form
  * ──────────────────────────────────────────────────────────────────────────── */

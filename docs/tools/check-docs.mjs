@@ -302,6 +302,57 @@ function renderFacts() {
     )
     .join("\n");
 
+  /* ── the CI-gate sentence, hoisted out of the template so that a comment can reach it ────────
+     A GENERATED FACT IS ONLY AS TRUE AS ITS GENERATOR, AND THIS IS THE SECOND TIME IN THIS
+     FUNCTION. What stood here was a hard-coded literal — "Neither the backend suite nor the e2e
+     suite is a CI gate today" — and it was false in BOTH halves from 2026-09-03, the day a
+     `wait-for-checks` job landed in each deploy workflow. Nothing could catch it. It lived inside
+     the template string, so no counter ever disagreed with it and no check ever read it, and
+     `--write` then republished it as a *generated* fact on every Docs check run — which is
+     strictly worse than the same claim in hand-written prose. This file's own header tells the
+     reader that every count lives here and nowhere else, which is an invitation to read all of
+     REPO_FACTS.md as measured; a literal smuggled in among the measurements inherits that
+     authority without ever having been measured. It is the identical defect that the
+     `:app:testDebugUnitTest` paragraph records and dates — the one rendered immediately BELOW this
+     sentence in REPO_FACTS.md, and written a few lines further down in this same template: same
+     function, same mechanism, a hard-coded string asserting a CI fact the generator had never once
+     looked at. That paragraph is this comment's cross-reference, not an unrelated anecdote. The rule
+     it buys: anything this script ASSERTS about CI rather than COUNTS gets hoisted to a const,
+     with the files it is a claim about named beside it, in the same commit.
+
+     RE-VERIFY BY GREP RATHER THAN BY MEMORY (last checked 2026-09-20, and named rather than cited
+     by line, because a line number in another file rots faster than the claim does):
+       • `grep -n GATING_JOBS .github/workflows/deploy-*.yml` — deploy-backend.yml and
+         deploy-frontend.yml each set the same JSON list, ["Backend tests", "Web typecheck, lint
+         and unit specs", "Docs check"], poll the Checks run at the exact SHA being shipped, and
+         `exit 1` the moment any of the three has completed as anything but success. Each `deploy`
+         job `needs:` that wait, so one red name of the three stops the ship.
+       • `.github/workflows/checks.yml` declares all three: `Backend tests` runs the whole pytest
+         suite, `Web typecheck, lint and unit specs` runs `tsc --noEmit`, `eslint` and
+         `npm run test:unit`, and `Docs check` runs this script.
+       • MERGING is a different question with a different answer, which is why the sentence states
+         both: required status checks live in branch protection, and nothing in a checkout can
+         prove them. checks.yml's own `THIS WORKFLOW RUNS. IT DOES NOT, BY ITSELF, GATE ANYTHING`
+         header draws the same line, and docs/CI.md §5 argues both halves at length.
+
+     NO TOTAL GOES IN THIS SENTENCE, and putting one back is the repair to refuse. The SELECTION is
+     the durable fact — `test:unit` is every `*-unit.spec.ts` minus two excluded by name for
+     reaching a real dev server — while the size of that selection moves whenever a sibling lane
+     adds a spec. CI.md §5 carries the measurement of precisely that rot (the same suite read 536,
+     then 550, then 564 within a day) and deliberately keeps no total; a total hard-coded HERE
+     would rot the same way with a generated file's authority behind it. The `Files` and `Cases`
+     columns above are recounted on every run and are the honest place for a number. */
+  const ciGateSentence = `**The backend suite gates the deploy, the web suite half-gates it, and
+neither gates a merge.** \`Backend tests\` — the job that runs the whole pytest suite — and \`Web
+typecheck, lint and unit specs\`, which runs \`npm run test:unit\`, are two of the three names in the
+\`GATING_JOBS\` list that \`deploy-backend.yml\` and \`deploy-frontend.yml\` each poll for at the SHA
+being shipped, and neither workflow hands over to its \`deploy\` job until all three have concluded
+green. The web one is only **half** a gate because \`test:unit\` is every \`*-unit.spec.ts\` bar two
+excluded by name for wanting a dev server: the specs that drive a real screen are gated by nothing.
+Merging is a separate question with a separate answer — required status checks live in branch
+protection, which no file in a checkout can prove — so a red Checks still merges to \`main\`. See
+[CI.md](CI.md) §1.1 and §5, and [QA_AUDIT.md](QA_AUDIT.md).`;
+
   return `<!-- GENERATED FILE — do not edit by hand.
      Regenerate with:  node docs/tools/check-docs.mjs --write
      Every count in this documentation set lives here and nowhere else, so that a migration or a new
@@ -381,8 +432,8 @@ no key is skipped wherever it sits.
 | Android instrumented (\`android/app/src/androidTest/\`) | ${tests.androidInstr.files || "**none**"} | ${tests.androidInstr.cases} \`@Test\` | needs a device; not run in CI |
 
 The backend case count is \`def test_\` occurrences; pytest reports a larger number because
-parametrised cases expand. Neither the backend suite nor the e2e suite is a CI gate today — see
-[CI.md](CI.md) and [QA_AUDIT.md](QA_AUDIT.md).
+parametrised cases expand.
+${ciGateSentence}
 
 **THIS TABLE USED TO SAY \`:app:testDebugUnitTest\` REPORTS NO-SOURCE, AND IT WAS FALSE.** The string
 was a hard-coded literal in the generator, and the counter beside it only read a flat directory —

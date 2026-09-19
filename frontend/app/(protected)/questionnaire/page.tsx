@@ -1,11 +1,12 @@
 "use client";
 
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { ArrowDown, ArrowUp, ClipboardList, GripVertical, Lock, Mic, Pencil, Plus, QrCode, Save, Square, Trash2 } from "lucide-react";
 
 import { deleteConfirm, useConfirm } from "@/components/dialogs/ConfirmDialog";
+import { useEditDeepLink } from "@/components/hooks/useEditDeepLink";
 import { OnDeviceDictationButton } from "@/components/dictation/OnDeviceDictationButton";
 import { EmptyState } from "@/components/EmptyState";
 import { Field, MultiNoteField, Select, TextArea, TextInput } from "@/components/FormControls";
@@ -171,7 +172,21 @@ function batchCause(err: unknown): string {
 export default function QuestionnairePage() {
   return (
     <UploadsProvider>
-      <QuestionnairePageBody />
+      {/*
+        THE SUSPENSE BOUNDARY `useSearchParams` OWES, AND `UploadsProvider` STAYS OUTSIDE IT.
+
+        Both halves are the frontend contract's rule, and the second is the one that bites: the
+        provider owns the upload tray's state, so suspending it would tear down in-flight uploads —
+        recorder-produced bytes that exist nowhere else — every time the boundary re-suspended.
+
+        The body has called `useSearchParams` since long before the edit path, and Next 16 wants it
+        wrapped; `useEditDeepLink` is now a second consumer of the same hook. A boundary was owed
+        either way, and the fallback is the same "Loading…" the body itself renders while its first
+        read is in flight, so nothing flickers between the two.
+      */}
+      <Suspense fallback={<div className="panel p-4 text-sm text-ink-700">Loading…</div>}>
+        <QuestionnairePageBody />
+      </Suspense>
       <UploadTray />
     </UploadsProvider>
   );
@@ -183,6 +198,7 @@ function QuestionnairePageBody() {
   const { adminMode } = useAdminView();
   const { addCompleted } = useUploads();
   const searchParams = useSearchParams();
+  const router = useRouter();
   const [sections, setSections] = useState<QuestionnaireSection[]>([]);
   const [data, setData] = useState<PageResult<QuestionnaireInterview> | null>(null);
   const [answers, setAnswers] = useState<Record<string, string>>({});
@@ -314,6 +330,38 @@ function QuestionnairePageBody() {
    */
   const [answerSeed, setAnswerSeed] = useState<Record<string, number>>({});
 
+  /* ────────────────────────────────────────────────────────────────────────────
+   * EDITING A RECORDED INTERVIEW — added 2026-09-20.
+   *
+   * ── THE BROWSER NEVER HAD AN EDIT FORM. NOT "LOST ONE" — NEVER HAD ONE. ──────────────────────
+   *
+   * What DID exist was a button. `app/(protected)/data/page.tsx`'s questionnaire browse arm declared
+   * `editHref: () => "/questionnaire"` — the only one of eight arms discarding the id its own
+   * signature is handed — so "Edit record" on an interview a researcher had just drilled into landed
+   * on the blank CREATE form. Filling that in filed a SECOND sitting, which under one-entry-per-
+   * artisan-set either folded the answers into a shared entry nobody asked for or came back 409.
+   *
+   * That is the defect `useEditDeepLink` was written for on /crafts, /workshops and /processes; its
+   * own header says so. This page is the FOURTH inline form and was simply never wired to it.
+   *
+   * ── `editingInterview` AND NOT `editing` ─────────────────────────────────────────────────────
+   *
+   * `editing` is already taken further down this file by `QuestionnaireAdminEditor`, a different
+   * component editing a different thing (a section or a question of the instrument). Two `editing`s
+   * in one 3200-line file is how the wrong one gets read.
+   */
+  const [editingInterview, setEditingInterview] = useState<QuestionnaireInterview | null>(null);
+
+  /**
+   * The capture form's element, for the deep link to scroll to.
+   *
+   * `targetRef` and NOT `window.scrollTo(0, 0)`: this page draws the funnel, the carry banner and —
+   * for a professor — a completion matrix above the form, so the top of the document is not the top
+   * of the thing the reader asked to edit. The same reason `/workshops` passes its own ref.
+   */
+  const captureFormRef = useRef<HTMLFormElement | null>(null);
+
+
   function stopElapsedTimer() {
     if (elapsedTimerRef.current !== null) {
       window.clearInterval(elapsedTimerRef.current);
@@ -328,6 +376,122 @@ function QuestionnairePageBody() {
   // Professors and above may pick a record's status; everyone below is forced to PENDING
   // (mirrors the backend, which silently drops an unauthorized status on create).
   const canPickStatus = hasRank(user, "PROFESSOR");
+
+  /**
+   * Put a recorded interview into the capture form.
+   *
+   * ── THE UNCONTROLLED HALF IS RE-SEEDED BY A REMOUNT AND NOT BY THIS FUNCTION ─────────────────
+   *
+   * Most of this form is uncontrolled `FormData` — status, the notes, the location and capture rows —
+   * so there is nothing here to assign them to. The `<form>` carries `key={editingInterview?.id ??
+   * "new"}`, which is the same remount every record form in this repository performs, and it is what
+   * makes their `defaultValue`s re-read. Without it the previous occupant's values stay on screen
+   * under the new record's title, which is the defect `useEditDeepLink`'s own header describes.
+   *
+   * ── THE ANSWERS ARE SEEDED BY QUESTION ID AND NEVER BY POSITION ──────────────────────────────
+   *
+   * A sitting's responses are keyed to the questions that were asked; the instrument's sections can
+   * be reordered, retired and superseded between the sitting and the correction. Matching by index
+   * would put last month's answer against this month's question — a wrong answer under a real
+   * person's name, saved without anybody typing it.
+   *
+   * `answerSeed` is bumped alongside, because `RichTextField` parses `defaultValue` exactly once and
+   * only a new `key` puts new words into a mounted editor. Its declaration says so.
+   */
+  const seedFromInterview = useCallback((record: QuestionnaireInterview) => {
+    setEditingInterview(record);
+    setTitle(record.title ?? "");
+    setPlace(record.place ?? "");
+    setLanguage(record.language ?? "");
+    setSelectedArtisanIds((record.artisans ?? []).map((link) => link.artisan.id));
+    const seeded: Record<string, string> = {};
+    for (const response of record.responses ?? []) {
+      if (response.questionId) seeded[response.questionId] = response.answerText ?? "";
+    }
+    setAnswers(seeded);
+    setAnswerSeed((current) => {
+      const next = { ...current };
+      for (const questionId of Object.keys(seeded)) next[questionId] = (next[questionId] ?? 0) + 1;
+      return next;
+    });
+    // The media of a recorded sitting stay where they are. An edit form is not a re-capture, and
+    // pre-loading the existing clips into the upload tray would offer to send them a second time.
+    setMediaFiles([]);
+    setQuestionAudioFiles({});
+  }, []);
+
+  /**
+   * Leave edit mode and hand the form back as a blank capture form.
+   *
+   * The URL is stripped as well as the state, because `?edit=` surviving a cancel would re-apply the
+   * intent on the next read and put the abandoned record back under the Back button —
+   * `useEditDeepLink`'s one-shot rule, kept by its callers.
+   */
+  const resetToCreate = useCallback(() => {
+    setEditingInterview(null);
+    setTitle("");
+    setPlace("");
+    setLanguage("");
+    setAnswers({});
+    setSelectedArtisanIds([]);
+    setMediaFiles([]);
+    setQuestionAudioFiles({});
+    if (typeof window !== "undefined" && window.location.search.includes("edit=")) {
+      router.replace("/questionnaire");
+    }
+  }, [router]);
+
+  /**
+   * Come out of edit mode WITHOUT blanking the form — the half of {@link resetToCreate} a successful
+   * save wants and the other half it does not.
+   *
+   * The two reset paths below already decide, carefully, what stays on the form after a save: the
+   * head of the artisan tick order is kept because the researcher is still sitting with the same
+   * person, and a partially-uploaded batch keeps whatever did not land. Calling `resetToCreate`
+   * there would throw all of that away in order to clear two variables.
+   */
+  const leaveEditMode = useCallback(() => {
+    setEditingInterview(null);
+    if (typeof window !== "undefined" && window.location.search.includes("edit=")) {
+      router.replace("/questionnaire");
+    }
+  }, [router]);
+
+  /**
+   * `?edit=<id>` — THE SHARED HOOK, and not a fourth hand-rolled deep link.
+   *
+   * Every obligation in it is one this page would otherwise have had to get right by itself: the
+   * record is fetched BY ID rather than looked up in the page of rows on screen (the reader arrives
+   * from the data browser and the row is usually not on page one), the parameter is one-shot and is
+   * stripped with `router.replace`, the scroll is deferred one frame so the remounted form has its
+   * final height, and the guard released in cleanup is what stops React's StrictMode double-mount
+   * deadlocking the load in development.
+   *
+   * `onNew` IS OMITTED DELIBERATELY. `?new=1` is a render MODE on this page rather than a one-shot
+   * intent — the dashboard's Questionnaire tile links to `/questionnaire?new=1` and the page reads it
+   * on every render — so consuming it here would close the create form as it opened. `/processes`
+   * carries the identical omission for the identical reason, and the hook's header names it.
+   */
+  const { loading: loadingEdit } = useEditDeepLink<QuestionnaireInterview>({
+    endpoint: "/questionnaire/interviews",
+    basePath: "/questionnaire",
+    targetRef: captureFormRef,
+    onEdit: seedFromInterview,
+    onError: setError,
+    /*
+      `!!user` AND NOT A CAPABILITY, and the distinction is the whole of this page's edit rule.
+
+      Taking an interview is open to every signed-in account — that is how a volunteer contributes —
+      so there is no client-side predicate that decides who may open this form. Whether THIS account
+      may change THIS sitting is the server's call and is made per record by `guard_record_edit`
+      inside the PATCH's transaction, which is the only place that can see who recorded it and what
+      grants stand. A client-side guess here would either hide an Edit link from somebody entitled to
+      it or offer one that 403s, and the hook's own note says what this flag is for: "identity
+      resolved", so the deep link does not fire against an unresolved account.
+    */
+    allowed: !!user,
+    errorMessage: "Unable to load that interview"
+  });
 
   /*
     ── THE WHOLE WORKSHOP QUESTION, IN ONE CONTROL WITH TWO BOXES ────────────────────────
@@ -360,7 +524,30 @@ function QuestionnairePageBody() {
     CREATE-ONLY, so `isEdit` is left false and the picker may always prefill: an interview is edited
     through the review panel rather than re-opened in this form.
   */
-  const workshop = useWorkshopPicker();
+  /*
+    SEEDED FROM THE RECORD ON AN EDIT, AND `useWorkshopPicker` WAS BUILT FOR EXACTLY THIS.
+
+    `isEdit` is what stops the picker doing what it does on a create — reaching for the most recent
+    workshop this account can see and filling itself in. On an edit that default would silently
+    re-file a sitting recorded weeks ago under whatever workshop happens to be newest today, on a
+    form the researcher opened to correct a typo. `initialDesignWorkshopId` passes `null` rather than
+    `undefined` deliberately: the hook reads `undefined` as "new record, choose for me" and `null` as
+    "this record is stored with no workshop, leave it alone", which is the honest reading of a
+    sitting that was never filed under one.
+
+    `resetKey` is the record id, so moving from one edit straight to another re-seeds rather than
+    keeping the first one's workshop under the second one's title.
+  */
+  const workshop = useWorkshopPicker(
+    editingInterview
+      ? {
+          initialWorkshopId: editingInterview.workshopId ?? null,
+          initialDesignWorkshopId: editingInterview.designWorkshopId ?? null,
+          isEdit: true,
+          resetKey: editingInterview.id
+        }
+      : {}
+  );
 
   /**
    * THE WORKSHOP THIS INTERVIEW IS FILED UNDER, as the one thing the artisan roster is scoped by.
@@ -1041,9 +1228,20 @@ function QuestionnairePageBody() {
       const recordedAt = recordedAtFromForm(form);
       const recordedTimezone = recordedTimezoneFromForm(form);
       const interviewTitle = textValue(form, "title") || `Interview ${new Date().toLocaleDateString()}`;
-      const interviewPayload = {
+      const editingId = editingInterview?.id ?? null;
+      /*
+        ── THE KEYS BOTH BODIES SHARE ────────────────────────────────────────────────────────────
+        `interviewDate` is deliberately not sent by either: the server derives it from `recordedAt`.
+
+        `workshopId` and `designWorkshopId` ARE sent on an edit, on the owner's ruling of 2026-09-20,
+        and that is safe only because `useWorkshopPicker` above is seeded from the record with
+        `isEdit: true`. A picker the reader never touched therefore hands back the workshop the
+        sitting was already filed under, rather than the "most recent workshop I can see" a blank
+        create form would have defaulted to. Take that seeding away and these two keys become a
+        silent re-filing on every correction.
+      */
+      const commonPayload = {
           title: interviewTitle,
-          // interviewDate is deliberately not sent: the server derives it from recordedAt.
           place: textValue(form, "place"),
           language: textValue(form, "language"),
           notes: textValue(form, "notes"),
@@ -1051,18 +1249,40 @@ function QuestionnairePageBody() {
           workshopId: workshop.workshopId || null,
           designWorkshopId: workshop.designWorkshopId || null,
           artisanIds,
-          responses,
-          recordedAt,
-          recordedTimezone,
-          location
+          responses
       };
+      /*
+        ── THREE KEYS THE EDIT BODY LEAVES OUT, AND EACH OMISSION IS AN API RULE ─────────────────
+
+        · `recordedAt` / `recordedTimezone` — ACCEPTED by the update schema, which is exactly why
+          omitting them had to be a decision rather than an oversight. The "Captured at" row is
+          re-read from a form that has just remounted in an office, so sending them would restamp
+          last week's fieldwork every time somebody corrects a typo.
+
+        · `location` WHEN THERE IS NONE — `forbid_clearing_location` is "omit to keep, send to
+          replace, never null", so an edit typed indoors with no fix must leave the key OFF rather
+          than send an empty one. Spread conditionally for that reason and not for tidiness.
+
+        · `questionnaireId` — not sent by either body, and not because of a rule this page could
+          break: designer-portal has ONE global capture instrument and `QuestionnaireInterview`
+          carries no such column at all. Said here because the sister repository's version of this
+          form does send one, and a reader comparing the two should know the difference is a schema
+          difference rather than a missing feature.
+      */
+      const interviewPayload = editingId
+        ? { ...commonPayload, ...(location ? { location } : {}) }
+        : { ...commonPayload, recordedAt, recordedTimezone, location };
       // Offline this queues the whole interview — answers, the interview audio and every
       // per-question or whole-section clip — to the outbox. An interview is the one record that
       // cannot be reconstructed later: the artisan has gone home.
       const outcome = await saveOrQueue<QuestionnaireInterview>({
         label: `Interview · ${interviewTitle}`,
-        endpoint: "/questionnaire/interviews",
-        method: "POST",
+        // AN EDIT PATCHES THE RECORD'S OWN PATH; A CAPTURE POSTS TO THE COLLECTION. `saveOrQueue`
+        // already took a method, so an edit made with no signal is banked and replays as the PATCH
+        // it was — rather than as a second sitting, which under one-entry-per-artisan-set is the 409
+        // (or the silent fold) this whole edit path exists to stop.
+        endpoint: editingId ? `/questionnaire/interviews/${editingId}` : "/questionnaire/interviews",
+        method: editingId ? "PATCH" : "POST",
         body: interviewPayload,
         media: [
           {
@@ -1113,6 +1333,16 @@ function QuestionnairePageBody() {
         // with the same person, so the next interview opens on them, while the others in a group
         // sitting are not carried into a sitting they were not part of.
         setSelectedArtisanIds((current) => current.slice(0, 1));
+        /*
+          LEAVING EDIT MODE IS PART OF THE RESET, on BOTH save branches.
+        
+          A banked PATCH the server has not seen yet must not leave the form still claiming to be editing
+          that record: the next Save would be a second PATCH of a sitting whose first is still in the
+          outbox, and the "Editing interview" banner would assert a state the researcher has finished with.
+          The URL is stripped for the same reason `resetToCreate` strips it — a surviving `?edit=`
+          re-applies on the next read and puts the finished record back under the Back button.
+        */
+        leaveEditMode();
         setSaving(false);
         if (typeof window !== "undefined") window.scrollTo({ top: 0, behavior: "smooth" });
         return;
@@ -1341,6 +1571,16 @@ function QuestionnairePageBody() {
       setQuestionAudioFiles({});
       // Keep the head, drop the rest — same rule and same reason as the queued branch above.
       setSelectedArtisanIds((current) => current.slice(0, 1));
+      /*
+        LEAVING EDIT MODE IS PART OF THE RESET, on BOTH save branches.
+      
+        A banked PATCH the server has not seen yet must not leave the form still claiming to be editing
+        that record: the next Save would be a second PATCH of a sitting whose first is still in the
+        outbox, and the "Editing interview" banner would assert a state the researcher has finished with.
+        The URL is stripped for the same reason `resetToCreate` strips it — a surviving `?edit=`
+        re-applies on the next read and puts the finished record back under the Back button.
+      */
+      leaveEditMode();
       // Show the freshly saved (most recent) interview at the top of page one.
       if (page !== 1) setPage(1);
       else await loadInterviews();
@@ -1463,8 +1703,60 @@ function QuestionnairePageBody() {
             control, because collapsing several notes into one box would lose a feature Android's
             `MultiNoteInput` still splits back out on the handset.
       */}
-      <form onSubmit={submit} onKeyDown={handleFormEnter} className="panel mb-5 grid gap-4 p-4">
-        <CarryContextBanner offer={carry.applied} onChange={clearCarriedContext} />
+      {/*
+        `key` AND `ref`, BOTH ADDED WITH THE EDIT PATH.
+
+        `key={editingInterview?.id ?? "new"}` is the remount every record form in this repository
+        performs, and it is what re-reads the UNCONTROLLED half of this form — status, the notes, the
+        location and capture rows. Without it the previous occupant's values stay on screen under the
+        new record's title: `useEditDeepLink`'s own header names that as the defect the remount
+        exists for. `"new"` rather than `undefined` so leaving edit mode is also a remount and the
+        form comes back genuinely blank.
+
+        `ref` is where the deep link scrolls. This page draws the funnel, the carry banner and — for a
+        professor — a completion matrix above the form, so the top of the document is not the top of
+        the thing the reader asked to edit.
+      */}
+      <form
+        key={editingInterview?.id ?? "new"}
+        ref={captureFormRef}
+        onSubmit={submit}
+        onKeyDown={handleFormEnter}
+        className="panel mb-5 grid gap-4 p-4"
+      >
+        {/*
+          EDIT MODE SAYS SO, AND SAYS WHAT IT WILL NOT TOUCH.
+
+          Two facts a researcher needs before typing, neither of which is visible from the form
+          itself: recordings already attached to the sitting are kept (this form is not a
+          re-capture, and the upload tray opens empty), and when the sitting was recorded is not
+          re-stamped by a correction typed in an office a week later.
+
+          A third is deliberately NOT promised here: whether this account may change a field somebody
+          else recorded. That is `guard_record_edit`'s answer, made per record inside the PATCH, and a
+          client-side claim about it would be a guess printed as a fact.
+        */}
+        {editingInterview ? (
+          <div className="rounded-md border border-purple-300 bg-purple-50 px-3 py-2 text-sm text-purple-800">
+            <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+              <span>
+                Editing <span className="font-medium">{editingInterview.title?.trim() || "this interview"}</span>.
+                Saving corrects this sitting rather than filing another.
+              </span>
+              <button type="button" className="field-button-secondary h-8 min-h-0 px-3 text-xs" onClick={resetToCreate}>
+                Cancel edit
+              </button>
+            </div>
+            <p className="mt-1 text-xs leading-5">
+              Recordings already attached to it are kept, and when it was recorded is not changed by a
+              correction made now.
+            </p>
+          </div>
+        ) : null}
+        {/* The carry-forward offer is a CREATE affordance: it prefills a NEW record from the last
+            one. Offering it over an open edit would invite overwriting a recorded sitting with
+            another record's values. */}
+        {editingInterview ? null : <CarryContextBanner offer={carry.applied} onChange={clearCarriedContext} />}
         <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
           {/*
             ── THE "this browser cannot dictate" SENTENCE, ONCE FOR THE WHOLE FORM ──────────────
@@ -1704,7 +1996,14 @@ function QuestionnairePageBody() {
         </div>
         {/* The theme defines exactly three amber tokens (100/500/800); 50/200/300/700 are not
             Tailwind classes here and silently render as nothing. */}
-        {existingEntry ? (
+        {/*
+          NOT SHOWN AGAINST THE RECORD BEING EDITED. The banner keys on the artisan SET, which an open
+          edit normally still has — so it announced the record to itself and promised that saving
+          would "add to" it, which is the opposite of what an edit does. A DIFFERENT entry is still
+          worth warning about, and harder: editing INTO an occupied set cannot fold the way a create
+          does, so the save is refused rather than merged. The wording below forks on exactly that.
+        */}
+        {existingEntry && existingEntry.id !== editingInterview?.id ? (
           <section className="rounded-lg border border-amber-500 bg-amber-100 p-4">
             <h3 className="font-display font-bold text-lg text-amber-800">A shared entry already exists for this set of artisans</h3>
             <p className="mt-1 text-sm text-amber-800">
@@ -1996,7 +2295,13 @@ function QuestionnairePageBody() {
         <div>
           <button className="field-button" disabled={saving}>
             <Plus className="h-4 w-4" aria-hidden />
-            {saving ? "Saving..." : existingEntry ? "Add to shared entry" : "Save interview"}
+            {saving
+              ? "Saving..."
+              : editingInterview
+                ? "Save changes"
+                : existingEntry
+                  ? "Add to shared entry"
+                  : "Save interview"}
           </button>
         </div>
       </form>
@@ -2082,6 +2387,22 @@ function QuestionnairePageBody() {
                             <QrCode className="h-3.5 w-3.5" aria-hidden />
                             {codeFor === interview.id ? "Hide code" : "Code"}
                           </button>
+                          {/*
+                            A `Link` AND NOT A BUTTON, so it is the same `?edit=` navigation the data
+                            browser's row uses and the same one a colleague can paste — one route into
+                            the edit form rather than two mechanisms that have to be kept agreeing.
+
+                            OUTSIDE THE `adminMode` GATE BELOW, deliberately. Admin view is a
+                            NARROWING switch over admin CHROME; correcting an interview is ordinary
+                            work, and whether this account may correct THIS sitting is
+                            `guard_record_edit`'s answer per record rather than a tier's. Hiding the
+                            link behind a toggle would take it from every non-admin who is entitled to
+                            it — which is almost everybody who records one.
+                          */}
+                          <Link className={rowAction()} href={`/questionnaire?edit=${interview.id}`}>
+                            <Pencil className="h-3.5 w-3.5" aria-hidden />
+                            Edit
+                          </Link>
                           {adminMode ? (
                             <button className={rowAction("danger")} onClick={() => remove(interview.id)}>
                               Delete

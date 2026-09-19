@@ -64,13 +64,25 @@ const PAGE_HEADER = join(ROOT, "components", "PageHeader.tsx");
 const TAILWIND = join(ROOT, "tailwind.config.ts");
 
 /**
- * The four, written out rather than derived.
+ * The five, written out rather than derived.
  *
  * ⚠ NOT `ROUTE_GUARDS.filter((g) => g.ministry)`, which would make the first test a restatement of
- * the thing it is testing. Four paths, typed on purpose, so a fifth ministry surface has to be typed
+ * the thing it is testing. Five paths, typed on purpose, so a sixth ministry surface has to be typed
  * here too and is therefore a decision somebody made rather than one that happened.
+ *
+ * `/ministry-dashboard` joined on 2026-09-20 — the ministry's whole-estate register. It is TOP-LEVEL
+ * and that is load-bearing rather than a filing preference: `routeMatches` compares whole segments,
+ * so nesting it at `/officers/dashboard` would inherit `canAssignWorkshopOversight`, a SET that
+ * refuses a REGIONAL DIRECTOR and an ASSISTANT DIRECTOR — two thirds of the page's own audience.
+ * Its guard row carries the argument in full.
  */
-const MINISTRY_PATHS = ["/annual-plan", "/officers", "/officers/monitored", "/sanction-orders"];
+const MINISTRY_PATHS = [
+  "/annual-plan",
+  "/ministry-dashboard",
+  "/officers",
+  "/officers/monitored",
+  "/sanction-orders"
+];
 
 /**
  * The one scoped block, lifted out of globals.css — WITH ITS COMMENTS STRIPPED.
@@ -155,22 +167,22 @@ test("no ministry row is gated on canRunDesignWorkshops", () => {
   expect(ministrySurface("/design-workshops/ckq12345")).toBe(false);
 });
 
-test("the guard table still has twenty-four rows", () => {
+test("the guard table still has twenty-five rows", () => {
   /*
-    TWENTY-FOUR, and updating this literal is supposed to be a deliberate act rather than a
-    formality. It is what keeps MINISTRY_PATHS above honest: a literal set over a table that grew
+    TWENTY-FIVE since 2026-09-20, and updating this literal is supposed to be a deliberate act
+    rather than a formality. It is what keeps MINISTRY_PATHS above honest: a literal set over a table that grew
     silently stops being exhaustive, and being made to type the new total is the cheapest possible
     moment to ask "is this new route a ministry surface?".
 
-    ⚠ TWENTY-FOUR AND NOT TWENTY-ONE, AND THE DIFFERENCE IS A GREP THAT CANNOT SEE THREE ROWS.
-    Grepping this table for lines beginning `path:` answers twenty-one, and that number has been
-    carried into planning documents as a verified fact. It is wrong by construction: the last three
+    ⚠ IT IS FIVE MORE THAN A GREP REPORTS, AND THE DIFFERENCE IS THREE ROWS THE PATTERN CANNOT SEE.
+    Grepping this table for lines beginning `path:` answers twenty-two, and the equivalent number has
+    been carried into planning documents as a verified fact. It is wrong by construction: the last three
     rows are written on ONE LINE EACH — `{ path: "/artisans/new", ...RECORD_CREATOR_GUARD }` and its
     two siblings — so `path:` is not the first thing after the indent and the pattern skips them.
     The length of the array is the only honest count, which is why this asserts the array and never
     a grep. Do not "correct" it back down.
   */
-  expect(ROUTE_GUARDS.length).toBe(24);
+  expect(ROUTE_GUARDS.length).toBe(25);
 });
 
 test("the scoped block never reaches a utility class", () => {
@@ -189,42 +201,126 @@ test("the scoped block never reaches a utility class", () => {
   }
 });
 
-test("the ministry accent is spent on no action control", () => {
+test("the ministry accent reaches the action controls, and stops where it was told to", () => {
   /*
-    OQ-2, ENFORCED RATHER THAN REMEMBERED. Purple-700 is the only action colour in this product and
-    a ministry page is not an exception: `ministry-700` computes to #923e0d against `amber-800`
-    #92400e — ΔE 0.004, the same colour — and amber is drawn on all four of these screens, so an
-    orange button would sit beside an indistinguishable "Withdrawn" pill. `.field-button` also
-    carries `hover:shadow-cta`, which is a literal purple glow at hue 305 and cannot be scoped.
+    ⚠ THIS TEST USED TO ASSERT THE OPPOSITE, AND THE REVERSAL IS AN OWNER RULING OF 2026-09-20 RATHER
+    THAN A CORRECTION. What it enforced was OQ-2 — "the ministry accent is spent on no action
+    control" — by forbidding the strings `.field-button`, `.field-button-secondary`, `.field-input`,
+    `.file-trigger` and `:focus-visible` anywhere in the block. Its reasoning, kept here in its own
+    words because the day somebody proposes putting it back, this is the argument they are making:
 
-    Stated as forbidden SELECTORS rather than as forbidden properties, because the block is scoped
-    by selector: if none of these classes is ever the subject, no button, input, upload trigger or
-    focus ring on a ministry page can be anything but purple.
+      "Purple-700 is the only action colour in this product and a ministry page is not an exception:
+       `ministry-700` computes to #923e0d against `amber-800` #92400e — ΔE 0.004, the same colour —
+       and amber is drawn on all four of these screens, so an orange button would sit beside an
+       indistinguishable 'Withdrawn' pill. `.field-button` also carries `hover:shadow-cta`, which is
+       a literal purple glow at hue 305 and cannot be scoped."
+
+    THE RULING IS REVERSED. THE TWO MEASUREMENTS INSIDE IT ARE NOT, and this test is now the place
+    both are enforced rather than the place the question was avoided. What it checks, in order: the
+    orange reaches the four controls; the glow is the hue-45 twin and never the purple one; each
+    button rule restates the states the cascade would otherwise hand it; the secondary keeps ordinary
+    ink so it cannot be mistaken for a status pill; and the two things the owner did NOT overrule are
+    still absent.
   */
   const block = ministryCss();
-  for (const control of [
-    ".field-button",
-    ".field-button-secondary",
-    ".field-input",
-    ".file-trigger",
-    ":focus-visible"
-  ]) {
-    expect(block, `the ministry block restyles ${control} — the accent is surface-only`).not.toContain(
+
+  // ── 1. THE ACCENT ACTUALLY ARRIVES ──────────────────────────────────────────────────────────
+  // Asserted as PRESENCE, not merely as permission. The change is worth nothing if a later edit
+  // quietly drops a rule, and "the block no longer mentions .field-button" is invisible in review.
+  for (const control of [".field-button", ".field-button-secondary", ".field-input", ".file-trigger"]) {
+    expect(block, `the ministry block no longer repaints ${control} — the owner asked for it`).toContain(
       control
     );
   }
 
   /*
-    And it re-points no custom property. `--purple-700` is read by the global focus outline, the
-    audio range's outline and `.fr-flash-row` — three declarations, all of them action-coloured.
-    `--bg-0` and `--card` are worse: `THEME_COLOR` in lib/preferences.ts drives the mobile address
-    bar and is rewritten on a PREFERENCE change and never on a navigation, so an orange canvas would
-    leave the address bar lavender with no code path in the product that could ever correct it.
+    ── 2. THE HOVER GLOW IS THE HUE-45 TWIN ────────────────────────────────────────────────────
+    `hover:shadow-cta` is a Tailwind TOKEN compiled to a utility class, not a custom property, so no
+    selector here can re-point it — an orange button spending it would throw a saturated PURPLE glow.
+    `theme.extend.boxShadow["cta-ministry"]` exists for this one line. Both halves are checked: the
+    twin is spent, and the original is not.
   */
-  for (const token of ["--purple-700", "--bg-0:", "--card:"]) {
-    expect(block, `the ministry block re-points ${token}`).not.toContain(`${token} `);
+  expect(block, "the ministry primary does not spend the hue-45 glow").toContain("shadow-cta-ministry");
+  expect(
+    block.replace(/shadow-cta-ministry/g, ""),
+    "the ministry block still spends `shadow-cta`, which is a literal purple glow at hue 305"
+  ).not.toContain("shadow-cta");
+
+  /*
+    ── 3. EVERY STATE THE BASE RECIPE CARRIES IS RESTATED ──────────────────────────────────────
+    `.field-button:hover` and `.field-button:disabled` are (0,2,0) — identical to
+    `[data-surface="ministry"] .field-button` — and this block is LAST in the file, so it wins the
+    source-order tie on `background-color`. A rule that set only the resting ground would paint the
+    same orange on hover (no hover response at all) and, worse, the same orange when DISABLED,
+    erasing the disabled affordance on every button on the surface.
+  */
+  const primary = ruleFor(block, ".field-button");
+  expect(primary, "the ministry primary sets no hover ground, so hover is the resting colour").toContain(
+    "hover:bg-ministry-"
+  );
+  expect(primary, "the ministry primary sets no disabled ground — a disabled button stays orange").toContain(
+    "disabled:bg-line-200"
+  );
+  expect(primary, "the ministry primary drops the disabled ink").toContain("disabled:text-ink-500");
+  expect(primary, "the ministry primary keeps a glow while disabled").toContain("disabled:shadow-none");
+
+  /*
+    ── 4. THE SECONDARY KEEPS ORDINARY INK, WHICH IS WHERE ΔE 0.004 WOULD HAVE BITTEN ──────────
+    A secondary button is a pale ground with dark ink, the same SHAPE as an `amber-100`/`amber-800`
+    status pill — and `ministry-700` ink and `amber-800` ink are the same colour to 0.004 in OKLab.
+    Two inches apart on /annual-plan and /sanction-orders, one a thing to press and the other a fact
+    about a workshop, they would be indistinguishable. Only the border and the hover wash take the
+    ramp; the label stays in the app's ordinary ink.
+  */
+  expect(
+    ruleFor(block, ".field-button-secondary"),
+    "the ministry secondary takes ministry INK, which is amber-800 to ΔE 0.004 — the status-pill collision"
+  ).not.toContain("text-ministry-");
+
+  /*
+    ── 5. WHAT THE OWNER DID NOT OVERRULE ──────────────────────────────────────────────────────
+    The global `:focus-visible` outline stays purple: it was not part of the instruction, and it is
+    the one mark that is identical on every screen in the product. `--purple-700` is therefore never
+    re-pointed either, which also protects `.audio-range:focus-visible` and `.fr-flash-row`'s "this
+    row, just now" outline — both app-wide meanings rather than ministry ones.
+
+    `--bg-0` and `--card` are likewise untouched. `THEME_COLOR` in lib/preferences.ts drives
+    <meta name="theme-color"> and `applyPreferences` rewrites it on a PREFERENCE change and never on
+    a navigation, so an orange canvas would leave the mobile address bar lavender with no code path
+    in the product that could ever correct it.
+  */
+  expect(block, "the ministry block re-points the global focus outline").not.toContain(":focus-visible");
+
+  /*
+    ⚠ THE FIRST TOKEN USED TO BE CHECKED WITH A TRAILING SPACE — `not.toContain("--purple-700 ")` —
+    AND THAT ASSERTION COULD NEVER FIRE. A re-pointing declaration is written `--purple-700: oklch(…)`
+    and a usage is `var(--purple-700)`; neither contains the token followed by a space, so the one
+    guard on the one-line way to turn every focus ring in the product orange was inert from the day it
+    was written. Measured on the real file: "--purple-700: " occurs, "--purple-700 " occurs nowhere.
+    The other two already ended in a colon and worked; they are spelled the same way now so the loop
+    reads as one rule.
+  */
+  for (const token of ["--purple-700:", "--bg-0:", "--card:"]) {
+    expect(block, `the ministry block re-points ${token}`).not.toContain(token);
   }
 });
+
+/**
+ * The declarations of one recipe's rule inside the block — everything between its selector pair and
+ * the closing brace.
+ *
+ * Needed because the assertions above are about ONE rule rather than about the block: "the secondary
+ * carries no ministry ink" is false of the block (the upload trigger legitimately does) and true of
+ * the rule, and a substring test over the whole block cannot tell those apart.
+ */
+function ruleFor(block: string, recipe: string): string {
+  const marker = `.${recipe.replace(/^\./, "")}[data-surface="ministry"] {`;
+  const from = block.indexOf(marker);
+  expect(from, `the ministry block carries no self-matching rule for ${recipe}`).toBeGreaterThan(-1);
+  const to = block.indexOf("}", from);
+  expect(to, `${recipe}'s rule in the ministry block is not closed`).toBeGreaterThan(from);
+  return block.slice(from + marker.length, to);
+}
 
 test("every ministry rule carries its dark pair", () => {
   /*
@@ -242,6 +338,18 @@ test("every ministry rule carries its dark pair", () => {
     .filter((line) => line.startsWith("@apply"));
   expect(rules.length, "the ministry block declares no rules at all").toBeGreaterThan(0);
   for (const rule of rules) {
+    /*
+      ⚠ ONE EXEMPTION, ADDED WITH THE ORANGE BUTTONS ON 2026-09-20, AND IT IS A RULE RATHER THAN A
+      HOLE. The obligation above is owed by ministry INK on a ground that inverts underneath it, and
+      by a PALE ministry ground painted onto a card that inverts underneath IT. A rule that sets
+      `text-white` on a dark ministry ground owes neither, because it has fixed BOTH halves of its own
+      contrast and neither half is themed: white on `ministry-700` #923e0d measures 7.20:1 and is the
+      same 7.20:1 in either theme. That is the identical position `.field-button`'s own
+      `bg-purple-700 text-white` has always been in, and the alternative — bolting a meaningless
+      `dark:` token on to satisfy a string check — would weaken the assertion for the ink rules it
+      genuinely protects, which is the failure this file's own header warns about twice.
+    */
+    if (rule.includes("text-white")) continue;
     expect(rule, `no dark: pair on "${rule}" — ministry ink on a dark card is 2.44:1`).toContain(
       "dark:"
     );
@@ -294,6 +402,35 @@ test("AppShell stamps the attribute, and only on a page it is serving", () => {
     the three self-refusal panels inside /officers carry for staying purple.
   */
   expect(shell).toContain("const ministry = !blocked && ministrySurface(pathname);");
+});
+
+test("a dialog raised from a ministry page carries the surface with it", () => {
+  /*
+    THE ONE PLACE THE SCOPE CANNOT REACH BY ANCESTRY, AND IT MATTERS MORE SINCE THE BUTTONS TURNED.
+
+    `FieldDialog` `createPortal`s to `document.body`, which is OUTSIDE <main> by construction, so no
+    ancestor rule can reach it. The block's header records that as DELIBERATE for dropdown panels and
+    toasts: those are app chrome that happens to have been raised from a ministry page.
+
+    A DIALOG IS NOT THAT. /annual-plan opens "Upload the annual plan" and /sanction-orders opens its
+    import review, and the confirming button INSIDE each is the second half of the act whose trigger
+    the reader just pressed on the page. Before the accent reached action controls this was invisible;
+    after it, an unstamped overlay ships an orange trigger on the page and a purple primary in the
+    dialog it opens — one action in two accent colours, which is worse than either alone.
+
+    Derived from the pathname rather than passed in, so every existing call site is correct without
+    being edited and the next one cannot forget.
+  */
+  const dialog = readFileSync(join(ROOT, "components", "dialogs", "FieldDialog.tsx"), "utf8");
+  expect(dialog).toContain('data-surface={ministrySurface(pathname) ? "ministry" : undefined}');
+  expect(dialog, "the dialog reads the route it was raised from").toContain(
+    'import { usePathname } from "next/navigation";'
+  );
+  /*
+    NO `!blocked` GUARD IS OWED HERE, unlike AppShell's stamp, and the asymmetry is worth stating: a
+    dialog can only be opened by a page that is already being served, so there is no refusal panel
+    for the accent to be painted in front of.
+  */
 });
 
 test("PageHeader carries the hook the block hangs off", () => {

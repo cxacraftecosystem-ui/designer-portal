@@ -3341,49 +3341,43 @@ export async function downloadDesignWorkshopReport(id: string, body: DwReportBod
 }
 
 /**
- * The server's chosen file name, out of `content-disposition`.
+ * THE TWO DOWNLOAD HELPERS MOVED TO `lib/fileDownload.ts` AND ARE RE-EXPORTED HERE.
  *
- * Worth honouring rather than inventing one: `_report_file_name` strips the nine characters Windows
- * forbids outright, and a report named after a craft is routinely saved onto a departmental share,
- * where a name that fails to save is a report that was not delivered.
+ * ── WHY THEY MOVED ──────────────────────────────────────────────────────────────────────────────
  *
- * EXPORTED FOR THE SUBTITLE DOWNLOAD, which has a second reason of its own and a sharper one:
- * `download_subtitles` distinguishes the speaker-labelled file from the anonymised one by NAME
- * alone (`subtitles-{id}.speakers.srt` against `subtitles-{id}.srt`), and confusing those two is
- * how a ministry is emailed the version that attributes an artisan's words to a machine's guess.
- * See `lib/aiVerbs.downloadDesignWorkshopSubtitles`.
+ * Four modules had each written their own bearer-fetch-for-a-binary around these two — this one,
+ * `lib/questionnaireForms.ts`, `app/(protected)/annual-plan/annualPlan.ts`, `lib/sanctionOrders.ts`
+ * and `app/(protected)/officers/oversight.ts` — and that last one carried the instruction in its own
+ * ⚠: *"If you are the person consolidating them, export `fetchWorkbook` and delete this."* The
+ * ministry dashboard's downloads would have been the fifth copy. `lib/fileDownload.ts` is now the
+ * one implementation and carries the argument in full.
+ *
+ * ⚠ **AND `fileNameFromDisposition` WAS WRONG IN ALL FIVE COPIES.** Its single regex matched the
+ * FIRST filename in the header, and RFC 6266 requires the ASCII `filename=` to be written BEFORE the
+ * extended `filename*=UTF-8''…` — so the Devanagari and Odia names the server goes to some trouble to
+ * emit (`data_browser._content_disposition`) never reached a single download. The replacement reads
+ * the extended form first. See that file.
+ *
+ * ── WHY THE NAMES ARE STILL EXPORTED FROM HERE ──────────────────────────────────────────────────
+ *
+ * Fourteen call sites import `saveBlobToDisk` from `@/lib/designWorkshops`, and
+ * `e2e/sketch-trace-panel.spec.ts` STUBS this module's export by name to capture what the trace panel
+ * hands to the browser. A re-export keeps every one of those working and keeps the stub pointing at
+ * the function the component actually calls, which a moved import would silently break — the panel
+ * would download for real inside a test that believed it had intercepted it.
  */
-export function fileNameFromDisposition(header: string | null): string | null {
-  if (!header) return null;
-  const match = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(header);
-  if (!match) return null;
-  try {
-    return decodeURIComponent(match[1]);
-  } catch {
-    // A name that is not valid percent-encoding is still a usable name; decodeURIComponent throws
-    // on a bare "%" and losing the download over a literal percent sign in a craft name would be
-    // absurd.
-    return match[1];
-  }
-}
+export { fileNameFromDisposition, saveBlobToDisk } from "@/lib/fileDownload";
 
-/**
- * Hand a generated file to the browser's download machinery.
- *
- * The object URL is revoked on the next task rather than immediately: revoking it in the same tick
- * as the synthetic click races the browser's own read of it, and Safari in particular ends up
- * downloading nothing at all with no error anywhere.
- */
-export function saveBlobToDisk(blob: Blob, fileName: string): void {
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = fileName;
-  document.body.appendChild(anchor);
-  anchor.click();
-  anchor.remove();
-  window.setTimeout(() => URL.revokeObjectURL(url), 0);
-}
+/*
+  AND IMPORTED SEPARATELY, BECAUSE `export … from` DOES NOT BIND THE NAME LOCALLY.
+  `downloadDesignWorkshopReport` above reads the header itself — it is a POST with a body, and it
+  also reads `x-report-warnings` and `x-report-warning-count` off the same response, so it is one of
+  the two downloads in this app that legitimately is NOT `fetchFile`. It still must not re-implement
+  the filename parse: the report's name is built by `_report_file_name`, which strips the nine
+  characters Windows forbids, and a report named after a craft is routinely saved onto a departmental
+  share where a name that fails to save is a report that was not delivered.
+*/
+import { fileNameFromDisposition } from "@/lib/fileDownload";
 
 /* ────────────────────────────────────────────────────────────────────────────
  * Value helpers — the small functions every renderer in this feature shares.

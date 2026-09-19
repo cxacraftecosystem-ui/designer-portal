@@ -26,12 +26,13 @@
  * `backend/app/services/annual_plan.py`'s module docstring for that decision in full.
  */
 
-import { API_BASE, ApiError, apiFetch, assertApiConfigured, describeApiDetail, getToken } from "@/lib/api";
-// BOTH IMPORTED, NEITHER RE-IMPLEMENTED. `lib/aiVerbs.ts` imports the first one exactly this way,
-// and `saveBlobToDisk`'s own docstring records why the anchor dance must not be written again:
-// revoking the object URL in the same tick as the synthetic click races the browser's read of it,
-// and Safari downloads nothing at all with no error anywhere.
-import { fileNameFromDisposition, saveBlobToDisk } from "@/lib/designWorkshops";
+import { ApiError, apiFetch } from "@/lib/api";
+// NEITHER RE-IMPLEMENTED, AND SINCE THE CONSOLIDATION NEITHER IS THE FETCH AROUND THEM.
+// `saveBlobToDisk`'s docstring records why the anchor dance must not be written again — revoking the
+// object URL in the same tick as the synthetic click races the browser's read of it, and Safari
+// downloads nothing at all with no error anywhere — and `fetchFile` is the one bearer-fetch-for-a-
+// binary this app has. See `lib/fileDownload.ts`.
+import { fetchFile, saveBlobToDisk } from "@/lib/fileDownload";
 import type { PageResult } from "@/lib/types";
 
 /** PLANNED / PROMOTED / WITHDRAWN — derived on the server from two columns, never stored. */
@@ -232,40 +233,14 @@ export async function uploadAnnualPlan(
 type Workbook = { blob: Blob; fileName: string };
 
 /**
- * A Bearer fetch that answers a blob and the name the server gave it.
+ * Fetch one .xlsx by hand, because `apiFetch` cannot — now the SHARED helper.
  *
- * The shape is `questionnaireForms.fetchWorkbook`'s, deliberately: `apiFetch` parses JSON, so an
- * .xlsx has to be fetched by hand, and the error branch has to rebuild the `ApiError` that
- * `apiFetch` would otherwise have thrown — otherwise a 403 on the export reaches the screen as a
- * blank box. `statusText` is empty over HTTP/2, which every deployed request is, so it can never be
- * the last resort on its own.
+ * `lib/fileDownload.fetchFile` is what stood here. This module was one of four that had each written
+ * that fetch out, and the ministry dashboard's downloads would have been the fifth; the argument is
+ * in that file's header. It discharges the same three obligations this comment used to list, and
+ * fixes the `filename*` bug all four copies shared.
  */
-async function fetchWorkbook(path: string, fallbackName: string): Promise<Workbook> {
-  assertApiConfigured();
-
-  const headers = new Headers();
-  const token = getToken();
-  if (token) headers.set("Authorization", `Bearer ${token}`);
-
-  const response = await fetch(`${API_BASE}/api${path}`, { headers, cache: "no-store" });
-  if (!response.ok) {
-    const contentType = response.headers.get("content-type") ?? "";
-    const payload = contentType.includes("application/json") ? await response.json() : await response.text();
-    const detail =
-      typeof payload === "object" && payload && "detail" in payload
-        ? (payload as { detail: unknown }).detail
-        : undefined;
-    throw new ApiError(
-      response.status,
-      describeApiDetail(detail, response.statusText || `The server refused the request (HTTP ${response.status}).`),
-      payload
-    );
-  }
-  return {
-    blob: await response.blob(),
-    fileName: fileNameFromDisposition(response.headers.get("content-disposition")) ?? fallbackName
-  };
-}
+const fetchWorkbook = fetchFile;
 
 /** The blank pro-forma a ministry's directory is typed into. */
 export async function downloadPlanProForma(): Promise<void> {

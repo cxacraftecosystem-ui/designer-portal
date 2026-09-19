@@ -595,6 +595,61 @@ def can_export_design_workshop_data(user: Any) -> bool:
     return is_admin(user)
 
 
+#: Who may open the ministry dashboard — the register of every workshop on the platform, its
+#: designers' progress, and the downloads taken off it.
+#:
+#: A SET WITH A HOLE AT ADMIN (50) AND MASTER_ADMIN (60) ABOVE IT, so no rank floor produces it. The
+#: tightest floor admitting ASSISTANT_DIRECTOR (42) also admits ADMIN; a floor at MINISTRY_ADMIN (48)
+#: loses the two tiers who actually supervise the workshops the page is about.
+#:
+#: WHY AN ADMIN IS OUT, WHICH IS THE ONLY SURPRISING MEMBERSHIP. Not capability — an admin reads more
+#: of this repository than any ministry post does. It is that an admin already has this screen under
+#: another name: ``/api/analytics/design-workshops`` (``require_admin``) is the whole-estate
+#: comparison, reachable from a settings hub the three directorate tiers cannot open at all. A second
+#: whole-estate door for the tier that already has one buys nothing and is one more thing to keep
+#: gated in step. MASTER_ADMIN is in because it is the account that must be able to see exactly what a
+#: ministry officer sees without holding a ministry post.
+#:
+#: ⚠ THIS IS THE GATE AND IT HAS A TWIN. ``frontend/lib/permissions.ts::MINISTRY_DASHBOARD_ROLES``
+#: carries the identical list. It is deliberately NOT the same literal as that file's
+#: ``MINISTRY_DESK_ROLES``, which has the same four members and is a dashboard CARD'S AUDIENCE whose
+#: own docstring promises that widening it "widens no capability at all" — a promise that stops being
+#: true the moment a card audience is used as a route gate. Two literals, two jobs.
+#:
+#: ``backend/tests/test_role_ladder_parity.py`` registers both as ``partial`` mirrors, so a twelfth
+#: tier cannot default into or out of this audience by nobody having thought about it.
+MINISTRY_DASHBOARD_ROLES = frozenset(
+    {"ASSISTANT_DIRECTOR", "REGIONAL_DIRECTOR", "MINISTRY_ADMIN", "MASTER_ADMIN"}
+)
+
+#: What an account that is not of the ministry is told at ``/api/ministry-dashboard``.
+#:
+#: ONE SENTENCE, SHARED BYTE-FOR-BYTE WITH THE CLIENT'S ``ROUTE_GUARDS`` MESSAGE, which is the house
+#: pattern (``ANNUAL_PLAN_REFUSAL``, ``SANCTION_REFUSAL``, ``OVERSIGHT_SURFACE_REFUSAL``). It names
+#: who the page is for AND where everybody else reads the same estate, because a refusal that names
+#: no alternative teaches the reader the product is broken rather than that a rule exists — this
+#: repository's standing rule for every gate it draws.
+MINISTRY_DASHBOARD_REFUSAL = (
+    "The ministry dashboard gathers every design & prototype workshop and every other workshop on "
+    "the platform, with each designer's progress, for the ministry's own posts — Assistant "
+    "Director, Regional Director and Ministry Administrator — and the master admin. Admins read the "
+    "same estate on Cross-workshop analytics in the settings hub; designers read the workshops they "
+    "are on through Design workshops."
+)
+
+
+def can_see_ministry_dashboard(user: Any) -> bool:
+    """May this account open the ministry dashboard? See :data:`MINISTRY_DASHBOARD_ROLES`.
+
+    THIS DECIDES WHETHER THE PAGE OPENS AND NOT WHAT IS ON IT. Which workshops a caller sees is
+    ``app.services.ministry_dashboard.scope_clause``, which hands MINISTRY_ADMIN and MASTER_ADMIN the
+    whole estate and narrows ASSISTANT_DIRECTOR and REGIONAL_DIRECTOR to the workshops they were
+    named on — the same ``oversight_by_clause`` that already scopes ``/officers/monitored``. Keeping
+    the two apart is what stops a widening of the door quietly widening the view.
+    """
+    return role_value(user) in MINISTRY_DASHBOARD_ROLES
+
+
 def can_manage_designer_roster(user: Any) -> bool:
     """Add, suspend and restore designers on the roster that gates their sign-in: Admin and above.
 

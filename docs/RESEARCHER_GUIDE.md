@@ -281,6 +281,13 @@ is information, not an error, and usually means exactly what it did above.
   interview later.
 - **A question somebody else answered is theirs.** You cannot overwrite it; an admin can.
 - **Use "Check completion"** to see the artisans × sections matrix and find the gaps before you leave.
+- **A recorded interview can be corrected from the browser.** Press **Edit** on its row — under
+  the form, or in *View Data* — and the sitting reopens in the form above with its answers, its
+  artisans and its workshop already in place. Saving corrects that sitting; it does not file a
+  second one, which is what the old "Edit record" button used to do. Recordings already attached
+  are kept and are not re-uploaded, when it was captured is not re-stamped, and the location it
+  was recorded at is left alone unless you take a new fix. The rule above still applies: a field
+  somebody else answered is theirs, and the server says so when you save.
 
 ---
 

@@ -87,6 +87,17 @@ grounds, borders, the header chip, the desk tiles — never an action control. T
 counterpart to the ramp because there is no Android screen to paint. That is a consequence of this
 decision, not a second one.
 
+> **2026-09-20 — the last clause of the paragraph above was overruled, and the paragraph is left as
+> it stands.** The owner ruled that the ministry's screens wear the ministry's colour on their action
+> controls too, so the accent is no longer surface-only: `.field-button`, `.field-button-secondary`,
+> `.file-trigger`, `.field-input` and `.section-band` are now in the scoped block. Nothing else here
+> is touched — the carve-out, the authoring/consuming split, and the sentence about there being no
+> Android counterpart all stand, the last of them for the same reason as before. This record's own
+> maintenance rule is that its argument is frozen rather than rewritten to agree with later code, so
+> the reversal is recorded next door, with the two measurements the old ruling rested on and how each
+> is answered rather than waived:
+> [DECISION-ministry-orange-action-controls.md](DECISION-ministry-orange-action-controls.md).
+
 ## 4. What this does NOT cover — and this release is the demonstration
 
 **Ordinary record forms still require both clients.** Artisan, tool, product, process and interview

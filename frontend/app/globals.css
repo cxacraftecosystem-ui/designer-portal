@@ -543,14 +543,57 @@ input[type="number"] {
    own and any single utility are (0,1,0). End-of-file is the one placement that needs no reasoning
    about layer hoisting at all, and this file already ends in un-layered blocks.
 
-   ── SURFACE ACCENT ONLY. NO ORANGE ON ANY ACTION CONTROL. ─────────────────────────────────────
-   `.field-button`, `.field-button-secondary`, `.field-input`, `.file-trigger`, the global
-   `:focus-visible` outline, `--purple-700` and `shadow-cta` are ALL deliberately absent from this
-   block. Purple-700 remains the only action colour in the product, on a ministry page exactly as on
-   every other. The arithmetic is in tailwind.config.ts beside the ramp: `ministry-700` #923e0d and
-   `amber-800` #92400e are ΔE 0.004 apart — the same colour — and amber is drawn on all four of
-   these screens, so an orange button would sit beside an indistinguishable "Withdrawn" pill and,
-   through `hover:shadow-cta`, throw a saturated PURPLE glow while doing it.
+   ── THE ACTION CONTROLS ARE ORANGE HERE. OWNER RULING, 2026-09-20. ────────────────────────────
+   ⚠ WHAT THIS PARAGRAPH SAID UNTIL THAT DATE, KEPT VERBATIM BECAUSE THE REVERSAL IS A PRODUCT
+   DECISION AND NOT A CORRECTION — the same treatment `GuideTrackSwitch`'s header gives its own
+   overruled argument:
+
+     "── SURFACE ACCENT ONLY. NO ORANGE ON ANY ACTION CONTROL. ──
+      `.field-button`, `.field-button-secondary`, `.field-input`, `.file-trigger`, the global
+      `:focus-visible` outline, `--purple-700` and `shadow-cta` are ALL deliberately absent from
+      this block. Purple-700 remains the only action colour in the product, on a ministry page
+      exactly as on every other. The arithmetic is in tailwind.config.ts beside the ramp:
+      `ministry-700` #923e0d and `amber-800` #92400e are ΔE 0.004 apart — the same colour — and
+      amber is drawn on all four of these screens, so an orange button would sit beside an
+      indistinguishable 'Withdrawn' pill and, through `hover:shadow-cta`, throw a saturated PURPLE
+      glow while doing it."
+
+   The owner's instruction is that the ministry's own screens wear the ministry's own colour,
+   buttons included. That reverses the RULING. It does not reverse the two MEASUREMENTS the ruling
+   rested on, and both are answered here rather than waived:
+
+   · THE PURPLE GLOW IS REAL AND IS FIXED AT THE SOURCE. `hover:shadow-cta` is a Tailwind TOKEN, not
+     a custom property, so no selector in this block can re-point it. `theme.extend.boxShadow` now
+     carries `cta-ministry` at hue 45 — same geometry, the ramp's own gamut-clipped chroma, alpha
+     nudged 0.28 → 0.29 for equal perceived weight — and the rule below spends it. The arithmetic is
+     written out beside the token.
+
+   · THE ΔE 0.004 COLLISION WITH `amber-800` IS REAL AND IS ANSWERED BY ROLE, NOT BY HUE. What the
+     old paragraph measured is that ministry INK and amber INK are the same colour. The rules below
+     never put ministry ink beside an amber pill: the primary is a FILLED ground at `ministry-700`
+     carrying WHITE text, and an amber status pill is `bg-amber-100` carrying `amber-800` text — a
+     dark ground with light ink against a pale ground with dark ink. Those are different shapes
+     before they are different colours, and rule 5 of the frontend contract is satisfied twice over
+     because a status pill also carries a WORD. The one place the two inks WOULD have met is the
+     secondary button, which is why its text stays `ink-900` below and only its border and hover
+     wash take the ramp.
+
+   WHAT IS STILL ABSENT, AND IS NOT OVERRULED:
+
+   · THE GLOBAL `:focus-visible` OUTLINE STAYS PURPLE. It was not part of the instruction — buttons
+     were — and it is the one mark that is identical on every screen in the product. A reader who
+     tabs across a ministry page and then a designer's page should not have to learn that the focus
+     ring means the same thing in two colours; `MinistryDeskCard`'s own tile comment makes the same
+     call for the same reason. `--purple-700` is therefore still never re-pointed here, which also
+     protects `.audio-range:focus-visible` and `.fr-flash-row`'s "this row, just now" outline, both
+     of which read that property and are app-wide meanings rather than ministry ones.
+
+   · `--bg-0` AND `--card` ARE STILL NEVER RE-POINTED, and neither is the page canvas repainted by
+     any other route. `THEME_COLOR` in lib/preferences.ts drives <meta name="theme-color"> — the
+     mobile address bar — and `applyPreferences` rewrites it on a PREFERENCE change and never on a
+     navigation, so an orange canvas would leave the address bar lavender with no code path in the
+     product that could ever correct it. The "light accent" on a ministry page is `.section-band`
+     below, which is a BAND on a page and not the page.
 
    ── WHAT THIS BLOCK MUST NEVER CONTAIN ────────────────────────────────────────────────────────
    A bare descendant rule on a utility class — `[data-surface="ministry"] .text-purple-700 { … }`
@@ -630,4 +673,103 @@ input[type="number"] {
 [data-surface="ministry"] .eyebrow,
 .eyebrow[data-surface="ministry"] {
   @apply text-ministry-700 dark:text-ministry-300;
+}
+
+/*
+ * THE PRIMARY ACTION ON A MINISTRY SCREEN. Owner ruling 2026-09-20 — see the block header for the
+ * argument this reverses and for the two measurements it does not.
+ *
+ * ⚠ EVERY STATE THE BASE RECIPE CARRIES IS RE-DECLARED, AND THAT IS NOT VERBOSITY. `.field-button`
+ * is `@apply … hover:bg-purple-800 hover:shadow-cta disabled:bg-line-200 disabled:text-ink-500
+ * disabled:shadow-none`, and `.field-button:hover` compiles to (0,2,0) — exactly the weight of
+ * `[data-surface="ministry"] .field-button`. This block is LAST in the file, so it wins the
+ * source-order tie on `background-color`. A rule that set only the resting ground would therefore
+ * paint the SAME orange on hover — no hover response at all — and, worse, the same orange when
+ * DISABLED, erasing the disabled affordance on every button on the surface. Both states are
+ * restated so the cascade cannot be relied on to do the wrong thing quietly.
+ *
+ * `shadow-cta-ministry` AND NOT `shadow-cta`: the base is a literal purple oklch at hue 305 and is a
+ * Tailwind token, so it cannot be scoped — the twin exists for exactly this line.
+ *
+ * NO `dark:` PAIR IS OWED HERE AND THE ABSENCE IS DELIBERATE. The ramp is literal and does not
+ * invert, and this rule fixes BOTH halves of its own contrast: white on `ministry-700` #923e0d
+ * measures 7.20:1 and is the same 7.20:1 in either theme, because neither the ground nor the ink is
+ * themed. That is the identical position `.field-button`'s own `bg-purple-700 text-white` is in.
+ * The `dark:`-pair obligation belongs to ministry INK on a themed ground and to a PALE ministry
+ * ground on a themed card — both of which DO invert underneath — and every such rule below carries
+ * one. `e2e/ministry-surface-unit.spec.ts` encodes that distinction rather than the blanket rule it
+ * used to.
+ */
+[data-surface="ministry"] .field-button,
+.field-button[data-surface="ministry"] {
+  @apply bg-ministry-700 text-white hover:bg-ministry-800 hover:shadow-cta-ministry disabled:bg-line-200 disabled:text-ink-500 disabled:shadow-none;
+}
+
+/*
+ * THE SECONDARY ACTION — border and hover wash only, and the TEXT DELIBERATELY STAYS `ink-900`.
+ *
+ * This is the one control where the ΔE 0.004 collision the old header measured would actually have
+ * bitten. A secondary button is a pale ground with dark ink, which is the same shape as an
+ * `amber-100` / `amber-800` status pill — and `ministry-700` ink and `amber-800` ink ARE the same
+ * colour. Two inches apart on /annual-plan and /sanction-orders, one of them a thing to press and
+ * the other a fact about a workshop, they would be indistinguishable. Leaving the label in the
+ * app's ordinary ink keeps the shapes different: a pill has no border and no hover.
+ *
+ * The `dark:` pair IS owed here, and for the usual reason: `bg-ministry-50` is a near-white peach in
+ * BOTH themes, so as a hover wash on a dark card it would flash a bright patch. The dark half is
+ * `CarryContextBanner`'s pair with the hue moved.
+ */
+[data-surface="ministry"] .field-button-secondary,
+.field-button-secondary[data-surface="ministry"] {
+  @apply hover:border-ministry-300 hover:bg-ministry-50 dark:hover:bg-ministry-950/40;
+}
+
+/*
+ * THE UPLOAD TRIGGER. The same treatment as the secondary button and for the same reasons — it is
+ * the dashed sibling of one, and on /annual-plan and /officers it is the control an officer reaches
+ * for most. `text-ministry-700` is ink on a themed `bg-card`, so its `dark:` pair is mandatory:
+ * 2.44:1 without it, 10.06:1 with.
+ */
+[data-surface="ministry"] .file-trigger,
+.file-trigger[data-surface="ministry"] {
+  @apply border-ministry-300 text-ministry-700 hover:border-ministry-400 hover:bg-ministry-50 dark:text-ministry-300 dark:hover:bg-ministry-950/40;
+}
+
+/*
+ * THE TEXT BOX'S FOCUS RING — the band around a field while it is being typed in.
+ *
+ * ⚠ THIS IS NOT THE GLOBAL `:focus-visible` OUTLINE AND THE TWO MUST NOT BE CONFLATED. That one is
+ * an `outline` drawn by `globals.css` on every anchor, button and tabbable element in the product,
+ * it reads `--purple-700`, and it stays purple — the header says why, and this block still re-points
+ * that property nowhere. What is repainted here is `.field-input`'s OWN `focus:ring-4
+ * focus:ring-purple-600/15` and its `focus:border-purple-600`, which are this recipe's decoration
+ * and nothing else's meaning. On a ministry screen the two now agree: the box the officer is typing
+ * in glows in the surface's colour, and the ring that says "the keyboard is here" is the same mark
+ * it is on every other screen in the app.
+ *
+ * `dark:` is owed on the border because `bg-card` inverts underneath it.
+ */
+[data-surface="ministry"] .field-input,
+.field-input[data-surface="ministry"] {
+  @apply focus:border-ministry-600 focus:ring-ministry-600/15 dark:focus:border-ministry-400;
+}
+
+/*
+ * THE LIGHT ACCENT THE PAGES CARRY — a BAND, and never the canvas.
+ *
+ * `.section-band` is `rounded-lg bg-surface-50`: the recipe every screen in this app uses for "a
+ * quiet block of related things inside a page". On a ministry surface it takes the palest rung of
+ * the ramp, which is the whole of what "the pages should have a light accent" can mean here without
+ * running into the two things the header says are NOT overruled — the page canvas and the mobile
+ * address bar.
+ *
+ * AND THIS IS WHY THE ACCENT ARRIVES ON SCREENS NOBODY EDITED. Scoping a RECIPE class rather than
+ * editing pages is the whole point of the mechanism: /annual-plan, /officers, /officers/monitored
+ * and /sanction-orders pick this up wherever they already use the band, and the next ministry screen
+ * is right without anybody being told. `bg-ministry-50` is a near-white peach in both themes, so the
+ * `dark:` pair is mandatory for the reason every pale rung's is.
+ */
+[data-surface="ministry"] .section-band,
+.section-band[data-surface="ministry"] {
+  @apply bg-ministry-50 dark:bg-ministry-950/30;
 }

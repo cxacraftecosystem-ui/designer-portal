@@ -21,8 +21,13 @@ traps — check it before "simplifying" anything that looks redundant.
 
 ## 1. Non-negotiables
 
-1. **Purple-700 `oklch(0.47 0.198 305)` is the only action colour.** No second accent on a data
-   screen, ever. Gold is marketing-only (hero + auth), ≤5% of a viewport.
+1. **Purple-700 `oklch(0.47 0.198 305)` is the only action colour**, with exactly one scoped
+   exception. No second accent on a data screen, ever. Gold is marketing-only (hero + auth), ≤5% of
+   a viewport. **The exception is the ministry surface** — owner ruling, 2026-09-20: on the five
+   routes whose `ROUTE_GUARDS` row carries `ministry: true`, one block scoped to an attribute on
+   `<main>` repaints the action RECIPES at hue 45 (§3.7). It reaches recipe classes and never a
+   utility class, it is off everywhere else, and it is not a licence for a second accent on a data
+   screen. The global `:focus-visible` outline stays purple on every screen in the product.
 2. **Never hardcode a neutral.** Every grey goes through the themed `ink-*` / `line-200` /
    `surface-50` / `bg-0` / `card` ladders, which invert under `data-theme="dark"`.
 3. **Copy Android's words verbatim.** Feature names, tile labels, button wording, menu entries. A
@@ -141,6 +146,108 @@ stock and will not pair correctly. Inside a tinted card use `amber-100` + `amber
 - **`ring-2` / `ring-4` alone** uses preflight's **blue** `rgb(59 130 246 / 0.5)`. Always name the
   colour: `ring-purple-600/15`, `ring-offset-card`.
 
+### 3.7 `ministry` — the scoped surface accent, and the one exception to non-negotiable 1
+
+A third literal ramp, at **hue 45**, declared in `tailwind.config.ts` beside purple and gold.
+
+`ministry-50 oklch(0.977 0.011 45)` #fef5f1 · `100 oklch(0.946 0.027 45)` #fee8df ·
+`200 oklch(0.9 0.053 45)` #fdd4c2 · `300 oklch(0.828 0.096 45)` #fcb393 ·
+`400 oklch(0.738 0.15 45)` #f68854 · `500 oklch(0.648 0.175 45)` #e1631a ·
+`600 oklch(0.56 0.151 45)` #b95014 · **`700 oklch(0.47 0.127 45)` #923e0d** ·
+`800 oklch(0.4 0.109 45)` #753007 · `900 oklch(0.34 0.093 45)` #5d2404 ·
+`950 oklch(0.255 0.072 45)` #3e1400.
+
+Every LIGHTNESS is purple's rung for rung, so `purple-300` → `ministry-300` swaps 1:1 and every
+existing pairing keeps its relationship. The CHROMA is re-derived as
+`min(purple's chroma, 0.94 × the sRGB gamut maximum at hue 45)` — purple's 0.19–0.205 is outside
+sRGB at every orange hue and a browser clips it **silently**, so the ladder would stop holding with
+nothing on screen to say so. **Called `ministry` and not `orange`** because `orange` is a stock
+Tailwind scale and would deep-merge exactly as `amber` does (§3.5): `orange-400` would quietly
+resolve to stock and would not pair with these rungs. The name is also the scoping rule — a scale
+called `orange` invites use on a data screen. Like purple and gold it is **literal and does not
+invert**, and `[data-high-contrast]` does not reach it (those blocks re-point neutrals only).
+
+**How a screen gets it.** `AppShell` stamps `data-surface="ministry"` on `<main>` for any route
+whose `ROUTE_GUARDS` row carries `ministry: true` — **five** today — and only while it is actually
+serving the page: `const ministry = !blocked && ministrySurface(pathname);`. The `!blocked` half is
+load-bearing, because what `<main>` holds on a refusal is `RouteLocked`, shown to somebody who is
+*not* a ministry account, and painting the accent onto that puts the mark in front of exactly the
+person it is not for. A component OUTSIDE those routes opts in by putting the same attribute on its
+own root — `MinistryDeskCard` on `/dashboard` does precisely that. One un-layered block at the **end
+of `globals.css`** hangs off the attribute; end-of-file is the placement that needs no reasoning
+about Tailwind v3 layer hoisting at all, and it is also what wins the source-order tie described
+below.
+
+**⚠ "Surface accent only — no orange on any action control" was OVERRULED on 2026-09-20.** That
+ruling is kept verbatim in the block's own header and in `e2e/ministry-surface-unit.spec.ts`,
+because the reversal is a product decision and not a correction: the day somebody proposes putting
+it back, that paragraph is the argument they are making. The block repaints **seven** recipe classes
+today — `.field-header-chip`, `.eyebrow`, `.field-button`, `.field-button-secondary`,
+`.file-trigger`, `.field-input`, `.section-band` — and that count is not a budget.
+
+The ruling reversed; the two MEASUREMENTS it rested on did not, and both are answered rather than
+waived:
+
+- **The purple glow was real, and is fixed at the source.** `.field-button` carries
+  `hover:shadow-cta`, which is a Tailwind **token** compiled to a utility class and not a custom
+  property, so no `[data-surface="ministry"]` selector can re-point it — an orange button spending
+  it would throw a saturated purple glow. `boxShadow["cta-ministry"]` is the hue-45 twin and exists
+  for that one line (§4).
+- **The ΔE 0.004 collision with `amber-800` was real, and is answered by ROLE rather than by hue.**
+  `ministry-700` #923e0d and `amber-800` #92400e are the same colour, and amber is drawn on these
+  screens. So the primary is a **filled dark ground carrying white text** while a status pill is a
+  **pale ground carrying dark ink** — different shapes before they are different colours, and a pill
+  also carries a WORD (non-negotiable 5). The one control where the two inks would have met is the
+  secondary button, whose label therefore **stays `text-ink-900`**: only its border and hover wash
+  take the ramp.
+
+**What is still true, every line of it enforced by `frontend/e2e/ministry-surface-unit.spec.ts`:**
+
+- **RECIPE classes only — never a utility class.** `[data-surface="ministry"] .text-purple-700 { … }`
+  is the tidy-looking way to finish the job and it destroys information: `StatusBadge` paints
+  NEEDS_REVISION and IN_PROGRESS `border-purple-300 bg-purple-50 text-purple-700` deliberately
+  sharing one treatment, and the SAME workshop row is drawn on `/design-workshops`, on
+  `/design-workshop-inspections` and on `/officers/monitored` — so one workshop would read purple on
+  a designer's screen and orange on an officer's.
+- **Every rule is written TWICE** — `[data-surface="ministry"] .x` *and*
+  `.x[data-surface="ministry"]` — because an opting-in component wears the attribute on the very
+  element the rule targets. A descendant combinator alone simply never matches it: no error, no
+  warning, a rule that does nothing.
+- **A `dark:` pair is owed UNLESS the rule sets `text-white`.** The obligation belongs to ministry
+  INK on a ground that inverts underneath it (`text-ministry-700` on `bg-card` is 2.44:1;
+  `dark:text-ministry-300` is 10.06:1) and to a PALE ministry ground on a card that inverts under
+  it. A rule that sets `text-white` on `bg-ministry-700` has fixed both halves of its own contrast
+  and neither half is themed — 7.20:1 in either theme, the identical position `.field-button`'s own
+  `bg-purple-700 text-white` has always been in. Bolting a meaningless `dark:` token on to satisfy a
+  string check would weaken the assertion for the ink rules it genuinely protects.
+- **Restate every state the base recipe carries.** `.field-button:hover` compiles to (0,2,0) —
+  exactly the weight of `[data-surface="ministry"] .field-button` — and this block is last in the
+  file, so it wins the tie. A rule that set only the resting ground would paint the same orange on
+  hover (no hover response at all) and the same orange when DISABLED, erasing the disabled
+  affordance on every button on the surface.
+- **The global `:focus-visible` outline stays purple, and `--purple-700` is never re-pointed.** It
+  was not part of the instruction, and it is the one mark identical on every screen in the product;
+  it also carries `.audio-range:focus-visible` and `.fr-flash-row`'s "this row, just now" outline,
+  both app-wide meanings. `.field-input`'s own `focus:ring-*` / `focus:border-*` ARE repainted —
+  that is this recipe's decoration, not the keyboard's mark, and the two must not be conflated.
+- **`--bg-0` and `--card` are never re-pointed.** `THEME_COLOR` in `lib/preferences.ts` drives
+  `<meta name="theme-color">` and `applyPreferences` rewrites it on a PREFERENCE change and never on
+  a navigation, so an orange canvas would leave the mobile address bar lavender with no code path in
+  the product that could ever correct it. The light accent is `.section-band` — a band on a page,
+  never the page.
+- **Portalled surfaces escape the scope and stay purple on purpose** — `AnchoredPopover` /
+  `SearchableSelect` panels and `Toast` all `createPortal` to `document.body`, outside `<main>`, and
+  they are app chrome that happens to have been raised from a ministry page. So is the island nav's
+  active pill. **`FieldDialog` is the one exception and it stamps the attribute itself**
+  (`data-surface={ministrySurface(pathname) ? "ministry" : undefined}` on its overlay): the
+  confirming button inside a dialog is the second half of the act whose trigger the reader just
+  pressed on the page, and an unstamped overlay ships one action in two accent colours.
+
+⚠ **Two comments outside this document still describe the pre-ruling world** —
+`tailwind.config.ts`'s `ministry` block ("`.field-button`, `.field-input`, the focus ring … are
+UNTOUCHED") and `ministrySurface`'s docstring in `lib/permissions.ts` ("FOUR routes carry the flag
+today"). Read `globals.css` and the guard table, not either of those.
+
 ---
 
 ## 4. Radius, shadow, easing, gradients
@@ -150,7 +257,7 @@ stock and will not pair correctly. Inside a tinted card use `amber-100` + `amber
 `rounded-2xl` = 1rem (**numerically identical to `lg`**), `rounded-3xl` 1.5rem, `rounded-full`.
 Reading a class name is not enough to know the visual radius.
 
-**Shadows — all purple-tinted `rgba(46,16,101,…)`:**
+**Shadows — purple-tinted `rgba(46,16,101,…)`, with one hue-45 exception:**
 
 | Utility | Value |
 |---|---|
@@ -160,8 +267,20 @@ Reading a class name is not enough to know the visual radius.
 | `shadow-island` | `0 4px 16px rgba(46,16,101,0.12), 0 1px 2px rgba(46,16,101,0.06)` |
 | `shadow-cta` / `shadow-glow` | `0 8px 24px oklch(0.47 0.198 305 / 0.28)` |
 | `shadow-glow-soft` | `0 4px 16px oklch(0.47 0.198 305 / 0.16)` |
+| `shadow-cta-ministry` | `0 8px 24px oklch(0.47 0.127 45 / 0.29)` |
 
 `shadow`, `shadow-xl`, `shadow-2xl`, `shadow-inner` are **stock black** — do not use them.
+
+**`shadow-cta-ministry` exists because a scoped selector cannot reach `shadow-cta`.**
+`.field-button` carries `hover:shadow-cta`, and that is a Tailwind **token** compiled into a utility
+class — not a custom property — so no `[data-surface="ministry"]` rule can re-point it; the twin is
+spent by the one line in `globals.css` that repaints the ministry primary (§3.7). Geometry is
+`cta`'s exactly (same offset, same blur) so both sit at one elevation. Lightness is `ministry-700`'s
+0.47, identical to `purple-700`'s. Chroma is the ramp's own gamut-clipped **0.127**, because
+purple's 0.198 is outside sRGB at hue 45 and the browser would clip it silently. **Alpha is 0.29 and
+not 0.28** — `ministry-700` is 8.6% lighter in relative luminance than `purple-700`, so at equal
+alpha the orange glow reads weaker against the same page; the odd hundredth is a correction, not a
+typo, and "fixing" it back undoes it.
 
 **Easing.** `ease-out` is **redefined** to `cubic-bezier(0.16, 1, 0.3, 1)` (the brand expo curve);
 `ease-spring` = `cubic-bezier(0.34, 1.56, 0.64, 1)`. `ease-in`/`ease-in-out`/`ease-linear` are stock.
@@ -1728,18 +1847,76 @@ guard stays the only race protection needed.
 Visual language = the tokens above. **Wording and structure = Android.**
 
 **Dashboard heading:** "What would you like to do?"
-**Tiles, in this order** (tile label / primary button word), all twenty, from the `tiles` array in
-`app/(protected)/dashboard/page.tsx` — read it, do not trust this list to have stayed current:
+**Tiles, in this order** (tile label / primary button word), all **twenty-one**, from the `tiles`
+array in `app/(protected)/dashboard/page.tsx` — read it, do not trust this list to have stayed
+current:
 Design workshop/New workshop · Sketches & prototypes/Open · Design review/Open · Artisan/New ·
 Product/New · Process/New · Tool/New · Questionnaire/New interview · Miscellaneous Media/Upload ·
-View Data/Open · Map/Open · Consolidated questionnaire/Open · Tasks/Open · Sharing/New · Workshop
-access/Open · My designer profile/Open · Users/Manage (admin) · Settings/Open (admin) · Craft/New ·
-Workshop/New.
+**Scan a code/Open** · View Data/Open · Map/Open · Consolidated questionnaire/Open · Tasks/Open ·
+Sharing/New · Workshop access/Open · My designer profile/Open · Users/Manage (admin) ·
+Settings/Open (admin) · Craft/New · Workshop/New.
+
+**This line said "all twenty" and omitted Scan a code from the day that tile landed until
+2026-09-20** — the same register going short for the second time; the paragraph below records the
+first. The omission is the worse-reading kind, because the sentence under it says "never invent a
+label for these": a tile absent from the list reads as a tile that is not expected, and the one that
+was missing is the one added because the owner reported scanning as "buried underneath a lot of
+pages". Count from the array, never from this sentence.
+
+**The grid is now drawn as FOUR MEGA CARDS, and the ARRAY ORDER IS NOT WHAT CHANGED.** Owner ruling,
+2026-09-20: twenty-one tiles was too many to scan — "classify all the myriad number of pages that we
+have currently into multiple sections". `TILE_GROUPS` declares them in render order — **For
+designers** ("Running a design & prototype workshop, and the two halves of it reached without one in
+hand") · **Records** ("The repository a workshop draws on — the people, the things they make, and
+how they make them") · **Miscellaneous** ("Reading what is already recorded, and the errands around
+it") · **Admin** ("Who may do what, and how this deployment is configured"). For designers leads for
+the same reason the Design workshop tile leads the array; Admin is last because it is configuration
+rather than work. **They are NOT `NAV_GROUPS`** (`["Record", "Browse", "Admin", "Account"]`) and
+must not be derived from it in either direction: the menu files Design review and Sketches &
+prototypes under Browse — reading surfaces reached without a workshop in hand — while the grid
+files them with the workshop they belong to, and the menu has an Account group the grid has no tile
+for.
+
+The grouping is a **`group` scalar on each tile** (`group?: TileGroup`) and the regrouping happens
+at **render** time. `tiles.filter((tile) => tile.visible !== false)` still runs FIRST and is asserted
+as that literal substring, parameter name included, because the filter is default-ALLOW — a tile
+whose `visible` key was deleted is shown to every signed-in account. `TILE_GROUPS.map(…)` then picks
+each group's members, so a tile this account may not have cannot reappear inside a mega card. A tile
+with no group, or an unrecognised one, falls into **Miscellaneous** rather than vanishing; an EMPTY
+group renders nothing at all — no heading, no empty card — because a heading over nothing reads as
+a section that failed to load. Grid geometry is unchanged (`grid-cols-2 md:grid-cols-3`), because it
+is Android's. **A tile's `group` may be edited freely. Its POSITION may not.**
+
+⚠ **Nested arrays are the obvious shape for this and are refused, because THREE PARSERS IN THREE
+LANGUAGES read the array as text.** `frontend/e2e/dashboard-tile-parity-unit.spec.ts` (TypeScript)
+and `android/…/DashboardTileParityTest.kt` (Kotlin, reaching out of `android/` into `frontend/`)
+both scan from the declaration and split on depth-zero commas; the Kotlin one additionally asserts
+every element `startsWith("{")`, and the TypeScript one keeps only elements whose `label` is a
+double-quoted string — a nested array would parse as one label-less element, be DROPPED, and take
+`TILES.length > 15` down with it, failing every assertion in that file with a misleading "the tile is
+missing" story. `backend/tests/test_annual_plan_web_surface.py` (Python) is the third, asserting an
+ABSENCE over the raw file.
+
+⚠ **AND THE DECLARATION MUST NOT BE QUOTED IN PROSE ANYWHERE ABOVE THE ARRAY.** Both scanners find
+it with a plain `indexOf` over the RAW file and strip comments only afterwards, so a comment
+repeating `const tiles: Tile[] = [` is found FIRST and the scan then runs off the end of the file
+hunting a closing bracket. The TypeScript failure reads "the `tiles` array literal is not closed" —
+which names the ARRAY and not the sentence, and sends the next reader looking for an unbalanced
+brace that does not exist. **That failure actually happened during this change**, to the very
+paragraph that was documenting the rule. (The Python one never strips comments at any point — it is
+a bare substring assertion over the raw source — so a predicate name written in a comment there
+fails it exactly as a real call site would.)
+
 **Menu extras** (in `NAV_ITEMS`, no tile): Walkthrough · My questionnaires · My Activity · Browse
 records · Assign tools to artisans · Review · Cross-workshop analytics (admin) · Settings — the
 account's own preferences at `/settings`, which is **not** the Settings TILE, that one opens the
-admin hub at `/admin` · Give app feedback · Admin view toggle. A menu row and a tile for one
-destination are worded differently on purpose, and the rule is **not** singular-versus-plural: the
+admin hub at `/admin` · Give app feedback · Admin view toggle.
+**The five ministry rows are deliberately NOT in that list** — Ministry dashboard, Workshop
+oversight, Workshops I monitor, Annual plan and Sanction orders are `NAV_ITEMS` entries with no tile
+AND no handset counterpart at all, by decision (`docs/DECISION-ministry-surfaces-web-only.md`,
+`docs/PERMISSIONS.md` §5). This section is the Android-parity register; a surface Android will never
+have has nothing here to agree with, and listing one invites the next reader to go and build it.
+A menu row and a tile for one destination are worded differently on purpose, and the rule is **not** singular-versus-plural: the
 tile is Android's `EntryMode.label` and the row is its `EntryMode.actionTitle`, which is usually a
 noun against a verb phrase — Artisan/"Record artisan", Process/"Document process",
 Questionnaire/"Take interview", Users/"Manage users". Where the two strings coincide (Map, Tasks,
@@ -1756,16 +1933,32 @@ button word comes from Android's `EntryMode.createButtonLabel()`, and `Dashboard
 This list was stale for a long time and that is worth knowing about, because it is the failure mode
 of writing a register down twice. It carried eleven tiles under "never invent a label", omitting six
 that already existed, so the honest reading of a missing tile was "this tile is not expected" — and
-a page whose tile was never added reads to its owner as a page that was never built. Four of the
-twenty have **no Android dashboard tile to agree with**, because the handset's grid is
-`DesignWorkshopCard` + `EntryMode.entries` + Settings and none of the four is an `EntryMode`: Design
-workshop (Android draws the bespoke `DesignWorkshopCard`), My designer profile (Android has
-`NavDestination.DESIGNER_PROFILE` and no card), Sketches & prototypes and Design review.
+a page whose tile was never added reads to its owner as a page that was never built.
 
-**"No tile" is the whole of the claim, and for the last two it is now the ONLY part of it that is
-still true.** Both of them are on the handset as menu destinations with real screens — read the tree,
-not this sentence: `grep -n "SKETCHES_AND_PROTOTYPES\|DESIGN_REVIEW" android/.../ui/AppNavigation.kt`
-answers it in one command. What each lacks is a member of `EntryMode`, and nothing else:
+**Every web tile now has an Android card, and this paragraph claimed the opposite until 2026-09-20.**
+It read "Four of the twenty have no Android dashboard tile to agree with, because the handset's grid
+is `DesignWorkshopCard` + `EntryMode.entries` + Settings", naming Design workshop, My designer
+profile, Sketches & prototypes and Design review. The PREMISE is what went stale. The handset's grid
+is now `DesignWorkshopCard` → `SketchesAndPrototypesCard` → `DesignReviewCard` →
+`EntryMode.entries`, with `DesignerProfileCard` spliced in after `EntryMode.WORKSHOP_ACCESS` and
+`ScanCodeCard` after `EntryMode.MEDIA` (each guarded on the entry rather than on an index, so
+reordering the enum moves the card with the row it belongs beside), then Settings last — five
+bespoke cards, all built in `MainActivity.kt`. `DashboardTileParityTest`'s `WEB_ONLY` is
+`emptyList<String>()` and the test asserts that emptiness in **both** directions, so the claim is
+mechanical now rather than prose: `grep -n "internal object .*Card" MainActivity.kt` settles it in
+one command, and a tile that ever goes web-only again owes that list a label, a reason and a date.
+
+What those five still lack is a member of **`EntryMode`**, and nothing else — which is why rules 1
+and 2 above have no Android string for them to agree with, and why their tile labels are copied
+character for character out of the web's own `NAV_ITEMS` instead. **Do not read "not an `EntryMode`"
+as "not on the handset".** That conflation is exactly what the next two paragraphs are a record of.
+
+**"No `EntryMode`" is the whole of the claim, and for the last two even "no tile" stopped being
+true on 2026-09-20.** Both of them are on the handset as menu destinations with real screens, and
+both now have a bespoke dashboard card besides — read the tree, not this sentence:
+`grep -n "SKETCHES_AND_PROTOTYPES\|DESIGN_REVIEW" android/.../ui/AppNavigation.kt` answers the
+menu half in one command and `grep -n "internal object .*Card" MainActivity.kt` the card half.
+What each still lacks is a member of `EntryMode`, and nothing else:
 
 - **Design review.** `NavDestination.DESIGN_REVIEW` → `"Design review"`, `Icons.Filled.Star`,
   `NavGroup.BROWSE`, gated `canRunDesignWorkshops` — declared immediately before
@@ -1797,14 +1990,18 @@ answers it in one command. What each lacks is a member of `EntryMode`, and nothi
   report would read the wrong one.
 
 **Say what is missing, precisely, and never a tier more than that.** "No feature" was wrong about
-sketches, "web-only outright" is now wrong about design review, and both errors cost the same thing:
-this document is loaded before any frontend UI work here, so an over-claim sends every reader looking
-for a gap that is not there and stops them matching wording Android already ships. The array's own
-comment names all four tiles; do not "restore parity" by deleting one — the tile really is web-only
-even where the destination is not.
-`e2e/dashboard-tile-parity-unit.spec.ts` is what holds the last two tiles in place, and its own
-comment still describes design review as web-only outright, as does the `tiles` array's — **both
-outside this document, both now stale, neither mine to edit.**
+sketches, "web-only outright" was wrong about design review, and "no Android dashboard tile" is now
+wrong about all five — three instances of one error, each caught a release late, each arriving the
+same way: nothing goes red when a "the other client does not have this" sentence stops being true.
+They cost the same thing every time. This document is loaded before any frontend UI work here, so an
+over-claim sends every reader looking for a gap that is not there and stops them matching wording
+Android already ships. **Never "restore parity" by deleting a tile on the strength of a sentence** —
+`DashboardTileParityTest` is the register, it fails in both directions, and a card there with no web
+tile is a destination a designer can find on their phone and not on the laptop they write the report
+on. If you are about to write another such claim, write the GREP that settles it beside the claim.
+⚠ The `tiles` array's own comment still carries the four-cards-missing world in full ("AND FOUR OF
+THESE TILES HAVE NO ANDROID *CARD*") — **outside this document, now stale, not mine to edit.** Read
+the Kotlin, not that prose.
 
 Grid: `grid-cols-2 md:grid-cols-3` — 2 per row on phones, 3 on tablets and laptops.
 Card anatomy (Android `DashboardActionCard`): white `rounded-2xl` card, small dark-purple icon tile
@@ -1856,6 +2053,25 @@ Each of these looks wrong and is deliberate. Most were a shipped bug.
 - `--header-clearance` has zero consumers.
 - `accordion-down/up` keyframes are dead scaffold.
 - `cn()` is a plain join, not tailwind-merge.
+- **"Surface accent only — no orange on any action control" was OVERRULED on 2026-09-20** (§3.7).
+  The ministry block now repaints `.field-button`, `.field-button-secondary`, `.field-input`,
+  `.file-trigger` and `.section-band` as well as the header chip and the eyebrow.
+  `tailwind.config.ts`'s ramp comment and `ministrySurface`'s docstring still say otherwise — stale,
+  and outside this document.
+- **`shadow-cta` cannot be scoped.** It is a Tailwind token compiled to a utility class, not a custom
+  property, so no `[data-surface="ministry"]` rule re-points it and an orange button spending it
+  throws a purple glow. Spend `shadow-cta-ministry` (§4) on a ministry surface.
+- **The ministry block targets RECIPE classes only.** `[data-surface="ministry"] .text-purple-700`
+  repaints every `StatusBadge` on the page, and the same workshop row then reads purple on a
+  designer's screen and orange on an officer's.
+- **Every ministry rule is written twice** — descendant *and* self-match — because an opting-in
+  component wears the attribute on the styled element itself. A descendant combinator alone fails
+  silently.
+- **A ministry rule owes a `dark:` pair unless it sets `text-white`.** The ramp is literal; ministry
+  ink on a themed ground and a pale ministry ground on a themed card both invert underneath.
+  `text-white` on `bg-ministry-700` fixes both halves of its own contrast and owes nothing.
+- The ministry block re-points `.field-input`'s own focus ring but **never the global
+  `:focus-visible` outline**, `--purple-700`, `--bg-0` or `--card`. Those four are not overruled.
 
 **Nav**
 - The scrim is `z-40`, below the island's `z-50`, so the X stays clickable.
@@ -2003,6 +2219,13 @@ Each of these looks wrong and is deliberate. Most were a shipped bug.
   download, never inside the .docx**. Write that sentence, not the annexure one.
 
 **Android — you will be editing Kotlin the moment a feature lands on both clients (§16)**
+- **The dashboard `tiles` array is parsed as TEXT by three tests in three languages, and the
+  declaration `const tiles: Tile[] = [` must never be quoted in prose above it** (§16). Two of them
+  `indexOf` the raw file and strip comments only afterwards, so a comment repeating the declaration
+  is found first and the scan runs off the end of the file: "the `tiles` array literal is not
+  closed", an error that names the array and not the sentence. The array's ORDER is pinned on both
+  clients; the four-mega-card grouping is a `group` scalar regrouped at render time, precisely so
+  that nothing had to move.
 - **Kotlin block comments NEST, unlike Java's.** So an unbalanced `/*` anywhere inside a KDoc — and
   the one that bites is a mime wildcard, `image/*` or `*/*`, written out in prose — opens a second
   comment, the block's own `*/` closes only that one, and the outer comment swallows the rest of the
@@ -2018,10 +2241,35 @@ Each of these looks wrong and is deliberate. Most were a shipped bug.
 ## 18. Checklists
 
 ### New page
+
+A destination in this repo owes MORE registers than a route file, and the ones a reviewer does not
+think to check are the ones that have shipped as "the feature is still not there".
+`/ministry-dashboard` (2026-09-20) had to satisfy every line below.
+
 - [ ] `"use client"` (unless it reads no API), under `app/(protected)/`
 - [ ] `PageHeader` first, nothing above it; no top padding of your own
 - [ ] `ROUTE_GUARDS` row if gated; `ADMIN_CHROME_ROUTES` row if admin chrome (with an honest
-      `alternative`); **one** `NAV_ITEMS` entry; a dashboard tile if Android has one
+      `alternative`); **one** `NAV_ITEMS` entry
+- [ ] **`docs/PERMISSIONS.md` §5** — the guard table's twin row, AND the two counts in the sentence
+      above it ("all N rules … as M rows"). `docs/tools/check-docs.mjs` (`checkRouteGuardTable`)
+      diffs the path LIST in both directions and has **no opinion whatsoever about a number written
+      out in words**, which is why that sentence has been wrong more than once
+- [ ] **ministry surface only** (`ministry: true` on the row): BOTH hand-typed literals in
+      `frontend/e2e/ministry-surface-unit.spec.ts` — `MINISTRY_PATHS`, written out rather than
+      derived from the flag so that a sixth surface has to be TYPED and is therefore a decision
+      somebody made, and the `ROUTE_GUARDS.length` total. **Count the ARRAY, never a grep**:
+      `^    path:` undercounts by three, because the last three rows are one-liners spread with
+      `RECORD_CREATOR_GUARD` and the pattern cannot see them
+- [ ] **a new `*_ROLES` literal?** register it in `MIRRORS` in
+      `backend/tests/test_role_ladder_parity.py` (`path`, `binding`, `kind`, `pattern`, and `absent`
+      for a `partial`). That sweep is what stops a twelfth tier defaulting into or out of a set
+      nobody re-read — and register it even where an existing literal has identical membership,
+      which is the whole reason `MINISTRY_DASHBOARD_ROLES` and `MINISTRY_DESK_ROLES` are two entries
+- [ ] a dashboard tile **only if Android has one**. `DashboardTileParityTest` asserts `WEB_ONLY` is
+      `emptyList<String>()` in both directions, so a web-only destination added to the `tiles` array
+      turns the Kotlin red. Give it a **sibling section above the grid** instead — `MinistryDeskCard`
+      is the worked example: it owns its own gate, is read by neither parity test, and costs the grid
+      no row. If you do add a tile, set its `group`; the array's ORDER may not move (§16)
 - [ ] content in `panel`s; `EmptyState` for nothing-here; `items === null` vs `[]`
 - [ ] fetch race guard (generation / cancelled / signal)
 - [ ] z-index from the ladder only

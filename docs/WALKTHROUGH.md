@@ -290,6 +290,16 @@ either a **"Record this question"** audio clip or a typed answer, and Interview 
 language. Recorded audio is auto-transcribed on the server, so you get both the original recording
 and searchable text without typing during the interview.
 
+
+**Correcting one afterwards.** A recorded interview can be reopened from the browser: press
+**Edit** on its row in the table below the form, or on its row in *View Data*, and the sitting
+comes back into the form above with its answers, its artisans and its workshop already filled in.
+Saving corrects that sitting rather than filing a second one. Three things a correction
+deliberately does not change: the recordings already attached to it are kept and are not
+re-uploaded, when it was captured is not re-stamped to the moment you typed the correction, and
+the location it was recorded at is left alone unless you take a new fix. Whether you may change a
+field somebody else recorded is decided by the server, per record, when you save — so the Edit
+link is offered to everyone and the refusal, if there is one, names what it refused.
 **Watch out for:**
 
 - **There is no date box, and that is deliberate.** The interview date is derived from when the

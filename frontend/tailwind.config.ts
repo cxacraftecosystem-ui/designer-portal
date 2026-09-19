@@ -192,7 +192,34 @@ const config: Config = {
         island: "0 4px 16px rgba(46, 16, 101, 0.12), 0 1px 2px rgba(46, 16, 101, 0.06)",
         cta: "0 8px 24px oklch(0.47 0.198 305 / 0.28)",
         glow: "0 8px 24px oklch(0.47 0.198 305 / 0.28)",
-        "glow-soft": "0 4px 16px oklch(0.47 0.198 305 / 0.16)"
+        "glow-soft": "0 4px 16px oklch(0.47 0.198 305 / 0.16)",
+        /*
+         * THE MINISTRY TWIN OF `cta`, AT HUE 45, AND IT EXISTS BECAUSE A SCOPED SELECTOR CANNOT
+         * REACH THE ORIGINAL.
+         *
+         * `.field-button` carries `hover:shadow-cta`, and that is a Tailwind TOKEN compiled into a
+         * utility class — not a CSS custom property — so no `[data-surface="ministry"]` rule can
+         * re-point it. Before this rung existed, the ministry block's own header named the
+         * consequence as a reason not to repaint the button at all: an orange primary would
+         * "through `hover:shadow-cta`, throw a saturated PURPLE glow while doing it". The owner
+         * overruled the no-orange-buttons ruling on 2026-09-20; the glow is the half of that
+         * refusal which was a MEASUREMENT rather than a judgement, so it is answered rather than
+         * waived.
+         *
+         * THE ARITHMETIC. Geometry is `cta`'s, untouched — same offset, same blur — so the two
+         * shadows sit at the same visual depth and a reader moving between a ministry page and any
+         * other meets one elevation language. Lightness is `ministry-700`'s own 0.47, identical to
+         * `purple-700`'s, and the chroma is the ramp's own gamut-clipped 0.127 at this hue rather
+         * than purple's 0.198, which is outside sRGB at hue 45 and would be silently clipped by the
+         * browser — the same re-derivation every rung of the ramp above went through.
+         *
+         * ALPHA 0.29 AND NOT 0.28, WHICH IS THE ONE NUMBER THAT MOVED. `ministry-700` is 8.6%
+         * lighter in relative luminance than `purple-700`, so at equal alpha the orange glow reads
+         * weaker against the same page. Raising it by one hundredth restores equal perceived weight.
+         * It is a small correction and it is written down because an unexplained 0.29 beside an 0.28
+         * reads as a typo and would be "fixed" back.
+         */
+        "cta-ministry": "0 8px 24px oklch(0.47 0.127 45 / 0.29)"
       },
       transitionTimingFunction: {
         out: "cubic-bezier(0.16, 1, 0.3, 1)",

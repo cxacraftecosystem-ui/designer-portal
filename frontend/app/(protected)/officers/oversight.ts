@@ -76,7 +76,8 @@
  * route tree.
  */
 
-import { ApiError, API_BASE, apiFetch, assertApiConfigured, buildQuery, getToken } from "@/lib/api";
+import { ApiError, apiFetch, buildQuery } from "@/lib/api";
+import { fetchFile } from "@/lib/fileDownload";
 import { designerCreateFields } from "@/lib/designWorkshops";
 import type { DwStageCompleteness, DwStageData, DwSummary } from "@/lib/designWorkshops";
 import type { PageResult } from "@/lib/types";
@@ -582,58 +583,21 @@ export function oversightIsReadOnly(
 export type OversightFile = { blob: Blob; fileName: string };
 
 /**
- * Fetch the .xlsx pro-forma by hand, because `apiFetch` cannot.
+ * Fetch the .xlsx pro-forma by hand, because `apiFetch` cannot — the SHARED helper, at last.
  *
- * That helper reads every response as JSON or TEXT, and reading a workbook as text hands back a
- * mangled string cast to the caller's type — a download that "succeeds" and produces a file Excel
- * refuses to open.
- *
- * ⚠ **THIS IS A SECOND COPY OF `lib/questionnaireForms.fetchWorkbook`, AND IT SHOULD NOT BE.** That
- * function is private to its module and this one is character-for-character its three obligations:
- * refuse the request when this build has no usable API address, attach the bearer token, and turn a
- * failure body into the sentence the server actually sent rather than "[object Object]". The right
- * shape is one exported helper both doors call — `lib/questionnaireForms.ts` was owned by another
+ * ✅ **THE ⚠ THAT STOOD HERE HAS BEEN DISCHARGED AND IS KEPT AS THE RECORD OF IT.** It read: *"THIS
+ * IS A SECOND COPY OF `lib/questionnaireForms.fetchWorkbook`, AND IT SHOULD NOT BE … The right shape
+ * is one exported helper both doors call — `lib/questionnaireForms.ts` was owned by another
  * workstream in the wave that wrote this, so the copy is deliberate and temporary rather than an
- * oversight. **If you are the person consolidating them, export `fetchWorkbook` and delete this.**
+ * oversight. **If you are the person consolidating them, export `fetchWorkbook` and delete this.**"*
+ *
+ * By the time the ministry dashboard needed a download there were FOUR copies, not two. They are now
+ * one: `lib/fileDownload.fetchFile`. This module's copy also had a defect the others did not — its
+ * error branch used a bare `typeof detail === "string"` test rather than `describeApiDetail`, so a
+ * FastAPI 422, whose `detail` is a LIST, fell through to `statusText` and reached an officer as a
+ * blank box on the one screen where an upload is refused most often.
  */
-async function fetchWorkbook(path: string, fallbackName: string): Promise<OversightFile> {
-  assertApiConfigured();
-
-  const headers = new Headers();
-  const token = getToken();
-  if (token) headers.set("Authorization", `Bearer ${token}`);
-
-  const response = await fetch(`${API_BASE}/api${path}`, { headers, cache: "no-store" });
-  if (!response.ok) {
-    const contentType = response.headers.get("content-type") ?? "";
-    const payload = contentType.includes("application/json")
-      ? await response.json()
-      : await response.text();
-    const detail =
-      typeof payload === "object" && payload && "detail" in payload
-        ? (payload as { detail: unknown }).detail
-        : undefined;
-    // `statusText` is empty over HTTP/2 — which every deployed request is — so it can never be the
-    // last resort on its own, or a body-less failure reaches the screen as a blank error box.
-    throw new ApiError(
-      response.status,
-      typeof detail === "string" && detail
-        ? detail
-        : response.statusText || `The server refused the request (HTTP ${response.status}).`,
-      payload
-    );
-  }
-  return {
-    blob: await response.blob(),
-    fileName: fileNameFromDisposition(response.headers.get("content-disposition")) ?? fallbackName
-  };
-}
-
-function fileNameFromDisposition(header: string | null): string | null {
-  if (!header) return null;
-  const match = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(header);
-  return match ? decodeURIComponent(match[1]) : null;
-}
+const fetchWorkbook = fetchFile;
 
 /**
  * The blank workbook an officer types a workshop's artisan list into.

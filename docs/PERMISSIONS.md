@@ -1633,14 +1633,14 @@ The client's half of gating is declared **once**, in `ROUTE_GUARDS` in `frontend
 and enforced by `AppShell` for the entire `(protected)` tree. A hidden nav entry is not a guard —
 every one of these routes is reachable by typing the URL.
 
-**"The client" means the browser, and for four of these routes there is deliberately no second one.**
-`/annual-plan`, `/sanction-orders`, `/officers` and `/officers/monitored` have no Android counterpart
-and are not going to get one — the reasoning, and what it does and does not extend to, is in
-[DECISION-ministry-surfaces-web-only.md](DECISION-ministry-surfaces-web-only.md). A missing row in a
-handset's menu is not a permission decision and must never be read as one; the gate is the backend
+**"The client" means the browser, and for five of these routes there is deliberately no second one.**
+`/annual-plan`, `/sanction-orders`, `/officers`, `/officers/monitored` and `/ministry-dashboard` have
+no Android counterpart and are not going to get one — the reasoning, and what it does and does not
+extend to, is in [DECISION-ministry-surfaces-web-only.md](DECISION-ministry-surfaces-web-only.md).
+A missing row in a handset's menu is not a permission decision and must never be read as one; the gate is the backend
 dependency in the right-hand column, and it answers a phone exactly as it answers a browser.
 
-**All twenty-four rules, in the order they are declared, as twenty-two rows.** Every one of them,
+**All twenty-five rules, in the order they are declared, as twenty-three rows.** Every one of them,
 deliberately — see the note under the table about why a partial list here is worse than no list at
 all.
 
@@ -1656,8 +1656,11 @@ number written out in words, so nothing went red for as long as the sentence was
 were corrected on 2026-09-13 in the change that added `/sanction-orders`, which is why they moved by
 two rather than by one — and moved again the same day, to twenty-three and twenty-one, when
 `/officers` and `/officers/monitored` landed, and once more to twenty-four and twenty-two when
-`/annual-plan` did. If you add a rule, the count to update is the number of
-`path:` values; `docs/tools/check-docs.mjs` reports it on every run.
+`/annual-plan` did. They moved a fourth time, to twenty-five and twenty-three, when
+`/ministry-dashboard` landed on 2026-09-20 — a rule and a row, moving both numbers by one. If you add
+a rule, the count to update is the number of `path:` values; `docs/tools/check-docs.mjs` reports it
+on every run — and count the ARRAY rather than grepping `^    path:`, because the last three entries
+are one-liners spread with `RECORD_CREATOR_GUARD` and that pattern does not see them.
 
 | Route | Client gate | Backend dependency it mirrors |
 |---|---|---|
@@ -1666,6 +1669,7 @@ two rather than by one — and moved again the same day, to twenty-three and twe
 | `/admin/analytics` | `isAdmin` — a **designer is refused**, because this aggregates clusters and workshops beyond their own | `require_admin` |
 | `/admin/designers` | `canManageDesignerRoster` | `require_designer_roster_manager` |
 | `/admin/access` | `canManageAccessRoster` — **admin and above**, deliberately not master-admin-only: the master-admin exemption in the sign-in gate is the break-glass, and a queue only one account can clear would make that exemption a single point of failure | `require_access_manager` |
+| `/ministry-dashboard` | `canSeeMinistryDashboard` — a **set**, {ASSISTANT_DIRECTOR, REGIONAL_DIRECTOR, MINISTRY_ADMIN, MASTER_ADMIN}, and no rank floor expresses it: the tightest floor that admits Assistant Director (42) also admits **Admin (50)**, which is deliberately out, and a floor at Ministry Admin (48) loses the two tiers who actually supervise the workshops this page is about. The set has a **hole at 50 with Master Admin (60) above it**, and every threshold instinct closes that hole — which is why this row's refusal is **not monotonic in rank** either — an Admin (50) is refused a page an Assistant Director (42) may open, the same shape as the `/officers` row further down, and §2's ladder gives the wrong answer for it every time. An **ADMIN is refused**, and not for want of capability: an admin reads more of this installation than any ministry post does. It is that they already have this screen under another name — `/admin/analytics` is the admin's whole-estate view and it is reached from a settings hub the three ministry posts cannot open at all, so admitting an admin here would be a second whole-estate door for the one tier that already has one. **It is deliberately NOT `canSeeMinistryDesk`**, although that literal has the identical four members today: the desk is a dashboard CARD'S AUDIENCE, and its own docstring promises in as many words that widening it "widens no capability at all" and that it is mirrored nowhere on the server. Both promises stop being true the moment a card audience is used as a `ROUTE_GUARDS.can` — a later editor widening the card, an edit its comment says is free, would silently open the page that holds the whole national programme. Two literals, two jobs, and the duplication is the point rather than something to tidy. The row also carries `ministry: true`, making this the **fifth ministry surface**; the orange accent follows from that one flag, with no CSS and no second list of paths to keep in step. Read is the only gate there is — nothing on this page writes — and WHAT THE PAGE SHOWS is a second question the server answers separately: `scope_clause` hands Ministry Admin and Master Admin the whole estate and narrows Assistant Director and Regional Director through the same `oversight_by_clause` that already scopes `/officers/monitored`, and the page prints the server's own `scopeLabel` sentence rather than rendering "every workshop on the platform" over an officer's four | `require_ministry_dashboard_reader` (declared in `app/api/routes/ministry_dashboard.py` over `deps.can_see_ministry_dashboard` and `deps.MINISTRY_DASHBOARD_ROLES` — the same split as the `/annual-plan` row below, where the predicate is in `deps.py` and the dependency that raises is not). It is the gate on all six reads under the prefix — `GET /api/ministry-dashboard/design-workshops`, `GET /api/ministry-dashboard/workshops`, `GET /api/ministry-dashboard/summary`, `GET /api/ministry-dashboard/entitlements` and the two CSV exports beside them — so a seventh route added to that file is gated by having been put there. `MINISTRY_DASHBOARD_REFUSAL` is the 403 detail and is shared byte-for-byte with this row's own `message`, held so by `backend/tests/test_ministry_dashboard_gate.py` the way `test_sanction_order_gate.py` holds its own |
 | `/annual-plan` | `canManageAnnualPlan` — a **rank floor at Ministry Admin (48)**, deliberately not `isAdmin`, which is set membership `{ADMIN, MASTER_ADMIN}` and would refuse the very tier the page exists for. That is also why the route is TOP-LEVEL and not nested under `/admin`: a rule WIDER than `/admin` sitting beneath it is refused twice over, once by the longest-match guard and once by the hub page's own `isAdmin` check. Regional Director (45) and Assistant Director (42) are below the floor because the annual plan is a national instrument and this table carries no per-region column an edit could be narrowed to — regional editing is a scope table, not a rank change. Read is gated with write: the plan is a list of named places and dates the ministry has not announced yet | `require_annual_plan_manager` (declared in `app/api/routes/annual_plan.py` over `annual_plan.can_manage_annual_plan`, not in `deps.py` — see §"How this document is kept true") |
 | `/design-workshops/:id/provenance` | `isAdmin` — the per-field authorship on each stage stays open to every designer on the workshop; this is the CANONICAL COMPARISON, which crosses into the shared record tables and reports one account's data beside another's | `require_admin` (`GET /design-workshops/{id}/provenance`) |
 | `/settings/api-keys` | `isAdmin` (key **values** are master-admin inside the page) | `require_admin` / `require_master_admin` |

@@ -45,8 +45,10 @@ import {
   type RefObject
 } from "react";
 import { createPortal } from "react-dom";
+import { usePathname } from "next/navigation";
 
 import { useAppReducedMotion } from "@/components/guide/useAppReducedMotion";
+import { ministrySurface } from "@/lib/permissions";
 import { lockPageScroll, unlockPageScroll } from "@/lib/scrollLock";
 import { cn } from "@/lib/utils";
 
@@ -194,6 +196,9 @@ export function FieldDialog({
   const panelRef = useRef<HTMLDivElement | null>(null);
   const restoreFocusRef = useRef<HTMLElement | null>(null);
   const reduce = useAppReducedMotion();
+  /* Which surface raised this dialog — see the note on the overlay's `data-surface` below. Read
+     unconditionally, like every other hook here: the early `if (!mounted) return null` sits below. */
+  const pathname = usePathname();
 
   // Portals need a DOM; the first client render is what makes one available.
   const [mounted, setMounted] = useState(false);
@@ -353,6 +358,27 @@ export function FieldDialog({
         <motion.div
           key="field-dialog-overlay"
           data-field-dialog-overlay=""
+          /*
+            THE SURFACE TRAVELS WITH THE DIALOG, AND WITHOUT THIS LINE IT COULD NOT.
+
+            `globals.css`'s scoped ministry block hangs off `data-surface="ministry"`, which
+            `AppShell` stamps on <main>. This overlay is `createPortal`'d to `document.body` — OUTSIDE
+            <main> by construction — so no ancestor scope can reach it, and the block's own header
+            records that as deliberate for dropdown panels and toasts: those are APP chrome that
+            happens to have been raised from a ministry page.
+
+            A DIALOG IS NOT THAT. `/annual-plan` opens "Upload the annual plan" and `/sanction-orders`
+            opens its import review, and the confirming button INSIDE each is the second half of the
+            act whose trigger the reader just pressed on the page. Left unstamped, the ministry
+            surfaces would ship an orange trigger on the page and a purple primary in the dialog it
+            opens — one action in two accent colours, which is worse than either colour alone.
+
+            IT IS DERIVED FROM THE PATHNAME AND NOT PASSED IN, so every existing call site is correct
+            without being edited and the next one cannot forget. `AppShell` guards its own stamp with
+            `!blocked`; no guard is owed here, because a dialog can only be opened by a page that is
+            already being served.
+          */
+          data-surface={ministrySurface(pathname) ? "ministry" : undefined}
           className="fixed inset-0 grid place-items-center overflow-y-auto bg-ink-900/45 p-4 backdrop-blur-[2px]"
           /*
             THE GUTTER, REPAID — the standing obligation on anything `position: fixed` and
