@@ -27,16 +27,16 @@ Enums: `UserRole`, `AuthProvider`, `RecordStatus`, `WorkshopType`, `MediaType`, 
 
 ## API surface
 
-**349 operations** in the working tree — 173 GET, 106 POST, 28 DELETE,
+**350 operations** in the working tree — 173 GET, 107 POST, 28 DELETE,
 24 PATCH, 18 PUT. 2 of them (`/health`, `/health/ready`) are declared
 on the app rather than on a router; the rest are spread across `backend/app/api/routes/`:
 
 | Route module | Operations |
 |---|---|
 | `design_workshops.py` | 43 |
+| `questionnaire.py` | 21 |
 | `workshops.py` | 21 |
 | `media.py` | 20 |
-| `questionnaire.py` | 20 |
 | `questionnaire_forms.py` | 19 |
 | `design_workshop_oversight.py` | 15 |
 | `usage.py` | 13 |
@@ -123,7 +123,7 @@ no key is skipped wherever it sits.
 
 | Surface | Files | Cases | Runner |
 |---|---|---|---|
-| Backend unit (`backend/tests/`) | 221 | 4605 `def test_` | `python -m pytest -q` from `backend/` |
+| Backend unit (`backend/tests/`) | 222 | 4612 `def test_` | `python -m pytest -q` from `backend/` |
 | Web end-to-end (`frontend/e2e/`) | 200 | 2455 `test(` | Playwright, `frontend/playwright.config.ts` |
 | Android unit (`android/app/src/test/`) | 231 | 3095 `@Test` | `./gradlew :app:testDebugUnitTest` from `android/` |
 | Android instrumented (`android/app/src/androidTest/`) | 8 | 24 `@Test` | needs a device; not run in CI |
@@ -151,7 +151,7 @@ and this one asserted an absence it had never looked for.
 
 | Area | Tracked files | Tracked lines | Tree files | Tree lines |
 |---|---|---|---|---|
-| `backend/app` | 204 | 152,071 | 204 | 152,071 |
+| `backend/app` | 204 | 152,525 | 204 | 152,525 |
 | `frontend/app` | 92 | 51,760 | 92 | 51,760 |
 | `frontend/components` | 300 | 129,126 | 300 | 129,126 |
 | `frontend/lib` | 125 | 66,634 | 125 | 66,634 |
