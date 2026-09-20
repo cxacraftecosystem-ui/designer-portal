@@ -894,7 +894,41 @@ async def oversight_links(workshop_ids: list[str]) -> list[Any]:
 
 
 async def inspector_links(workshop_ids: list[str]) -> list[Any]:
-    """Every inspector assignment on these workshops, with its account. ONE query."""
+    """Every inspector assignment on these workshops, with its account. ONE query.
+
+    ── ⚠ THIS MODULE IS A CLASSIFIED READER OF THE INSPECTOR ASSIGNMENT TABLE ───────────────────
+
+    ``tests/test_dw_inspector_scope_gate.py`` sweeps all of ``app/`` for four names and this read
+    speaks one of them — the Prisma delegate on the line below. That sweep caught this route on the
+    day it landed, which is the sweep working rather than the sweep being wrong, and its own failure
+    message asks the right question: *is this a READ?*
+
+    It is, and narrowly:
+
+    * **It counts rows and serves a number.** How many workshops each inspector holds — nothing off
+      an inspection, no note, no field value, no stage content.
+    * **It decides nothing.** The workshop ids handed to it have ALREADY been scoped by
+      ``ministry_dashboard._design_where``, which composes the caller's own scope under
+      ``where["AND"]``. This function narrows nothing and widens nothing; hand it a list and it
+      answers about that list.
+    * **It consults no predicate.** The OTHER three names in that test's ``THE_NAMES`` tuple are the
+      ones that decide who may REACH a workshop, and this module speaks none of them.
+      ``test_a_classified_reader_speaks_the_table_and_none_of_the_predicates`` is the fence that
+      keeps that true: the classification exempts this file from the delegate alone, not from the
+      feature.
+
+    ⚠ **AND THAT IS WHY THE THREE ARE NOT WRITTEN OUT ABOVE.** The sweep matches RAW TEXT, on
+    purpose — its own comment says the drift it defends against is somebody reaching for an
+    autocompleted symbol, and text is where that happens. A docstring listing the three forbidden
+    names to explain that this module does not use them fails the check exactly as three call sites
+    would. The first draft of this paragraph did precisely that.
+
+    So the entitlement question this register answers is its own — ``require_ministry_dashboard_
+    reader``, a SET with a deliberate hole at ADMIN — and the inspection scope is not consulted here
+    at all. If a future edit needs one of those three, the answer is no: that would be this scope
+    deciding something new, on a surface whose audience is every ministry and directorate account in
+    the installation.
+    """
     if not workshop_ids:
         return []
     return await db.designworkshopinspector.find_many(

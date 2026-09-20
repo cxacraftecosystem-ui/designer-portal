@@ -757,6 +757,32 @@ THE_FEATURE = {
     APP / "schemas" / "design_workshop_inspections.py",
 }
 
+#: FILES THAT MAY SPEAK SOME OF THE NAMES BELOW, AND EXACTLY WHICH ONES.
+#:
+#: ⚠ **THIS IS NOT A SECOND ``THE_FEATURE``, AND THE DIFFERENCE IS THE WHOLE POINT.** A file in
+#: ``THE_FEATURE`` is exempt from ALL FOUR names; a file here is exempt from the ones it is listed
+#: with and from nothing else. The distinction matters because the four names are two different
+#: kinds of thing:
+#:
+#:   * ``has_inspection_scope`` / ``inspectable_by_clause`` / ``load_inspectable_workshop_or_404``
+#:     are PREDICATES. They decide who may reach a workshop, and a second caller is a second place
+#:     the scope is consulted from — which is the drift this section exists to catch.
+#:   * ``designworkshopinspector`` is a TABLE. Reading it to COUNT rows decides nothing at all.
+#:
+#: Added 2026-09-20, when ``GET /ministry-dashboard/inspectors`` landed and this sweep caught it —
+#: which is the sweep working, not the sweep being wrong. That route counts how many workshops each
+#: inspector holds and how much correction they filed, over workshop ids that
+#: ``ministry_dashboard._design_where`` has ALREADY scoped before the read happens. It consults no
+#: predicate, it reaches no stage content, it writes nothing, and its own module header says so.
+#:
+#: Adding a row here is a deliberate act with a cost: the file is then invisible to this sweep for
+#: that one name, so the test below it — which asserts the classified reader still speaks NONE of
+#: the three predicates — is the fence that makes the exemption safe. Add the fence with the row,
+#: never after it.
+CLASSIFIED_READERS: dict[Path, frozenset[str]] = {
+    APP / "services" / "ministry_dashboard.py": frozenset({"designworkshopinspector"}),
+}
+
 #: The names that, spoken anywhere else, mean somebody has wired this scope into another path.
 #:
 #: The Prisma delegate is in the list and it is the one that matters most: a read of
@@ -795,9 +821,14 @@ def test_no_other_module_names_the_inspection_predicates():
     for path in sorted(APP.rglob("*.py")):
         if path in THE_FEATURE:
             continue
+        # A classified reader is exempt from the names it was classified FOR, and from no others.
+        # See `CLASSIFIED_READERS` for why that is not the same exemption `THE_FEATURE` grants.
+        permitted = CLASSIFIED_READERS.get(path, frozenset())
         text = path.read_text(encoding="utf-8", errors="replace")
         lowered = text.lower()
         for name in THE_NAMES:
+            if name in permitted:
+                continue
             if name in lowered:
                 offenders.append(f"{path.relative_to(BACKEND)} names {name!r}")
     assert not offenders, (
@@ -805,6 +836,41 @@ def test_no_other_module_names_the_inspection_predicates():
         + "\n  ".join(offenders)
         + "\nRead the header of app/services/design_workshop_inspectors.py before allowing it."
     )
+
+
+def test_a_classified_reader_speaks_the_table_and_none_of_the_predicates():
+    """**THE FENCE THAT MAKES THE EXEMPTION SAFE**, and it is the reason a row in
+    ``CLASSIFIED_READERS`` is not simply a hole in the sweep above.
+
+    A classified reader is invisible to that sweep for one name. This asserts, per file and by name,
+    that the exemption is still only the one it was granted: the ministry register may READ the
+    inspector table to count rows, and it may not speak a single predicate that DECIDES who reaches a
+    workshop. The day somebody writes ``inspectable_by_clause`` into that module — the autocompleted
+    symbol this whole section is defending against — the sweep above would stay green and this fails.
+
+    It also asserts the reader really does still speak its permitted name. A classification that
+    outlived its call site is a permanent hole nobody can see, so it has to be removed when the read
+    is, and being made to delete a row is the cheapest possible reminder.
+    """
+    for path, permitted in CLASSIFIED_READERS.items():
+        assert path.exists(), f"{path.relative_to(BACKEND)} is classified and does not exist"
+        lowered = path.read_text(encoding="utf-8", errors="replace").lower()
+        for name in permitted:
+            assert name in lowered, (
+                f"{path.relative_to(BACKEND)} is classified for {name!r} and no longer names it. "
+                "Delete the row: a classification that outlived its call site is a hole in the "
+                "sweep that nobody can see."
+            )
+        for name in THE_NAMES:
+            if name in permitted:
+                continue
+            assert name not in lowered, (
+                f"{path.relative_to(BACKEND)} is a CLASSIFIED READER of "
+                f"{sorted(permitted)} and it now also names {name!r}. That is a predicate: it "
+                "decides who may reach a workshop. Reading a table to count rows and consulting a "
+                "scope to grant access are different acts, and this file was only ever allowed the "
+                "first. Read the header of app/services/design_workshop_inspectors.py."
+            )
 
 
 def test_the_sweep_actually_reaches_the_modules_it_is_defending():
