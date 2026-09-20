@@ -12963,14 +12963,32 @@ private fun EntryMode.linkedRecordType(): String = when (this) {
 }
 
 /**
- * Key that collapses all interviews for the SAME set of artisan(s) into one logical record, so the
- * questionnaire dropdowns (browse AND update) are idempotent — multiple saved interview records for
- * the same artisan(s) show once. An interview with no linked artisans stays unique (keyed by its own
- * id) so unrelated artisan-less interviews never merge together.
+ * Key that collapses all interviews for the SAME set of artisan(s) AT THE SAME WORKSHOP into one
+ * logical record, so the questionnaire dropdowns (browse AND update) are idempotent — multiple saved
+ * interview records for the same artisan(s) show once. An interview with no linked artisans stays
+ * unique (keyed by its own id) so unrelated artisan-less interviews never merge together.
+ *
+ * THE WORKSHOP SCOPE IS IN THE KEY BECAUSE IT IS IN THE SERVER'S (2026-09-20). This is the handset's
+ * copy of `QuestionnaireInterview.artisanSetKey` — the same two separators in the same order, so the
+ * two answer "are these the same sitting?" identically. The server used to hold ONE interview per
+ * artisan set across the whole repository; migration
+ * `20260920120000_questionnaire_artisan_set_key_scoped` made it one per set PER WORKSHOP, because two
+ * workshops interviewing the same family are two sittings and only one of them could be recorded.
+ *
+ * ⚠ LEAVING THE WORKSHOP OUT WOULD NOT HAVE CRASHED ANYTHING — it would have HIDDEN A ROW. Both
+ * sittings now exist on the server; a key that ignores the workshop merges them here and
+ * [representativeInterview] then shows whichever was created last. The other workshop's interview,
+ * with its answers and its recordings, simply would not appear in the browse or update dropdown, and
+ * nothing on screen would say a record had been left out. Note the shape is the handset's own
+ * (`set:` / `iv:` prefixes, `toSortedSet`) and is NOT sent to the server: what must match is the
+ * QUESTION it answers, not the string.
  */
 private fun interviewGroupKey(iv: QuestionnaireInterviewDetailDto): String {
     val ids = iv.artisans.map { it.artisanId }.toSortedSet()
-    return if (ids.isEmpty()) "iv:${iv.id}" else "set:${ids.joinToString(",")}"
+    // `orEmpty()` for a null column, which is exactly what the server's `or ""` does — an interview
+    // filed under no workshop is one scope, not an absent one, and the two must group together.
+    val scope = "${iv.workshopId.orEmpty()}|${iv.designWorkshopId.orEmpty()}"
+    return if (ids.isEmpty()) "iv:${iv.id}" else "set:$scope|${ids.joinToString(",")}"
 }
 
 /** The representative (most recently created) interview that a merged entry opens / edits. */

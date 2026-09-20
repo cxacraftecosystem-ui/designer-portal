@@ -624,11 +624,13 @@ QUESTIONNAIRE_INTERVIEW_NOT_CARRIED = {
     "reviewedById": _MUTABLE_VERDICT,
     "reviewedAt": _MUTABLE_VERDICT,
     # A `String? @unique` that a "carry the scalars" instinct sweeps in without noticing. It is the
-    # SORTED, COMMA-JOINED LIST OF ARTISAN IDS — a group re-identification key in one string, which
-    # smuggles in exactly the roster the names refusal excludes.
+    # WORKSHOP SCOPE FOLLOWED BY THE SORTED, COMMA-JOINED LIST OF ARTISAN IDS — a group
+    # re-identification key in one string, which smuggles in exactly the roster the names refusal
+    # excludes, and since 2026-09-20 the workshop id with it.
     "artisanSetKey": (
-        "a group re-identification key: the sorted, comma-joined ARTISAN IDS of the sitting. "
-        "Carrying it would smuggle in the roster the names refusal excludes, in one string."
+        "a group re-identification key: the workshop scope plus the sorted, comma-joined ARTISAN "
+        "IDS of the sitting. Carrying it would smuggle in the roster the names refusal excludes, "
+        "in one string."
     ),
     # `_reference_place` returns `(row.place, '', '')` for every model but `Artisan`, and this model
     # does not include `location` at all — the cleanest form of the refusal. Its own docstring's
@@ -1980,7 +1982,10 @@ def _interview_row(**overrides):
         language="Odia",
         notes="The second weaver's daughter translated for her.",
         status="APPROVED",
-        artisanSetKey="art_1,art_2,art_3,art_4,art_5,art_6",
+        # The scoped spelling the column has carried since migration 20260920120000:
+        # "<workshopId>|<designWorkshopId>|<sorted artisan ids>". The roster is still in there, which
+        # is the whole reason this field is on the refusal list.
+        artisanSetKey="wsh_1||art_1,art_2,art_3,art_4,art_5,art_6",
         recordedAt=datetime(2026, 3, 16, 8, 0),
         createdById="usr_9",
         workshop=SimpleNamespace(title="Sambalpuri Ikat cluster survey, Barpali"),
@@ -2380,7 +2385,8 @@ async def test_no_artisan_answer_or_name_crosses_from_an_interview(monkeypatch):
     room together is a social one — and decisively, a sitting may include artisans who are NOT on
     this workshop's roster, so naming them would have a submitted report disclose that a particular
     person from another cluster was interviewed. ``artisanSetKey`` is refused with them: it is the
-    sorted, comma-joined list of artisan IDS, which is the same roster in one string.
+    workshop scope plus the sorted, comma-joined list of artisan IDS, which is the same roster in one
+    string.
     """
     row = _interview_row()
     data = await _hydrate(

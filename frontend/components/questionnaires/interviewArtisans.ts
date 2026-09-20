@@ -417,7 +417,8 @@ export function primaryInterviewArtisanId(selectedIds: readonly string[]): strin
 }
 
 /**
- * The SET key the shared-entry lookup is keyed on: sorted, blank-free, comma-joined.
+ * The SET key the shared-entry lookup is keyed on:
+ * `"<workshopId>|<designWorkshopId>|<sorted, blank-free, comma-joined artisan ids>"`.
  *
  * SORTED, because the interview is stored once per exact SET of artisans and ticking A then B is the
  * same interview as ticking B then A — the server's own `artisan_set_key` sorts for the same reason,
@@ -425,9 +426,36 @@ export function primaryInterviewArtisanId(selectedIds: readonly string[]): strin
  * string would disagree about which interview a save folds into. This is deliberately NOT the order
  * the ids are SENT in: that order is the researcher's and is what {@link primaryInterviewArtisanId}
  * reads, so the two must not be collapsed into one array.
+ *
+ * THE WORKSHOP SCOPE IS PART OF THE KEY (2026-09-20) AND THE `scope` ARGUMENT IS REQUIRED. The
+ * server's key carries it now: a set held one interview across the WHOLE repository before, so the
+ * same artisans interviewed at a second workshop folded into their first workshop's row and wrote
+ * the second sitting's answers onto it. `backend/prisma/migrations/20260920120000_questionnaire_
+ * artisan_set_key_scoped` has the full argument, including why the scope could not simply become a
+ * composite index (both workshop columns are nullable, and NULLs are distinct in a Postgres unique
+ * index — the dedupe would have silently switched off for the 31-of-44 interviews that name no
+ * workshop).
+ *
+ * ⚠ IF THIS FUNCTION AND THE SERVER'S EVER DISAGREE, NOTHING FAILS LOUDLY. The page uses this string
+ * to decide "is there already an entry for this set?", so a client computing the old spelling simply
+ * stops matching: the researcher is shown no existing entry, starts what looks like a fresh sitting,
+ * and the save folds into a row they were never shown. That is why `scope` is required rather than
+ * optional — an omitted scope would silently mean "the unattached interview" — and why
+ * `backend/tests/test_questionnaire_artisan_set_scope.py` reads THIS FILE and asserts it spells the
+ * key exactly as Python does.
+ *
+ * `""` for an empty selection, which is the TypeScript spelling of the `None` the server returns
+ * there: an interview with no artisans is not deduped at all, so there is no key to look up.
  */
-export function artisanSetKey(selectedIds: readonly string[]): string {
-  return [...new Set(selectedIds.filter(Boolean))].sort().join(",");
+export function artisanSetKey(
+  selectedIds: readonly string[],
+  scope: InterviewWorkshopScope
+): string {
+  const ids = [...new Set(selectedIds.filter(Boolean))].sort().join(",");
+  // Built from {@link interviewScopeKey} rather than re-interpolating the two ids, so "which workshop
+  // is this" has ONE spelling in this file. `""` is this repository's "not linked to a workshop" and
+  // is exactly what the server's `or ""` produces for a null column, so both ends agree on `"||a,b"`.
+  return ids ? `${interviewScopeKey(scope)}|${ids}` : "";
 }
 
 /**

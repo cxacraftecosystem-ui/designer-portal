@@ -1,9 +1,13 @@
 """One artisan's questionnaire, gathered from every interview they sat in, as a single document.
 
-WHY THIS EXISTS. An interview belongs to an exact SET of artisans — ``artisanSetKey`` is the sorted,
-comma-joined artisan ids under a unique constraint, and a subset is a different set, so it gets its
-own entry. That storage rule is correct and is NOT changed here: it is what stops five clients
-recording the same sitting five times. But it means an artisan's answers are scattered across every
+WHY THIS EXISTS. An interview belongs to an exact SET of artisans at an exact WORKSHOP —
+``artisanSetKey`` is the workshop scope followed by the sorted, comma-joined artisan ids, under a
+unique constraint, and a subset is a different set, so it gets its own entry. That storage rule is
+correct and is NOT changed here: it is what stops five clients recording the same sitting five times.
+The workshop entered the key on 2026-09-20 (migration ``20260920120000``) and makes the scattering
+this module gathers up STRICTLY WIDER, never narrower — the same people at two workshops are now two
+entries where they used to be one — which is an argument for this view, not against it. But it means
+an artisan's answers are scattered across every
 set they happen to appear in, and on the live repository that scattering is the normal case, not an
 edge case: of sixteen artisans, thirteen appear in more than one interview and three appear in four.
 Reading such an artisan today means opening four separate entries and holding them in your head.

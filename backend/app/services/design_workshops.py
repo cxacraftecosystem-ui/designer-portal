@@ -2594,9 +2594,10 @@ REFERENCE_MODELS: dict[str, ReferenceModel] = {
         # WHAT IS NOT HERE, so that each absence is a decision on the record. The five helpers above
         # carry the argument for the answers themselves. Also refused: the artisans' NAMES (a sitting
         # may cover artisans who are not on this roster); `artisanSetKey` (a `String? @unique` that a
-        # "carry the scalars" instinct sweeps in without noticing — it is the sorted, comma-joined
-        # list of ARTISAN IDS, a group re-identification key in one string, smuggling exactly the
-        # roster the names refusal excludes); `notes` (unbounded free prose about a GROUP of which the
+        # "carry the scalars" instinct sweeps in without noticing — it is the workshop scope followed
+        # by the sorted, comma-joined list of ARTISAN IDS, a group re-identification key in one
+        # string, smuggling exactly the roster the names refusal excludes — and since 2026-09-20 the
+        # workshop id along with it); `notes` (unbounded free prose about a GROUP of which the
         # report may name one, so "the second weaver's daughter" can be neither attributed nor
         # redacted — unlike `Artisan.notes`, whose subject is the one person named on the row it lands
         # on); `status`/`reviewNotes`/`reviewedById`/`reviewedAt` (MUTABLE — live in the sublabel via

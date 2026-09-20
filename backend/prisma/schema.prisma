@@ -1621,10 +1621,31 @@ model QuestionnaireInterview {
   updatedAt     DateTime     @updatedAt
   createdById   String
   locationId    String?
-  // Deterministic key for the exact set of artisans this interview covers (sorted, comma-joined
-  // artisan ids). Enforces ONE interview per artisan set: creation is idempotent on this key, so
-  // every client lands on the single canonical entry instead of spawning duplicates. NULL only when
-  // an interview has no artisans (those are not deduped). A subset is a different set => different key.
+  // Deterministic key for the exact set of artisans this interview covers, WITHIN ONE WORKSHOP:
+  //   "<workshopId>|<designWorkshopId>|<sorted, comma-joined artisan ids>"
+  // with "" standing in for a workshop that is not named. Enforces ONE interview per artisan set per
+  // workshop: creation is idempotent on this key, so every client lands on the single canonical entry
+  // instead of spawning duplicates. NULL only when an interview has no artisans (those are not
+  // deduped). A subset is a different set => different key.
+  //
+  // THE SCOPE MOVED INTO THE KEY ON 2026-09-20 (migration 20260920120000) AND THE INDEX DID NOT MOVE,
+  // which is the whole design. The key used to be the artisan ids alone, so one artisan set held one
+  // interview ACROSS THE ENTIRE REPOSITORY and two workshops interviewing the same people collided:
+  // the second sitting folded into the first and wrote its answers onto that row. The field
+  // repository hit the same defect from the instrument side and fixed it with
+  // `@@unique([questionnaireId, artisanSetKey])` — a fix this model CANNOT COPY, because it has no
+  // `questionnaireId`. Its scope columns are `workshopId` and `designWorkshopId` and BOTH ARE
+  // NULLABLE, so `@@unique([workshopId, designWorkshopId, artisanSetKey])` would have been worse than
+  // the defect: NULLs are DISTINCT under a Postgres unique index, so the 31-of-44 interviews that
+  // name no workshop would have stopped deduping altogether — silently, with no error anywhere — and
+  // the duplicate explosion migration 20260622120000 cleaned up (133 rows for 18 real sets) would
+  // have started again. A scope carried INSIDE the key is one non-null string per (scope, set) and has
+  // no nullability hazard at all. Do not "simplify" this into a composite index.
+  //
+  // FOUR PLACES SPELL THIS KEY and they must agree character for character:
+  // `routes/questionnaire.artisan_set_key`, the recompute in migration 20260920120000,
+  // `frontend/components/questionnaires/interviewArtisans.ts` and the handset's `interviewGroupKey`.
+  // `backend/tests/test_questionnaire_artisan_set_scope.py` holds the first three together.
   artisanSetKey String?      @unique
   /// The workshop this interview was conducted at, named EXPLICITLY on the record — previously an
   /// interview had no path to a workshop at all. Nullable, so every interview recorded before this

@@ -1,5 +1,10 @@
 """Reconcile QuestionnaireInterview.artisanSetKey with each interview's CURRENT artisan links.
 
+The key is ``"<workshopId>|<designWorkshopId>|<sorted artisan ids>"`` since 2026-09-20 — the workshop
+SCOPE is part of it, so "the same artisan set" below always means "the same artisan set AT THE SAME
+WORKSHOP". Two workshops interviewing the same people are two legitimate rows and this script must
+never fold them together; that is why every recompute here reads the row's own workshop columns.
+
 Why: an out-of-band change to the artisan links (e.g. the artisan-merge script) can leave the
 denormalised ``artisanSetKey`` stale, and can make two interviews share the same actual artisan set.
 Editing such an interview recomputes the key and collides with the sibling -> HTTP 409. This script
@@ -35,7 +40,16 @@ async def main() -> None:
         correct_key: dict[str, str | None] = {}
         by_key: dict[str, list[str]] = defaultdict(list)
         for iv in interviews:
-            key = artisan_set_key([link.artisanId for link in (iv.artisans or [])])
+            # THE ROW'S OWN WORKSHOP COLUMNS, because the key carries the workshop scope since
+            # 2026-09-20 (see ``questionnaire.artisan_set_key``). Recomputing without them would
+            # rewrite all 44 keys to the unattached spelling and then collapse every workshop's
+            # sitting into whichever one happened to be consolidated first — this script would become
+            # the data loss it was written to repair.
+            key = artisan_set_key(
+                [link.artisanId for link in (iv.artisans or [])],
+                workshop_id=iv.workshopId,
+                design_workshop_id=iv.designWorkshopId,
+            )
             correct_key[iv.id] = key
             if key:
                 by_key[key].append(iv.id)

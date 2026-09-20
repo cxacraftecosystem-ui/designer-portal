@@ -150,16 +150,53 @@ test("anything needing one artisan takes element 0, in the researcher's own tick
   expect(primaryInterviewArtisanId(["", "a1"])).toBe("a1");
 });
 
+/** "Filed under no workshop" — the state 31 of the corpus's 44 interviews are in. */
+const UNFILED = { workshopId: "", designWorkshopId: "" };
+
 test("the SET key sorts and the SENT order does not — they are two different facts", () => {
   // The interview is stored once per exact SET of artisans (`artisanSetKey` is `@unique`), and the
   // server's own `artisan_set_key` sorts, so ticking A then B is the same interview as B then A. The
   // ORDER the ids are sent in is the researcher's and is what `primaryInterviewArtisanId` reads, so
   // collapsing the two into one array would make the head of the selection alphabetical.
-  expect(artisanSetKey(["a3", "a1", "a2"])).toBe("a1,a2,a3");
-  expect(artisanSetKey(["a1", "a3", "a2"])).toBe(artisanSetKey(["a3", "a2", "a1"]));
-  expect(artisanSetKey(["a1", "", "a1"]), "de-duplicated and blank-free").toBe("a1");
-  expect(artisanSetKey([])).toBe("");
+  expect(artisanSetKey(["a3", "a1", "a2"], UNFILED)).toBe("||a1,a2,a3");
+  expect(artisanSetKey(["a1", "a3", "a2"], UNFILED)).toBe(artisanSetKey(["a3", "a2", "a1"], UNFILED));
+  expect(artisanSetKey(["a1", "", "a1"], UNFILED), "de-duplicated and blank-free").toBe("||a1");
+  // Empty stays `""` and NOT `"||"`: an interview with no artisans is not deduped at all, so there
+  // is no key to look up, and the falsy sentinel is what the page's early return reads.
+  expect(artisanSetKey([], UNFILED)).toBe("");
   expect(primaryInterviewArtisanId(["a3", "a1"]), "the head is not re-sorted").toBe("a3");
+});
+
+test("the WORKSHOP is part of the key, so two workshops are two sittings", () => {
+  // Migration `20260920120000_questionnaire_artisan_set_key_scoped` put the scope inside the server's
+  // key: one artisan set used to hold one interview across the WHOLE repository, so the same family
+  // interviewed at a second workshop folded into the first workshop's row and wrote the second
+  // sitting's answers onto it. This client computes the key to decide "is there already an entry for
+  // this set?", so if it kept the old spelling it would ask about the wrong row — silently, with the
+  // researcher shown no existing entry and their save folding into one they never saw.
+  const ids = ["a2", "a1"];
+  const atW1 = artisanSetKey(ids, { workshopId: "w1", designWorkshopId: "" });
+  const atW2 = artisanSetKey(ids, { workshopId: "w2", designWorkshopId: "" });
+  expect(atW1).toBe("w1||a1,a2");
+  expect(atW2).toBe("w2||a1,a2");
+  expect(atW1, "the same people at two workshops are two different keys").not.toBe(atW2);
+
+  // The two workshop tables are different populations and an id from one must never be read as an id
+  // from the other: `designWorkshopId` sits in its own slot, never merged into the first.
+  expect(artisanSetKey(ids, { workshopId: "", designWorkshopId: "w1" })).toBe("|w1|a1,a2");
+  expect(artisanSetKey(ids, { workshopId: "", designWorkshopId: "w1" })).not.toBe(atW1);
+
+  // Unfiled is a SCOPE and not a missing one — it groups with itself, which is the case the majority
+  // of this corpus is in and the one a composite index over two nullable columns would have stopped
+  // constraining altogether (NULLs are distinct in a Postgres unique index).
+  expect(artisanSetKey(ids, UNFILED)).toBe("||a1,a2");
+  expect(artisanSetKey(ids, UNFILED)).toBe(artisanSetKey(["a1", "a2"], UNFILED));
+
+  // The key is built out of `interviewScopeKey`, so "which workshop is this" has one spelling in the
+  // file. If that ever stops being true this assertion is the one that says so.
+  expect(atW1.startsWith(`${interviewScopeKey({ workshopId: "w1", designWorkshopId: "" })}|`)).toBe(
+    true
+  );
 });
 
 // ── RULE 6: A WORKSHOP CHANGE NEVER UNTICKS ANYBODY ────────────────────────────────────────────

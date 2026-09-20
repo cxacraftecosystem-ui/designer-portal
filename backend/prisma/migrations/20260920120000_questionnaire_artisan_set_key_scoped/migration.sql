@@ -1,0 +1,129 @@
+-- THE WORKSHOP SCOPE MOVES INSIDE `QuestionnaireInterview.artisanSetKey`. No column is added,
+-- dropped or retyped, no constraint is created or relaxed, and no index changes. This migration
+-- rewrites the VALUE of one column on the rows that carry it, and nothing else in the database is
+-- touched.
+--
+--     before:  "<id>,<id>,…"
+--     after:   "<workshopId>|<designWorkshopId>|<id>,<id>,…"   ("" for a workshop not named)
+--
+--
+-- WHAT WAS WRONG
+-- ==============
+--
+-- `artisanSetKey` is a single-column `@unique` (schema.prisma), so ONE ARTISAN SET HELD ONE
+-- INTERVIEW ACROSS THE ENTIRE REPOSITORY. `routes/questionnaire.create_interview` looks the key up
+-- and FOLDS a create into whatever row it finds, so the same artisans sitting for a second workshop
+-- did not get a second interview: their answers were written onto the FIRST workshop's row, and the
+-- second workshop's record of the sitting never existed. Two researchers at two workshops
+-- interviewing one family is not a duplicate — it is two sittings — and the database could hold only
+-- one of them.
+--
+-- The field repository (documentation-portal) hit the identical defect from the INSTRUMENT side and
+-- recorded the argument in its own migration 20260913100000: the 3rd Craft Toolkit Workshop's
+-- answers folded onto the 2nd workshop's interview for the same reason. Its fix was
+-- `@@unique([questionnaireId, artisanSetKey])`.
+--
+--
+-- WHY THAT FIX COULD NOT BE COPIED
+-- ================================
+--
+-- This repository's `QuestionnaireInterview` HAS NO `questionnaireId` — verified on 2026-09-20
+-- against schema.prisma, against the generated Prisma client, and against this database (there is no
+-- such column on the table). There is ONE instrument here, not many.
+--
+-- The columns that say WHICH BODY OF FIELDWORK an interview belongs to are `workshopId` and
+-- `designWorkshopId` — the same pair `_MERGE_SCOPE_FIELDS` already refuses to let a merge cross — and
+-- BOTH ARE NULLABLE.
+--
+-- A COMPOSITE UNIQUE OVER THOSE TWO COLUMNS WOULD HAVE BEEN WORSE THAN THE DEFECT, and this is the
+-- decision most likely to be "tidied up" by a later reader, so it is stated in full. NULLs are
+-- DISTINCT in a Postgres unique index. Under `@@unique([workshopId, designWorkshopId,
+-- artisanSetKey])` every row with no workshop would be exempt from the constraint — and on this
+-- database on 2026-09-20 that is 31 of 44 interviews:
+--
+--     SELECT count(*) total, count("workshopId") ws, count("designWorkshopId") dws
+--     FROM "QuestionnaireInterview";
+--      total | ws | dws
+--      ------+----+-----
+--         44 | 13 |   0
+--
+-- So the dedupe would have switched OFF for the majority case, silently, with no error anywhere. The
+-- fold `create_interview` depends on would stop folding, and the duplicate explosion that migration
+-- 20260622120000 was written to clean up (133 rows for 18 real sets, from taps and 504-retries)
+-- would begin again. Carrying the scope INSIDE the key keeps exactly one NON-NULL string per
+-- (scope, artisan set) pair, so the existing single-column `@unique` keeps doing its job and there is
+-- no nullability hazard to reason about at all.
+--
+--
+-- WHY THIS RECOMPUTE CANNOT FAIL, AND CANNOT LOSE A ROW
+-- ====================================================
+--
+-- ADDING A PREFIX CAN ONLY MAKE KEYS MORE DISTINCT. Two rows that differ today still differ after
+-- it, because their artisan halves still differ. Two rows with the SAME artisan half cannot both
+-- exist today — the column is `@unique` and that is what this migration is preserving. So the
+-- rewrite can never create a collision that did not already exist: it only ever SPLITS one key into
+-- several, never MERGES several into one. Nothing is consolidated here, no row is deleted, no media
+-- or response is re-pointed. (Contrast 20260622120000, which did all three — it was INTRODUCING the
+-- constraint; this file is re-scoping a key the constraint already holds.)
+--
+-- NO TRANSIENT VIOLATION MID-STATEMENT EITHER. A unique INDEX is checked per row as the UPDATE
+-- proceeds, not at statement end, so "the final state is unique" would not be enough on its own.
+-- It is enough here because no NEW key can equal any OLD key: every new key contains two `|`
+-- characters and no old key contains any (they are cuid ids joined by `,`, and a cuid is `c`
+-- followed by base-36 digits). The two spellings occupy disjoint halves of the value space, so a
+-- half-rewritten table cannot collide with itself.
+--
+-- THE NEW KEY IS DERIVED FROM THE STORED KEY, NOT FROM THE LINK ROWS, and that is the load-bearing
+-- choice in this file. Recomputing from `QuestionnaireInterviewArtisan` would be the "obvious"
+-- version and it is the unsafe one: a key that has DRIFTED from its links (an out-of-band artisan
+-- merge does exactly this — it is why `scripts/reconcile_interview_set_keys.py` exists) would be
+-- recomputed to its links' true value, and two drifted rows that really do cover the same people at
+-- the same workshop would then collide and abort the deploy. Reading the stored key inherits the
+-- uniqueness the column already guarantees, so the argument above holds without this file having to
+-- know anything about drift. Healing drift stays the reconcile script's job, where it can
+-- consolidate rows rather than fail.
+--
+-- IDEMPOTENT, AND NOT BY A GUARD FLAG. The expression takes the artisan half as "everything after
+-- the LAST `|`", which is the whole value when there is no `|` at all — so it strips a prefix this
+-- migration already wrote before putting the same prefix back. A second run therefore computes what
+-- is already stored, and the `WHERE` clause means it does not even write it. This is why the file
+-- does NOT say `'…' || "artisanSetKey"`: a plain prepend would double the prefix on a re-run, and
+-- this deployment's migrations are applied by a runner that can be interrupted and re-run (the
+-- reason 20260913130200_dw_inspection_feedback, 20260915100000_tool_craft_links and
+-- 20260916160000_workshop_type_options all give for their own `IF NOT EXISTS` clauses).
+--
+-- ROWS WITH NO KEY ARE LEFT ALONE. `artisanSetKey IS NULL` means "this interview has no artisans",
+-- which is not deduped and has no scope to carry (`artisan_set_key` returns NULL for an empty set).
+-- Six of the 44 rows are in that state.
+--
+--
+-- THE CODE THAT MUST MATCH THIS FILE
+-- ==================================
+--
+-- Four places spell this key and all four must agree character for character, or a client's "is
+-- there already an entry for this set?" check silently stops matching the server's:
+--
+--   * `backend/app/api/routes/questionnaire.py`                 — `artisan_set_key` (the definition)
+--   * this file                                                 — the recompute below
+--   * `frontend/components/questionnaires/interviewArtisans.ts` — `artisanSetKey`
+--   * `android/.../MainActivity.kt`                             — `interviewGroupKey`
+--
+-- `backend/tests/test_questionnaire_artisan_set_scope.py` reads the TypeScript source and asserts it
+-- spells the key the way Python does, so those two cannot drift apart unnoticed.
+--
+-- COLLATION IS NOT A CONCERN HERE, unlike in 20260622120000. That migration had to say
+-- `ORDER BY "artisanId" COLLATE "C"` because it was BUILDING the sorted list in SQL and had to match
+-- Python's `sorted()` byte for byte. This file never sorts anything: it copies the artisan half of
+-- the key across verbatim and concatenates a prefix in front of it.
+
+
+UPDATE "QuestionnaireInterview"
+SET "artisanSetKey" =
+        coalesce("workshopId", '') || '|' ||
+        coalesce("designWorkshopId", '') || '|' ||
+        reverse(split_part(reverse("artisanSetKey"), '|', 1))
+WHERE "artisanSetKey" IS NOT NULL
+  AND "artisanSetKey" <>
+        coalesce("workshopId", '') || '|' ||
+        coalesce("designWorkshopId", '') || '|' ||
+        reverse(split_part(reverse("artisanSetKey"), '|', 1));

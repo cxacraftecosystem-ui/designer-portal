@@ -986,9 +986,12 @@ function QuestionnairePageBody() {
    *
    * ONE ROW AND NOT THE ARTISAN GROUP, which is where this deliberately differs from the handset.
    * Android gathers the media of every interview sharing an artisan set, because it has to: it walks
-   * `interviewGroupKey` over the whole list. Here `artisanSetKey` is `@unique` repository-wide and
-   * `by-artisans` returns exactly ONE row for a set, so "the group" IS this record and a second read
-   * would list the same clips twice under two headings.
+   * `interviewGroupKey` over the whole list. Here `artisanSetKey` is `@unique` and `by-artisans`
+   * returns exactly ONE row for a set AT A WORKSHOP, so "the group" IS this record and a second read
+   * would list the same clips twice under two headings. The workshop qualifier has been load-bearing
+   * since migration `20260920120000`: the same artisans may now hold a second interview at a second
+   * workshop, and gathering "every row for this set" would draw that other workshop's recordings
+   * under this sitting's section headings.
    */
   const savedClips = useMemo(() => {
     const bySection = new Map<string, MediaFile[]>();
@@ -1064,12 +1067,18 @@ function QuestionnairePageBody() {
     [knownArtisans, primaryArtisanId]
   );
 
-  // There is a single shared questionnaire entry per exact SET of artisans — we look it up so the
-  // researcher sees that it has already been started and which sections others have answered,
-  // instead of making a duplicate. `artisanSetKey` sorts, because ticking A then B is the same
-  // interview as ticking B then A and the server's own `artisan_set_key` sorts for that reason; the
-  // SENT order stays the researcher's, which is what `primaryArtisanId` above reads.
-  const selectedSetKey = artisanSetKey(selectedArtisanIds);
+  // There is a single shared questionnaire entry per exact SET of artisans PER WORKSHOP — we look it
+  // up so the researcher sees that it has already been started and which sections others have
+  // answered, instead of making a duplicate. `artisanSetKey` sorts, because ticking A then B is the
+  // same interview as ticking B then A and the server's own `artisan_set_key` sorts for that reason;
+  // the SENT order stays the researcher's, which is what `primaryArtisanId` above reads.
+  //
+  // THE WORKSHOP IS PART OF THE KEY SINCE 2026-09-20, which changes this effect in two ways worth
+  // naming. It now RE-FIRES when the workshop picker moves — it could not before, because nothing in
+  // its dependencies knew about the workshop, so moving a sitting to another workshop left the
+  // "already started" banner describing some other workshop's entry. And the request below must
+  // carry the workshop or the server answers about the UNATTACHED entry whatever is on screen.
+  const selectedSetKey = artisanSetKey(selectedArtisanIds, artisanWorkshopScope);
 
   useEffect(() => {
     if (selectedArtisanIds.length === 0) {
@@ -1077,7 +1086,19 @@ function QuestionnairePageBody() {
       return;
     }
     let active = true;
-    const query = selectedArtisanIds.map((id) => `artisanIds=${encodeURIComponent(id)}`).join("&");
+    // SENT EVEN WHEN BLANK IS NOT AN OPTION AND NEITHER IS SENDING BOTH — this is a different rule
+    // from `workshopArtisanParams` above it, and the difference is deliberate. That one FILTERS a
+    // roster, where an empty parameter would narrow to nothing; this one names a SCOPE, where the
+    // empty string is a real answer ("the interview filed under no workshop") and is what the
+    // server's own key spells for a null column. Omitting the blank half would be the same request,
+    // because FastAPI reads a missing query parameter as `None` and `artisan_set_key` treats `None`
+    // and `""` alike — the parameters are written out in full so the URL states the scope it asked
+    // about rather than leaving it to a default.
+    const query = [
+      ...selectedArtisanIds.map((id) => `artisanIds=${encodeURIComponent(id)}`),
+      `workshopId=${encodeURIComponent(artisanWorkshopScope.workshopId)}`,
+      `designWorkshopId=${encodeURIComponent(artisanWorkshopScope.designWorkshopId)}`
+    ].join("&");
     apiFetch<QuestionnaireInterview | null>(`/questionnaire/interviews/by-artisans?${query}`)
       .then((result) => {
         if (active) setExistingEntry(result ?? null);
@@ -1088,7 +1109,7 @@ function QuestionnairePageBody() {
     return () => {
       active = false;
     };
-  }, [selectedSetKey, selectedArtisanIds]);
+  }, [selectedSetKey, selectedArtisanIds, artisanWorkshopScope]);
 
   /**
    * What this effect last wrote into `answers`, per question. It is how a stale prefill is told apart
@@ -1993,12 +2014,18 @@ function QuestionnairePageBody() {
         // PRESSING SAVE AGAIN IS A REAL RETRY, AND SAYING OTHERWISE WOULD BE THE WORSE MISTAKE. The
         // first draft of this banner said only that the clips were the only copy and that leaving
         // would lose them — framing a recoverable state as hopeless. `create_interview`
-        // (backend/app/api/routes/questionnaire.py) keys on `artisan_set_key(payload.artisanIds)`
-        // and folds a second submission for the same artisan set into the interview that already
-        // exists, and the amber panel higher up this page tells the researcher exactly that. The
-        // form still holds the same artisans, so a second press re-sends only what is left on it and
-        // it lands on the same entry. (Same-text answers are skipped server-side by
-        // `upsert_responses`.)
+        // (backend/app/api/routes/questionnaire.py) keys on
+        // `artisan_set_key(payload.artisanIds, workshop_id=payload.workshopId, ...)` and folds a
+        // second submission for the same artisan set AT THE SAME WORKSHOP into the interview that
+        // already exists, and the amber panel higher up this page tells the researcher exactly that.
+        // The form still holds the same artisans AND the same workshop — a failed upload changes
+        // neither — so the key the retry computes is the key the first press computed, a second press
+        // re-sends only what is left on the form, and it lands on the same entry. (Same-text answers
+        // are skipped server-side by `upsert_responses`.) The workshop half of that promise has been
+        // load-bearing since migration 20260920120000 put the scope inside the key: were the
+        // researcher to move the workshop picker between the two presses, the retry would open a
+        // SECOND interview rather than fold — which is correct, and is why the sentence says press
+        // Save again rather than "re-submit however you like".
         setUploadError(
           `${failedNames.length} of ${attempted} audio file(s) failed to upload: ${failedNames.join(", ")}.` +
             (firstCause ? ` Reason given: ${firstCause}` : "") +
@@ -2298,8 +2325,9 @@ function QuestionnairePageBody() {
         CHOOSING ONE NAVIGATES rather than re-pointing this form. The reason is in the schema and is
         argued in full in `InstrumentPicker`'s header — an interview can only answer GLOBAL questions
         (`QuestionnaireResponse.questionId` is `Restrict`-FK'd to `QuestionnaireQuestion`), and
-        `artisanSetKey` is `@unique` repository-wide, so one artisan set answering two instruments
-        would fold both onto one row.
+        `artisanSetKey` is `@unique` and carries no instrument — only the workshop scope, since
+        migration `20260920120000` — so one artisan set answering two instruments at one workshop
+        would still fold both onto one row.
 
         THE PICKER IS ONLY DRAWN FOR ACCOUNTS THAT MAY LIST QUESTIONNAIRES. Every route under
         `/api/questionnaires` begins with `_require_designer`, while THIS page is open to every

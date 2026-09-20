@@ -316,7 +316,7 @@ erDiagram
 
   QuestionnaireInterview {
     string title
-    string artisanSetKey "UNIQUE — one interview per exact artisan set"
+    string artisanSetKey "UNIQUE — one interview per exact artisan set PER WORKSHOP"
     string language
   }
   QuestionnaireResponse {
@@ -327,10 +327,17 @@ erDiagram
 
 Three things here that are not obvious:
 
-- **`artisanSetKey` is unique.** There is exactly one interview per *exact* set of artisans. Saving
-  answers for a set that already has an interview folds into it rather than creating a second one —
-  which is why `POST /questionnaire/interviews` is the one route that cannot decide from its
-  signature whether it is a create (see `assert_can_create_records`).
+- **`artisanSetKey` is unique, and it carries the workshop.** The value is
+  `"<workshopId>|<designWorkshopId>|<sorted artisan ids>"`, so there is exactly one interview per
+  *exact* set of artisans **at a given workshop**. Saving answers for a set that already has an
+  interview there folds into it rather than creating a second one — which is why
+  `POST /questionnaire/interviews` is the one route that cannot decide from its signature whether it
+  is a create (see `assert_can_create_records`). The scope went into the key on 2026-09-20
+  (migration `20260920120000`): before it, one set held one interview *repository-wide*, so a second
+  workshop interviewing the same artisans had its answers folded onto the first workshop's row and
+  its own sitting never existed. It is inside the key rather than a composite index because both
+  workshop columns are nullable and NULLs are distinct under a Postgres unique index — a composite
+  would have stopped deduping the interviews that name no workshop, which are the majority.
 - **Completion is derived, then overridden.** The artisans × sections matrix is computed from the
   responses that exist; `QuestionnaireSectionStatus` stores an *admin override* on top, for the
   legitimate case of a section that will never be answered.
@@ -751,7 +758,8 @@ one CREATE REQUEST, globally.
 **Three models deliberately did not get one**, because each already carries a constraint that catches
 the same duplicate, and two idempotency mechanisms can disagree about what a duplicate is:
 `Artisan.aadhaarNumber @unique` (plus a pre-write 409 naming the holder),
-`QuestionnaireInterview.artisanSetKey @unique` (creation is already idempotent on it) and
+`QuestionnaireInterview.artisanSetKey @unique` (creation is already idempotent on it, per
+workshop since 2026-09-20) and
 `Craft.name @unique`.
 
 ### Two columns added on 2026-09-03

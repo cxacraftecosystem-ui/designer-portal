@@ -43,6 +43,7 @@ from typing import Any
 
 import pytest
 
+from app.api.routes.questionnaire import artisan_set_key
 from app.core.db import db
 from app.core.security import create_access_token, hash_password
 
@@ -92,10 +93,11 @@ async def _section(code: str, title: str) -> Any:
 async def env():
     """Five interview PAIRS, one per test, each over its own artisans — plus the people and the clip.
 
-    A PAIR PER TEST AND ITS OWN ARTISANS, WHICH IS NOT TIDINESS. ``artisanSetKey`` is ``@unique``
-    repository-wide here, so exactly one interview may hold a given set at a time; two tests sharing
-    artisans would make the second one's fixture a 500 in the first one's clean-up, and the failure
-    would read as a bug in the route. Each pair therefore gets fresh artisans and is used once.
+    A PAIR PER TEST AND ITS OWN ARTISANS, WHICH IS NOT TIDINESS. ``artisanSetKey`` is ``@unique``, so
+    exactly one interview may hold a given set AT A GIVEN WORKSHOP at a time — and every pair but the
+    fourth is filed under no workshop at all, which is one scope and not an absent one. Two tests
+    sharing artisans would therefore make the second one's fixture a 500 in the first one's clean-up,
+    and the failure would read as a bug in the route. Each pair gets fresh artisans and is used once.
 
     Rows are created here rather than inside a test because the Prisma client is shared with the
     running app and bound to the TestClient's event loop; touching it from a test's own loop is the
@@ -182,7 +184,16 @@ async def env():
             )
 
         async def interview(title: str, artisan_ids: list[str], **extra: Any) -> Any:
-            key = ",".join(sorted(artisan_ids)) or None
+            # THROUGH THE SERVER'S OWN FUNCTION, not a hand-spelled join. The key carries the workshop
+            # scope since 2026-09-20 (``"<workshopId>|<designWorkshopId>|<ids>"``), and a fixture that
+            # kept spelling the old artisans-only form would seed rows the routes cannot find: the
+            # 409 this file's first test exists to pin would simply not fire, and the test would go
+            # green having proved nothing. ``extra`` is where ``workshopId`` arrives for pair 4.
+            key = artisan_set_key(
+                artisan_ids,
+                workshop_id=extra.get("workshopId"),
+                design_workshop_id=extra.get("designWorkshopId"),
+            )
             made = await db.questionnaireinterview.create(
                 data={
                     "title": title,

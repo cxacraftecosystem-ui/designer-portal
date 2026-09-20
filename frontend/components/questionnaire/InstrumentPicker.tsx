@@ -32,11 +32,16 @@
  *      question id it cannot find in that table. An interview can only ever answer global questions;
  *      answering a custom form means writing `QuestionnaireFormEntry`/`QuestionnaireFormAnswer`,
  *      which is what `/questionnaires/[id]/answer` already does.
- *   3. `QuestionnaireInterview.artisanSetKey` IS `@unique` REPOSITORY-WIDE, and `create_interview`
- *      FOLDS a submission into the existing row for that exact set of artisans. If one artisan set
- *      could be interviewed on two different instruments, the second submission would merge into the
- *      first — two instruments' answers on one row, silently. Re-keying that dedupe is a migration
- *      and a decision, not a dropdown.
+ *   3. `QuestionnaireInterview.artisanSetKey` IS `@unique`, and `create_interview` FOLDS a submission
+ *      into the existing row for that exact set of artisans. If one artisan set could be interviewed
+ *      on two different instruments, the second submission would merge into the first — two
+ *      instruments' answers on one row, silently. Re-keying that dedupe is a migration and a
+ *      decision, not a dropdown — and the one time it HAS been re-keyed proves the size of it:
+ *      migration `20260920120000_questionnaire_artisan_set_key_scoped` put the WORKSHOP inside the
+ *      key so two workshops could interview the same artisans, and it took a recompute of every row,
+ *      a new query parameter on `by-artisans`, and matching edits in three languages. The key carries
+ *      no instrument and this picker must not pretend otherwise: within one workshop, one artisan set
+ *      is still exactly one interview.
  *
  * So choosing a designer-authored form NAVIGATES to the screen that can actually record it. The
  * shared instrument stays exactly what it was, which is also why the questionnaire form contract and

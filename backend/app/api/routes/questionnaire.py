@@ -219,17 +219,79 @@ async def duplicate_set_detail(set_key: str) -> dict[str, Any]:
     }
 
 
-def artisan_set_key(artisan_ids: list[str]) -> str | None:
-    """Deterministic key for the exact set of artisans an interview covers.
+#: The two separators inside an ``artisanSetKey``: ``"<workshopId>|<designWorkshopId>|<id>,<id>,…"``.
+#:
+#: NEITHER CHARACTER CAN OCCUR INSIDE A VALUE, which is what makes the concatenation unambiguous.
+#: Every id in this key is a cuid — ``c`` followed by base-36 digits — so no id contains ``|`` or
+#: ``,``, and therefore no two different (scope, artisan set) pairs can spell the same string by
+#: accident. Were a separator ever to become a legal character in an id, ``("w", ["a|b"])`` and
+#: ``("w|a", ["b"])`` would collide and two unrelated sittings would fight over one row.
+#:
+#: Named constants rather than four string literals because FOUR languages have to agree on them
+#: character for character — this module, the recompute in migration ``20260920120000``,
+#: ``frontend/components/questionnaires/interviewArtisans.ts`` and the handset's
+#: ``interviewGroupKey``. ``backend/tests/test_questionnaire_artisan_set_scope.py`` reads the
+#: TypeScript source and asserts it spells the key the same way; a literal repeated in four files is
+#: a definition nobody can grep for, let alone hold together.
+_SET_KEY_SCOPE_SEPARATOR = "|"
+_SET_KEY_ID_SEPARATOR = ","
 
-    Sorted, de-duplicated, comma-joined artisan ids — identical to the SQL backfill in migration
-    ``20260622120000`` (``string_agg(..., ',' ORDER BY ...)``). This is what makes one-interview-per-
-    artisan-set enforceable: every client computing the same set lands on the same key. Returns
-    ``None`` for an empty set (artisan-less interviews are not deduped). A subset yields a different
-    key, i.e. a separate entry.
+
+def artisan_set_key(
+    artisan_ids: list[str], *, workshop_id: str | None, design_workshop_id: str | None
+) -> str | None:
+    """Deterministic key for the exact set of artisans an interview covers, WITHIN ONE WORKSHOP.
+
+    Format: ``"<workshopId>|<designWorkshopId>|<sorted, de-duplicated, comma-joined artisan ids>"``,
+    with ``""`` standing in for a workshop that is not named. Returns ``None`` for an empty artisan
+    set (artisan-less interviews are not deduped — Postgres treats NULLs as distinct under a unique
+    index, so several of them may coexist). A subset of the artisans yields a different key, i.e. a
+    separate entry, exactly as it always did.
+
+    ── WHY THE SCOPE IS INSIDE THE KEY AND NOT BESIDE IT (2026-09-20) ──────────────────────────────
+
+    ``QuestionnaireInterview.artisanSetKey`` is a single-column ``@unique``, so before this change ONE
+    artisan set could hold ONE interview ACROSS THE WHOLE REPOSITORY. The field repository
+    (documentation-portal) hit the same defect and recorded it in migration ``20260913100000``: the
+    same artisans sitting for a second instrument FOLDED into their first sitting
+    (``create_interview`` looks the key up and merges), so the 3rd Craft Toolkit Workshop's answers
+    were written onto the 2nd workshop's interview. Here the collision is between WORKSHOPS rather
+    than between instruments — two workshops interviewing the same artisans are two sittings, and the
+    second one could not be recorded at all.
+
+    That repository's fix CANNOT BE COPIED. It moved the index to ``@@unique([questionnaireId,
+    artisanSetKey])``, and this repository's ``QuestionnaireInterview`` HAS NO ``questionnaireId`` —
+    checked against schema.prisma, the live database and the generated Prisma client. Its scope
+    columns are ``workshopId`` and ``designWorkshopId``, and **both are nullable**.
+
+    ⚠ **A COMPOSITE INDEX OVER THOSE TWO COLUMNS WOULD SILENTLY TURN THE DEDUPE OFF.** NULLs are
+    DISTINCT in a Postgres unique index, so ``@@unique([workshopId, designWorkshopId,
+    artisanSetKey])`` would stop constraining the case that actually dominates this corpus: on
+    2026-09-20, 31 of the 44 interviews name no workshop at all. Two unattached interviews for the
+    same artisans would both be allowed, the fold ``create_interview`` depends on would stop folding,
+    and the duplicate explosion migration ``20260622120000`` was written to clean up (133 rows for 18
+    real sets) would start again — with no error anywhere to say so. Putting the scope INSIDE the key
+    keeps ONE non-null string per (scope, set) and therefore has no nullability hazard at all.
+
+    ── WHY EVERY CALLER MUST NAME THE SCOPE, AND WHY THESE ARGUMENTS HAVE NO DEFAULTS ──────────────
+
+    Defaulting them to ``None`` would make "I forgot the scope" and "this interview is unattached"
+    the same call. A caller that forgot would compute the unattached key for a workshop interview:
+    ``by-artisans`` would answer with the wrong row, or a create would fold a workshop sitting into an
+    unattached one. Keyword-only and REQUIRED means that mistake is a ``TypeError`` at the call site
+    the moment the suite imports this module, not a wrong row in production.
     """
     unique = sorted({aid for aid in artisan_ids if aid})
-    return ",".join(unique) if unique else None
+    if not unique:
+        return None
+    # ``or ""`` rather than ``if is not None`` on purpose: a client may spell "no workshop" as either
+    # ``null`` or ``""`` (the web form's pickers hold ``""``, ``lib/api.ts`` sends
+    # ``workshopId: workshop.workshopId || null``), and those two must not produce two different keys
+    # for the same sitting — that is the same fold-splitting failure this function exists to prevent.
+    scope = (workshop_id or "", design_workshop_id or "")
+    return _SET_KEY_SCOPE_SEPARATOR.join(
+        [*scope, _SET_KEY_ID_SEPARATOR.join(unique)]
+    )
 
 
 def default_interview_date(data: dict[str, Any]) -> dict[str, Any]:
@@ -301,10 +363,74 @@ async def section_payloads(active_only: bool = True) -> list[dict[str, Any]]:
     return payload
 
 
+async def write_interview_set_key(interview_id: str, set_key: str | None, *, writer: Any) -> None:
+    """Write one interview's ``artisanSetKey``, turning the unique violation into the named 409.
+
+    Extracted from :func:`replace_interview_artisans` (2026-09-20) because there is now a SECOND
+    caller: a PATCH that moves an interview to another workshop WITHOUT touching its artisans changes
+    the key too (the scope is part of it), and it must refuse in the same words — a client cannot be
+    expected to parse two different shapes for "somebody else already covers this set here".
+
+    ⚠ ``duplicate_set_detail`` reads the holder through ``db`` and NOT through ``writer``, and that is
+    deliberate; its own docstring carries the argument. A unique violation aborts the caller's
+    Postgres transaction, so asking THAT connection for the holder would raise ``current transaction
+    is aborted`` and turn this 409 into a 500 on exactly the path it exists to serve.
+    """
+    try:
+        await writer.questionnaireinterview.update(
+            where={"id": interview_id}, data={"artisanSetKey": set_key}
+        )
+    except UniqueViolationError as exc:
+        # THE 409 IS RAISED FROM INSIDE THE CALLER'S TRANSACTION WHERE THERE IS ONE, AND THAT IS
+        # WHAT MAKES IT CLEAN — ``crafts.update_craft``'s argument, applied to the other unique
+        # index. A unique violation aborts the transaction in Postgres whatever this handler does,
+        # so raising here takes the caller's other writes back with it instead of answering 409
+        # beside a committed edit. Nothing after this line runs, so no statement is issued on an
+        # already-aborted transaction.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=await duplicate_set_detail(set_key or "")
+        ) from exc
+
+
+async def resync_interview_set_key(
+    interview_id: str, *, workshop_id: str | None, design_workshop_id: str | None, client: Any = None
+) -> None:
+    """Recompute one interview's set key from its CURRENT links under a (possibly new) scope.
+
+    WHY THIS EXISTS AT ALL (2026-09-20). The scope is now part of the key, so moving an interview
+    between workshops changes its key even though not one artisan moved. ``update_interview`` only
+    calls :func:`replace_interview_artisans` when the payload carries ``artisanIds``, and a PATCH that
+    re-files a sitting under another workshop routinely carries nothing else. Without this call that
+    row would keep the OLD workshop's prefix, and BOTH halves of the guard would then be wrong: the
+    destination workshop would be left unguarded (a second interview for the same people could be
+    created there), while the origin workshop's slot would stay occupied by a row that has left it —
+    blocking a legitimate new sitting with a 409 naming an interview that is no longer there.
+    """
+    writer = db if client is None else client
+    links = await writer.questionnaireinterviewartisan.find_many(where={"interviewId": interview_id})
+    set_key = artisan_set_key(
+        [link.artisanId for link in links],
+        workshop_id=workshop_id,
+        design_workshop_id=design_workshop_id,
+    )
+    await write_interview_set_key(interview_id, set_key, writer=writer)
+
+
 async def replace_interview_artisans(
-    interview_id: str, artisan_ids: list[str], *, client: Any = None
+    interview_id: str,
+    artisan_ids: list[str],
+    *,
+    workshop_id: str | None,
+    design_workshop_id: str | None,
+    client: Any = None,
 ) -> None:
     """Rewrite the artisan set on one interview, links and cached set key together.
+
+    ``workshop_id`` / ``design_workshop_id`` ARE THE SCOPE THE ROW WILL HAVE AFTER THIS SAVE, not the
+    one it had before — the key carries them (see :func:`artisan_set_key`), and ``update_interview``
+    may be changing the workshop in the same PATCH. They are required keyword arguments for the reason
+    that function's docstring gives: a defaulted scope makes "I forgot" indistinguishable from
+    "unattached", and the cost of that confusion is a sitting folded into the wrong workshop's row.
 
     ``client`` CARRIES THE CALLER'S TRANSACTION, AND IT IS THE SAME PARAMETER
     ``workshops.replace_workshop_artisans`` takes, for the same two failures (2026-09-03). This is a
@@ -325,21 +451,26 @@ async def replace_interview_artisans(
     """
     writer = db if client is None else client
     unique_ids = sorted({aid for aid in artisan_ids if aid})
-    set_key = artisan_set_key(unique_ids)
+    set_key = artisan_set_key(
+        unique_ids, workshop_id=workshop_id, design_workshop_id=design_workshop_id
+    )
 
     # Short-circuit when the artisan set is unchanged. A plain edit (new responses/media, title, notes)
     # re-sends the same artisanIds; rewriting the unique set key + links on every such save is both
     # wasteful and the ONLY thing that could trip the one-interview-per-set guard. Skipping it means an
-    # ordinary edit can never 409. We still heal a drifted cached key (its own value, so no conflict).
+    # ordinary edit can never 409 ON THE LINKS. We still heal a key that does not match — which since
+    # 2026-09-20 is no longer only a drifted cache: the SCOPE is in the key, so an edit that re-files
+    # the sitting under another workshop reaches here with the same artisans and a different key, and
+    # that rewrite genuinely CAN collide with the interview already covering these people at the
+    # destination. It therefore goes through ``write_interview_set_key`` rather than writing blind, so
+    # the answer is the same named 409 as every other route to the same conflict instead of a 500.
     current = await writer.questionnaireinterviewartisan.find_many(
         where={"interviewId": interview_id}
     )
     if sorted({link.artisanId for link in current}) == unique_ids:
         existing = await writer.questionnaireinterview.find_unique(where={"id": interview_id})
         if existing is not None and existing.artisanSetKey != set_key:
-            await writer.questionnaireinterview.update(
-                where={"id": interview_id}, data={"artisanSetKey": set_key}
-            )
+            await write_interview_set_key(interview_id, set_key, writer=writer)
         return
 
     # The set is genuinely changing. Validate every artisan up front so a bad id can't leave a
@@ -353,26 +484,11 @@ async def replace_interview_artisans(
         found = await writer.artisan.find_many(where={"id": {"in": unique_ids}})
         if len(found) != len(unique_ids):
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Record not found")
-    try:
-        await writer.questionnaireinterview.update(
-            where={"id": interview_id}, data={"artisanSetKey": set_key}
-        )
-    except UniqueViolationError as exc:
-        # THE 409 IS RAISED FROM INSIDE THE CALLER'S TRANSACTION WHERE THERE IS ONE, AND THAT IS
-        # WHAT MAKES IT CLEAN — ``crafts.update_craft``'s argument, applied to the other unique
-        # index. A unique violation aborts the transaction in Postgres whatever this handler does,
-        # so raising here takes the interview's own scalar update back with it instead of answering
-        # 409 beside a committed edit. Nothing below this line runs, so no statement is issued on an
-        # already-aborted transaction.
-        #
-        # AND THE ONE STATEMENT THAT IS ISSUED HERE IS ISSUED ON ``db``, NOT ON ``writer``.
-        # ``duplicate_set_detail`` reads the holding interview so the refusal can name it; doing that
-        # through the caller's aborted transaction would raise ``current transaction is aborted``
-        # and turn this 409 into a 500. Its docstring carries the whole argument — do not "tidy" the
-        # read onto ``writer`` to match the lines above it.
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT, detail=await duplicate_set_detail(set_key)
-        ) from exc
+    # The key first and the links second, through the shared writer so the unique violation comes back
+    # as the named 409 rather than a 500. See ``write_interview_set_key`` for why the holder is read on
+    # ``db`` and not on ``writer``, and do not "tidy" that read onto the transaction to match the
+    # statements around it.
+    await write_interview_set_key(interview_id, set_key, writer=writer)
     await writer.questionnaireinterviewartisan.delete_many(where={"interviewId": interview_id})
     if unique_ids:
         await writer.questionnaireinterviewartisan.create_many(
@@ -886,6 +1002,24 @@ async def list_interviews(
 # Scalar fields a "create for an existing set" may back-fill on the canonical interview — but ONLY
 # when that field is still empty, so one researcher's create can never overwrite another's content.
 # workshopId joins the list so a later create can name the workshop an earlier one left blank.
+#
+# ⚠ ``workshopId`` IS NOW ALL BUT UNREACHABLE HERE, AND IT IS KEPT ANYWAY — read this before deleting
+# it as dead code (2026-09-20). The fold is reached by looking an ``artisanSetKey`` up, and that key
+# now carries the workshop scope, so a create naming workshop X can only ever find a row whose key
+# already says X: "incoming names a workshop, the holder has none" no longer describes a row this
+# function can be handed. The one state that still reaches it is a row whose key has DRIFTED from its
+# own columns — which ``scripts/reconcile_interview_set_keys.py`` exists to heal and which an
+# out-of-band artisan merge can still produce. On that row the fill is exactly as correct as it was
+# before, and the ``stamp_workshop_submission`` machinery below it (late-submission stamp, PENDING
+# pin, ``record=existing`` so a re-link cannot launder an unapproved late stamp) is what keeps it so.
+# Removing the field would take that machinery with it and leave the drifted case silently filing a
+# workshop link with no submission stamp at all.
+#
+# AND ON THAT DRIFTED ROW THE FILL IS A REPAIR, WHICH IS WHY NOTHING HERE RECOMPUTES THE KEY. The row
+# was FOUND by ``find_unique(artisanSetKey=set_key)`` where ``set_key`` carries the INCOMING payload's
+# workshop, so writing that same workshop onto the row's column makes the column agree with the key it
+# was already filed under. Recomputing the key instead would be the dangerous half — it can collide,
+# and colliding in the middle of a fold would turn a successful contribution into a 409.
 _MERGEABLE_FILL_FIELDS = ("title", "place", "language", "notes", "interviewDate", "workshopId")
 
 
@@ -972,9 +1106,19 @@ async def create_interview(
     # `designWorkshopId` is creator / admin / `DesignWorkshopViewer` — so it is a second gate
     # rather than a replacement. See `services/record_design_workshop.py`.
     await assert_may_file_under(payload.designWorkshopId, current_user)
-    # One interview per exact artisan set: if one already exists for this set, fold into it instead
-    # of creating a duplicate. This holds for EVERY client (web + old/new app) regardless of UI.
-    set_key = artisan_set_key(payload.artisanIds)
+    # One interview per exact artisan set PER WORKSHOP: if one already exists for this set under the
+    # workshop being filed under, fold into it instead of creating a duplicate. This holds for EVERY
+    # client (web + old/new app) regardless of UI.
+    #
+    # THE SCOPE NARROWED ON 2026-09-20 AND THAT IS THE POINT OF THE CHANGE, not a side effect: the
+    # same artisans interviewed at a second workshop used to fold into their FIRST workshop's row,
+    # writing the second sitting's answers onto the first's record. Within one workshop the fold is
+    # exactly what it always was. See ``artisan_set_key``.
+    set_key = artisan_set_key(
+        payload.artisanIds,
+        workshop_id=payload.workshopId,
+        design_workshop_id=payload.designWorkshopId,
+    )
     if set_key:
         # Bare row: the merge only reads scalar columns off it, and hydrates the relations once at
         # the end — so the common "fold into the existing entry" path stops paying for six relation
@@ -1010,7 +1154,15 @@ async def create_interview(
             return await merge_into_interview(existing, payload, current_user, check)
         raise
     if payload.artisanIds:
-        await replace_interview_artisans(created.id, payload.artisanIds)
+        # The SAME scope the key above was computed under, and it must stay that way: this call
+        # recomputes the key from its arguments and writes it over the one just inserted, so a
+        # different scope here would silently move the row out from under the guard that chose it.
+        await replace_interview_artisans(
+            created.id,
+            payload.artisanIds,
+            workshop_id=payload.workshopId,
+            design_workshop_id=payload.designWorkshopId,
+        )
     if payload.responses:
         await upsert_responses(created.id, payload.responses, current_user)
     # The row we just inserted IS the response; only its links and answers were written afterwards,
@@ -1022,15 +1174,34 @@ async def create_interview(
 @router.get("/interviews/by-artisans")
 async def interview_for_artisan_set(
     artisanIds: list[str] = Query(default=[]),
+    workshopId: str | None = Query(default=None),
+    designWorkshopId: str | None = Query(default=None),
     current_user: Any = Depends(get_current_user),
 ) -> dict[str, Any] | None:
-    """The single canonical interview for an EXACT set of artisans, or ``null``.
+    """The single canonical interview for an EXACT set of artisans UNDER ONE WORKSHOP, or ``null``.
 
     Lets a client show the one shared entry — and which sections/questions others have already
     recorded — before offering to create. A subset of the artisans is a different set, so it will not
     match here. Declared before ``/{interview_id}`` so the literal path wins the route match.
+
+    ── WHY THE TWO WORKSHOP PARAMETERS ARE NOT OPTIONAL DECORATION (2026-09-20) ────────────────────
+
+    This route exists to answer the question ``create_interview`` is about to answer for itself, and
+    the two answers have to agree or the banner lies. Since the workshop scope became part of
+    ``artisanSetKey``, asking by artisans ALONE asks a question the key can no longer answer: it would
+    always look up the UNATTACHED sitting. A researcher filing under a workshop would be shown the
+    unattached entry's recordings ("already started, sections A and D answered") and then have their
+    save open a brand-new row — or, worse, be shown nothing while a sitting for exactly these people
+    at this workshop sat one row away, and duplicate it.
+
+    They are Pythonic-optional because OMITTING THEM IS A REAL ANSWER — "the interview that is filed
+    under no workshop" is the case 31 of this corpus's 44 interviews are in on 2026-09-20 — and
+    because an older client that sends neither keeps getting exactly the rows it always got for that
+    case. ``None`` and ``""`` are the same answer here for the reason ``artisan_set_key`` gives.
     """
-    set_key = artisan_set_key(artisanIds)
+    set_key = artisan_set_key(
+        artisanIds, workshop_id=workshopId, design_workshop_id=designWorkshopId
+    )
     if not set_key:
         return None
     interview = await db.questionnaireinterview.find_unique(where={"artisanSetKey": set_key})
@@ -1486,6 +1657,17 @@ async def update_interview(
         jsonify_metadata(data)
         if data:
             await tx.questionnaireinterview.update(where={"id": interview_id}, data=data)
+        # THE SCOPE THIS ROW WILL HAVE WHEN THE BLOCK COMMITS, which is what the set key must be built
+        # from — not the scope it had on the way in.
+        #
+        # ⚠ THE DEFAULT ARGUMENT TO ``.get`` IS THE STORED VALUE, AND `` or interview.workshopId``
+        # WOULD BE A BUG, not a shorter spelling of it. ``data`` holds a workshop key only when the
+        # caller SENT one (``exclude_unset=True``), and an explicit ``null`` SURVIVES ``clean_data``
+        # because both columns are in ``CLEARABLE_KEYS`` — that null is a deliberate unfiling. A
+        # falsy-test would read it as "not sent", keep the old workshop in the key, and leave the row
+        # unfiled while its key still claimed the workshop it had just left.
+        after_workshop_id = data.get("workshopId", interview.workshopId)
+        after_design_workshop_id = data.get("designWorkshopId", interview.designWorkshopId)
         if payload.artisanIds is not None:
             # THROUGH ``tx`` BECAUSE IT MUST SEE THIS TRANSACTION'S OWN WRITES. On the module client
             # this count would be answered from outside the block — the same reason
@@ -1497,7 +1679,34 @@ async def update_interview(
                 assert_can_contribute_relation(
                     interview, current_user, link_count > 0, "artisanIds"
                 )
-            await replace_interview_artisans(interview_id, payload.artisanIds, client=tx)
+            await replace_interview_artisans(
+                interview_id,
+                payload.artisanIds,
+                workshop_id=after_workshop_id,
+                design_workshop_id=after_design_workshop_id,
+                client=tx,
+            )
+        elif (after_workshop_id, after_design_workshop_id) != (
+            interview.workshopId,
+            interview.designWorkshopId,
+        ):
+            # RE-FILED UNDER ANOTHER WORKSHOP WITHOUT TOUCHING THE ARTISANS — the ordinary shape of
+            # "this sitting was logged against the wrong workshop". The scope is part of the key since
+            # 2026-09-20, so the key has changed even though the roster has not, and the branch above
+            # never runs on this payload. ``resync_interview_set_key`` states what goes wrong when
+            # this is skipped: the destination loses its guard AND the origin keeps a slot occupied by
+            # a row that has left it. Runs only on a REAL move, so an ordinary PATCH pays nothing.
+            #
+            # No contribution check here on purpose: this does not change the artisan roster, it
+            # restates a key derived from it. The move itself is already gated above by
+            # ``enforce_workshop_submission`` and ``assert_payload_workshop``, and ``guard_record_edit``
+            # has already ruled on whether this account may edit this row at all.
+            await resync_interview_set_key(
+                interview_id,
+                workshop_id=after_workshop_id,
+                design_workshop_id=after_design_workshop_id,
+                client=tx,
+            )
         if payload.responses is not None:
             await upsert_responses(interview_id, payload.responses, current_user, client=tx)
     # Re-read the row itself (the PATCH may have changed its columns), but graft the six relations on

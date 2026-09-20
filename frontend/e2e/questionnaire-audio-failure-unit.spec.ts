@@ -203,7 +203,14 @@ test("the warning names the cause and the retry that actually exists", () => {
   // The banner does not quote a backend path at a field researcher, but the guard has to cite the
   // fold it relies on so the next reader can check that the retry really is idempotent.
   expect(guard, "the guard must cite the server-side fold its promise depends on").toContain(
-    "artisan_set_key(payload.artisanIds)"
+    "artisan_set_key(payload.artisanIds"
+  );
+  // AND THE SCOPE THE FOLD IS NOW KEYED ON. Migration 20260920120000 put the workshop inside
+  // `artisanSetKey`, so "press Save again and it lands on the same entry" is true only while the
+  // workshop on the form has not moved. A comment that still described the key as the artisan ids
+  // alone would be promising a fold the server no longer performs unconditionally.
+  expect(guard, "the cited fold must name the workshop scope the key now carries").toContain(
+    "workshop_id=payload.workshopId"
   );
   expect(guard).toContain("backend/app/api/routes/questionnaire.py");
 });
