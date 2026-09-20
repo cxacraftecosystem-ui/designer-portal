@@ -169,8 +169,35 @@ unrelated infrastructure failure.
 The backend workflow has **no `paths:` filter** — it starts on every push to `main` and decides for
 itself whether to touch EC2. That is the fix for the obvious `workflow_run` dead-lock: if stage 1
 were filtered to `backend/**`, a frontend-only push would never start it, so stage 2 would never be
-triggered and the frontend would never ship. Instead, stage 1's `changes` job diffs the push range
-and skips **its own** deploy when `backend/` is untouched.
+triggered and the frontend would never ship. Instead, stage 1's `changes` job decides for itself
+whether `backend/` needs deploying.
+
+**Stage 1 stopped asking the per-push question too — changed 2026-09-20, and it is the same bug the
+next section describes, on the other workflow.** Its `changes` job diffed the **push range** only:
+`git diff --name-only ${{ github.event.before }} ${{ github.sha }}`. That measures what *one push*
+touched, and the question a deploy has to answer is what has changed since the box was last
+**written to**. Those are the same number only when every deploy in between succeeded — and when one
+does not, the answer silently goes wrong in the dangerous direction:
+
+| push | `backend/` touched | backend deploy |
+|---|---|---|
+| `5b2d187` | yes | ❌ failed — Checks red on one test |
+| `591a458` | yes | ❌ failed |
+| `89ce043` | **no — docs only** | ⏭️ **skipped, run GREEN** |
+
+The box was left three commits behind `main` with every tick green. The first symptom was
+`GET /api/ministry-dashboard/designers` answering **404** in production while the identical route
+answered 401 from the tree — three new read-only routes that had been merged, tested and released
+were simply not there. Nothing in the pipeline was red, and nothing said why.
+
+`changes` now **unions** the push range with `git diff <last commit this workflow actually deployed>
+<this commit>`. "Actually deployed" is read from the Actions API: the newest successful run of
+`deploy-backend.yml`, *excluding this one*, **whose `deploy` job itself concluded `success`** — a run
+that skipped its deploy also concludes `success`, and treating one as deployed would re-open the hole
+one level deeper. Anything it cannot determine — API down, first ever deploy, force-pushed history,
+`jq` missing — treats every area as changed and **deploys**. A union can only ever turn an area from
+false to **true**, so this cannot introduce a skipped deploy; and it stays a real gate, because a
+docs-only push with the box already on the tip still skips.
 
 **Stage 2 no longer asks that question — changed 2026-09-17.** It used to read stage 1's push diff
 out of a `pipeline-changes` artifact and skip on `frontend=false`. Deploy eligibility was therefore a
@@ -194,10 +221,10 @@ the diagram above is still *any outcome*, so a red stage 2 does not stop the And
 | Push touches | 1 · backend deploy | 2 · frontend deploy | 3 · Android build | — · Checks |
 |---|---|---|---|---|
 | `backend/**` only | **runs**, after Checks is green on that SHA | skipped *only if the live site already serves this tree's `frontend/`* — otherwise it publishes the backlog | runs | **runs** |
-| `frontend/**` only | skipped (run still succeeds) | **runs**, after Checks is green on that SHA | runs | **runs** |
-| `android/**` only | skipped | skipped *only if the live site already serves this tree's `frontend/`* — otherwise it publishes the backlog | **runs** | **runs** |
+| `frontend/**` only | skipped *only if the box already runs this tree's `backend/`* (run still succeeds) | **runs**, after Checks is green on that SHA | runs | **runs** |
+| `android/**` only | skipped *only if the box already runs this tree's `backend/`* | skipped *only if the live site already serves this tree's `frontend/`* — otherwise it publishes the backlog | **runs** | **runs** |
 | several areas | **runs** | **runs**, after 1 is green *and* Checks is green | runs | **runs** |
-| docs only | skipped | skipped *only if the live site already serves this tree's `frontend/`* — otherwise it publishes the backlog | runs | **runs** |
+| docs only | skipped *only if the box already runs this tree's `backend/`* — otherwise it deploys the backlog | skipped *only if the live site already serves this tree's `frontend/`* — otherwise it publishes the backlog | runs | **runs** |
 | backend deploy **fails** | ❌ red | **refuses to deploy**. Green if nothing was stranded; ❌ **red** if `main` carries frontend work the live site is not serving, or if the gate could not find out | still runs | unaffected — it is not in the chain |
 | **Checks red** | **refuses to deploy** *if `backend/` was touched* — its wait is scoped to that, so a push that changed no backend file skips the wait and deploys | **refuses to deploy**, whatever changed | still runs — `android-build.yml` chains on `workflow_run` with **no conclusion filter**, deliberately | ❌ red |
 

@@ -91,6 +91,27 @@ jobs:
   # the log and the step summary, for a human reading a run and asking what it touched. Anything
   # that wants to decide whether to DEPLOY must ask what is live instead — see the note below.
   #
+  # ═══ 2026-09-20: THIS WORKFLOW WAS THE NEXT VICTIM OF ITS OWN NOTE ════════════════════════
+  #
+  # The paragraph below was written about deploy-frontend.yml, and it ends "that gate now diffs
+  # against the commit Vercel is actually serving". The BACKEND gate was not changed at the same
+  # time, and on 2026-09-20 it reproduced the identical outage — the same shape, on the same day
+  # of the week, for the same reason:
+  #
+  #     5b2d187  backend changed   deploy FAILED (Checks red on one test)
+  #     591a458  backend changed   deploy FAILED
+  #     89ce043  docs only         backend=false -> deploy SKIPPED -> run GREEN
+  #
+  # The box was left three commits behind main with every tick green, and the first thing anybody
+  # saw was `GET /api/ministry-dashboard/designers` answering 404 in production while the same
+  # route answered 401 from the tree. A per-push diff cannot see that: it measures what ONE PUSH
+  # touched, and the question a deploy has to answer is what has changed since the box was last
+  # WRITTEN TO. Those are the same number only when every deploy in between succeeded.
+  #
+  # `detect` now unions the push range with the range from the last commit this workflow actually
+  # deployed. The union can only ever make the answer MORE true — a hole can be closed by it and
+  # none can be opened — which is why it is a union and not a replacement.
+  #
   # 2026-09-17: this used to also upload `changes.env` as the `pipeline-changes` artifact, because
   # downstream `workflow_run` workflows cannot read job outputs across a workflow boundary and an
   # artifact was the only channel. deploy-frontend.yml's gate was the sole consumer, and it no
@@ -114,10 +135,65 @@ jobs:
       frontend: ${{ steps.detect.outputs.frontend }}
       android: ${{ steps.detect.outputs.android }}
     steps:
-      - name: Checkout (full history so the push range can be diffed)
+      - name: Checkout (full history, so both the push range and the live range can be diffed)
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
+
+      # ─── WHAT THIS WORKFLOW LAST ACTUALLY PUT ON THE BOX ──────────────────────────────────
+      #
+      # FAIL OPEN, EXACTLY AS deploy-frontend.yml's GATE DOES, AND FOR THE IDENTICAL REASON. Every
+      # path that cannot answer writes an empty string, and an empty answer makes `detect` below
+      # fall back to the push range alone — i.e. to the behaviour this step is fixing, which is
+      # strictly no worse than what shipped before it. Over-deploying costs a build minute;
+      # under-deploying cost two days on f4f6740 and, on 2026-09-20, a 404 in production.
+      #
+      # ⚠ "SUCCEEDED" IS NOT ENOUGH — THE `deploy` JOB MUST HAVE RUN. That is the whole finding. A
+      # run whose `deploy` job was SKIPPED still concludes `success`, and treating it as deployed
+      # would put the baseline on a commit the box has never seen and re-open the hole one level
+      # deeper. So each candidate run's jobs are read and the one named `deploy` is required to
+      # have concluded `success` itself.
+      #
+      # THE CURRENT RUN IS EXCLUDED BY ID. On a re-run of this very workflow the API can already
+      # list it, and a baseline of "this commit" makes every diff empty — the gate would then skip
+      # the deploy it exists to perform, and would do it only on re-runs, which is the worst
+      # possible place for a bug to hide.
+      #
+      # `actions: read` is granted at the workflow level and is already what `wait-for-checks`
+      # uses; this job declares no permissions of its own and needs no new secret.
+      - name: Read the commit this workflow last deployed
+        id: live
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          THIS_RUN: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          api="repos/${GITHUB_REPOSITORY}/actions"
+          live=""
+          reason="no successful deploy of this workflow was found in the last 50 runs"
+
+          # Newest first. `status=success` drops the runs that failed outright; the jobs read below
+          # is what separates "deployed" from "skipped the deploy and went green anyway".
+          runs="$(gh api "${api}/workflows/deploy-backend.yml/runs?status=success&per_page=50" 2>/dev/null || echo '{"workflow_runs":[]}')"
+          candidates="$(printf '%s' "$runs" | jq -r --arg this "$THIS_RUN" '
+            [ .workflow_runs[] | select((.id|tostring) != $this) ] | .[] | "\(.id) \(.head_sha)"
+          ' 2>/dev/null || true)"
+
+          while read -r run_id sha; do
+            [ -n "${run_id:-}" ] || continue
+            jobs="$(gh api "${api}/runs/${run_id}/jobs?per_page=100" 2>/dev/null || echo '{"jobs":[]}')"
+            ran="$(printf '%s' "$jobs" | jq -r '[.jobs[] | select(.name=="deploy" and .conclusion=="success")] | length' 2>/dev/null || echo 0)"
+            if [ "${ran:-0}" -gt 0 ]; then
+              live="$sha"
+              reason="run ${run_id} deployed ${sha}"
+              break
+            fi
+          done <<< "$candidates"
+
+          echo "$reason"
+          echo "sha=${live}" >> "$GITHUB_OUTPUT"
+          echo "reason=${reason}" >> "$GITHUB_OUTPUT"
 
       - name: Detect which areas changed
         id: detect
@@ -125,6 +201,10 @@ jobs:
           EVENT: ${{ github.event_name }}
           BEFORE: ${{ github.event.before }}
           AFTER: ${{ github.sha }}
+          # Empty whenever the step above could not answer, or died. An unwritten output reads as
+          # '' and folds into the push-range-only path below, which is the pre-2026-09-20 behaviour.
+          LIVE: ${{ steps.live.outputs.sha }}
+          LIVE_REASON: ${{ steps.live.outputs.reason }}
         run: |
           set -euo pipefail
           # Fail SAFE: anything we cannot diff (manual dispatch, first push of a branch,
@@ -140,7 +220,37 @@ jobs:
           else
             files="$(git diff --name-only "$BEFORE" "$AFTER")"
             all=false
-            echo "Changed files:"; printf '%s\n' "$files"
+            echo "Changed files in this push:"; printf '%s\n' "$files"
+          fi
+
+          # ── AND EVERYTHING THE BOX HAS NOT SEEN YET ───────────────────────────────────────
+          #
+          # UNIONED, NEVER SUBSTITUTED. The push range answers "what did this push touch" and is
+          # what the step summary reports to a human; this answers "what has changed since the box
+          # was last written to", which is the only question a DEPLOY decision may be made on.
+          # Adding lines to `files` can only turn an area from false to true, so this cannot
+          # introduce a skipped deploy — the failure mode it exists to remove.
+          #
+          # `git cat-file -e` because the baseline may genuinely be absent from this checkout: a
+          # force-push can orphan it, and the commit of a deploy older than the repository's
+          # history rewrite is not reachable. Absent means UNKNOWN, and unknown means deploy.
+          echo "Last deployed: ${LIVE_REASON:-unknown}"
+          if [ "$all" != "true" ]; then
+            if [ -z "${LIVE:-}" ]; then
+              echo "The commit last deployed could not be read, so every area is treated as changed."
+              all=true
+            elif ! git cat-file -e "${LIVE}^{commit}" 2>/dev/null; then
+              echo "The last deployed commit ${LIVE} is not in this checkout's history; treating all areas as changed."
+              all=true
+            elif [ "$LIVE" = "$AFTER" ]; then
+              echo "The box is already on ${AFTER}; the push range alone decides."
+            else
+              undeployed="$(git diff --name-only "$LIVE" "$AFTER")"
+              echo "Changed since the box was last written to (${LIVE}):"; printf '%s\n' "$undeployed"
+              # A newline between them, and `printf` rather than an echo of two variables, so an
+              # empty half cannot glue two filenames into one line that matches neither pattern.
+              files="$(printf '%s\n%s\n' "$files" "$undeployed" | sort -u)"
+            fi
           fi
 
           area() {
@@ -164,6 +274,12 @@ jobs:
             | tee -a "$GITHUB_OUTPUT"
           {
             echo "### Changed areas"
+            echo ""
+            # NAMED IN THE SUMMARY, because the whole 2026-09-20 failure was a green run that never
+            # said what it had decided or on what evidence. A reader looking at a skipped deploy
+            # has to be able to see the baseline it was skipped against.
+            echo "Measured against this push **and** against the commit this workflow last"
+            echo "deployed — ${LIVE_REASON:-unknown}."
             echo ""
             echo "| area | changed |"
             echo "|---|---|"
