@@ -869,10 +869,23 @@ function DesignerPanel({
     void load();
   }, [load]);
 
+  /**
+   * THE LEAD THIS PANEL IS ASKING FOR, AND IT IS NOTHING AT ALL WHEN NOTHING IS TICKED.
+   *
+   * `namedDesignerTeam` promotes a bare `lead` into a ONE-PERSON TEAM when `chosen` is empty
+   * (`lib/designWorkshops.ts`), which is right for the create form — a lead named there IS the
+   * choice — and is a silent re-add here. An officer who unticks the only designer on the workshop
+   * would have `baselineLead` handed straight back to the resolver, and Save would post the very
+   * person they had just removed, under a 200, with the screen agreeing. The baseline lead is a
+   * DISPLAY resolution only, so it stands down the moment the selection is empty — which is also
+   * what stops the picker printing "the report will carry …" over an empty tick list.
+   */
+  const leadIntent = selected.length === 0 ? "" : leadChoice || baselineLead;
+
   /** The team and the lead, resolved by the rule the wire uses. */
   const resolved = useMemo(
-    () => namedDesignerTeam({ chosen: selected, lead: leadChoice || baselineLead }),
-    [selected, leadChoice, baselineLead]
+    () => namedDesignerTeam({ chosen: selected, lead: leadIntent }),
+    [selected, leadIntent]
   );
 
   const added = useMemo(
@@ -883,25 +896,44 @@ function DesignerPanel({
     () => baseline.filter((id) => !selected.includes(id)),
     [baseline, selected]
   );
-  const leadMoved = Boolean(leadChoice) && leadChoice !== baselineLead;
+  // Read off `leadIntent`, not `leadChoice`, so that emptying the workshop is expressed by the
+  // TEAM going empty and never as a lead move — otherwise a lead chosen earlier in the sitting and
+  // then unticked would put `leadUserId` on an empty body and count as an extra unsaved change.
+  const leadMoved = Boolean(leadIntent) && leadIntent !== baselineLead;
   const dirty = added.length > 0 || removed.length > 0 || leadMoved;
   const overCap = selected.length > MAX_NAMED_DESIGNERS;
 
   /**
-   * THE ONE STATE THIS SCREEN REFUSES BEFORE THE SERVER DOES, and the exception proves the rule.
+   * EMPTYING A WORKSHOP IS ALLOWED, AND THIS NOTICE IS WHAT REPLACED THE REFUSAL THAT STOOD HERE.
    *
-   * Everywhere else on this page the server's sentence is what the reader sees, because the rules
-   * behind them (empanelment, the platform allow-list, "already on this workshop") are facts this
-   * client cannot see and a client-side copy would go stale. THIS one is different: the panel holds
-   * both halves exactly — who the server says the report names, and what is ticked — so letting the
-   * Save go out would spend a round trip to be told something already on screen. The refusal is
-   * worded, not merely tinted, and Save is disabled while it stands, exactly as the inspectors
-   * panel states its cap of 25.
+   * ⚠ **`strandsTheDesigner` LIVED ON THIS LINE AND THE REASON IT GAVE WAS FACTUALLY FALSE.** It
+   * disabled Save whenever the report named somebody and nothing was ticked, and told the reader
+   * that "nobody is the designer" was not a state this product could express. The product CREATES
+   * that state every time a workshop is opened without naming a designer: design workshop
+   * `cmsxcdc2y000` ("Test", IN_PROGRESS) sits in the live database with `designerName = None`,
+   * measured there on 2026-09-20. What was missing was never the STATE — it was the TRANSITION
+   * BACK to it. You could start with no designer and you could not return, so a mistaken add was a
+   * one-way door, which is exactly what an officer reported: a designer added by accident, a panel
+   * demanding a replacement she did not want to name, and a Save button dead beside "1 unsaved
+   * change".
+   *
+   * The transition is symmetric now, and what replaces the refusal is NOT NOTHING. Emptying a
+   * workshop is consequential, so the reader is told BEFORE the click rather than after it: the
+   * notice below names all three consequences — no named designer, a cover page that then names
+   * nobody, and the profile details already copied into stages 1 and 3 left exactly as they are —
+   * and Save is ENABLED underneath it. Worded, not merely tinted: a signal carried only by colour
+   * is one some readers never get.
+   *
+   * ── THE ONE REFUSAL THIS SCREEN STILL KEEPS FOR ITSELF, AND WHY IT IS SOUND ──────────────────
+   *
+   * Dropping the lead WHILE OTHERS REMAIN is choosing among a team, not emptying a workshop: there
+   * is a replacement to name, and a report with three designers on it and no author is a state
+   * nobody asked for. With nothing ticked there is no replacement and that sentence would simply be
+   * wrong — hence `selected.length > 0`, this client's half of the server's `and wanted`.
    */
-  const strandsTheDesigner =
-    Boolean(designerName?.trim()) && selected.length === 0;
+  const emptiesTheWorkshop = selected.length === 0 && removed.length > 0;
   const dropsTheLeadWithNoReplacement =
-    Boolean(baselineLead) && removed.includes(baselineLead) && !leadMoved;
+    Boolean(baselineLead) && removed.includes(baselineLead) && !leadMoved && selected.length > 0;
 
   const labelById = useMemo(() => {
     const map = new Map<string, string>();
@@ -918,7 +950,9 @@ function DesignerPanel({
     : `${selected.length} designer${selected.length === 1 ? "" : "s"} selected, not yet saved. ${added.length} to add, ${removed.length} to remove${leadMoved ? ", and the report's designer changes" : ""}.`;
 
   async function save() {
-    if (!dirty || overCap || strandsTheDesigner || dropsTheLeadWithNoReplacement) return;
+    // `emptiesTheWorkshop` is deliberately absent from this list: it is a WARNING, not a refusal,
+    // and a guard that quietly swallowed the click would be the disabled button all over again.
+    if (!dirty || overCap || dropsTheLeadWithNoReplacement) return;
     setSaving(true);
     setRefusal(null);
     setSaved(null);
@@ -938,16 +972,23 @@ function DesignerPanel({
       setLeadChoice("");
       setDesignerName(answer.designerName);
       setLostAccess(answer.removedDesigners);
+      // WHAT THE SERVER ACTUALLY DID. The empty answer is a real saved outcome as of 2026-09-20
+      // and no longer an unreachable branch, so it says what the workshop is LEFT like rather than
+      // only counting rows — and the clause under it answers the question the warning raised before
+      // the click, rather than reporting a stage write that a removal does not perform.
+      const nowEmpty = answer.designers.length === 0;
       setSaved(
         [
-          answer.designers.length === 0
-            ? "Nobody is named on this workshop."
+          nowEmpty
+            ? "Nobody is named on this workshop. Its report will name nobody on the cover until a designer is ticked here again."
             : `${answer.designers.length} designer${answer.designers.length === 1 ? "" : "s"} can now open this workshop.`,
-          answer.stagesWritten.length
-            ? `The designer's profile was copied into ${
-                answer.stagesWritten.length === 1 ? "one stage" : `${answer.stagesWritten.length} stages`
-              }.`
-            : "",
+          nowEmpty
+            ? "The profile details already copied into stages 1 and 3 stay exactly as they are — only the designer's name is gone."
+            : answer.stagesWritten.length
+              ? `The designer's profile was copied into ${
+                  answer.stagesWritten.length === 1 ? "one stage" : `${answer.stagesWritten.length} stages`
+                }.`
+              : "",
           answer.removedDesigners.length
             ? `${answer.removedDesigners
                 .map((row) => personLabel(row))
@@ -978,16 +1019,23 @@ function DesignerPanel({
       </p>
       {/*
         THE CORRECTION, ABOVE THE CONTROL AND NOT BELOW IT. `WorkshopDesignerPicker`'s own hint is
-        the create form's and says the field may be left empty — which is true when a workshop is
-        being opened and false here, where the server refuses it and says so. A reader meets this
+        the create form's, and what still needs correcting here are its sentences about a workshop
+        that does not exist yet ("stage 1 then carries whoever creates the workshop") and its
+        pointer at "Designers on a workshop", a panel a Ministry Admin is redirected away from.
+        ⚠ THIS COMMENT ALSO CORRECTED THE HINT'S "may be left empty", on the grounds that the server
+        refused an empty set here. It does not, and since 2026-09-20 it must not — see
+        `emptiesTheWorkshop` for the measurement that ended that rule. A reader meets this paragraph
         first. See this panel's header for why the control is composed rather than forked.
       */}
       <p className="mt-1 text-xs leading-5 text-ink-500">
         Everybody ticked below can open this workshop and fill in its stages; unticking somebody
         takes that access away when you save. One of them — named in the box under the picker — is
-        the designer whose profile is copied into stages 1 and 3 and whose name the report carries,
-        and THAT one cannot simply be removed: choose a different lead instead. A workshop whose
-        report has already been handed in is refused outright, naming the status and the remedy.
+        the designer whose profile is copied into stages 1 and 3 and whose name the report carries.
+        While other designers stay ticked that one cannot simply be dropped: name a different lead
+        instead. Unticking EVERYBODY is a different act and is allowed — the workshop is then left
+        with no named designer, its report names nobody on the cover, and what has already been
+        copied into stages 1 and 3 stays as it is. A workshop whose report has already been handed
+        in is refused outright, naming the status and the remedy.
       </p>
 
       {refusal ? (
@@ -1009,7 +1057,7 @@ function DesignerPanel({
             <WorkshopDesignerPicker
               values={selected}
               onChange={setSelected}
-              lead={leadChoice || baselineLead}
+              lead={leadIntent}
               onLeadChange={setLeadChoice}
               disabled={saving}
               // THIS PAGE'S DOOR, not the picker's default. `GET /design-workshops/eligible-viewers`
@@ -1069,16 +1117,13 @@ function DesignerPanel({
             ) : null}
           </div>
 
-          {/* THE TWO REFUSALS THIS SCREEN CAN SEE FOR ITSELF, stated BEFORE the Save rather than
-              discovered from a 422. Worded rather than merely tinted, because colour alone is a
-              signal some readers never get. */}
-          {strandsTheDesigner ? (
-            <p className="mt-3 rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-sm leading-5 text-amber-800">
-              This workshop&rsquo;s report names {designerName}. Taking every designer off it is not
-              something this product can express — the cover page would have nobody on it. Tick the
-              designer it is for instead.
-            </p>
-          ) : dropsTheLeadWithNoReplacement ? (
+          {/* ONE REFUSAL AND ONE WARNING, both stated BEFORE the Save rather than discovered from
+              a 422, and both WORDED rather than merely tinted because colour alone is a signal some
+              readers never get. They are mutually exclusive by construction — the refusal needs a
+              non-empty selection and the warning an empty one — so the order below is for the
+              reader and not for correctness: what STOPS the save comes before what merely explains
+              it. Save is disabled under the refusal and ENABLED under the warning. */}
+          {dropsTheLeadWithNoReplacement ? (
             <p className="mt-3 rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-sm leading-5 text-amber-800">
               {labelById.get(baselineLead) ?? "That designer"} is the one this report names, so
               taking them off means naming who leads it instead rather than leaving it with nobody.
@@ -1089,14 +1134,22 @@ function DesignerPanel({
               {selected.length} designers are selected and a workshop may be opened for at most{" "}
               {MAX_NAMED_DESIGNERS}. Untick {selected.length - MAX_NAMED_DESIGNERS} of them to save.
             </p>
+          ) : emptiesTheWorkshop ? (
+            <p className="mt-3 rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-sm leading-5 text-amber-800">
+              Saving now will leave this workshop with no named designer at all. Nobody will be able
+              to open it except an admin and whoever created it, and its report will name nobody on
+              the cover page. The designer details already copied into stages 1 and 3 — the
+              institution, the profile, the experience, the qualification and the rest — stay exactly
+              as they are; only the name is cleared. You can tick a designer here again at any time.
+            </p>
           ) : null}
 
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <button
               className="field-button"
-              disabled={
-                !dirty || saving || overCap || strandsTheDesigner || dropsTheLeadWithNoReplacement
-              }
+              // `emptiesTheWorkshop` is NOT in this list, and that is the whole of the fix: the
+              // notice above explains the consequence and the officer decides.
+              disabled={!dirty || saving || overCap || dropsTheLeadWithNoReplacement}
               onClick={save}
               type="button"
             >

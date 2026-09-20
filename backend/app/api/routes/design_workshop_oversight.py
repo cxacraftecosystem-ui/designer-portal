@@ -723,10 +723,20 @@ async def set_workshop_designers(
     means a whole-set replace destroys a row a concurrent redemption created in the same second —
     the exact hazard ``attach_the_named_designers`` refuses to take on.
 
-    **"NOBODY IS THE DESIGNER" IS STILL NOT EXPRESSIBLE.** Two 422s, both naming the remedy: an
-    empty ``userIds`` on a workshop that names a designer, and a body that drops the LEAD without
-    ``leadUserId`` naming their replacement. Removing a CO-designer is always allowed — that is the
-    gap this route exists to close, and their name is on no document.
+    **"NOBODY IS THE DESIGNER" IS AN EXPRESSIBLE STATE, AND THIS DOOR IS THE WAY BACK TO IT
+    (2026-09-20).** This paragraph claimed the opposite until that date and the claim was false:
+    design workshop ``cmsxcdc2y000`` ("Test", IN_PROGRESS) is in the live database with
+    ``designerName = None``, which is where every workshop opened without a designer named begins.
+    The missing half was the TRANSITION BACK, so an officer who added the wrong designer could not
+    take her off again and was asked for a replacement she did not want to name. An empty
+    ``userIds`` now removes the last viewer row, blanks the promoted ``designerName`` AND stage 1's
+    own ``designerName`` field in one act — the field because it is the single source the column is
+    promoted from — and keeps every other stage value the prefill wrote.
+
+    ONE 422 remains on this shape, and it names the remedy: a body that drops the LEAD **while other
+    designers remain** without ``leadUserId`` saying which of them leads instead. Removing a
+    CO-designer is always allowed — that is the gap this route exists to close, and their name is on
+    no document. A FILED report is refused before any of it.
 
     Validation runs to completion before any write, and ``assert_every_designer_may_be_named`` is
     asked of the ADDED ids only. Refusing a REMOVAL because somebody's empanelment has lapsed would

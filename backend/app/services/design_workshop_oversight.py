@@ -989,13 +989,29 @@ async def set_named_designers(
     truth for it, and ``_deduplicate`` drops them on the viewers PUT for the same stated reason. A
     body that names them is a no-op about them, never an error.
 
-    **3. "NOBODY IS THE DESIGNER" IS STILL NOT AN EXPRESSIBLE STATE**, and this door does not become
-    the way to reach it. ``DesignWorkshopDesignerIn``'s docstring is the argument — the promoted
-    ``designerName`` column would have to be blanked, which is the write ``_coerce_promoted`` exists
-    to stop happening by accident. So two refusals, both 422, both naming the remedy: an empty set
-    on a workshop that names a designer, and a set that drops the LEAD without ``leadUserId``
-    naming their replacement. **Removing a CO-designer is a different act and is always allowed** —
-    their name is on no document, and this is the whole gap the feature was missing.
+    **3. "NOBODY IS THE DESIGNER" IS AN EXPRESSIBLE STATE, AND SINCE 2026-09-20 IT IS ALSO A
+    REACHABLE ONE.** This paragraph, the route's docstring and ``DesignWorkshopDesignerIn``'s all
+    said the opposite until that date, and the claim was FALSE — measured, not argued: design
+    workshop ``cmsxcdc2y000`` ("Test", IN_PROGRESS) sits in the live database with
+    ``designerName = None``, and every workshop opened without a designer named starts there. What
+    did not exist was the TRANSITION BACK. An officer could name a designer and could never unname
+    one, so a mistaken add was a ONE-WAY DOOR: the only other viewer removal in the backend is
+    ``replace_viewers``, behind ``require_admin`` = {ADMIN, MASTER_ADMIN}, a set the MINISTRY_ADMIN
+    performing this act is outside.
+
+    So the empty set is now ALLOWED, and it does three things and no fourth: the viewer rows go (as
+    they already did for a co-designer), the promoted ``designerName`` is blanked, and the stage
+    data is KEPT — except stage 1's own ``designerName`` field, which is blanked in the SAME act,
+    because it is the single source the column is promoted from and would otherwise re-promote the
+    removed designer's name on the next stage-1 save. See
+    :func:`take_the_designers_name_off_the_workshop`, which carries the whole of that argument.
+
+    ONE refusal survives, and it is the one that was always sound: a set that drops the LEAD while
+    OTHER designers remain, without ``leadUserId`` naming which of them leads instead. With a team
+    of three you are choosing among them, not emptying the workshop — so it is guarded with ``and
+    wanted`` and cannot fire on an empty set. **Removing a CO-designer is a different act and is
+    always allowed** — their name is on no document, and this is the whole gap the feature was
+    missing. A FILED report is still refused outright, ahead of everything: step 1.
 
     **4. ELIGIBILITY IS ASKED OF THE ADDED IDS ONLY, AND BEFORE ANY WRITE.** ``added`` goes through
     ``assert_every_designer_may_be_named`` — one call for the whole set, so the 422 names every
@@ -1004,12 +1020,14 @@ async def set_named_designers(
     refusing to REMOVE somebody because their empanelment has lapsed strands access precisely on the
     accounts it is most urgent to take it away from.
 
-    **5. ADD, THEN REMOVE, THEN MOVE THE LEAD'S PROFILE.** Adds first so the workshop never passes
-    through a moment with no designer on it at all — the same ordering, and the same sentence,
-    :func:`reassign_designer` carries. The prefill/stage-save arm runs **only when the lead actually
-    changes**: adding a co-designer must not rewrite stage 1 and must not restamp the report's
-    cover, and a save that moved the lead every time would make "add Rekha" quietly re-attribute the
-    document.
+    **5. ADD, THEN REMOVE, THEN MOVE THE LEAD'S PROFILE — OR TAKE THE NAME OFF ALTOGETHER.** Adds
+    first so the workshop never passes through a moment with no designer on it at all — the same
+    ordering, and the same sentence, :func:`reassign_designer` carries. The prefill/stage-save arm
+    runs **only when the lead actually changes**: adding a co-designer must not rewrite stage 1 and
+    must not restamp the report's cover, and a save that moved the lead every time would make "add
+    Rekha" quietly re-attribute the document. The EMPTY set takes the third road, after the
+    removals: :func:`take_the_designers_name_off_the_workshop`, which blanks stage 1's own
+    ``designerName`` field and lets the promoted column follow through the one writer.
 
     ══ NOT A TRANSACTION, AND THAT IS INHERITED RATHER THAN CHOSEN ════════════════════════════════
 
@@ -1064,25 +1082,37 @@ async def set_named_designers(
     removed_rows = [row for row in held_rows if row["userId"] not in seen]
 
     designer_named = bool(str(getattr(workshop, "designerName", "") or "").strip())
-    if designer_named and not wanted:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=(
-                "Removing a workshop's designer altogether is not something this product can "
-                "express: its report already carries their name, and leaving the workshop with "
-                "nobody named would blank the cover page. Name the designer it is for instead — "
-                "replacing them takes the outgoing designer's access away in the same act. "
-                "Nothing was changed."
-            ),
-        )
-    if current_lead_id is not None and current_lead_id not in seen and not lead:
+    # ══ THE 422 THAT STOOD HERE UNTIL 2026-09-20 IS GONE, BECAUSE WHAT IT CLAIMED WAS FALSE ═════
+    #
+    # It refused ``designer_named and not wanted`` with "removing a workshop's designer altogether
+    # is not something this product can express". MEASURED AGAINST THE LIVE DATABASE, 2026-09-20:
+    # design workshop ``cmsxcdc2y000`` ("Test", IN_PROGRESS) is sitting in it with
+    # ``designerName = None``, and so is every workshop ever opened without a designer named — this
+    # product CREATES that state on the ordinary create door. The state was never inexpressible.
+    # What was missing was the TRANSITION BACK to it: you could start with nobody and you could not
+    # return, so an officer who added the wrong designer met a ONE-WAY DOOR. The panel demanded a
+    # replacement they did not want to name, and there was no other route anywhere in the product —
+    # the only other viewer removal is ``replace_viewers``, behind ``require_admin`` = {ADMIN,
+    # MASTER_ADMIN}, a set a MINISTRY_ADMIN is outside.
+    #
+    # Emptying the set is therefore ALLOWED, and the name comes off the cover with the last viewer
+    # row — see the branch below, which does it through the STAGE that owns the name and not by
+    # writing the promoted column. What remains is the refusal that was always sound:
+    if current_lead_id is not None and current_lead_id not in seen and not lead and wanted:
+        # ``and wanted`` IS WHAT KEEPS THIS REFUSAL OUT OF THE EMPTY CASE, and without it deleting
+        # the one above would have changed nothing: an officer taking the LAST designer off is also
+        # dropping the lead, so this branch fired in its place and demanded the same replacement in
+        # different words. It is right whenever somebody REMAINS — with a team of three you are
+        # choosing which of them the report names, not emptying the workshop — and it is answering
+        # a question nobody asked when the answer is "nobody".
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=(
                 f"{current_lead.get('name') or current_lead.get('email') or 'That designer'} is the "
-                f"designer this workshop's report names, so taking them off it means naming who "
-                f"leads it instead rather than leaving it with nobody. Choose the designer whose "
-                f"name the report should carry and save again. Nothing was changed."
+                f"designer this workshop's report names, so taking them off while other designers "
+                f"remain means saying which of the others leads it instead. Choose the designer "
+                f"whose name the report should carry and save again — or take every designer off "
+                f"the workshop, which clears the name from its cover as well. Nothing was changed."
             ),
         )
 
@@ -1104,7 +1134,16 @@ async def set_named_designers(
         await design_workshop_viewers.remove_one_viewer(workshop_id, row["userId"])
 
     stages_written: list[str] = []
-    if lead and lead != current_lead_id:
+    if designer_named and not wanted:
+        # THE LAST DESIGNER HAS JUST GONE, SO THE NAME ON THE REPORT'S COVER GOES WITH THEM — AND
+        # BOTH HALVES OF IT GO IN ONE ACT. ``designerName`` is a PROMOTED column whose single source
+        # is stage 1's own field, so blanking the column alone would be re-promoted by the very next
+        # stage-1 save and the removed designer's name would reappear on the cover of a workshop
+        # nobody is on. The helper blanks the FIELD and lets the column follow through the one
+        # writer; it is the mirror of ``move_the_leads_profile_onto_the_workshop``, and it answers
+        # with the stage keys it wrote for the same reason.
+        stages_written = await take_the_designers_name_off_the_workshop(workshop_id, actor=actor)
+    elif lead and lead != current_lead_id:
         stages_written = await move_the_leads_profile_onto_the_workshop(
             workshop_id, lead, actor=actor
         )
@@ -1258,6 +1297,141 @@ async def move_the_leads_profile_onto_the_workshop(
             actor,
         )
     return sorted({stage for stage, _entity in by_entity})
+
+
+async def take_the_designers_name_off_the_workshop(workshop_id: str, *, actor: Any) -> list[str]:
+    """Take the report's designer name off a workshop that is now for NOBODY.
+
+    The mirror of :func:`move_the_leads_profile_onto_the_workshop`, and it answers with the same
+    thing — the stage keys it wrote — which is what ``stagesWritten`` is.
+
+    ══ WHY THIS IS NOT ONE LINE AGAINST THE COLUMN, WHICH IS THE HALF THAT WOULD LOOK DONE ═══════
+
+    ``DesignWorkshop.designerName`` is a PROMOTED column. Its single source is stage 1's
+    ``workshopSetup.designerName`` — ``designers.PREFILL_MAP`` maps the profile's ``displayName``
+    onto that field, and ``stage_schema.PROMOTED_COLUMNS`` copies the field onto the column on every
+    save that touches the entity. A ``db.designworkshop.update`` setting the column to NULL would
+    therefore pass every test anybody would think to write and be SILENTLY UNDONE by the next
+    stage-1 save: ``_coerce_promoted`` rewrites the column from the row, so the designer's next
+    visit to stage 1, or an officer's next reassignment, would put the removed designer's name back
+    on the cover of a workshop nobody is on. That is exactly the JSON-and-column drift the promoted
+    columns' single-writer rule exists to prevent. The FIELD is blanked; the column follows from it.
+
+    ══ WHAT IS KEPT, WHICH IS EVERYTHING ELSE ═══════════════════════════════════════════
+
+    ONLY ``designerName`` GOES. ``designerInstitution`` beside it on this same entity, and the
+    whole of the prefill's stage-3 ``workshopPlan`` block — ``designerProfile``,
+    ``designerExperience``, ``designerPhone``, ``designerQualification``, the address block, the
+    empanelment number, the photograph, the signature — stay exactly as they are, and so do the
+    craft, the cluster, the state, the district, the venue and both dates, which share this row and
+    are promoted columns of their own. A report is a HISTORICAL DOCUMENT; withdrawing somebody's
+    access does not make what was recorded about the workshop untrue, and an officer correcting a
+    mistaken add must not have to retype a stage they never touched. Stage 3 is not written at all,
+    because nothing on it is promoted and nothing on it is the report's AUTHORSHIP.
+
+    ══ WHY THE ENTRY IS ``merge=False``, WHICH ANYWHERE ELSE IN THIS MODULE WOULD BE THE DEFECT ══
+
+    A BLANK CANNOT BE SENT AS A VALUE. ``coerce_value`` answers ``None`` for an empty string,
+    ``validate_entry`` then leaves the key out of ``cleaned`` altogether, and ``save_stage``'s merge
+    arm — ``clean = {**previous, **clean}`` — fills it straight back in from the row. So
+    ``merge=True`` with ``{"designerName": ""}`` is a NO-OP wearing the appearance of a blank, and
+    the only way to take a key OFF a singleton is the wholesale write every client already makes.
+    This reads the row and sends back every key it holds except this one, which is precisely what
+    the web form does when a designer clears a box — with the same narrow race: a concurrent stage-1
+    save landing between the read and the write loses to this one. The row is read HERE rather than
+    the values being rebuilt from the workshop's columns because the columns are the COPY and the
+    stage row is the original.
+
+    The one thing a wholesale write drops that a merge would keep is a key the registry no longer
+    declares — an unknown key, or a ``deprecated`` field — and that is the registry's stated policy
+    rather than a loss this introduces: ``validate_entry`` rebuilds ``cleaned`` from the specs, so
+    such a value "is dropped from the row on its next save" whoever makes that save.
+    ``workshopSetup`` declares no deprecated field today; the registry's only one is
+    ``sketchReview.rank``.
+
+    ⚠ ``submit=False`` IS LOAD-BEARING HERE AND NOT COPIED HABIT. ``workshopSetup.designerName`` is
+    a BASIC-tier REQUIRED field. With ``submit=True``, ``validate_entry`` files "Designer is
+    required" into ``errors`` and ``save_stage``'s rejected-key branch then RESTORES the value from
+    ``previous`` — so the guard that stops a typo destroying a stored answer would quietly undo this
+    blank, and the route would answer 200 with the name still on the cover.
+    ``replaceCollections=False`` and an empty ``emptiedEntities`` so nothing is swept: there is no
+    collection on this entity, and naming one would be a statement about rows this act knows nothing
+    about.
+
+    WHICH STAGE AND ENTITY IS ASKED OF THE REGISTRY through :func:`_prefill_targets`, never typed
+    out, for the reason ``seed_designer_prefill`` gives about the same lookup: the day the designer
+    block moves onto a stage of its own, a hard-coded ``WORKSHOP_SETUP``/``workshopSetup`` here
+    would blank a field on a row no form reads and leave the real one promoting the old name for
+    ever.
+    """
+    from app.schemas.design_workshops import StageEntryIn, StageSaveIn
+    from app.services.stage_schema import stages
+
+    target = _prefill_targets().get("designerName")
+    spec = {s.key: s for s in stages()}.get(target[0]) if target else None
+    if target is None or spec is None:  # pragma: no cover - the registry disagreeing with itself
+        # Logged rather than raised, the same choice the prefill loop makes about the same lookup:
+        # an assignment that 500s on a stale registry mapping is worse than one that leaves a name
+        # on a cover, and the answer re-reads the column, so the officer is shown what stands.
+        logger.warning(
+            "no stage declares designerName; workshop %s keeps the name on its cover", workshop_id
+        )
+        return []
+    stage_key, entity_key = target
+
+    rows = [
+        row
+        for row in await design_workshops.entry_rows(workshop_id, stage_key=stage_key)
+        if row.entityKey == entity_key
+    ]
+    # THE SENTINEL-KEYED ROW FIRST, which is the preference ``save_stage``'s own singleton matcher
+    # applies and for the reason ``SINGLETON_CLIENT_KEY`` records: on a workshop carrying a
+    # duplicate from before the unique index could enforce one, "the first live row" is a coin toss,
+    # and reading one row while ``save_stage`` writes the other would blank nothing at all while
+    # reporting that it had.
+    sentinel = design_workshops.singleton_client_key(stage_key)
+    row = next((r for r in rows if r.clientKey == sentinel), None) or next(iter(rows), None)
+    held: dict[str, Any] = dict(getattr(row, "data", None) or {})
+
+    if not str(held.get("designerName") or "").strip():
+        # ⚠ A DIRECT WRITE OF A PROMOTED COLUMN, WHICH BYPASSES ITS SINGLE-WRITER RULE. It is here
+        # because it is the only correct answer in this one case, and the case is narrow: the header
+        # names a designer and the stage row that OWNS that name holds nothing — no row at all, or a
+        # row whose ``designerName`` is already blank.
+        #
+        # THE ALTERNATIVE IS FAR WORSE THAN THE BYPASS. Handing ``save_stage`` an empty
+        # ``workshopSetup`` would make the entity a CONTRIBUTOR with no values, and
+        # ``_coerce_promoted`` NULLS every promoted column of a contributing entity whose value came
+        # back blank — so one save would take the craft, the cluster, the state, the district, the
+        # venue, the scheme, the implementing agency, the sponsor, the workshop code and both dates
+        # off the workshop, under a 200 reading "Stage saved". That is the incident
+        # ``seed_designer_prefill``'s docstring records — "a designer who typed Ikat / Barpali /
+        # Odisha / Bargarh into the create form ... watched craftName, clusterName, state, district,
+        # startDate, endDate, scheme, implementingAgency, sponsor and workshopCode all go to NULL"
+        # — deliberately re-created.
+        #
+        # AND WHAT THE SINGLE-WRITER RULE PROTECTS IS NOT AT RISK HERE, which is the whole of the
+        # argument: the rule exists so the column and the JSON cannot disagree, and with no value in
+        # the JSON the column IS the disagreement. Nothing can re-promote what the stage does not
+        # hold, so this write ENDS that drift rather than starting it. It stays an ``update`` of
+        # this ONE column by id, and must never grow into a second place that computes promoted
+        # values.
+        await db.designworkshop.update(where={"id": workshop_id}, data={"designerName": None})
+        return []
+
+    kept = {key: value for key, value in held.items() if key != "designerName"}
+    await design_workshops.save_stage(
+        workshop_id,
+        spec,
+        StageSaveIn(
+            entries=[StageEntryIn(entityKey=entity_key, data=kept, merge=False)],
+            replaceCollections=False,
+            emptiedEntities=[],
+            submit=False,
+        ),
+        actor,
+    )
+    return [stage_key]
 
 
 async def _the_designer_being_replaced(workshop: Any, *, incoming_id: str) -> dict[str, Any] | None:

@@ -79,11 +79,19 @@ class DesignWorkshopDesignerIn(BaseModel):
     fields into two stages and moves a promoted column. Folding them into one body would mean one
     422 that could not say which half of the request it was refusing.
 
-    ``designerId`` IS REQUIRED AND THERE IS NO UNASSIGN. Removing a workshop's designer is not a
-    thing this product can express: the viewer row would have to go, the stage-1 header would have
-    to be blanked, and the promoted column with it — which is the write
-    ``design_workshops._coerce_promoted`` exists to stop happening by accident. Somebody who wants
-    that is replacing the designer, which is this route.
+    ``designerId`` IS REQUIRED AND THERE IS NO UNASSIGN **ON THIS DOOR**. This paragraph read
+    "removing a workshop's designer is not a thing this product can express" until 2026-09-20, and
+    that was false: design workshop ``cmsxcdc2y000`` ("Test", IN_PROGRESS) sits in the live database
+    with ``designerName = None``, and so does every workshop opened without a designer named. The
+    state always existed; the TRANSITION BACK to it did not, which made a mistaken add a one-way
+    door. It exists now, and it belongs to the PLURAL body alone —
+    :class:`DesignWorkshopDesignersIn`, whose empty ``userIds`` takes the last viewer row, the
+    promoted column and stage 1's own ``designerName`` field together.
+
+    This body stays REQUIRED because of what this route ANSWERS, not because of what the product can
+    hold: "whose name is on the report", and a replacement is what that question is for. A ``null``
+    here would be a second way to say something the plural door already says, on the one door that
+    cannot say which OTHER designers keep their access afterwards.
 
     ── AND IT IS NO LONGER THE ONLY DESIGNER BODY ON THIS PREFIX (0.0.12) ────────────────────────
 
@@ -94,13 +102,14 @@ class DesignWorkshopDesignerIn(BaseModel):
     .docx's ``dc:creator``. Both facts already existed on the CREATE door as ``designerUserId``
     beside ``designerUserIds``; this prefix simply had only half of the pair until now.
 
-    **THE "NO UNASSIGN" RULE SURVIVES THE PLURAL BODY AND IS ENFORCED THERE TOO.** The set write
-    cannot be used to reach the state this class refuses — a workshop whose designer is nobody. Its
-    route refuses a body that would take the LEAD off without naming a replacement, in the same
-    words as the paragraph above, so the rule is spelled once as an argument and enforced on both
-    doors. What the set write DOES add is the removal of a CO-designer, which is a different act:
-    that person's name is on no document, and before 0.0.12 a Ministry Admin had no route anywhere
-    that could take their access away.
+    **AND THE PLURAL BODY IS WHERE "FOR NOBODY" IS SAID (2026-09-20).** This paragraph used to
+    claim the set write "cannot be used to reach the state this class refuses". It can, and it is
+    the only thing that can: an empty ``userIds`` removes the last viewer row, blanks the promoted
+    ``designerName`` and blanks stage 1's own ``designerName`` field in the same act. The plural
+    door is the right home for it because it is the one that can say what happens to everybody ELSE
+    on the workshop. What the set write also adds is the removal of a CO-designer, which is a
+    different act again: that person's name is on no document, and before 0.0.12 a Ministry Admin
+    had no route anywhere that could take their access away.
     """
 
     designerId: str = Field(min_length=1, max_length=64)
@@ -136,11 +145,15 @@ class DesignWorkshopDesignersIn(BaseModel):
     not in the set would be a body that names somebody as the workshop's designer and does not give
     them access to it, so it is a 422 rather than a silent promotion of the first id.
 
-    ``userIds`` MAY NOT BE EMPTY WHERE THE WORKSHOP HAS A NAMED DESIGNER — see
-    :class:`DesignWorkshopDesignerIn`. "Nobody is the designer" is not an expressible state, and a
-    body that asked for it would have to blank the promoted ``designerName`` column, which is the
-    write ``_coerce_promoted`` exists to stop happening by accident. The refusal lives on the route
-    because it needs the workshop row to answer.
+    ``userIds`` MAY BE EMPTY, AND AN EMPTY LIST MEANS "THIS WORKSHOP IS FOR NOBODY". It was refused
+    until 2026-09-20 on the ground that "nobody is the designer" was not an expressible state, which
+    was measurably untrue — ``cmsxcdc2y000`` ("Test", IN_PROGRESS) holds ``designerName = None`` in
+    the live database, as does every workshop opened without a designer named. The promoted column
+    IS blanked by it, deliberately, together with stage 1's own ``designerName`` field, which is the
+    single source the column is promoted from: blanking one without the other is the drift
+    ``_coerce_promoted`` exists to prevent, because the next stage-1 save would re-promote the name.
+    What the service still refuses, and what needs the workshop row to answer, is dropping the LEAD
+    while other designers remain without naming which of them leads instead.
 
     ``max_length`` is :data:`MAX_DESIGN_WORKSHOP_VIEWERS`, imported rather than chosen, because this
     body and the viewers PUT write the same table.

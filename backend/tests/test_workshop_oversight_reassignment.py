@@ -62,9 +62,16 @@ from typing import Any
 import pytest
 from conftest import needs_db
 
+import app.services.stage_definitions  # noqa: F401  - installs the stage registry
 from app.core.db import db
 from app.core.security import hash_password
-from app.services import design_workshop_oversight as oversight
+from app.schemas.design_workshops import StageEntryIn, StageSaveIn
+from app.services import design_workshop_oversight as oversight, design_workshops
+
+STAGE_ONE = "WORKSHOP_SETUP"
+SETUP_ENTITY = "workshopSetup"
+STAGE_THREE = "WORKSHOP_PLAN_PARTICIPANTS_OPENING"
+PLAN_ENTITY = "workshopPlan"
 
 pytestmark = pytest.mark.anyio
 
@@ -175,6 +182,81 @@ async def world():
 async def _viewer_ids(workshop_id: str) -> set[str]:
     rows = await db.designworkshopviewer.find_many(where={"designWorkshopId": workshop_id})
     return {row.userId for row in rows}
+
+
+def _spec(stage_key: str) -> Any:
+    from app.services.stage_schema import stages
+
+    spec = next((s for s in stages() if s.key == stage_key), None)
+    assert spec is not None, f"{stage_key} is no longer in the registry"
+    return spec
+
+
+async def _stage_data(workshop_id: str, stage_key: str, entity_key: str) -> dict[str, Any]:
+    """What one singleton row of one stage actually holds. ``{}`` when there is no row.
+
+    Read straight off ``DwStageEntry`` rather than through the stage read, because what is under
+    test is the STORED document: the promoted column is a copy of it, and a test that consulted
+    only the column could not tell a blanked field from a column blanked beside a field that will
+    put it back on the next save.
+    """
+    rows = await db.dwstageentry.find_many(
+        where={"designWorkshopId": workshop_id, "stageKey": stage_key, "deletedAt": None}
+    )
+    row = next((r for r in rows if r.entityKey == entity_key), None)
+    return dict(getattr(row, "data", None) or {})
+
+
+async def _save_stage_one(workshop_id: str, actor: Any, data: dict[str, Any]) -> None:
+    """An ORDINARY stage-1 save, ``merge=True``, exactly as a client that has read the stage makes
+    it. Used to fill the cover fields the blanking must not touch, and — in the re-promotion test
+    below — to be the next save after one.
+    """
+    await design_workshops.save_stage(
+        workshop_id,
+        _spec(STAGE_ONE),
+        StageSaveIn(
+            entries=[StageEntryIn(entityKey=SETUP_ENTITY, data=data, merge=True)],
+            replaceCollections=False,
+            emptiedEntities=[],
+            submit=False,
+        ),
+        actor,
+    )
+
+
+async def _a_workshop_whose_stage_one_names_its_designer(world: dict[str, Any]) -> Any:
+    """The state an officer is actually looking at: a designer NAMED through this very door, so
+    stage 1 and stage 3 carry the prefill the promoted column was written from, plus the cover
+    fields somebody typed.
+
+    Reached through the product's own calls rather than by writing rows, because the thing under
+    test is a transition BACK out of a state, and a hand-built state is only as faithful as the
+    person who built it. ``incoming`` is the designer named, not ``outgoing``: the fixture's column
+    already reads "A. Sharma", and naming the designer the column already names moves no lead and
+    so writes no stage.
+    """
+    designer = world["incoming"]
+    await db.designerprofile.update(
+        where={"userId": designer.id},
+        data={
+            "institution": "National Institute of Design",
+            "qualification": "M.Des (Textile Design)",
+            "biography": "Twelve years on pit-loom ikat.",
+        },
+    )
+    workshop = world["workshop"]
+    await oversight.set_named_designers(
+        workshop, user_ids=[designer.id], lead_user_id=designer.id, actor=world["officer"]
+    )
+    # The cover fields a designer types for themselves, and every one of them a PROMOTED column of
+    # its own on the same singleton — which is what makes "only designerName goes" assertable.
+    await _save_stage_one(
+        workshop.id,
+        world["officer"],
+        {"craftName": "Sambalpuri Ikat", "clusterName": "Barpali", "venue": "Weavers' Centre"},
+    )
+    return await db.designworkshop.find_unique(where={"id": workshop.id})
 
 
 @needs_db
@@ -379,37 +461,139 @@ async def test_a_co_designer_can_be_taken_off_and_the_answer_names_them(world) -
 
 
 @needs_db
-async def test_taking_every_designer_off_a_workshop_that_names_one_is_refused(world) -> None:
-    """NOBODY IS THE DESIGNER is not an expressible state, and the empty set does not become it.
+async def test_taking_every_designer_off_a_workshop_takes_the_name_off_its_cover_too(world) -> None:
+    """**THE ONE-WAY DOOR, OPENED (2026-09-20)** — this test asserted the refusal until that date.
 
-    ``DesignWorkshopDesignerIn`` refuses it structurally on the singular door — ``designerId`` is
-    ``min_length=1``. A whole-set body can SEND an empty list and has to, because a workshop that
-    has never named anybody is the ordinary starting state, so the refusal lives where the workshop
-    row is readable. Reaching the state would blank the promoted column, which is the write
-    ``_coerce_promoted`` exists to stop happening by accident.
+    The refusal said "nobody is the designer" was not an expressible state. It is one and always
+    was: design workshop ``cmsxcdc2y000`` ("Test", IN_PROGRESS) sits in the live database with
+    ``designerName = None``, which is where every workshop opened without a designer named begins.
+    What did not exist was the TRANSITION BACK, so an officer who added the wrong designer was
+    asked for a replacement she did not want to name and had no other route — the only other viewer
+    removal in the backend is ``replace_viewers``, behind ``require_admin``, a set a MINISTRY_ADMIN
+    is outside.
 
-    **AND NOTHING IS WRITTEN ON THE WAY TO THE REFUSAL**, which is the row-level half a source read
-    cannot show: an all-or-nothing validation that had already removed somebody would be worse than
-    no validation at all.
+    **BOTH HALVES OR NEITHER.** Taking the access away and leaving the cover naming the designer it
+    was just taken from is the residual-grant defect this file is named after, wearing its other
+    face: the report would go on being attributed to somebody with no way to open the record.
+
+    THE FIXTURE'S WORKSHOP HAS NO STAGE ROW AT ALL — its ``designerName`` is a column and nothing
+    else — which is the arm that cannot go through ``save_stage``: handing it an empty
+    ``workshopSetup`` would make the entity a contributor with no values and ``_coerce_promoted``
+    would NULL the craft, the cluster, the state, the district and both dates along with the name.
+    The stage-backed arm, which is the ordinary one, is the test below.
     """
     workshop = world["workshop"]
-    with pytest.raises(Exception) as exc:
-        await oversight.set_named_designers(
-            workshop, user_ids=[], lead_user_id=None, actor=world["officer"]
-        )
-    assert getattr(exc.value, "status_code", None) == 422
-    assert await _viewer_ids(workshop.id) == {world["outgoing"].id}, (
-        "a refusal that had already taken the designer's access away"
+    answer = await oversight.set_named_designers(
+        workshop, user_ids=[], lead_user_id=None, actor=world["officer"]
     )
+
+    assert await _viewer_ids(workshop.id) == set(), "the last designer kept their stage writes"
+    assert [row["userId"] for row in answer["removedDesigners"]] == [world["outgoing"].id]
+    assert answer["designerName"] is None, (
+        "the workshop is for nobody and its cover still names the designer it was taken from"
+    )
+    assert answer["designers"] == []
+    reread = await db.designworkshop.find_unique(where={"id": workshop.id})
+    assert reread.designerName is None
+    assert reread.title == workshop.title, "the NOT NULL promoted column was written too"
 
 
 @needs_db
-async def test_dropping_the_named_designer_without_a_replacement_is_refused(world) -> None:
-    """Taking the report's own author off is NAMING SOMEBODY ELSE, not a deletion.
+async def test_the_cover_name_is_blanked_on_stage_one_and_nothing_else_on_it_is(world) -> None:
+    """**THE ORDINARY ARM, AND THE HALF THAT WOULD LOOK DONE.**
+
+    ``designerName`` is a PROMOTED column whose single source is stage 1's own ``designerName``
+    field. Blanking the column alone passes a test that re-reads the column and is then SILENTLY
+    UNDONE by the next stage-1 save — see the test below, which makes that save. So the field goes
+    in the same act, and NOTHING ELSE does: ``designerInstitution`` beside it, the stage-3 profile
+    block, and the craft, cluster and venue a designer typed are all still there afterwards. A
+    report is a historical document; withdrawing access does not make what was recorded untrue, and
+    an officer correcting a mistaken add must not have to retype a stage they never touched.
+
+    The three cover fields are PROMOTED COLUMNS OF THEIR OWN on this same singleton, which is what
+    makes this assertable rather than decorative: a wholesale write that dropped them would null
+    ``craftName``, ``clusterName`` and ``venue`` on the header under a 200 — the incident
+    ``seed_designer_prefill``'s docstring records, from the other end.
+    """
+    record = await _a_workshop_whose_stage_one_names_its_designer(world)
+    before = await _stage_data(record.id, STAGE_ONE, SETUP_ENTITY)
+    assert before["designerName"] == "B. Mohanty", "the fixture never named anybody on the stage"
+    assert before["designerInstitution"] == "National Institute of Design"
+
+    answer = await oversight.set_named_designers(
+        record, user_ids=[], lead_user_id=None, actor=world["officer"]
+    )
+
+    assert answer["stagesWritten"] == [STAGE_ONE], (
+        "no stage was written, so nothing can have blanked the field the column is promoted from"
+    )
+    after = await _stage_data(record.id, STAGE_ONE, SETUP_ENTITY)
+    assert not str(after.get("designerName") or "").strip(), (
+        "stage 1 still names the designer, so the next save of it re-promotes the name onto the "
+        "cover of a workshop nobody is on"
+    )
+    assert after["designerInstitution"] == "National Institute of Design", (
+        "a field the removal was never about was taken with it"
+    )
+    assert after["craftName"] == "Sambalpuri Ikat"
+    assert after["clusterName"] == "Barpali"
+    assert after["venue"] == "Weavers' Centre"
+
+    plan = await _stage_data(record.id, STAGE_THREE, PLAN_ENTITY)
+    assert plan["designerQualification"] == "M.Des (Textile Design)", (
+        "stage 3 was rewritten; nothing on it is promoted and nothing on it is the authorship"
+    )
+    assert plan["designerProfile"], "the designer's biography was deleted by a removal of access"
+
+    reread = await db.designworkshop.find_unique(where={"id": record.id})
+    assert reread.designerName is None
+    assert reread.craftName == "Sambalpuri Ikat", "a promoted column nobody asked about was nulled"
+    assert reread.clusterName == "Barpali"
+    assert reread.venue == "Weavers' Centre"
+    assert await _viewer_ids(record.id) == set()
+
+
+@needs_db
+async def test_the_blanked_cover_name_is_not_put_back_by_the_next_stage_one_save(world) -> None:
+    """**WHY THE COLUMN IS NOT WRITTEN DIRECTLY, ASSERTED AS THE SAVE THAT WOULD HAVE UNDONE IT.**
+
+    ``_coerce_promoted`` rewrites every promoted column from the stage row on every save that
+    touches ``workshopSetup``. A ``db.designworkshop.update`` setting ``designerName`` to NULL would
+    therefore pass the test above — the column reads NULL — and be reverted the next time anybody
+    opened stage 1 and pressed save, putting the removed designer's name back on the cover of a
+    workshop nobody is on, with no request anywhere that says it happened.
+
+    This is that save, made by the ordinary path after the removal. It is the whole reason the field
+    and the column go together in one act.
+    """
+    record = await _a_workshop_whose_stage_one_names_its_designer(world)
+    await oversight.set_named_designers(
+        record, user_ids=[], lead_user_id=None, actor=world["officer"]
+    )
+
+    await _save_stage_one(record.id, world["officer"], {"venue": "Community hall, Barpali"})
+
+    reread = await db.designworkshop.find_unique(where={"id": record.id})
+    assert reread.designerName is None, (
+        "the next stage-1 save re-promoted the name off a stage field that was never blanked; the "
+        "column had been written directly"
+    )
+    assert reread.venue == "Community hall, Barpali", "the control: that save did reach the header"
+
+
+@needs_db
+async def test_dropping_the_named_designer_while_others_remain_is_refused(world) -> None:
+    """Taking the report's own author off a workshop OTHERS are still on is NAMING SOMEBODY ELSE.
 
     The co-designer beside them may go freely, so the refusal has to be about the LEAD specifically
     rather than about the set shrinking — which is why the lead is resolved from the rows rather
     than assumed to be the first of them.
+
+    **AND IT FIRES ONLY WHILE SOMEBODY REMAINS (2026-09-20).** Guarded with ``and wanted``, because
+    an officer taking the LAST designer off is also dropping the lead: without that guard this
+    branch fired in the deleted empty-set refusal's place and demanded the same replacement in
+    different words, and the one-way door would have stayed shut. With a team of three you are
+    choosing which of them the report names; with nobody left there is nothing to choose.
     """
     workshop = world["workshop"]
     await db.designworkshopviewer.create_many(

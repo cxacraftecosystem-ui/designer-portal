@@ -841,7 +841,13 @@ def team(monkeypatch: pytest.MonkeyPatch):
     """
     from app.services import designers as designer_service
 
-    calls: dict[str, list] = {"added": [], "removed": [], "lead_moved": [], "validated": []}
+    calls: dict[str, list] = {
+        "added": [],
+        "removed": [],
+        "lead_moved": [],
+        "validated": [],
+        "name_cleared": [],
+    }
     rows = [_viewer("lead-1", "A. Sharma"), _viewer("co-1", "B. Mohanty")]
 
     async def _viewer_rows(workshop_id):
@@ -865,6 +871,14 @@ def team(monkeypatch: pytest.MonkeyPatch):
         calls["lead_moved"].append(user_id)
         return ["WORKSHOP_SETUP"]
 
+    # THE THIRD ARM, RECORDED RATHER THAN RUN, for the same reason as the prefill above it: what it
+    # does is read stage 1 and write it back without one key, which is a ROW and belongs to
+    # ``tests/test_workshop_oversight_reassignment.py``. What belongs here is WHETHER it runs, and
+    # on which saves — a decision this module makes, and one no row could show on its own.
+    async def _clear_name(workshop_id, *, actor):
+        calls["name_cleared"].append(workshop_id)
+        return ["WORKSHOP_SETUP"]
+
     async def _named(workshop):
         return []
 
@@ -874,6 +888,7 @@ def team(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(oversight.design_workshops, "assert_every_designer_may_be_named", _validate)
     monkeypatch.setattr(designer_service, "prefill_from_profile", _prefill)
     monkeypatch.setattr(oversight, "move_the_leads_profile_onto_the_workshop", _move_lead)
+    monkeypatch.setattr(oversight, "take_the_designers_name_off_the_workshop", _clear_name)
     monkeypatch.setattr(oversight, "named_designer_rows", _named)
     monkeypatch.setattr(
         oversight,
@@ -894,28 +909,108 @@ def _save(user_ids, lead=None, *, designer_name="A. Sharma"):
     )
 
 
-def test_an_empty_team_on_a_workshop_that_names_a_designer_is_refused_and_writes_nothing(team):
-    """**"NOBODY IS THE DESIGNER" IS STILL NOT AN EXPRESSIBLE STATE**, on the door that could say it.
+def test_taking_every_designer_off_a_workshop_removes_them_and_takes_the_name_off_too(team):
+    """**THE ONE-WAY DOOR, OPENED (2026-09-20) — AND WHY THE 422 THAT STOOD HERE WAS WRONG.**
 
-    ``DesignWorkshopDesignerIn`` refuses it structurally — ``designerId`` is ``min_length=1`` and
-    its docstring carries the argument — but a whole-set body CAN send an empty list, and has to,
-    because a workshop that has never named anybody is the ordinary starting state. So the refusal
-    moved to the one place that can tell the two apart: the workshop row. Reaching that state would
-    blank the promoted ``designerName`` column, which is the write ``_coerce_promoted`` exists to
-    stop happening by accident, and the cover page with it.
+    This test asserted the opposite until that date, on the ground that "nobody is the designer" is
+    not an expressible state. It IS one: design workshop ``cmsxcdc2y000`` ("Test", IN_PROGRESS) is
+    in the live database with ``designerName = None``, and every workshop opened without a designer
+    named starts there. What did not exist was the TRANSITION BACK — you could start with nobody and
+    could not return — so an officer who added the wrong designer was refused, asked for a
+    replacement she did not want to name, and had no other route: the only other viewer removal in
+    the backend is ``replace_viewers``, behind ``require_admin``, a set a MINISTRY_ADMIN is outside.
+
+    BOTH HALVES HAVE TO HAPPEN AND THEY ARE ASSERTED SEPARATELY: the viewer rows go, and the name on
+    the report's cover goes with them. A removal that left the cover naming the designer it had just
+    taken off the workshop would be the residual-grant defect wearing the other face.
     """
-    with pytest.raises(HTTPException) as exc:
-        _save([])
-    assert exc.value.status_code == 422
-    assert "Nothing was changed" in exc.value.detail
-    assert team["removed"] == [], "a refusal that has already taken somebody's access away"
+    answer = _save([])
+    assert team["removed"] == ["lead-1", "co-1"], "the last designers kept their access"
+    assert team["added"] == []
+    assert team["name_cleared"] == ["w1"], (
+        "the workshop is for nobody and its report still names a designer; the promoted column is "
+        "re-promoted from stage 1 on the next save, so the field has to go in the same act"
+    )
+    assert team["lead_moved"] == [], "an empty set moved somebody's profile onto the workshop"
+    assert answer["stagesWritten"] == ["WORKSHOP_SETUP"]
+    assert [row["userId"] for row in answer["removedDesigners"]] == ["lead-1", "co-1"]
 
 
-def test_dropping_the_lead_without_naming_a_replacement_is_refused_and_writes_nothing(team):
-    """Taking the report's own author off the workshop is NAMING SOMEBODY ELSE, not a deletion.
+def test_a_workshop_that_names_nobody_is_not_written_to_when_the_set_is_already_empty(team):
+    """An empty save on a workshop with no name on its cover writes NOTHING to stage 1.
+
+    The blanking arm is gated on the workshop actually naming somebody, not on the set being empty,
+    because a stage-1 write is not free: it bumps the row's version, restamps provenance and
+    re-renders ``searchText``. An officer opening the panel on an unstaffed workshop and pressing
+    save must not rewrite the cover page to say what it already said.
+    """
+    _save([], designer_name="")
+    assert team["name_cleared"] == []
+    assert team["lead_moved"] == []
+
+
+def test_the_empty_set_clears_the_name_through_the_stage_and_never_through_the_column():
+    """**THE HALF THAT WOULD LOOK DONE AND BE UNDONE BY THE NEXT SAVE**, asserted at the source.
+
+    ``designerName`` is a PROMOTED column whose single source is stage 1's own field. A
+    ``db.designworkshop.update`` here would blank the column, pass a test that re-read the column,
+    and then be silently re-promoted by ``_coerce_promoted`` on the next stage-1 save — putting the
+    removed designer's name back on the cover of a workshop nobody is on. The service therefore
+    delegates to the one helper that blanks the FIELD, and the column follows through the single
+    writer. Read at the source because the failure is a write that happens LATER, on a different
+    request, which no test of this call can see.
+    """
+    body = _body_without_docstring(oversight.set_named_designers)
+    assert "take_the_designers_name_off_the_workshop(" in body
+    assert "db.designworkshop.update" not in body, (
+        "the plural door writes the promoted column itself; the next stage-1 save re-promotes the "
+        "name it just blanked"
+    )
+    assert "save_stage(" not in body, (
+        "the plural door has grown its own stage write; there are two stage writers in this module "
+        "and both are extracted functions"
+    )
+
+
+def test_the_name_is_taken_off_stage_one_with_a_write_the_registry_cannot_put_back():
+    """``merge=False`` AND ``submit=False``, and both are load-bearing rather than copied habit.
+
+    ``merge=True`` — right for the prefill next door and wrong here — cannot express a blank at all:
+    ``coerce_value`` answers ``None`` for an empty string, ``validate_entry`` drops the key, and
+    ``save_stage``'s ``clean = {**previous, **clean}`` fills it straight back in from the row. The
+    save would report success and change nothing.
+
+    ``submit=True`` would be worse, because it would look even more correct:
+    ``workshopSetup.designerName`` is a BASIC-tier REQUIRED field, so ``validate_entry`` would file
+    "Designer is required" into ``errors`` and ``save_stage``'s rejected-key branch would RESTORE
+    the value from ``previous`` — the guard that stops a typo destroying a stored answer, quietly
+    undoing this blank under a 200.
+
+    And the entity is asked of the REGISTRY, so the day the designer block moves to a stage of its
+    own this still blanks the field the report is promoted from.
+    """
+    source = _body_without_docstring(oversight.take_the_designers_name_off_the_workshop)
+    assert "merge=False" in source
+    assert "submit=False" in source
+    assert "replaceCollections=False" in source
+    assert "save_stage(" in source
+    assert "_prefill_targets()" in source, (
+        "the stage and entity are hard-coded; the day the designer block moves, this blanks a field "
+        "no form reads and the real one goes on promoting the old name"
+    )
+
+
+def test_dropping_the_lead_while_others_remain_is_refused_and_writes_nothing(team):
+    """Taking the report's own author off a workshop OTHERS are still on is NAMING SOMEBODY ELSE.
 
     The co-designer beside them may be removed freely — that is the gap this door exists to close —
     so the refusal has to be about the LEAD specifically rather than about the set shrinking.
+
+    **AND IT IS GUARDED WITH ``and wanted`` SO IT CANNOT FIRE ON THE EMPTY SET**, which is the whole
+    reason the test above can pass: an officer taking the LAST designer off is also dropping the
+    lead, so without that guard this branch would have fired in the deleted refusal's place and
+    demanded the same replacement in different words. With somebody left you are choosing among
+    them; with nobody left there is no choice to make.
     """
     with pytest.raises(HTTPException) as exc:
         _save(["co-1"])
@@ -923,6 +1018,7 @@ def test_dropping_the_lead_without_naming_a_replacement_is_refused_and_writes_no
     assert "A. Sharma" in exc.value.detail, "the refusal must name who it is about"
     assert team["removed"] == []
     assert team["added"] == []
+    assert team["name_cleared"] == []
 
 
 def test_removing_a_co_designer_is_allowed_and_does_not_restamp_the_report(team):
