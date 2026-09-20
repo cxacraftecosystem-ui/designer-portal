@@ -1023,6 +1023,78 @@ async def list_interviews(
 _MERGEABLE_FILL_FIELDS = ("title", "place", "language", "notes", "interviewDate", "workshopId")
 
 
+async def assert_referenced_records_exist(
+    artisan_ids: list[str], responses: list[Any] | None
+) -> None:
+    """Refuse a create whose body names an artisan or a question that does not exist.
+
+    ── THE DEFECT THIS CLOSES (2026-09-20) ─────────────────────────────────────────────────────────
+
+    ``create_interview`` validated NOTHING before writing. It computed ``artisanSetKey`` from the raw
+    payload, INSERTED the interview row with that key, and only then called
+    :func:`replace_interview_artisans` — which is where "do these artisans exist" is asked — and
+    :func:`upsert_responses`, which asks the same of the question ids. Both raise 404. Neither the
+    create nor the two calls after it sit in a transaction, so **the 404 left the interview row
+    committed**: a caller saw a failure, retried, and the repository kept a permanent interview with
+    no artisans, no answers, and a client-authored value sitting in a repository-wide UNIQUE index.
+
+    The same hole is on the fold path, one frame along: :func:`merge_into_interview` commits its fill
+    ``update`` and then calls ``upsert_responses``, so a bad question id left the fill standing.
+
+    ``update_interview`` is NOT affected and needs no call here — it runs its guard, its update, its
+    links and its answers inside one ``db.tx()``, so its 404s roll back. This is exactly the
+    difference ``replace_interview_artisans``' docstring names when it says ``create_interview``
+    "genuinely has no transaction to offer".
+
+    ── WHY VALIDATION AND NOT A TRANSACTION ───────────────────────────────────────────────────────
+
+    Wrapping the create would be the other fix and it is the WRONG one here, because the create path
+    deliberately catches ``UniqueViolationError`` and folds into the winner of the race. A unique
+    violation ABORTS a Postgres transaction — every later statement on that connection fails with
+    "current transaction is aborted" — so inside ``db.tx()`` that recovery could not run at all. It
+    is the same property :func:`duplicate_set_conflict` documents about reading the holder on ``db``
+    rather than on the caller's ``tx``. Validating first keeps the race recovery working AND leaves
+    nothing behind, which a transaction alone would not achieve.
+
+    ── WHERE IT SITS, AND WHY NOT EARLIER ─────────────────────────────────────────────────────────
+
+    In ``create_interview`` it runs AFTER ``assert_can_create_records`` and before the first write.
+    Not earlier: the create gate deliberately sits after the fold so that a CROWDSOURCE_VOLUNTEER or
+    FIELD_CONTRIBUTOR can answer an entry that already exists, and one with nothing to fold into is
+    owed "Researcher access or above" — a 403 about who they are. Validating ahead of that turned it
+    into a 404 about the records they named, which is the wrong answer AND reports the existence of
+    rows to an account that may not create them. ``tests/test_permission_matrix`` pins both halves.
+
+    ── WHAT THIS MEANS FOR THE KEY, WHICH IS COMPUTED EARLIER ─────────────────────────────────────
+
+    ``artisan_set_key`` is derived from these very ids and is computed further up, for the fold
+    LOOKUP. That is a read: an id that does not resolve simply produces a key that matches no row,
+    so nothing is written and nothing is polluted. What matters is that the key is only ever
+    PERSISTED below this check. ``artisanIds`` is ``list[str]`` with no format check, so ``["a|b"]``
+    was a value a client could get into a column whose separators are load-bearing, and migration
+    ``20260920120000`` rests on the premise that no STORED key contains a ``|``. Refusing unknown
+    ids before any write is what makes that premise true rather than hoped for: a cuid contains no
+    separator, and anything that is not a real id no longer reaches the column.
+
+    ONE QUERY EACH, and concurrently — this is outside any transaction, so the two genuinely
+    overlap. ``gather_reads`` is the helper that says why that is only true outside one.
+    """
+    artisans = sorted({aid for aid in artisan_ids if aid})
+    question_ids = sorted({r.questionId for r in (responses or []) if r.questionId})
+    if not artisans and not question_ids:
+        return
+    found_artisans, found_questions = await gather_reads(
+        db.artisan.find_many(where={"id": {"in": artisans}}),
+        db.questionnairequestion.find_many(where={"id": {"in": question_ids}}),
+    )
+    # The SAME 404 the two callees raise, and deliberately the same opaque detail: which of the ids
+    # a caller sent is unknown is not a question this endpoint answers. It is only raised EARLIER.
+    if len(found_artisans) != len(artisans) or len({q.id for q in found_questions}) != len(
+        question_ids
+    ):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Record not found")
+
+
 async def merge_into_interview(
     existing: Any,
     payload: QuestionnaireInterviewCreate,
@@ -1081,6 +1153,15 @@ async def merge_into_interview(
     # ``existing`` is passed in bare — only its scalar columns are read above — and ``update`` hands
     # back the saved row, so the canonical interview is never read a third time just to answer with it.
     canonical = existing
+    # THE FOLD'S HALF OF THE SAME HOLE (2026-09-20), and it is reached by a path the create gate
+    # never sees — every lower-tier contributor answering a shared entry arrives here. ``fill`` is
+    # committed below and ``upsert_responses`` raises 404 for an unknown question id AFTER it, with
+    # no transaction around the pair: a single bad id in a section's worth of answers left the
+    # scalar fill standing behind a refusal, and the obvious retry re-sent the lot.
+    #
+    # Only the QUESTIONS are checked here. The artisans are not this path's to judge — the set is
+    # whatever the canonical row already holds, and this fold does not rewrite the links.
+    await assert_referenced_records_exist([], payload.responses)
     if fill:
         canonical = await db.questionnaireinterview.update(where={"id": existing.id}, data=fill)
     if payload.responses:
@@ -1133,6 +1214,19 @@ async def create_interview(
     # set posts to this same endpoint and folds into the canonical row — refusing them at the door
     # would take away the contribution path these two tiers exist for.
     assert_can_create_records(current_user)
+    # ⚠ AFTER THE CREATE GATE AND BEFORE THE FIRST WRITE, and both halves of that are load-bearing.
+    #
+    # BEFORE THE WRITE, because nothing on this path is in a transaction: the 404s raised further
+    # down by ``replace_interview_artisans`` and ``upsert_responses`` used to leave the interview
+    # row committed behind the refusal. See ``assert_referenced_records_exist``.
+    #
+    # AFTER THE GATE, because moving it earlier silently rewrites the permission contract. A
+    # CROWDSOURCE_VOLUNTEER or FIELD_CONTRIBUTOR with nothing to fold into must be told "Researcher
+    # access or above" — a 403 about who they are — and validating first turned that into a 404
+    # about the records they named, which is both the wrong answer and one that reports on the
+    # existence of rows to an account that may not create them.
+    # ``tests/test_permission_matrix`` pins both halves and caught exactly this.
+    await assert_referenced_records_exist(payload.artisanIds, payload.responses)
     data = clean_data(payload.model_dump(exclude={"artisanIds", "responses"}))
     # No longer a user-facing field: fall back to when the interview was actually recorded.
     default_interview_date(data)

@@ -23,6 +23,8 @@ import asyncio
 from types import SimpleNamespace
 from typing import Any
 
+from fastapi import HTTPException
+
 from app.services.records import (
     CLEARABLE_KEYS,
     clean_data,
@@ -329,6 +331,146 @@ class _Client(SimpleNamespace):
         return _Tx()
 
 
+# ────────────────────────────────────────────────────────────────────────────────────────────────
+# A REJECTED CREATE MUST LEAVE NOTHING BEHIND
+#
+# `create_interview` used to validate nothing before writing: it computed `artisanSetKey` from the
+# raw payload, INSERTED the interview with that key, and only then called
+# `replace_interview_artisans` (which asks whether the artisans exist) and `upsert_responses` (which
+# asks the same of the question ids). Both raise 404, and nothing on that path is in a transaction —
+# so the refusal left a committed interview with no artisans, no answers, and a CLIENT-AUTHORED
+# value occupying a slot in a repository-wide UNIQUE index. Retrying made another.
+#
+# These drives are deliberately white-box and PURE — no database, no `@needs_db` — because the only
+# job that can stop a deploy (`GATING_JOBS` in deploy-backend.yml) runs with DATABASE_URL pointed at
+# `ci.invalid` and skips every database test. A guard against writing to the database is worth
+# nothing if it is asserted only where a deploy cannot see it.
+#
+# What is asserted is the ABSENCE of a write, which is why `create` raises rather than records: if
+# the route ever reaches it on a rejected body, the test fails with that call rather than with a
+# missing assertion.
+# ────────────────────────────────────────────────────────────────────────────────────────────────
+
+
+class _CreateBody(SimpleNamespace):
+    """A `QuestionnaireInterviewCreate` stand-in that survives as far as the INSERT.
+
+    `model_dump` is the one method the route needs off it and the one a bare `SimpleNamespace` does
+    not have — see the note in `_drive_rejected_create` about why reaching the insert matters here.
+    """
+
+    def __init__(self, *, artisan_ids, responses):
+        super().__init__(
+            artisanIds=artisan_ids,
+            responses=responses,
+            workshopId=None,
+            designWorkshopId=None,
+        )
+
+    def model_dump(self, **_kwargs):
+        return {"title": "Refused body"}
+
+
+def _drive_rejected_create(monkeypatch, *, artisans_found, questions_found, payload):
+    """Drive `create_interview` with a body whose ids do not all resolve. Returns what it raised."""
+    from app.api.routes import questionnaire
+
+    class _Exploding:
+        """Any write through this is the bug: a refused create must not reach the database."""
+
+        async def create(self, **_kwargs):
+            raise AssertionError(
+                "create_interview INSERTED an interview for a body it went on to refuse. That row "
+                "outlives the 404 - nothing on this path is in a transaction - and it holds a "
+                "client-authored artisanSetKey in a repository-wide unique index."
+            )
+
+        async def find_unique(self, **_kwargs):
+            return None
+
+    async def _no_workshop_check(_user, _workshop_id):
+        return None
+
+    async def _may_file(_design_workshop_id, _user):
+        return None
+
+    async def _attach_location(data):
+        return data
+
+    # EVERYTHING BETWEEN THE GUARD AND THE INSERT IS STUBBED OUT, and that is the point rather than
+    # over-stubbing. The first cut of these drives passed a payload too thin to get that far, so
+    # removing the guard failed them with `SimpleNamespace has no attribute 'model_dump'` — red, but
+    # red for the wrong reason, and the `_Exploding.create` message explaining the actual defect
+    # never fired. A test whose failure does not name the bug is a tripwire nobody can act on. With
+    # these in place the route runs all the way to the INSERT, so deleting the guard produces that
+    # message and nothing else.
+    monkeypatch.setattr(questionnaire, "default_interview_date", lambda data: data)
+    monkeypatch.setattr(questionnaire, "attach_location", _attach_location)
+    monkeypatch.setattr(questionnaire, "stamp_workshop_submission", lambda *_a, **_kw: None)
+    monkeypatch.setattr(questionnaire, "merge_field_provenance", lambda *_a, **_kw: None)
+    monkeypatch.setattr(questionnaire, "jsonify_metadata", lambda *_a, **_kw: None)
+    monkeypatch.setattr(questionnaire, "apply_status_policy_create", lambda *_a, **_kw: None)
+    monkeypatch.setattr(questionnaire, "pin_pending_if_late", lambda *_a, **_kw: None)
+
+    monkeypatch.setattr(
+        questionnaire,
+        "db",
+        _Client(
+            questionnaireinterview=_Exploding(),
+            artisan=_Delegate(artisans_found),
+            questionnairequestion=_Delegate(questions_found),
+        ),
+    )
+    monkeypatch.setattr(questionnaire, "enforce_workshop_submission", _no_workshop_check)
+    monkeypatch.setattr(questionnaire, "assert_may_file_under", _may_file)
+    # The create gate runs BEFORE the check under test and is not what these drives are about — see
+    # `assert_referenced_records_exist` for why that order is deliberate. Stubbed so the 404 they
+    # assert is the record check refusing, and never the rank gate refusing first.
+    monkeypatch.setattr(questionnaire, "assert_can_create_records", lambda _user: None)
+
+    try:
+        asyncio.run(questionnaire.create_interview(payload, _saver()))
+    except HTTPException as raised:
+        return raised
+    raise AssertionError("create_interview accepted a body naming records that do not exist")
+
+
+def test_a_create_naming_an_unknown_artisan_is_refused_before_anything_is_written(monkeypatch):
+    """The artisan half. The id is also what the unique key is built from, so this is two bugs.
+
+    `artisanIds` is `list[str]` with no format check, so `["a|b"]` was a value a client could put
+    into a column whose `|` separators are load-bearing — and migration 20260920100000's premise is
+    that no stored key contains one. Refusing unknown ids before the key exists is what makes that
+    premise true rather than hoped for.
+    """
+    payload = _CreateBody(artisan_ids=["cartisanreal", "does-not-exist"], responses=None)
+    raised = _drive_rejected_create(
+        monkeypatch,
+        artisans_found=[_Row(id="cartisanreal")],  # one of the two asked for
+        questions_found=[],
+        payload=payload,
+    )
+    assert raised.status_code == 404
+
+
+def test_a_create_naming_an_unknown_question_is_refused_before_anything_is_written(monkeypatch):
+    """The answers half, which reaches the same hole one frame further along.
+
+    `upsert_responses` raises the identical 404 for an unknown question id, and it runs AFTER the
+    interview row is inserted — and after the fold's `update` on the `merge_into_interview` path.
+    """
+    payload = _CreateBody(
+        artisan_ids=["cartisanreal"], responses=[SimpleNamespace(questionId="no-such-question")]
+    )
+    raised = _drive_rejected_create(
+        monkeypatch,
+        artisans_found=[_Row(id="cartisanreal")],
+        questions_found=[],  # the question does not resolve
+        payload=payload,
+    )
+    assert raised.status_code == 404
+
+
 def test_a_duplicate_question_in_one_body_is_saved_once_last_wins(monkeypatch):
     """AN AUTHENTICATED CALLER MUST NOT BE ABLE TO TURN A SCHEMA-VALID BODY INTO A 500.
 
@@ -467,8 +609,15 @@ def test_folding_a_create_into_an_existing_interview_keeps_its_stored_metadata(m
     # stripping the clips off the entry it folded into. ``media_url_owners`` QUERIES — it reads the
     # viewer's data-access grants — and this driver has no database, so without the stub the
     # argument is evaluated first and the test dies with ``ClientNotConnectedError`` before reaching
-    # the column it is about. ``set()`` is the narrowest answer (own uploads only) and the assertion
-    # below never reads a URL.
+    # the column it is about.
+    #
+    # ``set()`` IS NOT "the viewer's own uploads" — it is NOBODY'S, strictly narrower than anything
+    # the real function returns (its narrowest answer is ``{viewer.id, *granted}``, records.py). It
+    # is the right value here only because ``public_encode`` is stubbed to identity on the line
+    # below, so nothing ever consumes it. A later test that stops stubbing ``public_encode`` in
+    # order to assert a media node keeps its ``url`` must NOT inherit this value: with the node's
+    # own uploader missing from the set, ``_redact_sensitive`` strips the url and the test would
+    # pin the withheld shape as though it were the entitled one.
     async def _no_media_urls(_viewer):
         return set()
 
@@ -641,8 +790,15 @@ def test_folding_a_create_onto_a_flagged_row_does_not_launder_the_late_flag(monk
     # stripping the clips off the entry it folded into. ``media_url_owners`` QUERIES — it reads the
     # viewer's data-access grants — and this driver has no database, so without the stub the
     # argument is evaluated first and the test dies with ``ClientNotConnectedError`` before reaching
-    # the column it is about. ``set()`` is the narrowest answer (own uploads only) and the assertion
-    # below never reads a URL.
+    # the column it is about.
+    #
+    # ``set()`` IS NOT "the viewer's own uploads" — it is NOBODY'S, strictly narrower than anything
+    # the real function returns (its narrowest answer is ``{viewer.id, *granted}``, records.py). It
+    # is the right value here only because ``public_encode`` is stubbed to identity on the line
+    # below, so nothing ever consumes it. A later test that stops stubbing ``public_encode`` in
+    # order to assert a media node keeps its ``url`` must NOT inherit this value: with the node's
+    # own uploader missing from the set, ``_redact_sensitive`` strips the url and the test would
+    # pin the withheld shape as though it were the entitled one.
     async def _no_media_urls(_viewer):
         return set()
 
