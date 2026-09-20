@@ -55,6 +55,7 @@ import { DictatedTextArea } from "@/components/richtext/DictatedTextArea";
 // false about this box.
 import { appendDictatedPhrase, clampToColumn } from "@/components/richtext/dictatedValue";
 import { DictationUnavailableNotice } from "@/components/richtext/DictationUnavailableNotice";
+import { InstrumentPicker, SHARED_INSTRUMENT } from "@/components/questionnaire/InstrumentPicker";
 import { FieldBlock } from "@/components/tasks/TaskPrimitives";
 import { Dropdown } from "@/components/ui/Dropdown";
 import { useToast } from "@/components/ui/Toast";
@@ -227,6 +228,15 @@ function AnswerPageBody() {
     | { kind: "back" }
     /** Switch to another sitting — a move WITHIN this screen, which is why it needs its own kind. */
     | { kind: "sitting"; entryId: string }
+    /**
+     * Switch to a DIFFERENT QUESTIONNAIRE — added 2026-09-20 with the instrument picker.
+     *
+     * It is its own kind rather than a `back` in disguise because it discards strictly MORE than the
+     * sitting switch does: a new form invalidates every answer box, the dirty set, the cache key and
+     * the entry id at once. `target` is a `Questionnaire` id, or `SHARED_INSTRUMENT` for the one
+     * global artisan instrument, which lives on an entirely different screen.
+     */
+    | { kind: "instrument"; target: string }
     | { kind: "edit" };
   const [pendingExit, setPendingExit] = useState<Exit | null>(null);
 
@@ -455,6 +465,20 @@ function AnswerPageBody() {
         router.push(`/questionnaires/${id}`);
         return;
       }
+      if (exit.kind === "instrument") {
+        /*
+          `push` AND NOT `replace`, unlike the sitting arm below. A sitting switch is a move within
+          one form and the Back button should return to the list rather than walking a chain of
+          sittings; changing the INSTRUMENT is a move between screens, and a reader who picked the
+          wrong form expects Back to bring the one they were in.
+
+          The shared artisan instrument is not a `Questionnaire` and has no id — it is the singular
+          `/questionnaire` route, and sending `/questionnaires/shared/answer` would 404 on a
+          plausible-looking URL.
+        */
+        router.push(exit.target === SHARED_INSTRUMENT ? "/questionnaire" : `/questionnaires/${exit.target}/answer`);
+        return;
+      }
       setEntryId(exit.entryId);
       setSectionIndex(0);
       router.replace(
@@ -578,6 +602,29 @@ function AnswerPageBody() {
       ) : null}
 
       <section className="panel mb-5 grid gap-3 p-4">
+        {/*
+          WHICH QUESTIONNAIRE, ABOVE WHICH SITTING — the order matters, because the sitting list is
+          a property of the form and choosing a form empties it. Every account that can reach this
+          screen has already passed `_require_designer`, so the picker's gate is satisfied by being
+          here at all; it is still passed explicitly rather than hardcoded, so the control carries
+          the same entitlement on both screens.
+
+          It routes through `requestExit` for the same reason the sitting dropdown does, one degree
+          harder: switching forms discards every answer box, the dirty set, the cache key and the
+          entry id together. See the `Exit` type for why it is its own kind.
+        */}
+        <div className="mb-3 max-w-xl">
+          <InstrumentPicker
+            value={id}
+            allowed
+            hint="The shared artisan questionnaire opens on Take interview, which is where its answers are recorded."
+            onChange={(next) => {
+              if (next === id) return;
+              requestExit({ kind: "instrument", target: next });
+            }}
+          />
+        </div>
+
         <div className="grid gap-3 md:grid-cols-[1fr_auto] md:items-end">
           <FieldBlock label="Sitting">
             <Dropdown

@@ -20,6 +20,13 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -79,7 +86,9 @@ import com.designprototype.workshop.ui.deriveExperienceYears
 // that had not caught up, because that file could not be edited from the workflow that added it.
 import com.designprototype.workshop.ui.ExperienceFields
 import com.designprototype.workshop.ui.FieldIslandNav
+import com.designprototype.workshop.ui.FieldAccent
 import com.designprototype.workshop.ui.FieldPermissions
+import com.designprototype.workshop.ui.LocalAppPreferences
 import com.designprototype.workshop.ui.PRODUCT_MEASURE_DIMENSIONS
 import com.designprototype.workshop.ui.RecordMeasureField
 import com.designprototype.workshop.ui.TOOL_MEASURE_DIMENSIONS
@@ -109,6 +118,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
@@ -427,6 +437,12 @@ import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.Assignment
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.AccountTree
+import androidx.compose.material.icons.filled.AdminPanelSettings
+import androidx.compose.material.icons.filled.Apps
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.Gesture
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Architecture
 import androidx.compose.material.icons.filled.ArrowUpward
@@ -694,10 +710,125 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+/**
+ * THE FOUR MEGA CARDS THE DASHBOARD GRID IS DRAWN INSIDE, in render order.
+ *
+ * ── WHY ────────────────────────────────────────────────────────────────────────────────────────
+ *
+ * Owner ruling, 2026-09-20, after the grid reached twenty-one cards: "Each of the megacard is
+ * supposed to be a larger card that would stay minimized unless it is clicked upon, colour code so
+ * that it is easier for people to understand and navigate". Twenty-one cards on a 360dp handset is
+ * eleven rows of scrolling with nothing to say where one subject stops and the next starts, and the
+ * Design workshop block at the top — the thing this application IS — was paying for that with ten
+ * rows of reference data underneath it.
+ *
+ * ── THE TITLES AND NOTES ARE THE WEB'S, BYTE FOR BYTE ──────────────────────────────────────────
+ *
+ * They are copied out of `TILE_GROUPS` in `frontend/app/(protected)/dashboard/page.tsx`, and
+ * `DashboardTileParityTest` reads both literals and compares them character for character. A
+ * researcher moves between the handset and the laptop mid-workshop; two spellings of one heading
+ * read as two different sections of the app. That is the same rule the tile LABELS already live
+ * under, arriving one level up.
+ *
+ * ── AND THEY ARE NOT `FIELD_NAV_ITEMS`' GROUPS ─────────────────────────────────────────────────
+ *
+ * The drawer files Design review and Sketches & prototypes under BROWSE, because they are reading
+ * surfaces reached without a workshop in hand; this grid files them with the workshop they belong
+ * to. Two registers, two jobs, and the overlap in wording is a coincidence not to build on. The web
+ * array's own comment makes the identical argument about `NAV_GROUPS` one client over.
+ *
+ * ── WHAT DEPENDS ON THIS ENUM'S SHAPE ──────────────────────────────────────────────────────────
+ *
+ * [DashboardTile.group] is non-null and [DashboardScreen] iterates `DashGroup.entries`, so every
+ * card built into that grid is drawn by construction and no tile can fall through the floor. That
+ * is a stronger guarantee than the web's, whose `group` key is optional and which therefore needs a
+ * Miscellaneous catch-all and an "N of your entries could not be filed" line to stay honest. Adding
+ * a fifth member here costs a `FieldAccent` in BOTH instances of [FieldTokens] — the compiler will
+ * say so — and a fifth entry in `TILE_GROUPS` on the web, or the parity test fails by name.
+ */
+private enum class DashGroup(
+    /** The heading. Byte-identical to the web group's `title`. */
+    val title: String,
+    /** The line under it. Byte-identical to the web group's `note`. */
+    val note: String
+) {
+    DESIGNERS(
+        "For designers",
+        "Running a design & prototype workshop, and the two halves of it reached without one in hand."
+    ),
+    RECORDS(
+        "Records",
+        "The repository a workshop draws on — the people, the things they make, and how they make them."
+    ),
+    MISC(
+        "Miscellaneous",
+        "Reading what is already recorded, and the errands around it."
+    ),
+    ADMIN(
+        "Admin",
+        "Who may do what, and how this deployment is configured."
+    )
+}
+
+/**
+ * The glyph on a mega card's header chip.
+ *
+ * A `when` and not a constructor argument, for the same reason [EntryMode.icon] is one: the enum
+ * above is read as TEXT by `DashboardTileParityTest`, which takes the first two constructor
+ * arguments as the title and the note, and an `ImageVector` in that list is a third thing for that
+ * parser to know about for no gain. Exhaustive with no `else`, so a fifth group is a compile error
+ * here rather than a blank chip on a phone.
+ *
+ * NONE OF THESE FOUR IS A CARD GLYPH, checked against [EntryMode.icon] and the five bespoke cards.
+ * `no two cards on this grid draw the same glyph` only looks at the cards, so nothing mechanical
+ * would have caught a header wearing its own first card's icon — and that is precisely the
+ * confusion a colour code is being added to remove. Re-check with
+ * `grep -n "Icons.Filled" MainActivity.kt | grep -n "icon ="`.
+ */
+private fun DashGroup.icon(): ImageVector = when (this) {
+    DashGroup.DESIGNERS -> Icons.Filled.Gesture
+    DashGroup.RECORDS -> Icons.Filled.Folder
+    DashGroup.MISC -> Icons.Filled.Apps
+    DashGroup.ADMIN -> Icons.Filled.AdminPanelSettings
+}
+
+/**
+ * The tone this mega card's header chip and hairline are drawn in.
+ *
+ * Reads [FieldTokens], which holds the four pairs as non-defaulted fields precisely so that a fifth
+ * group cannot be added without the compiler naming both the light and the dark instance. See the
+ * block above those fields for why `For designers` takes the brand purple rather than a fourth hue,
+ * and for the measured contrast of all eight pairings.
+ */
+@Composable
+private fun DashGroup.accent(): FieldAccent = when (this) {
+    DashGroup.DESIGNERS -> MaterialTheme.field.groupDesigners
+    DashGroup.RECORDS -> MaterialTheme.field.groupRecords
+    DashGroup.MISC -> MaterialTheme.field.groupMisc
+    DashGroup.ADMIN -> MaterialTheme.field.groupAdmin
+}
+
 private enum class EntryMode(
     val label: String,
     val actionTitle: String,
     val editable: Boolean = false,
+    /**
+     * WHICH MEGA CARD THIS MODE'S DASHBOARD CARD IS DRAWN IN, or null when it has no card.
+     *
+     * NO DEFAULT, deliberately, and this is the one argument below that every member must state.
+     * The grouping is the fifth register of the same twenty-one destinations — after this enum, the
+     * web `tiles` array, `FIELD_NAV_ITEMS` and `docs/PERMISSIONS.md` — and a default would let the
+     * next member arrive filed under whichever group the default happened to name, which is how
+     * every other register in this tree came to disagree with itself. `DashboardTileParityTest`
+     * compares this value against the web tile's `group:` key card for card.
+     *
+     * NULL IS `onDashboard = false` SAYING THE SAME THING TWICE ON PURPOSE, and the two must agree:
+     * Search and the Data Browser are menu rows, so there is no card for a mega card to hold. A
+     * null here on a mode that DOES carry a card would be a card drawn into no group, which is this
+     * repository's silent-emptiness bug wearing a layout change; the test asserts the pairing in
+     * both directions so it cannot happen quietly.
+     */
+    val group: DashGroup?,
     /**
      * False = the menu only, no dashboard tile. The web keeps Search and the Data Browser in the
      * nav's "Browse" group and off the dashboard grid (its twelve tiles are the record types plus
@@ -705,39 +836,42 @@ private enum class EntryMode(
      */
     val onDashboard: Boolean = true
 ) {
-    ARTISAN("Artisan", "Record artisan", editable = true),
-    PRODUCT("Product", "Record product", editable = true),
-    PROCESS("Process", "Document process", editable = true),
-    TOOL("Tool", "Record tool", editable = true),
-    QUESTIONNAIRE("Questionnaire", "Take interview", editable = true),
-    MEDIA("Miscellaneous Media", "Upload media"),
-    VIEW_DATA("View Data", "Browse records"),
+    ARTISAN("Artisan", "Record artisan", editable = true, group = DashGroup.RECORDS),
+    PRODUCT("Product", "Record product", editable = true, group = DashGroup.RECORDS),
+    PROCESS("Process", "Document process", editable = true, group = DashGroup.RECORDS),
+    TOOL("Tool", "Record tool", editable = true, group = DashGroup.RECORDS),
+    QUESTIONNAIRE("Questionnaire", "Take interview", editable = true, group = DashGroup.RECORDS),
+    // RECORDS and not MISC, though the tile is named "Miscellaneous Media": the word in the LABEL
+    // is about the media, which is everything that is not an artisan/product/process/tool photo,
+    // and not about where it is filed. The web array agrees and this is checked against it.
+    MEDIA("Miscellaneous Media", "Upload media", group = DashGroup.RECORDS),
+    VIEW_DATA("View Data", "Browse records", group = DashGroup.MISC),
     // /search on the web. Its nav entry there is labelled "Browse records" — the phrase this app has
     // long used for the View Data card — so the page's OWN title is used instead, rather than putting
     // two identically-named entries in the menu.
-    SEARCH("Search", "Search", onDashboard = false),
+    SEARCH("Search", "Search", onDashboard = false, group = null),
     // /data on the web: the whole repository as a directory tree, gated on require_dataset_downloader.
     // Named after the page's own title ("Data Browser") for the same reason as SEARCH above.
-    DATA_BROWSER("Data Browser", "Data Browser", onDashboard = false),
+    DATA_BROWSER("Data Browser", "Data Browser", onDashboard = false, group = null),
     // /map on the web, and a dashboard tile there too — the third way of reading the whole corpus
     // (list, folder tree, place). Both strings are the web tile's own, which is why the label and the
     // action title are the same word: the tile says "Map" and its button says "Open".
-    MAP("Map", "Map"),
+    MAP("Map", "Map", group = DashGroup.MISC),
     // /questionnaire/consolidated on the web. Reads one artisan's answers back out of every interview
     // they sat in; writes nothing, which is why it is not next to QUESTIONNAIRE above.
-    CONSOLIDATED_QUESTIONNAIRE("Consolidated questionnaire", "Consolidated questionnaire"),
+    CONSOLIDATED_QUESTIONNAIRE("Consolidated questionnaire", "Consolidated questionnaire", group = DashGroup.MISC),
     // "Tasks" matches the web nav label exactly. The card is the ASSIGNEE's to-do list; assigning work
     // is an admin action and lives in the admin hub.
-    TASKS("Tasks", "My tasks"),
-    SHARING("Sharing", "Share data access"),
+    TASKS("Tasks", "My tasks", group = DashGroup.MISC),
+    SHARING("Sharing", "Share data access", group = DashGroup.MISC),
     // Workshop access is the other half of Sharing: Sharing is researcher-to-researcher over records,
     // this is admin-to-researcher over a workshop. Kept as its own card so a new user can find "how do
     // I get into this workshop" without reading the sharing screen first.
-    WORKSHOP_ACCESS("Workshop access", "Request workshop access"),
-    USERS("Users", "Manage users"),
+    WORKSHOP_ACCESS("Workshop access", "Request workshop access", group = DashGroup.MISC),
+    USERS("Users", "Manage users", group = DashGroup.ADMIN),
     // Craft and Workshop are the least frequently edited, so they sit last on the dashboard.
-    CRAFT("Craft", "Add craft", editable = true),
-    WORKSHOP("Workshop", "Record workshop", editable = true)
+    CRAFT("Craft", "Add craft", editable = true, group = DashGroup.RECORDS),
+    WORKSHOP("Workshop", "Record workshop", editable = true, group = DashGroup.RECORDS)
 }
 
 /** Where the user currently is. null-mode dashboard is replaced by this explicit machine. */
@@ -5157,11 +5291,46 @@ private fun DashboardScreen(
     onOpenArtisan: (String) -> Unit
 ) {
     val configuration = LocalConfiguration.current
-    val columns = when {
-        configuration.screenWidthDp >= 840 -> 4
-        configuration.screenWidthDp >= 600 -> 3
-        else -> 2
-    }
+    /*
+     * ── TWO COLUMN COUNTS, AND THE SECOND IS DERIVED FROM THE FIRST ─────────────────────────────
+     *
+     * The owner's ruling: "there should be two cards in a row for a megacard only on the larger
+     * screens, and 1 card on mobile screens". Read as written, that is two numbers rather than one:
+     * how many MEGA CARDS stand side by side, and how many action cards stand side by side INSIDE
+     * one of them. The second cannot be a breakpoint on the screen, because the same 1024dp screen
+     * gives a mega card half its width when two of them share a row and all of it when one does.
+     *
+     * 840dp IS THE MEGA BREAKPOINT and is the number this screen already used for its widest grid,
+     * so a tablet that drew four cards across before does not suddenly draw two.
+     *
+     * THE INNER COUNT IS A FIT TEST AGAINST A MEASURED WIDTH, NOT A SECOND BREAKPOINT. It asks one
+     * question -- would two cards of the narrowest width this app already ships fit inside THIS mega
+     * card -- and the arithmetic is the real chrome, not a guess: the whole app sits inside
+     * [RepositoryApp]'s root `Box(...).padding(16.dp)`, two mega cards are separated by
+     * [DASH_GRID_GAP_DP], and a mega card spends [DASH_MEGA_PAD_DP] on each of its own edges.
+     *
+     * WHAT THAT PRODUCES, stated so the next reader does not have to run it:
+     *
+     *   · 360dp handset  -> 1 mega card 328dp wide -> 1 card per row. The owner's "1 card on mobile
+     *     screens", and the one band where this is a REDUCTION: the grid was two columns here.
+     *   · 600dp tablet   -> 1 mega card 568dp wide -> 2 cards per row. Was three; one column is the
+     *     price of the headings, and the headings are what the owner asked for.
+     *   · 840dp          -> 2 mega cards 398dp wide -> 2 cards per row, so four across, which is
+     *     exactly what the old `>= 840 -> 4` arm drew. The grouping costs this band nothing.
+     *   · 1280dp         -> 2 mega cards 618dp wide -> 2 cards per row.
+     *
+     * A THIRD INNER COLUMN IS DELIBERATELY NOT OFFERED. Three action cards inside a mega card inside
+     * a two-up row is a card about 200dp wide holding a 38dp chip, a wrapping label and two buttons,
+     * and the thing being grouped stops being legible at that point. If a wider class of device ever
+     * needs it, widen [megaColumns] first -- more mega cards side by side is the axis the owner
+     * named.
+     */
+    val megaColumns = if (configuration.screenWidthDp >= 840) 2 else 1
+    val megaWidthDp =
+        (configuration.screenWidthDp - 2 * DASH_PAGE_GUTTER_DP - (megaColumns - 1) * DASH_GRID_GAP_DP) /
+            megaColumns
+    val innerColumns =
+        if (megaWidthDp - 2 * DASH_MEGA_PAD_DP >= 2 * DASH_MIN_CARD_DP + DASH_GRID_GAP_DP) 2 else 1
     // One list for the whole grid. The admin "Settings" card used to be emitted as its own Row below
     // the grid with `columns - 1` spacers after it, which is exactly why it never lined up with the
     // cards above: a second Row measures independently of the first. It is a tile like any other.
@@ -5200,7 +5369,8 @@ private fun DashboardScreen(
                     icon = Icons.Filled.DesignServices,
                     primaryLabel = DesignWorkshopCard.PRIMARY_LABEL,
                     onPrimary = onNewDesignWorkshop,
-                    onUpdate = onOpenDesignWorkshops
+                    onUpdate = onOpenDesignWorkshops,
+                    group = DashGroup.DESIGNERS
                 )
             )
         }
@@ -5254,7 +5424,8 @@ private fun DashboardScreen(
                     label = SketchesAndPrototypesCard.LABEL,
                     icon = Icons.Filled.Architecture,
                     primaryLabel = SketchesAndPrototypesCard.PRIMARY_LABEL,
-                    onPrimary = onOpenSketchesAndPrototypes
+                    onPrimary = onOpenSketchesAndPrototypes,
+                    group = DashGroup.DESIGNERS
                     // No `onUpdate`, deliberately: this card has ONE destination. The chooser it
                     // opens is already where "carry on with the one I am in" lives, so a second
                     // button would lead to the same screen under a different word.
@@ -5274,7 +5445,8 @@ private fun DashboardScreen(
                     label = DesignReviewCard.LABEL,
                     icon = Icons.Filled.Star,
                     primaryLabel = DesignReviewCard.PRIMARY_LABEL,
-                    onPrimary = onOpenDesignReview
+                    onPrimary = onOpenDesignReview,
+                    group = DashGroup.DESIGNERS
                     // One destination, so no `onUpdate` — the same shape as the card above.
                 )
             )
@@ -5286,7 +5458,14 @@ private fun DashboardScreen(
                     icon = entry.icon(),
                     primaryLabel = entry.createButtonLabel(),
                     onPrimary = { onNew(entry) },
-                    onUpdate = if (entry.editable) ({ onUpdateExisting(entry) }) else null
+                    onUpdate = if (entry.editable) ({ onUpdateExisting(entry) }) else null,
+                    // `actions` is already filtered on `it.onDashboard` at the call site (see
+                    // [RepositoryApp]), and every mode that carries a card names a group -- the
+                    // pairing `DashboardTileParityTest` asserts in both directions. MISC is the web
+                    // renderer's own catch-all for an unfiled tile and is what makes this expression
+                    // total: the one thing worse than a card in the wrong mega card is a card in
+                    // none of them, which is a blank space where a destination used to be.
+                    group = entry.group ?: DashGroup.MISC
                 )
             )
             /*
@@ -5306,7 +5485,12 @@ private fun DashboardScreen(
                         label = DesignerProfileCard.LABEL,
                         icon = Icons.Filled.Badge,
                         primaryLabel = DesignerProfileCard.PRIMARY_LABEL,
-                        onPrimary = onOpenDesignerProfile
+                        onPrimary = onOpenDesignerProfile,
+                        // DESIGNERS, not RECORDS, though it is a record. The web array files it the
+                        // same way: this is the standing profile a designer types once instead of
+                        // into stage 1 and stage 3 of every workshop, so it belongs beside the
+                        // workshop work and not with the artisans that work is ABOUT.
+                        group = DashGroup.DESIGNERS
                     )
                 )
             }
@@ -5335,7 +5519,12 @@ private fun DashboardScreen(
                         label = ScanCodeCard.LABEL,
                         icon = Icons.Filled.QrCodeScanner,
                         primaryLabel = ScanCodeCard.PRIMARY_LABEL,
-                        onPrimary = onOpenScanCode
+                        onPrimary = onOpenScanCode,
+                        // MISC with the three reading surfaces, matching the web array and this
+                        // app's own BROWSE drawer group. A scan is repository-wide and knows nothing
+                        // about which workshop anybody is standing in -- the same argument the
+                        // comment above makes for keeping it out of the design-workshop block.
+                        group = DashGroup.MISC
                         // One destination, so no `onUpdate`.
                     )
                 )
@@ -5347,35 +5536,108 @@ private fun DashboardScreen(
                     label = "Settings",
                     icon = Icons.Filled.Tune,
                     primaryLabel = "Open",
-                    onPrimary = onOpenAdminHub
+                    onPrimary = onOpenAdminHub,
+                    group = DashGroup.ADMIN
                 )
             )
         }
     }
     Column(verticalArrangement = Arrangement.spacedBy(16.dp), modifier = Modifier.fillMaxWidth()) {
         Text("What would you like to do?", display = true, fontSize = 20.sp, color = MaterialTheme.colorScheme.onBackground)
-        tiles.chunked(columns).forEach { rowItems ->
+        /*
+         * ── THE FOUR MEGA CARDS ─────────────────────────────────────────────────────────────────
+         *
+         * DERIVED FROM `DashGroup.entries`, NEVER WRITTEN OUT AS FOUR BLOCKS. Four hand-written
+         * blocks would be a sixth register of the same twenty-one destinations, and this grid is
+         * already the register that taught this repository what that costs -- read the header of
+         * `DashboardTileParityTest` for the two occasions a destination shipped into one register
+         * and not the other. The web renderer says the same thing about its own JSX.
+         *
+         * AN EMPTY GROUP IS DROPPED WHOLE -- no heading, no empty card, no "0 cards". A volunteer
+         * has no Records cards and a researcher has no Admin card, and a heading over nothing reads
+         * as a section that failed to load, which is this repository's most-repeated bug class
+         * pointing the other way. `DynamicIslandNav` and the web grid both make this call and both
+         * say why. Note what is NOT being hidden: a group with members is always drawn, and its
+         * header always states how many members it has, precisely so that a COLLAPSED card cannot be
+         * mistaken for an empty one.
+         *
+         * `Alignment.Top` AND NO `IntrinsicSize.Min` ON THIS ROW, which is the opposite of the tile
+         * rows inside it, and deliberately. Height equalisation is right for cards that are peers;
+         * two mega cards are not peers at any given moment, because one may be open and the other
+         * shut. Stretching a collapsed card to the height of its expanded neighbour would draw a
+         * quarter-screen of empty surface under a one-line heading and read as a section that had
+         * lost its contents. Ragged bottoms are the honest shape here.
+         *
+         * ⚠ NO `LazyVerticalGrid` AND NO `LazyColumn` ANYWHERE UNDER THIS COMPOSABLE. The whole
+         * screen renders into [RepositoryApp]'s `Column(...).verticalScroll(pageScroll)`, and a lazy
+         * scroller nested in a scrollable parent is measured with an infinite maximum height and
+         * throws. `Row` + `chunked` + `IntrinsicSize.Min` + a weighted `Spacer` is the idiom that
+         * survives that, which is why it is kept here twice over -- once for the mega cards and once
+         * for the tiles inside each of them.
+         */
+        // ── WHICH MEGA CARDS THE READER HAS OPENED ──────────────────────────────────────────────
+        //
+        // AN EMPTY SET IS THE OWNER'S REQUIREMENT, NOT AN OVERSIGHT: "would stay minimized unless it
+        // is clicked upon". Everything is shut on first paint and the reader chooses what to open.
+        //
+        // `rememberSaveable` AND KEYED BY `DashGroup.name`. Saveable, so a rotation or a trip
+        // through the background does not shut a card the reader opened three taps ago -- the exact
+        // complaint a designer makes about a phone that "forgets". Keyed by the enum's NAME and
+        // never by its index or ordinal: an ordinal is a number that silently means something else
+        // the day the render order changes, and this set outlives the process that wrote it.
+        var openGroups by rememberSaveable { mutableStateOf(setOf<String>()) }
+        // Read ONCE here and threaded into every card, rather than re-read per card: it is a
+        // CompositionLocal lookup and the value is the same for all four. Same rule as
+        // `WalkthroughJourney`'s own `reduceMotion` parameter, which says so in its KDoc.
+        val reduceMotion = LocalAppPreferences.current.reducedMotion
+        val filled = DashGroup.entries
+            .map { group -> group to tiles.filter { it.group == group } }
+            .filter { (_, members) -> members.isNotEmpty() }
+        filled.chunked(megaColumns).forEach { rowGroups ->
             Row(
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                // Height equalisation, the Compose equivalent of the web grid's default
-                // `align-items: stretch`. Without it a Row sizes each child to its own content, so a
-                // card whose label wraps to two lines — or one with no "Update" button — was shorter
-                // than its neighbours and its buttons sat at a different height. IntrinsicSize.Min
-                // measures the row to the tallest card; `fillMaxHeight` then stretches the rest to it.
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(IntrinsicSize.Min)
+                horizontalArrangement = Arrangement.spacedBy(DASH_GRID_GAP_DP.dp),
+                verticalAlignment = Alignment.Top,
+                modifier = Modifier.fillMaxWidth()
             ) {
-                rowItems.forEach { tile ->
-                    DashboardActionCard(
-                        tile = tile,
-                        modifier = Modifier
-                            .weight(1f)
-                            .fillMaxHeight()
+                rowGroups.forEach { (group, members) ->
+                    DashboardMegaCard(
+                        group = group,
+                        members = members,
+                        innerColumns = innerColumns,
+                        expanded = group.name in openGroups,
+                        reduceMotion = reduceMotion,
+                        onToggle = {
+                            openGroups =
+                                if (group.name in openGroups) openGroups - group.name
+                                else openGroups + group.name
+                        },
+                        modifier = Modifier.weight(1f)
                     )
                 }
-                repeat(columns - rowItems.size) { Spacer(modifier = Modifier.weight(1f)) }
+                repeat(megaColumns - rowGroups.size) { Spacer(modifier = Modifier.weight(1f)) }
             }
+        }
+        /*
+         * UNREACHABLE TODAY, AND WRITTEN ANYWAY -- the same line the web renderer keeps, for the same
+         * reason and with one difference worth stating. [DashboardTile.group] is a non-null
+         * [DashGroup] and the loop above walks `DashGroup.entries`, so every card built into `tiles`
+         * is claimed by exactly one mega card and the compiler is what guarantees it; the web's
+         * `group` key is optional, so over there the guarantee is a Miscellaneous catch-all at
+         * runtime. What this survives is somebody making the loop above cleverer -- a filter, a sort,
+         * a "hide the empty ones" that quietly hides a full one. The alternative to this line is a
+         * destination that is simply not on the screen this app opens on, which is the whole defect
+         * `DashboardTileParityTest` exists for, arriving through the one door it cannot watch.
+         */
+        val filedCount = filled.sumOf { (_, members) -> members.size }
+        if (filedCount != tiles.size) {
+            Text(
+                "${tiles.size - filedCount} of your cards could not be filed under a heading and " +
+                    "are not shown above. That is a fault in this screen and not a change to what " +
+                    "you may open — every one of them is still in the navigation menu.",
+                color = MaterialTheme.field.muted,
+                fontSize = 12.sp,
+                lineHeight = 17.sp
+            )
         }
         // A short grid is otherwise unexplained: say WHY the record cards are missing and where the
         // tier comes from, rather than leaving a volunteer to assume the app is broken. Web parity
@@ -5515,7 +5777,20 @@ private class DashboardTile(
     val icon: ImageVector,
     val primaryLabel: String,
     val onPrimary: () -> Unit,
-    val onUpdate: (() -> Unit)? = null
+    val onUpdate: (() -> Unit)? = null,
+    /**
+     * WHICH MEGA CARD THIS CARD IS DRAWN IN. Non-null and no default, which is the whole mechanism:
+     * [DashboardScreen] iterates `DashGroup.entries` and draws `tiles.filter { it.group == g }`, so
+     * a card that named no group would be built and then silently never drawn — a destination
+     * missing from the screen this app opens on, which is the exact defect
+     * `DashboardTileParityTest` was written for. With no default the compiler refuses the card
+     * instead, at the construction site, before anybody can ship it.
+     *
+     * LAST IN THE LIST AND AFTER `onUpdate`, which has a default, so every call site must name it.
+     * That is also what `DashboardTileParityTest` reads: `group = ...` as a named argument at depth
+     * zero, compared card for card against the web tile's `group:` key.
+     */
+    val group: DashGroup
 ) {
     /** Read [dashboardPrimaryIcon]: not a parameter, so no call site can contradict its own word. */
     val primaryIcon: ImageVector = dashboardPrimaryIcon(primaryLabel)
@@ -5593,6 +5868,209 @@ private fun CardButtonLabel(icon: ImageVector, text: String) {
     // Ellipsis, not a silent clip: the cards are two-to-a-row on a phone and "New interview" is wider
     // than the button at that width.
     Text(text, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis, fontSize = 13.sp)
+}
+
+/*
+ * ── THE FOUR NUMBERS THE MEGA-CARD GEOMETRY IS ARITHMETIC OVER ──────────────────────────────────
+ *
+ * [DashboardScreen] decides how many action cards fit inside one mega card by ADDING THESE UP
+ * rather than by picking a second breakpoint, so each one has to be the real measurement it claims
+ * to be. Every one is a number already on screen somewhere; none is a taste.
+ */
+/** [RepositoryApp]'s root `Box(...).padding(16.dp)` — the app's own gutter, one per side. */
+private const val DASH_PAGE_GUTTER_DP = 16
+/** `Arrangement.spacedBy(12.dp)` — the gap between two cards, and between two mega cards. */
+private const val DASH_GRID_GAP_DP = 12
+/** A mega card's own padding, matching [DashboardActionCard]'s 14dp so the two edges agree. */
+private const val DASH_MEGA_PAD_DP = 14
+/**
+ * The narrowest a [DashboardActionCard] may be drawn, and NOT a round number chosen for comfort: it
+ * is the width one already has, today, on the 360dp handset this app is tested on, where the
+ * two-column grid gives each card (360 - 2x16 gutters - 12 gap) / 2 = 158dp. A card of that width
+ * carries a 38dp chip, a label that wraps to two lines and a "New" beside an "Update", because it
+ * has been doing exactly that since the grid was built. Anything narrower is a claim nothing in this
+ * tree supports.
+ */
+private const val DASH_MIN_CARD_DP = 158
+
+/**
+ * ONE MEGA CARD: a colour-coded header that opens and shuts, and the cards of one [DashGroup].
+ *
+ * ── COLLAPSED ON FIRST PAINT, AND THE HEADER SAYS WHAT IS INSIDE ───────────────────────────────
+ *
+ * The owner asked for a card that "would stay minimized unless it is clicked upon", and the caller
+ * gives it an empty open-set to start from. A card that is shut and a group that is EMPTY then look
+ * identical from the outside, which is this repository's most-repeated defect wearing a new hat --
+ * so the header states its own count ("8 cards") whether it is open or shut, and an empty group is
+ * never drawn at all. A reader can therefore always tell "nothing here" from "not showing you".
+ *
+ * ── THE TONE IS A CHIP AND A HAIRLINE, AND NOTHING ELSE ────────────────────────────────────────
+ *
+ * `colorScheme.surface` for the mega card, exactly as [DashboardActionCard] uses for the twenty-one
+ * cards inside it. A tinted SURFACE would say the cards in this group are a different KIND of
+ * control from the ones next door, which they are not -- they are the same cards, filed. What
+ * carries the group's colour is the 38dp icon chip and the 1dp rule under the header, which is
+ * enough to find "Records" by its tone from across a room and not enough to start a second theme.
+ * See [FieldAccent] for the two-colour argument and the measured contrast of all eight pairings.
+ *
+ * ── THE ANIMATION, AND WHAT REDUCED MOTION DOES TO IT ──────────────────────────────────────────
+ *
+ * `expandVertically`/`shrinkVertically`, collapsing to `snap()` under the reader's reduced-motion
+ * preference and NOT being removed -- the panel is content, not decoration, and what the preference
+ * asks for is that it stop sliding. Copied whole from `WalkthroughJourney`'s detail panel, which
+ * carries the long form of the argument.
+ *
+ * ⚠ THE ROWS INSIDE ARE `Row` + `chunked` + `IntrinsicSize.Min`, NEVER A LAZY GRID. This composable
+ * renders inside [RepositoryApp]'s `Column(...).verticalScroll(pageScroll)`; a `LazyVerticalGrid` or
+ * `LazyColumn` under a scrollable parent is measured with an infinite maximum height and throws at
+ * runtime, not at compile time. [DashboardScreen]'s own comment says the same thing about the row of
+ * mega cards one level up.
+ */
+@Composable
+private fun DashboardMegaCard(
+    group: DashGroup,
+    /** Non-empty by construction: [DashboardScreen] drops an empty group rather than heading one. */
+    members: List<DashboardTile>,
+    /** How many cards stand side by side INSIDE this card. See [DashboardScreen]'s derivation. */
+    innerColumns: Int,
+    expanded: Boolean,
+    /** Read once by the caller and threaded down, so four cards do not make four lookups. */
+    reduceMotion: Boolean,
+    onToggle: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val accent = group.accent()
+    // "1 card" and not "1 cards". The count is the whole defence against a shut card reading as an
+    // empty one, so it may not be the sort of sentence a reader stops trusting.
+    val countLabel = if (members.size == 1) "1 card" else "${members.size} cards"
+    ElevatedCard(
+        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surface),
+        shape = MaterialTheme.shapes.large,
+        modifier = modifier
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(DASH_MEGA_PAD_DP.dp)
+        ) {
+            // The WHOLE header is the control, not the chevron: a 38dp target at the end of a row is
+            // a miss on a handset held in one hand. Same shape as `DwFindingsPanel`'s FindingsCard.
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(onClick = onToggle)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(38.dp)
+                        .background(color = accent.chip, shape = MaterialTheme.shapes.medium),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        group.icon(),
+                        // The heading beside it is the name of this thing; a screen reader that read
+                        // the glyph as well would say it twice.
+                        contentDescription = null,
+                        tint = accent.ink,
+                        modifier = Modifier.size(22.dp)
+                    )
+                }
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
+                    Text(
+                        group.title,
+                        display = true,
+                        fontSize = 16.sp,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    // NO `maxLines` AND NO ELLIPSIS. These notes are the web's sentences byte for
+                    // byte and the longest is 94 characters; clipping one on a narrow handset would
+                    // be a silent truncation of the only text that explains what the group holds.
+                    // Wrapping to three lines is the correct answer at 328dp.
+                    Text(
+                        group.note,
+                        color = MaterialTheme.field.muted,
+                        fontSize = 11.sp,
+                        lineHeight = 15.sp
+                    )
+                    Text(
+                        countLabel,
+                        color = MaterialTheme.field.muted,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+                Icon(
+                    if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                    // A REAL description and not "Expand": it names the group and the number of
+                    // things behind it, which is what a reader who cannot see the card needs before
+                    // deciding whether to open it.
+                    contentDescription =
+                        if (expanded) "Hide the $countLabel under ${group.title}"
+                        else "Show the $countLabel under ${group.title}",
+                    tint = MaterialTheme.field.muted
+                )
+            }
+            Spacer(Modifier.height(10.dp))
+            // The hairline, drawn open or shut, because it is half of what carries this group's tone.
+            HorizontalDivider(color = accent.ink)
+            AnimatedVisibility(
+                visible = expanded,
+                enter = if (reduceMotion) {
+                    expandVertically(snap(), expandFrom = Alignment.Top) + fadeIn(snap())
+                } else {
+                    expandVertically(tween(220), expandFrom = Alignment.Top) + fadeIn(tween(180))
+                },
+                exit = if (reduceMotion) {
+                    shrinkVertically(snap(), shrinkTowards = Alignment.Top) + fadeOut(snap())
+                } else {
+                    shrinkVertically(tween(180), shrinkTowards = Alignment.Top) + fadeOut(tween(120))
+                },
+                label = "dashboard-mega-${group.name}"
+            ) {
+                // The gap below the hairline belongs to the OPEN state, so it is padding inside this
+                // subtree rather than `spacedBy` on the Column above -- which would have left 10dp of
+                // nothing under the rule on a card that is shut.
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(DASH_GRID_GAP_DP.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = DASH_GRID_GAP_DP.dp)
+                ) {
+                    members.chunked(innerColumns).forEach { rowItems ->
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(DASH_GRID_GAP_DP.dp),
+                            // Height equalisation, the Compose equivalent of the web grid's default
+                            // `align-items: stretch`. Without it a Row sizes each child to its own
+                            // content, so a card whose label wraps to two lines — or one with no
+                            // "Update" button — was shorter than its neighbours and its buttons sat at
+                            // a different height. IntrinsicSize.Min measures the row to the tallest
+                            // card; `fillMaxHeight` then stretches the rest to it.
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(IntrinsicSize.Min)
+                        ) {
+                            rowItems.forEach { tile ->
+                                DashboardActionCard(
+                                    tile = tile,
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .fillMaxHeight()
+                                )
+                            }
+                            repeat(innerColumns - rowItems.size) {
+                                Spacer(modifier = Modifier.weight(1f))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 /**

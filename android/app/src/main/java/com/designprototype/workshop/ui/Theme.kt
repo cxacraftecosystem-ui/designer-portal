@@ -84,6 +84,55 @@ object FieldPalette {
     val Purple950 = Color(0xFF2F0D4B)  // oklch(0.255 0.108 305)
 
     /*
+     * ── THE THREE MEGA-CARD HUES ────────────────────────────────────────────────────────────────
+     *
+     * The dashboard's four mega cards are colour-coded so that a reader looking for "Records" finds
+     * it by its TONE before reading a word of it. Three of those four tones are these ramps; the
+     * fourth is the purple ramp directly above, because `For designers` is what this product is and
+     * a brand does not get a decorative hue of its own.
+     *
+     * COPIED RUNG FOR RUNG OUT OF `frontend/tailwind.config.ts`, where `archive` (hue 195),
+     * `errand` (hue 255) and `steward` (hue 15) are derived from that purple ramp by the rule stated
+     * in that file: the same eleven lightnesses, chroma clamped to 0.94 of the sRGB gamut at each
+     * hue. That is what makes a 700 weigh the same in every family, so swapping one chip for another
+     * changes the hue and nothing else. The hexes here are the ones committed in that file's own
+     * per-rung comments — re-check with `grep -n "const archive" -A 12 frontend/tailwind.config.ts`.
+     *
+     * ONLY THE FOUR RUNGS THE CHIPS ACTUALLY DRAW, and that is deliberate rather than lazy. A rung
+     * nobody paints is a rung that drifts from the web with nothing to notice it: no test can
+     * compare a colour across the two clients (`DashboardTileParityTest` compares WORDS, and says
+     * why in its point 3), so the only defence this file has is that every constant in it is on
+     * screen somewhere and a wrong one is visible.
+     *
+     * ⚠ CHIP AND HAIRLINE ONLY. purple-700 remains the single action colour on this client: no
+     * button, no link, no card surface and no progress indicator may take one of these. The mega
+     * card's own surface stays `colorScheme.surface` for exactly this reason — see
+     * [DashboardActionCard] in MainActivity.kt, whose twenty-one cards must stay one family.
+     *
+     * CONTRAST, MEASURED RATHER THAN ASSUMED (WCAG relative luminance, ink on its own chip):
+     * records 5.65:1 light / 9.48:1 dark, misc 5.91:1 / 9.37:1, admin 6.35:1 / 9.27:1, and the
+     * purple pair above it 6.46:1 / 9.33:1. All eight clear AA for icon-sized content in both
+     * themes, which is the whole reason the light chip takes the 700 rung and the dark chip the 300.
+     */
+    // Archive — hue 195. The `Records` mega card.
+    val Archive100 = Color(0xFFD7F4F3) // oklch(0.946 0.03  195) — chip ground, light
+    val Archive300 = Color(0xFF6FDBDB) // oklch(0.828 0.1   195) — chip ink, dark
+    val Archive700 = Color(0xFF136868) // oklch(0.47  0.075 195) — chip ink, light
+    val Archive950 = Color(0xFF032929) // oklch(0.255 0.041 195) — chip ground, dark
+
+    // Errand — hue 255. The `Miscellaneous` mega card.
+    val Errand100 = Color(0xFFE2EEFE) // oklch(0.946 0.025 255) — chip ground, light
+    val Errand300 = Color(0xFFA3CAFC) // oklch(0.828 0.082 255) — chip ink, dark
+    val Errand700 = Color(0xFF0E59AA) // oklch(0.47  0.146 255) — chip ink, light
+    val Errand950 = Color(0xFF022248) // oklch(0.255 0.08  255) — chip ground, dark
+
+    // Steward — hue 15. The `Admin` mega card.
+    val Steward100 = Color(0xFFFEE7E7) // oklch(0.946 0.026 15) — chip ground, light
+    val Steward300 = Color(0xFFFCAFB4) // oklch(0.828 0.091 15) — chip ink, dark
+    val Steward700 = Color(0xFFA71439) // oklch(0.47  0.177 15) — chip ink, light
+    val Steward950 = Color(0xFF460413) // oklch(0.255 0.096 15) — chip ground, dark
+
+    /*
      * Gold ramp — oklch(L C ~85) converted with the same transform as the purple ramp above (the
      * converter reproduces all eleven committed purple hexes exactly, so these are real conversions).
      *
@@ -197,6 +246,29 @@ fun WorkshopLogo(modifier: Modifier = Modifier, cornerRadius: Dp = 12.dp) {
 // ---------------------------------------------------------------------------------------------
 
 /**
+ * ONE MEGA CARD'S TONE: the ground of its header chip and the ink that sits on that ground.
+ *
+ * TWO COLOURS AND NOT THREE, because a tone with more than two colours in it becomes a theme, and a
+ * second theme on a screen whose twenty-one cards are deliberately one family is the thing the
+ * dashboard's own comment forbids. The HAIRLINE under each header draws [ink] at full strength
+ * rather than taking a third token: it is the same tone as the chip beside it, it needs no new
+ * constant, and at 1dp against a card surface it reads as a rule rather than as a border (measured
+ * against the two card grounds: 6.55:1 to 7.59:1 light, 10.0:1 to 10.75:1 dark).
+ *
+ * NOTHING ELSE MAY BE TINTED WITH ONE OF THESE. Not the card, not a button, not a label. The owner
+ * asked for a colour code so the four groups can be told apart at a glance; a coloured SURFACE
+ * would instead tell a reader that the cards inside it are a different kind of control from the
+ * ones next door, which they are not.
+ */
+@Immutable
+data class FieldAccent(
+    /** The 38dp header chip's ground — rung 100 in light, rung 950 in dark. */
+    val chip: Color,
+    /** The glyph on that chip, and the hairline under the header — rung 700 light, 300 dark. */
+    val ink: Color
+)
+
+/**
  * Design-system roles that do not exist in [ColorScheme]: the body/placeholder rungs of the ink
  * ladder, the tinted surface ladder, success/warning semantics, and the "brand tile" pairing
  * (a dark purple chip carrying light content) that the web dashboard uses for icon tiles and the
@@ -237,6 +309,43 @@ data class FieldTokens(
     val onWarningContainer: Color,
     /** Purple-tinted shadow ink. */
     val shadow: Color,
+    /*
+     * ── THE DASHBOARD'S FOUR MEGA CARDS, ONE TONE EACH ──────────────────────────────────────────
+     *
+     * `DashGroup` in MainActivity.kt is the enum these four answer to, in its order, and the owner's
+     * ruling they exist for is "colour code so that it is easier for people to understand and
+     * navigate". They live in [FieldTokens] rather than beside that enum for one reason: a
+     * `data class` has no default for them, so a new theme — or a fifth group — cannot be added
+     * without the compiler naming every instance that forgot a colour. A `when` returning a Color
+     * would have compiled with a hole in it.
+     *
+     * `groupDesigners` IS THE BRAND PURPLE AND NOT A FOURTH HUE, at the same two rungs as its three
+     * neighbours (100/700 light, 950/300 dark) so all four chips weigh the same. The plan this was
+     * built from named #5b21b6 and #c4b5fd for it; those are stock Tailwind VIOLET, and this
+     * repository's purple is locked at OKLCH hue 305 (see the header of this file). Restating a
+     * near-miss of the brand colour as a literal would have put a fifth purple in a tree whose whole
+     * colour argument is that there is one.
+     *
+     * ── AND IT IS A PALE CHIP HERE WHERE THE WEB DRAWS A FILLED ONE, KNOWINGLY ──────────────────
+     *
+     * `docs/DECISION-mega-cards-and-group-colour.md` §3 gives that group "filled `purple-800`, white
+     * ink" on the web, and this client does NOT copy it. On the handset that pairing is already
+     * spoken for: [brandTile] / [onBrandTile] is a filled purple-800 38dp chip carrying a light
+     * glyph, and it is what all twenty-one [DashboardActionCard]s draw. A mega-card HEADING wearing
+     * the identical chip, directly above a column of cards wearing it, is a heading that looks like
+     * a card — which is the one thing a grouping added to make the grid scannable cannot afford, and
+     * the same argument the Sketches & prototypes card already makes on this grid for not taking
+     * `Icons.Filled.Brush` from its own menu row.
+     *
+     * The two clients are allowed to differ here and nothing compares them: `DashboardTileParityTest`
+     * compares the WORDS of these groups and says in its point 3 why it compares no colour on either
+     * side. What both clients do keep is the RULE — the tone is a chip and a hairline, never a
+     * button, never a card ground.
+     */
+    val groupDesigners: FieldAccent,
+    val groupRecords: FieldAccent,
+    val groupMisc: FieldAccent,
+    val groupAdmin: FieldAccent,
     val isDark: Boolean
 )
 
@@ -270,6 +379,10 @@ internal val LightFieldTokens = FieldTokens(
     warningContainer = FieldPalette.Amber100,
     onWarningContainer = FieldPalette.Amber800,
     shadow = FieldPalette.ShadowInk,
+    groupDesigners = FieldAccent(chip = FieldPalette.Purple100, ink = FieldPalette.Purple700),
+    groupRecords = FieldAccent(chip = FieldPalette.Archive100, ink = FieldPalette.Archive700),
+    groupMisc = FieldAccent(chip = FieldPalette.Errand100, ink = FieldPalette.Errand700),
+    groupAdmin = FieldAccent(chip = FieldPalette.Steward100, ink = FieldPalette.Steward700),
     isDark = false
 )
 
@@ -295,6 +408,12 @@ private val DarkFieldTokens = FieldTokens(
     warningContainer = FieldPalette.Amber800,
     onWarningContainer = FieldPalette.Amber100,
     shadow = Color.Black,
+    // The chip and the ink swap ends of each ramp, which is what keeps the pair legible on a dark
+    // card without either colour changing hue. Measured: 9.27:1 to 9.48:1 across the four.
+    groupDesigners = FieldAccent(chip = FieldPalette.Purple950, ink = FieldPalette.Purple300),
+    groupRecords = FieldAccent(chip = FieldPalette.Archive950, ink = FieldPalette.Archive300),
+    groupMisc = FieldAccent(chip = FieldPalette.Errand950, ink = FieldPalette.Errand300),
+    groupAdmin = FieldAccent(chip = FieldPalette.Steward950, ink = FieldPalette.Steward300),
     isDark = true
 )
 

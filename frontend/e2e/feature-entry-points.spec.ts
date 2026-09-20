@@ -25,14 +25,46 @@ test.skip(!EMAIL || !PASSWORD, "Set E2E_EMAIL and E2E_PASSWORD to run the signed
 
 /** Both are open to any signed-in user, so both must appear for every account that can sign in. */
 const DESTINATIONS = [
-  { href: "/map", tile: "Map", nav: "Map", heading: /Where the work comes from/i },
+  { href: "/map", tile: "Map", nav: "Map", group: "Miscellaneous", heading: /Where the work comes from/i },
   {
     href: "/questionnaire/consolidated",
     tile: "Consolidated questionnaire",
     nav: "Consolidated questionnaire",
+    group: "Miscellaneous",
     heading: /Consolidated questionnaire/i
   }
 ] as const;
+
+/**
+ * ── WHY THESE TESTS NOW CLICK BEFORE THEY LOOK, AND WHY THAT IS NOT A WEAKENING ────────────────
+ *
+ * Until 2026-09-20 both assertions ran straight after `goto("/dashboard")`: every tile was on the
+ * page at first paint, so `toBeVisible()` was the whole check. The owner then ruled that each mega
+ * card *"stay minimized unless it is clicked upon"*, and `Map` and `Consolidated questionnaire` both
+ * live under `Miscellaneous` — so on a first visit they are inside a shut card, and
+ * `MegaCard`'s panel is not merely hidden but UNMOUNTED while collapsed.
+ *
+ * The temptation is to read that as this spec's premise being repealed. It is not. This file exists
+ * because *"a feature a user cannot find is a feature that was not built"*, and the question it asks
+ * is whether there is a path from the dashboard to the destination that a person can actually walk.
+ * One click on a card that names its own group, states what it holds and counts its contents is such
+ * a path. Zero clicks on a wall of twenty-one tiles was arguably a worse one.
+ *
+ * So the check got STRONGER rather than weaker: it now asserts the group card exists, that it is
+ * shut on a first visit (which is the ruling, and the thing that would silently regress), that
+ * opening it is one click, and only then that the tile and its link are there. If somebody files
+ * `Map` under a group that does not exist, or ships the cards open, or breaks the toggle, this fails
+ * — and none of those three were observable here before.
+ */
+async function openGroup(page: Page, title: string) {
+  const toggle = page.getByRole("button", { name: new RegExp(title, "i") });
+  await expect(toggle).toBeVisible();
+  // The ruling, asserted rather than assumed. A build that shipped the cards open would otherwise
+  // pass every line below it without anybody noticing the requirement had been dropped.
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+}
 
 /**
  * The dashboard tile whose display-font label is exactly `label`.
@@ -52,6 +84,10 @@ test.describe("Entry points", () => {
       await signIn(page);
       await page.goto("/dashboard");
       await expect(page.getByRole("heading", { name: "What would you like to do?" })).toBeVisible();
+
+      // Collapsed on a first visit, by owner ruling. See `openGroup` for why clicking here is not a
+      // weakening of what this file is for.
+      await openGroup(page, destination.group);
 
       // The tile's own "Open" link, scoped to the card carrying the label — the grid holds a dozen
       // buttons with the same word on them.

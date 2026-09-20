@@ -250,6 +250,56 @@ today"). Read `globals.css` and the guard table, not either of those.
 
 ---
 
+### 3.8 The four GROUP TONES — navigation colour, and never an action colour
+
+Added 2026-09-20 with the mega cards. Owner ruling: *"colour code so that it is easier for people to
+understand and navigate"*, and *"use the mango colour from this place for the ministry one"*
+(`https://transaction-flow-analyser.vercel.app/`). Four more literal OKLCH ramps in
+`tailwind.config.ts`, on **purple's own eleven lightnesses**, chroma
+`min(purple's at that rung, 0.94 × sRGB gamut max at this hue)` — the `ministry` rule exactly.
+
+| Ramp | Hue | Spent on | Chip ink (light / dark) |
+|---|---|---|---|
+| `archive` | 195 | the **Records** mega card | `#136868` / `#6fdbdb` |
+| `errand` | 255 | **Miscellaneous** | `#0e59aa` / `#a3cafc` |
+| `steward` | 15 | **Admin** | `#a71439` / `#fcafb4` |
+| `mango` | 71 | the **ministry** mega card | `#7c500e` / `#f0bc7d` |
+
+**"For designers" keeps purple** — a filled `purple-800` chip with white ink, exactly as every
+`DashboardCard` draws — because that group is what the app is *for*.
+
+**Non-negotiable 1 is unchanged, and these ramps do not bend it.** A tone paints an `aria-hidden`
+icon chip (`bg-X-100 text-X-700 dark:bg-X-950/40 dark:text-X-300`), a `hover:border-X-300`, and the
+chevron that shares the chip's ink. It may paint **no button, no input, no focus ring, no card
+ground and no left-edge rule** — `globals.css:642-661` is a tombstone for that last one and
+`e2e/dashboard-megacard-unit.spec.ts` asserts its absence by name. The global `:focus-visible`
+outline stays `--purple-700` on every control on every screen.
+
+**The tone is never the only channel.** Every mega card carries its group TITLE, a one-line NOTE, a
+COUNT of what it holds, and a distinct ICON. A reader who cannot separate teal from indigo loses
+nothing.
+
+⚠ **`mango` DOES NOT REPLACE `ministry`, and must not.** `#FFA600` on white is 1.96:1, so it cannot
+carry the white text an action colour needs; the hue-45 ramp is what every `dark:` pair, the
+`cta-ministry` shadow and three test files are written against. `ministry` stays the action colour on
+the five `ministry: true` routes (§3.7); `mango` is the ministry mega card's navigation *mark*.
+`mango-500` `oklch(0.648 0.131 71)` reproduces the named site's dark primary; its accent
+`hsl(25 95% 55%)` = `oklch(0.715 0.180 49.5)` is already this repo's `ministry` hue.
+
+⚠ **None of the four may be renamed to a stock Tailwind colour.** A colliding key DEEP-MERGES —
+`amber` in this very config is the proof (only 100/500/800 are brand; `amber-50` is stock and does
+not pair). Name a ramp for its SCOPE, as `ministry` is.
+
+⚠ **The class strings are written out in full in `components/dashboard/MegaCard.tsx` and may not be
+interpolated.** Tailwind scans source text: `bg-${'{'}tone{'}'}-100` emits no CSS, the chip renders
+transparent, and nothing errors in the console, the build or the typecheck.
+
+The full ruling, the measurement behind the mango, and what the collapse cost
+`e2e/feature-entry-points.spec.ts` are in
+[docs/DECISION-mega-cards-and-group-colour.md](../../../docs/DECISION-mega-cards-and-group-colour.md).
+
+---
+
 ## 4. Radius, shadow, easing, gradients
 
 **Radius (overrides stock):** `rounded-sm 8px` · `rounded-md 12px` · `rounded-lg 16px` ·

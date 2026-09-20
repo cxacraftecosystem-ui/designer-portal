@@ -34,7 +34,10 @@ import {
 } from "lucide-react";
 
 import { DashboardCard } from "@/components/DashboardCard";
+import { EntryPointCard } from "@/components/dashboard/EntryPointCard";
+import { MegaCard, type MegaTone } from "@/components/dashboard/MegaCard";
 import { MinistryDeskCard } from "@/components/dashboard/MinistryDeskCard";
+import { useMegaCards } from "@/components/dashboard/useMegaCards";
 import { EmptyState } from "@/components/EmptyState";
 import { PageHeader } from "@/components/PageHeader";
 import { StatusBadge } from "@/components/StatusBadge";
@@ -170,27 +173,53 @@ type Tile = {
  * hand) while the grid files them with the workshop they belong to, and the menu has an Account
  * group the grid has no tile for. Two registers, two jobs — the same reason `NAV_ITEMS` and this
  * array are two lists at all.
+ *
+ * ── THEY BECAME COLLAPSIBLE AND COLOUR-CODED ON 2026-09-20 ─────────────────────────────────────
+ *
+ * Owner ruling, in these words: *"Each of the megacard is supposed to be a larger card that would
+ * stay minimized unless it is clicked upon, colour code so that it is easier for people to
+ * understand and navigate, there should be two cards in a row for a megacard only on the larger
+ * screens, and 1 card on mobile screens."*
+ *
+ * `tone` names a RAMP in `tailwind.config.ts`, not a colour word, and it buys exactly two marks: an
+ * `aria-hidden` icon chip and a hover border. It may not reach a button, an input, a focus ring or
+ * the card's ground — purple-700 is still the only action colour on this screen, and the group tone
+ * block in the Tailwind config argues that boundary at length. The `title` and the `note` stay the
+ * primary channel, because a signal that exists only as colour is a signal some readers never get.
+ *
+ * `icon` is the fourth channel. It is what a reader navigating by shape rather than by hue picks
+ * out of a two-column rail of shut cards, and it is why the chip is worth having at all.
  */
 const TILE_GROUPS = [
   {
     id: "designers" as const,
     title: "For designers",
-    note: "Running a design & prototype workshop, and the two halves of it reached without one in hand."
+    note: "Running a design & prototype workshop, and the two halves of it reached without one in hand.",
+    // Purple, because this group is what the app is FOR. Every other group is a supporting cast and
+    // wears a hue that is deliberately not the product's own.
+    tone: "purple" as MegaTone,
+    icon: DraftingCompass
   },
   {
     id: "records" as const,
     title: "Records",
-    note: "The repository a workshop draws on — the people, the things they make, and how they make them."
+    note: "The repository a workshop draws on — the people, the things they make, and how they make them.",
+    tone: "archive" as MegaTone,
+    icon: Boxes
   },
   {
     id: "misc" as const,
     title: "Miscellaneous",
-    note: "Reading what is already recorded, and the errands around it."
+    note: "Reading what is already recorded, and the errands around it.",
+    tone: "errand" as MegaTone,
+    icon: Layers
   },
   {
     id: "admin" as const,
     title: "Admin",
-    note: "Who may do what, and how this deployment is configured."
+    note: "Who may do what, and how this deployment is configured.",
+    tone: "steward" as MegaTone,
+    icon: Settings
   }
 ];
 
@@ -255,6 +284,14 @@ function DashboardView() {
   // above. A field contributor or volunteer answers existing interviews and adds media instead, so
   // offering them a "New artisan" button would only produce a 403 — the tile is not shown. The
   // Questionnaire and Media tiles below stay for everyone; those are how the lower tiers contribute.
+  /**
+   * WHICH MEGA CARDS ARE OPEN. Everything is shut on a first visit — the owner's ruling — and the
+   * reader's own choices are remembered after that. The hook lives here rather than inside the
+   * renderer below because that renderer is an IIFE, and a hook called from one runs on some
+   * renders and not others the moment an early return is added above it.
+   */
+  const megaCards = useMegaCards("dashboard");
+
   const creator = canCreateRecords(user);
   /**
    * Admin-tier chrome, matching DynamicIslandNav's `adminSurface`: capability holders below admin
@@ -706,7 +743,17 @@ function DashboardView() {
           section that failed to load. `DynamicIslandNav` makes the same choice for an empty nav
           group, for the same reason.
         */}
-        <div className="relative grid gap-6">
+        {/*
+          ── TWO IN A ROW ON A LARGE SCREEN, ONE ON A PHONE ────────────────────────────────────
+
+          `lg:grid-cols-2` is the owner's geometry for the MEGA CARDS themselves. `items-start` is
+          what stops a shut card stretching to the height of an open one beside it — `grid`
+          stretches every cell by default, and the result is a collapsed card rendered as a tall
+          empty box, which reads as a section that failed to load rather than as one that is closed.
+          `MegaCard` carries `h-fit` for the same reason; both are needed, because the card cannot
+          see the rail and the rail cannot see the card.
+        */}
+        <div className="relative grid items-start gap-6 lg:grid-cols-2">
           {(() => {
             const visible = tiles.filter((tile) => tile.visible !== false);
             const seen = new Set<Tile>();
@@ -720,22 +767,37 @@ function DashboardView() {
                 if (belongs) seen.add(tile);
                 return belongs;
               });
-              if (members.length === 0) return null;
+              /*
+                THE SIBLING DESTINATIONS COUNT TOWARDS THE CARD, because the number under a shut
+                card's title is a promise about what opening it reveals. "My questionnaires" is
+                inside the designers card and is not a tile, so a count of `members.length` alone
+                would be short by one and a reader who opened the card would find something the
+                closed card never mentioned.
+              */
+              const siblings = group.id === "designers" ? 1 : 0;
+              if (members.length + siblings === 0) return null;
               return (
-                <section key={group.id} aria-labelledby={`dashboard-group-${group.id}`}>
-                  <div className="mb-3 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-                    <h2
-                      id={`dashboard-group-${group.id}`}
-                      className="font-display text-lg font-bold text-ink-900"
-                    >
-                      {group.title}
-                    </h2>
-                    <p className="text-xs text-ink-500">{group.note}</p>
-                  </div>
-                  {/* The grid geometry is unchanged — two per row on phones, three on tablets and
-                      laptops — because it is Android's (`grid-cols-2 md:grid-cols-3`) and the
-                      handset's dashboard is the same product. Only the rows are now grouped. */}
-                  <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
+                <MegaCard
+                  key={group.id}
+                  title={group.title}
+                  note={group.note}
+                  icon={group.icon}
+                  tone={group.tone}
+                  count={members.length + siblings}
+                  countLabel="destination"
+                  expanded={megaCards.isOpen(group.id)}
+                  onToggle={() => megaCards.toggle(group.id)}
+                >
+                  {/*
+                    ONE PER ROW ON A PHONE, TWO ONCE THE CARD IS WIDE — and `sm:` rather than `md:`
+                    because the breakpoint that matters is the MEGA CARD's width, not the window's.
+                    Below `lg` the rail is one column, so a mega card is full-bleed and two tiles fit
+                    from `sm` up; at `lg` and above the rail is two columns, so a mega card is half a
+                    page and two tiles is again the right density. The old `grid-cols-2
+                    md:grid-cols-3` was written for a full-width section and packs three tiles into
+                    half a page at desktop width, where the labels wrap to three lines.
+                  */}
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                     {members.map((tile) => (
                       <DashboardCard
                         key={tile.label}
@@ -746,67 +808,60 @@ function DashboardView() {
                         newLabel={tile.newLabel}
                       />
                     ))}
+                    {/*
+                      ── THE DESTINATION THAT BELONGS IN THIS GROUP AND CANNOT BE A TILE ─────────
+
+                      `/questionnaires` — "My questionnaires", the designer's own .xlsx-derived
+                      instrument and its pro-forma — is already open to a DESIGNER: `ROUTE_GUARDS`,
+                      the nav entry and every route in `questionnaire_forms.py` all resolve to
+                      `canRunDesignWorkshops`, and DESIGNER is the first member of that set. What a
+                      designer did NOT have was a way to FIND it.
+
+                      ⚠ IT IS NOT A TILE, AND IT MAY NOT BECOME ONE.
+                      `android/.../DashboardTileParityTest.kt` asserts `WEB_ONLY == emptyList()` in
+                      BOTH directions — every web tile label must also be an Android card label — and
+                      the handset has no `EntryMode` for this destination. A tile here would go red on
+                      `main` rather than on the change that added it, because that suite is not in the
+                      frontend gate. `dashboard-tile-parity-unit.spec.ts`'s closed FAMILY literal says
+                      the same thing from this side: `"/questionnaires": false`.
+
+                      IT IS NOW A GRID CHILD RATHER THAN A SIBLING ROW, which is the whole of the
+                      owner's "the card size for this one currently is also different, fix that".
+                      `EntryPointCard` restates `DashboardCard`'s shell exactly and its own header
+                      lists the eight ways the old full-width row differed.
+                    */}
+                    {group.id === "designers" ? (
+                      <EntryPointCard
+                        // The nav's label, character for character. This destination already answers
+                        // to one name in the menu and a second invented here is a name nobody's grep
+                        // finds and nobody's colleague recognises.
+                        label="My questionnaires"
+                        description="Build your own interview form from the .xlsx pro-forma, and record answers against it — separate from the shared artisan questionnaire on Take interview."
+                        icon={FileSpreadsheet}
+                        href="/questionnaires"
+                      />
+                    ) : null}
                   </div>
-                  {/*
-                    ── THE DESTINATIONS THAT BELONG IN THIS GROUP AND CANNOT BE TILES ─────────────
-
-                    `/questionnaires` — "My questionnaires", the designer's own .xlsx-derived
-                    instrument and its pro-forma — is already open to a DESIGNER: `ROUTE_GUARDS`, the
-                    nav entry and every route in `questionnaire_forms.py` all resolve to
-                    `canRunDesignWorkshops`, and DESIGNER is the first member of that set. What a
-                    designer did NOT have was a way to FIND it. It was reachable only from the nav
-                    sheet — behind a tap, in one scrolling column — which is the exact failure
-                    `e2e/feature-entry-points.spec.ts` opens by naming: a feature a user cannot find
-                    is a feature that was not built. The owner asked for "access"; access was already
-                    there, and this is the half that was missing.
-
-                    ⚠ IT IS NOT A TILE, AND IT MAY NOT BECOME ONE.
-                    `android/.../DashboardTileParityTest.kt` asserts `WEB_ONLY == emptyList()` in BOTH
-                    directions — every web tile label must also be an Android card label — and the
-                    handset has no `EntryMode` for this destination. A tile here would go red on
-                    `main` rather than on the PR that added it, because that suite is not in the
-                    frontend gate. `dashboard-tile-parity-unit.spec.ts`'s closed FAMILY literal says
-                    the same thing from this side: `"/questionnaires": false`, with its own note that
-                    the list is what must change if the owner ever wants it on the grid.
-
-                    A SIBLING ROW INSIDE THE GROUP IS THE ESTABLISHED ANSWER — the shape
-                    `MinistryDeskCard` uses on this same page for the same reason, and it costs the
-                    parity-checked grid nothing.
-                  */}
-                  {group.id === "designers" ? (
-                    <Link
-                      href="/questionnaires"
-                      className="mt-3 flex items-start gap-3 rounded-md border border-line-200 bg-card p-3 transition-shadow hover:border-purple-300 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-700"
-                    >
-                      <span aria-hidden className="grid h-9 w-9 shrink-0 place-items-center rounded-md bg-purple-50 text-purple-700">
-                        <FileSpreadsheet className="h-[18px] w-[18px]" aria-hidden />
-                      </span>
-                      <span className="min-w-0 flex-1">
-                        {/* The nav's label, character for character. This destination already answers
-                            to one name in the menu and a second invented here is a name nobody's grep
-                            finds and nobody's colleague recognises. */}
-                        <span className="block font-display text-sm font-bold text-ink-900">My questionnaires</span>
-                        <span className="mt-0.5 block text-xs leading-5 text-ink-500">
-                          Build your own interview form from the .xlsx pro-forma, and record answers
-                          against it — separate from the shared artisan questionnaire on Take interview.
-                        </span>
-                      </span>
-                    </Link>
-                  ) : null}
                   {index === TILE_GROUPS.length - 1 && seen.size !== visible.length ? (
                     /* UNREACHABLE, AND WRITTEN ANYWAY. Every tile the filter admits is claimed by a
                        real group or by Miscellaneous's catch-all, so this cannot fire today. The day
                        somebody adds a fifth group id without adding it to `TILE_GROUPS`, the
                        alternative to this line is a tile that is simply not on the dashboard — which
                        is exactly the defect `dashboard-tile-parity-unit.spec.ts` exists for, arriving
-                       through the one door that spec does not watch. */
+                       through the one door that spec does not watch.
+
+                       ⚠ IT NOW SITS INSIDE THE LAST MEGA CARD, SO IT IS ONLY SEEN WHEN THAT CARD IS
+                       OPEN. That is a real narrowing and it is accepted deliberately: the sentence
+                       is unreachable, and the alternative — a warning pinned outside the rail — costs
+                       a permanent empty slot in a two-column grid for a branch that has never fired.
+                       If it ever DOES fire, the tiles it is reporting are in this same card. */
                     <p className="mt-3 text-xs leading-5 text-ink-500">
                       {visible.length - seen.size} of your entries could not be filed under a heading
                       and are not shown above. This is a fault in this screen, not a change to what
                       you may open — every one of them is still in the navigation menu.
                     </p>
                   ) : null}
-                </section>
+                </MegaCard>
               );
             });
           })()}

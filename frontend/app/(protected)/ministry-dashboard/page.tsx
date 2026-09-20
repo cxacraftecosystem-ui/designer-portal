@@ -58,9 +58,11 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Check, Download, LayoutDashboard, Lock, RefreshCw } from "lucide-react";
+import { Check, Download, LayoutDashboard, Lock, RefreshCw, ShieldCheck, UserCog, Users } from "lucide-react";
 
 import { useAuth } from "@/components/AuthProvider";
+import { MegaCard } from "@/components/dashboard/MegaCard";
+import { useMegaCards } from "@/components/dashboard/useMegaCards";
 import { EmptyState } from "@/components/EmptyState";
 import { PageHeader } from "@/components/PageHeader";
 import { Pagination } from "@/components/Pagination";
@@ -71,6 +73,7 @@ import { ApiError } from "@/lib/api";
 import { formatDate, formatDateTime } from "@/lib/format";
 import {
   DEFAULT_REGISTER_KIND,
+  PEOPLE_KINDS,
   REGISTER_KINDS,
   downloadBeneficiaries,
   downloadRegister,
@@ -79,6 +82,8 @@ import {
   hasProgressFigure,
   listRegisterDesignWorkshops,
   listRegisterOtherWorkshops,
+  listRegisterPeople,
+  personProgressSentence,
   progressSentence,
   standingMembersSentence,
   standingsFor,
@@ -86,7 +91,10 @@ import {
   type DesignRegisterPage,
   type OtherRegisterPage,
   type RegisterEntitlements,
+  type PeopleKind,
   type RegisterKind,
+  type RegisterPeoplePage,
+  type RegisterPerson,
   type RegisterSummary
 } from "@/lib/ministryDashboard";
 import { isUnreachable } from "@/lib/offline";
@@ -108,6 +116,18 @@ const SEARCH_DEBOUNCE_MS = 300;
  * than 240. `docs/SCALABILITY.md` sizes this deployment against a single-worker box.
  */
 const REFRESH_MS = 30_000;
+
+/**
+ * How many people one card shows at a time.
+ *
+ * Smaller than the workshop register's page because a person's row is three lines of figures rather
+ * than one, and because three of these cards can be open at once. The server clamps `pageSize` to
+ * `MAX_PAGE_SIZE` regardless, so this is a readability choice and not a limit.
+ */
+const PEOPLE_PAGE_SIZE = 20;
+
+/** One glyph per people register. The fourth channel, beside the title, the note and the count. */
+const PEOPLE_ICONS = { designers: Users, officers: UserCog, inspectors: ShieldCheck } as const;
 
 /**
  * What a failed read says, without ever implying the register is empty.
@@ -153,6 +173,22 @@ export default function MinistryDashboardPage() {
    */
   const [dataKind, setDataKind] = useState<RegisterKind>(DEFAULT_REGISTER_KIND);
   const [summary, setSummary] = useState<RegisterSummary | null>(null);
+
+  /**
+   * ── THE THREE PEOPLE REGISTERS, ADDED 2026-09-20 ──────────────────────────────────────────
+   *
+   * Owner: *"the dashboard carries no information about designers, ad, rd, inspectors, make it
+   * extremely more capable and powerful, there is no specific card for designers where they can do
+   * their stuff"*. Each is a collapsible mega card wearing the mango tone, and each holds its own
+   * page because three registers sharing one pager would page all three at once.
+   *
+   * ⚠ A FAILED PEOPLE READ IS `null` AND A READ THAT FOUND NOBODY IS AN EMPTY PAGE, and the card
+   * says which. This screen's whole discipline is that "none" and "not read" are different facts;
+   * collapsing them here would be the same defect one surface out from `_roll_up`.
+   */
+  const [people, setPeople] = useState<Partial<Record<PeopleKind, RegisterPeoplePage>>>({});
+  const [peopleError, setPeopleError] = useState<Partial<Record<PeopleKind, string>>>({});
+  const [peoplePage, setPeoplePage] = useState<Partial<Record<PeopleKind, number>>>({});
   const [entitlements, setEntitlements] = useState<RegisterEntitlements | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [readAt, setReadAt] = useState<string | null>(null);
@@ -209,6 +245,13 @@ export default function MinistryDashboardPage() {
   const inFlight = useRef(false);
 
   const allowed = !loading && canSeeMinistryDashboard(user);
+
+  /*
+    Every people card is SHUT on a first visit, which is the owner's ruling and also the reason
+    these three reads cost nothing until somebody wants them: the effect below fetches only what is
+    open. `useMegaCards`' own header carries the argument for remembering the choice afterwards.
+  */
+  const peopleCards = useMegaCards("ministry-dashboard");
 
   /* ── The debounced search settles into `applied`, and a narrowed list starts at page one ───── */
   useEffect(() => {
@@ -314,6 +357,60 @@ export default function MinistryDashboardPage() {
       cancelled = true;
     };
   }, [allowed, loadToken]);
+
+  /*
+    ── THE PEOPLE READS, ON THE SAME TOKEN AS EVERY OTHER READ ON THIS SCREEN ──────────────────
+
+    `loadToken` is the one thing the poll, the filters, the pager and the manual Refresh all bump, so
+    depending on it here is what keeps the three people cards in step with the workshop table rather
+    than drifting a poll behind it. A second independent timer would be a second answer to "as of
+    when", on a screen whose whole claim is that it says so.
+
+    ONLY WHAT IS OPEN IS FETCHED. A shut card issues no request — which is most of them, most of the
+    time — and opening one fetches it immediately rather than at the next tick, because a card that
+    sat blank for up to thirty seconds would read as a card with nothing in it.
+
+    `cancelled` AND NOT AN ABORT SIGNAL: `apiFetch` takes none. The flag is what stops a response
+    that arrives after a re-render writing over newer state, which is the same convention the
+    workshop read above uses and the same one `list-fetch-generation-unit.spec.ts` pins.
+  */
+  const openPeople = PEOPLE_KINDS.filter((entry) => peopleCards.isOpen(entry.id))
+    .map((entry) => entry.id)
+    .join(",");
+
+  useEffect(() => {
+    if (!allowed || !openPeople) return;
+    let cancelled = false;
+    const kinds = openPeople.split(",") as PeopleKind[];
+    kinds.forEach((peopleKind) => {
+      listRegisterPeople(peopleKind, { page: peoplePage[peopleKind] ?? 1, pageSize: PEOPLE_PAGE_SIZE })
+        .then((result) => {
+          if (cancelled) return;
+          setPeople((current) => ({ ...current, [peopleKind]: result }));
+          setPeopleError((current) => ({ ...current, [peopleKind]: undefined }));
+        })
+        .catch((err: unknown) => {
+          if (cancelled) return;
+          /*
+            NAMED ON ITS OWN CARD, never in the page's banner. The banner belongs to the workshop
+            register; a second red box there about a list nobody has opened would bury the one that
+            is about what the reader is looking at. And the card keeps its heading, so a failed read
+            is a card that says why rather than a card that is not there.
+          */
+          setPeopleError((current) => ({
+            ...current,
+            [peopleKind]: err instanceof Error ? err.message : "This list could not be read."
+          }));
+        });
+    });
+    return () => {
+      cancelled = true;
+    };
+    // `peoplePage` is read rather than watched as a whole object — the pager below bumps the token,
+    // which is what re-runs this. Depending on the object itself would re-fetch every open card on
+    // every page change of any one of them.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allowed, loadToken, openPeople]);
 
   /* ── What this account may take out, asked once ────────────────────────────────────────────── */
   useEffect(() => {
@@ -769,7 +866,217 @@ export default function MinistryDashboardPage() {
         )}
         {data ? <Pagination onPage={setPage} page={data.page} pages={data.pages} total={data.total} /> : null}
       </section>
+
+      {/*
+        ══ THE PEOPLE REGISTERS ══════════════════════════════════════════════════════════════════
+
+        Owner, 2026-09-20: *"the dashboard carries no information about designers, ad, rd,
+        inspectors, make it extremely more capable and powerful, there is no specific card for
+        designers where they can do their stuff."*
+
+        THEY WEAR `mango` AND NOT `ministry`, and the distinction is the whole of §4 of
+        docs/DECISION-mega-cards-and-group-colour.md. `ministry` (hue 45) is this surface's ACTION
+        colour — it paints the buttons on this very page through the `[data-surface="ministry"]`
+        block. `mango` (hue 71) is the navigation MARK the owner asked for, taken off the site they
+        named, and it may only ever be a chip, an ink or a hover border. Using the action ramp for
+        the card chips would make a heading look like a control.
+
+        TWO IN A ROW ON A LARGE SCREEN, ONE BELOW — the same rail as the dashboard's, `items-start`
+        for the same reason (a shut card must not stretch to an open neighbour's height).
+      */}
+      <div className="mt-6 grid items-start gap-5 lg:grid-cols-2">
+        {PEOPLE_KINDS.map((entry) => {
+          const loaded = people[entry.id];
+          const failed = peopleError[entry.id];
+          return (
+            <MegaCard
+              key={entry.id}
+              title={entry.title}
+              note={entry.note}
+              icon={PEOPLE_ICONS[entry.id]}
+              tone="mango"
+              /*
+                THE SERVER'S TOTAL, AND ZERO UNTIL IT HAS ANSWERED. A card that has not been opened
+                has read nothing, so it counts nothing — which is honest, because opening it is what
+                measures. The sentence inside says which of the two a zero is.
+              */
+              count={loaded?.total ?? 0}
+              countLabel={entry.countLabel}
+              expanded={peopleCards.isOpen(entry.id)}
+              onToggle={() => peopleCards.toggle(entry.id)}
+            >
+              <PeoplePanel
+                kind={entry.id}
+                data={loaded}
+                error={failed}
+                onPage={(next) => setPeoplePage((current) => ({ ...current, [entry.id]: next }))}
+              />
+            </MegaCard>
+          );
+        })}
+      </div>
     </div>
+  );
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * One people register
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * The inside of a people card: every sentence the server sent, then the rows.
+ *
+ * ⚠ **EVERY CAPTION HERE IS THE SERVER'S OWN STRING, PRINTED VERBATIM.** `scopeLabel`,
+ * `progressNote`, `withheldAccountsNote`, `unpostedNote` and `feedbackNote` are composed server-side
+ * because only the server knows what it actually read. A client that wrote its own version of
+ * "Progress could not be read" would be guessing at a state it cannot observe, and this router
+ * already shipped one caption over two differently-scoped counts — it told an Assistant Director
+ * "the workshops you were named on" above a national figure.
+ *
+ * ⚠ **NOTHING IS FILTERED OR SORTED HERE.** No `.filter()`, no `.sort()`, no `.slice()` over
+ * `data.items`. The order is the server's (workshops descending, then name), the page is the
+ * server's, and a client that narrowed a list would print a total that disagreed with the rows under
+ * it. `ministry-dashboard-unit.spec.ts` asserts the absence.
+ */
+function PeoplePanel({
+  kind,
+  data,
+  error,
+  onPage
+}: {
+  kind: PeopleKind;
+  data: RegisterPeoplePage | undefined;
+  error: string | undefined;
+  onPage: (page: number) => void;
+}) {
+  if (error) {
+    return (
+      <p role="alert" className="text-sm leading-6 text-red-700">
+        {error} This list could not be read, which is NOT the same as there being nobody in it.
+      </p>
+    );
+  }
+  if (!data) return <p className="text-sm text-ink-700">Loading...</p>;
+
+  return (
+    <div className="grid gap-3">
+      {/* The scope, in the server's words, per list. Never composed here. */}
+      <p className="text-xs leading-5 text-ink-500">{data.scopeLabel}</p>
+
+      {/*
+        A WHOLE BLANK COLUMN NEEDS A SENTENCE, NOT A BOOLEAN. Without this a column of dashes reads
+        as a programme where nothing has been done — the most damaging false statement this screen
+        could make, which is why the server sends the words rather than a flag.
+      */}
+      {data.progressNote ? (
+        <p className="rounded-md border border-amber-500 bg-amber-100 px-3 py-2 text-xs leading-5 text-amber-800">
+          {data.progressNote}
+        </p>
+      ) : null}
+      {data.withheldAccountsNote ? (
+        <p className="text-xs leading-5 text-ink-500">{data.withheldAccountsNote}</p>
+      ) : null}
+      {data.unpostedAccountsNote ? (
+        <p className="text-xs leading-5 text-ink-500">{data.unpostedAccountsNote}</p>
+      ) : null}
+      {data.feedbackNote ? <p className="text-xs leading-5 text-ink-500">{data.feedbackNote}</p> : null}
+      {/* A list that stopped short must say so: absence reading as non-existence is this
+          repository's most repeated defect class. */}
+      {data.scan?.truncated ? (
+        <p className="text-xs leading-5 text-ink-500">
+          This list was built from the first {data.scan.read} of {data.scan.total} workshops in scope.
+        </p>
+      ) : null}
+      {data.unpostedAccountsTruncated ? (
+        <p className="text-xs leading-5 text-ink-500">
+          The account directory stopped at its own ceiling, so somebody holding nothing in this scope
+          may be missing from this list.
+        </p>
+      ) : null}
+
+      {data.items.length === 0 ? (
+        <EmptyState title={`No ${kind} in this scope`} />
+      ) : (
+        // `aria-live="off"` EXPLICITLY, for the same reason the workshop table carries it: these
+        // rows are replaced on a thirty-second timer and a container that later acquired a live
+        // role would interrupt a screen-reader user twice a minute.
+        <div className="overflow-x-auto" aria-live="off">
+          <table className="w-full min-w-[640px] text-left text-sm">
+            <thead className="bg-surface-50 text-xs uppercase text-ink-500">
+              <tr>
+                <th className="px-3 py-2">Name</th>
+                <th className="px-3 py-2">Workshops</th>
+                <th className="px-3 py-2">Standing</th>
+                <th className="px-3 py-2">{kind === "inspectors" ? "Corrections" : "Progress"}</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-line-200">
+              {data.items.map((person) => (
+                <PersonRow key={person.id} kind={kind} person={person} />
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <Pagination onPage={onPage} page={data.page} pages={data.pages} total={data.total} />
+    </div>
+  );
+}
+
+/**
+ * One person.
+ *
+ * ⚠ **`null` IS PRINTED AS A DASH AND A REASON, NEVER AS A ZERO.** The server is explicit that a
+ * measured zero and an unmeasured figure are different facts, and a table read by the ministry that
+ * rendered both as "0" would say that work which exists was never done.
+ */
+function PersonRow({ kind, person }: { kind: PeopleKind; person: RegisterPerson }) {
+  return (
+    <tr>
+      <td className="px-3 py-2">
+        <span className="block font-medium text-ink-900">{person.name ?? "Unnamed account"}</span>
+        <span className="block text-xs text-ink-500">{roleLabel(person.role)}</span>
+      </td>
+      <td className="px-3 py-2 tabular-nums">
+        {person.workshops}
+        {kind === "designers" && typeof person.workshopsCreated === "number" ? (
+          // Both arms, because the creator holds no viewer row: a register built on viewer rows
+          // alone would be missing the lead designer of every workshop nobody has shared.
+          <span className="block text-xs text-ink-500">
+            {person.workshopsCreated} opened · {person.workshopsNamedOn ?? 0} named on
+          </span>
+        ) : null}
+        {kind === "officers" && person.byCapacity ? (
+          <span className="block text-xs text-ink-500">
+            {Object.entries(person.byCapacity)
+              .map(([capacity, count]) => `${count} ${capacity.toLowerCase()}`)
+              .join(" · ")}
+            {person.unknownCapacity ? ` · ${person.unknownCapacity} unrecognised` : ""}
+          </span>
+        ) : null}
+      </td>
+      <td className="px-3 py-2 text-xs leading-5 text-ink-700">
+        {person.registered} registered · {person.ongoing} ongoing · {person.completed} completed
+        {person.unclassifiedStanding ? (
+          <span className="block text-ink-500">{person.unclassifiedStanding} in no group</span>
+        ) : null}
+      </td>
+      <td className="px-3 py-2 text-xs leading-5 text-ink-700">
+        {kind === "inspectors" ? (
+          typeof person.feedbackFiled === "number" ? (
+            <>
+              {person.feedbackFiled} filed
+              <span className="block text-ink-500">{person.sendBacks ?? 0} sent a workshop back</span>
+            </>
+          ) : (
+            // The feedback read failed for this request. A dash and a word, never a zero.
+            <span className="text-ink-500">— not read</span>
+          )
+        ) : (
+          personProgressSentence(person)
+        )}
+      </td>
+    </tr>
   );
 }
 

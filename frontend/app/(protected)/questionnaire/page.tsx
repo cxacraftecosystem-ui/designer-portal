@@ -3,7 +3,7 @@
 import { Fragment, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ArrowDown, ArrowUp, ClipboardList, GripVertical, Lock, Mic, Pencil, Plus, QrCode, Save, Square, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, ClipboardCheck, ClipboardList, GripVertical, ListFilter, Lock, Mic, Pencil, Plus, QrCode, Save, Square, Trash2, Wrench } from "lucide-react";
 
 import { deleteConfirm, useConfirm } from "@/components/dialogs/ConfirmDialog";
 import { useEditDeepLink } from "@/components/hooks/useEditDeepLink";
@@ -39,7 +39,10 @@ import { MediaLightbox, MediaPreviewTile, type PreviewMedia } from "@/components
 import { UploadProgress } from "@/components/media/UploadProgress";
 import { UploadTray } from "@/components/media/UploadTray";
 import { RecordingStrip } from "@/components/media/Waveform";
+import { MegaCard } from "@/components/dashboard/MegaCard";
+import { useMegaCards } from "@/components/dashboard/useMegaCards";
 import { PageHeader } from "@/components/PageHeader";
+import { InstrumentPicker, SHARED_INSTRUMENT } from "@/components/questionnaire/InstrumentPicker";
 import { Pagination } from "@/components/Pagination";
 import { RecordCodeCard } from "@/components/RecordCode";
 import { DictatedTextInput } from "@/components/richtext/DictatedTextInput";
@@ -49,7 +52,6 @@ import { SearchInput } from "@/components/SearchInput";
 import { EMPTY_FUNNEL, FunnelFilters, type FunnelValue } from "@/components/FunnelFilters";
 import { StatusBadge } from "@/components/StatusBadge";
 import { FieldBlock } from "@/components/tasks/TaskPrimitives";
-import { Accordion } from "@/components/ui/Accordion";
 import { MultiSelectDropdown } from "@/components/ui/Dropdown";
 import { useWorkshopScope, WorkshopScopeSelect } from "@/components/WorkshopScopeSelect";
 import { useAdminView } from "@/components/AdminViewProvider";
@@ -70,7 +72,7 @@ import {
 } from "@/lib/media";
 import { saveOrQueue } from "@/lib/offline";
 import { cappedListNotice } from "@/components/data/cappedList";
-import { canManageQuestionnaire, hasRank, isAdmin } from "@/lib/permissions";
+import { canManageQuestionnaire, canRunDesignWorkshops, hasRank, isAdmin } from "@/lib/permissions";
 import { UploadsProvider, useEagerStaging, useUploads } from "@/lib/uploads";
 import type { Artisan, PageResult, QuestionnaireInterview, QuestionnaireQuestion, QuestionnaireSection } from "@/lib/types";
 
@@ -360,6 +362,22 @@ function QuestionnairePageBody() {
    * of the thing the reader asked to edit. The same reason `/workshops` passes its own ref.
    */
   const captureFormRef = useRef<HTMLFormElement | null>(null);
+
+  /**
+   * ── THE FOUR MEGA CARDS ON THIS SCREEN ────────────────────────────────────────────────────
+   *
+   * Owner ruling, 2026-09-20: *"this functionality should be there in the record questionnaire page
+   * as well"* — the same collapsible, colour-coded cards the dashboard grew in the same change.
+   *
+   * ⚠ `"capture"` IS OPEN ON A FIRST VISIT AND THE OTHER THREE ARE NOT, and that is not a softening
+   * of "stay minimized unless it is clicked upon". This page is a WORK surface rather than a menu:
+   * `/questionnaire?new=1` is what the dashboard tile and `guide/steps.ts` both link to and it
+   * expects to land on the create form, and `questionnaire-capture.spec.ts` asserts the first
+   * instrument section is visible with no clicks at all. A collapsed form would send both to a shut
+   * card with nothing on screen to say the page had finished loading. `useMegaCards`' own header
+   * carries the rest of that argument, including why a card shut by the reader stays shut.
+   */
+  const megaCards = useMegaCards("questionnaire", ["capture"]);
 
 
   function stopElapsedTimer() {
@@ -1662,8 +1680,26 @@ function QuestionnairePageBody() {
         </div>
       ) : null}
 
-      {/* 1) Completion matrix — top of the page, collapsed by default. */}
-      <CompletionMatrixPanel canOverride={adminMode && isAdmin(user)} />
+      {/*
+        ══ THE RAIL ══════════════════════════════════════════════════════════════════════════════
+
+        Two columns from `lg`, one below — the owner's geometry, the same as the dashboard's. Only
+        the two ADMIN panels take half of it. The capture form and the recorded-interviews table are
+        `span="full"` because their content genuinely cannot be halved rather than because it would
+        prefer not to be: the form is ONE `<form>` element by contract (two parsers slice from its
+        opening tag to the first `</form>`), and the table carries `min-w-[980px]`, so either one in
+        half a page is a horizontal scrollbar inside a card inside a rail.
+
+        `items-start` stops a shut card stretching to the height of an open one beside it.
+
+        ⚠ THE COMPLETION MATRIX MOVED DOWN THE PAGE, and that is a deliberate trade rather than an
+        accident. It was "top of the page, collapsed by default" — but a half-width card cannot sit
+        above a full-width one without leaving a hole beside it, and the two things a reader comes to
+        this page to DO are record an interview and find one they recorded. It is still collapsed by
+        default, still one click, and now sits beside the builder, which is the other panel an
+        administrator rather than an interviewer opens.
+      */}
+      <div className="grid items-start gap-5 lg:grid-cols-2">
 
       {/*
         ══ WHICH FIELDS ON THIS FORM GOT A MICROPHONE, AND WHICH DID NOT (req 13) ═══════════════
@@ -1717,12 +1753,75 @@ function QuestionnairePageBody() {
         professor — a completion matrix above the form, so the top of the document is not the top of
         the thing the reader asked to edit.
       */}
+      <MegaCard
+        title={editingInterview ? "Correct this interview" : "Take interview"}
+        note="Interview artisans section by section, answer only the questions asked, and link the interview to one or more artisans."
+        icon={ClipboardList}
+        tone="purple"
+        count={orderedGroups.length}
+        countLabel="section"
+        span="full"
+        expanded={megaCards.isOpen("capture")}
+        onToggle={() => megaCards.toggle("capture")}
+      >
+      {/*
+        ══ WHICH INSTRUMENT AM I ANSWERING ═══════════════════════════════════════════════════════
+
+        Owner, 2026-09-20: *"there is no way to pick between multiple questionnaires like there is in
+        field repo app."* It was exactly true: this screen records against the ONE global artisan
+        instrument and had no way of naming that fact, let alone of reaching a designer's own forms.
+
+        IT SITS ABOVE THE `<form>` AND NOT INSIDE IT, and that placement is load-bearing three times
+        over. `shared/questionnaire-form-contract.json` holds this form's eight fields to an ORDER,
+        and `backend/tests/test_questionnaire_form_contract.py` slices the region from
+        `<form … onSubmit={submit}>` to the first `</form>` and asserts an EQUALITY over the
+        `label="…"` literals inside it — so a ninth control in there is a red build whatever it is,
+        the Android half would owe a matching box, and the walkthrough registers would owe a row. It
+        is also not a field of the record: nothing about the chosen instrument is submitted.
+
+        CHOOSING ONE NAVIGATES rather than re-pointing this form. The reason is in the schema and is
+        argued in full in `InstrumentPicker`'s header — an interview can only answer GLOBAL questions
+        (`QuestionnaireResponse.questionId` is `Restrict`-FK'd to `QuestionnaireQuestion`), and
+        `artisanSetKey` is `@unique` repository-wide, so one artisan set answering two instruments
+        would fold both onto one row.
+
+        THE PICKER IS ONLY DRAWN FOR ACCOUNTS THAT MAY LIST QUESTIONNAIRES. Every route under
+        `/api/questionnaires` begins with `_require_designer`, while THIS page is open to every
+        signed-in account — so an ungated picker would 403 for exactly the volunteers and field
+        contributors this screen exists to serve.
+
+        NO LEAVE GUARD TO GO THROUGH, verified: this form has no dirty tracking at all (the note
+        above the Language field records that grep and its result). Every other navigation off this
+        page already leaves without asking; this one is not a new hole. If a guard is ever added
+        here, this `router.push` is one of the calls that must move behind it.
+      */}
+      <div className="mb-4 max-w-xl">
+        <InstrumentPicker
+          value={SHARED_INSTRUMENT}
+          allowed={canRunDesignWorkshops(user)}
+          hint="Your own .xlsx-derived forms open on their own screen, which is where their answers are recorded."
+          onChange={(next) => {
+            if (next === SHARED_INSTRUMENT) return;
+            router.push(`/questionnaires/${next}/answer`);
+          }}
+        />
+      </div>
+
+      {/*
+        ⚠ THE `panel` CLASS STAYS ON THIS FORM AND IS THEN NEUTRALISED, WHICH LOOKS LIKE A MISTAKE
+        AND IS NOT. `e2e/questionnaire-capture.spec.ts` locates the instrument's sections as
+        `form.panel details` — the class is a SELECTOR that a signed-in browser spec depends on, not
+        a decoration. Dropping it would break that spec; leaving it as-is would draw a bordered card
+        inside a bordered card. So the recipe stays and the utilities that follow it undo its border,
+        ground, shadow, padding and margin — utilities beat a component-layer recipe, which is what
+        makes this work at all.
+      */}
       <form
         key={editingInterview?.id ?? "new"}
         ref={captureFormRef}
         onSubmit={submit}
         onKeyDown={handleFormEnter}
-        className="panel mb-5 grid gap-4 p-4"
+        className="panel grid gap-4 border-0 bg-transparent p-0 shadow-none"
       >
         {/*
           EDIT MODE SAYS SO, AND SAYS WHAT IT WILL NOT TOUCH.
@@ -2305,7 +2404,26 @@ function QuestionnairePageBody() {
           </button>
         </div>
       </form>
+      </MegaCard>
 
+      <MegaCard
+        title="Recorded interviews"
+        note="Everything filed from this instrument, with the funnel and the search that narrow it."
+        icon={ListFilter}
+        tone="archive"
+        /*
+          THE COUNT IS THE SERVER'S TOTAL AND NOT THE LOADED PAGE'S LENGTH. `data.items` is one page
+          of at most `pageSize`, so counting it would tell a reader with four hundred interviews that
+          they have twenty. `data.total` is what the pager already prints. A page that has not loaded
+          yet counts zero rather than guessing — and the card still opens, so the loading line inside
+          it is what says so.
+        */
+        count={data?.total ?? 0}
+        countLabel="interview"
+        span="full"
+        expanded={megaCards.isOpen("recorded")}
+        onToggle={() => megaCards.toggle("recorded")}
+      >
       <div className="mb-4 grid gap-3">
         <FunnelFilters value={funnel} onChange={(next) => { setFunnel(next); setPage(1); }} showArtisan />
         <SearchInput
@@ -2433,9 +2551,25 @@ function QuestionnairePageBody() {
         )}
         {data ? <Pagination page={data.page} pages={data.pages} total={data.total} onPage={setPage} /> : null}
       </section>
+      </MegaCard>
 
-      {/* 2) Questionnaire builder — bottom of the page, collapsed by default. */}
-      {canManageQuestionnaire(user) ? <QuestionnaireAdminEditor sections={sections} onChanged={loadMeta} /> : null}
+      {/* Collapsed by default, and half the rail — see the rail's header for why it is no longer at
+          the top of the page. */}
+      <CompletionMatrixPanel
+        canOverride={adminMode && isAdmin(user)}
+        expanded={megaCards.isOpen("completion")}
+        onToggle={() => megaCards.toggle("completion")}
+      />
+
+      {canManageQuestionnaire(user) ? (
+        <QuestionnaireAdminEditor
+          sections={sections}
+          onChanged={loadMeta}
+          expanded={megaCards.isOpen("builder")}
+          onToggle={() => megaCards.toggle("builder")}
+        />
+      ) : null}
+      </div>
 
       {activePreview ? <MediaLightbox item={activePreview} onClose={() => setActivePreview(null)} /> : null}
     </>
@@ -2644,7 +2778,20 @@ type CompletionMatrix = {
  * (overrides carry an amber ring). In admin view, admins click a cell to cycle the override:
  * complete -> not complete -> clear (back to the derived state).
  */
-function CompletionMatrixPanel({ canOverride }: { canOverride: boolean }) {
+function CompletionMatrixPanel({
+  canOverride,
+  expanded,
+  onToggle
+}: {
+  canOverride: boolean;
+  /**
+   * Open/closed is owned by the PAGE now rather than by this panel, because all four mega cards on
+   * this screen share one remembered set. The lazy load below follows `expanded` instead of an
+   * `onOpenChange` callback — same guard, same `opened` ref, one less thing to keep in step.
+   */
+  expanded: boolean;
+  onToggle: () => void;
+}) {
   const [matrix, setMatrix] = useState<CompletionMatrix | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -2689,13 +2836,26 @@ function CompletionMatrixPanel({ canOverride }: { canOverride: boolean }) {
     refresh().finally(() => setLoading(false));
   }, [refresh, scope.settling]);
 
-  function handleOpenChange(open: boolean) {
-    if (!open || opened.current) return;
+  /**
+   * THE FIRST OPEN IS WHAT FETCHES, and it used to arrive as `Accordion`'s `onOpenChange`. The mega
+   * card is CONTROLLED by the page, so there is no callback to hang this on any more — the signal is
+   * the `expanded` prop going true, and the `opened` ref is what keeps it a FIRST open rather than
+   * every open. Without that ref this would re-fetch the whole matrix on every collapse and expand.
+   *
+   * `scope.settling` is still the early return it always was: the workshop scope has not resolved
+   * its default yet, and the effect above fires the moment it does. Fetching here as well would send
+   * two requests for the same matrix and render whichever answered last.
+   */
+  useEffect(() => {
+    if (!expanded || opened.current) return;
     opened.current = true;
-    if (scope.settling) return; // the effect above fires as soon as the default lands
+    if (scope.settling) return;
     setLoading(true);
     refresh().finally(() => setLoading(false));
-  }
+    // `refresh` is stable per scope and `scope.settling` is read, not watched: this must run on the
+    // first open and never again, which is what `opened` enforces.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [expanded]);
 
   const cellByKey = useMemo(() => {
     const map = new Map<string, CompletionMatrix["cells"][number]>();
@@ -2724,12 +2884,23 @@ function CompletionMatrixPanel({ canOverride }: { canOverride: boolean }) {
   }
 
   return (
-    <Accordion
+    <MegaCard
       title="Check completion"
-      subtitle={`Which questionnaire sections are covered for each artisan, derived from recorded answers and audio.${
+      note={`Which questionnaire sections are covered for each artisan, derived from recorded answers and audio.${
         canOverride ? " Click a cell to cycle an admin override: complete, not complete, clear." : ""
       }`}
-      onOpenChange={handleOpenChange}
+      icon={ClipboardCheck}
+      tone="errand"
+      /*
+        THE ROWS, NOT THE CELLS. A matrix is artisans × sections and either number could be called
+        "how much is in here"; the artisan count is the one a reader is looking for, because the
+        question this panel answers is "who has not been interviewed yet". Null until it loads, and
+        zero is then honest rather than a guess — the panel's own empty state says the rest.
+      */
+      count={matrix?.artisans?.length ?? 0}
+      countLabel="artisan"
+      expanded={expanded}
+      onToggle={onToggle}
     >
       {/* The scope sits ABOVE the matrix, because it changes what every cell means. */}
       <div className="mb-4 max-w-xl">
@@ -2851,7 +3022,7 @@ function CompletionMatrixPanel({ canOverride }: { canOverride: boolean }) {
           ) : null}
         </>
       ) : null}
-    </Accordion>
+    </MegaCard>
   );
 }
 
@@ -2929,7 +3100,17 @@ function SeededSectionTitle({ initial }: { initial: string }) {
   );
 }
 
-function QuestionnaireAdminEditor({ sections, onChanged }: { sections: QuestionnaireSection[]; onChanged: () => Promise<void> }) {
+function QuestionnaireAdminEditor({
+  sections,
+  onChanged,
+  expanded,
+  onToggle
+}: {
+  sections: QuestionnaireSection[];
+  onChanged: () => Promise<void>;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
   const confirm = useConfirm();
   const [localSections, setLocalSections] = useState<QuestionnaireSection[]>(sections);
   const [newCode, setNewCode] = useState("");
@@ -3188,9 +3369,16 @@ function QuestionnaireAdminEditor({ sections, onChanged }: { sections: Questionn
   const dragActive = Boolean(dragQuestion);
 
   return (
-    <Accordion
+    <MegaCard
       title="Questionnaire Builder"
-      subtitle="Master admin controls for sections, ordering, question text, moves and removals."
+      note="Master admin controls for sections, ordering, question text, moves and removals."
+      icon={Wrench}
+      tone="steward"
+      count={localSections.length}
+      countLabel="section"
+      expanded={expanded}
+      onToggle={onToggle}
+      // Outside the toggle, so reading the failure does not also collapse the editor you were in.
       headerRight={message ? <span className="text-sm text-red-700">{message}</span> : null}
     >
       <div className="grid gap-4">
@@ -3394,7 +3582,7 @@ function QuestionnaireAdminEditor({ sections, onChanged }: { sections: Questionn
           ))}
         </div>
       </div>
-    </Accordion>
+    </MegaCard>
   );
 }
 

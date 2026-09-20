@@ -4,7 +4,7 @@ No database, no browser. Every assertion here either calls a pure predicate or r
 disk, so this runs in the gating ``Backend tests`` job on a machine whose DSN is ``ci.invalid``.
 
 ═══════════════════════════════════════════════════════════════════════════════════════════════
-WHAT THIS FILE IS FOR, WHICH IS TWO DIFFERENT PROMISES
+WHAT THIS FILE IS FOR, WHICH IS THREE DIFFERENT PROMISES
 ═══════════════════════════════════════════════════════════════════════════════════════════════
 
 1. **THE GATE IS ONE RULE ON BOTH SIDES OF THE WIRE.** ``frontend/lib/permissions.ts``' own standing
@@ -29,11 +29,37 @@ WHAT THIS FILE IS FOR, WHICH IS TWO DIFFERENT PROMISES
    header, the roll-up and the artisan count. ``test_the_register_export_reads_no_stage_content``
    records why the name-comparison version of this test was wrong. If a future change wants an
    answer or a photograph in that file, this is what makes them go and get the export role first.
+
+3. **THE PEOPLE REGISTERS NAME PEOPLE AND JUDGE NONE OF THEM.** ``/designers``, ``/officers`` and
+   ``/inspectors`` answer the owner's ask that this dashboard stop knowing nothing about the people
+   running the programme, and every one of them is a list of NAMED INDIVIDUALS handed to a tier as
+   junior as rank 42. Three rules hold them, and the last section of this file asserts all three:
+
+   * **Four identity keys and no roster judgement** — ``assignable_designers_payload``'s ``id``,
+     ``name``, ``email``, ``role``. No ``rosterActive``, ``canSignIn``, ``firstSeenAt``,
+     ``institution``, ``rosterId`` or ``hasProfile``: those are facts about the EMPANELMENT table,
+     which ``can_manage_designer_roster`` (``is_admin``) stands in front of.
+   * **No gate was widened to feed the page.** The privileged tiers are named by nobody
+     (``include_admins=False`` as a disclosure boundary), and the two account directories are
+     offered only where ``OVERSIGHT_ASSIGNER_ROLES`` already admits the caller. That equality is
+     asserted rather than assumed, because if the two sets ever part, this page becomes a URL that
+     gate has never heard of.
+   * **Never a zero nobody measured.** These lists are an AGGREGATE over a capped scan of workshops,
+     so a silent cap is not a shorter list — it is every number in it meaning something else. The
+     scan report, the three progress reasons and the withheld count are all pinned here.
+
+   Same structural style as promise 2, and for its reason: a name appearing in a file is not the
+   same fact as a name reaching a payload, so the sweeps read the parsed body with the DOCSTRING
+   REMOVED — these routes document the keys they refuse BY NAME, and a raw text search would fail on
+   the very paragraph promising the thing it is checking for.
 """
 
 from __future__ import annotations
 
+import ast
+import inspect
 import re
+import textwrap
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -44,7 +70,9 @@ from app.core.deps import (
     ROLE_RANK,
     can_see_ministry_dashboard,
 )
-from app.services import ministry_dashboard as register
+from app.services import designers, ministry_dashboard as register
+from app.services.design_workshop_oversight import OVERSIGHT_ASSIGNER_ROLES
+from app.services.sanction_orders import can_record_sanction_orders
 
 REPO = Path(__file__).resolve().parents[2]
 PERMISSIONS_TS = REPO / "frontend/lib/permissions.ts"
@@ -450,3 +478,745 @@ def test_the_page_says_what_the_download_does_and_does_not_hold() -> None:
     assert "no stage content" in page
     assert "masked" in page
     assert "beneficiariesRefusal" in page
+
+
+# ────────────────────────────────────────────────────────────────────────────────────────────────
+# THE THREE PEOPLE REGISTERS — designers, officers, inspectors
+#
+# The router-wide sweeps above already cover these three routes, and that is deliberate: a sweep is
+# what makes a route added next year visible. What the sweeps CANNOT catch is the three routes being
+# deleted, renamed or moved to another prefix, at which point every sweep passes over what is left.
+# So the paths are pinned here as well, and each route gets a test of the one promise a sweep has no
+# opinion about — the SHAPE of the rows it hands over.
+# ────────────────────────────────────────────────────────────────────────────────────────────────
+
+#: The three reads this section is about, by their full path.
+_PEOPLE_PATHS = (
+    "/ministry-dashboard/designers",
+    "/ministry-dashboard/officers",
+    "/ministry-dashboard/inspectors",
+)
+
+#: Keys that must never reach a people row. Every one is a fact about ``DesignerRoster`` — the
+#: EMPANELMENT table — which ``can_manage_designer_roster`` (``is_admin``) stands in front of, and an
+#: officer reading this page is rank 42. ``assignable_designers_payload``'s own docstring gives the
+#: rule in one line: *"suspended" is a judgement the institution made about a person, and it is not
+#: an officer's business which designers have one.*
+_ROSTER_JUDGEMENTS = (
+    "rosterActive",
+    "canSignIn",
+    "firstSeenAt",
+    "institution",
+    "rosterId",
+    "hasProfile",
+)
+
+
+def _account(user_id: str, name: str, email: str, role: str) -> SimpleNamespace:
+    """A ``User`` row as the relation reads hand it over."""
+    return SimpleNamespace(id=user_id, name=name, email=email, role=role)
+
+
+def _function_body(function: object) -> ast.AST:
+    """One function's parsed body with its DOCSTRING REMOVED.
+
+    ⚠ **THE DOCSTRING HAS TO GO OR THE SWEEPS BELOW ARE BACKWARDS.** These routes document the keys
+    they refuse BY NAME — "NO ``rosterActive``, NO ``canSignIn`` …" — which is exactly the prose this
+    file exists to hold the code to. A raw ``inspect.getsource`` sweep would therefore fail on the
+    paragraph promising the thing it is checking for, and the obvious fix (delete the paragraph)
+    would delete the rule. Parsing and dropping the docstring keeps both.
+
+    Comments go too, because ``ast`` never sees them — which is the same protection for the ⚠ notes
+    in the bodies.
+    """
+    tree = ast.parse(textwrap.dedent(inspect.getsource(function)))
+    node = tree.body[0]
+    body = list(getattr(node, "body", []))
+    if (
+        body
+        and isinstance(body[0], ast.Expr)
+        and isinstance(body[0].value, ast.Constant)
+        and isinstance(body[0].value.value, str)
+    ):
+        body = body[1:]
+    return ast.Module(body=body, type_ignores=[])
+
+
+def _code_of(function: object) -> str:
+    """The function's code as text, docstring and comments gone. See :func:`_function_body`."""
+    return ast.unparse(_function_body(function))
+
+
+def _calls_guarded_by_try(function: object) -> set[str]:
+    """Every dotted call name that appears INSIDE a ``try`` in this function.
+
+    This is the other half of "degrade per read": the optional reads must each be guarded, and the
+    PRIMARY ones must not be. A register whose link read was quietly swallowed answers a cheerful
+    200 carrying an empty list, which on this screen says the programme has nobody in it — the
+    failure a shim exists to prevent, arriving through the shim.
+    """
+    guarded: set[str] = set()
+    for node in ast.walk(_function_body(function)):
+        if not isinstance(node, ast.Try):
+            continue
+        for statement in node.body:
+            for inner in ast.walk(statement):
+                if isinstance(inner, ast.Call):
+                    guarded.add(ast.unparse(inner.func))
+    return guarded
+
+
+def _keys_written_to(function: object, name: str) -> set[str]:
+    """Every literal key this function ASSIGNS into ``<name>[...]``.
+
+    STRUCTURAL AND NOT A STRING SEARCH, for the reason
+    ``test_the_register_export_reads_no_stage_content`` records about its own first attempt: a name
+    appearing in a file is not the same fact as a name reaching a payload. ``ctx`` is what separates
+    the two — a read of ``row["id"]`` is a ``Load`` and never puts a key on the wire.
+    """
+    written: set[str] = set()
+    for node in ast.walk(_function_body(function)):
+        if (
+            isinstance(node, ast.Subscript)
+            and isinstance(node.ctx, ast.Store)
+            and isinstance(node.value, ast.Name)
+            and node.value.id == name
+        ):
+            for inner in ast.walk(node.slice):
+                if isinstance(inner, ast.Constant) and isinstance(inner.value, str):
+                    written.add(inner.value)
+    return written
+
+
+# ── The door, the method and the shape of the path ──────────────────────────────────────────────
+
+
+def test_the_three_people_registers_are_declared_on_this_prefix() -> None:
+    """Pinned by path, because the sweeps above pass vacuously over a router they were deleted from.
+
+    The owner's ask was that this dashboard stop knowing nothing about people, and the three reads
+    are the answer to it: who runs the workshops, who oversees them, who inspects them.
+    """
+    paths = {api_route.path for api_route in route.router.routes}
+    for path in _PEOPLE_PATHS:
+        assert path in paths, f"{path} is gone from the ministry dashboard"
+
+
+def test_the_people_registers_are_reads_behind_the_gate_with_no_id_segment() -> None:
+    """The three router-wide promises, asserted again against these three routes BY NAME.
+
+    The sweeps above are the general rule and this is the specific one, and the duplication is the
+    point: a sweep reports "some route on this prefix is wrong" while this reports WHICH, and these
+    are the three routes most likely to grow a ``/{user_id}`` — "what is this one officer
+    overseeing" is the obvious next request and is exactly the second door onto one person's
+    postings the module docstring refuses.
+    """
+    for api_route in route.router.routes:
+        if api_route.path not in _PEOPLE_PATHS:
+            continue
+        assert set(api_route.methods) == {"GET"}, f"{api_route.path} is not a read"
+        assert "{" not in api_route.path, f"{api_route.path} is parameterised"
+        names = {
+            dependency.call.__name__
+            for dependency in api_route.dependant.dependencies
+            if getattr(dependency, "call", None) is not None
+        }
+        assert "require_ministry_dashboard_reader" in names, (
+            f"{api_route.path} is on the ministry prefix without the gate"
+        )
+
+
+def test_the_people_registers_widen_no_gate_and_grow_no_rank_floor() -> None:
+    """**THE ONE MISTAKE IN THIS FEATURE THAT WOULD BE SILENT**, and it has three shapes.
+
+    ``routes/sanction_orders.list_sanction_designers`` records the standing ruling: a tier that needs
+    a list gets **a fifth door with a narrower payload, never a widened gate**. The three names below
+    are the three gates a people register is tempted to reach for, and every one of them would be
+    granting something this page has no business granting:
+
+    * ``can_manage_designer_roster`` is ``is_admin`` and stands in front of the EMPANELMENT table —
+      an account that could reach it could end a designer's sign-in.
+    * ``require_workshop_assigner`` is ``OVERSIGHT_ASSIGNER_ROLES``, which excludes a
+      REGIONAL_DIRECTOR on purpose: the supervised must not choose the supervisor.
+    * ``has_rank`` is the shape ``MINISTRY_DASHBOARD_ROLES`` cannot be written in at all — the set
+      has a hole at ADMIN, and every floor fails (see the two tests at the top of this file).
+    """
+    for function in (route.list_designers, route.list_officers, route.list_inspectors):
+        code = _code_of(function)
+        for gate in (
+            "can_manage_designer_roster",
+            "require_workshop_assigner",
+            "require_admin",
+            "has_rank",
+            "designerroster",
+        ):
+            assert gate not in code, (
+                f"{function.__name__} reaches {gate!r}. The answer to a tier needing a list is a "
+                "fifth door with a narrower payload, never a widened gate — see "
+                "routes/sanction_orders.list_sanction_designers."
+            )
+
+
+def test_the_people_registers_compose_the_scope_under_and_and_never_beside_the_search() -> None:
+    """``where["OR"]`` IS THE SEARCH BOX'S AND ASSIGNING A SCOPE TO IT HANDS OVER THE COUNTRY.
+
+    Two assignments to one dict key: the later silently wins. Written onto ``OR``, the scope vanishes
+    and an Assistant Director reads every workshop on the platform — with nothing on screen to say
+    so, because the page looks exactly as healthy either way. The three routes therefore do not build
+    a ``where`` at all: they call ``_design_where``, which is the one place the composition order is
+    written down.
+    """
+    for function in (route.list_designers, route.list_officers, route.list_inspectors):
+        code = _code_of(function)
+        assert "_design_where(" in code, (
+            f"{function.__name__} builds its own where clause instead of using the composer that "
+            "puts the scope on AND"
+        )
+        assert "'OR'" not in code and '"OR"' not in code, (
+            f"{function.__name__} names where['OR'] — the search box owns that key"
+        )
+
+
+# ── The scope, per list, in words ───────────────────────────────────────────────────────────────
+
+
+def test_the_people_scope_sentence_never_claims_the_estate_to_an_officer() -> None:
+    """The sentence that stops three colleagues reading as the whole directorate.
+
+    It is a SEPARATE sentence from ``scope_label`` and not a reuse of it, and that is this router's
+    hardest-won rule: ``register_summary`` shipped one caption over two differently-scoped counts.
+    "The workshops you were named on" printed over a list of PEOPLE does not tell an Assistant
+    Director that a colleague running twenty workshops elsewhere is missing from it — and the counts
+    beside each name being counts within their own postings is a second fact the sentence has to
+    carry, which the workshop-list sentence has no reason to.
+    """
+    for noun in ("designer", "officer", "inspector"):
+        for folded in (True, False):
+            estate = register.people_scope_label(
+                _user("MINISTRY_ADMIN"), noun=noun, includes_unposted=folded
+            )
+            posted = register.people_scope_label(
+                _user("ASSISTANT_DIRECTOR"), noun=noun, includes_unposted=folded
+            )
+            assert estate != posted
+            assert noun in estate and noun in posted
+            assert "on the platform" in estate
+            assert "named on as Assistant Director or Regional Director" in posted
+            assert "WITHIN your postings" in posted, (
+                "the officer's sentence does not say the counts are narrowed, only the list"
+            )
+            # And it is not the workshop register's sentence wearing a new name.
+            assert estate != register.scope_label(_user("MINISTRY_ADMIN"))
+            assert posted != register.scope_label(_user("ASSISTANT_DIRECTOR"))
+
+
+def test_the_scope_sentence_changes_when_an_account_directory_is_folded_in() -> None:
+    """⚠ **A CAPTION THAT CONTRADICTS A ROW THE READER CAN SEE IS HOW A CAPTION STOPS BEING
+    BELIEVED**, and this page has nothing else standing between four rows and the size of a
+    directorate.
+
+    Two of these registers fold an account directory in, and when they do, "a designer working solely
+    on workshops you were not posted to is absent from this list" is no longer true — that designer
+    is on screen with a measured zero. The sentence therefore takes the fold as an argument rather
+    than describing the relation it was written for.
+    """
+    for noun in ("designer", "officer", "inspector"):
+        for role in ("MINISTRY_ADMIN", "ASSISTANT_DIRECTOR"):
+            folded = register.people_scope_label(
+                _user(role), noun=noun, includes_unposted=True
+            )
+            relation_only = register.people_scope_label(
+                _user(role), noun=noun, includes_unposted=False
+            )
+            assert folded != relation_only, (role, noun)
+            assert "measured zero" in folded
+            assert "absent" in relation_only or "does not appear here" in relation_only
+            # The claim that would be FALSE beside a folded row is not made in the folded sentence.
+            assert "absent from this list entirely" not in folded
+
+
+def test_every_people_list_carries_its_own_scope_and_scope_label() -> None:
+    """Both keys, on every one of the three, because the two halves of this screen are scoped
+    differently and one caption over both was a shipped bug.
+
+    ⚠ ASKED OF THE PARSED BODY AND NOT OF THE SOURCE TEXT. ``ast.unparse`` normalises every string
+    literal to single quotes, so a search for ``'"scope"'`` is a search for a spelling the code has
+    already lost — which is how the first version of this test failed against a payload that was
+    perfectly correct. :func:`_keys_written_to` asks what reaches the dict instead.
+    """
+    keys = _keys_written_to(route._people_envelope, "payload")
+    assert {"scope", "scopeLabel"} <= keys
+    assert "people_scope_label" in _code_of(route._people_envelope)
+    for function in (route.list_designers, route.list_officers, route.list_inspectors):
+        assert "_people_envelope(" in _code_of(function), (
+            f"{function.__name__} builds its own envelope and can lose the scope sentence"
+        )
+
+
+# ── The payload: four identity keys, measurements, and no judgement about a person ──────────────
+
+
+def test_a_people_row_is_four_identity_keys_and_measurements_and_nothing_about_the_roster() -> None:
+    """``assignable_designers_payload``'s four keys, and the ABSENCE OF THE REST IS THE POINT.
+
+    Every name in ``_ROSTER_JUDGEMENTS`` is a fact about the empanelment table, which is the admin's
+    and not the officer's. The suspended are already gone before the roster fold runs — the
+    ``WHERE`` in ``workshop_capable_accounts`` drops them — so the payload does not need a flag to be
+    SAFE, and must not EXPLAIN one to be honest.
+    """
+    row = register.new_person_row(_account("d1", "Rekha", "rekha@example.org", "DESIGNER"))
+    assert row["id"] == "d1"
+    assert row["name"] == "Rekha"
+    assert row["email"] == "rekha@example.org"
+    assert row["role"] == "DESIGNER"
+    for forbidden in _ROSTER_JUDGEMENTS:
+        assert forbidden not in row, f"a people row carries {forbidden}, which is a roster judgement"
+
+    # The identity half is BORROWED and not retyped, so the four keys cannot drift from the picker.
+    assert "assignable_designers_payload" in _code_of(register.new_person_row)
+
+    # NEVER A ZERO WE DID NOT MEASURE. The counters are measured by construction — a person is in
+    # the register because a relation put them there — and the progress figures are not.
+    assert row["workshops"] == 0
+    assert row["registered"] == row["ongoing"] == row["completed"] == 0
+    assert row["percent"] is None
+    assert row["requiredTotal"] is None
+    assert row["stagesComplete"] is None
+
+
+def test_the_designer_register_adds_only_the_two_link_counts_it_documents() -> None:
+    """ONE TEST PER ROUTE THAT THE PAYLOAD CARRIES NOTHING THE DISCIPLINE FORBIDS, and this is the
+    designers'.
+
+    The two extra keys are the two ARMS of the designer relation. ``DesignWorkshop`` has no designer
+    foreign key, so "who runs this workshop" is ``DesignWorkshopViewer`` UNION ``createdById`` — and
+    ``named_designer_rows`` records in capitals that the creator holds no viewer row, which is why
+    the second arm exists and why it will look redundant to the next reader. Reporting them apart
+    matters: "she opened nine and was added to two" and "she was added to eleven" are different facts
+    about who is running a workshop.
+    """
+    assert _keys_written_to(route.list_designers, "row") == {
+        "workshopsCreated",
+        "workshopsNamedOn",
+    }
+    assert _keys_written_to(route.list_designers, "payload") == {"unpostedAccountsTruncated"}
+    code = _code_of(route.list_designers)
+    for forbidden in _ROSTER_JUDGEMENTS:
+        assert forbidden not in code
+    # Counted over the RELATIONS and never over the denormalised string.
+    assert "designer_links" in code and "creator_accounts" in code
+    assert "designerName" not in code, (
+        "the designer register groups on the promoted stage-1 string, which is free-typed, "
+        "unindexed and not an account — see the services module's people-register header"
+    )
+
+
+def test_the_officer_register_adds_only_the_capacity_breakdown_it_documents() -> None:
+    """The officers' half of the same promise.
+
+    ``byCapacity`` is seeded from ``CAPACITIES`` rather than written out, so a third capacity — an
+    ``ALTER TYPE`` plus an entry in ``OVERSIGHT_CAPACITY_ROLES`` — appears here without a code
+    change; ``unknownCapacity`` catches one a server a release ahead can legitimately store, the same
+    reasoning ``group_of`` carries for a ninth status.
+    """
+    assert _keys_written_to(route.list_officers, "row") == {"byCapacity", "unknownCapacity"}
+    assert _keys_written_to(route.list_officers, "payload") == {
+        "unpostedAccountsTruncated",
+        "capacities",
+    }
+    code = _code_of(route.list_officers)
+    for forbidden in _ROSTER_JUDGEMENTS:
+        assert forbidden not in code
+    assert "oversight_links" in code
+    assert "officers.CAPACITIES" in code, (
+        "the capacity keys are written out rather than seeded from the enum's own tuple"
+    )
+
+
+def test_the_inspector_register_adds_only_the_two_feedback_counts_it_documents() -> None:
+    """The inspectors' half, and the two numbers are two facts.
+
+    ``DwInspectionFeedback.sentBack`` is true only on the suggestion that moved a workshop to
+    NEEDS_REVISION; the rest are suggestions on an open round. Forty notes with no send-back and
+    forty with thirty are different jobs, and one "feedback" number cannot tell them apart.
+    """
+    assert _keys_written_to(route.list_inspectors, "row") == {"feedbackFiled", "sendBacks"}
+    assert _keys_written_to(route.list_inspectors, "payload") == {
+        "unpostedAccountsTruncated",
+        "feedbackRead",
+        "feedbackFiledTotal",
+        "feedbackAttributed",
+        "feedbackByAccountsNotListed",
+        "feedbackNote",
+    }
+    code = _code_of(route.list_inspectors)
+    for forbidden in _ROSTER_JUDGEMENTS:
+        assert forbidden not in code
+    assert "inspector_links" in code and "inspection_feedback_counts" in code
+
+
+def test_the_envelope_keys_are_pinned_so_a_people_list_cannot_lose_its_disclosures() -> None:
+    """The shared half of all three payloads, pinned as a literal.
+
+    Each of these keys is a sentence-or-number the screen owes its reader, and every one of them is
+    the kind that disappears silently: a scan report nobody prints, a ``progressRead`` nobody checks,
+    a withheld count nobody adds up. Pinning the set is what makes deleting one a decision.
+    """
+    assert _keys_written_to(route._people_envelope, "payload") == {
+        "scope",
+        "scopeLabel",
+        "standingVocabulary",
+        "standingGroups",
+        "scan",
+        "progressScoreCap",
+        "progressRead",
+        "progressNote",
+        "withheldAccounts",
+        "withheldAccountsNote",
+        "includesUnpostedAccounts",
+        "unpostedAccountsNote",
+    }
+
+
+# ── The privileged tiers are named by nobody, and the withholding is counted ────────────────────
+
+
+def test_no_people_register_names_a_privileged_account() -> None:
+    """``include_admins=False`` AS A DISCLOSURE BOUNDARY, applied to a register keyed on relations.
+
+    ``list_sanction_designers`` records what it is for: a door that opened at a rank floor of
+    ASSISTANT_DIRECTOR would otherwise hand *"the complete privileged-account directory of the
+    installation"* to that tier. This router's floor is the same 42, and an ADMIN who opened one
+    workshop would appear here by name, address and role.
+
+    Read off ``designers.NEVER_ROSTER_GATED_ROLES`` so there is one list of "the privileged tiers"
+    rather than two that can disagree.
+    """
+    assert set(register.WITHHELD_PERSON_ROLES) == set(designers.NEVER_ROSTER_GATED_ROLES)
+    assert set(register.WITHHELD_PERSON_ROLES) == {"ADMIN", "MASTER_ADMIN"}
+    for role in ROLE_RANK:
+        expected = role in {"ADMIN", "MASTER_ADMIN"}
+        assert register.is_withheld_person(_user(role)) is expected, role
+
+
+def test_the_withheld_accounts_are_counted_and_the_count_is_on_the_wire() -> None:
+    """A person dropped without a word is the truncation bug wearing a permissions hat.
+
+    Their workshops are still inside ``workshopsRead``, so a reader adding the rows up finds them
+    short with nothing to explain the difference. The COUNT names nobody, which is the whole reason
+    it can be reported at all.
+    """
+    for function in (route.list_designers, route.list_officers, route.list_inspectors):
+        code = _code_of(function)
+        assert "is_withheld_person" in code, f"{function.__name__} does not apply the boundary"
+        assert "withheld=len(withheld)" in code, (
+            f"{function.__name__} withholds accounts without reporting how many"
+        )
+
+
+# ── Never a zero we did not measure ─────────────────────────────────────────────────────────────
+
+
+def test_a_person_with_no_workshop_says_so_rather_than_reporting_nought_per_cent() -> None:
+    """THREE ABSENCES, THREE FACTS, AND THE THIRD ONE IS WHY THE ROSTER IS FOLDED IN.
+
+    An empanelled designer who has been given nothing is the most actionable row on a ministry's
+    chasing screen. A register built only from workshop links cannot contain them at all — they would
+    be indistinguishable from somebody who does not exist — and a register that contained them
+    showing 0% would be accusing them of having done none of the work they were never given.
+    """
+    idle = register.new_person_row(_account("d0", "Nobody Yet", "n@x.y", "DESIGNER"))
+    register.close_person_progress(idle, scoring_read=True)
+    assert idle["percent"] is None
+    assert idle["progressReason"] == "noWorkshops"
+
+    capped = register.new_person_row(_account("d1", "Busy", "b@x.y", "DESIGNER"))
+    capped["workshops"] = 4
+    register.close_person_progress(capped, scoring_read=True)
+    assert capped["percent"] is None
+    assert capped["progressReason"] == "capped"
+
+    unread = register.new_person_row(_account("d2", "Busy Too", "b2@x.y", "DESIGNER"))
+    unread["workshops"] = 4
+    register.close_person_progress(unread, scoring_read=False)
+    assert unread["percent"] is None
+    assert unread["progressReason"] == "unreadable"
+
+    # All three are distinct words, because they suggest three different next moves.
+    assert len({idle["progressReason"], capped["progressReason"], unread["progressReason"]}) == 3
+
+
+def test_the_person_roll_up_is_the_registers_arithmetic_to_the_rounding() -> None:
+    """Sum filled over sum total across a person's SCORED workshops — ``_roll_up``'s rule, one level
+    up — and a zero denominator reads as complete rather than as 0%.
+
+    Averaging the per-workshop percentages instead would weight a workshop with four required fields
+    the same as one with two hundred, and would disagree with the register's own rows on the tab
+    beside this one.
+    """
+    row = register.new_person_row(_account("d1", "Rekha", "r@x.y", "DESIGNER"))
+    row["workshops"] = 3
+    register.add_score(row, {"requiredTotal": 10, "requiredFilled": 5, "stagesComplete": 1, "stagesTotal": 6})
+    register.add_score(row, {"requiredTotal": 30, "requiredFilled": 30, "stagesComplete": 6, "stagesTotal": 6})
+    # A workshop the request did not score contributes NOTHING and is not counted as scored, which is
+    # what keeps `workshopsScored` an honest denominator beside the percentage.
+    register.add_score(row, None)
+    register.add_score(row, register.unscored("capped"))
+    register.close_person_progress(row, scoring_read=True)
+
+    assert row["workshopsScored"] == 2
+    assert row["requiredTotal"] == 40
+    assert row["requiredFilled"] == 35
+    assert row["percent"] == round(100 * 35 / 40)
+    assert row["stagesComplete"] == 7
+
+    nothing_required = register.new_person_row(_account("d2", "B", "b@x.y", "DESIGNER"))
+    nothing_required["workshops"] = 1
+    register.add_score(
+        nothing_required,
+        {"requiredTotal": 0, "requiredFilled": 0, "stagesComplete": 0, "stagesTotal": 6},
+    )
+    register.close_person_progress(nothing_required, scoring_read=True)
+    assert nothing_required["percent"] == 100
+
+
+def test_a_capped_scan_says_so_in_a_sentence_and_a_complete_one_says_nothing() -> None:
+    """These lists are an AGGREGATE over the workshops one request read, so a silent cap is not a
+    shorter list — it is every number in it meaning something else.
+
+    The note is a sentence rather than a boolean for the reason the summary's ⚠ gives: a caption
+    composed in the browser drifts from the decision the server took, and this caption has the harder
+    job of saying that the COUNTS are partial and not merely that the LIST is.
+    """
+    whole = register.scan_report(12, 12)
+    assert whole["truncated"] is False
+    assert whole["truncationNote"] is None
+    assert whole["workshopsInScope"] == 12 and whole["workshopsRead"] == 12
+
+    cut = register.scan_report(900, register.PEOPLE_WORKSHOP_SCAN)
+    assert cut["truncated"] is True
+    assert "900" in cut["truncationNote"]
+    assert str(register.PEOPLE_WORKSHOP_SCAN) in cut["truncationNote"]
+    assert "count within the workshops that were read" in cut["truncationNote"], (
+        "the note says the LIST was cut and not that the COUNTS are partial, which is the half a "
+        "reader cannot infer"
+    )
+
+
+# ── Ordering is total ───────────────────────────────────────────────────────────────────────────
+
+
+def test_the_people_scan_order_is_the_registers_order_tiebreak_included() -> None:
+    """The duplicated literal, held equal, because a service must not import its own router.
+
+    On a CAPPED SCAN the ``id`` tiebreak is load-bearing in a way it is not on a page: without it,
+    WHICH five hundred workshops fall inside the cap is Postgres's choice among rows sharing an
+    ``updatedAt``, so two identical requests scan two different sets and a designer's workshop count
+    changes on refresh with nothing on screen to say why.
+    """
+    assert register.PEOPLE_SCAN_ORDER == route._DESIGN_ORDER
+    assert register.PEOPLE_SCAN_ORDER[-1] == {"id": "asc"}
+
+
+def test_the_people_order_is_total_so_a_paged_register_serves_nobody_twice() -> None:
+    """Busiest first, then the alphabet, then the account id — and the id is the one that matters.
+
+    Display names in ``User`` are not unique. Two people with the same name and the same workshop
+    count would otherwise sort in whatever order the accumulator happened to be built in, which is
+    insertion order over a relation read; a row that changes side of the page cut between two
+    requests is handed over twice or never, and either way the response looks perfectly healthy.
+    """
+    def _row(user_id: str, name: str, workshops: int) -> dict:
+        row = register.new_person_row(_account(user_id, name, f"{user_id}@x.y", "DESIGNER"))
+        row["workshops"] = workshops
+        return row
+
+    rows = [_row("b", "Same Name", 2), _row("a", "Same Name", 2), _row("c", "Busier", 9)]
+    ordered = [row["id"] for row in register.order_people(rows)]
+    assert ordered == ["c", "a", "b"]
+    # Total means the INPUT order cannot change the answer.
+    assert [row["id"] for row in register.order_people(list(reversed(rows)))] == ordered
+
+
+# ── The two account directories, and the gate that already governs them ─────────────────────────
+
+
+def test_the_unposted_directories_are_offered_exactly_where_their_own_gate_already_admits() -> None:
+    """**NOTHING WAS WIDENED TO MAKE AN UNPOSTED OFFICER VISIBLE**, and this is the proof.
+
+    ``officer_directory`` and ``eligible_inspectors`` are each served today behind
+    ``require_workshop_assigner`` — ``OVERSIGHT_ASSIGNER_ROLES`` — and that set is, member for
+    member, the one ``sees_whole_estate`` already answers True for. So an estate reader is handed a
+    list they can already open elsewhere, and the two directorate tiers are refused it exactly as
+    that gate refuses them: ``OVERSIGHT_ASSIGNER_ROLES`` excludes a REGIONAL_DIRECTOR on purpose,
+    because the supervised must not choose the supervisor.
+
+    ⚠ IF THIS TEST EVER FAILS, THE FIX IS NOT TO EDIT THE EXPECTATION. It means the two sets have
+    parted, and the people registers would then be reading a national directory to a tier its own
+    gate refuses — through a URL that gate has never heard of.
+    """
+    assert set(OVERSIGHT_ASSIGNER_ROLES) == {"MINISTRY_ADMIN", "ADMIN", "MASTER_ADMIN"}
+    for role in ROLE_RANK:
+        assert register.may_read_account_directories(_user(role)) is (
+            role in OVERSIGHT_ASSIGNER_ROLES
+        ), role
+    # And it is the same predicate the workshop registers scope by, not a second answer to one
+    # question.
+    for role in ROLE_RANK:
+        assert register.may_read_account_directories(_user(role)) is register.sees_whole_estate(
+            _user(role)
+        )
+
+
+def test_the_designer_roster_fold_reuses_a_door_every_tier_here_already_clears() -> None:
+    """The ONE directory offered to all four tiers, and it widens nothing either.
+
+    ``GET /sanction-orders/designers`` is ``require_sanction_recorder`` —
+    ``can_record_sanction_orders``, a RANK FLOOR at ASSISTANT_DIRECTOR (42) — and it answers this
+    exact call with these exact arguments. Every tier this router admits sits at or above that floor,
+    so folding the same row set in here discloses nothing new to anybody.
+
+    ``include_admins=False`` is the half that keeps it true: without it the answer is every empanelled
+    designer PLUS every privileged account in the installation, which is the defect
+    ``list_sanction_designers`` records having been fixed on 2026-09-16.
+    """
+    for role in MINISTRY_DASHBOARD_ROLES:
+        assert can_record_sanction_orders(_user(role)) is True, role
+    code = _code_of(register.empanelled_designer_accounts)
+    assert "include_admins=False" in code, (
+        "the roster fold would hand the privileged-account directory to rank 42"
+    )
+    assert "include_suspended=False" in code
+
+
+def test_a_directory_that_could_not_be_read_is_not_reported_as_an_empty_one() -> None:
+    """THREE STATES AND THREE SENTENCES: not offered, offered-and-read, offered-and-FAILED.
+
+    "This tier does not get the directory", "nobody is unposted" and "we could not ask" are three
+    different facts, and a boolean would collapse the first and the third into the second. The route
+    keeps them apart by deciding ``offered`` BEFORE the shim, so a ``None`` coming back from a caller
+    who was offered the read means the read failed and nothing else.
+    """
+    for function in (route.list_officers, route.list_inspectors):
+        code = _code_of(function)
+        assert "may_read_account_directories" in code
+        assert "if not offered:" in code, (
+            f"{function.__name__} cannot tell a refused directory from a failed one"
+        )
+        assert "could not be read for this request" in code, (
+            f"{function.__name__} has no sentence for the directory read that failed"
+        )
+
+
+# ── Degrading per read, never per page ──────────────────────────────────────────────────────────
+
+
+def test_every_optional_people_read_has_its_own_shim_and_the_primary_reads_have_none() -> None:
+    """``_design_rows`` records what the first attempt at this got wrong — one guard around a
+    ``gather_reads`` of two coroutines, whose ``except`` then RE-RAN one of them, so a roster read
+    that was down stayed down and the whole register 500'd through the handler written to stop
+    exactly that.
+
+    The shape copied here is one shim per optional read, gathered: the round trips still overlap and
+    none of them can take another down. The workshop scan and the link read are deliberately
+    UNGUARDED — without either there is no register, and a 200 carrying an empty list would say the
+    programme has no designers in it.
+    """
+    for function, shims in (
+        (route.list_designers, ("_people_progress_or_none", "_roster_or_none")),
+        (route.list_officers, ("_people_progress_or_none", "_directory_or_none")),
+        (
+            route.list_inspectors,
+            ("_people_progress_or_none", "_feedback_or_none", "_directory_or_none"),
+        ),
+    ):
+        code = _code_of(function)
+        for shim in shims:
+            assert shim in code, f"{function.__name__} does not degrade {shim} on its own"
+        # ⚠ AND THE PRIMARY READS ARE NOT GUARDED. A link read swallowed by a shim answers a
+        # cheerful 200 carrying an empty list, which on this screen says the programme has nobody
+        # in it — the failure the shims exist to prevent, arriving through a shim.
+        guarded = _calls_guarded_by_try(function)
+        for primary in (
+            "register.people_spine",
+            "register.designer_links",
+            "register.oversight_links",
+            "register.inspector_links",
+        ):
+            assert primary not in guarded, (
+                f"{function.__name__} swallows {primary}, so a failed read becomes an empty list"
+            )
+
+    # And the shim answers None rather than an empty map, so the caller can tell the two apart.
+    shim = _code_of(route._people_progress_or_none)
+    assert "return None" in shim
+    assert "logger.exception" in shim
+
+
+def test_the_feedback_columns_are_none_when_the_aggregate_could_not_be_read() -> None:
+    """0 suggestions against a working inspector is an accusation, not a blank.
+
+    An inspector who has filed nothing is an ordinary state on the day they are assigned and IS a
+    measured zero; an inspector whose filings this request failed to count is a fact about the
+    request. The route keeps them apart with ``feedback_read`` and the payload says which.
+    """
+    code = _code_of(route.list_inspectors)
+    assert "if feedback_read else None" in code, (
+        "the inspector rows report an unread aggregate as zero"
+    )
+    assert "feedbackRead" in _keys_written_to(route.list_inspectors, "payload")
+    assert "not because nothing was filed" in code
+
+
+def test_the_feedback_nobody_on_this_list_filed_is_counted_rather_than_dropped() -> None:
+    """Attributing only what this list can attribute and printing that as "the feedback" would be a
+    number that silently excludes an unknown amount.
+
+    Feedback is filed by whoever is entitled to file it, and holding an inspector row on one of the
+    scanned workshops is not the same set. The remainder is derived from the same two aggregates
+    rather than from a third query, and is usually a measured zero.
+    """
+    code = _code_of(route.list_inspectors)
+    for key in ("feedbackFiledTotal", "feedbackAttributed", "feedbackByAccountsNotListed"):
+        assert key in _keys_written_to(route.list_inspectors, "payload"), key
+    assert "max(0," in code, (
+        "the remainder can go negative if the two aggregates disagree, and a negative count on a "
+        "ministry screen is worse than a clamped one"
+    )
+
+
+def test_the_group_by_count_shim_is_reused_rather_than_re_derived() -> None:
+    """``_count`` IS A DICT AND NOT AN INT, and the module already has the one reader for it.
+
+    ``_group_count`` names ``_all`` rather than taking "the first value", which is right by accident
+    for a one-key dict and becomes wrong the day a per-field count is added to the query. The people
+    aggregates go through it.
+    """
+    assert "_group_count(row)" in _code_of(register._counts_by_key)
+    assert "_counts_by_key" in _code_of(register.inspection_feedback_counts)
+
+
+def test_the_people_reads_use_the_relations_and_not_the_promoted_string() -> None:
+    """``DesignWorkshop`` HAS NO DESIGNER FOREIGN KEY, and ``designerName`` is not a substitute.
+
+    It is promoted off stage 1 by ``promoted_values()``: free-typed, unindexed, not unique, not a
+    key, and absent entirely for a designer who never opened stage 1. Two spellings would be two
+    designers and one shared spelling one designer. ``_the_lead_among`` exists precisely because
+    matching it back to an account is a guess that answers ``None`` whenever it is not certain — the
+    honest shape for a guess and the wrong shape for a register.
+    """
+    for reader, model in (
+        (register.designer_links, "designworkshopviewer"),
+        (register.oversight_links, "designworkshopoversight"),
+        (register.inspector_links, "designworkshopinspector"),
+        (register.inspection_feedback_counts, "dwinspectionfeedback"),
+    ):
+        assert f"db.{model}." in _code_of(reader), reader.__name__
+
+    for reader in (register.designer_links, register.oversight_links, register.inspector_links):
+        code = _code_of(reader)
+        assert "designerName" not in code
+        # READ AND ONLY EVER READ. A viewer row confers STAGE WRITES — `load_workshop_or_404(
+        # for_edit=True)` reads the same relation — and nothing on this prefix writes.
+        for write in (".create(", ".create_many(", ".delete(", ".delete_many(", ".update("):
+            assert write not in code, f"{reader.__name__} writes to a relation this prefix only reads"

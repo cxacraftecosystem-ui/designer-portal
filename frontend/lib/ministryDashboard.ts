@@ -276,6 +276,163 @@ export function listRegisterOtherWorkshops(params: RegisterQuery) {
   });
 }
 
+/* ────────────────────────────────────────────────────────────────────────────
+ * The people registers
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * The three populations the ministry register learned about on 2026-09-20.
+ *
+ * Owner: *"the dashboard carries no information about designers, ad, rd, inspectors, make it
+ * extremely more capable and powerful, there is no specific card for designers where they can do
+ * their stuff"*. Until then this screen was one register of WORKSHOPS and knew nothing about people
+ * beyond `DesignWorkshop.designerName` — a free-typed, unindexed string with no account behind it.
+ */
+export type PeopleKind = "designers" | "officers" | "inspectors";
+
+export const PEOPLE_KINDS: ReadonlyArray<{
+  id: PeopleKind;
+  /** The card's heading. */
+  title: string;
+  /** One line under it. Never the scope sentence — that one comes from the server, per list. */
+  note: string;
+  /** Singular; the card pluralises with a bare "s". */
+  countLabel: string;
+}> = [
+  {
+    id: "designers",
+    title: "Designers",
+    note: "Who is running design & prototype workshops, how many, and how far along each one is.",
+    countLabel: "designer"
+  },
+  {
+    id: "officers",
+    title: "Assistant & Regional Directors",
+    note: "The directorate's postings — who oversees which workshops, and in what capacity.",
+    countLabel: "officer"
+  },
+  {
+    id: "inspectors",
+    title: "Inspectors",
+    note: "Who inspects, how much correction they filed, and how often a workshop went back.",
+    countLabel: "inspector"
+  }
+];
+
+/**
+ * One person in a people register.
+ *
+ * ⚠ **EVERY FIGURE THAT CAN BE UNMEASURED IS `number | null`, AND `null` IS NOT ZERO.** The server
+ * is explicit about this and the distinction is the whole reason these lists are trustworthy: a
+ * designer with no workshop scores a MEASURED zero, while a designer whose workshops could not be
+ * scored carries `null` and a `progressReason`. A client that rendered both as "0" would state, in a
+ * table read by the ministry, that work which exists was never done.
+ */
+export type RegisterPerson = {
+  id: string;
+  name: string | null;
+  email: string | null;
+  role: string;
+  /** Counted over ID relations, never over the free-typed `designerName`. */
+  workshops: number;
+  registered: number;
+  ongoing: number;
+  completed: number;
+  /** A status this build has not heard of — counted in `workshops` and in no group. */
+  unclassifiedStanding: number;
+  workshopsScored: number;
+  percent: number | null;
+  stagesComplete: number | null;
+  stagesTotal: number | null;
+  requiredTotal: number | null;
+  requiredFilled: number | null;
+  /** `"noWorkshops"` | `"unreadable"` | `"capped"`, or null when `percent` is a real figure. */
+  progressReason: string | null;
+  /** Designers only. The creator holds no viewer row, so the two arms are reported separately. */
+  workshopsCreated?: number;
+  workshopsNamedOn?: number;
+  /** Officers only. Keyed by `OVERSIGHT_CAPACITY`; a capacity this build has not heard of falls to
+   *  `unknownCapacity` rather than being dropped. */
+  byCapacity?: Record<string, number>;
+  unknownCapacity?: number;
+  /** Inspectors only. Null when the feedback read failed — see `feedbackRead` on the page. */
+  feedbackFiled?: number | null;
+  sendBacks?: number | null;
+};
+
+/**
+ * What every people list carries besides its rows.
+ *
+ * `scopeLabel` is PER LIST and is printed verbatim. This router shipped one caption over two
+ * differently-scoped counts once and told an Assistant Director "the workshops you were named on"
+ * above a national figure; each list now says its own scope in the server's own words, and the page
+ * composes none of its own.
+ */
+export type RegisterPeoplePage = PageResult<RegisterPerson> & {
+  scope: string;
+  scopeLabel: string;
+  standingVocabulary: string;
+  standingGroups: Record<string, string[]>;
+  scan: { total: number; read: number; truncated: boolean } & Record<string, unknown>;
+  progressScoreCap: number;
+  progressRead: boolean;
+  /** Null when progress WAS read. A whole blank column needs a sentence, not a boolean. */
+  progressNote: string | null;
+  withheldAccounts: number;
+  withheldAccountsNote: string | null;
+  /**
+   * Whether people holding nothing in this scope are listed at all, and — in the server's words —
+   * what their absence would mean if they are not. The two travel together: a caption saying
+   * "somebody with nothing is absent" beside a row showing exactly that person is a caption that
+   * stops being believed.
+   */
+  includesUnpostedAccounts: boolean;
+  unpostedAccountsNote: string | null;
+  /** The directory read has a ceiling of its own, and a list that stopped at it must say so. */
+  unpostedAccountsTruncated?: boolean;
+  /** Inspectors only. */
+  feedbackRead?: boolean;
+  feedbackNote?: string | null;
+  feedbackFiledTotal?: number | null;
+  feedbackAttributed?: number | null;
+  feedbackByAccountsNotListed?: number | null;
+};
+
+export function listRegisterPeople(kind: PeopleKind, params: RegisterQuery) {
+  return apiFetch<RegisterPeoplePage>(`/ministry-dashboard/${kind}${registerQuery(params)}`, undefined, {
+    // Same reason as the two workshop registers: a TIMER issues this, so a 401 must not
+    // hard-navigate and lose the screen an officer was working on.
+    redirectOn401: false
+  });
+}
+
+/**
+ * The sentence a person's progress column prints, and it is NEVER "0%" for something unmeasured.
+ *
+ * The four reasons are the server's own tokens, turned into words here rather than on the wire so
+ * the two clients can word them for their own readers. `progressSentence` does the same job for a
+ * workshop row and this is deliberately its twin rather than a second opinion.
+ */
+export function personProgressSentence(person: RegisterPerson): string {
+  if (typeof person.percent === "number") {
+    const scored =
+      person.workshopsScored === person.workshops
+        ? ""
+        : ` across ${person.workshopsScored} of ${person.workshops} workshops`;
+    return `${person.percent}% complete${scored}`;
+  }
+  switch (person.progressReason) {
+    case "noWorkshops":
+      return "No workshops in this scope";
+    case "capped":
+      return "Not scored — this page is longer than the scoring ceiling";
+    case "unreadable":
+      return "Not scored — the stage rows could not be read";
+    default:
+      return "Not scored";
+  }
+}
+
 export function fetchRegisterSummary() {
   return apiFetch<RegisterSummary>("/ministry-dashboard/summary", undefined, { redirectOn401: false });
 }

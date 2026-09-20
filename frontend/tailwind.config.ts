@@ -108,6 +108,120 @@ const ministry = {
   950: "oklch(0.255 0.072 45 / <alpha-value>)" /* #3e1400 */
 };
 
+/**
+ * ── THE FOUR GROUP TONES, ADDED 2026-09-20 — NAVIGATION COLOUR, AND NEVER AN ACTION COLOUR ──────
+ *
+ * Owner ruling: the dashboard's mega cards must be "colour coded so that it is easier for people to
+ * understand and navigate", and the ministry one must wear the mango from
+ * `https://transaction-flow-analyser.vercel.app/`.
+ *
+ * ── WHAT THESE MAY AND MAY NOT PAINT, WHICH IS THE WHOLE OF WHY THEY ARE SAFE ───────────────────
+ *
+ * Non-negotiable 1 still stands: **purple-700 is the only action colour**, with the five
+ * `ministry: true` routes as the one scoped exception. These ramps are spent EXACTLY where
+ * `components/dashboard/MinistryDeskCard.tsx` already spends `ministry`, and nowhere else:
+ *
+ *   • an `aria-hidden` icon chip — `bg-X-100 text-X-700 dark:bg-X-950/40 dark:text-X-300`
+ *   • a hover border — `hover:border-X-300`
+ *   • the collapsed card's chevron ink, which is the same ink as the chip
+ *
+ * They may NOT paint a button, an input, a focus ring, a left-edge accent rule (globals.css:642-661
+ * is a tombstone for exactly that) or a full card ground that reads as a page canvas. And by
+ * non-negotiable 5 the tone is never the only channel: every mega card keeps its GROUP TITLE and its
+ * one-line note as the primary signal, so a reader who cannot separate teal from indigo loses
+ * nothing at all.
+ *
+ * ── WHY FOUR NEW NAMES AND NOT `teal` / `indigo` / `rose` / `orange` ────────────────────────────
+ *
+ * A key that collides with a stock Tailwind scale DEEP-MERGES with it. `amber` in this very file is
+ * the standing proof: only 100/500/800 are brand, and `amber-50` / `amber-200` silently resolve to
+ * stock values that do not pair with them. So each ramp is named for its SCOPE exactly as `ministry`
+ * is — `ministry` is not called "orange" for the same reason.
+ *
+ * ── THE DERIVATION IS PURPLE'S, RUNG FOR RUNG ──────────────────────────────────────────────────
+ *
+ * Same eleven lightnesses as `purple`; chroma is `min(purple's chroma at that rung, 0.94 × the sRGB
+ * gamut maximum at this hue and lightness)` — the identical rule the `ministry` ramp above was
+ * derived with, so a 700 is the same *weight* in every family and a chip swap changes hue only.
+ *
+ * ── THE MANGO IS MEASURED FROM THE SITE THE OWNER NAMED, NOT EYEBALLED ─────────────────────────
+ *
+ * That site's stylesheet carries `--primary: 39 100% 50%` light and `39 80% 40%` dark, with
+ * `--accent: 25 95% 55%`. Converted:
+ *
+ *     light  primary  hsl(39 100% 50%) = #FFA600 = oklch(0.794 0.171 71.2)
+ *     dark   primary  hsl(39 80% 40%)  = #B87E14 = oklch(0.637 0.129 75.1)
+ *     light  accent   hsl(25 95% 55%)  = #F97A1F = oklch(0.715 0.180 49.5)
+ *
+ * Hue 71 is therefore the mango, and `mango-500` below — `oklch(0.648 0.131 71)` — reproduces that
+ * site's DARK primary to about ΔL 0.011 / ΔC 0.002. Its light primary sits between rungs 300 and 400
+ * and is not pinned to a rung, because a ladder with one rung off it is a ladder nobody can reason
+ * about. Its accent lands at hue 49.5, which is this repo's EXISTING `ministry` ramp (hue 45) — the
+ * two palettes already agree, which is why mango EXTENDS the ministry surface rather than replacing
+ * it.
+ *
+ * ⚠ `mango` DOES NOT REPLACE `ministry`, AND MUST NOT. The hue-45 ramp is what every `dark:` pair,
+ * the `cta-ministry` shadow, `docs/DECISION-ministry-orange-action-controls.md` and three test files
+ * are written against, and mango's bright rungs cannot carry white text (#FFA600 against white is
+ * 1.96:1). `ministry` stays the ACTION colour on the five ministry routes; `mango` is the ministry
+ * mega card's navigation MARK, and it is only ever a chip, an ink or a hover border.
+ */
+const archive = {
+  50: "oklch(0.977 0.013 195 / <alpha-value>)", /* #eefafa */
+  100: "oklch(0.946 0.03 195 / <alpha-value>)", /* #d7f4f3 */
+  200: "oklch(0.9 0.058 195 / <alpha-value>)", /* #b1ebea */
+  300: "oklch(0.828 0.1 195 / <alpha-value>)", /* #6fdbdb */
+  400: "oklch(0.738 0.118 195 / <alpha-value>)", /* #2bc1c1 */
+  500: "oklch(0.648 0.104 195 / <alpha-value>)", /* #21a2a2 */
+  600: "oklch(0.56 0.09 195 / <alpha-value>)", /* #198585 */
+  700: "oklch(0.47 0.075 195 / <alpha-value>)", /* #136868 — Records' chip ink on a light card */
+  800: "oklch(0.4 0.064 195 / <alpha-value>)", /* #0c5252 */
+  900: "oklch(0.34 0.055 195 / <alpha-value>)", /* #064141 */
+  950: "oklch(0.255 0.041 195 / <alpha-value>)" /* #032929 */
+};
+
+const errand = {
+  50: "oklch(0.977 0.01 255 / <alpha-value>)", /* #f3f8fe */
+  100: "oklch(0.946 0.025 255 / <alpha-value>)", /* #e2eefe */
+  200: "oklch(0.9 0.046 255 / <alpha-value>)", /* #cae0fd */
+  300: "oklch(0.828 0.082 255 / <alpha-value>)", /* #a3cafc */
+  400: "oklch(0.738 0.129 255 / <alpha-value>)", /* #70adfa */
+  500: "oklch(0.648 0.18 255 / <alpha-value>)", /* #338ef9 */
+  600: "oklch(0.56 0.173 255 / <alpha-value>)", /* #1673d6 */
+  700: "oklch(0.47 0.146 255 / <alpha-value>)", /* #0e59aa — Miscellaneous' chip ink */
+  800: "oklch(0.4 0.124 255 / <alpha-value>)", /* #094788 */
+  900: "oklch(0.34 0.106 255 / <alpha-value>)", /* #05376d */
+  950: "oklch(0.255 0.08 255 / <alpha-value>)" /* #022248 */
+};
+
+const steward = {
+  50: "oklch(0.977 0.011 15 / <alpha-value>)", /* #fff5f5 */
+  100: "oklch(0.946 0.026 15 / <alpha-value>)", /* #fee7e7 */
+  200: "oklch(0.9 0.049 15 / <alpha-value>)", /* #fdd2d4 */
+  300: "oklch(0.828 0.091 15 / <alpha-value>)", /* #fcafb4 */
+  400: "oklch(0.738 0.15 15 / <alpha-value>)", /* #fa7f8b */
+  500: "oklch(0.648 0.19 15 / <alpha-value>)", /* #eb5068 */
+  600: "oklch(0.56 0.205 15 / <alpha-value>)", /* #d1234c */
+  700: "oklch(0.47 0.177 15 / <alpha-value>)", /* #a71439 — Admin's chip ink */
+  800: "oklch(0.4 0.151 15 / <alpha-value>)", /* #860d2c */
+  900: "oklch(0.34 0.128 15 / <alpha-value>)", /* #6a0922 */
+  950: "oklch(0.255 0.096 15 / <alpha-value>)" /* #460413 */
+};
+
+const mango = {
+  50: "oklch(0.977 0.013 71 / <alpha-value>)", /* #fdf6ee */
+  100: "oklch(0.946 0.03 71 / <alpha-value>)", /* #faead8 */
+  200: "oklch(0.9 0.058 71 / <alpha-value>)", /* #f7d8b5 */
+  300: "oklch(0.828 0.1 71 / <alpha-value>)", /* #f0bc7d — the ministry chip's ink in dark theme */
+  400: "oklch(0.738 0.149 71 / <alpha-value>)", /* #e49824 */
+  500: "oklch(0.648 0.131 71 / <alpha-value>)", /* #c07f1c — the named site's dark primary */
+  600: "oklch(0.56 0.113 71 / <alpha-value>)", /* #9d6716 */
+  700: "oklch(0.47 0.095 71 / <alpha-value>)", /* #7c500e — the ministry chip's ink on a light card */
+  800: "oklch(0.4 0.081 71 / <alpha-value>)", /* #633f09 */
+  900: "oklch(0.34 0.069 71 / <alpha-value>)", /* #4e3105 */
+  950: "oklch(0.255 0.052 71 / <alpha-value>)" /* #321e02 */
+};
+
 const config: Config = {
   content: ["./app/**/*.{ts,tsx}", "./components/**/*.{ts,tsx}", "./lib/**/*.{ts,tsx}"],
   // ThemeProvider stamps data-theme onto <html>; the "class" strategy keeps `dark:` usable too.
@@ -124,6 +238,10 @@ const config: Config = {
         purple,
         gold,
         ministry,
+        archive,
+        errand,
+        steward,
+        mango,
         ink: {
           DEFAULT: neutral("ink-900"),
           900: neutral("ink-900"),

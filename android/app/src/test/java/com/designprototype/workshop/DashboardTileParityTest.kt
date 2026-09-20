@@ -72,6 +72,30 @@ import java.io.File
  * the Sketches card does not take `Icons.Filled.Brush` from its own menu row — Craft already holds
  * Brush here and an admin is offered both cards.
  *
+ * ── AND SINCE 2026-09-20, WHICH MEGA CARD EACH CARD IS DRAWN IN ────────────────────────────────
+ *
+ * The grid is no longer twenty-one cards in a flat run: both clients now draw four collapsible mega
+ * cards — `For designers`, `Records`, `Miscellaneous`, `Admin` — and every card names the one it
+ * belongs to. That is a FIFTH thing written down twice, after the two tile registers, the two nav
+ * registers and `docs/PERMISSIONS.md`, and it arrived with the same property as all of them: no
+ * type, lint or compiler on either side has an opinion about it, and a card filed under the wrong
+ * heading looks exactly like a card filed under the right one until somebody goes looking for it.
+ *
+ * Three assertions cover it. `the four mega cards are the web's four` compares `DashGroup` against
+ * `TILE_GROUPS` — the ids in order, and each title and note character for character, because a
+ * heading is a sentence a designer reads on both clients and two spellings of one heading read as
+ * two sections. `every card is filed in the same mega card on both clients` compares the resolved
+ * group per label. `a mode is filed in a mega card exactly when it has a card to file` holds
+ * `EntryMode.group` and `EntryMode.onDashboard` to each other, in both directions.
+ *
+ * WHAT IS DELIBERATELY NOT COMPARED, and it is the loud half of the feature: THE COLOURS. Point 3
+ * below is the standing rule and it applies here without amendment — a tone is four sRGB constants
+ * in `ui/Theme.kt` here and an OKLCH ramp in `frontend/tailwind.config.ts` there, and comparing them
+ * would be comparing two colour spaces' spellings. The two files each carry the derivation and the
+ * measured contrast instead. Nor is the RENDER ORDER of the cards INSIDE a mega card asserted
+ * separately: it falls out of `the shared tiles stand in one order`, because both clients group a
+ * list they may not reorder.
+ *
  * ── WHY IT READS SOURCE ─────────────────────────────────────────────────────────────────────────
  *
  * Neither register can be imported. `EntryMode`, `DashboardTile`, `DashboardScreen` and the grid are
@@ -157,6 +181,109 @@ class DashboardTileParityTest {
         // `newLabel` or a `primaryLabel` resolved to nothing, and the word comparisons below would
         // then be comparing nothing to nothing.
         assertTrue((WEB + ANDROID).all { it.label.isNotBlank() && it.button.isNotBlank() })
+        // THE TWO GROUP REGISTERS, GUARDED HERE FOR THE SAME REASON AS THE TWO TILE REGISTERS. The
+        // mega cards arrived on 2026-09-20 and are a fifth thing written down twice; the day either
+        // literal is renamed, every grouping assertion below would pass over an empty list and
+        // report nothing at all, which is the failure mode of every source-reading test.
+        assertTrue("the web group array parsed to ${WEB_GROUPS.size} groups", WEB_GROUPS.size >= 4)
+        assertTrue("DashGroup parsed to ${GROUPS.size} members", GROUPS.size >= 4)
+        assertTrue(
+            "a parsed group came back with a blank id, title or note",
+            (WEB_GROUPS + GROUPS).all { it.id.isNotBlank() && it.title.isNotBlank() && it.note.isNotBlank() }
+        )
+        // And every card on both sides came out of its parser filed somewhere, rather than filed
+        // under the empty string — which would then compare equal across the two clients and make
+        // `every card is filed in the same mega card on both clients` vacuously green.
+        assertTrue((WEB + ANDROID).all { it.group.isNotBlank() })
+    }
+
+    @Test
+    fun `the four mega cards are the web's four, in its order and in its words`() {
+        // ── WHY THE HEADINGS ARE COMPARED AND NOT JUST THE IDS ──────────────────────────────────
+        //
+        // The owner's ruling that produced them is "colour code so that it is easier for people to
+        // understand and navigate", and what a person navigates by is the WORDS: a designer who
+        // reads "For designers" on the laptop and "Designers" on the phone has been shown two
+        // sections, not one, and will look for the second one's contents somewhere else. This is §1
+        // of the frontend contract arriving one level above the tile labels it already governs.
+        //
+        // AND THE ORDER, because these four are a reading order rather than a set. For designers
+        // leads on both clients for the same reason the Design workshop card leads the grid — it is
+        // what this application is for — and Admin sits last because it is configuration rather than
+        // work. Nothing but this assertion has an opinion about either literal's order.
+        assertEquals(
+            "DashGroup and TILE_GROUPS no longer name the same groups in the same order",
+            WEB_GROUPS.map { it.id },
+            GROUPS.map { it.id }
+        )
+        val wrong = mutableListOf<String>()
+        for ((handset, web) in GROUPS.zip(WEB_GROUPS)) {
+            if (handset.title != web.title) {
+                wrong += "the ${web.id} mega card is titled \"${handset.title}\" on the handset " +
+                    "and \"${web.title}\" on the web"
+            }
+            if (handset.note != web.note) {
+                wrong += "the ${web.id} mega card's note reads \"${handset.note}\" on the handset " +
+                    "and \"${web.note}\" on the web"
+            }
+        }
+        assertEquals(emptyList<String>(), wrong)
+    }
+
+    @Test
+    fun `every card is filed in the same mega card on both clients`() {
+        // WITHOUT THIS, THE GROUPING IS A FIFTH UNGUARDED REGISTER — the exact shape of the defect
+        // the header of this file describes twice. Both clients now carry, per destination, a claim
+        // about which heading it is drawn under; nothing else compares them, and a tile that moves
+        // on one client and not the other is invisible in review and invisible on screen until a
+        // researcher goes looking for Craft under Records on a phone that files it under
+        // Miscellaneous.
+        //
+        // Missing labels are NOT reported here: `every card the handset draws is on the web, with
+        // the same words` already names those, and repeating them would bury this list's own news.
+        val web = WEB.associateBy { it.label }
+        val wrong = mutableListOf<String>()
+        for (tile in ANDROID) {
+            val twin = web[tile.label] ?: continue
+            if (twin.group != tile.group) {
+                wrong += "\"${tile.label}\" is filed under ${tile.group} on the handset and " +
+                    "${twin.group} on the web"
+            }
+        }
+        assertEquals(emptyList<String>(), wrong)
+
+        // ...and neither client filed a card under a heading that does not exist. On the handset
+        // that is a compile-time property (`DashboardTile.group` is a non-null `DashGroup`); on the
+        // web the key is an optional string, so this is the half that can actually fail.
+        val known = GROUPS.map { it.id }.toSet()
+        assertEquals(
+            "a card is filed under a heading neither TILE_GROUPS nor DashGroup carries",
+            emptySet<String>(),
+            (ANDROID.map { it.group } + WEB.map { it.group }).toSet() - known
+        )
+    }
+
+    @Test
+    fun `a mode is filed in a mega card exactly when it has a card to file`() {
+        // `onDashboard` and `group` say the same thing twice on purpose, and the pairing is what
+        // keeps the second one honest in both directions. A mode with a card and no group would be
+        // drawn into Miscellaneous by the renderer's catch-all — a destination quietly filed under
+        // the wrong heading rather than under none, which is worse than a crash because nobody
+        // notices. A menu-only mode carrying a group is the reverse: a heading promising a card that
+        // is never built, which is how a reader concludes the app is broken.
+        val wrong = MODES
+            .filter { (it.group != "null") != it.onDashboard }
+            .map {
+                if (it.onDashboard) {
+                    "${it.name} has a dashboard card and no mega card to draw it in"
+                } else {
+                    "${it.name} is a menu row with no card, but names the ${it.group} mega card"
+                }
+            }
+        assertEquals(emptyList<String>(), wrong)
+        // Both halves are non-empty, so neither line above is vacuously true.
+        assertTrue("no mode is filed at all", MODES.any { it.group != "null" })
+        assertTrue("no mode is menu-only", MODES.any { it.group == "null" })
     }
 
     @Test
@@ -463,6 +590,17 @@ private class Tile(
     val hasSecondButton: Boolean,
     /** Handset only, compared only against its own siblings. Empty for a web tile — see point 3. */
     val glyph: String,
+    /**
+     * WHICH MEGA CARD THIS CARD IS DRAWN IN, as the web spells it: one of the [WEB_GROUPS] ids.
+     *
+     * RESOLVED RATHER THAN RAW, and both parsers apply the same rule their own renderer does: an
+     * absent or unrecognised group falls into [MISC_GROUP]. Comparing raw values would report a
+     * disagreement between a tile that says nothing and a card that says `MISC` when the two draw
+     * in the same place, and would miss the case that actually matters — two clients filing one
+     * destination under two different headings, so that a researcher who moves between the handset
+     * and the laptop mid-workshop finds it in one place on Monday and another on Tuesday.
+     */
+    val group: String,
 )
 
 private class Mode(
@@ -470,7 +608,17 @@ private class Mode(
     val label: String,
     val editable: Boolean,
     val onDashboard: Boolean,
+    /**
+     * The `group` argument exactly as the enum member writes it: `DashGroup.RECORDS`, or the four
+     * letters `null` for a mode that has no dashboard card to file. Kept RAW because the difference
+     * between "filed nowhere because it has no card" and "filed in Miscellaneous" is a fact this
+     * file asserts about, and collapsing the two here would delete the assertion.
+     */
+    val group: String,
 )
+
+/** One heading on either client: the id both sides key by, and the two strings a reader sees. */
+private class Group(val id: String, val title: String, val note: String)
 
 private val KOTLIN_SOURCE: String by lazy {
     val source = repoFile(
@@ -496,8 +644,54 @@ private val WEB_SOURCE: String by lazy {
 }
 
 private val MODES: List<Mode> by lazy { entryModes(KOTLIN_SOURCE) }
+private val GROUPS: List<Group> by lazy { dashGroups(KOTLIN_SOURCE) }
+private val WEB_GROUPS: List<Group> by lazy { webGroups(WEB_SOURCE) }
 private val ANDROID: List<Tile> by lazy { handsetGrid(KOTLIN_SOURCE, MODES) }
 private val WEB: List<Tile> by lazy { webTiles(WEB_SOURCE) }
+
+/**
+ * The heading an unfiled card lands under, on BOTH clients and for the same stated reason: the one
+ * thing worse than a card in the wrong mega card is a card in none of them, which is a destination
+ * missing from the screen each app opens on. The web renderer spells the rule out beside its own
+ * catch-all; the handset makes it unreachable by giving `DashboardTile.group` no default and no
+ * nullability, and applies it only where a menu-only `EntryMode` could otherwise leak through.
+ */
+private const val MISC_GROUP = "misc"
+
+/**
+ * A handset `group = ...` argument, resolved to the id the web uses.
+ *
+ * `DashGroup.RECORDS` is `records`; the four letters `null` are a mode with no dashboard card, and
+ * resolve to [MISC_GROUP] because that is what `DashboardScreen` would draw if one ever reached the
+ * grid. Anything else fails BY NAME rather than being guessed at: an expression this file cannot
+ * read is a grouping nothing is checking, which is the fifth unguarded register this whole file
+ * exists to prevent.
+ */
+private fun kotlinGroup(expression: String?, what: String): String {
+    assertNotNull("$what carries no `group` argument", expression)
+    val raw = expression!!.trim()
+    if (raw == "null") return MISC_GROUP
+    assertTrue(
+        "$what files its card under `$raw`, which this file cannot resolve — it reads a plain " +
+            "`DashGroup.X` constant, and an expression here is a grouping no test can compare",
+        raw.startsWith("DashGroup.")
+    )
+    return raw.removePrefix("DashGroup.").lowercase()
+}
+
+/**
+ * A web tile's `group:` value, resolved the way that page's renderer resolves it.
+ *
+ * The key is OPTIONAL in the web `Tile` type and the group ids are a closed union, so a tile that
+ * names nothing — or names something `TILE_GROUPS` does not carry — is drawn under Miscellaneous
+ * rather than dropped. That is the rule stated on the key's own comment and implemented in the
+ * catch-all beside the heading loop, and this restates it rather than inventing a stricter one:
+ * a test that failed where the product deliberately forgives would be a test nobody keeps.
+ */
+private fun webGroup(raw: String?, known: Set<String>): String {
+    val value = raw?.let { unquote(it) }
+    return if (value != null && value in known) value else MISC_GROUP
+}
 
 /**
  * A file of this repository, found by walking up from wherever the test runner started.
@@ -721,11 +915,75 @@ private fun webTiles(source: String): List<Tile> {
             button = props["newLabel"]?.let { requireQuoted(it, "a web tile's newLabel") } ?: "New",
             hasSecondButton = props.containsKey("updateHref"),
             glyph = "",
+            group = webGroup(props["group"], WEB_GROUPS.map { it.id }.toSet()),
+        )
+    }
+}
+
+/**
+ * `TILE_GROUPS` on the web: the four headings, in the order that page draws them.
+ *
+ * A SEPARATE PARSER FROM [webTiles] AND NOT A FIELD ON IT, because the two literals answer two
+ * different questions — which cards exist, and what the reader is told the groups of them are — and
+ * the second is the one that was invisible until this file grew a parser for it. A heading is a
+ * sentence a designer reads on both clients, so it lives under the same rule §1 of the frontend
+ * contract puts the tile labels under: Android owns the words, and a researcher moves between the
+ * handset and the laptop mid-workshop.
+ */
+private fun webGroups(source: String): List<Group> {
+    val declaration = "const TILE_GROUPS = ["
+    val at = source.indexOf(declaration)
+    assertTrue("the web dashboard no longer declares `$declaration`", at >= 0)
+    // Past the WHOLE declaration, for the same off-by-one reason [webTiles] states: the bracket that
+    // opens the array is the LAST character of the text searched for, not the next one after it.
+    val body = balanced(source, at + declaration.length - 1, '[')
+    return splitTop(body).map { entry ->
+        assertTrue(
+            "a web group is not an object literal: ${entry.take(60)}",
+            entry.startsWith("{") && entry.endsWith("}")
+        )
+        val props = properties(entry.substring(1, entry.length - 1), ':')
+        Group(
+            // `as const` is what narrows these four ids to a union on that side. Stripped here
+            // rather than taught to [unquote], which is shared with the Kotlin parsers and has no
+            // business knowing a TypeScript keyword.
+            id = requireQuoted(props["id"]?.removeSuffix("as const")?.trim(), "a web group's id"),
+            title = requireQuoted(props["title"], "a web group's title"),
+            note = requireQuoted(props["note"], "a web group's note"),
         )
     }
 }
 
 /* ── the handset grid ───────────────────────────────────────────────────────────────────────── */
+
+/**
+ * `DashGroup` on the handset, read the same way [entryModes] reads `EntryMode`: the member name is
+ * the id, and the first two constructor arguments are the title and the note.
+ *
+ * WHICH IS WHY THAT ENUM TAKES ITS ICON FROM A `when` AND NOT FROM A THIRD ARGUMENT. Two positional
+ * strings is the whole contract between that declaration and this function, and an `ImageVector` in
+ * the middle of them would be a third thing for this parser to skip past for no gain on either side.
+ */
+private fun dashGroups(source: String): List<Group> {
+    val head = "private enum class DashGroup("
+    val at = source.indexOf(head)
+    assertTrue("MainActivity.kt no longer declares `$head`", at >= 0)
+    val constructor = balanced(source, at + head.length - 1, '(')
+    val body = balanced(source, at + head.length + constructor.length, '{')
+    return splitTop(body).map { entry ->
+        val open = entry.indexOf('(')
+        assertTrue("a DashGroup member carries no arguments: ${entry.take(40)}", open > 0)
+        val args = splitTop(balanced(entry, open, '('))
+        Group(
+            // Lower-cased so the two registers key by one string. The handset spells its members in
+            // SCREAMING_CASE because they are Kotlin enum members and the web spells its ids in
+            // lower case because they are DOM ids; neither is going to change for the other.
+            id = entry.substring(0, open).trim().lowercase(),
+            title = requireQuoted(args.getOrNull(0), "a DashGroup title"),
+            note = requireQuoted(args.getOrNull(1), "a DashGroup note"),
+        )
+    }
+}
 
 private fun entryModes(source: String): List<Mode> {
     val head = "private enum class EntryMode("
@@ -738,6 +996,13 @@ private fun entryModes(source: String): List<Mode> {
         assertTrue("an EntryMode member carries no arguments: ${entry.take(40)}", open > 0)
         val name = entry.substring(0, open).trim()
         val args = splitTop(balanced(entry, open, '('))
+        // `group` has NO DEFAULT on that enum, so every member states one and a missing argument is
+        // a compile error over there rather than a silent `misc` over here. Read by name and not by
+        // position, because it sits after two arguments that DO have defaults.
+        val group = args.firstOrNull { it.substringBefore('=').trim() == "group" }
+            ?.substringAfter('=')
+            ?.trim()
+        assertNotNull("$name declares no `group`, so nothing here knows where its card is drawn", group)
         Mode(
             name = name,
             // The TILE word, which is the first constructor argument. The second is `actionTitle`,
@@ -745,6 +1010,7 @@ private fun entryModes(source: String): List<Mode> {
             label = requireQuoted(args.firstOrNull(), "$name's label"),
             editable = args.any { it.replace(" ", "") == "editable=true" },
             onDashboard = args.none { it.replace(" ", "") == "onDashboard=false" },
+            group = group!!,
         )
     }
 }
@@ -784,6 +1050,7 @@ private fun bespokeCards(fragment: String): List<Tile> {
                 button = resolve(props["primaryLabel"], "primaryLabel"),
                 hasSecondButton = props.containsKey("onUpdate"),
                 glyph = props["icon"] ?: "",
+                group = kotlinGroup(props["group"], "the bespoke card ${props["label"]}"),
             )
         )
         at = fragment.indexOf(construction, at + 1)
@@ -820,6 +1087,14 @@ private fun handsetGrid(source: String, modes: List<Mode>): List<Tile> {
     // where it was aimed rather than in the middle of some other lambda.
     assertTrue("the EntryMode loop is not where this parser cut", loop.contains("entry.label"))
     assertFalse("the EntryMode loop leaked past the cut", trail.contains("entry.label"))
+    // The generic tile files itself from the MODE, and this file rebuilds that from the enum rather
+    // than from the expression — so the expression is pinned, or the two could drift apart with
+    // nothing to notice. The elvis arm is the renderer's catch-all and [kotlinGroup] applies the
+    // same one, so the two halves of that sentence are written down in one place each.
+    assertTrue(
+        "the EntryMode loop no longer files its card with `group = entry.group ?: DashGroup.MISC`",
+        loop.contains("group = entry.group ?: DashGroup.MISC")
+    )
 
     val (words, wordFallback) = whenArms(
         source, "private fun EntryMode.createButtonLabel(): String = when (this) {"
@@ -853,6 +1128,7 @@ private fun handsetGrid(source: String, modes: List<Mode>): List<Tile> {
                     button = requireQuoted(words[mode.name] ?: wordFallback, "${mode.name}'s button word"),
                     hasSecondButton = mode.editable,
                     glyph = glyphs[mode.name] ?: "",
+                    group = kotlinGroup(mode.group, mode.name),
                 )
             )
             spliced[mode.name]?.let { addAll(it) }
@@ -900,6 +1176,7 @@ private fun splicedCards(loop: String): Map<String, List<Tile>> {
                     button = resolve(props["primaryLabel"], "primaryLabel"),
                     hasSecondButton = props.containsKey("onUpdate"),
                     glyph = props["icon"] ?: "",
+                    group = kotlinGroup(props["group"], "the spliced card ${props["label"]}"),
                 )
             )
         }

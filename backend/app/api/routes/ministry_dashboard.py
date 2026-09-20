@@ -81,6 +81,7 @@ from __future__ import annotations
 import csv
 import io
 import logging
+from types import SimpleNamespace
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
@@ -92,7 +93,7 @@ from app.core.deps import (
     can_see_ministry_dashboard,
     get_current_user,
 )
-from app.services import ministry_dashboard as register
+from app.services import design_workshop_oversight as officers, ministry_dashboard as register
 from app.services.concurrency import gather_reads
 from app.services.design_workshops import workshop_summary
 from app.services.pagination import normalize_pagination, page_payload
@@ -844,3 +845,683 @@ async def download_entitlements(
             "or an explicit grant. Ask an admin to grant it."
         ),
     }
+
+
+# --------------------------------------------------------------------------------------
+# THE PEOPLE REGISTERS — who is running, supervising and inspecting the programme
+# --------------------------------------------------------------------------------------
+#
+# ═══════════════════════════════════════════════════════════════════════════════════════════════
+# THREE MORE GETs ON THE SAME PREFIX, UNDER THE SAME DEPENDENCY, WITH NO ``/{id}`` BETWEEN THEM
+# ═══════════════════════════════════════════════════════════════════════════════════════════════
+#
+# Everything the module docstring says about the two workshop registers holds here unchanged, and
+# these three routes were written to keep it true rather than to test it:
+#
+#   * **Every one is a GET.** Nothing on this prefix writes. A people register is a read of
+#     relations that three OTHER features own the writes to — ``design_workshop_viewers``,
+#     ``design_workshop_oversight`` and ``design_workshop_inspectors`` — and a write here would be a
+#     second place those tables are maintained from. The viewer table is the dangerous one: a row in
+#     it confers STAGE WRITES, because ``load_workshop_or_404(for_edit=True)`` reads the same
+#     relation.
+#   * **Every one takes** ``Depends(require_ministry_dashboard_reader)``, so the gate is visible as a
+#     dependency rather than as a line somebody can forget inside a body.
+#   * **Not one declares a path parameter.** "What is this one officer overseeing" is a question this
+#     router deliberately cannot be asked: it would be a second door onto one person's postings, and
+#     the ⚠ ordering hazard the oversight module spends a paragraph on arrives with the first
+#     ``/{id}``. The registers answer about the register.
+#
+# ``tests/test_ministry_dashboard_gate.py`` sweeps all three properties across the whole router, so
+# the paragraph above is a description of a test rather than a request to a future reader.
+#
+# ═══════════════════════════════════════════════════════════════════════════════════════════════
+# THE GATE WAS NOT TOUCHED, AND THREE SEPARATE TEMPTATIONS TO TOUCH IT WERE REFUSED
+# ═══════════════════════════════════════════════════════════════════════════════════════════════
+#
+# This page's floor is ASSISTANT_DIRECTOR, rank 42, and every list of PEOPLE in this product sits
+# behind a gate that was drawn for somebody more senior. The repository's standing answer to that is
+# written out in ``routes/sanction_orders.list_sanction_designers``: **a fifth door with a narrower
+# payload, never a widened gate.** So:
+#
+#   * ``can_manage_designer_roster`` (``is_admin``) is UNTOUCHED. It stands in front of the
+#     empanelment table, and an account that could reach it could end a designer's sign-in. Nothing
+#     here reads ``DesignerRoster`` directly and no row carries a roster judgement —
+#     ``designers.assignable_designers_payload`` is the payload, four keys, and
+#     ``ministry_dashboard.new_person_row`` is the only place a people row is built.
+#   * ``OVERSIGHT_ASSIGNER_ROLES`` is UNTOUCHED, REGIONAL_DIRECTOR's exclusion included. The two
+#     account directories behind it — ``officer_directory`` and ``eligible_inspectors`` — are offered
+#     only to callers who are already inside that set, which
+#     ``ministry_dashboard.may_read_account_directories`` establishes is exactly
+#     ``sees_whole_estate``. The other two tiers get the relation and a sentence saying so.
+#   * ``MINISTRY_DASHBOARD_ROLES`` is UNTOUCHED and is still a SET with a hole at ADMIN. Nothing here
+#     needs a rank floor and nothing here should grow one.
+#
+# The one directory that IS handed to all four tiers is the empanelled designer roster, and that is
+# not an exception: ``GET /sanction-orders/designers`` already answers the identical call at a rank
+# floor of 42. ``ministry_dashboard.empanelled_designer_accounts`` carries the arithmetic.
+#
+# ═══════════════════════════════════════════════════════════════════════════════════════════════
+# EVERY AUXILIARY READ DEGRADES ON ITS OWN, AND THE SHIMS ARE PER READ RATHER THAN PER PAGE
+# ═══════════════════════════════════════════════════════════════════════════════════════════════
+#
+# ``_design_rows`` above records what the first attempt at this got wrong — one guard around a
+# ``gather_reads`` of two coroutines, whose ``except`` then RE-RAN one of them — and the fix is the
+# shape copied here: each optional read is wrapped in its own failure-to-``None`` shim and the shims
+# are gathered, so the round trips still overlap and no one of them can take another down. What is
+# PRIMARY on each route (the workshop scan and the link read) is deliberately unguarded: without it
+# there is no register to serve, and a 200 carrying an empty list would say the programme has no
+# designers in it.
+#
+# And every degradation is NAMED IN THE PAYLOAD — ``progressRead``, ``feedbackRead``,
+# ``includesUnpostedAccounts`` and the sentence beside each. A column that quietly turns into blanks
+# is a screen telling a ministry that nobody has done anything.
+
+
+def _people_scope(current_user: Any) -> str:
+    """``estate`` or ``posted`` — the same two words the workshop registers use, for one reason.
+
+    The people lists are derived FROM the workshop scope, so a client that renders the two words
+    differently on two tabs of one screen would be describing one decision twice. The SENTENCE
+    differs (``people_scope_label``); the token does not.
+    """
+    return "estate" if register.sees_whole_estate(current_user) else "posted"
+
+
+async def _people_progress_or_none(
+    workshop_ids: list[str], register_name: str
+) -> dict[str, dict[str, Any]] | None:
+    """Score the scanned workshops, or answer ``None`` and let the register serve without percentages.
+
+    THE SAME SHIM ``_design_rows`` USES AND FOR ITS REASON: the scan and the link read have already
+    succeeded by the time this runs, so the ministry CAN be told who is on what. Turning the whole
+    response into a 500 over the completeness read would trade a list with one unreadable column for
+    no list at all, and an officer meeting that reads "the register could not be read".
+
+    It degrades to ``progressReason: "unreadable"``, NEVER to zero — ``_roll_up``'s note has the
+    argument, and ``close_person_progress`` keeps the three absences three separate facts.
+    """
+    try:
+        return await register.progress_for(workshop_ids)
+    except Exception:
+        logger.exception(
+            "ministry dashboard: scoring %d workshop(s) for the %s register failed",
+            len(workshop_ids),
+            register_name,
+        )
+        return None
+
+
+def _people_envelope(
+    ordered: list[dict[str, Any]],
+    *,
+    current_user: Any,
+    noun: str,
+    page: int,
+    page_size: int,
+    skip: int,
+    scan: dict[str, Any],
+    withheld: int,
+    scoring_read: bool,
+    includes_unposted: bool,
+    unposted_note: str,
+) -> dict[str, Any]:
+    """The keys every people list carries, so the three cannot describe themselves differently.
+
+    ⚠ **THE SCOPE SENTENCE IS PER LIST AND NOT PER PAGE**, which is this router's hardest-won rule:
+    ``register_summary`` shipped one caption over two differently-scoped counts and told an Assistant
+    Director "the workshops you were named on" above a NATIONAL figure. Each of these three lists is
+    built from the caller's own workshop scope, so each gets its own noun in its own sentence.
+
+    ``standingGroups`` TRAVELS WITH THE ROWS because every row carries a standing breakdown under
+    those exact keys, and a client that had to guess which three words the server used would guess
+    from a build that may be older than this one. ``standingVocabulary`` names which enum they are,
+    exactly as the two workshop registers do — these counts are ``DesignWorkshopStatus`` and never
+    ``RecordStatus``, and one word meaning two things on one screen is the defect the module
+    docstring refuses at length.
+    """
+    payload = page_payload(ordered[skip : skip + page_size], len(ordered), page, page_size)
+    payload["scope"] = _people_scope(current_user)
+    # ⚠ THE FOLD IS PASSED IN, NOT ASSUMED. When an account directory is folded in, "somebody who
+    # works only on workshops you were not posted to is absent" stops being true — they are on
+    # screen with a measured zero — and a caption contradicting a row the reader can see is how a
+    # caption stops being believed. See `people_scope_label`.
+    payload["scopeLabel"] = register.people_scope_label(
+        current_user, noun=noun, includes_unposted=includes_unposted
+    )
+    payload["standingVocabulary"] = "designWorkshopLifecycle"
+    payload["standingGroups"] = {
+        name: list(members) for name, members in register.STANDING_GROUPS.items()
+    }
+    payload["scan"] = scan
+    payload["progressScoreCap"] = register.PROGRESS_SCORE_CAP
+    payload["progressRead"] = scoring_read
+    # A SENTENCE AND NOT ONLY A BOOLEAN. The client has to tell a reader why an entire column is
+    # blank, and a column of blanks with no explanation reads as a programme where nothing has been
+    # done — the most damaging false statement on this screen, one surface out from `_roll_up`.
+    payload["progressNote"] = (
+        None
+        if scoring_read
+        else (
+            "Progress could not be read for this request, so no percentage below is a measurement. "
+            "Each row says so under progressReason rather than showing 0%."
+        )
+    )
+    # MEASURED AND REPORTED, NEVER SILENT. The withheld accounts' workshops are still inside
+    # `workshopsRead`, so a reader adding the rows up would find them short with nothing to explain
+    # the difference. The count names nobody, which is the whole point of reporting a count.
+    payload["withheldAccounts"] = withheld
+    payload["withheldAccountsNote"] = (
+        None
+        if withheld == 0
+        else (
+            f"{withheld} account(s) holding a row on these workshops are not named here because "
+            "they are platform administrator accounts, which this register never lists. Their "
+            "workshops are still counted in the totals above."
+        )
+    )
+    payload["includesUnpostedAccounts"] = includes_unposted
+    payload["unpostedAccountsNote"] = unposted_note
+    return payload
+
+
+@router.get("/designers")
+async def list_designers(
+    page: int = Query(1, ge=1),
+    pageSize: int = Query(20, ge=1, le=MAX_PAGE_SIZE),
+    standing: str | None = Query(None, max_length=32),
+    current_user: Any = Depends(require_ministry_dashboard_reader),
+) -> dict[str, Any]:
+    """Who is running design & prototype workshops, how many, at what standing, and how far along.
+
+    ── ⚠ COUNTED OVER RELATIONS, NEVER OVER ``designerName`` ─────────────────────────────────────
+
+    ``DesignWorkshop.designerName`` is a free-typed string ``promoted_values()`` denormalises off
+    stage 1: no index, no uniqueness, no foreign key, nothing reconciling it against an account.
+    Grouping on it would make two spellings two designers and one shared spelling one designer, and
+    would omit every designer who has not opened stage 1. ``design_workshop_oversight._the_lead_among``
+    exists because matching that string back to an account is a guess that answers ``None`` whenever
+    it is not certain. This register counts ``DesignWorkshopViewer`` rows and ``createdById``, both of
+    which are ids. The services module's people-register header carries the full argument.
+
+    **BOTH ARMS, AND THE SECOND IS THE ONE THAT WILL LOOK REDUNDANT.** ``named_designer_rows`` states
+    in capitals that the creator holds NO viewer row — their access is ``createdById`` — so a register
+    built on viewer rows alone would be missing the lead designer of every workshop nobody has shared,
+    which is most of them on the day they are opened. ``workshopsCreated`` and ``workshopsNamedOn``
+    are reported separately and ``workshops`` counts each workshop ONCE, because a designer who opened
+    a workshop and was later also added as a viewer is one designer on one workshop.
+
+    ── THE EMPANELLED DESIGNER WITH NOTHING TO DO IS THE MOST ACTIONABLE ROW ON THIS SCREEN ──────
+
+    A register built only from links cannot contain them: somebody with no workshop row would be
+    indistinguishable from somebody who does not exist, which is absence reading as non-existence in
+    the column this page is named after. So the empanelled roster is folded in, through
+    ``ministry_dashboard.empanelled_designer_accounts`` — the SAME call
+    ``GET /sanction-orders/designers`` already answers at a rank floor of ASSISTANT_DIRECTOR, with
+    ``include_admins=False``, so this widens nothing and discloses nothing new to any tier here.
+    Those rows carry a MEASURED zero and say ``progressReason: "noWorkshops"``, which is not the same
+    statement as 0% and not the same statement as "we did not look".
+
+    ── THE PAYLOAD IS FOUR IDENTITY KEYS AND WHAT THIS REGISTER MEASURED ────────────────────────
+
+    ``assignable_designers_payload``: ``id``, ``name``, ``email``, ``role``. **NO** ``rosterActive``,
+    **NO** ``canSignIn``, **NO** ``firstSeenAt``, **NO** ``institution``, **NO** ``rosterId``. Every
+    one of those is a fact about the empanelment table, which ``can_manage_designer_roster``
+    (``is_admin``) stands in front of, and an officer reading this page is rank 42. Whether a designer
+    has a suspension on file is not an officer's business — and the suspended are already gone before
+    the roster fold runs, because ``workshop_capable_accounts`` folds the roster into the ``WHERE``.
+
+    ``standing`` narrows the WORKSHOP SCAN and is the same word, the same groups and the same
+    ignore-an-unknown rule as the register beside it. **There is deliberately no ``search``**: a term
+    applied to people found by scanning at most ``PEOPLE_WORKSHOP_SCAN`` workshops would search only
+    the part of the register that fitted inside the cap, which is the defect ``eligible_inspectors``
+    was fixed for twice. Narrow by standing, which is inside the query.
+    """
+    clean_page, clean_size, skip = normalize_pagination(page, pageSize)
+    # ⚠ THE SAME `_design_where` THE REGISTER USES, so the scope lands on `where["AND"]` and can
+    # never be assigned beside a search's `OR`. `search` is None here by design — see the docstring.
+    where = _design_where(current_user, None, standing)
+    total_in_scope, records = await register.people_spine(where)
+    workshop_ids = [str(record.id) for record in records]
+
+    async def _roster_or_none() -> tuple[list[Any], bool] | None:
+        try:
+            return await register.empanelled_designer_accounts()
+        except Exception:
+            logger.exception("ministry dashboard: reading the empanelled designer roster failed")
+            return None
+
+    # FOUR READS, GATHERED, AND ONLY TWO OF THEM MAY FAIL. The viewer links and the creator accounts
+    # are what this register IS; the scoring and the roster are columns on it. See the section header.
+    links, creators, scored_map, roster = await gather_reads(
+        register.designer_links(workshop_ids),
+        register.creator_accounts(records),
+        _people_progress_or_none(workshop_ids, "designer"),
+        _roster_or_none(),
+    )
+
+    scoring_read = scored_map is not None
+    progress: dict[str, dict[str, Any]] = scored_map or {}
+    by_workshop = {str(record.id): record for record in records}
+
+    rows: dict[str, dict[str, Any]] = {}
+    withheld: set[str] = set()
+    # A PERSON AND A WORKSHOP ARE COUNTED ONCE. The two arms overlap — a designer can have opened a
+    # workshop AND hold a viewer row on it — and without this set that designer's workshop count, her
+    # standing tally and her progress denominator would all be double.
+    counted: set[tuple[str, str]] = set()
+
+    def _person(user: Any) -> dict[str, Any] | None:
+        user_id = str(getattr(user, "id", "") or "")
+        if not user_id:
+            return None
+        if register.is_withheld_person(user):
+            withheld.add(user_id)
+            return None
+        row = rows.get(user_id)
+        if row is None:
+            row = rows[user_id] = register.new_person_row(user)
+            # The two link kinds, reported apart. "She opened nine and was added to two" and "she was
+            # added to eleven" are different facts about who is running a workshop, and `workshops`
+            # alone cannot tell them apart.
+            row["workshopsCreated"] = 0
+            row["workshopsNamedOn"] = 0
+        return row
+
+    def _fold(user: Any, record: Any, *, created: bool) -> None:
+        row = _person(user) if user is not None else None
+        if row is None or record is None:
+            return
+        row["workshopsCreated" if created else "workshopsNamedOn"] += 1
+        pair = (str(row["id"]), str(record.id))
+        if pair in counted:
+            return
+        counted.add(pair)
+        register.count_workshop(row, record)
+        register.add_score(row, progress.get(str(record.id)))
+
+    for record in records:
+        _fold(creators.get(str(getattr(record, "createdById", "") or "")), record, created=True)
+    for link in links:
+        _fold(
+            getattr(link, "user", None),
+            by_workshop.get(str(getattr(link, "designWorkshopId", "") or "")),
+            created=False,
+        )
+
+    roster_users, roster_truncated = roster if roster is not None else ([], False)
+    for user in roster_users:
+        # No workshop is folded in: this call only ensures the person EXISTS in the register, with
+        # counters that are a measured zero. Somebody already found through a link is untouched.
+        _person(user)
+
+    for row in rows.values():
+        register.close_person_progress(row, scoring_read=scoring_read)
+
+    payload = _people_envelope(
+        register.order_people(list(rows.values())),
+        current_user=current_user,
+        noun="designer",
+        page=clean_page,
+        page_size=clean_size,
+        skip=skip,
+        scan=register.scan_report(total_in_scope, len(records)),
+        withheld=len(withheld),
+        scoring_read=scoring_read,
+        includes_unposted=roster is not None,
+        unposted_note=(
+            "Empanelled designers holding no workshop in this scope are listed with a measured zero, "
+            "so somebody who has been given nothing is visible rather than absent."
+            if roster is not None
+            else "The empanelled designer roster could not be read for this request, so a designer "
+            "who holds no workshop in this scope is missing from this list entirely. This is not "
+            "the same as there being none."
+        ),
+    )
+    # The roster read has a ceiling of its own (`designers.DIRECTORY_TAKE`) and a list that stopped
+    # at it must say so — the inference two other clients already draw from the same number.
+    payload["unpostedAccountsTruncated"] = roster_truncated
+    return payload
+
+
+@router.get("/officers")
+async def list_officers(
+    page: int = Query(1, ge=1),
+    pageSize: int = Query(20, ge=1, le=MAX_PAGE_SIZE),
+    standing: str | None = Query(None, max_length=32),
+    current_user: Any = Depends(require_ministry_dashboard_reader),
+) -> dict[str, Any]:
+    """The Assistant Directors and Regional Directors, and what each of them oversees.
+
+    ── THE RELATION IS ``DesignWorkshopOversight``, WHICH IS THE ONE THIS WHOLE PAGE IS SCOPED BY ──
+
+    ``oversight_by_clause`` narrows every other read on this router by exactly this table; this route
+    reads it in the other direction. So a Regional Director opening this list sees the officers who
+    share their own postings, and ``scopeLabel`` says that in words — an officer reading a list of
+    three colleagues as "the directorate" would be reading their own postings as the country.
+
+    ``byCapacity`` AND NOT A ROLE COUNT. An oversight row carries the CAPACITY the person was filed
+    in, and ``OVERSIGHT_CAPACITY_ROLES`` allows exactly one role per capacity today — so the two
+    happen to agree, and would stop agreeing the day a third capacity is added, which is an
+    ``ALTER TYPE`` plus an entry in that map. The keys are seeded from ``CAPACITIES`` so a third one
+    appears here without a code change, and ``unknownCapacity`` catches a capacity a server one
+    release ahead can legitimately store — the same reasoning ``group_of`` and ``unclassified``
+    already carry for a ninth status.
+
+    ── ⚠ OFFICERS WITH NO POSTING AT ALL: THE ANSWER DEPENDS ON THE CALLER, AND THE PAYLOAD SAYS SO ─
+
+    ``officer_directory`` — every account holding a ministry post, whether posted to anything or not
+    — is served today behind ``require_workshop_assigner``, i.e. ``OVERSIGHT_ASSIGNER_ROLES`` =
+    ``{MINISTRY_ADMIN, ADMIN, MASTER_ADMIN}``. That set REFUSES a REGIONAL_DIRECTOR deliberately —
+    *"the supervised must not choose the supervisor"* — and ``routes/sanction_orders`` records the
+    standing ruling that a tier needing a list gets a fifth door with a narrower payload and never a
+    widened gate. ``may_read_account_directories`` establishes that the set is, member for member,
+    the one ``sees_whole_estate`` already answers True for, so:
+
+      * an estate reader is folded the directory in — a list they can already open at
+        ``GET /design-workshop-oversight/officers``, so nothing is widened;
+      * an Assistant Director and a Regional Director get the relation alone, and
+        ``includesUnpostedAccounts: false`` with a sentence saying which narrower question was
+        answered. A list that silently answers a narrower question than the one asked is this
+        repository's most repeated bug class with the numbers left intact.
+
+    A third state exists and is kept distinct: offered, attempted, and FAILED. That is not the same
+    fact as not offered, and the note says which.
+    """
+    clean_page, clean_size, skip = normalize_pagination(page, pageSize)
+    where = _design_where(current_user, None, standing)
+    total_in_scope, records = await register.people_spine(where)
+    workshop_ids = [str(record.id) for record in records]
+
+    offered = register.may_read_account_directories(current_user)
+
+    async def _directory_or_none() -> dict[str, Any] | None:
+        if not offered:
+            return None
+        try:
+            return await register.officer_accounts()
+        except Exception:
+            logger.exception("ministry dashboard: reading the officer directory failed")
+            return None
+
+    links, scored_map, directory = await gather_reads(
+        register.oversight_links(workshop_ids),
+        _people_progress_or_none(workshop_ids, "officer"),
+        _directory_or_none(),
+    )
+
+    scoring_read = scored_map is not None
+    progress: dict[str, dict[str, Any]] = scored_map or {}
+    by_workshop = {str(record.id): record for record in records}
+
+    rows: dict[str, dict[str, Any]] = {}
+    withheld: set[str] = set()
+
+    def _person(user: Any) -> dict[str, Any] | None:
+        user_id = str(getattr(user, "id", "") or "")
+        if not user_id:
+            return None
+        if register.is_withheld_person(user):
+            withheld.add(user_id)
+            return None
+        row = rows.get(user_id)
+        if row is None:
+            row = rows[user_id] = register.new_person_row(user)
+            # Seeded from CAPACITIES so a third capacity appears without a code change here, and a
+            # capacity an officer holds none of prints a measured 0 rather than a missing key.
+            row["byCapacity"] = dict.fromkeys(officers.CAPACITIES, 0)
+            row["unknownCapacity"] = 0
+        return row
+
+    for link in links:
+        record = by_workshop.get(str(getattr(link, "designWorkshopId", "") or ""))
+        row = _person(getattr(link, "user", None))
+        if row is None or record is None:
+            continue
+        capacity = getattr(link, "capacity", None)
+        capacity_name = str(getattr(capacity, "value", capacity) or "")
+        if capacity_name in row["byCapacity"]:
+            row["byCapacity"][capacity_name] += 1
+        else:
+            row["unknownCapacity"] += 1
+        # The PK is [designWorkshopId, capacity], so one person can hold BOTH capacities on one
+        # workshop only by being filed in two slots — which `OVERSIGHT_CAPACITY_ROLES` forbids today
+        # by role. Counted per row regardless: `workshops` is what this register measured, and
+        # inventing a de-duplication for a state the schema does not produce would be a rule nobody
+        # could test.
+        register.count_workshop(row, record)
+        register.add_score(row, progress.get(str(record.id)))
+
+    for entry in (directory or {}).get("users", []):
+        # ⚠ ONLY THE POSTS THAT CAN HOLD A CAPACITY, AND THE OMISSION IS A ROLE FACT RATHER THAN A
+        # TRUNCATION. `officer_directory` answers all THREE ministry posts, and
+        # `OVERSIGHT_CAPACITY_ROLES` admits a MINISTRY_ADMIN to neither slot — which is exactly what
+        # that payload's `capacities` key exists to tell a picker, and why this reads the key rather
+        # than re-deriving the rule from a role name. A Ministry Administrator listed here with two
+        # zeros would read as an officer supervising nothing, when in truth they supervise nothing
+        # BY ROLE and can never appear in the relation this list is counted over. The sentence under
+        # `unpostedAccountsNote` says so rather than leaving the absence to be noticed.
+        if not entry.get("capacities"):
+            continue
+        # The directory's rows are plain dicts, not User records, so they are wrapped in the same
+        # attribute shape `new_person_row` reads. Nothing new is disclosed: `officer_directory`
+        # answers id/name/email/role/capacities and only the first four are carried through.
+        _person(
+            SimpleNamespace(
+                id=entry.get("id"),
+                name=entry.get("name"),
+                email=entry.get("email"),
+                role=entry.get("role"),
+            )
+        )
+
+    for row in rows.values():
+        register.close_person_progress(row, scoring_read=scoring_read)
+
+    payload = _people_envelope(
+        register.order_people(list(rows.values())),
+        current_user=current_user,
+        noun="officer",
+        page=clean_page,
+        page_size=clean_size,
+        skip=skip,
+        scan=register.scan_report(total_in_scope, len(records)),
+        withheld=len(withheld),
+        scoring_read=scoring_read,
+        includes_unposted=directory is not None,
+        unposted_note=(
+            "Officers holding a ministry post but posted to nothing in this scope are listed with "
+            "a measured zero. Only the two posts that can hold a capacity are listed — a Ministry "
+            "Administrator may be named on no oversight slot at all, so they are not an officer "
+            "this register counts."
+            if directory is not None
+            else (
+                "This list is only the officers posted to workshops you can see. The directory of "
+                "every ministry post is read on Workshop oversight, which an Assistant Director and "
+                "a Regional Director are not admitted to, so an officer with no posting here is "
+                "absent from this list rather than shown with a zero."
+                if not offered
+                else "The directory of ministry posts could not be read for this request, so an "
+                "officer posted to nothing is missing from this list entirely. This is not the same "
+                "as there being none."
+            )
+        ),
+    )
+    payload["unpostedAccountsTruncated"] = bool((directory or {}).get("truncated", False))
+    payload["capacities"] = list(officers.CAPACITIES)
+    return payload
+
+
+@router.get("/inspectors")
+async def list_inspectors(
+    page: int = Query(1, ge=1),
+    pageSize: int = Query(20, ge=1, le=MAX_PAGE_SIZE),
+    standing: str | None = Query(None, max_length=32),
+    current_user: Any = Depends(require_ministry_dashboard_reader),
+) -> dict[str, Any]:
+    """Who inspects, how many workshops, how much feedback they filed and how many sent a workshop back.
+
+    ── TWO FEEDBACK NUMBERS BECAUSE THEY ARE TWO DIFFERENT JOBS ─────────────────────────────────
+
+    ``DwInspectionFeedback.sentBack`` is true only on the suggestion that actually moved a workshop
+    to NEEDS_REVISION — that column's own note — while the rest are suggestions added to an open
+    round. An inspector who filed forty notes and sent nothing back and one who filed forty and sent
+    back thirty are doing different things, and a single "feedback" number cannot tell them apart.
+    Both are ``group_by`` aggregates: a register that counts suggestions has no business loading the
+    sentences an officer wrote to a named designer about a named field.
+
+    ── ⚠ AND THE SUGGESTIONS FILED BY PEOPLE WHO ARE NOT ON THIS LIST ARE COUNTED AND REPORTED ────
+
+    Feedback is filed by whoever is entitled to file it, and holding an inspector row on one of the
+    scanned workshops is not the same set. Attributing only what this list can attribute and printing
+    the attributed total as "the feedback" would be a number that silently excludes an unknown
+    amount — so ``feedbackFiledTotal``, ``feedbackAttributed`` and ``feedbackByAccountsNotListed``
+    all travel, derived from the same two aggregates rather than from a third query. The third of
+    those is usually zero and is a measured zero.
+
+    ── OFFERING AN INSPECTOR WHO INSPECTS NOTHING: THE SAME RULE AS THE OFFICERS' LIST ───────────
+
+    ``eligible_inspectors`` is behind ``require_workshop_assigner``, which is
+    ``sees_whole_estate``'s set exactly (see ``may_read_account_directories``). So a Ministry
+    Administrator and the master admin — who can already open
+    ``GET /design-workshop-inspections/eligible-inspectors`` — have unassigned inspectors folded in
+    with a measured zero, and the other two tiers are told in a sentence that this list is only the
+    inspectors on workshops they can see. No gate moved to make that happen.
+    """
+    clean_page, clean_size, skip = normalize_pagination(page, pageSize)
+    where = _design_where(current_user, None, standing)
+    total_in_scope, records = await register.people_spine(where)
+    workshop_ids = [str(record.id) for record in records]
+
+    offered = register.may_read_account_directories(current_user)
+
+    async def _feedback_or_none() -> dict[str, dict[str, int]] | None:
+        try:
+            return await register.inspection_feedback_counts(workshop_ids)
+        except Exception:
+            logger.exception(
+                "ministry dashboard: counting inspection feedback on %d workshop(s) failed",
+                len(workshop_ids),
+            )
+            return None
+
+    async def _directory_or_none() -> dict[str, Any] | None:
+        if not offered:
+            return None
+        try:
+            return await register.inspector_accounts()
+        except Exception:
+            logger.exception("ministry dashboard: reading the eligible-inspector directory failed")
+            return None
+
+    links, scored_map, feedback, directory = await gather_reads(
+        register.inspector_links(workshop_ids),
+        _people_progress_or_none(workshop_ids, "inspector"),
+        _feedback_or_none(),
+        _directory_or_none(),
+    )
+
+    scoring_read = scored_map is not None
+    progress: dict[str, dict[str, Any]] = scored_map or {}
+    feedback_read = feedback is not None
+    filed = (feedback or {}).get("filed", {})
+    sent_back = (feedback or {}).get("sentBack", {})
+    by_workshop = {str(record.id): record for record in records}
+
+    rows: dict[str, dict[str, Any]] = {}
+    withheld: set[str] = set()
+
+    def _person(user: Any) -> dict[str, Any] | None:
+        user_id = str(getattr(user, "id", "") or "")
+        if not user_id:
+            return None
+        if register.is_withheld_person(user):
+            withheld.add(user_id)
+            return None
+        row = rows.get(user_id)
+        if row is None:
+            row = rows[user_id] = register.new_person_row(user)
+            # ⚠ `None` AND NOT 0 WHEN THE AGGREGATE COULD NOT BE READ. An inspector who has filed
+            # nothing and an inspector whose filings this request failed to count are different
+            # facts: the first is an ordinary state on the day they are assigned, the second is a
+            # fact about the request, and "0 suggestions" against a working inspector is the
+            # accusation this distinction exists to prevent.
+            row["feedbackFiled"] = filed.get(user_id, 0) if feedback_read else None
+            row["sendBacks"] = sent_back.get(user_id, 0) if feedback_read else None
+        return row
+
+    for link in links:
+        record = by_workshop.get(str(getattr(link, "designWorkshopId", "") or ""))
+        row = _person(getattr(link, "user", None))
+        if row is None or record is None:
+            continue
+        register.count_workshop(row, record)
+        register.add_score(row, progress.get(str(record.id)))
+
+    for entry in (directory or {}).get("users", []):
+        _person(
+            SimpleNamespace(
+                id=entry.get("id"),
+                name=entry.get("name"),
+                email=entry.get("email"),
+                role=entry.get("role"),
+            )
+        )
+
+    for row in rows.values():
+        register.close_person_progress(row, scoring_read=scoring_read)
+
+    ordered = register.order_people(list(rows.values()))
+    payload = _people_envelope(
+        ordered,
+        current_user=current_user,
+        noun="inspector",
+        page=clean_page,
+        page_size=clean_size,
+        skip=skip,
+        scan=register.scan_report(total_in_scope, len(records)),
+        withheld=len(withheld),
+        scoring_read=scoring_read,
+        includes_unposted=directory is not None,
+        unposted_note=(
+            "Inspectors who may be assigned but hold no inspection in this scope are listed with a "
+            "measured zero."
+            if directory is not None
+            else (
+                "This list is only the inspectors assigned to workshops you can see. The directory "
+                "of every account that may be assigned an inspection is read on Workshop oversight, "
+                "which an Assistant Director and a Regional Director are not admitted to, so an "
+                "inspector with no assignment here is absent rather than shown with a zero."
+                if not offered
+                else "The directory of assignable inspectors could not be read for this request, so "
+                "an inspector holding no assignment is missing from this list entirely. This is not "
+                "the same as there being none."
+            )
+        ),
+    )
+    payload["unpostedAccountsTruncated"] = bool((directory or {}).get("truncated", False))
+    payload["feedbackRead"] = feedback_read
+    # ⚠ NEVER A ZERO WE DID NOT MEASURE. When the aggregate failed these are None, not 0 — and the
+    # note is the sentence the screen prints in place of the column.
+    payload["feedbackFiledTotal"] = sum(filed.values()) if feedback_read else None
+    payload["feedbackAttributed"] = (
+        sum(int(row["feedbackFiled"] or 0) for row in ordered) if feedback_read else None
+    )
+    payload["feedbackByAccountsNotListed"] = (
+        max(0, int(payload["feedbackFiledTotal"]) - int(payload["feedbackAttributed"]))
+        if feedback_read
+        else None
+    )
+    payload["feedbackNote"] = (
+        (
+            "Suggestion counts cover the workshops read for this register only. "
+            "feedbackByAccountsNotListed is feedback on those workshops filed by accounts this "
+            "list does not name: anyone holding no inspector row on them, and the administrator "
+            "accounts this register never lists. It is a measured figure and is usually zero."
+        )
+        if feedback_read
+        else (
+            "Inspection feedback could not be counted for this request. The columns are empty "
+            "because nothing was read, not because nothing was filed."
+        )
+    )
+    return payload
