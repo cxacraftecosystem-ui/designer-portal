@@ -1359,20 +1359,42 @@ async def test_taking_the_designer_off_serves_no_value_and_no_author(monkeypatch
     """
     saved: list[tuple] = []
 
+    # ── THE COVER AS IT IS ACTUALLY STORED ──────────────────────────────────────────────────────
+    #
+    # EVERY KEY BELOW IS A DECLARED ``workshopSetup`` FIELD (stage_definitions.py), and the ten of
+    # them are the ten the `seed_designer_prefill` incident names one by one — craftName,
+    # clusterName, state, district, startDate, endDate, schemeName, implementingAgency, sponsor and
+    # workshopCode, every one a PROMOTED column on `DesignWorkshop`. A fixture of invented keys
+    # would make the round-trip assertion below a transcript of itself; these make it the contract,
+    # because dropping any one of them is a column going NULL on the workshop cover.
+    #
+    # ⚠ `fieldProvenance` IS A SIBLING COLUMN AND NOT A KEY IN `data` — schema.prisma says so at the
+    # column itself ("NOT INSIDE `data`… a reserved key in it would be reported in `droppedKeys` on
+    # every save, destroying the one drift signal this repository has"), and
+    # `test_the_provenance_bucket_is_beside_the_data_and_never_inside_it` above asserts it. Putting
+    # the stamps inside `data` here would have pinned a shape the writer refuses, in the one file
+    # whose whole subject is provenance.
+    COVER = {
+        "designerName": ASHA.name,
+        "craftName": "Ikat",
+        "clusterName": "Barpali",
+        "state": "Odisha",
+        "district": "Bargarh",
+        "startDate": "2026-04-01",
+        "endDate": "2026-04-07",
+        "schemeName": "Craft Toolkit",
+        "implementingAgency": "NID",
+        "sponsor": "Ministry of Textiles",
+        "workshopCode": "CTW-3-BARPALI",
+    }
+
     async def _entry_rows(_workshop_id, *, stage_key=None, **_kw):
         return [
             SimpleNamespace(
                 entityKey="workshopSetup",
                 clientKey=dw.singleton_client_key("WORKSHOP_SETUP"),
-                data={
-                    "designerName": ASHA.name,
-                    "craftName": "Ikat",
-                    "clusterName": "Barpali",
-                    "state": "Odisha",
-                    "respondentName": "Sita Devi",
-                    "phone": "9000011111",
-                    "fieldProvenance": STAMPS,
-                },
+                data=dict(COVER),
+                fieldProvenance=STAMPS,
             )
         ]
 
@@ -1392,7 +1414,7 @@ async def test_taking_the_designer_off_serves_no_value_and_no_author(monkeypatch
         "it could answer with came off a stage entry, and this reader is EXEMPT only because it "
         "serves nothing - see above."
     )
-    assert "Sita Devi" not in served and "9000011111" not in served and "Ikat" not in served, (
+    assert not any(value in served for value in COVER.values()), (
         "a stage-entry VALUE reached the caller of the unassign."
     )
     assert ASHA.name not in served and ASHA.id not in served and MEENA.id not in served, (
@@ -1406,17 +1428,44 @@ async def test_taking_the_designer_off_serves_no_value_and_no_author(monkeypatch
     assert len(entries) == 1 and entries[0].merge is False
     written = entries[0].data
     assert "designerName" not in written, "the unassign left the name it exists to remove"
-    assert written == {
-        "craftName": "Ikat",
-        "clusterName": "Barpali",
-        "state": "Odisha",
-        "respondentName": "Sita Devi",
-        "phone": "9000011111",
-        "fieldProvenance": STAMPS,
-    }, (
-        "the unassign dropped a key it was not asked to drop. `merge=False` REPLACES the stored "
-        "entry, so a key missing here is a value deleted off the workshop cover - the incident "
-        "`seed_designer_prefill` records, re-created by omission rather than by an empty save."
+    assert written == {k: v for k, v in COVER.items() if k != "designerName"}, (
+        "the unassign dropped a key it was not asked to drop, or invented one. `merge=False` "
+        "REPLACES the stored entry, so a key missing here is a value deleted off the workshop "
+        "cover - the incident `seed_designer_prefill` records, re-created by omission rather than "
+        "by an empty save. Every key it must carry is a promoted column."
+    )
+    assert "fieldProvenance" not in written, (
+        "the unassign put the stamps INSIDE `data`. They are a sibling column; a reserved key in "
+        "`data` comes back in `droppedKeys` on every save - see schema.prisma at the column."
+    )
+
+
+def test_the_oversight_service_still_reads_stage_entries_in_exactly_one_place():
+    """The Reader 16 exemption is granted to ONE function; this is what keeps it that narrow.
+
+    ``allowed`` is keyed by MODULE PATH, and that granularity is a poor fit for this particular
+    module. ``services/design_workshop_oversight.py`` is ~1500 lines whose day job is building
+    OFFICER-FACING payloads — ``named_designer_rows``, the supervision reads, the review loop — and
+    its ROUTE twin was deliberately classified NOT exempt (Reader 12) for exactly that reason. The
+    service is exempt only because the single read it performs today serves nothing.
+
+    Without this test the exemption is a blank cheque: a second read added anywhere in the module —
+    ``outgoing = rows[0].data["designerName"]`` put into a confirmation sentence for the officer who
+    pressed unassign is the obvious one, and is a change a reviewer would wave through — is a stale
+    field value served to somebody with no author beside it, and BOTH the tripwire (the module is on
+    the list) and the Reader 16 test (it drives one helper) would stay green.
+
+    So the fence is the COUNT. A second read site fails here, and the failure says what to do about
+    it: re-read the exemption, and if the new reader serves anything to anybody, resolve provenance
+    and write its own test rather than raising this number.
+    """
+    code = _module_code("app/services/design_workshop_oversight.py")
+    sites = code.count("entry_rows(") + code.count("db.dwstageentry.")
+    assert sites == 1, (
+        f"{sites} stage-entry read sites in services/design_workshop_oversight.py, not 1. The "
+        "Reader 16 exemption covers ONE function that serves nothing and hands the row straight "
+        "back; it is not a licence for the whole module. If the new read serves a value to a "
+        "person, it must resolve provenance and carry its own test — see the classified list."
     )
 
 

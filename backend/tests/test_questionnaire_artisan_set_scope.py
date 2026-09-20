@@ -166,6 +166,67 @@ async def test_the_scope_arguments_have_no_defaults():
         artisan_set_key(["a1"])  # type: ignore[call-arg]
 
 
+async def test_the_migrations_rule_is_a_fixed_point_of_the_key_the_code_writes():
+    """The migration's recompute, applied to what ``artisan_set_key`` produces, changes nothing.
+
+    ── WHY THIS IS HERE AND NOT BESIDE THE STORED CORPUS ───────────────────────────────────────────
+
+    This property lived in ``test_the_recompute_is_idempotent_over_the_stored_rows`` below, which
+    carries ``@needs_db``. THE REQUIRED CHECK NEVER RUNS THAT. ``.github/workflows/deploy-backend.yml``
+    gates on ``GATING_JOBS = ["Backend tests", "Web typecheck, lint and unit specs", "Docs check"]``,
+    and the "Backend tests" job runs with ``DATABASE_URL`` pointed at ``ci.invalid`` — so every
+    ``needs_db`` test is SKIPPED in the only job that can stop a deploy. A property asserted only
+    there cannot block anything. Here, in the pure section, it runs in the gating job.
+
+    ── AND WHY IT BUILDS ITS KEYS FROM THE PRODUCTION FUNCTION ─────────────────────────────────────
+
+    The version this replaces asserted against a hand-written ``"cartisan1,cartisan2"`` literal, so
+    every assertion was about ``recompute`` — a three-line closure defined in the test and imported
+    by nobody — agreeing with itself. It would have passed unchanged if ``artisan_set_key``'s format
+    changed underneath it. Feeding it the REAL key makes it a two-sided contract: it goes red if the
+    SQL's rule drifts from the Python's format, whichever of the two moved.
+
+    ── THE HAZARD IT PINS ──────────────────────────────────────────────────────────────────────────
+
+    The rule takes the artisan half as "everything after the LAST separator" — which is the whole
+    value when there is none — precisely so that re-running it strips the prefix it already wrote
+    before putting the same one back. A plain ``'…' || "artisanSetKey"`` prepend looks identical on a
+    first run and DOUBLES the prefix on a second, and migrations here are applied by a runner that
+    can be interrupted and re-run.
+    """
+
+    def recompute(key: str, workshop_id: str | None, design_workshop_id: str | None) -> str:
+        """The SQL of migration ``20260920120000``, transcribed.
+
+        ``reverse(split_part(reverse(x), '|', 1))`` is "everything after the last ``|``", which is
+        ``rsplit`` with a maxsplit of 1; ``coalesce(col, '')`` is ``or ""``.
+        """
+        artisans = key.rsplit(_SET_KEY_SCOPE_SEPARATOR, 1)[-1]
+        return _SET_KEY_SCOPE_SEPARATOR.join(
+            [workshop_id or "", design_workshop_id or "", artisans]
+        )
+
+    ids = ["cartisanaaa", "cartisanbbb"]
+    for workshop_id, design_workshop_id in [
+        (None, None), ("cworkshop1", None), (None, "cdesignwk1"), ("cworkshop1", "cdesignwk1"),
+    ]:
+        written = artisan_set_key(
+            ids, workshop_id=workshop_id, design_workshop_id=design_workshop_id
+        )
+        assert written is not None
+        assert recompute(written, workshop_id, design_workshop_id) == written, (
+            "the migration's rule does not reproduce the key the code writes. One of the two has "
+            "drifted, and a deploy would rewrite every stored key into something no lookup finds."
+        )
+        # Idempotent: a re-run must not stack a second prefix on a key that already carries one.
+        assert recompute(recompute(written, workshop_id, design_workshop_id),
+                         workshop_id, design_workshop_id) == written
+        # And re-filing moves the key rather than accumulating scopes, which is what
+        # ``resync_interview_set_key`` depends on when a sitting changes workshop.
+        moved = recompute(written, "cworkshop9", None)
+        assert moved == artisan_set_key(ids, workshop_id="cworkshop9", design_workshop_id=None)
+
+
 # ════════════════════════════════════════════════════════════════════════════════════════════════
 # 2. THE ROUTES — needs Postgres
 # ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -490,36 +551,11 @@ async def test_the_recompute_is_idempotent_over_the_stored_rows(env):
             [workshop_id or "", design_workshop_id or "", artisans]
         )
 
-    # ── THE RULE ITSELF, ON VECTORS THIS TEST OWNS ──────────────────────────────────────────────
-    #
-    # These run on ANY database, including an empty one, and they are the half that actually pins
-    # the hazard the docstring names. This assertion used to be made only against whatever rows the
-    # database happened to hold, under `assert stored, "the corpus should hold ~38"` — which asserts
-    # a fact about ONE DEVELOPER'S MACHINE. CI applies the migrations to a FRESH database with no
-    # interviews in it, so the corpus is legitimately empty there and the test failed for three
-    # commits on a property of the environment rather than of the code.
-    #
-    # `a` and `b` are shaped like cuids (no `|`, no `,`), which is the premise the whole key format
-    # rests on — see `artisan_set_key`'s note on separators.
-    OLD_FORM = "cartisan1,cartisan2"
-    for workshop_id, design_workshop_id in [
-        (None, None), ("cworkshop1", None), (None, "cdesignwk1"), ("cworkshop1", "cdesignwk1"),
-    ]:
-        once = recompute(OLD_FORM, workshop_id, design_workshop_id)
-        assert once.endswith(OLD_FORM) and once.count(_SET_KEY_SCOPE_SEPARATOR) == 2, (
-            "the rule did not put exactly one scope pair in front of the artisan half"
-        )
-        twice = recompute(once, workshop_id, design_workshop_id)
-        assert twice == once, (
-            "the rule DOUBLED its prefix on a second application. A migration runner that is "
-            "interrupted and re-run would then write keys nothing can look up — which is why the "
-            "rule takes the artisan half as everything after the LAST separator rather than "
-            "prepending to whatever it finds."
-        )
-        # And re-applying it under a DIFFERENT scope re-files rather than accumulating, which is
-        # what `resync_interview_set_key` depends on when a sitting moves between workshops.
-        moved = recompute(once, "cworkshop9", None)
-        assert moved == _SET_KEY_SCOPE_SEPARATOR.join(["cworkshop9", "", OLD_FORM])
+    # THE RULE'S OWN PROPERTIES — idempotence, no doubled prefix, re-filing — are pinned ABOVE in
+    # `test_the_migrations_rule_is_a_fixed_point_of_the_key_the_code_writes`, against keys built by
+    # the production `artisan_set_key`, and in the PURE section so the gating job actually runs
+    # them. What is left here is the one thing that needs a database: drift between the rule and
+    # the rows a real deployment is carrying.
 
     # ── AND THE STORED CORPUS, WHERE THERE IS ONE ───────────────────────────────────────────────
     #
