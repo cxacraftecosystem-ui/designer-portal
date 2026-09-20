@@ -997,6 +997,16 @@ def test_the_interview_patch_dumps_with_exclude_unset(monkeypatch):
     monkeypatch.setattr(module, "apply_status_policy_update", _no_status_policy)
     monkeypatch.setattr(module, "attach_location", _attach_location)
     monkeypatch.setattr(module, "hydrate_relations", _no_relations)
+    # The same stub `_drive_product` and `_drive_tool` above already apply, for the same reason and
+    # by the same name. Since 2026-09-20 this route ends
+    # `public_encode(row, viewer, media_urls=await media_url_owners(viewer))`, and
+    # `media_url_owners` READS the viewer's data-access grants — so without this the argument is
+    # evaluated before `public_encode` is ever called and the driver, which has no database, dies
+    # with `ClientNotConnectedError` instead of asserting anything about `exclude_unset`.
+    async def _no_media_urls(_viewer):
+        return set()
+
+    monkeypatch.setattr(module, "media_url_owners", _no_media_urls)
     monkeypatch.setattr(module, "public_encode", lambda row, _viewer=None, **_kw: row)
 
     # ``artisanIds``/``responses`` are relations with their own guards, excluded from the dump; None

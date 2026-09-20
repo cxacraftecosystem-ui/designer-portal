@@ -490,19 +490,57 @@ async def test_the_recompute_is_idempotent_over_the_stored_rows(env):
             [workshop_id or "", design_workshop_id or "", artisans]
         )
 
+    # ── THE RULE ITSELF, ON VECTORS THIS TEST OWNS ──────────────────────────────────────────────
+    #
+    # These run on ANY database, including an empty one, and they are the half that actually pins
+    # the hazard the docstring names. This assertion used to be made only against whatever rows the
+    # database happened to hold, under `assert stored, "the corpus should hold ~38"` — which asserts
+    # a fact about ONE DEVELOPER'S MACHINE. CI applies the migrations to a FRESH database with no
+    # interviews in it, so the corpus is legitimately empty there and the test failed for three
+    # commits on a property of the environment rather than of the code.
+    #
+    # `a` and `b` are shaped like cuids (no `|`, no `,`), which is the premise the whole key format
+    # rests on — see `artisan_set_key`'s note on separators.
+    OLD_FORM = "cartisan1,cartisan2"
+    for workshop_id, design_workshop_id in [
+        (None, None), ("cworkshop1", None), (None, "cdesignwk1"), ("cworkshop1", "cdesignwk1"),
+    ]:
+        once = recompute(OLD_FORM, workshop_id, design_workshop_id)
+        assert once.endswith(OLD_FORM) and once.count(_SET_KEY_SCOPE_SEPARATOR) == 2, (
+            "the rule did not put exactly one scope pair in front of the artisan half"
+        )
+        twice = recompute(once, workshop_id, design_workshop_id)
+        assert twice == once, (
+            "the rule DOUBLED its prefix on a second application. A migration runner that is "
+            "interrupted and re-run would then write keys nothing can look up — which is why the "
+            "rule takes the artisan half as everything after the LAST separator rather than "
+            "prepending to whatever it finds."
+        )
+        # And re-applying it under a DIFFERENT scope re-files rather than accumulating, which is
+        # what `resync_interview_set_key` depends on when a sitting moves between workshops.
+        moved = recompute(once, "cworkshop9", None)
+        assert moved == _SET_KEY_SCOPE_SEPARATOR.join(["cworkshop9", "", OLD_FORM])
+
+    # ── AND THE STORED CORPUS, WHERE THERE IS ONE ───────────────────────────────────────────────
+    #
+    # A drift check for databases that carry real rows — a developer's machine, staging, production
+    # after a deploy. An EMPTY list is a legitimate state (a freshly migrated database has no
+    # interviews) and is NOT failed on; what is failed on is a row whose stored key is not what the
+    # rule computes, which means the migration did not run here or has drifted from the code.
     stored = env["storedKeys"]
-    assert stored, "no keyed interviews in this database — the corpus should hold ~38"
     for key, workshop_id, design_workshop_id in stored:
         once = recompute(key, workshop_id, design_workshop_id)
         assert once == key, (
-            "a stored key is not what the migration computes: it did not run on this database, "
-            "or the rule has drifted from it"
+            f"stored key {key!r} is not what the migration computes: it did not run on this "
+            "database, or the rule has drifted from it"
         )
         assert recompute(once, workshop_id, design_workshop_id) == once
-
-    # AND THE MIGRATION ACTUALLY RAN. Without this the loop above would pass vacuously on a database
-    # where every key is still the old artisans-only form AND the rule had been reverted to match it.
-    assert all(_SET_KEY_SCOPE_SEPARATOR in key for key, _, _ in stored)
+        # Not `all(... for ...)` over the list, which would pass vacuously on the empty corpus the
+        # paragraph above allows. Inside the loop it only ever runs on a row that exists.
+        assert _SET_KEY_SCOPE_SEPARATOR in key, (
+            f"stored key {key!r} is still the old artisans-only form, so the migration has not run "
+            "on this database"
+        )
 
 
 # ════════════════════════════════════════════════════════════════════════════════════════════════

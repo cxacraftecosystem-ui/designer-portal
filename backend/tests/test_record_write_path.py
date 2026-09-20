@@ -461,11 +461,23 @@ def test_folding_a_create_into_an_existing_interview_keeps_its_stored_metadata(m
         return None
 
     interviews.update = _update
+    # STUBBED FOR THE SAME REASON ``products.py`` AND ``tools.py`` STUB IT, and the same way.
+    # Since 2026-09-20 the fold and the patch both end
+    # ``public_encode(row, viewer, media_urls=await media_url_owners(viewer))`` so a fold stops
+    # stripping the clips off the entry it folded into. ``media_url_owners`` QUERIES — it reads the
+    # viewer's data-access grants — and this driver has no database, so without the stub the
+    # argument is evaluated first and the test dies with ``ClientNotConnectedError`` before reaching
+    # the column it is about. ``set()`` is the narrowest answer (own uploads only) and the assertion
+    # below never reads a URL.
+    async def _no_media_urls(_viewer):
+        return set()
+
     monkeypatch.setattr(questionnaire, "db", _Client(questionnaireinterview=interviews))
     # The fold's last two steps read relations and shape a response; neither touches the column
     # under test, and both would need a database.
     monkeypatch.setattr(questionnaire, "hydrate_relations", _no_relations)
-    monkeypatch.setattr(questionnaire, "public_encode", lambda row: row)
+    monkeypatch.setattr(questionnaire, "media_url_owners", _no_media_urls)
+    monkeypatch.setattr(questionnaire, "public_encode", lambda row, _viewer=None, **_kw: row)
 
     existing = _Row(
         id="int_1",
@@ -569,8 +581,14 @@ def test_the_interview_patch_route_actually_declares_its_nullable_scalars(monkey
         monkeypatch.setattr(questionnaire, "require_record", _require_record)
         monkeypatch.setattr(questionnaire, "guard_record_edit", _guard)
         monkeypatch.setattr(questionnaire, "apply_status_policy_update", _status_policy)
+        async def _no_media_urls(_viewer):
+            return set()
+
         monkeypatch.setattr(questionnaire, "hydrate_relations", _no_relations)
-        monkeypatch.setattr(questionnaire, "public_encode", lambda row: row)
+        # See the note at the first of these three drivers: the patch route now ends in
+        # ``media_url_owners``, which queries, and this loop has no database.
+        monkeypatch.setattr(questionnaire, "media_url_owners", _no_media_urls)
+        monkeypatch.setattr(questionnaire, "public_encode", lambda row, _viewer=None, **_kw: row)
 
         payload = SimpleNamespace(
             artisanIds=None,
@@ -617,9 +635,21 @@ def test_folding_a_create_onto_a_flagged_row_does_not_launder_the_late_flag(monk
         return None
 
     interviews.update = _update
+    # STUBBED FOR THE SAME REASON ``products.py`` AND ``tools.py`` STUB IT, and the same way.
+    # Since 2026-09-20 the fold and the patch both end
+    # ``public_encode(row, viewer, media_urls=await media_url_owners(viewer))`` so a fold stops
+    # stripping the clips off the entry it folded into. ``media_url_owners`` QUERIES — it reads the
+    # viewer's data-access grants — and this driver has no database, so without the stub the
+    # argument is evaluated first and the test dies with ``ClientNotConnectedError`` before reaching
+    # the column it is about. ``set()`` is the narrowest answer (own uploads only) and the assertion
+    # below never reads a URL.
+    async def _no_media_urls(_viewer):
+        return set()
+
     monkeypatch.setattr(questionnaire, "db", _Client(questionnaireinterview=interviews))
     monkeypatch.setattr(questionnaire, "hydrate_relations", _no_relations)
-    monkeypatch.setattr(questionnaire, "public_encode", lambda row: row)
+    monkeypatch.setattr(questionnaire, "media_url_owners", _no_media_urls)
+    monkeypatch.setattr(questionnaire, "public_encode", lambda row, _viewer=None, **_kw: row)
 
     existing = _Row(
         id="int_1",

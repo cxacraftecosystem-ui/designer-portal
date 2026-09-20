@@ -64,6 +64,7 @@ from app.api.routes import (
 from app.services import (
     design_ratings as dr,
     design_workshop_data as dwdata,
+    design_workshop_oversight as oversight_service,
     design_workshops as dw,
     entry_provenance as ep,
 )
@@ -1323,6 +1324,102 @@ async def test_the_registers_progress_column_is_counts_and_carries_no_value_and_
     )
 
 
+# --------------------------------------------------------------------------------------
+# Reader 16: taking the designer's name off a workshop — EXEMPT, and fenced
+# --------------------------------------------------------------------------------------
+#
+# Landed 2026-09-20 with the unassign fix, and the tripwire below is what caught it. The ROUTE
+# module of the same name has been classified since 2026-09-14 under Reader 12; this is the
+# SERVICE beside it, a second file with a second path into the table, and the name being already
+# on the list for the route is exactly why it was easy to miss.
+#
+# `take_the_designers_name_off_the_workshop` reads the stage-1 entry that OWNS `designerName` so it
+# can write that entry back without it. It therefore touches the whole of one row's `data` — every
+# promoted value on the workshop cover passes through `held` — which is more of the table than any
+# other exempt reader sees.
+#
+# IT IS EXEMPT ANYWAY, and on grounds none of the others use: it SERVES NOTHING. The values are
+# read and handed straight back to the same row through `save_stage`, and what the function returns
+# to its caller is a list of STAGE KEYS — the stages the officer's screen must reload. No value and
+# no author leaves it, so there is no audience to whom a stale field could be attributed.
+#
+# WHAT WOULD MAKE THE EXEMPTION FALSE: returning any part of `held` — the outgoing designer's name
+# in a confirmation sentence is the obvious one, and is a thing a reviewer would wave through. The
+# first assertion below is what fails on it. The second pins the round-trip itself, because the
+# same function is where a dropped key would silently blank a cover: `merge=False` means the entry
+# it writes REPLACES the stored one, so a key missing from `kept` is a value deleted from the
+# workshop.
+
+
+async def test_taking_the_designer_off_serves_no_value_and_no_author(monkeypatch):
+    """``design_workshop_oversight.take_the_designers_name_off_the_workshop`` — driven for real.
+
+    The stored row carries this file's own stamped fixtures beside the promoted values, so a
+    function that started copying either into its answer shows up here rather than in a review.
+    """
+    saved: list[tuple] = []
+
+    async def _entry_rows(_workshop_id, *, stage_key=None, **_kw):
+        return [
+            SimpleNamespace(
+                entityKey="workshopSetup",
+                clientKey=dw.singleton_client_key("WORKSHOP_SETUP"),
+                data={
+                    "designerName": ASHA.name,
+                    "craftName": "Ikat",
+                    "clusterName": "Barpali",
+                    "state": "Odisha",
+                    "respondentName": "Sita Devi",
+                    "phone": "9000011111",
+                    "fieldProvenance": STAMPS,
+                },
+            )
+        ]
+
+    async def _save_stage(workshop_id, spec, payload, actor):
+        saved.append((workshop_id, spec, payload, actor))
+
+    monkeypatch.setattr(dw, "entry_rows", _entry_rows)
+    monkeypatch.setattr(dw, "save_stage", _save_stage)
+
+    stages_to_reload = await oversight_service.take_the_designers_name_off_the_workshop(
+        "dw_1", actor=ADMIN
+    )
+
+    served = repr(stages_to_reload)
+    assert stages_to_reload == ["WORKSHOP_SETUP"], (
+        "the unassign answered with something other than the stage keys to reload. Anything else "
+        "it could answer with came off a stage entry, and this reader is EXEMPT only because it "
+        "serves nothing - see above."
+    )
+    assert "Sita Devi" not in served and "9000011111" not in served and "Ikat" not in served, (
+        "a stage-entry VALUE reached the caller of the unassign."
+    )
+    assert ASHA.name not in served and ASHA.id not in served and MEENA.id not in served, (
+        "the outgoing designer, or a stamp's author, reached the caller of the unassign."
+    )
+    assert "fieldProvenance" not in served and "byName" not in served
+
+    # THE ROUND TRIP, which is the other half of why this function may read the whole row.
+    assert len(saved) == 1, "the unassign did not write the stage entry back"
+    entries = saved[0][2].entries
+    assert len(entries) == 1 and entries[0].merge is False
+    written = entries[0].data
+    assert "designerName" not in written, "the unassign left the name it exists to remove"
+    assert written == {
+        "craftName": "Ikat",
+        "clusterName": "Barpali",
+        "state": "Odisha",
+        "respondentName": "Sita Devi",
+        "phone": "9000011111",
+        "fieldProvenance": STAMPS,
+    }, (
+        "the unassign dropped a key it was not asked to drop. `merge=False` REPLACES the stored "
+        "entry, so a key missing here is a value deleted off the workshop cover - the incident "
+        "`seed_designer_prefill` records, re-created by omission rather than by an empty save."
+    )
+
+
 def _blanked_code(path: Path) -> str:
     """One module's source with comment and string spans blanked out, lowercased.
 
@@ -1444,6 +1541,14 @@ def test_no_new_reader_of_stage_entries_appeared_without_resolving_provenance():
         # grant on the workshop.
         "app/services/artisan_import.py",
         "app/services/sanction_orders.py",
+        # Classified 2026-09-20, when the tripwire caught the unassign. The ROUTE module of this
+        # name has been on this list since 2026-09-14 (Reader 12); this is the SERVICE beside it,
+        # and the route already being classified is why a second path into the table went unseen.
+        # EXEMPT on grounds no other entry uses - it SERVES NOTHING, reading one row's `data` only
+        # to hand it straight back minus `designerName` and answering with stage keys - and FENCED
+        # by the test under "Reader 16" above, which fails both if any part of that row reaches the
+        # caller and if the round trip drops a key.
+        "app/services/design_workshop_oversight.py",
         # Classified 2026-09-20, when the tripwire caught the ministry register. EXEMPT on
         # `analytics`' grounds — it reads a page of workshops' entries to produce a percentage per
         # workshop and never shows one field to one person — and FENCED by the test under
