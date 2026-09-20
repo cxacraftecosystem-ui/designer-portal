@@ -263,6 +263,33 @@ async def _answered_question_ids(question_ids: list[str]) -> set[str]:
 
 
 async def main() -> None:
+    # ─── SAY THAT A SECOND SCRIPT PUBLISHES THIS SAME INSTRUMENT ─────────────────────────────────
+    #
+    # `scripts/seed_toolkit_questionnaires.py` (added 2026-09-20) publishes the 2nd Craft Toolkit
+    # Workshop corpus — the SAME instrument this file publishes — under the title "2nd Craft Toolkit
+    # Workshop - artisan interview", alongside the 3rd workshop's. The two scripts key idempotence on
+    # DIFFERENT titles, so neither can adopt the other's row: an operator who runs BOTH leaves every
+    # designer looking at the same 24 sections twice, under two names, with nothing on the list
+    # screen explaining why.
+    #
+    # Whichever is run, running the OTHER afterwards is the mistake, so the warning is printed by
+    # BOTH scripts rather than by one. It is printed BEFORE the write and names the remedy, because
+    # by the time a duplicate is visible on the list screen the fix is no longer a script's to make:
+    # withdrawing a published row is the admin-only PATCH that clears `isShared`.
+    #
+    # A warning and not a refusal, on purpose. Publishing both is a legitimate thing to want (they
+    # differ by one question, below), and a seeder that refuses to run because a sibling exists is a
+    # seeder that cannot be used to repair the very row it owns.
+    print(
+        "NOTE: `scripts/seed_toolkit_questionnaires.py` publishes this SAME 2nd-workshop corpus"
+    )
+    print(
+        '      as "2nd Craft Toolkit Workshop - artisan interview" (284 questions: these 285'
+    )
+    print('      without the locally added RESP "Date of Interview"), together with the 3rd')
+    print("      workshop's. Run ONE of the two. Running both publishes the 2nd workshop twice,")
+    print("      under two titles, and the duplicate can then only be withdrawn by an admin")
+    print("      clearing `isShared` on it.")
     await connect_db()
     try:
         questionnaire_id, counts = await seed_shared_questionnaire()
