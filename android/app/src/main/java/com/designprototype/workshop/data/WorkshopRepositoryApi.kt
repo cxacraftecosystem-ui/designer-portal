@@ -790,6 +790,35 @@ interface WorkshopRepositoryApi {
         @Body body: QuestionnaireInterviewUpdateRequest
     ): QuestionnaireInterviewDetailDto
 
+    /**
+     * FOLD `{id}` INTO `{targetId}`: move its answers, its recordings and the sections its title
+     * names onto the target, then remove it. Answers with the SURVIVOR, hydrated.
+     *
+     * ── WHY A SECOND ROUTE RATHER THAN A FLAG ON THE PATCH ABOVE ────────────────────────────────
+     *
+     * Because the fold must be an act somebody performs, not a mode a save falls into. `PATCH`
+     * still REFUSES a colliding artisan set — the 409 is unchanged and still the default answer —
+     * and this exists so that a researcher who has read the refusal, seen the holder named, and
+     * pressed a button that says *"Move into “D Black Pottery”"* has something to call. The server
+     * states the same split at `merge_interview_into`: *"the fold happens only because a person
+     * asked for it by calling a second, differently-named endpoint."*
+     *
+     * NO REQUEST BODY, deliberately. Every fact the route needs is in the two ids, and a body would
+     * invite a future flag — "overwrite on conflict" — that the route exists to refuse.
+     *
+     * ⚠ **IT CAN REFUSE, AND ITS REFUSALS ARE THE REASON [questionnaireSaveRefusal] EXISTS.** A 409
+     * carries `merge_answer_conflict` and NAMES every question the two rows answer differently,
+     * having moved nothing; 422s carry `merge_cross_scope` (different workshops) and
+     * `merge_artisan_coverage` (the source covers an artisan the target does not, whose answers
+     * would stop appearing anywhere). All three are sentences written for the person holding the
+     * phone — surface them, never a status code.
+     */
+    @POST("questionnaire/interviews/{id}/merge-into/{targetId}")
+    suspend fun mergeInterviewInto(
+        @Path("id") id: String,
+        @Path("targetId") targetId: String
+    ): QuestionnaireInterviewDetailDto
+
     @GET("questionnaire/completion")
     suspend fun completionMatrix(
         @Query("artisanId") artisanId: String? = null,

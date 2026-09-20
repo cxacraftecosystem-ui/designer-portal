@@ -5587,6 +5587,25 @@ class WorkshopRepository(
         api.updateInterview(id, body)
 
     /**
+     * Fold interview [id] into [targetId] and answer with the SURVIVOR. See
+     * [WorkshopRepositoryApi.mergeInterviewInto] for what moves and what refuses.
+     *
+     * ── NOT QUEUED, AND NOT RETRIED ────────────────────────────────────────────────────────────
+     *
+     * NOT QUEUED for the reason `QuestionnaireForm` already gives for refusing to queue an interview
+     * EDIT: this is a correction against server state that a second researcher may also be editing,
+     * and replaying it hours later would fold rows whose contents have changed since the refusal was
+     * read — against a target that may by then hold a differing answer the researcher never saw. The
+     * offer is made in the room, on a signal, or it is not made.
+     *
+     * NOT RETRIED because the request is not idempotent in the way a retry needs: a repeat of a call
+     * that already succeeded finds the source deleted and answers 404, which would turn a completed
+     * fold into a failure on screen. The caller reads the refusal and asks again if it wants to.
+     */
+    suspend fun mergeQuestionnaireInterview(id: String, targetId: String): QuestionnaireInterviewDetailDto =
+        api.mergeInterviewInto(id, targetId)
+
+    /**
      * Completion matrix (artisans x sections). Pass [artisanId] to scope it to one artisan, and
      * [workshopIds] to scope it to workshops — null or empty is every workshop, `none` is the records
      * linked to none. LAST and defaulted so no existing call site has to change.

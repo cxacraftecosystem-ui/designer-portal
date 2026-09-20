@@ -220,6 +220,7 @@ import com.designprototype.workshop.data.QuestionnaireQuestionUpdateRequest
 import com.designprototype.workshop.data.QuestionnaireResponseRequest
 import com.designprototype.workshop.data.QuestionnaireSectionCreateRequest
 import com.designprototype.workshop.data.QuestionnaireSectionDto
+import com.designprototype.workshop.data.questionnaireSaveRefusal
 import com.designprototype.workshop.data.QuestionnaireSectionUpdateRequest
 import com.designprototype.workshop.data.TokenStore
 import com.designprototype.workshop.data.ToolCreateRequest
@@ -366,7 +367,17 @@ import com.designprototype.workshop.ui.questionnaires.QuestionnaireQuickTranscri
 import com.designprototype.workshop.ui.questionnaires.QuestionnaireTranscriptActions
 import com.designprototype.workshop.ui.questionnaires.TRANSCRIPT_DOCUMENT_MIME
 import com.designprototype.workshop.ui.questionnaires.QuestionnaireTranscriptOutcome
+import com.designprototype.workshop.ui.questionnaires.QUESTIONNAIRE_RECORDED_ANSWER_HINT
+import com.designprototype.workshop.ui.questionnaires.QuestionnaireAnswerDisplay
+import com.designprototype.workshop.ui.questionnaires.QuestionnaireMergeConflictReport
+import com.designprototype.workshop.ui.questionnaires.QuestionnaireMergeOffer
 import com.designprototype.workshop.ui.questionnaires.questionnaireAcceptOffer
+import com.designprototype.workshop.ui.questionnaires.questionnaireAnswerDisplay
+import com.designprototype.workshop.ui.questionnaires.questionnaireCaptionBelongsToSection
+import com.designprototype.workshop.ui.questionnaires.questionnaireMergeConflictReport
+import com.designprototype.workshop.ui.questionnaires.questionnaireMergeOffer
+import com.designprototype.workshop.ui.questionnaires.questionnaireMergedSentence
+import com.designprototype.workshop.ui.questionnaires.questionnaireSectionsToReveal
 import com.designprototype.workshop.ui.questionnaires.questionnaireClipCapLine
 import com.designprototype.workshop.ui.questionnaires.questionnaireClipTooLongLine
 import com.designprototype.workshop.ui.questionnaires.questionnaireClipTooLongToDictate
@@ -17107,6 +17118,24 @@ private fun QuestionnaireForm(
     val isEdit = editing != null
     var syncing by remember { mutableStateOf(false) }
     var saveState by remember { mutableStateOf(SaveState.IDLE) }
+    /* ══════════════════════════════════════════════════════════════════════════════════════════
+     * THE FOLD OFFER — three pieces of state, all keyed on the interview being edited
+     * ══════════════════════════════════════════════════════════════════════════════════════════
+     *
+     * A save refused with `duplicate_artisan_set` now has somewhere to go: the server names the
+     * interview already holding this artisan set, and the researcher may move this one into it.
+     * [mergeOffer] is that named offer awaiting a yes, [merging] keeps the confirm button from being
+     * pressed twice against a source row the first press is deleting, and [mergeConflict] is the
+     * OTHER refusal — the merge route's own 409, which moved nothing because both interviews answer
+     * some question differently and NAMES each one.
+     *
+     * Keyed on `editing?.id` so an offer about one sitting can never be confirmed against the next
+     * one opened in the same composition — the two ids are the only thing standing between "fold F
+     * into D" and "delete an unrelated interview".
+     */
+    var mergeOffer by remember(editing?.id) { mutableStateOf<QuestionnaireMergeOffer?>(null) }
+    var merging by remember(editing?.id) { mutableStateOf(false) }
+    var mergeConflict by remember(editing?.id) { mutableStateOf<QuestionnaireMergeConflictReport?>(null) }
     var title by remember(editing) { mutableStateOf(editing?.title ?: prefill?.artisanName?.let { "Interview with $it" } ?: "") }
     var selectedArtisans by remember(editing) {
         mutableStateOf(
@@ -17538,32 +17567,68 @@ private fun QuestionnaireForm(
         lastEditedSectionId = sectionIdForKey(entry.key)
     }
     // Whether a saved media item (by its caption) belongs to a given section — used to surface
-    // earlier recordings under the right section in edit mode. Exact match on the captions this form
-    // writes, with a resilient prefix fallback if a prompt/title was edited after recording.
-    fun captionBelongsToSection(caption: String?, section: QuestionnaireSectionDto): Boolean {
-        val cap = caption?.trim().orEmpty()
-        if (cap.isEmpty()) return false
-        val expected = buildSet {
-            add("Section audio: ${section.code} ${section.title}".trim())
-            section.questions.forEach { q -> add("Question audio: ${q.sectionCode}${q.sortOrder} ${q.prompt}".trim()) }
-        }
-        if (cap in expected) return true
-        if (cap.startsWith("Section audio:")) {
-            val rest = cap.removePrefix("Section audio:").trim()
-            return rest == section.code || rest.startsWith("${section.code} ")
-        }
-        if (cap.startsWith("Question audio:")) {
-            val rest = cap.removePrefix("Question audio:").trim()
-            return rest.startsWith(section.code) && rest.length > section.code.length && rest[section.code.length].isDigit()
-        }
-        return false
-    }
+    // earlier recordings under the right section in edit mode.
+    //
+    // THE RULE ITSELF MOVED TO `questionnaireCaptionBelongsToSection` AND THIS IS NOW A CALL, because
+    // `questionnaireSectionsToReveal` has to answer the SAME question to decide which sections an edit
+    // opens. Two spellings of "does this recording belong to section F" is exactly how a clip ends up
+    // in the "Other saved recordings & media" catch-all while the section holding it stays shut — the
+    // failure the reveal exists to end. The caption is the only link there is: `MediaFile` carries no
+    // section column.
+    fun captionBelongsToSection(caption: String?, section: QuestionnaireSectionDto): Boolean =
+        questionnaireCaptionBelongsToSection(caption, section)
     // One take for the whole section is how these interviews are actually conducted: the researcher
     // sits down with the artisan and talks through the section, rather than starting and stopping a
     // recorder between every question. Per-question capture stays a click away for the times it is
     // wanted, but it is not the shape of the work and so it is not the default.
     var recordMode by remember { mutableStateOf("SECTION") }
-    var expandedSections by remember { mutableStateOf<Set<String>>(emptySet()) }
+
+    /* ══════════════════════════════════════════════════════════════════════════════════════════
+     * AN EDIT OPENS THE SECTIONS THAT ALREADY HAVE SOMETHING IN THEM
+     * ══════════════════════════════════════════════════════════════════════════════════════════
+     *
+     * THE COMPLAINT (owner): *"when edit page is opened, already existing entries and media do not
+     * show up in the respective sections, those should show up while editing as well, on both
+     * android and web"*.
+     *
+     * NOTHING WAS MISSING — THIS SET WAS EMPTY. `answers` is seeded from `editing?.responses` at
+     * composition and `savedMedia` loads every recording on this interview (and on its siblings
+     * covering the same artisan set) a beat later. Both were already in hand. But a collapsed
+     * section composes NONE of its inputs — that is the whole point of the `if (expanded)` guard
+     * below, and it is what keeps a twenty-section instrument responsive — so a researcher opening
+     * their own sitting was shown a column of closed cards and the header count line, and nothing
+     * else. On this instrument, where a section is captured as ONE whole-section take with the
+     * answer boxes hidden, that meant a fully recorded interview looked untouched.
+     *
+     * KEYED ON THE INTERVIEW, not unkeyed, so opening a second sitting in the same composition does
+     * not inherit the first one's open cards.
+     *
+     * ── WHY A SET OF ALREADY-OFFERED IDS AND NOT A PLAIN RECOMPUTE ──────────────────────────────
+     *
+     * The two inputs arrive at different times: the responses are on `editing` from the first frame,
+     * the recordings land when `savedMedia`'s `LaunchedEffect` returns, and `sections` can itself be
+     * refreshed by the Synchronise button. A rule that simply re-applied the computed set on every
+     * change would RE-OPEN a card the researcher had just closed — a screen that fights the person
+     * using it, one second after they touched it. So each section is revealed AT MOST ONCE per
+     * interview: `alreadyRevealed` remembers that the offer was made, `expandedSections` remains the
+     * reader's to change, and a recording that arrives late still opens its section the first time
+     * it is seen.
+     */
+    var expandedSections by remember(editing?.id) { mutableStateOf<Set<String>>(emptySet()) }
+    val sectionsWithContent = remember(editing?.id, sections, savedMedia) {
+        // `emptyList()` on a create for the same reason the saved-media strip is hidden there: there
+        // is no stored sitting to reveal, and a new interview must open exactly nothing.
+        if (!isEdit) emptySet()
+        else questionnaireSectionsToReveal(sections, editing?.responses.orEmpty(), savedMedia)
+    }
+    var alreadyRevealed by remember(editing?.id) { mutableStateOf<Set<String>>(emptySet()) }
+    LaunchedEffect(editing?.id, sectionsWithContent) {
+        val fresh = sectionsWithContent - alreadyRevealed
+        if (fresh.isNotEmpty()) {
+            alreadyRevealed = alreadyRevealed + fresh
+            expandedSections = expandedSections + fresh
+        }
+    }
     var showBuilder by remember { mutableStateOf(false) }
 
     if (canManageQuestionnaire && !isEdit) {
@@ -18070,114 +18135,182 @@ private fun QuestionnaireForm(
                                         onRecorded = { clip -> quickTranscribe(question.id, clip) }
                                     )
                                 }
-                                if (!hideAnswers) {
-                                    /*
-                                     * ── THE ANSWER BOX IS A RICH TEXT BOX, AND THE MICROPHONE IS
-                                     *    INSIDE IT ────────────────────────────────────────────
-                                     *
-                                     * Owner, 2026-08-30: the transcript *"should appear in the rich
-                                     * text box"*. The web's twin of this box became a `RichTextField`
-                                     * on 2026-08-31 and this one stayed a plain `TextInput`, which
-                                     * left the handset unable to READ an answer a colleague had
-                                     * formatted from the office — `{"blocks":[{"kind":"PARAGRAPH"…`
-                                     * in place of an artisan's words, overwritten the moment anybody
-                                     * typed. `QuestionnaireAnswerText.kt` argues what the column may
-                                     * hold and lists the readers that were taught to flatten it.
-                                     *
-                                     * NOTHING ABOUT THE PAYLOAD CHANGES for an answer nobody
-                                     * formats: `questionnaireAnswerStored` writes prose for an
-                                     * unformatted document and only stringifies once a mark, a list,
-                                     * a heading, an alignment or a table is actually applied. So
-                                     * `answers[question.id]` is still a `String`, the request body is
-                                     * unchanged, and the offline queue carries the same field.
-                                     *
-                                     * `resetKey` IS LOAD-BEARING. The editor parses its seed once and
-                                     * re-seeds only on a value it did not itself emit; keying it on
-                                     * the interview being edited is what stops one sitting's answers
-                                     * appearing in the boxes of the next one opened in the same
-                                     * composition.
-                                     */
-                                    QuestionnaireAnswerBox(
-                                        value = answers[question.id]?.value.orEmpty(),
-                                        onValueChange = { value ->
-                                            answers[question.id]?.let { state -> state.value = value }
-                                            lastEditedSectionId = section.id
-                                        },
-                                        resetKey = editing?.id to question.id,
-                                        onError = onError,
-                                        modifier = Modifier.fillMaxWidth()
-                                    )
-                                    QuestionnaireQuickTranscript(
-                                        busy = question.id in transcribing,
-                                        problem = quickProblem[question.id],
-                                        machine = machineText[question.id],
-                                        current = answers[question.id]?.value.orEmpty(),
-                                        offered = offeredTranscript[question.id],
-                                        onAccept = {
-                                            val text = offeredTranscript[question.id]
-                                            if (text != null) {
-                                                /*
-                                                  ADDED TO THE ANSWER, NOT SUBSTITUTED FOR IT. The
-                                                  offer only exists because the box holds words a
-                                                  person wrote, so the button that accepts it must
-                                                  not be the one control on this screen that deletes
-                                                  them.
-
-                                                  AND `machineText` IS DELIBERATELY LEFT ALONE. The
-                                                  box now holds the researcher's words AND the
-                                                  machine's, so it IS edited and the flag must go on
-                                                  saying so. Updating it here would relabel a mixed
-                                                  answer as untouched machine output, which is the
-                                                  one claim the flag exists to prevent.
-                                                */
-                                                answers[question.id]?.let { state ->
-                                                    state.value = questionnaireAcceptOffer(state.value, text)
-                                                }
-                                                offeredTranscript = offeredTranscript - question.id
-                                                lastEditedSectionId = section.id
-                                            }
-                                        },
-                                        onDiscard = { offeredTranscript = offeredTranscript - question.id },
-                                        /*
-                                         * COPY AND DOWNLOAD OVER THE OFFERED TAKE.
-                                         *
-                                         * WHY IT MATTERS ON THIS SURFACE AND NOT MERELY FOR PARITY:
-                                         * the two buttons this panel already had are Add to answer,
-                                         * which MIXES the machine's words into what a person wrote,
-                                         * and Discard, which throws the take away. Neither keeps it
-                                         * as a separate second reading, so a researcher who wanted
-                                         * one had to retype it off the screen — in a courtyard, from
-                                         * a box that empties the moment either button is pressed.
-                                         *
-                                         * NAMED BY SECTION CODE AND QUESTION NUMBER, not by the
-                                         * prompt. A prompt runs to two thousand characters and
-                                         * `transcriptDocumentFileName` cuts at sixty, so a folder of
-                                         * takes from one sitting would be a folder of files sharing
-                                         * their first sixty characters. The code and the number are
-                                         * short, unique within the sitting, and are what the
-                                         * researcher has written on the page in front of them.
-                                         *
-                                         * THE SAME WRITER AS EVERY OTHER SAVE IN THIS APP. Not a
-                                         * second saver: `saveTranscriptToDownloads` carries the
-                                         * IS_PENDING handshake, the pre-Q permission check, the
-                                         * `filesDir` fallback and the read-back of the name
-                                         * MediaProvider actually used — all four learned from field
-                                         * failures, and all four things a second copy would get
-                                         * wrong quietly.
-                                         *
-                                         * RE-READ AT THE PRESS rather than captured, so the bytes
-                                         * saved are the bytes the panel is drawing: the button only
-                                         * exists while an offer is on screen, and an offer that has
-                                         * just been accepted or discarded must not still be written
-                                         * to a file from a stale closure.
-                                         */
-                                        filenameBase = "Section-${section.code}-Q${question.sortOrder}-transcript",
-                                        onSave = { fileName ->
-                                            offeredTranscript[question.id]?.let { offer ->
-                                                saveTranscriptToDownloads(context, repository, scope, fileName, offer)
-                                            }
+                                /*
+                                 * ── THE STORED ANSWER IS SHOWN EVEN THOUGH THE BOXES ARE HIDDEN,
+                                 *    AND THE PREFERENCE IS NOT TOUCHED ────────────────────────
+                                 *
+                                 * "Do not display answer text boxes" is ON by default and it is the
+                                 * reader's own choice about CAPTURE: these interviews are conducted
+                                 * by talking a whole section through with the artisan, and twenty
+                                 * empty boxes under the record button are noise in front of somebody
+                                 * who is interviewing. So the switch is left exactly as they set it
+                                 * — flipping it on an edit would be the app overruling a control the
+                                 * reader can see is on, and it would open an EDITOR over words a
+                                 * colleague typed at the moment the reader only wanted to read them.
+                                 *
+                                 * BUT A PREFERENCE ABOUT EMPTY BOXES IS NOT A CLAIM THAT RECORDED
+                                 * ANSWERS SHOULD BE INVISIBLE, and read as one it was the second
+                                 * half of the owner's complaint: a researcher opening their own
+                                 * interview could not see a single answer they had typed, on any
+                                 * screen, at all. `RECORDED` draws those words read-only beside the
+                                 * recorder, with one line saying which switch brings the box back.
+                                 * On the pure-audio sitting this default was chosen for there are no
+                                 * stored answers, so nothing new is drawn and the capture screen is
+                                 * exactly what it was.
+                                 *
+                                 * The live value, not the stored column — see
+                                 * `questionnaireAnswerDisplay`: somebody who turns the switch off,
+                                 * types, and turns it back on must see what they just typed.
+                                 */
+                                when (questionnaireAnswerDisplay(hideAnswers, answers[question.id]?.value)) {
+                                    QuestionnaireAnswerDisplay.RECORDED -> {
+                                        Column(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .background(MaterialTheme.field.warningContainer, RoundedCornerShape(10.dp))
+                                                .padding(10.dp),
+                                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                                        ) {
+                                            // THE AMBER PANEL NEVER CARRIES THIS ON ITS OWN. A reader
+                                            // who does not separate the colours still has to know that
+                                            // this is a recorded answer and not a box they can type in,
+                                            // so the heading says it and the hint says how to change it.
+                                            Text(
+                                                "Recorded answer",
+                                                color = MaterialTheme.field.onWarningContainer,
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.SemiBold
+                                            )
+                                            // FLATTENED, ALWAYS. The column may hold a rich document,
+                                            // and `{"blocks":[{"kind":"PARAGRAPH"…` printed where an
+                                            // artisan's words belong is the defect
+                                            // `questionnaireAnswerPlain` was written to end.
+                                            Text(
+                                                questionnaireAnswerPlain(answers[question.id]?.value),
+                                                color = MaterialTheme.field.onWarningContainer,
+                                                fontSize = 13.sp,
+                                                lineHeight = 19.sp
+                                            )
+                                            Text(
+                                                QUESTIONNAIRE_RECORDED_ANSWER_HINT,
+                                                color = MaterialTheme.field.onWarningContainer,
+                                                fontSize = 11.sp,
+                                                lineHeight = 15.sp
+                                            )
                                         }
-                                    )
+                                    }
+                                    QuestionnaireAnswerDisplay.EDITOR -> {
+                                        /*
+                                         * ── THE ANSWER BOX IS A RICH TEXT BOX, AND THE MICROPHONE IS
+                                         *    INSIDE IT ────────────────────────────────────────────
+                                         *
+                                         * Owner, 2026-08-30: the transcript *"should appear in the rich
+                                         * text box"*. The web's twin of this box became a `RichTextField`
+                                         * on 2026-08-31 and this one stayed a plain `TextInput`, which
+                                         * left the handset unable to READ an answer a colleague had
+                                         * formatted from the office — `{"blocks":[{"kind":"PARAGRAPH"…`
+                                         * in place of an artisan's words, overwritten the moment anybody
+                                         * typed. `QuestionnaireAnswerText.kt` argues what the column may
+                                         * hold and lists the readers that were taught to flatten it.
+                                         *
+                                         * NOTHING ABOUT THE PAYLOAD CHANGES for an answer nobody
+                                         * formats: `questionnaireAnswerStored` writes prose for an
+                                         * unformatted document and only stringifies once a mark, a list,
+                                         * a heading, an alignment or a table is actually applied. So
+                                         * `answers[question.id]` is still a `String`, the request body is
+                                         * unchanged, and the offline queue carries the same field.
+                                         *
+                                         * `resetKey` IS LOAD-BEARING. The editor parses its seed once and
+                                         * re-seeds only on a value it did not itself emit; keying it on
+                                         * the interview being edited is what stops one sitting's answers
+                                         * appearing in the boxes of the next one opened in the same
+                                         * composition.
+                                         */
+                                        QuestionnaireAnswerBox(
+                                            value = answers[question.id]?.value.orEmpty(),
+                                            onValueChange = { value ->
+                                                answers[question.id]?.let { state -> state.value = value }
+                                                lastEditedSectionId = section.id
+                                            },
+                                            resetKey = editing?.id to question.id,
+                                            onError = onError,
+                                            modifier = Modifier.fillMaxWidth()
+                                        )
+                                        QuestionnaireQuickTranscript(
+                                            busy = question.id in transcribing,
+                                            problem = quickProblem[question.id],
+                                            machine = machineText[question.id],
+                                            current = answers[question.id]?.value.orEmpty(),
+                                            offered = offeredTranscript[question.id],
+                                            onAccept = {
+                                                val text = offeredTranscript[question.id]
+                                                if (text != null) {
+                                                    /*
+                                                      ADDED TO THE ANSWER, NOT SUBSTITUTED FOR IT. The
+                                                      offer only exists because the box holds words a
+                                                      person wrote, so the button that accepts it must
+                                                      not be the one control on this screen that deletes
+                                                      them.
+
+                                                      AND `machineText` IS DELIBERATELY LEFT ALONE. The
+                                                      box now holds the researcher's words AND the
+                                                      machine's, so it IS edited and the flag must go on
+                                                      saying so. Updating it here would relabel a mixed
+                                                      answer as untouched machine output, which is the
+                                                      one claim the flag exists to prevent.
+                                                    */
+                                                    answers[question.id]?.let { state ->
+                                                        state.value = questionnaireAcceptOffer(state.value, text)
+                                                    }
+                                                    offeredTranscript = offeredTranscript - question.id
+                                                    lastEditedSectionId = section.id
+                                                }
+                                            },
+                                            onDiscard = { offeredTranscript = offeredTranscript - question.id },
+                                            /*
+                                             * COPY AND DOWNLOAD OVER THE OFFERED TAKE.
+                                             *
+                                             * WHY IT MATTERS ON THIS SURFACE AND NOT MERELY FOR PARITY:
+                                             * the two buttons this panel already had are Add to answer,
+                                             * which MIXES the machine's words into what a person wrote,
+                                             * and Discard, which throws the take away. Neither keeps it
+                                             * as a separate second reading, so a researcher who wanted
+                                             * one had to retype it off the screen — in a courtyard, from
+                                             * a box that empties the moment either button is pressed.
+                                             *
+                                             * NAMED BY SECTION CODE AND QUESTION NUMBER, not by the
+                                             * prompt. A prompt runs to two thousand characters and
+                                             * `transcriptDocumentFileName` cuts at sixty, so a folder of
+                                             * takes from one sitting would be a folder of files sharing
+                                             * their first sixty characters. The code and the number are
+                                             * short, unique within the sitting, and are what the
+                                             * researcher has written on the page in front of them.
+                                             *
+                                             * THE SAME WRITER AS EVERY OTHER SAVE IN THIS APP. Not a
+                                             * second saver: `saveTranscriptToDownloads` carries the
+                                             * IS_PENDING handshake, the pre-Q permission check, the
+                                             * `filesDir` fallback and the read-back of the name
+                                             * MediaProvider actually used — all four learned from field
+                                             * failures, and all four things a second copy would get
+                                             * wrong quietly.
+                                             *
+                                             * RE-READ AT THE PRESS rather than captured, so the bytes
+                                             * saved are the bytes the panel is drawing: the button only
+                                             * exists while an offer is on screen, and an offer that has
+                                             * just been accepted or discarded must not still be written
+                                             * to a file from a stale closure.
+                                             */
+                                            filenameBase = "Section-${section.code}-Q${question.sortOrder}-transcript",
+                                            onSave = { fileName ->
+                                                offeredTranscript[question.id]?.let { offer ->
+                                                    saveTranscriptToDownloads(context, repository, scope, fileName, offer)
+                                                }
+                                            }
+                                        )
+                                    }
+                                    // Nothing recorded and the boxes are hidden: the record button
+                                    // alone, which is what this screen is for.
+                                    QuestionnaireAnswerDisplay.NONE -> Unit
                                 }
                             }
                             // Per-section live upload-progress card: the clips recorded/picked for THIS
@@ -18275,6 +18408,102 @@ private fun QuestionnaireForm(
         // artisan, workshop and process forms to fix this one screen, and four forms that say
         // "Notes" about notes are not wrong.
         MultiNoteInput(label = "Interview notes", value = notes) { notes = it }
+        /**
+         * Link every clip and attachment this session captured to [interviewId], and upload whatever
+         * has not already streamed.
+         *
+         * ── WHY THIS IS A FUNCTION AND NOT STILL INLINE IN `submit` ─────────────────────────────
+         *
+         * It has a SECOND caller now: the merge offer below. When a save is refused with the
+         * duplicate-artisan-set 409, the PATCH is the first statement in the save's `runCatching`
+         * block, so nothing reached the server — the clips a researcher recorded in the last hour are
+         * still sitting in `qMedia` on this phone, unlinked. If the researcher then accepts the offer
+         * and this interview is deleted by the merge, those clips have nothing left to attach to and
+         * are simply gone, with the SAVED tick on screen. So the merge path calls this FIRST, against
+         * THIS interview, and lets the route repoint the media onto the survivor — which it does
+         * unconditionally (`MediaFile.questionnaireInterviewId`, and the route's own note that a
+         * merge which did not repoint would orphan every recording rather than move it).
+         *
+         * Lifted verbatim out of `submit`; the only change is that the id is a parameter. Everything
+         * it reads — the captions, the nomenclature, the eager-upload bookkeeping, the location on
+         * the attachment batch — is the same code that has always run on a save, because two ways of
+         * naming one clip is how a recording stops being findable by the section it belongs to.
+         */
+        suspend fun persistCapturedMedia(interviewId: String) {
+            // Upload all recorded clips, whether keyed by question id or by section.
+            val questionsById = questions.associateBy { it.id }
+            val sectionsById = sections.associateBy { it.id }
+            questionAudio.forEach { (key, uris) ->
+                val caption: String
+                val hint: String
+                // Nomenclature parts: section code + question number (or "SEC" for a whole
+                // section take), and the interview name — fed into the per-clip filename
+                // SECTION_QUESTION_INTERVIEWNAME_DURATIONHHMMSS_DATETIMEDDMMYYYYHHMM.
+                val sectionCodePart: String?
+                val questionNumberPart: String?
+                if (key.startsWith("section:")) {
+                    val section = sectionsById[key.removePrefix("section:")]
+                    caption = "Section audio: ${section?.code ?: ""} ${section?.title ?: ""}".trim()
+                    hint = title.ifBlank { section?.title ?: "Section recording" }
+                    sectionCodePart = section?.code
+                    questionNumberPart = "SEC"
+                } else {
+                    val question = questionsById[key]
+                    caption = "Question audio: ${question?.sectionCode ?: ""}${question?.sortOrder ?: ""} ${question?.prompt ?: ""}".trim()
+                    hint = title.ifBlank { question?.prompt ?: "Question recording" }
+                    sectionCodePart = question?.sectionCode
+                    questionNumberPart = question?.sortOrder?.toString()
+                }
+                uris.forEachIndexed { index, uri ->
+                    val baseName = questionnaireClipBaseName(
+                        context = context,
+                        sectionCode = sectionCodePart,
+                        questionNumber = questionNumberPart,
+                        interviewName = title,
+                        uri = uri
+                    // Append the clip index when a target has more than one clip, so two
+                    // recordings of the same question in the same minute never collide.
+                    ).let { if (uris.size > 1) "${it}_${index + 1}" else it }
+                    // Prefer the eagerly pre-uploaded object (awaiting any still-in-flight
+                    // transfer); only fall back to a fresh upload if staging never ran/failed.
+                    val staged = qMedia.stagedDeferred[uri]?.let { runCatching { it.await() }.getOrNull() }
+                        ?: qMedia.staged[uri]
+                    if (staged != null) {
+                        repository.completeStaged(
+                            staged = staged,
+                            linkedRecordType = "questionnaire",
+                            linkedRecordId = interviewId,
+                            recordName = hint,
+                            caption = caption,
+                            location = null,
+                            batchIndex = index + 1,
+                            overrideBaseName = baseName
+                        )
+                    } else {
+                        repository.uploadMedia(
+                            context = context,
+                            uri = uri,
+                            linkedRecordType = "questionnaire",
+                            linkedRecordId = interviewId,
+                            caption = caption,
+                            location = null,
+                            titleHint = hint,
+                            batchIndex = index + 1,
+                            overrideBaseName = baseName
+                        )
+                    }
+                }
+            }
+            // General attach-media batch (photos/videos/files/extra audio) — eager-uploaded
+            // with progress while filling the form, finalised and linked to the interview here.
+            media.location = capturedLocation
+            uploadAttachments(
+                repository, context, media, "questionnaire", interviewId,
+                title.ifBlank { "Interview" },
+                "Field media for ${title.trim().ifBlank { "interview" }}"
+            )
+        }
+
         fun submit() {
             if (!validateRequired(listOf(
                     RequiredCheck(title.isBlank(), { titleError = it }, titleFocus)
@@ -18462,81 +18691,50 @@ private fun QuestionnaireForm(
                                 )
                             )
                         }
-                        // Upload all recorded clips, whether keyed by question id or by section.
-                        val questionsById = questions.associateBy { it.id }
-                        val sectionsById = sections.associateBy { it.id }
-                        questionAudio.forEach { (key, uris) ->
-                            val caption: String
-                            val hint: String
-                            // Nomenclature parts: section code + question number (or "SEC" for a whole
-                            // section take), and the interview name — fed into the per-clip filename
-                            // SECTION_QUESTION_INTERVIEWNAME_DURATIONHHMMSS_DATETIMEDDMMYYYYHHMM.
-                            val sectionCodePart: String?
-                            val questionNumberPart: String?
-                            if (key.startsWith("section:")) {
-                                val section = sectionsById[key.removePrefix("section:")]
-                                caption = "Section audio: ${section?.code ?: ""} ${section?.title ?: ""}".trim()
-                                hint = title.ifBlank { section?.title ?: "Section recording" }
-                                sectionCodePart = section?.code
-                                questionNumberPart = "SEC"
-                            } else {
-                                val question = questionsById[key]
-                                caption = "Question audio: ${question?.sectionCode ?: ""}${question?.sortOrder ?: ""} ${question?.prompt ?: ""}".trim()
-                                hint = title.ifBlank { question?.prompt ?: "Question recording" }
-                                sectionCodePart = question?.sectionCode
-                                questionNumberPart = question?.sortOrder?.toString()
-                            }
-                            uris.forEachIndexed { index, uri ->
-                                val baseName = questionnaireClipBaseName(
-                                    context = context,
-                                    sectionCode = sectionCodePart,
-                                    questionNumber = questionNumberPart,
-                                    interviewName = title,
-                                    uri = uri
-                                // Append the clip index when a target has more than one clip, so two
-                                // recordings of the same question in the same minute never collide.
-                                ).let { if (uris.size > 1) "${it}_${index + 1}" else it }
-                                // Prefer the eagerly pre-uploaded object (awaiting any still-in-flight
-                                // transfer); only fall back to a fresh upload if staging never ran/failed.
-                                val staged = qMedia.stagedDeferred[uri]?.let { runCatching { it.await() }.getOrNull() }
-                                    ?: qMedia.staged[uri]
-                                if (staged != null) {
-                                    repository.completeStaged(
-                                        staged = staged,
-                                        linkedRecordType = "questionnaire",
-                                        linkedRecordId = interviewId,
-                                        recordName = hint,
-                                        caption = caption,
-                                        location = null,
-                                        batchIndex = index + 1,
-                                        overrideBaseName = baseName
-                                    )
-                                } else {
-                                    repository.uploadMedia(
-                                        context = context,
-                                        uri = uri,
-                                        linkedRecordType = "questionnaire",
-                                        linkedRecordId = interviewId,
-                                        caption = caption,
-                                        location = null,
-                                        titleHint = hint,
-                                        batchIndex = index + 1,
-                                        overrideBaseName = baseName
-                                    )
-                                }
-                            }
-                        }
-                        // General attach-media batch (photos/videos/files/extra audio) — eager-uploaded
-                        // with progress while filling the form, finalised and linked to the interview here.
-                        media.location = capturedLocation
-                        uploadAttachments(
-                            repository, context, media, "questionnaire", interviewId,
-                            title.ifBlank { "Interview" },
-                            "Field media for ${title.trim().ifBlank { "interview" }}"
-                        )
-                    }.onFailure {
+                        persistCapturedMedia(interviewId)
+                    }.onFailure { failure ->
                         saveState = SaveState.IDLE
-                        onError(it.message ?: "Unable to save questionnaire")
+                        /*
+                         * ── THIS ARM PRINTED "HTTP 409 CONFLICT" AT A RESEARCHER ────────────────
+                         *
+                         * It read `it.message`, which for a Retrofit failure is the status line and
+                         * nothing else: every refusal this API writes for a person to read — the
+                         * named field on a 422, the sentence on a 403, the artisan-set clash — was
+                         * replaced on this screen by a number. `questionnaireSaveRefusal` reads the
+                         * error body ONCE and hands back both halves: the sentence to print, and the
+                         * machine-readable tag that decides whether there is anything better to do
+                         * than print it. (Once, because Retrofit buffers the body and `string()`
+                         * consumes it — asking twice silently answers the second question with
+                         * nothing. Everything that is not a 409 it defers to `apiErrorMessage`, so
+                         * the pydantic list keeps its one existing reader.)
+                         *
+                         * ── AND THE ONE REFUSAL THAT IS NOT A DEAD END ──────────────────────────
+                         *
+                         * `duplicate_artisan_set` means another interview already covers exactly
+                         * these artisans. That is the F/D case: two researchers recorded one artisan
+                         * set as two sittings titled by the sections they covered, the F one omitted
+                         * an artisan, and adding that artisan is what collides. The correction is
+                         * right and had nowhere to go. The server now names the holder so the offer
+                         * below can name it too — the fold is never automatic and never silent.
+                         *
+                         * EDIT ONLY, deliberately. `POST /questionnaire/interviews` already folds a
+                         * colliding CREATE into the holder by itself (`merge_into_interview`), so a
+                         * create never sees this code; and if it somehow did there would be no saved
+                         * source row for `merge-into/` to move.
+                         */
+                        val refusal = failure.questionnaireSaveRefusal("Unable to save questionnaire")
+                        val offer = if (isEdit) {
+                            questionnaireMergeOffer(
+                                refusal = refusal,
+                                // Counted off the form rather than the refusal: the 409 is about the
+                                // artisan roster and says nothing about answers.
+                                answeredQuestions = answers.values.count { questionnaireAnswerPlain(it.value).isNotBlank() },
+                                // Still on this phone. The PATCH is the first statement of the save,
+                                // so nothing was uploaded before it failed.
+                                pendingUploads = qMedia.uris.size + media.uris.size,
+                            )
+                        } else null
+                        if (offer != null) mergeOffer = offer else onError(refusal.message)
                         return@launch
                     }
                     // Clear the staged-media bookkeeping so leaving the form doesn't delete the objects
@@ -18604,6 +18802,124 @@ private fun QuestionnaireForm(
             idleLabel = if (isEdit) "Update interview" else "Save questionnaire"
         ) { submit() }
         Text("Recordings and attached media upload as you go and link to this interview automatically; audio is queued for transcription.", color = Muted, fontSize = 12.sp)
+
+        /* ══════════════════════════════════════════════════════════════════════════════════════
+         * "D BLACK POTTERY ALREADY COVERS THESE ARTISANS. MOVE THIS INTERVIEW INTO IT?"
+         * ══════════════════════════════════════════════════════════════════════════════════════
+         *
+         * THE CONFIRMATION IS THE WHOLE FEATURE. The server refuses a colliding artisan set and goes
+         * on refusing it; the fold exists only because a person read a sentence naming the holder and
+         * pressed a button naming it again. Nothing here is automatic, and the dialog states the part
+         * that cannot be undone — this interview is then removed — in the confirmation itself rather
+         * than hiding it behind the verb "move".
+         *
+         * The confirm sits on the primary (purple-700) because it is the action; Cancel is plain.
+         */
+        mergeOffer?.let { offer ->
+            AlertDialog(
+                // NOT DISMISSIBLE MID-FLIGHT. A tap outside while the merge is in the air would take
+                // the dialog away while the source row is being deleted, leaving the researcher on a
+                // form for a record that no longer exists and no sentence saying why.
+                onDismissRequest = { if (!merging) mergeOffer = null },
+                confirmButton = {
+                    TextButton(
+                        enabled = !merging,
+                        onClick = {
+                            val source = editing ?: return@TextButton
+                            scope.launch {
+                                merging = true
+                                saveState = SaveState.SAVING
+                                runCatching {
+                                    // THE CLIPS GO UP FIRST, ONTO THE SOURCE. They are still on this
+                                    // phone — the PATCH that failed was the first statement of the
+                                    // save — and the route repoints every MediaFile pointing at this
+                                    // row onto the survivor. Merging first would delete the only
+                                    // record they could ever have been attached to.
+                                    persistCapturedMedia(source.id)
+                                    repository.mergeQuestionnaireInterview(source.id, offer.targetId)
+                                }.onSuccess {
+                                    merging = false
+                                    mergeOffer = null
+                                    // The same bookkeeping a save does, and for the same reason:
+                                    // leaving the form must not delete objects that are now linked,
+                                    // and the keyed map must not re-upload them.
+                                    media.reset()
+                                    qMedia.reset()
+                                    questionAudio = emptyMap()
+                                    clearQuickTranscripts()
+                                    saveState = SaveState.SAVED
+                                    // SAID, because this screen navigates away and the row they were
+                                    // editing is gone. Without a sentence the interview simply
+                                    // vanishes from the list they come back to, which is
+                                    // indistinguishable from having deleted it by accident.
+                                    onError(questionnaireMergedSentence(offer.targetTitle))
+                                    delay(SAVED_CONFIRM_MS)
+                                    onSaved()
+                                }.onFailure { failure ->
+                                    merging = false
+                                    mergeOffer = null
+                                    saveState = SaveState.IDLE
+                                    val refusal = failure.questionnaireSaveRefusal(
+                                        "The merge could not be completed. Nothing has been moved."
+                                    )
+                                    // The answer-conflict 409 gets a list; the two 422s (different
+                                    // workshops, an artisan only this interview covers) are complete
+                                    // sentences already and go to the message channel.
+                                    val report = questionnaireMergeConflictReport(refusal)
+                                    if (report != null) mergeConflict = report else onError(refusal.message)
+                                }
+                            }
+                        }
+                    ) {
+                        Text(
+                            if (merging) "Moving…" else offer.confirmLabel,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                },
+                dismissButton = {
+                    TextButton(enabled = !merging, onClick = { mergeOffer = null }) { Text("Cancel") }
+                },
+                title = { Text(offer.heading) },
+                text = { Text(offer.body) }
+            )
+        }
+
+        /* ══════════════════════════════════════════════════════════════════════════════════════
+         * THE MERGE THE SERVER REFUSED, WITH THE QUESTIONS NAMED
+         * ══════════════════════════════════════════════════════════════════════════════════════
+         *
+         * Both interviews answer some question, and they answer it differently. The route refuses and
+         * moves NOTHING rather than picking a winner, because the losing wording would go with the
+         * deleted source and no 200 would ever mention it. Every such question is listed here — a
+         * count alone is a refusal nobody can act on, and the researcher's next move is to open each
+         * one and decide which wording is right.
+         */
+        mergeConflict?.let { report ->
+            AlertDialog(
+                onDismissRequest = { mergeConflict = null },
+                confirmButton = { TextButton(onClick = { mergeConflict = null }) { Text("Close") } },
+                title = { Text("Two answers to one question") },
+                text = {
+                    // SCROLLABLE, because a prompt on this instrument runs to a couple of thousand
+                    // characters and there can be several: a dialog that clipped the list would hide
+                    // exactly the questions it exists to name.
+                    Column(
+                        modifier = Modifier.verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Text(report.heading, fontSize = 13.sp, lineHeight = 18.sp)
+                        report.questions.forEach { question ->
+                            Text("•  $question", fontSize = 12.sp, lineHeight = 17.sp)
+                        }
+                        if (report.remedy.isNotBlank()) {
+                            Text(report.remedy, fontSize = 12.sp, lineHeight = 17.sp, color = Muted)
+                        }
+                    }
+                }
+            )
+        }
     }
 }
 
