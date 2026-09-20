@@ -1038,6 +1038,130 @@ async def inspector_accounts() -> dict[str, Any]:
     return await inspector_service.eligible_inspectors()
 
 
+async def roster_representation() -> dict[str, Any]:
+    """How much of the empanelled roster this register is STRUCTURALLY unable to show.
+
+    ── THE QUESTION THIS ANSWERS, AND THE REPORT THAT PROMPTED IT ─────────────────────────────────
+
+    Measured against production on 2026-09-20, with the owner asking why three screens disagreed:
+
+        /admin/access            47   AccessRoster rows      — invitations and requests, by EMAIL
+        the designer roster      35   DesignerRoster rows    — empanelment, also by EMAIL
+        this register             9   User rows              — accounts, by ID
+
+    The nine was arithmetically right and the screen was still wrong. 35 = 9 listed + 24 with no
+    ``User`` row at all + 2 holding an account under another role (one of them an administrator,
+    which :data:`WITHHELD_PERSON_ROLES` withholds on purpose and which ``withheldAccounts`` already
+    reported). Nothing said the other twenty-six existed.
+
+    ── WHY THEY CANNOT SIMPLY BE LISTED ──────────────────────────────────────────────────────────
+
+    :func:`empanelled_designer_accounts` reads ``User`` — it has to, because every column this
+    register prints (role, workshops, standing, progress) hangs off an account. ``DesignerRoster`` is
+    keyed by email and is an INVITATION: a row there is a promise that an address may become a
+    designer, not a person who has. Somebody empanelled who has never signed up has no id, no role
+    and no workshops, and a row for them would be four empty columns under a name.
+
+    So they are COUNTED rather than listed, and the count is the most actionable number on the
+    screen: those are people the ministry invited who never arrived.
+
+    ── EVERY FIGURE IS DERIVED, NONE IS WRITTEN DOWN ─────────────────────────────────────────────
+
+    The eligible role set is recomputed from ``workshop_capable_roles()`` minus the never-roster-gated
+    tiers — the SAME expression :func:`empanelled_designer_accounts` passes ``include_admins=False``
+    to produce — rather than spelled as a literal. A hardcoded "DESIGNER" here would be a second
+    opinion about who this register lists, and it would stop agreeing with the fold the day a second
+    workshop-capable role is added.
+
+    ⚠ **COUNTS ONLY ON THE WIRE, NEVER THE ADDRESSES.** The whole point of ``include_admins=False``
+    is that this router never names a privileged account; an "empanelled but absent" list would hand
+    over exactly the roster emails that flag exists to keep back, and to a tier that is refused every
+    other designer directory. A number discloses nothing and is the entire answer to "why nine".
+
+    ``rosterReadTruncated`` rides along because :func:`active_roster_emails` can be cut at
+    ``ACTIVE_ROSTER_READ_LIMIT``, and a gap computed from a short roster is a gap that understates
+    itself — the one failure mode that would make this number worse than no number.
+    """
+    from app.services.design_workshop_viewers import active_roster_emails
+
+    admitted, roster_cut = await active_roster_emails()
+    eligible_roles = [
+        role for role in designers.workshop_capable_roles() if role not in designers.NEVER_ROSTER_GATED_ROLES
+    ]
+    if not admitted:
+        return {
+            "rosterAdmitted": 0,
+            "rosterWithoutAccount": 0,
+            "rosterOtherRole": 0,
+            "rosterReadTruncated": roster_cut,
+        }
+
+    # ``mode: "insensitive"`` for the reason `workshop_capable_accounts` gives at its own arm:
+    # ``admitted`` is lower-cased and ``User.email`` is not, so an address stored shouting would
+    # match no roster row — and here that would COUNT a real account as a missing one, which is the
+    # gap overstating itself rather than under.
+    accounts = await db.user.find_many(
+        where={"email": {"in": admitted, "mode": "insensitive"}},
+        take=designers.DIRECTORY_TAKE,
+    )
+    matched = {str(getattr(user, "email", "") or "").strip().lower() for user in accounts}
+    matched.discard("")
+    other_role = sum(1 for user in accounts if getattr(user, "role", None) not in eligible_roles)
+
+    return {
+        "rosterAdmitted": len(admitted),
+        # An admitted address with no account AT ALL. `matched` is what the database answered, so a
+        # roster row whose account was deleted counts here, which is correct: there is nothing to
+        # show for them either.
+        "rosterWithoutAccount": max(0, len(admitted) - len(matched)),
+        # An account exists and this register does not list it — an administrator (withheld by
+        # design) or somebody empanelled who signed up under a different role.
+        "rosterOtherRole": other_role,
+        # Either read can be cut. Both make the gap understate itself, so both are reported as one
+        # flag the client can turn into a caveat.
+        "rosterReadTruncated": roster_cut or len(accounts) >= designers.DIRECTORY_TAKE,
+    }
+
+
+def roster_representation_note(report: dict[str, Any], listed: int) -> str | None:
+    """The sentence the screen prints, composed from the counts and never from a literal.
+
+    ``None`` when every empanelled designer is on screen, because a caveat that is always there is a
+    caveat nobody reads. The wording names the REASON rather than the number alone: "24 are missing"
+    invites a bug report, and "24 have not created an account yet" is a fact somebody can act on.
+
+    The two halves are reported separately because they are different problems with different
+    remedies — one is chasing people who were invited and never arrived, the other is an account
+    whose role is not the one the roster promised.
+    """
+    missing = int(report.get("rosterWithoutAccount") or 0)
+    other = int(report.get("rosterOtherRole") or 0)
+    if missing == 0 and other == 0:
+        return None
+
+    parts: list[str] = []
+    if missing:
+        parts.append(
+            f"{missing} empanelled designer(s) have not created an account yet, so this register "
+            "cannot show them — there is no role, no workshop and no progress to report against an "
+            "invitation."
+        )
+    if other:
+        parts.append(
+            f"{other} further empanelled address(es) hold an account under a role this register "
+            "does not list, which includes any platform administrator."
+        )
+    parts.append(
+        f"{listed} of {int(report.get('rosterAdmitted') or 0)} empanelled designers are listed above."
+    )
+    if report.get("rosterReadTruncated"):
+        parts.append(
+            "The roster read was cut at its own ceiling, so these figures are a floor rather than a "
+            "total."
+        )
+    return " ".join(parts)
+
+
 async def empanelled_designer_accounts() -> tuple[list[Any], bool]:
     """The empanelled designer roster, and whether the read was cut at its ceiling.
 

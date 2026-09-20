@@ -799,7 +799,13 @@ def test_the_designer_register_adds_only_the_two_link_counts_it_documents() -> N
         "workshopsCreated",
         "workshopsNamedOn",
     }
-    assert _keys_written_to(route.list_designers, "payload") == {"unpostedAccountsTruncated"}
+    assert _keys_written_to(route.list_designers, "payload") == {
+        "unpostedAccountsTruncated",
+        # Added 2026-09-20. Not a column on a person — a CAVEAT about who the register cannot
+        # contain at all. See the test below, and `register.roster_representation`.
+        "rosterRepresentation",
+        "rosterRepresentationNote",
+    }
     code = _code_of(route.list_designers)
     for forbidden in _ROSTER_JUDGEMENTS:
         assert forbidden not in code
@@ -809,6 +815,116 @@ def test_the_designer_register_adds_only_the_two_link_counts_it_documents() -> N
         "the designer register groups on the promoted stage-1 string, which is free-typed, "
         "unindexed and not an account — see the services module's people-register header"
     )
+
+
+# ── The roster this register cannot contain, counted rather than guessed ────────────────────────
+
+
+def test_the_designer_register_says_how_much_of_the_roster_it_cannot_show() -> None:
+    """**THE ANSWER TO "35 ON THE ROSTER PAGE, 9 HERE, WHY?"**, asserted so it cannot go quiet again.
+
+    Measured against production on 2026-09-20. The nine was arithmetically CORRECT — 24 of the
+    thirty-five empanelled addresses had no ``User`` row at all and 2 held an account under another
+    role, one of them an administrator this register withholds by design. Every number on the
+    payload was right and the screen still could not be believed, because nothing accounted for the
+    other twenty-six.
+
+    ``empanelled_designer_accounts`` reads ``User`` and must: every column this register prints
+    hangs off an account. ``DesignerRoster`` is keyed by EMAIL and is an invitation. So the gap is
+    structural, it can never be closed by listing harder, and the only honest repair is to COUNT it
+    and say so.
+    """
+    assert hasattr(register, "roster_representation")
+    assert hasattr(register, "roster_representation_note")
+    code = _code_of(route.list_designers)
+    assert "roster_representation" in code, (
+        "the designers route stopped measuring how much of the roster it cannot show"
+    )
+    # Its own shim, like every other optional read here: the caveat may fail without costing the
+    # register, and the client is told which.
+    assert "_representation_or_none" in code
+
+
+def test_the_roster_gap_derives_its_role_set_and_names_no_role() -> None:
+    """**NOTHING IS HARDCODED**, which the owner asked for by name.
+
+    A literal ``"DESIGNER"`` in the gap calculation would be a second opinion about who this
+    register lists, and it would stop agreeing with the fold the day a second workshop-capable role
+    is added — the gap would then report people as missing who are on screen. The eligible set is
+    recomputed from ``designers.workshop_capable_roles()`` minus the never-roster-gated tiers, which
+    is the SAME expression ``empanelled_designer_accounts`` produces by passing
+    ``include_admins=False``.
+    """
+    code = _code_of(register.roster_representation)
+    assert "workshop_capable_roles()" in code
+    assert "NEVER_ROSTER_GATED_ROLES" in code
+    for role in ROLE_RANK:
+        assert f'"{role}"' not in code, (
+            f"{role!r} is written out in roster_representation. The eligible set is derived, not "
+            "named — see this test's docstring."
+        )
+    # And it reads the same roster the fold reads, rather than a second opinion about who is
+    # empanelled.
+    assert "active_roster_emails" in code
+
+
+def test_the_roster_gap_discloses_counts_and_never_an_address() -> None:
+    """The whole point of ``include_admins=False`` is that this router never names a privileged
+    account. An "empanelled but absent" LIST would hand over exactly the roster addresses that flag
+    exists to keep back, to a tier refused every other designer directory. A number discloses
+    nothing and is the entire answer to "why nine"."""
+    code = _code_of(register.roster_representation)
+    assert "assignable_designers_payload" not in code, (
+        "the gap started shaping people ROWS; it reports counts only — see this test's docstring"
+    )
+    # The report is a returned dict literal rather than a mutated one, so it is read as source:
+    # every value it carries is a count or a flag, and there is nowhere for a name to travel.
+    for name in ("rosterAdmitted", "rosterWithoutAccount", "rosterOtherRole", "rosterReadTruncated"):
+        assert name in code, f"{name} is gone from the representation report"
+    for leak in ("email", "name", "fullName"):
+        assert f'"{leak}"' not in code, f"{leak!r} is being put on the wire by the gap report"
+
+
+def test_a_failed_gap_measurement_never_reads_as_nothing_missing() -> None:
+    """NULL IS NOT ZERO, one surface further out than ``_roll_up`` argues it.
+
+    A measurement that failed must not render as "every empanelled designer is on screen" — that is
+    the one answer this caption must never give by accident, and a zero would give it. The route
+    writes the figures as ``None`` and swaps in a sentence that says the measurement failed.
+    """
+    code = _code_of(route.list_designers)
+    assert "if representation is None:" in code
+    assert "could not be measured" in code
+
+
+def test_the_gap_sentence_is_absent_when_nothing_is_missing() -> None:
+    """A caveat that is always on screen is a caveat nobody reads, so the note is ``None`` when the
+    register accounts for the whole roster — and the client renders nothing rather than an empty
+    box."""
+    assert register.roster_representation_note(
+        {"rosterAdmitted": 9, "rosterWithoutAccount": 0, "rosterOtherRole": 0, "rosterReadTruncated": False},
+        9,
+    ) is None
+
+    note = register.roster_representation_note(
+        {"rosterAdmitted": 35, "rosterWithoutAccount": 24, "rosterOtherRole": 2, "rosterReadTruncated": False},
+        9,
+    )
+    assert note is not None
+    # The production numbers, in the sentence, derived from the arguments and not from a literal.
+    assert "24" in note and "2" in note and "9" in note and "35" in note
+    # It names the REASON rather than only the number: "24 are missing" invites a bug report.
+    assert "have not created an account yet" in note
+
+
+def test_a_cut_roster_read_says_the_gap_is_a_floor() -> None:
+    """A gap computed from a roster that was cut at its own ceiling UNDERSTATES itself, which is the
+    one failure mode that would make this number worse than no number at all."""
+    note = register.roster_representation_note(
+        {"rosterAdmitted": 500, "rosterWithoutAccount": 400, "rosterOtherRole": 0, "rosterReadTruncated": True},
+        100,
+    )
+    assert note is not None and "floor" in note
 
 
 def test_the_officer_register_adds_only_the_capacity_breakdown_it_documents() -> None:

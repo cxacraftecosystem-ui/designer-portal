@@ -80,7 +80,17 @@ test.describe("the envelope the server sends is the envelope the client declares
   test("the per-route extras are declared too", () => {
     // These are written onto `payload` and onto `row` in the three route bodies rather than in the
     // shared envelope, so the sweep above cannot see them.
-    for (const key of ["feedbackRead", "feedbackNote", "feedbackFiledTotal", "unpostedAccountsTruncated"]) {
+    for (const key of [
+      "feedbackRead",
+      "feedbackNote",
+      "feedbackFiledTotal",
+      "unpostedAccountsTruncated",
+      // Added 2026-09-20 with the roster-gap caveat — the answer to "35 on the roster page, 9
+      // here, why?". A key the server sends and no client type declares is the exact failure this
+      // whole section exists for, and it has already happened once on this payload.
+      "rosterRepresentation",
+      "rosterRepresentationNote"
+    ]) {
       expect(ROUTES, `the route no longer sends \`${key}\`; update this list deliberately`).toContain(`"${key}"`);
       expect(PEOPLE_PAGE_TYPE, `the server sends \`${key}\` and the client type omits it`).toContain(key);
     }
@@ -153,7 +163,8 @@ test.describe("the page prints the server's sentences", () => {
       "progressNote",
       "withheldAccountsNote",
       "unpostedAccountsNote",
-      "feedbackNote"
+      "feedbackNote",
+      "rosterRepresentationNote"
     ]) {
       expect(PAGE_CODE, `\`${note}\` is sent and never rendered — a disclosure nobody sees`).toContain(
         `data.${note}`

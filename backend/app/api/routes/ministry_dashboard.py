@@ -1090,13 +1090,29 @@ async def list_designers(
             logger.exception("ministry dashboard: reading the empanelled designer roster failed")
             return None
 
-    # FOUR READS, GATHERED, AND ONLY TWO OF THEM MAY FAIL. The viewer links and the creator accounts
-    # are what this register IS; the scoring and the roster are columns on it. See the section header.
-    links, creators, scored_map, roster = await gather_reads(
+    async def _representation_or_none() -> dict[str, Any] | None:
+        """How much of the roster this register structurally cannot show.
+
+        ITS OWN SHIM, like every other optional read here. It answers a CAVEAT rather than a column,
+        so a failure must cost the caveat and never the register — and the client is told the
+        difference, because a missing caveat that looks like "nothing is missing" is the exact
+        inversion this whole feature exists to prevent.
+        """
+        try:
+            return await register.roster_representation()
+        except Exception:
+            logger.exception("ministry dashboard: measuring roster representation failed")
+            return None
+
+    # FIVE READS, GATHERED, AND ONLY TWO OF THEM MAY FAIL. The viewer links and the creator accounts
+    # are what this register IS; the scoring, the roster and the representation gap are columns and
+    # captions on it. See the section header.
+    links, creators, scored_map, roster, representation = await gather_reads(
         register.designer_links(workshop_ids),
         register.creator_accounts(records),
         _people_progress_or_none(workshop_ids, "designer"),
         _roster_or_none(),
+        _representation_or_none(),
     )
 
     scoring_read = scored_map is not None
@@ -1180,6 +1196,34 @@ async def list_designers(
     # The roster read has a ceiling of its own (`designers.DIRECTORY_TAKE`) and a list that stopped
     # at it must say so — the inference two other clients already draw from the same number.
     payload["unpostedAccountsTruncated"] = roster_truncated
+
+    # ── WHY NINE, WHEN THE ROSTER SAYS THIRTY-FIVE ────────────────────────────────────────────
+    #
+    # Reported on 2026-09-20 against production: the designer roster showed 35 and this register
+    # showed 9, and the 9 was arithmetically correct — 24 of those addresses had no `User` row at
+    # all and 2 held an account under another role. Every number on the payload was right and the
+    # screen still could not be believed, because nothing accounted for the other twenty-six.
+    #
+    # The counts are DERIVED on every request, never stored and never written down: see
+    # `register.roster_representation`, which recomputes the eligible role set from
+    # `workshop_capable_roles()` rather than naming a role, so it cannot drift from the fold above.
+    #
+    # NULL IS NOT ZERO HERE EITHER. A failed measurement leaves every figure absent and the note
+    # says the measurement failed — it does NOT say "nobody is missing", which is what a zero would
+    # claim and is the one answer this screen must never give by accident.
+    if representation is None:
+        payload["rosterRepresentation"] = None
+        payload["rosterRepresentationNote"] = (
+            "How much of the empanelled roster this register can show could not be measured for "
+            "this request. The count above may therefore be smaller than the roster."
+        )
+    else:
+        payload["rosterRepresentation"] = representation
+        # `payload["total"]` and not the page's length: the caption says how many of the roster are
+        # "listed above", and a reader on page two must not be told that two designers are listed.
+        payload["rosterRepresentationNote"] = register.roster_representation_note(
+            representation, int(payload.get("total") or 0)
+        )
     return payload
 
 

@@ -123,8 +123,8 @@ no key is skipped wherever it sits.
 
 | Surface | Files | Cases | Runner |
 |---|---|---|---|
-| Backend unit (`backend/tests/`) | 221 | 4594 `def test_` | `python -m pytest -q` from `backend/` |
-| Web end-to-end (`frontend/e2e/`) | 198 | 2439 `test(` | Playwright, `frontend/playwright.config.ts` |
+| Backend unit (`backend/tests/`) | 221 | 4600 `def test_` | `python -m pytest -q` from `backend/` |
+| Web end-to-end (`frontend/e2e/`) | 199 | 2441 `test(` | Playwright, `frontend/playwright.config.ts` |
 | Android unit (`android/app/src/test/`) | 231 | 3095 `@Test` | `./gradlew :app:testDebugUnitTest` from `android/` |
 | Android instrumented (`android/app/src/androidTest/`) | 8 | 24 `@Test` | needs a device; not run in CI |
 
@@ -151,10 +151,10 @@ and this one asserted an absence it had never looked for.
 
 | Area | Tracked files | Tracked lines | Tree files | Tree lines |
 |---|---|---|---|---|
-| `backend/app` | 204 | 151,706 | 204 | 151,706 |
-| `frontend/app` | 92 | 51,688 | 92 | 51,688 |
+| `backend/app` | 204 | 151,874 | 204 | 151,874 |
+| `frontend/app` | 92 | 51,707 | 92 | 51,707 |
 | `frontend/components` | 300 | 129,126 | 300 | 129,126 |
-| `frontend/lib` | 125 | 66,616 | 125 | 66,616 |
+| `frontend/lib` | 125 | 66,634 | 125 | 66,634 |
 | `android/app/src/main/java` | 260 | 228,194 | 260 | 228,194 |
 
 Two columns because the two numbers get quoted interchangeably and disagree by however much work is

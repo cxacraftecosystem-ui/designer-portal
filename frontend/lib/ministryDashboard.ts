@@ -390,6 +390,24 @@ export type RegisterPeoplePage = PageResult<RegisterPerson> & {
   unpostedAccountsNote: string | null;
   /** The directory read has a ceiling of its own, and a list that stopped at it must say so. */
   unpostedAccountsTruncated?: boolean;
+  /**
+   * DESIGNERS ONLY — how much of the empanelled roster this register structurally cannot show.
+   *
+   * Reported 2026-09-20: the designer roster page showed 35 and this register showed 9. The 9 was
+   * arithmetically right — 24 of those addresses had no account at all and 2 held one under another
+   * role — and the screen was still wrong, because nothing accounted for the other twenty-six.
+   *
+   * `null` means the measurement FAILED, which is not the same as nothing being missing; the note
+   * beside it says which, and is the only thing that should ever be printed.
+   */
+  rosterRepresentation?: {
+    rosterAdmitted: number;
+    rosterWithoutAccount: number;
+    rosterOtherRole: number;
+    rosterReadTruncated: boolean;
+  } | null;
+  /** The server's sentence. Null when every empanelled designer is on screen. */
+  rosterRepresentationNote?: string | null;
   /** Inspectors only. */
   feedbackRead?: boolean;
   feedbackNote?: string | null;

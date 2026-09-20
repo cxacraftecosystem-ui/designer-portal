@@ -979,6 +979,25 @@ function PeoplePanel({
       {data.unpostedAccountsNote ? (
         <p className="text-xs leading-5 text-ink-500">{data.unpostedAccountsNote}</p>
       ) : null}
+
+      {/*
+        ── WHY THIS COUNT IS SMALLER THAN THE ROSTER ────────────────────────────────────────────
+
+        The answer to the owner's question of 2026-09-20 — "35 designers on the roster page, 9 here,
+        why?" — printed where the question gets asked instead of being derivable only by reading
+        three tables. It is `amber` rather than the muted ink the other notes use because it is the
+        one caption here that reports something MISSING rather than something scoped: an empanelled
+        designer who never created an account is a person the ministry invited and never heard from,
+        which is the most actionable row this screen could have if it could have rows for them.
+
+        It is absent entirely when nothing is missing — the server returns null then — because a
+        caveat that is always on screen is a caveat nobody reads.
+      */}
+      {data.rosterRepresentationNote ? (
+        <p className="rounded-md border border-amber-500 bg-amber-100 px-3 py-2 text-xs leading-5 text-amber-800">
+          {data.rosterRepresentationNote}
+        </p>
+      ) : null}
       {data.feedbackNote ? <p className="text-xs leading-5 text-ink-500">{data.feedbackNote}</p> : null}
       {/* A list that stopped short must say so: absence reading as non-existence is this
           repository's most repeated defect class. */}
