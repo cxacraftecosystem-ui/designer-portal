@@ -28,9 +28,17 @@ name: Android instrumented tests
 # remember to trigger is a required check that blocks every pull request forever.
 #
 # ─── IF THIS IS EVER PROMOTED TO A SCHEDULE ─────────────────────────────────────────────
-# Weekly is the shape that would make sense, alongside e2e-live.yml — same argument, same
-# non-blocking status. What would NOT make sense is per-push: see the cost paragraph. Whoever makes
-# that change should measure one run first and write the number into this comment.
+# Weekly is the shape that would make sense — same argument, same non-blocking status. What would
+# NOT make sense is per-push: see the cost paragraph. Whoever makes that change should measure one
+# run first and write the number into this comment.
+#
+# THIS USED TO CITE e2e-live.yml AS THE PRECEDENT TO SIT ALONGSIDE. It is no longer one: that
+# workflow was weekly from 2026-09-03 and had its `schedule:` REMOVED on 2026-09-21, because all
+# three of its scheduled runs went red and none was read — two of them on a Docker Hub image that
+# had been withdrawn, unrelated to anything in the repository. The precedent it now sets is the
+# cautionary one: a scheduled run that nobody has agreed to read is not a signal, it is a red badge
+# people learn to scroll past. Before scheduling THIS one, say who reads the result and what they
+# do about it.
 
 on:
   workflow_dispatch:

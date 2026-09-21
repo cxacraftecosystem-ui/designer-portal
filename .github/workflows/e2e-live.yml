@@ -10,12 +10,40 @@ name: Live end-to-end suite
 # every upload, every screen: covered by specs that ran when somebody remembered to type the
 # command.
 #
-# ─── THIS IS A WEEKLY SIGNAL, NOT A GATE, AND THAT IS DELIBERATE ─────────────────────────
+# ─── THIS IS AN ON-DEMAND TOOL, NOT A GATE, AND THAT IS DELIBERATE ───────────────────────
 # It stands up Postgres, MinIO, the API and a production build of the web app on one runner, which
 # is minutes of setup before the first assertion. Putting that on every pull request would triple
 # the cost of a one-line change and would go red for reasons — a slow container, a cold npm cache —
-# that have nothing to do with the diff. So it runs weekly and on demand, and it MUST NOT be added
-# to branch protection. When it goes red, somebody reads it; nothing is blocked in the meantime.
+# that have nothing to do with the diff. So it runs ONLY when somebody asks for it, and it MUST NOT
+# be added to branch protection. When it goes red, somebody reads it; nothing is blocked.
+#
+#     gh workflow run "Live end-to-end suite" --ref <branch>
+#
+# ─── IT USED TO BE WEEKLY. THE SCHEDULE WAS REMOVED 2026-09-21 ───────────────────────────
+# It ran `cron: 0 4 * * 1` — Monday 04:00 UTC — from 2026-09-03. That was dropped because the
+# cadence was not earning what it cost: a weekly run is only a signal if somebody reads it, and the
+# record says nobody was. What the three scheduled runs actually did:
+#
+#   2026-09-07  the stack came up in 3 minutes, then `Run the live specs` was killed at the 45-minute
+#               job timeout — and produced NOTHING to diagnose from, because the report-upload and
+#               Diagnostics steps are `if: failure()`, which does not fire on a cancellation.
+#   2026-09-14  failed in 14s: `docker compose up` could not pull the MinIO image.
+#   2026-09-21  failed in 12s, same pull. Fixed by repointing `docker-compose.yml` at quay.io.
+#
+# Two weeks red on an unrelated registry change, unnoticed. A red run nobody reads is not a signal,
+# it is noise with a cost — so this is now run deliberately, when somebody intends to act on the
+# answer. THE SUITE ITSELF IS UNCHANGED and every step below still works.
+#
+# ─── IF IT IS EVER PUT BACK ON A SCHEDULE ────────────────────────────────────────────────
+# Weekly is still the right shape — the argument for it (catch drift over time rather than gate a
+# change; a Monday failure is read at the start of a working week, not on a Friday evening) was
+# sound and is not what was wrong. Fix these two first, or the next schedule repeats this one:
+#   • THE 45-MINUTE TIMEOUT. `npm run test:e2e` is bare `playwright test` — ALL ~201 spec files at
+#     `workers: 1`, which re-runs the ~2,137 `-unit` tests `checks.yml` already gates on every PR
+#     to reach the ~355 live ones. Measure it before raising `timeout-minutes`; the number is not
+#     the problem.
+#   • THE DISCARDED EVIDENCE. Make the report-upload and Diagnostics steps `failure() ||
+#     cancelled()`, so a run killed by the timeout still leaves the traces and the API log behind.
 #
 # ─── IT IS docs/TESTING-E2E-LOCAL.md, SCRIPTED ───────────────────────────────────────────
 # The order of operations below is that document's "The sequence" section, in its order, for its
@@ -38,12 +66,8 @@ name: Live end-to-end suite
 #     applied before anything can be seeded.
 
 on:
-  schedule:
-    # Monday 04:00 UTC (09:30 IST). Weekly, because the whole point is to catch drift over time
-    # rather than to gate a change; Monday so a failure is read at the start of a working week and
-    # not on a Friday evening. GitHub's cron drifts under load — the day is what matters here, not
-    # the minute.
-    - cron: "0 4 * * 1"
+  # Manual only. The `schedule:` that stood here until 2026-09-21 is gone and the header says why;
+  # putting a cron back is a decision, not a tidy-up, and the header lists what to fix first.
   workflow_dispatch:
 
 permissions:
@@ -52,7 +76,7 @@ permissions:
 concurrency:
   # One at a time. Two runs would fight over the same host ports on different runners only in
   # theory, but they would also both be writing into the same seeded account set if anyone ever
-  # points this at a shared database, and serialising costs nothing on a weekly job.
+  # points this at a shared database, and serialising costs nothing on a job this occasional.
   group: e2e-live
   cancel-in-progress: false
 

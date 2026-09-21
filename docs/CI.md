@@ -500,14 +500,23 @@ UptimeRobot's free tier or Better Stack, pointed at
 external checker probes from several regions and can page rather than email. Keep this file when that
 lands, or delete it — but do not keep it and believe it is the alerting.
 
-**`.github/workflows/e2e-live.yml` — the live browser suite.** Monday 04:00 UTC and on demand. It is
+**`.github/workflows/e2e-live.yml` — the live browser suite.** **On demand only**
+(`gh workflow run "Live end-to-end suite" --ref <branch>`). It is
 [TESTING-E2E-LOCAL.md](TESTING-E2E-LOCAL.md)'s sequence, scripted: compose up, migrate, seed, start
 the API, `next build` then `next start`, `npm run test:e2e`. Until it landed, the only machine that
-had ever executed the non-`*-unit` specs was one developer laptop. It is a weekly signal and **must
-not** be added to branch protection — the stack takes minutes to stand up before the first assertion,
-and putting that on every pull request would triple the cost of a one-line change and go red for
-reasons unrelated to the diff. Retries stay at the config's zero, deliberately: a suite that runs
-once a week is exactly the one that must be believed.
+had ever executed the non-`*-unit` specs was one developer laptop. It **must not** be added to branch
+protection — the stack takes minutes to stand up before the first assertion, and putting that on
+every pull request would triple the cost of a one-line change and go red for reasons unrelated to the
+diff. Retries stay at the config's zero, deliberately: a suite run this rarely is exactly the one that
+must be believed.
+
+> **It was `cron: 0 4 * * 1` from 2026-09-03 and the schedule was removed 2026-09-21.** All three
+> scheduled runs were red and none was acted on: 09-07 hit the 45-minute job timeout and left no
+> artifacts behind (`if: failure()` does not fire on a cancellation), and 09-14 and 09-21 both died
+> in seconds when `docker compose up` could not pull MinIO — Docker Hub had dropped `minio/minio`,
+> fixed by repointing `docker-compose.yml` at quay.io. A weekly run is a signal only if somebody
+> reads it; two weeks red on an unrelated registry change says nobody was. The workflow's own header
+> carries the full record and lists the two things to fix before any schedule goes back on it.
 
 It brings the stack up with a **bare `docker compose up -d`**, which is a dependency on a promise
 [DOCKER.md](DOCKER.md) makes and `checks.yml`'s packaging job asserts: a profileless `up` starts
