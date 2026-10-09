@@ -209,9 +209,7 @@ fun UsageScreen(
             }
             routes?.window?.let { window ->
                 Text(
-                    "${window.days} days, up to ${window.maxDays} allowed in one request. " +
-                        "Dates with no time are read as UTC midnight, and the range is " +
-                        "${window.interval}.",
+                    "${window.days} days, up to ${window.maxDays} at a time.",
                     color = MaterialTheme.field.muted,
                     fontSize = 12.sp,
                     lineHeight = 17.sp
@@ -227,9 +225,8 @@ fun UsageScreen(
             // ANSWERED AND EMPTY is a real state here and it is not "nothing happened": the page may
             // simply be past the end, or every route on it may have been withheld. Both are said,
             // because "no screens in this window" alone would be read as a quiet week.
-            emptyLine = "No screens on this page of this window. That is not a claim that nothing " +
-                "was used — a screen too few identified accounts reached is withheld rather than " +
-                "reported, and the count of withheld screens is above."
+            emptyLine = "No screens to show on this page. Screens used by too few accounts are not " +
+                "shown; how many is given above."
         )?.let { notice ->
             Text(
                 notice,
@@ -267,7 +264,7 @@ fun UsageScreen(
                 StatLine("Requests on this page", usageCount(data.totalsForThisPage.requests))
                 StatLine("Succeeded", usageCount(data.totalsForThisPage.ok))
                 StatLine(
-                    "Client / server errors",
+                    "Failed (request / system)",
                     "${usageCount(data.totalsForThisPage.clientErrors)} / " +
                         "${usageCount(data.totalsForThisPage.serverErrors)}"
                 )
@@ -275,8 +272,8 @@ fun UsageScreen(
                 if (data.totalsForThisPage.routesWithheld > 0) {
                     Text(
                         "Fewer than ${data.limits.minimumIdentifiedUsers} identified accounts used " +
-                            "them in this window, so the server did not state their figures. They " +
-                            "are excluded from the sums above rather than counted as zero.",
+                            "them in this period, so their figures are not shown and are left out " +
+                            "of the totals above.",
                         color = MaterialTheme.field.muted,
                         fontSize = 12.sp,
                         lineHeight = 17.sp
@@ -284,7 +281,7 @@ fun UsageScreen(
                 }
                 Text(
                     if (data.routeSource == "mounted") {
-                        "Every measured screen this deployment currently serves."
+                        "Every measured screen."
                     } else {
                         "The screens you asked about."
                     },
@@ -320,7 +317,7 @@ fun UsageScreen(
                     // Excluded from the rows rather than reported as zero, and SAID: a row that is
                     // structurally always zero reads as "nobody uses this screen", and the two are
                     // opposite facts.
-                    "Not measured, on any window: ${data.notMeasured.joinToString(", ")}.",
+                    "${usageCount(data.notMeasured.size)} screens are never measured.",
                     color = MaterialTheme.field.muted,
                     fontSize = 11.sp,
                     lineHeight = 16.sp
@@ -372,7 +369,7 @@ private fun CollectionPostureCard(
                             state = state,
                             noun = "collection method",
                             online = online,
-                            emptyLine = "This server did not say how these figures were collected."
+                            emptyLine = "How these figures were collected could not be shown."
                         ).orEmpty(),
                         color = MaterialTheme.field.onWarningContainer,
                         fontSize = 13.sp,
@@ -397,13 +394,11 @@ private fun CollectionPostureCard(
                         if (method.consent.flowExists) {
                             "Consent is asked, and the rows below reflect what each account answered."
                         } else {
-                            "No consent flow exists yet. This deployment's policy for the unasked is " +
-                                method.consent.unaskedPolicy +
-                                if (attributed) {
-                                    " — requests ARE attributed to an account id, without having asked."
-                                } else {
-                                    "."
-                                }
+                            if (attributed) {
+                                "Accounts are not asked first, and activity is recorded against each account."
+                            } else {
+                                "Accounts are not asked first, and activity is recorded without names."
+                            }
                         },
                         color = MaterialTheme.field.onWarningContainer,
                         fontWeight = FontWeight.SemiBold,
@@ -424,12 +419,6 @@ private fun CollectionPostureCard(
                             lineHeight = 17.sp
                         )
                     }
-                    Text(
-                        "Method: ${method.document}. Decision: ${method.consent.document}.",
-                        color = MaterialTheme.field.onWarningContainer,
-                        fontSize = 11.sp,
-                        lineHeight = 16.sp
-                    )
                 }
             }
         }
@@ -470,7 +459,7 @@ private fun RouteCard(row: UsageRouteRow) {
                 Text("—", color = MaterialTheme.field.muted, fontSize = 16.sp)
                 Text(
                     row.withheldBecause.orEmpty().ifBlank {
-                        "The server did not state figures for this screen."
+                        "Figures for this screen are not shown."
                     },
                     modifier = Modifier.weight(1f),
                     color = MaterialTheme.field.muted,
@@ -482,7 +471,7 @@ private fun RouteCard(row: UsageRouteRow) {
             StatLine("Requests", usageMetricText(row.requests))
             StatLine("Identified accounts", usageMetricText(row.identifiedUsers))
             StatLine("OK", usageMetricText(row.ok))
-            StatLine("Client / server errors", "${usageMetricText(row.clientErrors)} / ${usageMetricText(row.serverErrors)}")
+            StatLine("Failed (request / system)", "${usageMetricText(row.clientErrors)} / ${usageMetricText(row.serverErrors)}")
             StatLine("Average duration", usageDurationText(row.avgDurationMs))
             StatLine("Longest", usageDurationText(row.maxDurationMs))
         }
