@@ -154,20 +154,37 @@ if missing_manifest:
     failures.append(f"classes the manifest names but the dex does not hold: {missing_manifest}")
 
 # ── 2. META-INF/services ─────────────────────────────────────────────────────────────────────
+# R8 RENAMES THESE FILES as well as the classes inside them: a service interface it obfuscated gets a
+# file under its new name (`ServiceLoader.load` asks for that name at runtime), and the implementation
+# lines are rewritten the same way. So both are read back through mapping.txt before being judged.
+mapping = (MAPPING_DIR / "mapping.txt").read_text(encoding="utf-8", errors="replace")
+renamed: dict[str, str] = {}
+for line in mapping.splitlines():
+    match = re.match(r"^(\S+) -> (\S+):$", line)
+    if match:
+        renamed[match.group(1)] = match.group(2)
+original = {new: old for old, new in renamed.items()}
 service_report = {}
 for service, body in sorted(services.items()):
     impls = [line.split("#")[0].strip() for line in body.splitlines() if line.split("#")[0].strip()]
     missing = [impl for impl in impls if not present(impl)]
-    service_report[service] = {"implementations": impls, "missing": missing}
+    interface = service[len("META-INF/services/"):]
+    service_report[service] = {
+        "interface": original.get(interface, interface),
+        "implementations": [original.get(impl, impl) for impl in impls],
+        "missing": missing,
+    }
     if missing:
         failures.append(f"{service} names classes the dex does not hold: {missing}")
 report["services"] = service_report
 print(json.dumps(service_report, indent=1))
-coil_services = [s for s in services if "coil3" in s]
-if not coil_services:
-    failures.append("no coil3 META-INF/services file in the APK — Coil would find no network fetcher")
-elif not any("okhttp" in impl.lower() for s in coil_services for impl in service_report[s]["implementations"]):
-    failures.append("no Coil service file names the OkHttp network fetcher")
+coil_fetchers = [s for s, row in service_report.items() if row["interface"] == "coil3.util.FetcherServiceLoaderTarget"]
+if not coil_fetchers:
+    failures.append("no META-INF/services file for coil3.util.FetcherServiceLoaderTarget — Coil would find no network fetcher")
+elif "coil3.network.okhttp.internal.OkHttpNetworkFetcherServiceLoaderTarget" not in [
+    impl for s in coil_fetchers for impl in service_report[s]["implementations"]
+]:
+    failures.append("the Coil fetcher service file does not name the OkHttp network fetcher")
 
 # ── 3. sherpa-onnx native methods against the library's exports ─────────────────────────────
 
@@ -216,12 +233,6 @@ if not natives:
     failures.append("no sherpa-onnx native method survived in the dex at all")
 
 # ── 4. Named entry points and the Retrofit interfaces ────────────────────────────────────────
-mapping = (MAPPING_DIR / "mapping.txt").read_text(encoding="utf-8", errors="replace")
-renamed = {}
-for line in mapping.splitlines():
-    match = re.match(r"^(\S+) -> (\S+):$", line)
-    if match:
-        renamed[match.group(1)] = match.group(2)
 must_keep_name = [
     "androidx.credentials.playservices.CredentialProviderPlayServicesImpl",
     "androidx.camera.camera2.Camera2Config$DefaultProvider",
