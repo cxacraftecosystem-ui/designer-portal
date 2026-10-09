@@ -1,0 +1,11 @@
+# actionlint's own configuration. Nothing in CI runs actionlint; this is for whoever runs it by hand.
+#
+# ONE ENTRY, AND IT IS A STOPGAP WITH A DATE ON IT (2026-10-09). Every job here runs on
+# `ubuntu-26.04`, which GitHub made generally available in September 2026, and actionlint — 1.7.12,
+# the newest release, and its main branch on that day — does not list the label yet, so it reports
+# every job as using an unknown runner. Declaring the label here is the documented way to teach it
+# one. DELETE THIS FILE once `actionlint` stops reporting `label "ubuntu-26.04" is unknown` without
+# it (its list lives in rule_runner_label.go upstream).
+self-hosted-runner:
+  labels:
+    - ubuntu-26.04

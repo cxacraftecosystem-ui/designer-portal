@@ -104,7 +104,7 @@ concurrency:
 jobs:
   dump:
     name: pg_dump to S3
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
 
     env:
@@ -119,9 +119,12 @@ jobs:
       - name: Install PostgreSQL client 17 from PGDG
         # THE MAJOR VERSION IS A HARD REQUIREMENT, NOT A PREFERENCE. pg_dump refuses to dump a
         # server newer than itself ("server version 17.x; pg_dump version 16.x" — it errors, it does
-        # not degrade), and ubuntu-latest ships whatever client the image was built with. Pinning
-        # the client to 17 means the runner image can move under us without silently ending the
-        # backups. If the managed database is ever upgraded past 17, this number moves with it.
+        # not degrade), and the runner image ships whatever client it was built with (ubuntu-26.04
+        # carries PostgreSQL 18). Pinning the client to 17 means the runner image can move under us
+        # without silently ending the backups, and keeps the dump restorable into the server's own
+        # major. If the managed database is ever upgraded past 17, this number moves with it.
+        # `${VERSION_CODENAME}-pgdg` below resolves to `resolute-pgdg` on 26.04; PGDG publishes
+        # postgresql-client-17 there (17.11 on 2026-10-09).
         run: |
           set -euo pipefail
           sudo install -d /usr/share/postgresql-common/pgdg
