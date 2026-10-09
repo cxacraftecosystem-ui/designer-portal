@@ -619,6 +619,25 @@ So the job replaces `cmdline-tools/latest` with 23.0, the newest stable release 
 refuses an AVD whose `target=` is not the API level asked for, and builds both APKs before the
 emulator boots, so the compile does not compete with it for the runner's cores.
 
+The third run (37937482647) was the first to execute the tests: 22 of 24 passed. One failure was a
+real defect — Pause and Cancel on a speech-model download let the transfer run on to the end of the
+file — fixed in 25ec2cd. The fourth (37939404066) failed the other one, `DwAsrModelTransferProbeTest`'s
+speed check: the download meter's window began when the response headers arrived, so a host that
+waited three seconds before its first byte read as "3 kB/s · about 6 hr 50 min left". `DwTransferMeter`
+now measures the rate from the first byte and keeps the stall clock on the headers (c9d4a34), and the
+fifth run (37944158602) passed all 24. As of 2026-10-09 a run on `upgrade/dp-android` is green.
+
+**The R8-shrunk release build was launched on the same emulator before the upgrade was tagged**, by a
+temporary `release-smoke` job that lived in this workflow on `upgrade/dp-android` only and was removed
+again once it had run green. It built `assembleRelease` with the `debugSignRelease`, `releaseAllAbis`
+and loopback `apiBaseUrl` opt-ins `android/app/build.gradle.kts` documents — no secret read — checked
+the APK for everything reached by name (manifest classes and their constructors, R8-renamed
+`META-INF/services` files, sherpa-onnx's native methods against the library's exports, Credential
+Manager's provider, the seven Retrofit interfaces), then drove the app against a local stub: the
+sign-in card, set-password links in fragment and query form through the POST-404-GET fallback, a
+password sign-in, and the designer profile's https and loopback pictures drawn by Coil. Its scripts
+and runs are in that branch's history (`.github/release-smoke/`).
+
 **It is not wired into branch protection and must not be**: a required check a human has to remember
 to trigger is a required check that blocks every pull request forever.
 
@@ -638,8 +657,9 @@ Two things are *not* pinned and both are on the record. `deploy-frontend.yml` in
 `vercel@latest` — deliberate, because the CLI must match a platform that changes under it — and the
 Android toolchain under `android/` is pinned by VERSION, not by digest, with one exception: since
 2026-10-09 the Gradle wrapper carries a `distributionSha256Sum`, so a tampered distribution fails
-the wrapper's own check. AGP, Kotlin and every library resolve by version, with no Gradle
-dependency-verification file.
+the wrapper's own check, and the vendored sherpa-onnx AAR, which no repository serves, is checked
+against its SHA-256 and byte size in all three Android workflows. AGP, Kotlin and every other
+library resolve by version, with no Gradle dependency-verification file.
 
 Pinning introduces its own failure mode, which is a pin that rots. `.github/dependabot.yml` is what
 closes it: **github-actions weekly** (Monday 04:00 Asia/Kolkata, at most 3 open PRs, `ci` commit

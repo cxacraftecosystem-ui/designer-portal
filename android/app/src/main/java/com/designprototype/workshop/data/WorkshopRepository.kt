@@ -924,7 +924,7 @@ class WorkshopRepository(
         "dos",
         "donts"
     )
-    // Mirrors the Retrofit converter's config (ApiClient.kt:42) so a body re-encoded here to carry the
+    // Mirrors the Retrofit converter's config (`ApiClient.json`) so a body re-encoded here to carry the
     // checksum is byte-identical to the one the plain call would have sent — same omitted nulls, same
     // omitted defaults. A `processingRequests: []` that should have been absent changes what the
     // server does with the file.

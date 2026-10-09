@@ -70,8 +70,10 @@ with tempfile.TemporaryDirectory() as scratch, zipfile.ZipFile(APK) as apk:
             stripped = line.strip()
             if stripped.startswith("Class descriptor"):
                 current = stripped.split("'")[1]
-                classes.setdefault(current, {"methods": set(), "native": set()})
+                classes.setdefault(current, {"methods": set(), "native": set(), "abstract": False})
                 section = None
+            elif current and section is None and stripped.startswith("Access flags"):
+                classes[current]["abstract"] = "INTERFACE" in stripped or "ABSTRACT" in stripped
             elif stripped in ("Static fields     -", "Instance fields   -", "Direct methods    -",
                               "Virtual methods   -") or stripped.startswith(("Static fields", "Instance fields",
                                                                              "Direct methods", "Virtual methods")):
@@ -152,6 +154,17 @@ report["manifestClasses"] = sorted(resolved)
 print(f"{len(resolved)} classes named in the manifest; missing from dex: {missing_manifest or 'none'}")
 if missing_manifest:
     failures.append(f"classes the manifest names but the dex does not hold: {missing_manifest}")
+# Everything the manifest names is created by NAME through a no-argument constructor — a component by
+# the framework, an initializer by androidx.startup, a registrar by ML Kit, a provider by CameraX — and
+# R8's full mode does not keep a constructor just because it kept the class.
+no_constructor = sorted(
+    n for n in resolved
+    if present(n) and not classes[descriptor(n)]["abstract"] and "<init>" not in classes[descriptor(n)]["methods"]
+)
+report["manifestClassesWithoutConstructor"] = no_constructor
+print(f"manifest-named classes without a constructor: {no_constructor or 'none'}")
+if no_constructor:
+    failures.append(f"classes the manifest names have no constructor left: {no_constructor}")
 
 # ── 2. META-INF/services ─────────────────────────────────────────────────────────────────────
 # R8 RENAMES THESE FILES as well as the classes inside them: a service interface it obfuscated gets a
@@ -167,7 +180,8 @@ original = {new: old for old, new in renamed.items()}
 service_report = {}
 for service, body in sorted(services.items()):
     impls = [line.split("#")[0].strip() for line in body.splitlines() if line.split("#")[0].strip()]
-    missing = [impl for impl in impls if not present(impl)]
+    # ServiceLoader instantiates each line through its no-argument constructor.
+    missing = [impl for impl in impls if not present(impl) or "<init>" not in classes[descriptor(impl)]["methods"]]
     interface = service[len("META-INF/services/"):]
     service_report[service] = {
         "interface": original.get(interface, interface),

@@ -126,17 +126,14 @@ TRANSCRIPTION_SERVICE.md
 # `git add -A` away from entering the history permanently — where it could not be removed without
 # rewriting every commit after it.
 #
-# IT IS NOT MEANT TO BE COMMITTED, AND THAT IS A DESIGN DECISION RATHER THAN AN OVERSIGHT.
-# `docs/PLAN-AI-TIERS-AND-CUSTOM-SECTIONS.md` §5 records why: bundling the speech runtime takes the
-# ARM-pair APK from 26.2 MB to 79.6 MB — 3.03×, measured off eight packaged APKs — so the runtime is
-# an offer the designer accepts on a connection they choose, not weight every designer in the fleet
-# downloads on prepaid mobile data to serve the few who go to the field. An AAR in the repository is
-# the first step back toward bundling it by accident.
-#
-# The upstream artifact is not on `google()` or `mavenCentral()` under any spelling (twelve tried,
-# every one a 404), so it cannot be a build-time dependency either; it is fetched at runtime and its
-# SHA-256 is pinned in the APK and verified on disk before anything is loaded. See
-# `docs/ASR-RUNTIME-DOWNLOAD-CONTRACT.md`.
+# IT IS NOT MEANT TO BE COMMITTED: a 37 MB binary does not belong in git history. It IS a build-time
+# dependency — `implementation(":sherpa-onnx-static-link-onnxruntime-1.13.8@aar")` in
+# android/app/build.gradle.kts, bundled into every APK — and the three Android workflows fetch it
+# from the k2-fsa GitHub release and check its SHA-256 and size before building. (This block used to
+# say the runtime was an opt-in download fetched at runtime, which is what
+# `docs/ASR-RUNTIME-DOWNLOAD-CONTRACT.md` designed; build.gradle.kts records why that cannot work with
+# this binding.) The upstream artifact is on neither `google()` nor `mavenCentral()` under any spelling
+# (twelve tried, every one a 404), which is why it is a file and not a coordinate.
 #
 # Scoped to the directory rather than to `*.aar` everywhere, so a future AAR that genuinely SHOULD be
 # vendored has to be an explicit decision rather than something this rule silently swallows.

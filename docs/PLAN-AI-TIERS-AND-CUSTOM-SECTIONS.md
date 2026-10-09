@@ -279,7 +279,7 @@ The risk is that it arrives as a 19-language download list that does not fit on 
 > publishes **ONNX exports** of a 600M Conformer for all 22 scheduled languages. Measured by building
 > and running it, not by reading about it:
 >
-> - **sherpa-onnx 1.13.5 — the version already vendored in this APK — loads it and decodes with it.**
+> - **sherpa-onnx 1.13.5 — the version vendored in this APK at the time (1.13.8 since 2026-10-09, not re-measured) — loads it and decodes with it.**
 >   `encoder.onnx` (`audio_signal[B,80,T]`, `length[B]` → `outputs[B,1024,T']`) merged with the two-node
 >   `ctc_decoder.onnx` (Conv 1×1, weight `[5633,1024,1]`, then Transpose → `logprobs[B,T',5633]`) **is**
 >   the NeMo-CTC contract `from_nemo_ctc` expects. No `.nemo` export pipeline, no third-party repackage.

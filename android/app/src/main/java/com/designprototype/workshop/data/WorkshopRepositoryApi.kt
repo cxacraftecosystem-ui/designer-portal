@@ -1682,7 +1682,7 @@ interface WorkshopRepositoryApi {
     //
     // AND NONE OF THEM IS AUTO-RETRIED, which is [ApiClient.isSafelyRetriable]'s doing and is worth
     // knowing rather than discovering: a POST is retried only when its path is one of the four
-    // side-effect-free upload-setup calls, and these are not among them. A 504 from CloudFront over a
+    // side-effect-free upload-setup calls or the set-password link check, and these are not among them. A 504 from CloudFront over a
     // verb that the origin actually ran would otherwise spend a second run of the allowance and store a
     // second layer saying the same thing.
     //

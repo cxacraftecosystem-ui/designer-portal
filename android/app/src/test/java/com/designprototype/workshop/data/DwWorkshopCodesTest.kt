@@ -275,7 +275,8 @@ class DwWorkshopCodesTest {
         //
         // ⚠ WHICH DECIMAL IT PRINTS DEPENDS ON THE JDK, AND THIS LINE USED TO ASSERT ONE OF THEM.
         // It read `contains("code format 9")`, which is true only while `Double.toString` is NOT the
-        // shortest round-tripping decimal — i.e. before JDK 19 (JDK-4511638). CI pins JDK 17 and
+        // shortest round-tripping decimal — i.e. before JDK 19 (JDK-4511638). CI pinned JDK 17 then
+        // (25 since 2026-10-09) and
         // prints "9.999999999999999e+22", so it passed there; Gradle here resolves JDK 21, prints
         // "1.0E23", and it failed on every developer machine. A test that is green on the build
         // server and red for everyone who runs it is worse than one that is simply red: it trains

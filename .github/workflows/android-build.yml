@@ -5,7 +5,7 @@ name: Android build
 # ─── WHY LAST, AND WHY IT STILL RUNS WHEN A DEPLOY FAILED ─────────────────────────────
 # This stage builds and checks the APK; it does not deploy anything. (Shipping a build to
 # devices is a separate, deliberate act: the in-app OTA updater compares versionCode against
-# a release-signed APK uploaded by a master admin — see android/README.md. Nothing here can
+# a release-signed APK published by a `v*` tag push — publish-android.yml, docs/CI.md §1.4. Nothing here can
 # reach a phone.) So it is ordered last purely as a dependency courtesy: it is the cheapest
 # stage and the least urgent, and putting it ahead of the deploys would delay them.
 #
@@ -285,8 +285,8 @@ jobs:
           # DEBUG-SIGNED build. It is a compile artifact for testers to sideload, NOT a
           # release: the in-app OTA updater only accepts APKs signed with the release key,
           # and Android refuses to install an APK whose signature differs from the one
-          # already on the device. Cutting a real release is still the manual, key-holding
-          # process in android/README.md.
+          # already on the device. Cutting a real release is a `v*` tag push to
+          # publish-android.yml, the one workflow that holds the key (docs/CI.md §1.4).
           name: app-debug-${{ github.event.workflow_run.head_sha || github.sha }}
           path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error

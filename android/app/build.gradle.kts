@@ -235,8 +235,9 @@ android {
          *     `abiFilters` is applied at PACKAGING time. An intermediate directory is not evidence
          *     here, and checking one is how this measurement was nearly got wrong.
          *  2. `defaultConfig` also narrows DEBUG, which takes away the x86_64 emulator — the only
-         *     machine a contributor without a handset has, on a project whose CI runs no
-         *     instrumented tests at all.
+         *     machine a contributor without a handset has, and the one
+         *     `.github/workflows/android-emulator.yml` installs this debug APK on (on demand, and
+         *     never a gate — the only device CI this project has, since 2026-09-03).
          */
     }
 
@@ -265,8 +266,10 @@ android {
      * `META-INF/com.android.tools/` proguard and r8 copies), `retrofit-3.0.0` carries
      * `META-INF/proguard/retrofit2.pro`, and OkHttp 5's Android artifact, `okhttp-android-5.5.0.aar`,
      * carries a consumer `proguard.txt` — `-dontwarn` lines only, because OkHttp needs no keep rule.
-     * `proguard-rules.pro` therefore holds only what is specific to this app: our own
-     * `@Serializable` wire types and the two Retrofit interfaces reached through a dynamic proxy.
+     * `proguard-rules.pro` therefore holds what is specific to this app or that no library ships: our
+     * own `@Serializable` wire types, two of the seven Retrofit interfaces by name (Retrofit's own
+     * `-if interface * { @retrofit2.http.* <methods>; }` rule keeps all seven), `-dontoptimize`, the
+     * ML Kit registrars' constructors, the sherpa-onnx binding, and Credential Manager's provider.
      *
      * WHAT IS STILL NOT PROVEN, stated because a shrunk build fails in a way that a green build
      * hides. R8's failure mode is not a compile error — it is a `SerializationException` or a
@@ -407,7 +410,8 @@ android {
              * There is no device inventory here to say the risk is zero, so it is not assumed to be.
              * With a roster of what the designers actually carry, this is a one-line change.
              *
-             * THE EMULATOR, because dropping x86 drops it and this project has no device CI. `debug`
+             * THE EMULATOR, because dropping x86 drops it and this project's only device CI is the
+             * on-demand android-emulator.yml. `debug`
              * below is left unfiltered on purpose, so day-to-day work on an x86_64 emulator is
              * untouched. For the one case that needs more — smoke-testing a SHRUNK release build with
              * no handset in reach, which is exactly what the R8 section of this file says must not be
@@ -451,7 +455,8 @@ android {
             // development point at an obfuscated name for no benefit.
             //
             // AND DELIBERATELY LEFT WITHOUT `abiFilters`, which is the other half of the release
-            // block's narrowing. There is no device CI on this project, so the emulator is how a
+            // block's narrowing. The only device CI here is the on-demand android-emulator.yml, so the
+            // emulator is how a
             // developer with no handset runs anything at all — and a standard AVD is x86_64. The
             // debug APK is never downloaded over a mobile connection by anybody, so the ABIs it
             // carries cost nothing that matters. Narrowing both build types would have saved no
@@ -955,7 +960,8 @@ dependencies {
      *     ./gradlew :app:assembleRelease
      *     stat -c %s app/build/outputs/apk/release/app-release.apk
      *
-     * (Written as two lines with the file named rather than as one line with a glob, because a glob
+     * (`app-release-unsigned.apk` when no key is configured, which is what CI builds.) (Written as
+     * two lines with the file named rather than as one line with a glob, because a glob
      * before `.apk` spells the end of a block comment and silently ate this whole paragraph once.)
      *
      * What can be said with evidence: release R8 is ON (`isMinifyEnabled` + `isShrinkResources`
@@ -966,7 +972,7 @@ dependencies {
      * R8 ate almost all of it") will FLATTER CameraX, though: ML Kit's Java was mostly unreached
      * API surface, whereas `camera-core` plus `camera-camera2` is a pipeline entered wholesale
      * through `bindToLifecycle` whose ~100 device-quirk classes are reached by enumeration. Estimate
-     * +700 KB to +1.2 MB of dex, which against the last measured shipping figure
+     * +700 KB to +1.2 MB of dex, which against the shipping figure measured at the time
      * (`docs/ASR-RUNTIME-MEASUREMENT.md` row E, 66,056,244 bytes) is 1.1%–1.8%. Do not quote it as
      * a measurement.
      *

@@ -159,7 +159,9 @@ call this API as the signed-in user". Keep `BACKEND_CORS_ORIGINS` set to the exa
   APIs that read it directly.
 
 Developing against a LAN backend from a real phone: add your machine's private IP as an extra
-`<domain>` **temporarily** and do not commit it.
+`<domain>` **temporarily** and do not commit it. Use a debug build and grant "Nearby devices" when it
+asks: on Android 17 the app's traffic to the local network is blocked until `ACCESS_LOCAL_NETWORK` is
+granted, and only `android/app/src/debug/AndroidManifest.xml` declares it (since 2026-10-09).
 
 ---
 

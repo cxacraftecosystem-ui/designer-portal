@@ -76,6 +76,7 @@ R8_SIGNATURES = (
 )
 
 results: list[dict] = []
+observations: list[dict] = []
 app_pids: set[str] = set()
 
 
@@ -149,6 +150,7 @@ def dump(tag: str | None = None) -> list[dict]:
             "checked": el.get("checked") == "true",
             "enabled": el.get("enabled") == "true",
             "password": el.get("password") == "true",
+            "focused": el.get("focused") == "true",
             "bounds": (x1, y1, x2, y2),
         })
     return nodes
@@ -470,6 +472,58 @@ def scenario_designer_profile_pictures() -> None:
     record("designer profile draws an https picture and a loopback picture through Coil 3", True, detail)
 
 
+def ime_frame() -> tuple[int, int, int, int] | None:
+    """The keyboard's frame while it is shown, from the window manager's own inset sources."""
+    out = shell("dumpsys window", check=False, timeout=60)
+    (OUT / "dumpsys-window-keyboard.txt").write_text(out, encoding="utf-8")
+    for line in out.splitlines():
+        if "type=ime" in line and "visible=true" in line:
+            match = re.search(r"frame=\[(\d+),(\d+)\]\[(\d+),(\d+)\]", line)
+            if match:
+                return tuple(int(v) for v in match.groups())
+    return None
+
+
+def observe_keyboard_over_a_long_form() -> None:
+    """NOT A CHECK — an observation for the review, which asks whether any form loses its focused box
+    under the keyboard now that the app is drawn edge to edge and `SystemBarsInsetsRoot` leaves the
+    keyboard's inset alone. The designer profile is the longest form reachable here: bring its last
+    text box up, focus it with the keyboard ON, and measure the box against the keyboard's frame."""
+    shell("ime reset", check=False)
+    time.sleep(1.5)
+    size = shell("wm size").strip().split()[-1]
+    width, height = (int(v) for v in size.split("x"))
+    for _ in range(14):
+        shell(f"input swipe {width // 2} {int(height * 0.8)} {width // 2} {int(height * 0.25)} 300")
+        time.sleep(0.6)
+    nodes = dump("keyboard-before")
+    boxes = [n for n in edit_texts(nodes) if n["bounds"][3] <= height - 150 and n["bounds"][1] >= 100]
+    if not boxes:
+        observations.append({"observation": "keyboard over a long form", "detail": "no text box on screen to focus"})
+        return
+    target = max(boxes, key=lambda n: n["bounds"][3])
+    tap(target)
+    time.sleep(3.0)
+    frame = ime_frame()
+    nodes = dump("keyboard-after")
+    screenshot("06-keyboard-on-profile")
+    focused = [n for n in edit_texts(nodes) if n["focused"]]
+    shown = ime_shown()
+    if not focused:
+        detail = f"no focused box after the tap (keyboard shown: {shown}, frame {frame})"
+    elif frame is None:
+        detail = f"keyboard shown: {shown}; its frame could not be read; focused box at {focused[0]['bounds']}"
+    else:
+        box = focused[0]["bounds"]
+        covered = box[3] > frame[1]
+        detail = (f"focused box {box}, keyboard top at y={frame[1]} on a {width}x{height} screen: the box is "
+                  f"{'COVERED by' if covered else 'above'} the keyboard (it was at {target['bounds']} before)")
+    observations.append({"observation": "keyboard over the designer profile's lowest text box", "detail": detail})
+    print("OBSERVE " + detail, flush=True)
+    shell("input keyevent 4")
+    time.sleep(1.0)
+
+
 def logcat_checks() -> None:
     log = adb("logcat", "-d", "-v", "threadtime", timeout=120, check=False)
     (OUT / "logcat.txt").write_text(log, encoding="utf-8")
@@ -531,6 +585,11 @@ def main() -> int:
             except Exception as error:  # a driver bug is still a red run, with its reason
                 record(scenario.__name__, False, f"driver error: {error!r}")
             note_pid()
+        try:
+            observe_keyboard_over_a_long_form()
+        except Exception as error:  # an observation never turns the run red
+            observations.append({"observation": "keyboard over a long form", "detail": f"not taken: {error!r}"})
+        note_pid()
         logcat_checks()
     finally:
         stub.terminate()
@@ -543,10 +602,13 @@ def main() -> int:
     summary = ["### Release build (R8) on the API 37 emulator", "", "| check | result | detail |", "|---|---|---|"]
     for row in results:
         summary.append(f"| {row['check']} | {'pass' if row['ok'] else '**FAIL**'} | {row['detail'].replace('|', '/')} |")
+    for row in observations:
+        summary.append(f"| {row['observation']} | observed | {row['detail'].replace('|', '/')} |")
     summary += ["", f"Requests the stub answered 404 because it does not model them: {', '.join(unhandled) or 'none'}"]
     text = "\n".join(summary) + "\n"
     (OUT / "summary.md").write_text(text, encoding="utf-8")
-    (OUT / "results.json").write_text(json.dumps(results, indent=2), encoding="utf-8")
+    (OUT / "results.json").write_text(json.dumps({"results": results, "observations": observations}, indent=2),
+                                      encoding="utf-8")
     if os.environ.get("GITHUB_STEP_SUMMARY"):
         with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as handle:
             handle.write(text)

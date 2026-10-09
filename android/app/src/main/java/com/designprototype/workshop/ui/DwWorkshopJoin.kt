@@ -108,7 +108,7 @@ data class DwWorkshopJoinAck(
  *
  * DECLARED HERE RATHER THAN ADDED TO `WorkshopRepositoryApi`, and `ApiClient.retrofit`'s own
  * docstring is the licence: it exists "so a feature can declare its OWN typed service without
- * standing up a second HTTP stack beside this one". `ui/designworkshop/DwAsrModelInstallUi.kt:728`
+ * standing up a second HTTP stack beside this one". `ui/designworkshop/DwAsrModelInstallUi.kt:730`
  * is the standing precedent for doing it from a UI file. Going through `ApiClient` is what keeps
  * this call inside the 504 retry that exists because CloudFront times this origin out, and inside
  * the auth interceptor that reads a FRESH token per request.

@@ -1,6 +1,6 @@
 name: Android instrumented tests
 
-# ─── EIGHT TEST CLASSES THAT NOTHING HAS EVER RUN ────────────────────────────────────────
+# ─── EIGHT TEST CLASSES, FIRST EXECUTED ON 2026-10-09 (RUN 37937482647) ─────────────────
 #
 # `android/app/src/androidTest/` holds eight instrumented test classes — 24 `@Test` methods,
 # counted 2026-09-03 — and android-build.yml runs none of them. It cannot: `connectedAndroidTest`
@@ -27,6 +27,11 @@ name: Android instrumented tests
 # android-37.0, and the emulator then boots the image as API 3 and leaves off the graphics features
 # Android 17 needs (ReactiveCircus/android-emulator-runner#482). The command-line-tools step below
 # answers it, and the script's first line refuses an AVD with any other target than the one asked for.
+#
+# The third run (37937482647) executed the tests for the first time: 22 of 24 passed, and the two
+# failures were real — a paused speech-model download that kept running (fixed in 25ec2cd) and a
+# download readout that counted the wait for the first byte as transfer time (fixed in c9d4a34).
+# Run 37944158602 passed all 24. docs/CI.md §1.5 keeps the account.
 #
 # ─── WHY THIS IS `workflow_dispatch` ONLY, WHICH IS A COST DECISION AND NOT A TASTE ──────
 # An emulator job is the most expensive thing this repository could run. It needs KVM, boots a
@@ -131,7 +136,9 @@ jobs:
           "$sdk/cmdline-tools/latest/bin/sdkmanager" "cmdline-tools;23.0" > /dev/null
           rm -rf "$sdk/cmdline-tools/latest"
           mv "$sdk/cmdline-tools/23.0" "$sdk/cmdline-tools/latest"
-          "$sdk/cmdline-tools/latest/bin/sdkmanager" --version
+          # Not `sdkmanager --version`: since 23.0 that prints the Android CLI's own version
+          # (1.0.16500706), which does not show that 23.0 is the one in place.
+          grep '^Pkg.Revision=' "$sdk/cmdline-tools/latest/source.properties"
 
       - name: Ensure the required Android SDK packages are installed
         # Mirrors android-build.yml deliberately: which platform and build-tools versions are
@@ -218,6 +225,11 @@ jobs:
         # why, and for what keeps the pin from rotting. This one is a third-party action rather than
         # a first-party `actions/*` one, which makes the pin matter more rather than less.
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
+        # The dispatch input reaches the script as data, through the environment, and is compared as
+        # a fixed string — not pasted into the shell line, where `.` is a regex wildcard and the text
+        # is whatever the person dispatching typed.
+        env:
+          API_LEVEL: ${{ inputs.api-level || '37.0' }}
         with:
           api-level: ${{ inputs.api-level || '37.0' }}
           # `google_apis` rather than the bare `default` image: the probes touch Play-services-shaped
@@ -254,12 +266,12 @@ jobs:
           #       they exist for, and the emulator is gone once this script ends — and then
           #  7.   the parked status fails the step.
           script: |
-            grep -x "target=android-${{ inputs.api-level || '37.0' }}" "$ANDROID_AVD_HOME/test.ini" || { echo "::error::The AVD was not created for API ${{ inputs.api-level || '37.0' }}: $(grep '^target=' "$ANDROID_AVD_HOME/test.ini")"; exit 1; }
+            grep -Fx "target=android-$API_LEVEL" "$ANDROID_AVD_HOME/test.ini" || { echo "::error::The AVD was not created for API $API_LEVEL: $(grep '^target=' "$ANDROID_AVD_HOME/test.ini")"; exit 1; }
             "${ANDROID_HOME:-$ANDROID_SDK_ROOT}/platform-tools/adb" push "$RUNNER_TEMP/dwasr" /data/local/tmp/
             "${ANDROID_HOME:-$ANDROID_SDK_ROOT}/platform-tools/adb" shell chmod -R 755 /data/local/tmp/dwasr
             "${ANDROID_HOME:-$ANDROID_SDK_ROOT}/platform-tools/adb" logcat -G 16M || true
             ./gradlew :app:connectedDebugAndroidTest --console=plain --stacktrace || echo "$?" > "$RUNNER_TEMP/connected-exit"
-            mkdir -p app/build/outputs/androidTest-results && "${ANDROID_HOME:-$ANDROID_SDK_ROOT}/platform-tools/adb" logcat -d -v time -s DWASRPROBE DWICPROBE DWXFERPROBE DWTIERPROBE DWPACKPROBE DWTIER2PROBE TestRunner AndroidRuntime DEBUG libc > app/build/outputs/androidTest-results/probes-logcat.txt
+            mkdir -p app/build/outputs/androidTest-results && "${ANDROID_HOME:-$ANDROID_SDK_ROOT}/platform-tools/adb" logcat -d -v time -s DWASRPROBE DWICPROBE DWXFERPROBE DWTIERPROBE DWPACKPROBE DWTIER2PROBE TestRunner AndroidRuntime DEBUG libc > app/build/outputs/androidTest-results/probes-logcat.txt || true
             test ! -e "$RUNNER_TEMP/connected-exit"
 
       - name: Fail unless instrumented tests ran, and none failed

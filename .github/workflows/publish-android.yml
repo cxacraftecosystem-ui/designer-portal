@@ -68,8 +68,8 @@ name: Publish Android release
 # R8 and resource shrinking exist only on the release variant (`isMinifyEnabled = true`,
 # `isShrinkResources = true`), and R8's failure mode is not a compile error — it is a
 # SerializationException or a NoSuchMethodError at the first sync, on a build that installed and
-# ran fine on a desk. A GitHub runner has no device and no emulator, and no instrumented test runs
-# here (android-build.yml:165-171 declines them for the same reason). So a green run here means
+# ran fine on a desk. This job has no device or emulator, and no instrumented test runs here
+# (android-build.yml:250-256 sends them to android-emulator.yml). So a green run here means
 # "correctly built, correctly signed, correctly published" and NOT "verified on hardware". The
 # build file's own standard is that a release must be run through the offline loop on a real
 # handset before it ships. That is a human step and this file cannot do it for you; the step
@@ -691,7 +691,7 @@ jobs:
           # ─── THE DEBUG-KEYSTORE BRANCH: THE ONLY OUTCOME HERE THAT LOOKS ENTIRELY FINE ───────
           # build.gradle.kts's release block has THREE outcomes, not two, and until 2026-08-23 this
           # step looked at only two of them. The middle one is `debugSignRelease=true` in somebody's
-          # gitignored local.properties with no release key resolved (build.gradle.kts:345-358): the
+          # gitignored local.properties with no release key resolved (build.gradle.kts:348-361): the
           # release variant is then signed with the DEBUG keystore that ships inside every Android
           # SDK on earth. That is a SIGNED `app-release.apk`, so every other signal in this step
           # reads green over it — the expected filename exists, `app-release-unsigned.apk` does
@@ -706,12 +706,12 @@ jobs:
           # fingerprint mismatch cannot do for you.
           if grep -q "release: signing with the DEBUG keystore" "$log"; then
             echo "::error::The Gradle log says the release variant was signed with the DEBUG KEYSTORE (debugSignRelease=true, and no release key resolved). That APK is signed and it installs, and it must never be published: the debug keystore ships with every Android SDK, so anybody can sign an update for it."
-            echo "::error::On a runner this can only mean the release key did not resolve — check ANDROID_RELEASE_KEYSTORE_BASE64, ANDROID_RELEASE_KEYSTORE_PASSWORD and ANDROID_RELEASE_KEY_ALIAS. A real key always wins over the flag (build.gradle.kts:345-354 states that ordering and why), so a key that resolved cannot reach this branch."
+            echo "::error::On a runner this can only mean the release key did not resolve — check ANDROID_RELEASE_KEYSTORE_BASE64, ANDROID_RELEASE_KEYSTORE_PASSWORD and ANDROID_RELEASE_KEY_ALIAS. A real key always wins over the flag (build.gradle.kts:348-357 states that ordering and why), so a key that resolved cannot reach this branch."
             exit 1
           fi
 
           # ─── THE POSITIVE ASSERTION, AND THE STRING IT HAS TO MATCH ───────────────────────
-          # Taken verbatim from android/app/build.gradle.kts:342-344, which logs:
+          # Taken verbatim from android/app/build.gradle.kts:345-347, which logs:
           #     release: signing with the RELEASE key (<store>.jks, alias <alias>). This APK is distributable.
           # This grep used to read "signing with the configured release key" — a string that
           # appears NOWHERE in this repository. So the notice below fired on every correct run,
@@ -1988,7 +1988,7 @@ jobs:
             echo ""
             echo "**Still not verified by this run:** R8 and resource shrinking are release-only, and"
             echo "their failure mode is a \`SerializationException\` or a \`NoSuchMethodError\` at the first"
-            echo "sync, on a build that installs and runs fine. No device or emulator exists on a GitHub"
-            echo "runner and no instrumented test ran here. A release must still be taken through the"
+            echo "sync, on a build that installs and runs fine. This job has no device or emulator and"
+            echo "no instrumented test ran here. A release must still be taken through the"
             echo "offline loop on real hardware — a green run above does not do that for you."
           } >> "$GITHUB_STEP_SUMMARY"
