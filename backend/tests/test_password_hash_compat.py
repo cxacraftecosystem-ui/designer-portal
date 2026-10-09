@@ -111,3 +111,21 @@ def test_a_malformed_stored_hash_raises_rather_than_answering():
         verify_password("anything", "not-a-hash")
     assert verify_password("anything", "") is False
     assert verify_password("anything", None) is False
+
+
+@pytest.mark.parametrize(
+    "broken",
+    [
+        PASSLIB_HASHES["the-real-one"] + " ",
+        PASSLIB_HASHES["the-real-one"] + "\n",
+        PASSLIB_HASHES["the-real-one"] + "\r\n",
+        " " + PASSLIB_HASHES["the-real-one"],
+        PASSLIB_HASHES["the-real-one"][:-1],
+    ],
+)
+def test_a_stored_hash_of_the_wrong_length_raises_as_it_did(broken):
+    """A real hash with a stray character, or one short. passlib raised "malformed bcrypt hash" for
+    each (measured 2026-10-09); bcrypt 5 alone would answer False with the right password typed,
+    which turns a corrupted row into a permanent "wrong password" nobody is told about."""
+    with pytest.raises(ValueError):
+        verify_password("the-real-one", broken)

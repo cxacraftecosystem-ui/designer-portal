@@ -56,6 +56,11 @@ BCRYPT_ROUNDS = 12
 #: did on our behalf — so every hash it wrote verifies against exactly the bytes it was made from.
 BCRYPT_MAX_SECRET_BYTES = 72
 
+#: The length of every bcrypt hash this application, and passlib before it, ever stored: ``$2b$``, two
+#: cost digits, ``$``, 22 characters of salt and 31 of checksum. See :func:`verify_password` for why it
+#: is checked rather than left to bcrypt.
+BCRYPT_HASH_LENGTH = 60
+
 #: The longest password :func:`verify_password` will check at all, in UTF-8 BYTES. It is passlib's
 #: ``MAX_PASSWORD_SIZE``: passlib refused anything longer, and the sign-in answered "wrong password".
 #: Kept, rather than dropped with passlib, because without it a 5,000-byte paste whose first 72 bytes
@@ -160,9 +165,14 @@ def verify_password(password: str, password_hash: str | None) -> bool:
         # account's password, which is all a sign-in asks: False, never a 500, and never a check of
         # its first 72 bytes (see MAX_CHECKED_PASSWORD_BYTES).
         return False
-    # A MALFORMED STORED HASH still raises — `bcrypt.checkpw` answers ValueError("Invalid salt") —
-    # because that is a broken row an operator must hear about, not a wrong password. passlib raised
-    # a ValueError for it too.
+    # A MALFORMED STORED HASH still raises, because that is a broken row an operator must hear about,
+    # not a wrong password; passlib raised a ValueError for it too. bcrypt 5 raises on its own only
+    # for a bad prefix or salt (ValueError "Invalid salt"). A hash of the wrong LENGTH — one character
+    # short, or a trailing space or newline from a hand-written UPDATE — it simply fails to match, so
+    # that row would have read as "wrong password" for ever. passlib refused every such shape
+    # ("malformed bcrypt hash", measured against passlib 1.7.4 on 2026-10-09), hence the check here.
+    if len(password_hash) != BCRYPT_HASH_LENGTH:
+        raise ValueError(f"the stored password hash is malformed: not {BCRYPT_HASH_LENGTH} characters")
     return bcrypt.checkpw(_bcrypt_secret(password), password_hash.encode("ascii"))
 
 
