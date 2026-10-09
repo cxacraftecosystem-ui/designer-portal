@@ -872,12 +872,14 @@ class AccessLogRedaction(logging.Filter):
     """Blank the credentials in the path of uvicorn's access line; leave the rest of the line, and
     every other record, exactly as it came.
 
-    THE SHAPE IS READ OFF UVICORN, NOT GUESSED. All three of its HTTP implementations
-    (``httptools_impl``, ``h11_impl`` and ``zttp_impl`` in the pinned 0.52.4) log the line as
+    THE SHAPE IS READ OFF UVICORN, NOT GUESSED. All four of its HTTP implementations
+    (``httptools_impl``, ``h11_impl``, ``zttp_impl`` and ``zttp_h2_impl`` in the pinned 0.54.0, re-read
+    on 2026-10-09) log the line as
     ``access_logger.info('%s - "%s %s HTTP/%s" %d', client, method, path, http_version, status)``,
     with the path built by ``get_path_with_query_string``; its ``AccessFormatter`` unpacks the same
     five. So the path is the third of exactly five arguments, and a record of any other shape is not
-    the access line.
+    the access line. ``tests/test_access_log_redaction_live_server.py`` runs a real uvicorn server
+    and reads its access line, so the day a uvicorn release changes that call, a test says so.
 
     IT NEVER RAISES. A filter runs inside ``logger.info``, which uvicorn calls from the ``send`` that
     starts the response: an exception here would come out of that call and fail the request whose

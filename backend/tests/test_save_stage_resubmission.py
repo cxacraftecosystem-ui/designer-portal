@@ -82,6 +82,15 @@ def anyio_backend():
     return "asyncio"
 
 
+# ⚠ CORRECTION, 2026-10-09: FUNCTION SCOPE WAS NOT THE FIX, AND THE PARAGRAPHS BELOW ARE HISTORY. The
+# cross-loop failures kept coming back on CI — this module's four tests among 37 across three modules,
+# on Python 3.12 and 3.14 alike — because their cause was never scope: it was which of the two async
+# plugins site-packages happened to register first (every red run's header read `plugins:
+# asyncio-1.4.0, anyio-4.14.2`). backend/pyproject.toml now fixes that order with `addopts`,
+# tests/conftest.py refuses the wrong one, and tests/test_async_plugin_order.py checks the property.
+# The fixture is left function-scoped because it is correct as it stands, not because it cured
+# anything. The original reasoning follows unedited.
+#
 # ⚠ FUNCTION-SCOPED, NOT MODULE-SCOPED, AND THAT IS THE FIX FOR THE CROSS-LOOP FAILURES.
 #
 # `pyproject.toml` sets `asyncio_mode = "auto"` (pytest-asyncio) AND this module marks itself

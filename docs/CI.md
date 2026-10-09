@@ -131,7 +131,7 @@ Three properties of that wait are worth knowing before you rely on it:
 | 1 | Deploy backend to EC2 | `.github/workflows/deploy-backend.yml` | `push` to `main` | `wait-for-checks` (§1.1) → rsync into `releases/<sha>-<run_id>.<attempt>` (per deploy ATTEMPT, so a re-run never writes into the tree that is serving) → write that release's `.env` → build or reuse a venv from `requirements.lock` → `prisma migrate deploy` → **flip the `current` symlink** → restart `fieldrepo` + `fieldrepo-queue` → poll `/health`. See §1.2 for the release layout and the rollback command. |
 | 2 | Deploy frontend to Vercel | `.github/workflows/deploy-frontend.yml` | `workflow_run` on **1** completing | gate → `wait-for-checks` (§1.1, and it runs exactly where **1**'s copy could not) → `vercel pull` → **assert the pulled env carries what the app needs** (and, since 2026-10-09, *warn* when the project's Node.js Version differs from the build's major or the pulled env holds a database credential) → `vercel build --prod` → **assert those values actually reached the bundle** → `vercel deploy --prebuilt --prod` → `vercel alias set` onto the production alias → smoke-check the alias → **assert the bundle the CDN serves is the one that was verified** |
 | 3 | Android build | `.github/workflows/android-build.yml` | `workflow_run` on **2** completing, plus `pull_request` | JDK 17 → `compileDebugKotlin` → `testDebugUnitTest` → `lintDebug` (advisory) → `assembleDebug` → upload APK |
-| — | Checks | `.github/workflows/checks.yml` | **every** `pull_request`, `push` to `main`, `workflow_dispatch` — **no `paths:` filter, deliberately** | Four independent jobs plus a packaging job. The three that gate: `Backend tests` (whole pytest suite, DSN `ci.invalid` so the database-backed modules skip — and, despite the job's name, a last step that runs `ruff check .` over `backend/` and can fail the build on its own; the dated baseline in `backend/pyproject.toml` is what keeps it green), `Web typecheck, lint and unit specs` (`tsc --noEmit`, `eslint . --max-warnings=0`, `npm run test:unit`), `Docs check` (`node docs/tools/check-docs.mjs`). **`Backend integration tests` is the fourth and is deliberately advisory** — a `postgres:16` service container, `prisma migrate deploy`, then the *whole* suite with a loopback DSN so the database-backed modules that skip in job 1 actually run. Its last step asserts that `conftest` reported a local database, because a job that silently ran the same DB-less suite would prove nothing while looking green. It is not in `GATING_JOBS` and must not be added to branch protection until somebody has watched a few runs and knows what it costs. |
+| — | Checks | `.github/workflows/checks.yml` | **every** `pull_request`, `push` to `main`, `workflow_dispatch` — **no `paths:` filter, deliberately** | Four independent jobs plus a packaging job. The three that gate: `Backend tests` (whole pytest suite, DSN `ci.invalid` so the database-backed modules skip — and, despite the job's name, a last step that runs `ruff check .` over `backend/` and can fail the build on its own; the dated baseline in `backend/pyproject.toml` is what keeps it green), `Web typecheck, lint and unit specs` (`tsc --noEmit`, `eslint . --max-warnings=0`, `npm run test:unit`), `Docs check` (`node docs/tools/check-docs.mjs`). **`Backend integration tests` is the fourth and is deliberately advisory** — a `postgres:17` service container (production's major), `prisma migrate deploy`, then the *whole* suite with a loopback DSN so the database-backed modules that skip in job 1 actually run. Its last step asserts that `conftest` reported a local database, because a job that silently ran the same DB-less suite would prove nothing while looking green. It is not in `GATING_JOBS` and must not be added to branch protection until somebody has watched a few runs and knows what it costs. |
 
 **The other six workflows in this repository.** Naming them rather than counting them is the rule
 this document learned the hard way (§5); at 2026-09-03 there are **ten files** under
@@ -468,21 +468,26 @@ and a developer's venv resolve to the **same** versions; before it, three machin
 the index offered that day, which is how an unpinned transitive dependency turns a green branch red
 overnight with no commit behind it.
 
-**It is compiled for Python 3.12 in a container**, because the Python that resolves it must be the
-Python that runs it in production — the local venv on the machine this was written from is 3.14, and
-a lock compiled there would carry that interpreter's environment markers into production. Since
-2026-10-09 CI's two backend jobs (and `e2e-live.yml`) install it on **3.14**, as the development
-machine always has, by the owner's decision after 37 integration tests failed on 3.12 alone (a Prisma
-client left connected to one test's event loop and reused from another). The EC2 box still runs 3.12,
-so CI no longer proves the suite on production's interpreter; the deploy's own install, migration and
-`/health` poll on the box are the 3.12 evidence until the box moves too. Refresh it deliberately,
-never as a side effect of something else:
+**It is compiled for Python 3.14 in a Linux container**, because the Python that resolves it must be
+the Python that runs it in production — and since 2026-10-09 that is 3.14 everywhere: the EC2 box
+builds every release venv with `python3.14` (`BOX_PYTHON` in `deploy-backend.yml`, installed from the
+deadsnakes PPA on Ubuntu 24.04), `backend/Dockerfile` is on `python:3.14-slim-trixie`, CI's two backend
+jobs and `e2e-live.yml` run 3.14 with `check-latest`, and `backend/pyproject.toml` requires `>= 3.14`.
+Linux and not a developer's Windows venv, because a lock compiled there carries that platform's
+environment markers: `uvloop` is marker-excluded on Windows and would silently drop out of the
+production install. Refresh it deliberately, never as a side effect of something else:
 
 ```bash
-docker run --rm -v "$PWD/backend:/w" -w /w python:3.12 sh -c \
-  "pip install -q pip-tools && pip-compile -q --strip-extras --extra dev \
+docker run --rm -v "$PWD/backend:/w" -w /w python:3.14-slim sh -c \
+  "pip install -q pip-tools && pip-compile -q --strip-extras --extra dev --upgrade \
    --output-file requirements.lock pyproject.toml"
 ```
+
+`--upgrade` moves every pin to its newest release, which is what the repository's "latest stable
+everywhere" rule asks for; drop it to keep every pin that still satisfies `pyproject.toml` and resolve
+only what a range change forces. `python:3.14-slim` suffices because every pin ships a cp314
+manylinux wheel (measured 2026-10-09); if a future dependency needs a compiler just to report its
+metadata, use `python:3.14`, the full image.
 
 Two traps, both already sprung once:
 
@@ -490,9 +495,16 @@ Two traps, both already sprung once:
   roughly 400 MB of wheels that `backend/pyproject.toml` explicitly forbids on the API box.
   Measured on the way in on 2026-09-03: `--all-extras` produced a lock carrying `onnxruntime`,
   `rembg`, `numpy` and `scipy`.
-* **Do not paste the command out of the lock's own `pip-compile` header.** That header records
-  `--no-index` to say no index URL was written into the file. Passing it for real tells pip to
-  resolve against no index at all, and the refresh fails.
+* **Use the command above, not the one in the lock's own `pip-compile` header.** The header never
+  records `--upgrade`, so it reproduces a compile, not a refresh. (Older pip-tools also wrote
+  `--no-index` into it, which passed for real resolves against no index at all; pip-tools 7.6.2,
+  which compiled the current lock, no longer does.)
+
+**The 37 integration failures that used to be blamed on Python 3.12 were never about the
+interpreter.** The same 37 tests failed on 3.14.8. They were an accident of plugin ORDER: whichever of
+pytest-asyncio and anyio's plugin site-packages listed first claimed an anyio test's async fixtures
+for its own event loop. `backend/pyproject.toml` now loads them in a fixed order (`addopts`), and
+`backend/tests/conftest.py` refuses the other one at startup.
 
 ### 1.4 Publishing the Android release — one ordering constraint
 
@@ -568,6 +580,9 @@ must be believed.
 > fixed by repointing `docker-compose.yml` at quay.io. A weekly run is a signal only if somebody
 > reads it; two weeks red on an unrelated registry change says nobody was. The workflow's own header
 > carries the full record and lists the two things to fix before any schedule goes back on it.
+> **quay.io went the same way by 2026-10-09** (both MinIO images answer 401 to an anonymous pull, and
+> upstream MinIO is archived), so the stack now runs `docker.io/pgsty/silo`, a maintained fork of the
+> same MinIO source, under the same service name; `docker-compose.yml` records what was checked.
 
 It brings the stack up with a **bare `docker compose up -d`**, which is a dependency on a promise
 [DOCKER.md](DOCKER.md) makes and `checks.yml`'s packaging job asserts: a profileless `up` starts
@@ -621,7 +636,27 @@ closes it: **github-actions weekly** (Monday 04:00 Asia/Kolkata, at most 3 open 
 prefix), plus **npm on `/frontend`** and **pip on `/backend`** monthly, minor-and-patch grouped and
 majors left individual. It does **not** refresh `backend/requirements.lock` — that is pip-compile
 output, so a pip PR moves the range in `pyproject.toml` and the lock has to be recompiled in the same
-PR (§1.3). `pip` also ignores **ruff** (minor and major) and **bcrypt** (entirely).
+PR (§1.3). `pip` also ignores **ruff** (minor and major). It used to ignore **bcrypt** entirely, for
+passlib's sake; since 2026-10-09 passlib is gone and a bcrypt bump is an ordinary one, gated by
+`backend/tests/test_password_hash_compat.py`.
+
+**The pins as of 2026-10-09**, each the latest release, its tag's commit read off the GitHub API on
+that day: `actions/checkout` v7.0.1, `actions/setup-python` v7.0.0, `actions/setup-node` v7.1.0,
+`actions/setup-java` v6.0.1, `actions/upload-artifact` v7.0.2, `reactivecircus/android-emulator-runner`
+v2.38.0, `webfactory/ssh-agent` v0.10.0. checkout v7 refuses to check a FORK's pull request out under
+`pull_request_target` or `workflow_run`; the two `workflow_run` workflows here (deploy-frontend.yml,
+android-build.yml) only ever chain from pushes and dispatches on this repository, so the guard — which
+keys on the triggering run's event being a pull request — never applies to them.
+
+**The runner image is pinned too: `runs-on: ubuntu-26.04` in every job, since 2026-10-09.** It was
+`ubuntu-latest`, which GitHub moves to a new Ubuntu on its own schedule (to 26.04 in November 2026), so
+the OS under every job could change with no diff here. What 26.04 changes, checked per job: Docker
+Compose 5 (e2e-live's `ps --format json` greps still match — measured with Compose 5.5.0), a default
+JDK of 25 (the Android jobs set 17 through setup-java), a system Python 3.14 and a cached 3.14.7
+(setup-python with `check-latest` installs python.org's newest 3.14 regardless), OpenSSL 3.5 (Prisma's
+CLI still fetches its `debian-openssl-3.0.x` engine there, which libssl.so.3 runs), PGDG's
+`resolute-pgdg` for backup-db's `postgresql-client-17`, and kubectl/kustomize/AWS CLI/gh/jq still
+preinstalled. Moving to the next image is the same one-word change in every job, made deliberately.
 
 ---
 
@@ -773,7 +808,7 @@ same value in two places. Change one there and re-run this workflow (or push) to
   absence of one, is what makes the ~28 modules skip. With them it is 2862 passed, 381 skipped, 0
   failed, in four to five minutes. **That "second, larger decision" was taken on 2026-09-03**, and
   not by changing this job: `Backend integration tests` is a separate job in the same file, with a
-  `postgres:16` service container and a loopback DSN, running `prisma migrate deploy` and then the
+  `postgres:17` service container (production's major; it was 16 until 2026-10-09) and a loopback DSN, running `prisma migrate deploy` and then the
   whole suite so the modules that skip here actually execute. `Backend tests` is deliberately
   unchanged — it is fast, needs no service, and it is the one that gates. The new job is advisory
   until somebody has watched enough runs to know what it costs; see §1's table.

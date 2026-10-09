@@ -383,7 +383,7 @@ def artifact_dir(artifact: AsrArtifact) -> Path | None:
 # ---------------------------------------------------------------------------------------------
 
 #: ``(path, size, mtime_ns, ctime_ns) -> digest``. Insertion-ordered so the oldest entry evicts.
-_DIGEST_CACHE: "OrderedDict[tuple[str, int, int, int], str]" = OrderedDict()
+_DIGEST_CACHE: OrderedDict[tuple[str, int, int, int], str] = OrderedDict()
 
 
 def clear_digest_cache() -> None:

@@ -33,6 +33,32 @@ import pytest
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND_ROOT))
 
+
+# --------------------------------------------------------------------------------------
+# The two async plugins, in the one order under which an anyio test's async fixtures share its loop
+# --------------------------------------------------------------------------------------
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    """Refuse to run with pytest-asyncio registered before anyio's plugin.
+
+    In that order an async fixture of an anyio-marked test is set up on pytest-asyncio's event loop
+    and the test then runs on anyio's, so the first query a test makes through a connection its
+    fixture opened fails with "... is bound to a different event loop". It cost 37 integration
+    tests on CI for weeks — on 3.12 and 3.14 alike — because the order was decided by how
+    site-packages happened to list the two plugins. ``addopts`` in backend/pyproject.toml fixes the
+    order; this turns the day somebody removes that line into one clear error at startup instead of
+    three modules failing for a reason that names neither plugin.
+    """
+    names = [name for name, _plugin in config.pluginmanager.list_name_plugin()]
+    if "anyio" in names and "asyncio" in names and names.index("asyncio") < names.index("anyio"):
+        raise pytest.UsageError(
+            "pytest-asyncio is registered before anyio's pytest plugin, so async fixtures of "
+            "anyio-marked tests would run on a different event loop from their tests. Keep "
+            '`addopts = ["-p", "anyio", "-p", "asyncio"]` in backend/pyproject.toml, or pass those '
+            "two options first on the command line."
+        )
+
 #: Whether the SHELL exported a DSN, captured before anything here could have loaded ``.env``.
 #: Recorded rather than inferred because it is the difference between "the publish below is what
 #: makes twenty-eight modules work" (a developer machine, where the DSN exists only in ``backend/.env``)

@@ -2,16 +2,29 @@
 name = "design-workshop-backend"
 version = "0.1.0"
 description = "API-first FastAPI backend for Design Prototype Workshop capture, review and report generation."
-requires-python = ">=3.11"
+# 3.14 EVERYWHERE SINCE 2026-10-09: the EC2 box (deploy-backend.yml installs it from deadsnakes on
+# Ubuntu 24.04), backend/Dockerfile, and every CI job. 3.15 is a release candidate, not a target.
+requires-python = ">=3.14"
 dependencies = [
     "fastapi>=0.111.0",
     "uvicorn[standard]>=0.30.0",
     "pydantic>=2.7.0",
     "pydantic-settings>=2.2.1",
-    "python-jose[cryptography]>=3.3.0",
-    "passlib[bcrypt]>=1.7.4",
-    "bcrypt>=4.0.1,<4.1.0",
-    "prisma>=0.13.1",
+    # PyJWT and bcrypt REPLACED python-jose and passlib on 2026-10-09 — app/core/security.py has
+    # the argument, and tests/test_password_hash_compat.py and tests/test_jwt_compat.py hold the
+    # hashes and the token the old pair wrote, so the swap stays provably invisible. bcrypt's floor is
+    # 5: security.py truncates to 72 bytes itself, which is what 5 demands and 4 did silently.
+    "PyJWT>=2.15.1",
+    "bcrypt>=5.0.0",
+    # PINNED EXACTLY, AND THERE IS NOTHING NEWER TO MOVE TO. 0.15.0 is prisma-client-py's final
+    # release: the project is archived upstream (RobertCraigie/prisma-client-py, last push
+    # 2025-04-10) and is bound to Prisma CLI/engines 5.17.0, while Prisma ORM itself is on 7.x with a
+    # Rust-free engine that no Python client speaks. A range here could only ever resolve to this one
+    # version, so it is written as the pin it is. WHAT THE PIN HOLDS BACK, AND THE WAY OUT, are in
+    # docs/OPEN_FINDINGS.md ("prisma-client-py is archived"): PostgreSQL 18 (the 5.17 schema engine
+    # predates it) and Python 3.15 (never tested upstream), removed by moving app/core/db.py and every
+    # `prisma.<model>` call to a maintained async stack (SQLAlchemy 2 with asyncpg or psycopg 3).
+    "prisma==0.15.0",
     "boto3>=1.34.0",
     "python-multipart>=0.0.9",
     "email-validator>=2.1.1",
@@ -113,7 +126,10 @@ cache = [
 ]
 
 [build-system]
-requires = ["setuptools>=69", "wheel"]
+# The floor is the newest setuptools (84.0.0, 2026-08-08). pip's isolated build resolves the newest
+# anyway, so this states what is actually used rather than holding anything back. `wheel` is gone:
+# setuptools has built wheels itself since 70.1, and listing it only installed a package nothing read.
+requires = ["setuptools>=84"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
@@ -122,7 +138,9 @@ exclude = ["prisma*"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+# py314 with `requires-python` above. Raising it turned on the UP rules for 3.12-3.14 syntax; what
+# they found was fixed in the same commit (2026-10-09), so nothing was added to the baseline below.
+target-version = "py314"
 
 # The rule set is pinned HERE, by name, deliberately. With no [tool.ruff.lint] section ruff falls
 # back to its own implicit default, and that default has changed between ruff releases -- so this
@@ -137,7 +155,7 @@ select = [
     "E",      # pycodestyle errors
     "W",      # pycodestyle warnings
     "I",      # isort -- one import order, enforced mechanically rather than by review
-    "UP",     # pyupgrade -- requires-python is >=3.11, so write 3.11
+    "UP",     # pyupgrade -- requires-python is >=3.14, so write 3.14
     "B",      # flake8-bugbear -- mutable defaults, loop-variable capture, silent truncation
     "C4",     # flake8-comprehensions
     "SIM",    # flake8-simplify
@@ -336,7 +354,7 @@ combine-as-imports = true
 "app/services/questionnaire_forms.py" = ["I001"]
 
 # (a) in flight, and (b): FURB162 is right that `fromisoformat(s.replace("Z", "+00:00"))` is
-# redundant on 3.11+, which is the floor `requires-python` sets. Deleting the replace is still a
+# redundant on 3.11+, and the floor `requires-python` sets is 3.14. Deleting the replace is still a
 # parsing change on a date-of-birth string that arrives from the wire, and it belongs to whoever is
 # in that function.
 "app/services/records.py" = ["FURB162"]
@@ -382,3 +400,21 @@ combine-as-imports = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+# ─── THE TWO ASYNC PLUGINS ARE LOADED IN A FIXED ORDER, AND THE ORDER IS A FIX (2026-10-09) ────────
+#
+# pytest-asyncio (`asyncio_mode = "auto"` above) and anyio's plugin (the `pytest.mark.anyio` that 59
+# modules carry) both wrap `pytest_fixture_setup`, and whichever pluggy calls first claims an async
+# fixture for ITS event loop. Registered pytest-asyncio first, an async fixture of an anyio test runs
+# on pytest-asyncio's loop while the test runs on anyio's: the fixture's `db.connect()` binds Prisma's
+# httpx pool to one loop and the test's first query uses it from the other — "RuntimeError: <asyncio.
+# locks.Event ...> is bound to a different event loop". That is the 37 integration failures in
+# test_designer_roster_names.py, test_save_stage_resubmission.py and
+# test_workshop_oversight_reassignment.py, on Python 3.12 AND 3.14 alike.
+#
+# WITHOUT THIS LINE THE ORDER IS AN ACCIDENT of how site-packages happens to list two .dist-info
+# directories, so it differs between machines and between runner images: every red CI run printed
+# `plugins: asyncio-1.4.0, anyio-4.14.2`, the last green one `plugins: anyio-4.14.2, asyncio-1.4.0`,
+# and NTFS lists them alphabetically, which is why no laptop ever reproduced it. `-p` loads both
+# before autoload does, in the order written. tests/conftest.py refuses the other order outright,
+# and tests/test_async_plugin_order.py checks the property that actually matters.
+addopts = ["-p", "anyio", "-p", "asyncio"]

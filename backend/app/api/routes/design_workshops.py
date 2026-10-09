@@ -864,9 +864,12 @@ async def get_stage_schema(request: Request, _: Any = Depends(get_current_user))
         # "AT THE MOMENT IT COMPRESSES" IS A CONDITION AND NOT A FIGURE OF SPEECH. The middleware
         # returns before it captures anything when the request does not offer gzip, and appends
         # `vary` only inside the compression branch, which a body under `minimum_size` also skips —
-        # so `Accept-Encoding: identity` gets a 200 with ETag, Cache-Control and NO Vary at all
-        # (MEASURED through `create_app()`, and
-        # `test_the_200_carries_no_vary_when_the_client_refuses_gzip` pins it). Harmless as
+        # so `Accept-Encoding: identity` gets a 200 with ETag, Cache-Control and no
+        # `Vary: Accept-Encoding` (MEASURED through `create_app()`, and
+        # `test_the_200_carries_no_vary_when_the_client_refuses_gzip` pins it). Since Starlette
+        # 1.7.0 that 200 does carry `Vary: Origin`: CORSMiddleware now stamps it on EVERY response it
+        # wraps, whether or not the request sent an Origin — which is right, since only some origins
+        # get an Access-Control-Allow-Origin back — and it lands on the 304 beside this one. Harmless as
         # deployed: both clients send gzip, and `private` keeps this body out of a shared cache
         # regardless. Named here because the alternative — setting Vary on the 200 too — trades a
         # duplicated header on every compressed response for one that is always present, and that

@@ -137,7 +137,7 @@ class _Client:
     coming apart; whether Postgres rolls them back together is a claim for Postgres.
     """
 
-    def __init__(self, **tables: "_Rows") -> None:
+    def __init__(self, **tables: _Rows) -> None:
         for name, table in tables.items():
             setattr(self, name, table)
 

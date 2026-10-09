@@ -31,7 +31,9 @@ anytime without data loss. That is the whole reason this guide provisions no dat
   disabled, and expect to tune the ceilings below downwards.
 - **Do NOT** try to `npm run build` the Next.js frontend on this box either way — deploy the
   frontend to **Vercel**, which is what this project does (see `docs/DEPLOYMENT_VERCEL.md`).
-- AMI: **Ubuntu Server 24.04 LTS**. Storage: **30 GiB gp3** (free-tier max).
+- AMI: **Ubuntu Server 26.04 LTS** (resolute) for a new box — what `infra/terraform/main.tf` selects
+  since 2026-10-09; the box running today is 24.04 (noble), and both are covered below. Storage:
+  **30 GiB gp3** (free-tier max).
 - Add a **2 GiB swap file** (below) so `pip install` / `prisma generate` don't get OOM-killed.
 
 > The "Free tier eligible" badge on larger types (m7i-flex.large etc.) refers to the new account
@@ -43,7 +45,7 @@ anytime without data loss. That is the whole reason this guide provisions no dat
 
 ## 2. Launch + network
 
-1. **Launch instance** → Ubuntu 24.04, `t3.micro`, new key pair (download the `.pem`).
+1. **Launch instance** → Ubuntu 26.04, `t3.small`, new key pair (download the `.pem`).
 2. **Elastic IP**: Allocate one and **associate it** with the instance. This gives a *stable* public
    IP (DHCP-style changes were exactly the LAN problem earlier — don't repeat it in the cloud).
 3. **Security group (inbound rules):**
@@ -62,7 +64,13 @@ ssh -i your-key.pem ubuntu@<ELASTIC_IP>
 sudo fallocate -l 2G /swapfile && sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
 echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
 
-sudo apt update && sudo apt install -y python3.12-venv python3-pip git
+# PYTHON 3.14 — what every release venv is built with (BOX_PYTHON in deploy-backend.yml). On 26.04 it
+# is the system Python; on 24.04 it comes from the deadsnakes PPA, exactly as the deploy installs it.
+# libatomic1 is for the Node 26 the deploy pins for the Prisma CLI.
+sudo apt update
+. /etc/os-release
+if [ "$VERSION_CODENAME" = "noble" ]; then sudo add-apt-repository -y ppa:deadsnakes/ppa; fi
+sudo apt install -y python3.14 python3.14-venv python3-pip git libatomic1
 
 # The release layout the deploy expects. See §3.1 — do not clone into /home/ubuntu/app/backend.
 mkdir -p /home/ubuntu/app/releases/manual/backend
@@ -78,15 +86,32 @@ cp -a /tmp/repo/backend/. /home/ubuntu/app/releases/manual/backend/
 ln -sfn /home/ubuntu/app/releases/manual /home/ubuntu/app/current
 cd /home/ubuntu/app/current/backend
 
-python3.12 -m venv .venv
+python3.14 -m venv .venv
 # FROM THE LOCK, and then the project with NO dependency resolution. `pip install -e .` on its own
 # re-resolves this project's declared ranges and can lift a pin the lock had settled, which is the
 # whole property the lock exists to have — CI, this box and a developer's venv resolving to the same
 # versions. See docs/CI.md §1.3 for how the lock is refreshed (in a container, deliberately).
 ./.venv/bin/pip install -r requirements.lock
 ./.venv/bin/pip install -e . --no-deps
-PATH="$PWD/.venv/bin:$PATH" ./.venv/bin/python -m prisma generate
+# Through the script, not a bare `prisma generate`: it adds the one line that keeps the generated
+# client importable in seconds on Python 3.14 (without it, minutes and well over a gigabyte).
+PATH="$PWD/.venv/bin:$PATH" ./.venv/bin/python scripts/generate_prisma_client.py
 ```
+
+**Running the Prisma CLI by hand** (`migrate status`, `migrate deploy`) — use the Node the deploy
+pinned, the same way the deploy does, or prisma-client-py falls back to whatever older nodeenv it
+finds in `~/.cache/prisma-python/nodeenv`:
+
+```bash
+cd /home/ubuntu/app/current/backend
+export PRISMA_NODEENV_CACHE_DIR="$HOME/.cache/prisma-python/nodeenv-26.11.1"   # = PRISMA_CLI_NODE_VERSION
+export PRISMA_USE_GLOBAL_NODE=false PRISMA_USE_NODEJS_BIN=false
+set -a; . ./.env; set +a
+./.venv/bin/python -m prisma migrate status
+```
+
+Do NOT set `PRISMA_NODEENV_EXTRA_ARGS` to pin Node instead: prisma-client-py 0.15.0 passes it to
+pydantic 2 as a raw string, it fails validation, and every `prisma` command dies before it starts.
 
 Create `backend/.env` (see template in section 5) **inside the release**, at
 `/home/ubuntu/app/current/backend/.env`.
@@ -118,6 +143,12 @@ ls -lt /home/ubuntu/app/releases                   # newest first; the one below
 ln -sfn /home/ubuntu/app/releases/<older-release> /home/ubuntu/app/current
 sudo systemctl restart fieldrepo fieldrepo-queue
 ```
+
+**A release built before 2026-10-09 runs Python 3.12**, not 3.14: its venv symlinks
+`/usr/bin/python3.12`, Ubuntu 24.04's own interpreter. Rolling back to one works because that
+interpreter is still installed — do not remove `python3.12` from the box while any such release is in
+`releases/`. The deploy keeps three released trees, so they age out on their own three deploys after
+the first 3.14 one.
 
 Seconds, no network fetch. **The one thing a flip cannot undo is an applied migration** — if the
 release you are rolling back to predates a migration that has run, the old code meets a schema it was

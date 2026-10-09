@@ -34,7 +34,7 @@ class LoginRequest(APIModel):
     googleIdToken: str | None = None
 
     @model_validator(mode="after")
-    def validate_login_mode(self) -> "LoginRequest":
+    def validate_login_mode(self) -> LoginRequest:
         has_password_login = bool(self.email and self.password)
         has_google_login = bool(self.googleIdToken)
         if has_password_login == has_google_login:

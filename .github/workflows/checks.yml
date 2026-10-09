@@ -96,7 +96,7 @@ jobs:
   # ═══════════════════════════════════════════════════════════════════════════════════════
   backend:
     name: Backend tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     defaults:
       run:
         working-directory: backend
@@ -137,19 +137,25 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Python
-        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          # 3.14, the interpreter the development machine runs — the owner's decision of 2026-10-09,
-          # after 37 integration tests failed on 3.12 alone (a Prisma client left connected to one
-          # test's event loop and reused from another, which 3.14's asyncio does not trip on). The
-          # EC2 box still runs 3.12 (`python3.12 -m venv .venv` in deploy-backend.yml), so this job
-          # no longer proves the suite on production's interpreter: until the box moves too, the
-          # deploy's own install, migration and /health poll on the box are the 3.12 evidence.
-          # pyproject allows >= 3.11.
+          # 3.14, THE INTERPRETER PRODUCTION RUNS: the EC2 box builds every release venv with
+          # python3.14 since 2026-10-09 (BOX_PYTHON in deploy-backend.yml), the Dockerfile is on
+          # python:3.14-slim-trixie, and pyproject requires >= 3.14. So this job proves the suite on
+          # production's interpreter again. `check-latest` makes the patch python.org's newest
+          # rather than whatever the runner image cached (3.14.7 in the ubuntu-26.04 image of
+          # 2026-09-27, when 3.14.8 was current).
+          #
+          # A CORRECTION TO WHAT THIS COMMENT USED TO SAY. It blamed 37 integration failures on
+          # 3.12 ("a Prisma client left connected to one test's event loop and reused from another,
+          # which 3.14's asyncio does not trip on"). The same 37 failed on 3.14.8 as well: the cause
+          # was the ORDER in which pytest-asyncio and anyio's plugin happened to be registered, not
+          # the interpreter. backend/pyproject.toml now fixes that order — see `addopts` there.
           python-version: "3.14"
+          check-latest: true
           cache: pip
           # Both files, since 2026-09-03: the lock is what decides the installed set now, and a
           # cache keyed only on pyproject would be reused across a lock refresh that changed every
@@ -174,25 +180,32 @@ jobs:
         # commit behind it. `--no-deps` on the editable install is what keeps the lock authoritative:
         # without it pip re-resolves this project's own declared ranges and can quietly lift a pin.
         #
-        # REFRESH IT DELIBERATELY, NEVER AS A SIDE EFFECT. It is compiled in a container so the
-        # Python that resolves it is the Python that runs it in production (3.12 — the local venv on
-        # the machine this was written from is 3.14, and a lock compiled there would carry that
-        # interpreter's markers into production). Since 2026-10-09 this job and the integration job
-        # install the same lock on 3.14, as the development machine always has:
+        # REFRESH IT DELIBERATELY, NEVER AS A SIDE EFFECT. It is compiled in a LINUX container on
+        # the Python that runs it in production — 3.14 since 2026-10-09, on the box, in this job, in
+        # the integration job and in the Dockerfile alike. Linux and not the development machine's
+        # Windows venv, because a lock compiled there would carry that platform's markers: uvloop
+        # is marker-excluded on Windows and would silently fall out of the production install.
+        # `--upgrade` moves every pin to its newest release; without it pip-compile keeps every pin
+        # it can and only resolves what a pyproject change forces:
         #
-        #   docker run --rm -v "$PWD/backend:/w" -w /w python:3.12 sh -c \
-        #     "pip install -q pip-tools && pip-compile -q --strip-extras --extra dev \
+        #   docker run --rm -v "$PWD/backend:/w" -w /w python:3.14-slim sh -c \
+        #     "pip install -q pip-tools && pip-compile -q --strip-extras --extra dev --upgrade \
         #      --output-file requirements.lock pyproject.toml"
+        #
+        # python:3.14-slim suffices because every pin ships a cp314 manylinux wheel (measured
+        # 2026-10-09); if a future dependency needs a compiler just to report its metadata, use
+        # python:3.14, the full image, instead.
         #
         # `--extra dev` AND NOT `--all-extras`: `ai-local` pulls rembg and onnxruntime, ~400 MB of
         # wheels that backend/pyproject.toml explicitly says must not be installed on the t3.micro.
         # Measured on the way in — `--all-extras` produced a lock with onnxruntime, rembg, numpy and
         # scipy in it, and this line is the correction.
         #
-        # DO NOT PASTE THE COMMAND FROM THE LOCK'S OWN HEADER. pip-compile writes `--no-index` into
-        # that header to record that no index URL was emitted into the file; passing it for real
-        # tells pip to resolve against no index at all and the refresh fails.
-        # docs/CI.md carries the same procedure in prose.
+        # USE THE COMMAND ABOVE, NOT THE ONE IN THE LOCK'S OWN HEADER. The header never records
+        # `--upgrade`, so it reproduces a compile but not a refresh. (Older pip-tools also wrote
+        # `--no-index` there, which passed for real resolves against no index at all; 7.6.2, which
+        # compiled the current lock on 2026-10-09, no longer does.) docs/CI.md carries the same
+        # procedure in prose.
         run: |
           set -euo pipefail
           python -m pip install --upgrade pip
@@ -204,7 +217,12 @@ jobs:
         # generate` writes into the installed package; without this step every module that
         # reaches app.core.db fails to import. It talks to the schema and to the engine download,
         # NOT to a database — no migration runs and nothing connects.
-        run: python -m prisma generate --schema prisma/schema.prisma
+        #
+        # THROUGH scripts/generate_prisma_client.py, which runs exactly `prisma generate` and then
+        # adds `from __future__ import annotations` to the generated types.py. Without that line this
+        # client takes minutes to import on Python 3.14 (it cost this job about four minutes per
+        # pytest process on 2026-10-09, against half a minute on 3.12); the script says why.
+        run: python scripts/generate_prisma_client.py --schema prisma/schema.prisma
 
       - name: Run the suite
         # THE WHOLE SUITE, not a hand-written selection, and that is the point: a `-k` expression
@@ -482,17 +500,17 @@ jobs:
   # ═══════════════════════════════════════════════════════════════════════════════════════
   web:
     name: Web typecheck, lint and unit specs
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     defaults:
       run:
         working-directory: frontend
 
     steps:
       - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           # 22 to match deploy-frontend.yml, which matches Vercel's current build image. A
           # typecheck that passes on a different major than the one that builds production is
@@ -567,16 +585,16 @@ jobs:
   # ═══════════════════════════════════════════════════════════════════════════════════════
   docs:
     name: Docs check
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
 
     steps:
       - name: Checkout
         # Full history is NOT needed, but a git checkout is: check-docs shells out to
         # `git ls-files` to decide which paths a document is allowed to name.
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "22"
 
@@ -614,11 +632,11 @@ jobs:
   # deliberately, dated, to say which figure the connection budget came from.
   packaging:
     name: Container and manifest packaging
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
 
     steps:
       - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: The manifest tree must be present
         # CHECKED BEFORE THE BUILD, so a missing tree is reported as a missing tree rather than as
@@ -731,7 +749,7 @@ jobs:
   # typecheck, lint and unit specs` and `Docs check` remain the three named in job 1's header.
   backend-integration:
     name: Backend integration tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     # Generous, because it is the whole suite plus ~375 tests that have never run in CI and a
     # `prisma migrate deploy` of 73 migrations against a cold database. Measured on a laptop the
     # DB-less half alone is ~6 minutes; this has no measurement yet, which is the other reason it is
@@ -744,11 +762,16 @@ jobs:
 
     services:
       postgres:
-        # 16 to match docker-compose.yml's `postgres:16-alpine`, so a test that passes here passes
-        # on a developer's local stack. The managed production database is a different major, and
-        # that gap is real but is not this job's to close: `prisma migrate deploy` is what says the
-        # migrations apply, and it is the same migration set either way.
-        image: postgres:16
+        # 17, PRODUCTION'S MAJOR (the managed production database runs PostgreSQL 17), and the same
+        # major as docker-compose.yml's `postgres:17-alpine`, so a test that passes here passes on a
+        # developer's local stack. This read 16 until 2026-10-09 — a major BELOW production, which
+        # meant the one job that applies the whole migration history to an empty database was
+        # proving it on a server production does not run. 18 is the newest PostgreSQL major, and it
+        # is not used here because production cannot follow it: its provider (docs/ENVIRONMENT.md
+        # names it) offers no 18, and prisma-client-py's frozen Prisma 5.17 schema engine predates it
+        # (docs/OPEN_FINDINGS.md).
+        # The container is created empty on every run, so the bump carries no data to migrate.
+        image: postgres:17
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
@@ -789,14 +812,15 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Python
-        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          # 3.14, matching job 1 — whose comment says why production's 3.12 is no longer what this
-          # job proves.
+          # 3.14, production's interpreter, exactly as job 1 — whose comment carries the reasoning
+          # and the correction about the 37 failures this job used to report.
           python-version: "3.14"
+          check-latest: true
           cache: pip
           cache-dependency-path: |
             backend/requirements.lock
@@ -827,10 +851,13 @@ jobs:
         #
         # PYTHONUTF8 is set at job level for parity with the rest of the repository; it is a Windows
         # concern and does nothing on a runner.
+        #
+        # `generate` goes through scripts/generate_prisma_client.py, as in job 1 and for the same
+        # reason: the generated client must import in seconds on Python 3.14, not minutes.
         run: |
           set -euo pipefail
           python -m prisma py fetch
-          python -m prisma generate --schema prisma/schema.prisma
+          python scripts/generate_prisma_client.py --schema prisma/schema.prisma
 
       - name: Apply the migrations to the service database
         # `migrate deploy`, never `migrate dev`. This repository hand-authors its migrations (see

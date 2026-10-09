@@ -524,7 +524,7 @@ class Scope:
         """
         return bool(self.records or self.media)
 
-    def for_download(self) -> "Scope":
+    def for_download(self) -> Scope:
         """The same scope as it applies to a path that HANDS OVER A FILE.
 
         On a download, viewing IS exporting: the manifest is the list of files the browser zips, so

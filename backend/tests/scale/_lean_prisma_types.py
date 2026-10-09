@@ -13,10 +13,15 @@ Measured on this machine (2026-08-27, Python 3.14.7, 15.7 GB RAM with 3.6 GB fre
     stringifier namespace per annotated class, and 52,528 of them will not fit.
   * With the stub below installed first, the same import completes in a few seconds.
 
-Production is unaffected by the crash: the Dockerfile pins ``PYTHON_VERSION=3.12`` and CI runs
-3.12, where PEP 649 is not in play. What production DOES still pay is the import itself, which is
-part of every cold start and every systemd restart. That is worth knowing and is reported as a
-finding, not fixed here.
+THE CRASH IS FIXED AT THE SOURCE SINCE 2026-10-09, and this stub is no longer what keeps a 3.14
+import alive. Production, the Dockerfile and CI all run 3.14 now, and every one of them generates the
+client through ``scripts/generate_prisma_client.py``, which adds ``from __future__ import
+annotations`` to the generated ``types.py``: the annotations are then plain strings, ``TypedDict``
+never calls the annotate machinery, and the full import takes seconds (that script's docstring has
+the measurements). The cause the line above names was precise: for every class, PEP 649's FORWARDREF
+path copies the module's globals, which in a module defining 52,528 classes is quadratic. What
+production DOES still pay is the import itself, part of every cold start and every systemd restart;
+this stub remains the way to measure everything else without it.
 
 **NOTHING IN app/ MAY IMPORT THIS.** It is a measurement tool. Type information is what tells the
 next person editing a query that they have spelled a field wrong, and swapping it out inside the

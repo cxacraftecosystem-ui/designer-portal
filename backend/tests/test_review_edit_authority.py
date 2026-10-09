@@ -180,12 +180,12 @@ class _Queue:
             if getattr(module, "__name__", "").startswith("app.") and getattr(module, "db", None) is real_db:
                 monkeypatch.setattr(module, "db", fake_db)
 
-    def holding(self, creator_role: str) -> "_Queue":
+    def holding(self, creator_role: str) -> _Queue:
         self.artisan.row = _record(creator_role)
         self.artisan.updates.clear()
         return self
 
-    def as_(self, role: str) -> "_Queue":
+    def as_(self, role: str) -> _Queue:
         _CURRENT["user"] = _user(role)
         return self
 

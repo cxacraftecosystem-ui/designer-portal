@@ -546,7 +546,7 @@ class Settings(BaseSettings):
         """Pin the signing algorithm to a symmetric HMAC one, loudly rejecting anything else.
 
         This is the configuration half of the algorithm-confusion defence; the decode half is in
-        app.core.security, which passes exactly this one algorithm to jose. Failing here (at
+        app.core.security, which passes exactly this one algorithm to PyJWT. Failing here (at
         startup) rather than at token-verification time means a bad JWT_ALGORITHM can never quietly
         weaken authentication in production.
         """
@@ -558,7 +558,7 @@ class Settings(BaseSettings):
         return algorithm
 
     @model_validator(mode="after")
-    def _harden_database_url(self) -> "Settings":
+    def _harden_database_url(self) -> Settings:
         """Make database TLS explicit as soon as settings load, so every consumer inherits it.
 
         The rewrite lives here rather than in core/db.py because ``database_url`` is what the

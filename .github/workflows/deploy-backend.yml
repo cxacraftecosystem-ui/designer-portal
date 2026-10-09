@@ -129,14 +129,14 @@ jobs:
   # per-directory answer still exists where it is legitimate — as job outputs, scoped to the
   # workflow that computed them and to the push they describe.
   changes:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     outputs:
       backend: ${{ steps.detect.outputs.backend }}
       frontend: ${{ steps.detect.outputs.frontend }}
       android: ${{ steps.detect.outputs.android }}
     steps:
       - name: Checkout (full history, so both the push range and the live range can be diffed)
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
@@ -327,7 +327,7 @@ jobs:
     # Push only, and only when a deploy would actually follow. A frontend-only push skips this
     # for the same reason it skips `deploy` — there is nothing to gate.
     if: ${{ needs.changes.outputs.backend == 'true' && github.event_name != 'workflow_dispatch' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     # A hair over the poll's own 20-minute budget, so the loop's error message (which names what
     # it was still waiting for) is what a reader sees rather than a bare job cancellation.
     timeout-minutes: 25
@@ -479,10 +479,26 @@ jobs:
           && (needs.wait-for-checks.result == 'success' || needs.wait-for-checks.result == 'skipped')
           && needs.wait-for-checks.outputs.superseded != 'true'
           && (needs.changes.outputs.backend == 'true' || github.event_name == 'workflow_dispatch') }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
+    # ─── THE TWO RUNTIMES THIS JOB PUTS ON THE BOX, NAMED ONCE (2026-10-09) ─────────────────────
+    #
+    # BOX_PYTHON is the interpreter every release venv is built with. The "Install Python on the box"
+    # step installs it, the venv step builds with it and refuses to COPY a venv built by any other
+    # minor, and the runner-side generator uses the same minor. 3.14 is the newest stable line;
+    # 3.15 is a release candidate.
+    #
+    # PRISMA_CLI_NODE_VERSION is the Node the Prisma CLI runs on for `migrate status` / `migrate
+    # deploy` — the only thing on the box that needs Node. It used to be whatever nodeenv decided
+    # was newest on the day ~/.cache/prisma-python/nodeenv was first created (v26.7.0, never
+    # refreshed since); it is now this exact version, in a directory named for it, built by the
+    # "Pin the Node the Prisma CLI runs on" step. Raise it to the newest 26.x (nodejs.org/dist) and
+    # the next deploy builds the new one beside the old. Never lower it.
+    env:
+      BOX_PYTHON: "3.14"
+      PRISMA_CLI_NODE_VERSION: "26.11.1"
     steps:
       - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # ─── OPEN A DEPLOY WINDOW ON PORT 22, FOR THIS RUNNER ONLY ───────────────────────────────
       #
@@ -704,8 +720,9 @@ jobs:
       # WHAT IT COSTS, NAMED HERE RATHER THAN DISCOVERED LATER:
       #   • A re-run no longer inherits the live release's venv in place; it takes the `cp -a` branch
       #     beside it instead. That branch is gated on `requirements.lock` and `pyproject.toml`
-      #     comparing equal against the LIVE release — which for a re-run is the previous attempt of
-      #     the same commit, through the same rsync, so they are byte-identical and it always fires.
+      #     comparing equal against the LIVE release, and (since 2026-10-09) on the live venv running
+      #     BOX_PYTHON — which for a re-run is the previous attempt of the same commit, through the
+      #     same rsync and on the same interpreter, so all three agree and it always fires.
       #     Nothing moves from copying to `pip install`; the ordinary deploy path is untouched.
       #   • A failed or cancelled attempt leaves a directory behind until a later successful deploy
       #     prunes it, and that directory carries the `.env` it was deployed with. The prune step
@@ -868,6 +885,82 @@ jobs:
           grep -q '^/swapfile ' /etc/fstab || echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
           echo "swap now:"; swapon --show
           free -h
+          REMOTE
+
+      # ─── THE INTERPRETER EVERY RELEASE VENV IS BUILT WITH — INSTALLED HERE, NOT ASSUMED ─────────
+      #
+      # 2026-10-09: the box moved from Ubuntu 24.04's own python3.12 to 3.14, the interpreter CI, the
+      # Dockerfile and the lock already ran. Ubuntu 24.04 (noble) has no python3.14 in its archive, so
+      # it comes from the deadsnakes PPA, which builds the current upstream patch for noble (3.14.8 on
+      # 2026-10-09). A box rebuilt from the 26.04 (resolute) AMI that infra/terraform/main.tf now
+      # selects has python3.14 as its SYSTEM interpreter, installed by user_data.sh, and never touches
+      # the PPA: the branch below only adds it on noble.
+      #
+      # IDEMPOTENT, AND CHEAP ON EVERY DEPLOY AFTER THE FIRST. Present and able to build a venv: the
+      # only work is an `--only-upgrade` against the package lists apt-daily already refreshes, which
+      # is how the PPA's next patch release arrives (unattended-upgrades only follows the Ubuntu
+      # security pocket, so without this the interpreter would sit on its first patch for ever). That
+      # upgrade is allowed to fail with a warning: the interpreter is there and works, and a deploy
+      # must not stop over an upgrade it can try again next time. Absent: install it, and THAT is
+      # fatal, before anything about the release exists — no venv can be built without it.
+      #
+      # THE APT LOCK. unattended-upgrades and apt-daily take the dpkg and lists locks on their own
+      # schedule, and on this swap-bound box they can hold them for minutes. `DPkg::Lock::Timeout`
+      # makes dpkg wait for its lock instead of failing at once, and every apt-get is retried ten
+      # times, thirty seconds apart, for the lists lock that option does not cover. `sudo` as in every
+      # other step of this job: the deploy user has it passwordless, and BatchMode in ~/.ssh/config
+      # turns any prompt into an immediate failure rather than a hang.
+      #
+      # PYTHON 3.12 IS NOT REMOVED, AND MUST NOT BE UNTIL THE LAST 3.12-BUILT RELEASE IS PRUNED. The
+      # venvs of the releases already on the box symlink /usr/bin/python3.12, and those releases are
+      # the rollback targets `ls -lt /home/ubuntu/app/releases` lists — removing it would turn every
+      # documented rollback into a unit that cannot start. It is Ubuntu 24.04's own system Python
+      # besides, which apt and cloud-init use. The step prints whether it is still there.
+      #
+      # libatomic1 RIDES ALONG because the Node the next steps pin for the Prisma CLI (26.x) links
+      # against it — measured on a trixie-slim container, where its absence made every npm call exit
+      # 127. Ubuntu server images normally carry it; asking costs one `dpkg -s`.
+      - name: Install Python on the box (deadsnakes on 24.04, the archive on 26.04)
+        run: |
+          ssh ubuntu@${{ secrets.EC2_HOST }} "BOX_PYTHON='$BOX_PYTHON' bash -s" <<'REMOTE'
+          set -euo pipefail
+          [ -n "${BOX_PYTHON:-}" ] || { echo "::error::BOX_PYTHON is empty; the job-level env block of this workflow is missing it."; exit 1; }
+          py="python${BOX_PYTHON}"
+          apt_get() {
+            for attempt in 1 2 3 4 5 6 7 8 9 10; do
+              if sudo DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=120 -o Dpkg::Use-Pty=0 "$@"; then
+                return 0
+              fi
+              echo "apt-get $1 failed (attempt ${attempt}/10); most often unattended-upgrades or apt-daily holding a lock. Retrying in 30 s." >&2
+              sleep 30
+            done
+            return 1
+          }
+          usable() { command -v "$py" >/dev/null 2>&1 && "$py" -c 'import ensurepip, venv' >/dev/null 2>&1; }
+
+          . /etc/os-release
+          echo "box: ${PRETTY_NAME}"
+          if usable; then
+            echo "$py is installed: $("$py" -VV 2>&1 | head -1)"
+            if ! apt_get install -y --only-upgrade "$py" "${py}-venv"; then
+              echo "::warning::could not check for a newer $py patch release (apt never got its lock); deploying on the installed one."
+            fi
+          else
+            echo "$py is not installed: installing it"
+            if [ "${VERSION_CODENAME}" = "noble" ] && ! grep -rqs 'deadsnakes' /etc/apt/sources.list.d/; then
+              command -v add-apt-repository >/dev/null 2>&1 || apt_get install -y software-properties-common
+              # -n: no implicit `apt-get update` (the retried one below does it).
+              sudo add-apt-repository -y -n ppa:deadsnakes/ppa
+            fi
+            apt_get update
+            apt_get install -y "$py" "${py}-venv"
+          fi
+          dpkg -s libatomic1 >/dev/null 2>&1 || apt_get install -y libatomic1
+
+          # PROVED, NOT TRUSTED: the exact minor, and the modules a venv build and the app need.
+          usable || { echo "::error::$py still cannot build a venv (ensurepip/venv missing) after the install."; exit 1; }
+          "$py" -c 'import sys, ssl, sqlite3, ensurepip, venv; want = tuple(int(p) for p in sys.argv[1].split(".")); assert sys.version_info[:2] == want, sys.version; print("interpreter:", sys.version.split()[0], "| ssl:", ssl.OPENSSL_VERSION)' "$BOX_PYTHON"
+          echo "python3.12 (the rollback releases' interpreter): $(command -v python3.12 >/dev/null 2>&1 && python3.12 -V 2>&1 || echo 'not installed')"
           REMOTE
 
       - name: Prepare the release layout and the systemd units
@@ -1116,6 +1209,16 @@ jobs:
           # inherited arithmetic, and 800M is that arithmetic doubled. If real transcription work
           # thrashes, read the memory line in `systemctl status fieldrepo-queue` and raise it from
           # the number there — the way the API's was finally set.
+          #
+          # ─── AND PYTHON 3.14 MOVED BOTH BASELINES UP, 2026-10-09 — RE-READ THEM AFTER ITS FIRST DEPLOY
+          # The 634 MB above was measured on 3.12. Importing the generated Prisma client — which both
+          # units do at start — holds ~170 MiB more on 3.14 even with the fix in
+          # scripts/generate_prisma_client.py: 727 MiB against 557 MiB right after the import,
+          # measured in identical containers. So expect the API near ~800 MB, still under its 1000M
+          # soft ceiling, and the queue's IDLE footprint close to its own 800M soft ceiling, leaving
+          # less of its 1100M hard stop for ffmpeg and transcription than before. Nothing here was
+          # raised on an estimate; read both `systemctl status` memory lines after the first 3.14
+          # deploy and set these from them, exactly as this comment asks for the queue.
           write_dropin fieldrepo.service memory.conf <<'CONF'
           [Service]
           MemoryAccounting=yes
@@ -1242,8 +1345,8 @@ jobs:
           # NOTHING HERE MAKES A FRESH DIRECTORY A FULL REBUILD, and that is the question this scheme
           # has to answer. The venv is not in this transfer at all: the step below copies it from
           # whatever `current` resolves to whenever `requirements.lock` and `pyproject.toml` compare
-          # equal — a test on the LIVE release, not on this run's id, so a brand-new directory passes
-          # it exactly as often as a re-used one did.
+          # equal and that venv runs BOX_PYTHON — a test on the LIVE release, not on this run's id, so
+          # a brand-new directory passes it exactly as often as a re-used one did.
           rsync -az --delete \
             --exclude '.venv' --exclude '__pycache__' --exclude '*.pyc' --exclude '.env' \
             ./backend/ "ubuntu@${{ secrets.EC2_HOST }}:/home/ubuntu/app/releases/$SHA/backend/"
@@ -1436,7 +1539,8 @@ jobs:
       # wheels on a CPU-credit-throttled t3.micro is minutes, every deploy, for a commit that
       # usually changed a route handler. So the venv is REBUILT only when the dependency set moved
       # — decided by comparing this release's `requirements.lock` and `pyproject.toml` against the
-      # previous release's copies — and otherwise COPIED from the previous release.
+      # previous release's copies — or the interpreter did (the previous venv must run BOX_PYTHON,
+      # 2026-10-09), and otherwise COPIED from the previous release.
       #
       # `cp -a` AND NOT `cp -al`, WHICH IS THE ONE DECISION HERE THAT IS NOT OBVIOUS. Hard links
       # would make the copy instant and free, and they would be WRONG: `prisma generate` writes the
@@ -1483,14 +1587,16 @@ jobs:
       # PYTHON: the generated modules are platform- and interpreter-independent, and the query
       # engine BINARY is not among them -- prisma downloads that at runtime into
       # ~/.cache/prisma-python, which is why shipping these files to a different machine is sound.
-      # Python 3.12 matches the box's interpreter so the bytes are exactly what it would have made.
-      # Pinned to 3.12 to match the interpreter on the box. The generated modules are pure Python
-      # and would import on another minor, but "the bytes the box would have produced" is a cheaper
-      # property to hold than an argument about which syntax the generator emits.
-      - name: Python 3.12 for the generator
-        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+      # BOX_PYTHON, THE BOX'S OWN MINOR, so the bytes are exactly what the box would have made. The
+      # generated modules are pure Python and would import on another minor, but "the bytes the box
+      # would have produced" is a cheaper property to hold than an argument about which syntax the
+      # generator emits. `check-latest` so the patch is python.org's newest, not whatever the runner
+      # image cached (3.14.7 in the 26.04 image of 2026-09-27; 3.14.8 is current).
+      - name: Python for the generator (the box's minor)
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: "3.12"
+          python-version: ${{ env.BOX_PYTHON }}
+          check-latest: true
 
       - name: Generate the Prisma client on the runner, where there is memory for it
         id: genclient
@@ -1502,10 +1608,17 @@ jobs:
           pin="$(grep -iE '^prisma==' backend/requirements.lock | head -1)"
           test -n "$pin" || { echo "::error::no prisma== pin in backend/requirements.lock"; exit 1; }
           echo "generating with $pin"
-          python3.12 -m venv /tmp/genvenv
+          "python${BOX_PYTHON}" -m venv /tmp/genvenv
           /tmp/genvenv/bin/python -m pip install --quiet --upgrade pip
           /tmp/genvenv/bin/python -m pip install --quiet "$pin"
-          ( cd backend && PATH="/tmp/genvenv/bin:$PATH" /tmp/genvenv/bin/python -m prisma generate )
+          # THROUGH scripts/generate_prisma_client.py AND NOT A BARE `prisma generate` (2026-10-09). It
+          # generates exactly as before and then adds `from __future__ import annotations` to the
+          # generated types.py — without it, importing this client on Python 3.14 takes minutes and
+          # over a gigabyte (209 s for `prisma migrate deploy` to print its first line on a GitHub
+          # runner, 8 s on 3.12), which on the box would be every restart of both units. The file
+          # travels to the box in the copy below like every other generated file. The script's
+          # docstring has the measurements and the reason it refuses any file shape it does not know.
+          ( cd backend && PATH="/tmp/genvenv/bin:$PATH" /tmp/genvenv/bin/python scripts/generate_prisma_client.py )
 
           sp="$(/tmp/genvenv/bin/python -c 'import prisma, os; print(os.path.dirname(prisma.__file__))')"
           echo "generated into $sp"
@@ -1591,7 +1704,7 @@ jobs:
         env:
           SHA: ${{ env.REL_ID }}
         run: |
-          ssh ubuntu@${{ secrets.EC2_HOST }} "SHA='$SHA' bash -s" <<'REMOTE'
+          ssh ubuntu@${{ secrets.EC2_HOST }} "SHA='$SHA' BOX_PYTHON='$BOX_PYTHON' bash -s" <<'REMOTE'
           set -euo pipefail
           APP=/home/ubuntu/app
           REL="$APP/releases/$SHA"
@@ -1599,6 +1712,26 @@ jobs:
           # or empty. `|| true` because on a brand-new box there is nothing to resolve.
           PREV="$(readlink -f "$APP/current" 2>/dev/null || true)"
           cd "$REL/backend"
+
+          # ─── THE INTERPRETER IS PART OF WHAT "UNCHANGED DEPENDENCIES" MEANS (2026-10-09) ────────
+          # A venv is bound to the interpreter that built it: `.venv/bin/python` is a symlink to it and
+          # every compiled wheel inside is tagged for its minor. So the copy branch below now also asks
+          # the PREVIOUS venv which Python it runs, and copies only a venv built by BOX_PYTHON. Without
+          # that, the first deploy after the box gained 3.14 would have found requirements.lock and
+          # pyproject.toml byte-identical to the live 3.12 release and `cp -a`'d a 3.12 venv into a
+          # release meant to run 3.14. That first deploy therefore BUILDS — `pip install` of the whole
+          # lock, minutes on this box — and every deploy after it copies again.
+          #
+          # The answer comes from running the previous interpreter, never from reading pyvenv.cfg: a
+          # venv whose interpreter cannot start is not one to copy either, and the comparison then
+          # fails and the build runs.
+          want_py="python${BOX_PYTHON:?BOX_PYTHON is not set; see the job-level env block}"
+          command -v "$want_py" >/dev/null 2>&1 || { echo "::error::$want_py is not installed on the box; the 'Install Python on the box' step should have installed it."; exit 1; }
+          prev_minor=""
+          if [ -n "$PREV" ] && [ -x "$PREV/backend/.venv/bin/python" ]; then
+            prev_minor="$("$PREV/backend/.venv/bin/python" -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null || true)"
+          fi
+          echo "previous release's venv runs: ${prev_minor:-<none>}; this release needs: $BOX_PYTHON"
 
           if [ -n "$PREV" ] && [ "$PREV" = "$REL" ] && [ -x .venv/bin/python ]; then
             # THIS IS NOW UNREACHABLE, AND IT IS KEPT AS A GUARD RATHER THAN AS AN OPTIMISATION.
@@ -1630,20 +1763,22 @@ jobs:
             # that would have to be made again the next time somebody changes how releases are named.
             echo "current already points at this release — keeping the venv that is in it"
           elif [ -n "$PREV" ] && [ -x "$PREV/backend/.venv/bin/python" ] \
+               && [ "$prev_minor" = "$BOX_PYTHON" ] \
                && [ -f "$PREV/backend/requirements.lock" ] && [ -f requirements.lock ] \
                && cmp -s "$PREV/backend/requirements.lock" requirements.lock \
                && cmp -s "$PREV/backend/pyproject.toml" pyproject.toml; then
-            echo "dependencies unchanged since $PREV — copying its venv"
+            echo "dependencies and interpreter (python$BOX_PYTHON) unchanged since $PREV — copying its venv"
             rm -rf .venv
             cp -a "$PREV/backend/.venv" .venv
           else
             # Also the path taken on the FIRST run of this workflow, where PREV is the legacy tree
             # and has no requirements.lock to compare against. Building once is the right answer
             # there: the legacy venv was installed from unpinned ranges and is exactly what the lock
-            # exists to replace.
-            echo "building a fresh venv from requirements.lock"
+            # exists to replace. And the path taken whenever the previous venv runs a different
+            # minor than BOX_PYTHON — the first deploy on 3.14 among them.
+            echo "building a fresh venv from requirements.lock with $want_py"
             rm -rf .venv
-            python3.12 -m venv .venv
+            "$want_py" -m venv .venv
             ./.venv/bin/python -m pip install --upgrade pip
             ./.venv/bin/python -m pip install -r requirements.lock
           fi
@@ -1672,6 +1807,58 @@ jobs:
           # only converts the kill into a stall.
           echo "venv ready; the Prisma client arrives from the runner in the next step"
 
+          REMOTE
+
+      # ─── THE NODE THE PRISMA CLI RUNS ON, PINNED (2026-10-09) ───────────────────────────────────
+      #
+      # `prisma migrate status` and `migrate deploy` below are the Prisma CLI, a Node program, and they
+      # are the only Node on this box. prisma-client-py finds Node through a nodeenv it creates the
+      # first time it needs one, at ~/.cache/prisma-python/nodeenv, with whatever nodeenv thought was
+      # newest that day — v26.7.0 here — and it NEVER refreshes it: `from_nodeenv` skips creation
+      # whenever the directory exists. So the version was an accident of a date.
+      #
+      # NOW IT IS A DIRECTORY NAMED FOR THE VERSION, built here from PRISMA_CLI_NODE_VERSION (the job's
+      # env block) and handed to the CLI through PRISMA_NODEENV_CACHE_DIR in the migrate step. Raising
+      # the pin builds a new directory beside the old one, so the version can only change through this
+      # file, and the previous directory is still there for a hand-run of an older release's CLI. The
+      # old ~/.cache/prisma-python/nodeenv is no longer used by the deploy and is left alone.
+      #
+      # WHY NOT PRISMA_NODEENV_EXTRA_ARGS='["--node=…"]', the knob that looks made for this. Measured:
+      # prisma-client-py 0.15.0's settings shim hands the raw environment string to pydantic 2, which
+      # does not parse JSON into a list there, so the value fails validation and EVERY prisma command —
+      # `migrate status` included — dies loading its config. And it would not have helped anyway: the
+      # extra arguments are only read when the nodeenv directory is created, which on this box it
+      # already was.
+      #
+      # FATAL ON FAILURE, AND BEFORE ANYTHING IS STOPPED: this runs before the migrate step, so a
+      # download that fails leaves the box serving the release it was serving. The version is asserted
+      # from the binary itself, not from the directory name.
+      - name: Pin the Node the Prisma CLI runs on
+        env:
+          SHA: ${{ env.REL_ID }}
+        run: |
+          ssh ubuntu@${{ secrets.EC2_HOST }} "SHA='$SHA' NODE_PIN='$PRISMA_CLI_NODE_VERSION' bash -s" <<'REMOTE'
+          set -euo pipefail
+          [ -n "${NODE_PIN:-}" ] || { echo "::error::PRISMA_CLI_NODE_VERSION is empty; the job-level env block of this workflow is missing it."; exit 1; }
+          dir="$HOME/.cache/prisma-python/nodeenv-${NODE_PIN}"
+          want="v${NODE_PIN}"
+          have="$("$dir/bin/node" --version 2>/dev/null || true)"
+          if [ "$have" = "$want" ]; then
+            echo "Prisma CLI Node already pinned: $want at $dir"
+          else
+            echo "building $dir (Node $NODE_PIN, prebuilt from nodejs.org) — found '${have:-nothing}'"
+            # Rebuilt from scratch: a directory that exists but does not answer the version is a
+            # half-finished build, and prisma-client-py would otherwise use it as it stands.
+            rm -rf "$dir"
+            mkdir -p "$(dirname "$dir")"
+            "/home/ubuntu/app/releases/$SHA/backend/.venv/bin/python" -m nodeenv --prebuilt --node="$NODE_PIN" "$dir"
+          fi
+          got="$("$dir/bin/node" --version 2>&1)" || { echo "::error::$dir/bin/node does not start: $got"; exit 1; }
+          [ "$got" = "$want" ] || { echo "::error::$dir/bin/node answers $got, not $want."; exit 1; }
+          # npm's shebang is `#!/usr/bin/env node` and this box has no Node on PATH, so it is asked
+          # with the env's own bin first — the PATH prisma-client-py itself gives the CLI.
+          npm_version="$(PATH="$dir/bin:$PATH" "$dir/bin/npm" --version 2>&1)" || { echo "::error::npm in $dir does not start: $npm_version"; exit 1; }
+          echo "Prisma CLI Node: $got, npm $npm_version ($dir)"
           REMOTE
 
       # ─── AND THE GENERATED CLIENT IS PLACED INTO *THIS* RELEASE'S VENV, THEN PROVED ────────
@@ -1828,6 +2015,32 @@ jobs:
           # `prisma py fetch` WAS HERE AND DID NOT WORK -- see the runner step's note. The engine
           # now arrives by rsync from the runner that generated the matching client.
 
+          # ─── THE CLIENT MUST CARRY THE PYTHON 3.14 IMPORT FIX, CHECKED BEFORE ANYTHING IMPORTS IT ──
+          # 2026-10-09. The runner's generator adds `from __future__ import annotations` to types.py
+          # (scripts/generate_prisma_client.py); without it every import of this client on 3.14 costs
+          # minutes and more than a gigabyte, which on this box means the import checks below — and
+          # every later start of both units — run into MemoryHigh and the queue's MemoryMax. `--check`
+          # reads the file through find_spec and imports nothing, so a client shipped without the fix
+          # fails here in a second instead of stalling the deploy for half an hour first.
+          ./.venv/bin/python scripts/generate_prisma_client.py --check || { echo "::error::the Prisma client in this release lacks the Python 3.14 import fix; the runner's generate step did not run scripts/generate_prisma_client.py. Not flipping."; exit 1; }
+
+          # ─── AN ENGINE NAME THIS BOX'S CLIENT WILL LOOK FOR, ON ANY OpenSSL 3 (2026-10-09) ─────────
+          # The engine arrives named for the runner's target, `prisma-query-engine-debian-openssl-3.0.x`
+          # — Prisma's own CLI files every OpenSSL 3.x host under 3.0.x, because libssl.so.3 keeps its
+          # ABI across 3.x. prisma-client-py's RUNTIME does not: it names the file it looks for in the
+          # working directory after `openssl version` verbatim (prisma/binaries/platform.py), so on an
+          # OpenSSL 3.5 host — Ubuntu 26.04, which infra/terraform/main.tf now builds a replacement box
+          # from — it would look for `…-3.5.x`, find nothing, and the connect check below would refuse
+          # the flip on every deploy to that box. On today's 24.04 box (OpenSSL 3.0) the two names are
+          # the same file and this does nothing. The name is computed here the way platform.py computes
+          # it, so nothing has to import the client to learn it.
+          ssl_minor="$( { openssl version -v 2>/dev/null || true; } | sed -nE 's/^OpenSSL ([0-9]+\.[0-9]+)\.[0-9]+.*/\1/p')"
+          box_engine="prisma-query-engine-debian-openssl-${ssl_minor:-1.1}.x"
+          if [ ! -e "$box_engine" ] && [ -x prisma-query-engine-debian-openssl-3.0.x ] && [ "${ssl_minor%%.*}" = "3" ]; then
+            ln -s prisma-query-engine-debian-openssl-3.0.x "$box_engine"
+            echo "OpenSSL ${ssl_minor} on this box: $box_engine -> prisma-query-engine-debian-openssl-3.0.x"
+          fi
+
           client_dir="$(./.venv/bin/python -c 'import prisma, os; print(os.path.dirname(prisma.__file__))')"
 
           if [ "${client_dir#$REL/}" = "$client_dir" ]; then
@@ -1940,12 +2153,27 @@ jobs:
         env:
           SHA: ${{ env.REL_ID }}
         run: |
-          ssh ubuntu@${{ secrets.EC2_HOST }} "SHA='$SHA' bash -s" <<'REMOTE'
+          ssh ubuntu@${{ secrets.EC2_HOST }} "SHA='$SHA' NODE_PIN='$PRISMA_CLI_NODE_VERSION' bash -s" <<'REMOTE'
           set -uo pipefail
           APP=/home/ubuntu/app
           REL="$APP/releases/$SHA"
           cd "$REL/backend"
           export PATH="$PWD/.venv/bin:$PATH"
+
+          # THE PRISMA CLI RUNS ON THE NODE "Pin the Node the Prisma CLI runs on" BUILT, and on no
+          # other. PRISMA_NODEENV_CACHE_DIR names that directory; the two flags stop prisma-client-py
+          # preferring a global `node` or the `nodejs-bin` package if either ever appears on this box,
+          # which would quietly unpin it again. Checked HERE, BEFORE `migrate status`, because a CLI
+          # that cannot start makes `migrate status` fail, and a failed status is read as "pending" —
+          # which stops both units and retries `migrate deploy` five times before giving up. A missing
+          # Node is not a pending migration and must not cost an outage: refuse with the box untouched.
+          export PRISMA_NODEENV_CACHE_DIR="$HOME/.cache/prisma-python/nodeenv-${NODE_PIN:-unset}"
+          export PRISMA_USE_GLOBAL_NODE=false
+          export PRISMA_USE_NODEJS_BIN=false
+          if [ "$("$PRISMA_NODEENV_CACHE_DIR/bin/node" --version 2>/dev/null)" != "v${NODE_PIN:-unset}" ]; then
+            echo "::error::the Prisma CLI's pinned Node (v${NODE_PIN:-unset}) is not at $PRISMA_NODEENV_CACHE_DIR. Nothing has been stopped or flipped; the box is still serving $(readlink "$APP/current")."
+            exit 1
+          fi
 
           # ATOMIC BY `mv -T`, not by `ln -sfn` alone. `ln -sfn` unlinks and re-creates, so there is
           # a window — brief, but real — in which `current` does not exist at all, and an automatic

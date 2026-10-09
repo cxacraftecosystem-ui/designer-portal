@@ -276,7 +276,11 @@ first because it is the one that changed under this document's feet.
   the project's plan, not this repository, decides whether provider-side backups exist at all. No
   application configuration is required or possible either way. Re-confirm on the next provider
   move, with a date, as before.
-- Passwords are stored as bcrypt hashes (`passlib`, `CryptContext(schemes=["bcrypt"])`). An account
+- Passwords are stored as bcrypt hashes — `$2b$`, cost 12 — written by `bcrypt` itself since 2026-10-09
+  (`backend/app/core/security.py`; until then through passlib, which is unmaintained and could not run on
+  bcrypt 5). The new code truncates to bcrypt's 72 bytes explicitly and keeps passlib's two refusals (a
+  NUL character, more than 4096 characters), so every stored hash verifies exactly as before —
+  `backend/tests/test_password_hash_compat.py` checks hashes passlib wrote. An account
   CREATED by Google sign-in has no password hash at all; an account that has a password keeps it when
   its owner later signs in with Google (§3.3).
 - **Nothing is encrypted at the column level.** Artisan names, phone numbers, addresses, GPS
@@ -309,8 +313,9 @@ first because it is the one that changed under this document's feet.
 |---|---|---|
 | Algorithm | HS256 (HMAC), **pinned on decode** | `decode_access_token(..., algorithms=[settings.jwt_algorithm])` |
 | Allowed algorithms | HS256 / HS384 / HS512 only | `Settings._normalise_jwt_algorithm` — `JWT_ALGORITHM=none` refuses to start |
-| Expiry | `JWT_EXPIRES_MINUTES`, default 10080 (7 days) | `create_access_token`; `verify_exp` + `require_exp` on decode |
-| Subject | `sub` = user id, required | `require_sub` on decode, re-checked in `deps.get_current_user` |
+| Expiry | `JWT_EXPIRES_MINUTES`, default 10080 (7 days) | `create_access_token`; `verify_exp` + `require: ["exp", …]` on decode |
+| Subject | `sub` = user id, required, a string | `require: [… "sub"]` on decode (PyJWT also refuses a non-string `sub`), re-checked in `deps.get_current_user` |
+| Library | PyJWT since 2026-10-09 (python-jose before: its last release depends on `ecdsa`, CVE-2024-23342). Tokens are byte-identical to jose's; jose-minted tokens stay valid | `backend/tests/test_jwt_compat.py` holds tokens jose minted and the byte comparison |
 | Password binding | `cred` = 16 hex characters of a SHA-256 of the account's `passwordHash` as it stood when the token was minted, on every token minted since 2026-10-09 (§3.6) | `create_access_token(credential=…)`, which reserves the claim; compared with the row in `deps._user_from_bearer` |
 | Secret | ≥ 32 characters, never the example placeholder | `verify_jwt_configuration()` at `create_app()` |
 

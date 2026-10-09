@@ -19,10 +19,11 @@ WHY IT TALKS TO POSTGRES THROUGH ``psql`` AND NOT THROUGH PRISMA, which is what 
 in ``backend/scripts/`` does. Importing the generated Prisma client costs 15+ MINUTES on this
 machine's Python 3.14 venv — ``prisma/types.py`` is 444,394 lines of ``TypedDict``, and 3.14's
 PEP 649 annotation machinery (via ``typing_extensions.TypedDict.__new__``) evaluates all of it
-eagerly. Production runs Python 3.12 (``backend/Dockerfile``: ``ARG PYTHON_VERSION=3.12``) where
-this does not happen, so it is a local-toolchain problem and not a product one — but it is not one a
-seeder should have to pay to write three INSERT statements. ``psql`` starts in milliseconds and the
-statements below are flat enough to read.
+eagerly. (Measured then, 2026-08-27. Since 2026-10-09 ``scripts/generate_prisma_client.py`` adds
+``from __future__ import annotations`` to the generated file and the import is seconds again; a client
+generated with a bare ``prisma generate`` still pays the old price. Production runs 3.14 now too, on a
+client generated through that script.) It is still not something a seeder should pay to write three
+INSERT statements. ``psql`` starts in milliseconds and the statements below are flat enough to read.
 
 VERIFIED 2026-08-27. Re-check with:
     backend/.venv/Scripts/python.exe backend/loadtest/seed_load_identities.py --count 4 --dry-run
@@ -30,7 +31,7 @@ VERIFIED 2026-08-27. Re-check with:
 THE ONE THING THAT IS NOT HAND-ROLLED IS THE PASSWORD HASH. It comes from
 ``app.core.security.hash_password`` — the API's own function — so the seeded rows cannot drift from
 what ``verify_password`` accepts. That import does NOT touch Prisma (``app.core.security`` pulls in
-only ``app.core.config``, ``jose`` and ``passlib``), which is why it is affordable here.
+only ``app.core.config``, ``jwt`` (PyJWT) and ``bcrypt``), which is why it is affordable here.
 
 ONE HASH FOR EVERY IDENTITY, computed once and reused. bcrypt at cost 12 takes ~370 ms, so hashing
 a thousand rows separately would cost six minutes for no benefit: distinct salts protect a stolen

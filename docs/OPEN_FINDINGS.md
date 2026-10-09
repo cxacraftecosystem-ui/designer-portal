@@ -1,8 +1,16 @@
 # Open findings
 
-**Status: 15 open, 1 decision recorded and 1 deferral, 95 closed.** Every count re-counted by
+**Status: 17 open, 1 decision recorded and 1 deferral, 97 closed.** Every count re-counted by
 heading on 2026-10-09; the entries closed on 2026-10-09 were checked against the tree that day, and
 the older closed sections were last re-checked on 2026-09-03.
+
+**The toolchain upgrade of 2026-10-09 opened two and closed two.** Moving the EC2 box, the image and
+CI to Python 3.14, the lock to its newest pins, the local stack to PostgreSQL 17, and the runners to
+ubuntu-26.04 turned up two things to keep open — prisma-client-py is archived and now visibly holds the
+data layer back, and 3.14 costs each process ~170 MiB more against memory ceilings measured on 3.12 —
+and closed two that were already biting: 37 integration tests failing on every CI runner whose
+site-packages listed pytest-asyncio before anyio, and a local stack that could not start because no
+MinIO image could be pulled any more. Counted by heading: 15 + 2 = 17 open, and 95 + 2 = 97 closed.
 
 **A verifier's pass over what the release writes to logs and terminals moved both numbers by one,
 the same day.** It closed a set-password link's token reaching the API's journal every time the link
@@ -590,6 +598,85 @@ read it as easily as the query. It is not switched yet because the handset is of
 (the `/set-password` filter in `android/app/src/main/AndroidManifest.xml`) and the shipped builds read
 the token from the query: the next Android release must accept both forms, and `link_for` can move to
 the fragment once the builds that accept only the query have left the field. Open as of 2026-10-09.
+
+### [MEDIUM] prisma-client-py is archived, and pins the data layer to Prisma 5.17's engines (backend) — opened 2026-10-09
+
+`backend/pyproject.toml` pins `prisma==0.15.0` exactly, because there is nothing newer: 0.15.0
+(2024-08-16) is prisma-client-py's final release and `RobertCraigie/prisma-client-py` is archived
+(last push 2025-04-10). It is bound to Prisma CLI and engines 5.17.0 — the 5.x line itself ended at
+5.22, and Prisma ORM is on 7.x with a Rust-free engine no Python client speaks. Every other runtime here
+was raised to its newest release on 2026-10-09; this one cannot be, and it now holds two of them back:
+
+* **PostgreSQL 18.** The 5.17 schema engine predates it, so `prisma migrate` is unproven there. Local
+  and CI databases stay on 17, production's major — which the production provider caps at 17 anyway.
+* **Python 3.15**, when it is released: the project was never tested on it upstream and will not be.
+
+It also forces one patch to generated code. The client it writes for this schema is 675,391 lines of
+TypedDicts without `from __future__ import annotations`, which Python 3.14 imports in tens of minutes
+and over a gigabyte; `backend/scripts/generate_prisma_client.py` adds that line after every generate,
+and every automated generate runs it. That script is a workaround for a library nobody maintains.
+
+**The exit**, and the only one: move `app/core/db.py` and every `db.<model>` call to a maintained async
+stack — SQLAlchemy 2 with asyncpg or psycopg 3 — with migrations kept on the Node Prisma CLI used only
+for `migrate`, or moved to Alembic. Until then, keep caching the 5.17.0 engines (fetched by hash from
+Prisma's CDN), keep databases on 17, and do not move production to a new Python minor without
+re-measuring the client import. Open as of 2026-10-09.
+
+### [LOW] On Python 3.14 each process carries ~170 MiB more, and the box's memory ceilings were set on 3.12 (backend) — opened 2026-10-09
+
+Importing the generated Prisma client — which uvicorn and the queue worker both do at start — holds
+727 MiB on 3.14.8 against 557 MiB on 3.12.15, measured in identical containers on 2026-10-09 with the
+import fix in place (without it, 3.14 needs over a gigabyte and many minutes). The systemd ceilings in
+`.github/workflows/deploy-backend.yml` and `infra/terraform/user_data.sh` were sized from a 3.12
+measurement: the API at ~634 MB under a 1000M soft ceiling, the queue under 800M soft / 1100M hard. On
+3.14 the API should sit near ~800 MB, still inside its ceiling, but the queue's idle footprint lands
+close to its own soft ceiling and leaves less of the hard stop for ffmpeg and transcription.
+
+Nothing was raised on an estimate. After the first deploy on 3.14, read the `Memory:` line of
+`systemctl status fieldrepo` and `systemctl status fieldrepo-queue` and set both drop-ins (and the
+base units in user_data.sh) from those numbers, as the comment above the memory drop-ins already asks
+for the queue. Open until that reading is taken.
+
+---
+
+## Closed on 2026-10-09 — by the toolchain upgrade
+
+Both found while moving the backend, the image, CI and the local stack to their newest releases, and
+closed in that change. Each names what fails without its fix.
+
+### [MEDIUM] 37 integration tests failed on every CI runner whose site-packages listed pytest-asyncio before anyio (backend) — **CLOSED 2026-10-09**
+
+`Backend integration tests` reported the same 37 failures — `test_designer_roster_names.py`,
+`test_save_stage_resubmission.py`, `test_workshop_oversight_reassignment.py` — on Python 3.12.15 AND on
+3.14.8, all "RuntimeError: <asyncio.locks.Event ...> is bound to a different event loop". The comments
+that blamed the interpreter (checks.yml, docs/CI.md) and the one that called function scope the fix
+(test_save_stage_resubmission.py) were wrong. The cause was the ORDER the two async plugins were
+registered: both wrap `pytest_fixture_setup`, and with pytest-asyncio first an anyio test's async
+fixture ran on pytest-asyncio's event loop while the test ran on anyio's, so the Prisma connection a
+fixture opened was used from another loop. Every red run's pytest header read `plugins: asyncio-1.4.0,
+anyio-4.14.2`; the last green one read `plugins: anyio-4.14.2, asyncio-1.4.0`. The order came from how
+site-packages listed two `.dist-info` directories, so it flipped between images and never reproduced
+on NTFS, which lists them alphabetically. Reproduced without a database by forcing the order with `-p`.
+
+**Closed by** `addopts = ["-p", "anyio", "-p", "asyncio"]` in `backend/pyproject.toml`, a
+`pytest_configure` in `backend/tests/conftest.py` that refuses the other order at startup, and
+`backend/tests/test_async_plugin_order.py`, which fails under the old order — measured both ways.
+
+### [HIGH] `docker compose up`, and with it e2e-live.yml, could not start: no MinIO image could be pulled (infra) — **CLOSED 2026-10-09**
+
+`docker-compose.yml` pinned `quay.io/minio/minio` and `quay.io/minio/mc` after MinIO withdrew them from
+Docker Hub on 2026-09-21. By 2026-10-09 quay.io refused them too — an anonymous token is still issued,
+but both manifests and the tag lists answer 401 to it, and `docker manifest inspect` says "no such
+manifest" — and upstream MinIO is archived. So a bare `docker compose up` failed at the pull, and so
+did every run of the live browser suite.
+
+**Closed by** `docker.io/pgsty/silo:RELEASE.2026-09-16T00-00-00Z`, a maintained fork of the same MinIO
+source (AGPL-3.0, monthly releases), for both the server and the one-shot bucket job (its bundled
+`mcli`). The service is still `minio` and still on the same ports, MinIO's `/minio/health/live` answers,
+and the app's own S3 traffic was replayed against it: presigned PUT from the web origin with CORS, a
+70 MiB multipart upload through presigned 16 MiB parts with browser-readable ETags, an anonymous GET of
+the public URL, a ranged presigned GET and a delete. `docker-compose.yml` names the alternative
+(rustfs/rustfs) and why it is not a drop-in.
 
 ---
 

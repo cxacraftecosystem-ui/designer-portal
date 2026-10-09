@@ -1222,7 +1222,7 @@ def _money(value: Any) -> str | None:
         return None
 
 
-def _reference_data(spec: "ReferenceModel", row: Any, photo: Any) -> dict[str, Any]:
+def _reference_data(spec: ReferenceModel, row: Any, photo: Any) -> dict[str, Any]:
     """One record's display payload, with any stored FORMATTING flattened out of it.
 
     ── THE DEFECT THIS EXISTS FOR ───────────────────────────────────────────────────────────────
@@ -3721,7 +3721,7 @@ class PendingEntry:
     #: information is gone the instant the value lands: a hydrated name and a typed name are the
     #: same string in ``data``, which is the whole reason field-level provenance was unanswerable
     #: on this table before. Reset per save, never persisted.
-    hydrated: dict[str, "entry_provenance.HydrationSource"] = dataclass_field(default_factory=dict)
+    hydrated: dict[str, entry_provenance.HydrationSource] = dataclass_field(default_factory=dict)
     #: THE ``version`` THE ROW CARRIED IN THE READ THIS SAVE WAS PLANNED AGAINST, and 0 for a row
     #: this save is creating. It is the predicate the UPDATE is written under — see
     #: :class:`_RowUpdate` and ``DwStageEntry.version`` in schema.prisma — so it must come from the
@@ -4977,7 +4977,7 @@ class _RowUpdate:
 
 
 def _content_changed(
-    creates: list[dict[str, Any]], updates: list["_RowUpdate"], removed: list[str]
+    creates: list[dict[str, Any]], updates: list[_RowUpdate], removed: list[str]
 ) -> bool:
     """Did this save actually change the designer's content? THE RESUBMISSION GATE, AS ONE LINE.
 

@@ -816,9 +816,10 @@ async def test_the_seed_script_resets_only_the_master_admin_and_every_password_i
 
 
 def test_a_password_too_long_to_check_is_simply_wrong():
-    """passlib raises rather than answering for anything over its 4096-character cap, and the sign-in
-    and dataset-token bodies are unbounded on purpose. A megabyte pasted at the front door must be a
-    wrong password, not a 500."""
+    """Anything over the 4096-character cap passlib enforced (``security.MAX_CHECKED_PASSWORD_LENGTH``
+    since bcrypt replaced passlib on 2026-10-09) is never checked at all, and the sign-in and
+    dataset-token bodies are unbounded on purpose. A megabyte pasted at the front door must be a
+    wrong password, not a 500 — and not a check of its first 72 bytes."""
     from app.core.security import hash_password, verify_password
 
     stored = hash_password("the-real-one")
