@@ -514,7 +514,7 @@ class DwReportHistoryTest {
         // device with no network — and the honest narrower fact is that the LOG row needs a server id.
         assertFalse(DW_REPORT_HISTORY_LOCAL_ONLY.contains("no file has been generated"))
         assertTrue(DW_REPORT_HISTORY_LOCAL_ONLY.contains("still made on this phone"))
-        assertTrue(DW_REPORT_HISTORY_LOCAL_ONLY.contains("will not be listed here"))
+        assertTrue(DW_REPORT_HISTORY_LOCAL_ONLY.contains("listed here once the workshop has been uploaded"))
     }
 
     // ── The list's own two notices ───────────────────────────────────────────────────────────────

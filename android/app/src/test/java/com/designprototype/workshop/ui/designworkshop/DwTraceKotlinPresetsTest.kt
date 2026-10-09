@@ -557,7 +557,7 @@ class DwTraceKotlinPresetsTest {
         assertEquals("pottery", Subjects.byId("  pottery  ")?.id)
         assertEquals(
             "There is no subject called \"carving\".",
-            dwTraceKotlinNoSuchSubjectSentence("  carving  ").substringBefore(" The portal's"),
+            dwTraceKotlinNoSuchSubjectSentence("  carving  ").substringBefore(" Choose"),
         )
     }
 }

@@ -153,7 +153,7 @@ class ReportSettingsLedgerTest {
         // section left that can warn is the transcript annexure, and only when it was asked for.
         assertTrue(
             reportWarnings("DCH_STANDARD", reportTemplate("DCH_STANDARD"), null, "DOCX")
-                .none { it.contains("not available in this version") }
+                .none { it.contains("is not available, so the report was generated") }
         )
     }
 
@@ -171,7 +171,7 @@ class ReportSettingsLedgerTest {
     }
 
     @Test
-    fun `the file's own provenance line names only what is genuinely missing`() {
+    fun `the file's own provenance line says where and when, and narrates no gap`() {
         val template = reportTemplate("DCH_STANDARD")
         val asked = fieldCopyNote(
             template,
@@ -179,22 +179,22 @@ class ReportSettingsLedgerTest {
             "04 March 2026",
         )
         assertTrue("the line must date the file: $asked", asked.contains("04 March 2026"))
-        assertTrue(
-            "a designer who asked for transcripts gets a file that says the office's copy has " +
-                "them: $asked",
-            asked.contains("also carries the transcripts of the recordings"),
+        // A document handed to an officer does not narrate a section it lacks (2026-10-10): asking
+        // for transcripts leaves the line as the date and nothing else.
+        assertEquals(
+            "a designer who asked for transcripts gets the plain provenance line: $asked",
+            "Generated in the field on 04 March 2026.",
+            asked,
         )
-        // Unasked, the transcript annexure prints nothing on either surface, so there is no
-        // difference between the two copies to declare.
         val unasked = fieldCopyNote(template, emptyMap(), "04 March 2026")
         assertTrue("nothing is outstanding here: $unasked", !unasked.contains("also carries"))
-        assertTrue("and it still says which copy this is: $unasked", unasked.contains("handset"))
+        assertTrue("and it still says which copy this is: $unasked", unasked.contains("in the field"))
         // With no timestamp it still names the surface rather than printing a dangling "on ".
-        assertEquals("Generated on a handset in the field.", fieldCopyNote(template, emptyMap(), ""))
+        assertEquals("Generated in the field.", fieldCopyNote(template, emptyMap(), ""))
     }
 
     @Test
-    fun `the transcript annexure is only reported when the designer asked for it`() {
+    fun `the transcript annexure is not narrated at export, asked for or not`() {
         val template = reportTemplate("DCH_STANDARD")
         val unasked = reportWarnings("DCH_STANDARD", template, emptyMap(), "DOCX")
         assertTrue(
@@ -208,9 +208,11 @@ class ReportSettingsLedgerTest {
             mapOf("includeTranscripts" to kotlinx.serialization.json.JsonPrimitive(true)),
             "DOCX",
         )
+        // The handset does not build this annexure; that gap is recorded in docs/OPEN_FINDINGS.md
+        // rather than narrated on the export screen (2026-10-10).
         assertTrue(
-            "a designer who ticked 'append the transcripts' and gets none must be told: $asked",
-            asked.any { it.contains("transcripts") },
+            "the export screen must not narrate the transcript annexure: $asked",
+            asked.none { it.contains("transcripts") },
         )
     }
 }

@@ -312,7 +312,7 @@ fun dwTraceComparisonStatus(
     // indistinguishable from a frozen one.
     hasPlates && running ->
         "A newer trace is running. This is the last finished one, and its controls come back when " +
-            "the new drawing lands."
+            "the new drawing appears."
 
     hasPlates -> ""
 
