@@ -804,13 +804,16 @@ same value in two places. Change one there and re-run this workflow (or push) to
   nothing**, and neither is `frontend/scripts/pw-smoke.mjs`. Those need a running app and a
   database, so they remain a genuinely larger job — but the cheap half is no longer an argument for
   postponing it, because the cheap half is done.
-- **Android Lint is advisory.** `./gradlew :app:lintDebug` on the current tree reports
-  *1 error, 44 warnings* and aborts. The error is pre-existing and unrelated to any code change:
-  `AndroidManifest.xml:6 PermissionImpliesUnsupportedChromeOsHardware` — `CAMERA` is requested with
-  no matching `<uses-feature android:name="android.hardware.camera" android:required="false"/>`.
-  Making lint a hard gate today would fail every run and train everyone to ignore red. The HTML/XML
-  report is uploaded on every run. Fix the manifest (or commit a `lint-baseline.xml`), then delete
-  `continue-on-error` from the lint step and it becomes a real gate.
+- **Android Lint is advisory, and nothing but that flag keeps it so** (as of 2026-10-09). It was made
+  advisory because `./gradlew :app:lintDebug` reported *1 error, 44 warnings* and aborted on a
+  pre-existing manifest nit (`PermissionImpliesUnsupportedChromeOsHardware`: `CAMERA` with no
+  `<uses-feature android:name="android.hardware.camera" android:required="false"/>`). The toolchain
+  move of 2026-10-09 brought AGP 9.4's lint and the Compose and lifecycle libraries' own checks, which
+  found six more; all seven were fixed in the code, that manifest line among them, and run
+  [37929056714](https://github.com/cxacraftecosystem-ui/designer-portal/actions/runs/37929056714)
+  measured *0 errors, 99 warnings, 47 hints*. The HTML/XML report is uploaded on every run. Deleting
+  `continue-on-error` from the lint step now makes it a real gate — an owner's decision, since a lint
+  rule a library adds in a minor release can then block a pull request that touched no Android code.
 - ~~**There are no Android tests.**~~ **The Android unit suite is a REAL GATE — corrected
   2026-08-19, and this is the one bullet in §5 that had inverted.** `android/app/src` no longer
   contains only `main/`: there is a unit source set and an instrumented one, with the counts in

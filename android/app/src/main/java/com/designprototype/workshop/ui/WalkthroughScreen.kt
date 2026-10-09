@@ -308,7 +308,8 @@ private fun walkthroughOpenLabel(destination: NavDestination): String? =
  * That was read out of `compose-ui 1.7.8` and `activity 1.9.3` in the Gradle cache rather than
  * remembered — the two classes are `androidx.compose.ui.window.DialogWrapper` and
  * `androidx.activity.ComponentDialog`, and the line that matters is the
- * `ViewTreeOnBackPressedDispatcherOwner.set` on the decor view.
+ * `ViewTreeOnBackPressedDispatcherOwner.set` on the decor view. Re-read in `compose-ui 1.12.1` and
+ * `activity 1.13.0` on 2026-10-09, when the app moved to them: unchanged on both counts.
  *
  * Two consequences, and between them they are the whole answer. A back press inside the walkthrough
  * cannot reach `MainActivity`'s dispatcher, so it cannot run `goBack()` and cannot finish the

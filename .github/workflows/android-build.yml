@@ -256,17 +256,17 @@ jobs:
           # actually waiting for.
 
       - name: Android Lint (debug)
-        # Non-blocking ON PURPOSE, and this is a measured decision, not a guess: running
-        # `./gradlew :app:lintDebug` on this tree today gives "Lint found 1 errors, 44
-        # warnings" and aborts — the error is
-        #   AndroidManifest.xml:6  PermissionImpliesUnsupportedChromeOsHardware
-        #   (uses-permission CAMERA with no matching <uses-feature required="false">)
-        # which is a pre-existing manifest nit, unrelated to any change being tested. A
-        # hard gate would therefore fail 100% of runs from day one and train everyone to
-        # ignore red. The report is uploaded on every run instead. Fix that manifest entry
-        # (or commit a lint-baseline.xml), then delete continue-on-error below and this
-        # becomes a real gate — the fix is one <uses-feature> line, but AndroidManifest.xml
-        # belongs to the Android workstream, not to this CI change.
+        # Non-blocking, and the reason it was is now gone. It was made advisory because
+        # `./gradlew :app:lintDebug` reported "1 errors, 44 warnings" and aborted on a
+        # pre-existing manifest nit (PermissionImpliesUnsupportedChromeOsHardware: CAMERA with
+        # no <uses-feature required="false">), so a hard gate would have failed every run from
+        # day one and trained everyone to ignore red. The toolchain move of 2026-10-09 brought
+        # AGP 9.4's lint and the Compose and lifecycle libraries' own checks, which found six
+        # more errors; all seven were fixed in the code, the manifest line among them, and
+        # run 37929056714 measured "0 errors, 99 warnings, 47 hints". The report is uploaded on
+        # every run. Deleting continue-on-error below now makes this a real gate; that is a
+        # policy decision for the repository's owner, because a lint rule a library ships in
+        # an ordinary minor release can then block a pull request that touched no Android code.
         id: lint
         continue-on-error: true
         run: ./gradlew :app:lintDebug --console=plain
@@ -278,6 +278,13 @@ jobs:
       - name: Assemble the debug APK
         id: assemble
         run: ./gradlew :app:assembleDebug --console=plain --stacktrace
+
+      - name: TEMPORARY — print the release runtime classpath, to regenerate android/deps.txt
+        # One run only, removed by the next commit. `android/deps.txt` is a dump of this report that
+        # comments cite by line, and the machine that moved the toolchain on 2026-10-09 had no memory
+        # to run Gradle locally, so CI prints it once and the dump is taken from this step's log.
+        continue-on-error: true
+        run: ./gradlew :app:dependencies --configuration releaseRuntimeClasspath --console=plain
 
       - name: Upload the debug APK
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

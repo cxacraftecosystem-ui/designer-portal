@@ -18,13 +18,15 @@ import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
  *
  * ── WHAT COUNTS, AND WHERE THE LINE IS DRAWN ────────────────────────────────────────────────────
  *
- * Android's documentation names the traffic (raw sockets to local addresses, mDNS, SSDP) but, as of
- * 2026-10-09, not a list of ranges, so this answers for the addresses that are local by definition:
- * the RFC 1918 private IPv4 ranges, IPv4 and IPv6 link-local, IPv6 unique-local, and the names that
- * only a local resolver answers (`.local` is multicast DNS; `.home.arpa` is RFC 8375's; `.lan` and
- * `.internal` are the common conventions). LOOPBACK IS NOT LOCAL NETWORK — `localhost`, `127.x` and
- * `::1` never leave the device, which is what `adb reverse` relies on — and an ordinary public name
- * answers no, because a public name is what production is.
+ * The ranges are Android's own, from the local-network section of its Android 16 behaviour changes
+ * (read 2026-10-09): IPv4 `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, link-local
+ * `169.254.0.0/16` and the shared `100.64.0.0/10` (where VPN overlays such as Tailscale put a
+ * developer's laptop), and IPv6 link-local. To those this adds IPv6 unique-local `fc00::/7` and the
+ * names only a local resolver answers (`.local` is multicast DNS; `.home.arpa` is RFC 8375's; `.lan`
+ * and `.internal` are the common conventions). What it cannot see from a URL — a public-looking IPv6
+ * address on a directly connected route — it does not guess at. LOOPBACK IS NOT LOCAL NETWORK —
+ * `localhost`, `127.x` and `::1` never leave the device, which is what `adb reverse` relies on — and
+ * an ordinary public name answers no, because a public name is what production is.
  *
  * Asking when it was not strictly needed costs one prompt on a developer's own debug build; not
  * asking when it was costs a sign-in that times out. So where the rule is unclear the answer leans
@@ -60,6 +62,7 @@ private fun ipv4IsLocalNetwork(octets: List<Int>): Boolean {
         a == 172 && b in 16..31 -> true // RFC 1918
         a == 192 && b == 168 -> true // RFC 1918
         a == 169 && b == 254 -> true // link-local
+        a == 100 && b in 64..127 -> true // shared address space, 100.64.0.0/10
         else -> false
     }
 }

@@ -41,6 +41,16 @@ class LocalNetworkHostTest {
     }
 
     @Test
+    fun `the shared 100_64 range counts, and only its 64 to 127 part`() {
+        // Android lists 100.64.0.0/10 as local network; a VPN overlay such as Tailscale lives there.
+        assertTrue(apiHostNeedsLocalNetwork("http://100.64.0.1:8000/api/"))
+        assertTrue(apiHostNeedsLocalNetwork("http://100.101.102.103:8000/api/"))
+        assertTrue(apiHostNeedsLocalNetwork("http://100.127.255.254:8000/api/"))
+        assertFalse(apiHostNeedsLocalNetwork("http://100.63.0.1:8000/api/"))
+        assertFalse(apiHostNeedsLocalNetwork("http://100.128.0.1:8000/api/"))
+    }
+
+    @Test
     fun `loopback is not the local network`() {
         // What `adb reverse` and a desktop backend use; it never leaves the device.
         assertFalse(apiHostNeedsLocalNetwork("http://localhost:8000/api/"))
