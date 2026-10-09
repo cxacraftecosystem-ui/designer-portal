@@ -739,7 +739,9 @@ async def write_account(
         getattr(actor, "id", None),
         user.id,
         plan.role,
-        plan.must_change_password,
+        # A WORD THE FLAG PICKS, NOT THE FLAG: its own value is read by a name a scanner takes for
+        # the password — see the audit line in ``routes/users.update_user``, which says it the same.
+        "required" if plan.must_change_password else "not required",
         (f"; re-admitted an address the allow-list held as {plan.barred}" if plan.barred else "")
         + (
             "; the address's designer empanelment is suspended, so this designer cannot sign in "

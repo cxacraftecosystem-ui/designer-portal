@@ -417,8 +417,10 @@ python -c "import secrets; print(secrets.token_urlsafe(48))"
 
 Google ID tokens are verified server-side against Google's keys with the audience restricted to
 the configured client ids (`GOOGLE_CLIENT_ID`, `GOOGLE_ANDROID_CLIENT_ID`), and the address must be
-one Google has verified. **Admission is decided before anything is written**: an address the platform
-allow-list does not admit becomes a PENDING request and a 403, and no account is created
+one Google has verified. A token that fails is logged by the audience it failed for and the class of
+google-auth's exception — never the exception's message, which quotes a malformed token back whole
+(`verify_google_token`, 2026-10-09). **Admission is decided before anything is written**: an address
+the platform allow-list does not admit becomes a PENDING request and a 403, and no account is created
 ([PERMISSIONS.md](PERMISSIONS.md) §1). An admitted address with no account becomes one at the tier
 its allow-list row names, or at `DEFAULT_SIGNUP_ROLE` when the row names none — the **lowest** tier
 (`CROWDSOURCE_VOLUNTEER`) by default, so an unknown Google account cannot read or write as a
@@ -652,9 +654,12 @@ respelling within it until the pair is merged or corrected.
 resets an existing master admin, and leaves every other existing account untouched — re-running it
 used to overwrite a live colleague's password and tier. `scripts/provision_account.py` sets the flag
 unless `--no-must-change` is given, which is `POST /api/users`' own default and its own opt-out; reads
-the password from `PROVISION_PASSWORD` and from nowhere else; never echoes an argument it did not
-recognise (in case it was a password); dry-runs unless `--apply`; and refuses an actor the API would
-refuse — barred, not admitted, or itself still holding a password somebody else chose.
+the password from `PROVISION_PASSWORD` and from nowhere else; never repeats a typed value when it
+cannot read its arguments, in case it was a password — only a complaint naming nothing but its own
+options (a missing one, say) is printed word for word, and every other becomes one fixed sentence,
+which since 2026-10-09 covers an ambiguous `--a=…`, an invalid `--role …` and an `--apply=…` as well
+as an unrecognised argument; dry-runs unless `--apply`; and refuses an actor the API would refuse —
+barred, not admitted, or itself still holding a password somebody else chose.
 
 ### 3.5 Password links
 
@@ -694,6 +699,17 @@ no role check, because the link is the whole authority.
   screen (`credential_links.CopyLinkDelivery`) and hands it over. The server's log lines carry account
   and link ids, never the link or an address. The link's origin is the backend's
   `NEXT_PUBLIC_APP_URL`, which [ENVIRONMENT.md](ENVIRONMENT.md) documents.
+- **The check carries the token in its URL, and only the API's own log is cleaned of it**
+  (2026-10-09). Both clients ask `GET /api/auth/set-password?token=…`, and uvicorn's access log used to
+  write that line, token and all, into the service's journal — which a deploy whose health check fails
+  prints into its Actions log. `AccessLogRedaction` in `backend/app/main.py`, attached to the
+  `uvicorn.access` logger when the module is imported, now writes the value of `token` — and of
+  `access_token`, `id_token`, `refresh_token`, `code`, `key`, `password` and `secret`, in any letter
+  case — as `[redacted]`. Anything in front of the API that logs the request line still records it:
+  the box's nginx keeps Ubuntu's default access log, and CloudFront would if its logging were switched
+  on. The complete fix moves the token out of the URL, into a POST body or a header, in the next web
+  and Android release; until then the GET stays, because the builds in the field call it
+  ([OPEN_FINDINGS.md](OPEN_FINDINGS.md)).
 
 ### 3.6 Sessions are bound to the password they were opened with (2026-10-09)
 
@@ -1459,7 +1475,7 @@ is removed and the entry stays. Both teach the reader to trust the wrong thing. 
 | §1.4 docs exposure | `curl -s -o /dev/null -w "%{http_code}" https://d3ekigkotd1xa2.cloudfront.net/openapi.json`. **This entry closes when that returns 404**, not when the code changes. |
 | §3 tokens | `backend/app/core/security.py`; the startup guard is `verify_jwt_configuration`. |
 | §3.2 the watermark's writers | The comment at the foot of `deps._user_from_bearer` lists them. Re-check the list against the code with `grep -rn "sessionsValidFrom" backend/app backend/scripts` — a writer found there and not named in §3.2 is the drift. |
-| §3.3–§3.5 Google sign-in, the forced change, password links | `backend/app/core/deps.py` (`PASSWORD_CHANGE_ALLOWED_ROUTES`, `password_change_pending`, `refuse_while_password_change_pending`), `backend/app/services/account_provisioning.py` (`is_master_email`, `is_master_address`, `issuer_still_manages`, `assert_not_escaping_a_bar`, `empanelment_active`, `email_in_use`, `holds_a_temporary_password`), `_lift_existing_account` in `backend/app/api/routes/access.py`, `backend/app/services/credential_links.py` (`purpose_for`, `FIRST_LOGIN_TRACKED_SINCE`, the two TTLs, `revoke_outstanding`), `backend/app/services/access_roster.py` (`follow_email_change`, `accounts_on_the_mailbox_for_sign_in`), `backend/app/services/sanction_orders.py` (`master_mailbox_reason`, `designer_standing_verdict`, `reissue_credential_link`) and `backend/app/api/routes/auth.py` (`_refuse_to_promote_a_password_account`). Pinned by `backend/tests/test_password_change_enforcement.py`, which also asserts that every allow-listed route is one the application publishes, `backend/tests/test_account_provisioning.py` (its sections on a bar staying with the account and on the old address staying barred, one account per mailbox, an ended empanelment carried onto an active one, a promotion — by `PATCH` and by the access screen's approval — and the master admin's mailbox among them), `backend/tests/test_auth_identity_and_password_links.py` (`test_the_masters_google_sign_in_promotes_no_account_somebody_else_holds_a_password_to` among them) and `backend/tests/test_change_password_budget.py`; the sanction register's refusal by `test_no_order_names_any_spelling_of_the_master_admins_mailbox` in `backend/tests/test_sanction_orders.py`, `test_the_master_admins_mailbox_is_refused_by_the_real_verdict_and_never_confirmed` in `backend/tests/test_sanction_import.py` and `test_no_link_is_reissued_for_an_account_on_the_master_admins_mailbox` in `backend/tests/test_sanction_order_designer_eligibility.py`. Added 2026-10-09. |
+| §3.3–§3.5 Google sign-in, the forced change, password links | `backend/app/core/deps.py` (`PASSWORD_CHANGE_ALLOWED_ROUTES`, `password_change_pending`, `refuse_while_password_change_pending`), `backend/app/services/account_provisioning.py` (`is_master_email`, `is_master_address`, `issuer_still_manages`, `assert_not_escaping_a_bar`, `empanelment_active`, `email_in_use`, `holds_a_temporary_password`), `_lift_existing_account` in `backend/app/api/routes/access.py`, `backend/app/services/credential_links.py` (`purpose_for`, `FIRST_LOGIN_TRACKED_SINCE`, the two TTLs, `revoke_outstanding`), `backend/app/services/access_roster.py` (`follow_email_change`, `accounts_on_the_mailbox_for_sign_in`), `backend/app/services/sanction_orders.py` (`master_mailbox_reason`, `designer_standing_verdict`, `reissue_credential_link`) and `backend/app/api/routes/auth.py` (`_refuse_to_promote_a_password_account`, and `verify_google_token`'s log line), with `AccessLogRedaction` in `backend/app/main.py` for the link check's access line. Pinned by `backend/tests/test_password_change_enforcement.py`, which also asserts that every allow-listed route is one the application publishes, `backend/tests/test_account_provisioning.py` (its sections on a bar staying with the account and on the old address staying barred, one account per mailbox, an ended empanelment carried onto an active one, a promotion — by `PATCH` and by the access screen's approval — and the master admin's mailbox among them), `backend/tests/test_auth_identity_and_password_links.py` (`test_the_masters_google_sign_in_promotes_no_account_somebody_else_holds_a_password_to` among them, and its section on what a credential leaves in a log or on a terminal) and `backend/tests/test_change_password_budget.py`; the sanction register's refusal by `test_no_order_names_any_spelling_of_the_master_admins_mailbox` in `backend/tests/test_sanction_orders.py`, `test_the_master_admins_mailbox_is_refused_by_the_real_verdict_and_never_confirmed` in `backend/tests/test_sanction_import.py` and `test_no_link_is_reissued_for_an_account_on_the_master_admins_mailbox` in `backend/tests/test_sanction_order_designer_eligibility.py`. Added 2026-10-09. |
 | §3.6 the password binding | `security.CREDENTIAL_CLAIM` and `create_access_token` in `backend/app/core/security.py`; `password_credential` and the second check in `_user_from_bearer` in `backend/app/core/deps.py`. Pinned by `backend/tests/test_password_change_enforcement.py` — `test_every_bearer_token_the_application_mints_is_bound_to_a_password` reads every mint in `backend/app/` and fails on one that passes no `credential=`, and the database-backed tests end a temporary password's sessions, a voluntary change's other sessions, a raced sign-in and a dataset token, keep a Google session through a name correction, and accept a token from before the binding. The answer's shape — a body of exactly `{"ok": true}` and the token in `X-Session-Token` — is held on every change those tests make, and `test_the_new_session_token_rides_in_a_header_a_browser_may_read` and `test_a_browser_may_send_the_change_and_read_the_token_it_hands_back` hold the header to CORS `expose_headers`, the second through a real preflight and a cross-origin answer. The clients' half is `frontend/e2e/password-change-enforcement-unit.spec.ts`, `frontend/e2e/change-password-card-unit.spec.ts`, `frontend/e2e/first-login-password-unit.spec.ts` and `android/app/src/test/java/com/designprototype/workshop/data/ChangePasswordSessionTest.kt`, which also drives the gate's question after a lost answer; when a handset notices an ended session, and that credential writes go out once, is `android/app/src/test/java/com/designprototype/workshop/data/SessionEndedSignalTest.kt`, which runs the app's own `ApiClient.httpClient` against canned answers and a local server. **The tell that it has rotted is a door that hands out a bearer token without `credential=`**, which that first test names. Added 2026-10-09. |
 | §4 the ladder | [PERMISSIONS.md](PERMISSIONS.md), which is itself checked — `docs/tools/check-docs.mjs` fails if the backend and web role ladders diverge. |
 | §4.1 identity cache | `backend/app/core/deps.py`, and `backend/tests/test_user_identity_cache.py`. |

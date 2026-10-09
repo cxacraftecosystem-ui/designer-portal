@@ -14,7 +14,9 @@ with the SQL quoted beside each row.
 """
 
 import base64
+import io
 import json
+import logging
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -684,6 +686,17 @@ def test_the_password_is_kept_exactly_as_typed_and_the_flag_defaults_on():
     assert UserUpdate().mustChangePassword is None
 
 
+def test_the_users_audit_line_can_name_every_field_a_patch_accepts():
+    """``update_user``'s audit line picks a changed field's name from ``AUDITED_FIELDS``, a tuple of
+    literals, so every word it prints about a password is one the module wrote. A field the PATCH
+    accepts and the tuple lacks would vanish from that line without a sound; and the order is the
+    one ``sorted`` gave the line when it joined the request's keys, so it reads as it always did."""
+    from app.api.routes import users
+    from app.schemas.users import UserUpdate
+
+    assert tuple(sorted(UserUpdate.model_fields)) == users.AUDITED_FIELDS
+
+
 @pytest.mark.parametrize(
     ("found", "expected"),
     [
@@ -1105,3 +1118,255 @@ async def test_only_an_admin_carries_an_ended_empanelment_onto_an_active_one(
     assert stopped.value.detail == provisioning.ENDING_AN_EMPANELMENT_BY_MOVING_DETAIL.format(
         email="ended@example.org", destination="empanelled@example.org"
     )
+
+
+# ==================================================================================================
+# What a credential leaves behind in a log or on a terminal (2026-10-09)
+# ==================================================================================================
+
+#: Stands in for a set-password link's token — the shape ``credential_links.mint_token`` makes, and
+#: distinctive, so finding it in a line is unambiguous.
+LINK_TOKEN = "eyJzdWIiOiJhY2N0LTA0NTEifQ.Link-Token-Signature-0451"
+
+
+def _uvicorn_access_record(path: str, query: bytes) -> logging.LogRecord:
+    """The record uvicorn's access logger makes for one request: its own helpers build the arguments,
+    in the order and under the format string ``httptools_impl`` and ``h11_impl`` pass to ``info``."""
+    from uvicorn.protocols.utils import get_client_addr, get_path_with_query_string
+
+    scope = {
+        "client": ("203.0.113.7", 51234),
+        "method": "GET",
+        "path": path,
+        "query_string": query,
+        "http_version": "1.1",
+    }
+    arguments = (
+        get_client_addr(scope),
+        scope["method"],
+        get_path_with_query_string(scope),
+        scope["http_version"],
+        200,
+    )
+    return logging.LogRecord(
+        "uvicorn.access", logging.INFO, __file__, 0, '%s - "%s %s HTTP/%s" %d', arguments, None
+    )
+
+
+def _access_formatter() -> logging.Formatter:
+    """uvicorn's access formatter, with the format uvicorn ships: the line as production writes it."""
+    from uvicorn.config import LOGGING_CONFIG
+    from uvicorn.logging import AccessFormatter
+
+    return AccessFormatter(LOGGING_CONFIG["formatters"]["access"]["fmt"], use_colors=False)
+
+
+def test_the_access_line_for_a_link_check_never_carries_the_token():
+    """THE FINDING: both clients check a link with ``GET /api/auth/set-password?token=…``, and
+    uvicorn's access log wrote that line, token and all, into the service's journal."""
+    from app.main import AccessLogRedaction
+
+    record = _uvicorn_access_record("/api/auth/set-password", f"token={LINK_TOKEN}".encode())
+    assert AccessLogRedaction().filter(record) is True
+    line = _access_formatter().format(record)
+    assert LINK_TOKEN not in line
+    assert line.endswith(
+        '203.0.113.7:51234 - "GET /api/auth/set-password?token=[redacted] HTTP/1.1" 200 OK'
+    )
+
+
+@pytest.mark.parametrize(
+    ("path", "query", "logged"),
+    [
+        # Every name on the list, in any letter case: the value goes, the name and its place stay.
+        ("/api/auth/set-password", b"Token=abc", "/api/auth/set-password?Token=[redacted]"),
+        (
+            "/api/x",
+            b"page=2&access_token=a&ID_TOKEN=b&refresh_token=c&code=d&key=e&Password=f&secret=g",
+            "/api/x?page=2&access_token=[redacted]&ID_TOKEN=[redacted]&refresh_token=[redacted]"
+            "&code=[redacted]&key=[redacted]&Password=[redacted]&secret=[redacted]",
+        ),
+        # A name Starlette decodes to "token" is the token to the route, so it is to the log too.
+        ("/api/auth/set-password", b"%74oken=abc", "/api/auth/set-password?%74oken=[redacted]"),
+        # Exact names: a parameter that merely contains one keeps its value.
+        (
+            "/api/artisans",
+            b"pageKey=7&tokenCount=3&monkey=1",
+            "/api/artisans?pageKey=7&tokenCount=3&monkey=1",
+        ),
+        # Nothing to hide: an empty value, a bare name, ordinary parameters, no query at all.
+        ("/api/auth/set-password", b"token=&token", "/api/auth/set-password?token=&token"),
+        ("/api/artisans", b"page=2&pageSize=50", "/api/artisans?page=2&pageSize=50"),
+        ("/api/auth/set-password", b"", "/api/auth/set-password"),
+    ],
+)
+def test_only_a_credentials_value_leaves_the_access_line(path, query, logged):
+    from app.main import AccessLogRedaction
+
+    record = _uvicorn_access_record(path, query)
+    client, method, _path, http_version, status_code = record.args
+    AccessLogRedaction().filter(record)
+    assert record.args == (client, method, logged, http_version, status_code)
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        None,
+        {"path": f"/api/auth/set-password?token={LINK_TOKEN}"},
+        ("GET", f"/api/auth/set-password?token={LINK_TOKEN}"),
+        ("203.0.113.7:51234", "GET", b"/api/auth/set-password?token=x", "1.1", 200),
+    ],
+)
+def test_a_record_of_any_other_shape_passes_the_filter_untouched(args):
+    """Not uvicorn's access line, so not the filter's to touch: passed on exactly as it came."""
+    from app.main import AccessLogRedaction
+
+    record = logging.LogRecord("uvicorn.access", logging.INFO, __file__, 0, "%s", None, None)
+    record.args = args
+    assert AccessLogRedaction().filter(record) is True
+    assert record.args is args
+
+
+def test_the_filter_never_raises_over_a_line_it_cannot_read(monkeypatch):
+    """The filter runs inside the call that starts uvicorn's response, so an exception there would
+    fail the request the line describes. Whatever goes wrong, the line passes on as it came."""
+    import app.main
+
+    def _unreadable(_path):
+        raise RuntimeError("a path the filter cannot read")
+
+    monkeypatch.setattr(app.main, "redact_query_credentials", _unreadable)
+    record = _uvicorn_access_record("/api/auth/set-password", b"token=abc")
+    arguments = record.args
+    assert app.main.AccessLogRedaction().filter(record) is True
+    assert record.args is arguments
+
+
+def test_importing_the_application_puts_the_filter_on_uvicorns_access_logger():
+    """WHAT PRODUCTION RUNS: uvicorn imports ``app.main``, then logs through the logger it looks up by
+    name. A filter that worked only where somebody remembered to attach it would leave the finding
+    open, so the line goes through that logger here, into uvicorn's own formatter."""
+    import app.main
+
+    access = logging.getLogger("uvicorn.access")
+    assert any(isinstance(each, app.main.AccessLogRedaction) for each in access.filters)
+
+    written = io.StringIO()
+    handler = logging.StreamHandler(written)
+    handler.setFormatter(_access_formatter())
+    level = access.level
+    access.addHandler(handler)
+    access.setLevel(logging.INFO)
+    try:
+        # The call uvicorn makes, argument for argument.
+        access.info(
+            '%s - "%s %s HTTP/%s" %d',
+            "203.0.113.7:51234",
+            "GET",
+            f"/api/auth/set-password?token={LINK_TOKEN}",
+            "1.1",
+            200,
+        )
+    finally:
+        access.removeHandler(handler)
+        access.setLevel(level)
+    assert LINK_TOKEN not in written.getvalue()
+    assert '"GET /api/auth/set-password?token=[redacted] HTTP/1.1" 200 OK' in written.getvalue()
+
+
+def test_a_refused_google_credential_is_never_written_to_the_log(monkeypatch, caplog):
+    """google-auth's messages quote what they refuse: ``decode_header`` raises exactly what
+    ``verify_oauth2_token`` raises for a token with the wrong number of segments, the whole credential
+    inside it. The line names the audience and the exception's class, and nothing that was sent."""
+    from types import SimpleNamespace
+
+    from fastapi import HTTPException
+    from google.auth import jwt as google_jwt
+
+    from app.api.routes import auth as auth_routes
+
+    pasted = "Pasted-Into-The-Google-Field-0451"
+    monkeypatch.setattr(
+        auth_routes,
+        "get_settings",
+        lambda: SimpleNamespace(google_client_ids=["web-client", "android-client"]),
+    )
+    monkeypatch.setattr(
+        auth_routes.google_id_token,
+        "verify_oauth2_token",
+        lambda token, _request, _audience: google_jwt.decode_header(token),
+    )
+    with (
+        caplog.at_level(logging.INFO, logger=auth_routes.logger.name),
+        pytest.raises(HTTPException) as refused,
+    ):
+        auth_routes.verify_google_token(pasted)
+    assert refused.value.status_code == 401
+    assert pasted not in caplog.text
+    assert [
+        record.getMessage() for record in caplog.records if record.name == auth_routes.logger.name
+    ] == [
+        f"Google token rejected for configured audience {audience}: it did not verify "
+        "(MalformedError)"
+        for audience in ("web-client", "android-client")
+    ]
+
+
+#: What an operator typed where a value goes. Distinctive, so an assertion that it never comes back
+#: cannot pass by accident; shaped like the password it most often is.
+TYPED = "Typed-On-The-Command-Line-0451"
+
+
+def _provision_argv(*extra: str, role: str = "RESEARCHER") -> list[str]:
+    return [
+        "--email", "person@example.org", "--name", "A Person", "--role", role,
+        "--actor-email", "admin@example.org", *extra,
+    ]
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        # An abbreviation two options share, carrying a value: argparse quoted the whole argument.
+        _provision_argv(f"--a={TYPED}"),
+        # A choice the option does not offer: argparse quoted the value back with the choices.
+        _provision_argv(role=TYPED),
+        # A value given to a flag that takes none.
+        _provision_argv(f"--apply={TYPED}"),
+        # The shape the script first guarded against: a password passed as an argument.
+        _provision_argv("--password", TYPED),
+    ],
+)
+async def test_the_provisioning_script_never_repeats_what_was_typed(argv):
+    """``scripts/provision_account.py`` reads its password from ``PROVISION_PASSWORD`` only, and
+    argparse quotes a typed value back in most of its complaints; until 2026-10-09 the script caught
+    only the unrecognised argument. Refused before anything connects, so no database is needed."""
+    from scripts import provision_account
+
+    out, err = io.StringIO(), io.StringIO()
+    code = await provision_account.run(argv, environ={}, out=out, err=err)
+    assert code == provision_account.EXIT_USAGE
+    assert TYPED not in out.getvalue() + err.getvalue()
+    assert err.getvalue().endswith(f"error: {provision_account.UNREADABLE_ARGUMENTS}\n")
+
+
+@pytest.mark.parametrize(
+    ("argv", "complaint"),
+    [
+        (
+            ["--email", "person@example.org"],
+            "the following arguments are required: --name, --role, --actor-email",
+        ),
+        (_provision_argv("--actor-email"), "argument --actor-email: expected one argument"),
+    ],
+)
+async def test_the_provisioning_script_still_names_the_option_at_fault(argv, complaint):
+    """A complaint that names nothing but the script's own options is repeated word for word: it is
+    the one that tells an operator what to fix, and it quotes nothing they typed."""
+    from scripts import provision_account
+
+    out, err = io.StringIO(), io.StringIO()
+    code = await provision_account.run(argv, environ={}, out=out, err=err)
+    assert code == provision_account.EXIT_USAGE
+    assert err.getvalue().endswith(f"error: {complaint}\n")

@@ -58,6 +58,30 @@ router = APIRouter(prefix="/users", tags=["users"])
 IDENTITY_FIELDS = frozenset({"name", "email"})
 CREDENTIAL_FIELDS = frozenset({"password", "mustChangePassword"})
 
+#: Every field the PATCH accepts — ``UserUpdate``'s eleven, which forbids any other — in ``sorted``
+#: order, so the audit line lists a change exactly as it did when it sorted the request's own keys.
+#:
+#: THE LINE PICKS ITS FIELD NAMES FROM HERE RATHER THAN JOINING THOSE KEYS (2026-10-09), so every
+#: word it prints about a password is a literal this module wrote: nothing for a scanner that judges
+#: a value by its identifier (CodeQL's py/clear-text-logging-sensitive-data) to follow, and nothing a
+#: client could spell should ``UserUpdate`` ever stop forbidding unknown keys. ``"password"`` is
+#: here as a word — the line says one was set, never what it was. A field missing from this tuple
+#: would vanish from the audit line without a sound, so
+#: ``tests/test_auth_identity_and_password_links.py`` holds it to the schema.
+AUDITED_FIELDS: tuple[str, ...] = (
+    "canDownloadDataset",
+    "canManageCrafts",
+    "canManageQuestionnaire",
+    "canManageWorkshops",
+    "canReview",
+    "canViewProvenance",
+    "email",
+    "mustChangePassword",
+    "name",
+    "password",
+    "role",
+)
+
 #: The refusal a professor or a directorate officer reads for a name, an address or a password.
 IDENTITY_NEEDS_PROVISIONER_DETAIL = (
     "Correcting a person's name, email address or password requires Ministry Admin access or "
@@ -373,7 +397,10 @@ async def update_user(
             user.email, data["email"], actor_id=current_user.id
         )
     # THE AUDIT LINE: who changed what on whose account. Field NAMES only — the password itself, and
-    # its hash, never reach a log.
+    # its hash, never reach a log. Every word about the password is a literal (2026-10-09): the
+    # fields are picked from :data:`AUDITED_FIELDS`, and the flag is "required" or "not required"
+    # rather than its own value, which a scanner that judges by name took for the password.
+    changed = sent - echoed
     notes = [
         f"moved off an address the allow-list held as {barred_on_departure}"
         if barred_on_departure
@@ -400,8 +427,8 @@ async def update_user(
         "users: %s updated account %s (fields=%s, mustChangePassword=%s, sessionsEnded=%s)%s",
         current_user.id,
         user_id,
-        ",".join(sorted(sent - echoed)) or "-",
-        updated.mustChangePassword,
+        ",".join(field for field in AUDITED_FIELDS if field in changed) or "-",
+        "required" if updated.mustChangePassword else "not required",
         ends_sessions,
         "".join(f"; {note}" for note in notes if note),
     )

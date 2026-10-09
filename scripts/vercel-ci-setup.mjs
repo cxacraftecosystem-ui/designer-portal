@@ -89,6 +89,18 @@ function repoSlug(value) {
 }
 
 /**
+ * A remote with its userinfo taken out, for printing — 2026-10-09. An HTTPS remote can carry a
+ * credential (`https://user:token@github.com/owner/name.git` is what some setups write into
+ * `.git/config`), `repoSlug` reads such a remote happily, and this script prints where it found the
+ * repository before it asks to go on: the token went to the terminal with it. Everything between the
+ * scheme and the LAST `@` before the first `/` goes, which is where a URL parser ends the userinfo; an
+ * scp-style `git@host:owner/name` loses its user too, which costs a reader nothing.
+ */
+function withoutCredentials(remote) {
+  return String(remote || "").replace(/^([a-z][a-z\d+.-]*:\/\/)?[^/]*@/i, "$1");
+}
+
+/**
  * ─── WHERE THE PROJECT AND TEAM IDS COME FROM — 2026-10-09 ───────────────────────────────────────
  * This used to read `frontend/.vercel/project.json` unconditionally. That file is in no checkout
  * any more, so the script died with ENOENT before printing a word: the documented way to re-seed
@@ -151,7 +163,8 @@ function resolveRepo() {
     origin = "";
   }
   const fromGit = repoSlug(origin);
-  if (fromGit) return { slug: fromGit, source: `git remote origin (${origin})` };
+  // `source` is printed, so it carries the remote without its credentials — see `withoutCredentials`.
+  if (fromGit) return { slug: fromGit, source: `git remote origin (${withoutCredentials(origin)})` };
   return null;
 }
 
@@ -200,7 +213,8 @@ if (projectName === "field-repository") {
 }
 
 // Printed BEFORE the first call that CHANGES anything, because every one of these is a thing that
-// can be wrong in a way that still succeeds. The token itself is never printed, here or anywhere below.
+// can be wrong in a way that still succeeds. The token itself is never printed, here or anywhere below,
+// and neither is a credential the origin remote carries (`withoutCredentials`).
 console.log("About to change:");
 console.log(`  GitHub repository   ${REPO}   [from ${resolved.source}]`);
 console.log(`  Vercel project      ${projectName}  (${projectId} in ${orgId})   [from ${linked.source}]`);

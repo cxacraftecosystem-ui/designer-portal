@@ -552,7 +552,7 @@ def _run_the_script_scenarios(address: Any, stamp: str) -> dict[str, tuple[int, 
 
     def run(argv: list[str], password: str | None = None) -> tuple[int, str, str]:
         out, err = io.StringIO(), io.StringIO()
-        environ = {provision_account.PASSWORD_ENV: password} if password else {}
+        environ = {provision_account.ENV_VARIABLE: password} if password else {}
         code = asyncio.run(provision_account.run(argv, environ=environ, out=out, err=err))
         return code, out.getvalue(), err.getvalue()
 

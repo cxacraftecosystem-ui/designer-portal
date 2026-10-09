@@ -469,9 +469,14 @@ the index offered that day, which is how an unpinned transitive dependency turns
 overnight with no commit behind it.
 
 **It is compiled for Python 3.12 in a container**, because the Python that resolves it must be the
-Python that runs it — the local venv on the machine this was written from is 3.14, and a lock
-compiled there would carry that interpreter's environment markers into production. Refresh it
-deliberately, never as a side effect of something else:
+Python that runs it in production — the local venv on the machine this was written from is 3.14, and
+a lock compiled there would carry that interpreter's environment markers into production. Since
+2026-10-09 CI's two backend jobs (and `e2e-live.yml`) install it on **3.14**, as the development
+machine always has, by the owner's decision after 37 integration tests failed on 3.12 alone (a Prisma
+client left connected to one test's event loop and reused from another). The EC2 box still runs 3.12,
+so CI no longer proves the suite on production's interpreter; the deploy's own install, migration and
+`/health` poll on the box are the 3.12 evidence until the box moves too. Refresh it deliberately,
+never as a side effect of something else:
 
 ```bash
 docker run --rm -v "$PWD/backend:/w" -w /w python:3.12 sh -c \

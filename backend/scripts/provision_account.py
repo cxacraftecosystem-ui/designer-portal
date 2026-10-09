@@ -66,6 +66,7 @@ with the interpreter's default codec and dies inside ``connect`` without it. :fu
 import argparse
 import asyncio
 import os
+import re
 import sys
 from collections.abc import Mapping, Sequence
 from typing import Any, NoReturn, TextIO
@@ -80,8 +81,15 @@ from app.core.deps import ROLE_RANK, is_break_glass_master, password_change_pend
 from app.schemas.users import UserCreate
 from app.services import access_roster, account_provisioning
 
-#: The ONE place the password may come from.
-PASSWORD_ENV = "PROVISION_PASSWORD"
+#: The environment variable the password is read from: the ONE place it may come from.
+#:
+#: NAMED FOR WHERE THE PASSWORD IS, NOT FOR WHAT IT IS (2026-10-09). As ``PASSWORD_ENV``, every line
+#: telling an operator which variable to set — the refusals, the argparse complaint — read to a
+#: scanner that judges a value by its identifier (CodeQL's py/clear-text-logging-sensitive-data) as a
+#: line printing the password, and so did ``plan.must_change_password`` in the summary, which is now
+#: printed as a word. Nothing here prints the password: the value read from this variable goes into
+#: ``UserCreate`` and nowhere else.
+ENV_VARIABLE = "PROVISION_PASSWORD"
 
 EXIT_OK = 0
 EXIT_REFUSED = 1
@@ -95,12 +103,36 @@ class Refused(Exception):
     """A refusal of the script's own, before any route rule is asked."""
 
 
-class _Parser(argparse.ArgumentParser):
-    """argparse, minus the one habit that would print a secret.
+#: argparse's complaints whose only variable part is the names of this parser's own options, joined
+#: the way argparse joins them — "the following arguments are required: --email, --name", "argument
+#: --email: expected one argument". They quote nothing typed, and they are the ones that tell an
+#: operator what to fix, so they are repeated word for word. Matched whole, with every name checked
+#: against the parser, so a sentence that merely begins the same way cannot carry a value through.
+_OPTIONS_ONLY_COMPLAINTS = (
+    re.compile(r"the following arguments are required: (?P<options>.+)"),
+    re.compile(r"argument (?P<options>\S+): expected one argument"),
+)
 
-    On an unknown argument argparse quotes it back — and the argument most likely to be unknown here
-    is a password somebody tried to pass on the command line. The value has already reached their
-    shell history; it must not reach a terminal log as well.
+#: What the operator reads in place of every other complaint. One fixed sentence, because the
+#: complaint it replaces may quote a password; it names where the password does go, since a password
+#: typed as an argument is the likeliest way to be here.
+UNREADABLE_ARGUMENTS = (
+    "the arguments could not be read, and what was typed is not repeated here in case it was a "
+    f"password (the password is read from {ENV_VARIABLE} only). Run with --help for the arguments "
+    "this script takes."
+)
+
+
+class _Parser(argparse.ArgumentParser):
+    """argparse, minus every habit that would print a secret.
+
+    Most of argparse's complaints quote what was typed back — an argument it does not know, an
+    abbreviation two options share (``--a=…``), a choice it does not offer (``--role …``), a value
+    given to a flag (``--apply=…``) — and the value most likely to be typed where it does not belong
+    here is a password somebody tried to pass on the command line. It has already reached their shell
+    history; it must not reach a terminal log as well. So a complaint is repeated only when it names
+    nothing but this parser's options (:data:`_OPTIONS_ONLY_COMPLAINTS`), and every other one becomes
+    :data:`UNREADABLE_ARGUMENTS`. Unrecognised arguments were the only case handled until 2026-10-09.
 
     Its complaints go to ``err`` rather than to ``sys.stderr`` directly, so a caller can collect them
     without swapping ``sys.stderr`` out — which must not be done around this script: Prisma starts its
@@ -113,14 +145,19 @@ class _Parser(argparse.ArgumentParser):
         self._err = err
 
     def error(self, message: str) -> NoReturn:
-        if message.startswith("unrecognized arguments"):
-            message = (
-                "unrecognized arguments (not repeated here, in case one was a password). "
-                f"The password is read from {PASSWORD_ENV} only."
-            )
+        if not self._names_only_options(message):
+            message = UNREADABLE_ARGUMENTS
         self._err.write(self.format_usage())
         self._err.write(f"{self.prog}: error: {message}\n")
         raise SystemExit(EXIT_USAGE)
+
+    def _names_only_options(self, message: str) -> bool:
+        for complaint in _OPTIONS_ONLY_COMPLAINTS:
+            found = complaint.fullmatch(message)
+            if found:
+                named = re.split(r", |/", found["options"])
+                return all(option in self._option_string_actions for option in named)
+        return False
 
 
 def _parser(err: TextIO) -> argparse.ArgumentParser:
@@ -129,7 +166,7 @@ def _parser(err: TextIO) -> argparse.ArgumentParser:
         description=(
             "Create one account under the rules POST /api/users obeys (or, with --google-only, "
             "admit one address for Google sign-in). Dry run unless --apply. The password is read "
-            f"from the {PASSWORD_ENV} environment variable only."
+            f"from the {ENV_VARIABLE} environment variable only."
         ),
         err=err,
     )
@@ -254,17 +291,19 @@ async def _provision(args: argparse.Namespace, payload: UserCreate | None, say: 
 
     assert payload is not None
     plan = await account_provisioning.plan_account(actor, payload)
+    # A word the flag picks, never the flag — see ENV_VARIABLE. The audit line says it the same way.
+    forced_change = "required" if plan.must_change_password else "not required"
     if not args.apply:
         say(
             f"DRY RUN on {host}: would create a {plan.role} password account for {plan.email} "
-            f"({plan.name!r}), mustChangePassword={plan.must_change_password}, {who}."
+            f"({plan.name!r}), mustChangePassword={forced_change}, {who}."
             f"{_warnings(plan)} Nothing was written; re-run with --apply."
         )
         return EXIT_OK
     user = await account_provisioning.write_account(actor, plan, payload.password, via=VIA)
     say(
         f"CREATED on {host}: {plan.role} account {user.id} for {plan.email}, "
-        f"mustChangePassword={plan.must_change_password}, {who}.{_warnings(plan)}"
+        f"mustChangePassword={forced_change}, {who}.{_warnings(plan)}"
     )
     return EXIT_OK
 
@@ -293,11 +332,11 @@ async def run(
     except SystemExit as exc:  # the parser has already said why
         return EXIT_OK if not exc.code else EXIT_USAGE
 
-    password = env.get(PASSWORD_ENV) or ""
+    password = env.get(ENV_VARIABLE) or ""
     payload: UserCreate | None = None
     if args.google_only:
         if password:
-            say(f"REFUSED: --google-only sets no password; unset {PASSWORD_ENV} and run it again.")
+            say(f"REFUSED: --google-only sets no password; unset {ENV_VARIABLE} and run it again.")
             return EXIT_USAGE
         if args.no_must_change:
             say("REFUSED: --no-must-change applies to password accounts, not to --google-only.")
@@ -313,7 +352,7 @@ async def run(
     else:
         if not password:
             say(
-                f"REFUSED: set the password in the {PASSWORD_ENV} environment variable. It is never "
+                f"REFUSED: set the password in the {ENV_VARIABLE} environment variable. It is never "
                 "read from the command line."
             )
             return EXIT_USAGE

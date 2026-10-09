@@ -429,7 +429,15 @@ def verify_google_token(token: str) -> dict[str, Any]:
             )
         except ValueError as exc:
             last_error = exc
-            logger.info("Google token rejected for configured audience %s: %s", client_id, exc)
+            # THE CLASS, NEVER THE MESSAGE. google-auth's messages quote what they refused — a token
+            # with the wrong number of segments comes back whole, "Wrong number of segments in token:
+            # b'…'" — so the line says which audience refused it and what kind of failure it was,
+            # and nothing the caller sent.
+            logger.info(
+                "Google token rejected for configured audience %s: it did not verify (%s)",
+                client_id,
+                type(exc).__name__,
+            )
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid Google ID token"
     ) from last_error

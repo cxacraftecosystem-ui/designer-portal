@@ -142,10 +142,14 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
-          # 3.12 because that is what the EC2 box runs (`python3.12 -m venv .venv` in
-          # deploy-backend.yml). A test suite that passes on a version production does not have
-          # is a weaker statement than it looks. pyproject allows >= 3.11.
-          python-version: "3.12"
+          # 3.14, the interpreter the development machine runs — the owner's decision of 2026-10-09,
+          # after 37 integration tests failed on 3.12 alone (a Prisma client left connected to one
+          # test's event loop and reused from another, which 3.14's asyncio does not trip on). The
+          # EC2 box still runs 3.12 (`python3.12 -m venv .venv` in deploy-backend.yml), so this job
+          # no longer proves the suite on production's interpreter: until the box moves too, the
+          # deploy's own install, migration and /health poll on the box are the 3.12 evidence.
+          # pyproject allows >= 3.11.
+          python-version: "3.14"
           cache: pip
           # Both files, since 2026-09-03: the lock is what decides the installed set now, and a
           # cache keyed only on pyproject would be reused across a lock refresh that changed every
@@ -171,9 +175,10 @@ jobs:
         # without it pip re-resolves this project's own declared ranges and can quietly lift a pin.
         #
         # REFRESH IT DELIBERATELY, NEVER AS A SIDE EFFECT. It is compiled in a container so the
-        # Python that resolves it is the Python that runs it (3.12 — the local venv on the machine
-        # this was written from is 3.14, and a lock compiled there would carry that interpreter's
-        # markers into production):
+        # Python that resolves it is the Python that runs it in production (3.12 — the local venv on
+        # the machine this was written from is 3.14, and a lock compiled there would carry that
+        # interpreter's markers into production). Since 2026-10-09 this job and the integration job
+        # install the same lock on 3.14, as the development machine always has:
         #
         #   docker run --rm -v "$PWD/backend:/w" -w /w python:3.12 sh -c \
         #     "pip install -q pip-tools && pip-compile -q --strip-extras --extra dev \
@@ -789,8 +794,9 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
-          # 3.12, matching production (`python3.12 -m venv` on the EC2 box) and job 1.
-          python-version: "3.12"
+          # 3.14, matching job 1 — whose comment says why production's 3.12 is no longer what this
+          # job proves.
+          python-version: "3.14"
           cache: pip
           cache-dependency-path: |
             backend/requirements.lock

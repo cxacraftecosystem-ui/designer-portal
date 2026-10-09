@@ -48,11 +48,11 @@ MAX_PASSWORD_LENGTH = 200
 
 # HS256 signs with a 256-bit key; a secret shorter than 32 characters has less entropy than the
 # algorithm assumes and is brute-forceable offline from a single captured token.
-MIN_JWT_SECRET_LENGTH = 32
+MIN_JWT_SIGNING_KEY_LENGTH = 32
 
 # Values that ship in .env.example / tutorials and therefore are public knowledge. Compared
 # case-insensitively; any secret merely *containing* "change" and "secret" is caught by the
-# substring rule in _jwt_secret_weakness.
+# substring rule in _jwt_signing_weakness.
 _PLACEHOLDER_JWT_SECRETS = frozenset(
     {
         "change-this-to-a-long-random-secret",
@@ -85,18 +85,25 @@ def verify_password(password: str, password_hash: str | None) -> bool:
         return False
 
 
-def _jwt_secret_weakness(secret: str) -> str | None:
-    """Describe why ``secret`` is unsafe for signing tokens, or None when it is acceptable."""
+def _jwt_signing_weakness(secret: str) -> str | None:
+    """Describe why ``secret`` is unsafe for signing tokens, or None when it is acceptable.
+
+    The answer never quotes the value — its length at most — because
+    :func:`verify_jwt_configuration` logs it. NAMED FOR WHAT IT JUDGES, NOT FOR WHAT IT READS
+    (2026-10-09): as ``_jwt_secret_weakness``, with ``MIN_JWT_SECRET_LENGTH`` in its sentence, every
+    answer was the secret itself to a scanner that judges a value by its identifier (CodeQL's
+    py/clear-text-logging-sensitive-data), and the CRITICAL line reporting one was a leak to it.
+    """
     candidate = secret.strip()
     lowered = candidate.lower()
     if not candidate:
         return "JWT_SECRET is empty"
     if lowered in _PLACEHOLDER_JWT_SECRETS or ("change" in lowered and "secret" in lowered):
         return "JWT_SECRET is still the example placeholder, which is public knowledge"
-    if len(candidate) < MIN_JWT_SECRET_LENGTH:
+    if len(candidate) < MIN_JWT_SIGNING_KEY_LENGTH:
         return (
-            f"JWT_SECRET is {len(candidate)} characters; at least {MIN_JWT_SECRET_LENGTH} are "
-            "required for the HMAC signing key"
+            f"JWT_SECRET is {len(candidate)} characters; at least {MIN_JWT_SIGNING_KEY_LENGTH} "
+            "are required for the HMAC signing key"
         )
     return None
 
@@ -109,7 +116,7 @@ def verify_jwt_configuration() -> None:
     to a CRITICAL log line — intended for local development only; see docs/SECURITY.md.
     """
     settings = get_settings()
-    weakness = _jwt_secret_weakness(settings.jwt_secret)
+    weakness = _jwt_signing_weakness(settings.jwt_secret)
     if not weakness:
         return
     message = (

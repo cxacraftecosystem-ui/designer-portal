@@ -1,11 +1,23 @@
 # Open findings
 
-**Status: 14 open, 1 decision recorded and 1 deferral, 94 closed.** Every count re-counted by
+**Status: 15 open, 1 decision recorded and 1 deferral, 95 closed.** Every count re-counted by
 heading on 2026-10-09; the entries closed on 2026-10-09 were checked against the tree that day, and
 the older closed sections were last re-checked on 2026-09-03.
 
+**A verifier's pass over what the release writes to logs and terminals moved both numbers by one,
+the same day.** It closed a set-password link's token reaching the API's journal every time the link
+was checked — both clients send the token in the query string of `GET /api/auth/set-password`, and
+uvicorn's access log wrote the line down — and opened what that fix cannot reach: anything in front of
+the API that logs the request line, the box's own nginx first. Its four smaller findings were fixed in
+the same change and never entered here, since none was outstanding: the operator script's argument
+errors quoting a typed value back, the Google sign-in's log line carrying google-auth's message (which
+can quote the submitted token), `scripts/vercel-ci-setup.mjs` printing a credential the origin remote
+carries, and `scripts/seed_test_accounts.py` printing the shared local password (CodeQL alert #20).
+Counted by heading: 14 + 1 = 15 open, and 94 + 1 = 95 closed.
+
 **A focused review of that last pass found eight more defects the same day, and each was closed
-before the day was out.** They are the last eight entries under *Closed on 2026-10-09*: the sanction
+before the day was out.** They are the eight entries under *Closed on 2026-10-09* that follow the two
+join-card scans: the sanction
 register creating the account on the master admin's mailbox for the master's Google sign-in to
 promote; an administrator's address correction moving a barred allow-list row off the old mailbox; a
 non-admin's correction ending an administrator's empanelment, or landing a second account on another
@@ -556,6 +568,29 @@ single-row filing and discard ask nothing first, though a row a design workshop'
 is not listed there at all. Every one is refused by the server, its answer printed word for word, so
 nothing is written; what is missing is the warning before the click.
 
+### [LOW] A set-password link's token still reaches anything in front of the API that logs the request line (backend, frontend, android) — opened 2026-10-09
+
+Both clients check a link with `GET /api/auth/set-password?token=<the token>`, and the token is the
+link's whole authority. The filter that keeps it out of uvicorn's access log (the entry closed below)
+runs inside the API process, so it reaches nothing in front of it, and anything there that writes the
+request line down still records the token: the box's own nginx — `infra/terraform/user_data.sh` sets
+no `access_log`, so Ubuntu's default writes every request line, query string included, to
+`/var/log/nginx/access.log` — and CloudFront, if its standard logging is ever switched on (not
+verifiable from this repository). Whoever can read those can set the account's password until the
+link is used or expires. The complete fix moves the token out of the URL — into a POST body or a
+header — in the next web and Android release, keeping the GET until the builds that call it have left
+the field.
+
+The link itself carries the token the same way, and that reaches further than the API check does. The
+address handed to the person is `{NEXT_PUBLIC_APP_URL}/set-password?token=…`
+(`credential_links.link_for`), so every open sends the token to the web host's request log and leaves
+it in the browser's history, where the next user of a shared computer can find it until the link is
+used or expires. A fragment (`/set-password#token=…`) is never sent to any server, and the web page can
+read it as easily as the query. It is not switched yet because the handset is offered these links too
+(the `/set-password` filter in `android/app/src/main/AndroidManifest.xml`) and the shipped builds read
+the token from the query: the next Android release must accept both forms, and `link_for` can move to
+the fragment once the builds that accept only the query have left the field. Open as of 2026-10-09.
+
 ---
 
 ## Closed on 2026-10-09
@@ -563,9 +598,11 @@ nothing is written; what is missing is the warning before the click.
 Found by the read-only investigation that preceded the account-provisioning and serve-as change, while
 making it, or by the review of it the same day, and closed by that change — six by its final pass,
 the six that end with the two join-card scans, five of them after the review had recorded them open
-and one found by that pass itself; and the last eight below by a focused review of that final pass,
-which found each and saw it closed the same day without recording it open. Every entry below was
-verified against the tree on the day it was written and names the test that fails without the fix.
+and one found by that pass itself; the eight after those by a focused review of that final pass,
+which found each and saw it closed the same day without recording it open; and, after those, a
+set-password link's token in the API's journal, by a verifier's pass over what the release writes to
+logs and terminals, which closed it and recorded its residue open. Every entry below was verified
+against the tree on the day it was written and names the test that fails without the fix.
 
 ### [HIGH] Any admin could mint a password link for the master admin or a peer admin, and take the account over (backend) — **CLOSED 2026-10-09**
 
@@ -1384,6 +1421,30 @@ Pinned by the seven probe-path tests in
 `a change nobody could confirm never says nothing has changed` in
 `android/app/src/test/java/com/designprototype/workshop/ui/PasswordSetupCopyTest.kt`. No published
 build carries it as of 2026-10-09.
+
+### [MEDIUM] A set-password link's token was written to the API's journal every time the link was checked (backend) — **CLOSED 2026-10-09**
+
+Both clients ask whether a link is still good with `GET /api/auth/set-password?token=<the token>` —
+the web's set-password page through `checkPasswordLink` in `frontend/lib/signIn.ts`, the handset
+through `WorkshopRepositoryApi.checkPasswordLink`'s `@Query("token")` — and the API box runs uvicorn
+with its access log on (the `ExecStart` in `.github/workflows/deploy-backend.yml`), which writes every
+request line, query string and all, to the `fieldrepo` journal. The token is the link's whole
+authority: whoever read the line could set the account's password until the link was used or expired,
+two hours for a RESET and seventy-two for an INVITE. Nor does the journal stay on the box: a deploy
+whose health check never passes prints its last 80 lines, unscrubbed, into the Actions log.
+
+`backend/app/main.py` now attaches `AccessLogRedaction` to the `uvicorn.access` logger when the module
+is imported. It rewrites the path argument of uvicorn's access line — the third of the five arguments
+all three of uvicorn 0.52.4's HTTP implementations pass — so that the value of `token`,
+`access_token`, `id_token`, `refresh_token`, `code`, `key`, `password` or `secret`, in any letter
+case, reads `[redacted]`; the rest of the line and every other record pass untouched, and it never
+raises. The GET is unchanged, because the builds in the field call it. Pinned in
+`backend/tests/test_auth_identity_and_password_links.py` by
+`test_the_access_line_for_a_link_check_never_carries_the_token`, which formats uvicorn's own record
+with uvicorn's own formatter, by
+`test_importing_the_application_puts_the_filter_on_uvicorns_access_logger`, and by the tables beside
+them. **The residue is open above**: anything in front of uvicorn that logs the request line still
+records the token.
 
 ---
 

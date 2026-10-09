@@ -169,7 +169,13 @@ async def main() -> None:
     finally:
         await disconnect_db()
 
-    print(f"\nAll ten share the password: {PASSWORD}")
+    # WHERE THE PASSWORD IS WRITTEN DOWN, NOT THE PASSWORD (2026-10-09; CodeQL alert #20). A terminal
+    # ends up in CI logs and screen shares like any other log, and this line used to print it there.
+    # Whoever needs it finds it at either place named: the browser suite signs in with it.
+    print(
+        "\nAll ten share one password: PASSWORD at the top of this script, and E2E_PASSWORD on the "
+        "last line of 'The sequence' in docs/TESTING-E2E-LOCAL.md."
+    )
     print("Sign in as each to check that a REFUSED page is actually refused, not merely unlinked.")
 
 

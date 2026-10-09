@@ -5,6 +5,7 @@ import os
 import time
 from contextlib import asynccontextmanager, suppress
 from typing import Any
+from urllib.parse import unquote_plus
 
 from fastapi import FastAPI, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -824,6 +825,92 @@ def _mounted_route_templates(app: FastAPI) -> list[str]:
     return found
 
 
+# --- The access log -------------------------------------------------------------------------------
+#
+# A SET-PASSWORD LINK'S TOKEN WAS WRITTEN DOWN EVERY TIME SOMEBODY OPENED THE LINK. Both clients ask
+# whether a link is still good with `GET /api/auth/set-password?token=<the token>` — the web's
+# set-password page through `checkPasswordLink` in `frontend/lib/signIn.ts`, the handset through
+# `WorkshopRepositoryApi.checkPasswordLink`'s `@Query("token")` — and production runs uvicorn with its
+# access log on, which writes every request line, query string and all, to stdout: the service's
+# journal. The token is the link's whole authority, so whoever could read the journal could set the
+# account's password until the link was used or expired. The GET stays, because builds already in the
+# field call it; the filter below changes what the log keeps of it.
+#
+# WHAT IT CANNOT REACH is open in docs/OPEN_FINDINGS.md: anything in front of uvicorn that logs the
+# request line, starting with the box's own nginx. The complete fix moves the token out of the URL —
+# into a POST body or a header — in the next web and Android release.
+
+#: Query parameters whose value is a credential, compared case-insensitively with the DECODED name.
+#: Exact names, and not ``ai.redact_secrets``' rule, which blanks any name that merely ENDS in one of
+#: its words (``monkey=`` included): that is right for a provider's exception text, and on a request
+#: line it would blank parameters an operator reads the line for.
+_CREDENTIAL_QUERY_PARAMETERS = frozenset(
+    {"token", "access_token", "id_token", "refresh_token", "code", "key", "password", "secret"}
+)
+
+
+def redact_query_credentials(path: str) -> str:
+    """``path`` with the value of every credential-named query parameter replaced by ``[redacted]``.
+
+    Split on ``&`` and each name decoded the way Starlette decodes it (``parse_qsl``), so what is
+    blanked is exactly what a route would read as that parameter: ``?%74oken=…`` is the token too. An
+    empty value is left as it was — it hides nothing, and "the client sent an empty token" is worth
+    being able to read.
+    """
+    head, separator, query = path.partition("?")
+    if not separator:
+        return path
+    fields = query.split("&")
+    for index, field in enumerate(fields):
+        name, equals, value = field.partition("=")
+        if equals and value and unquote_plus(name).lower() in _CREDENTIAL_QUERY_PARAMETERS:
+            fields[index] = f"{name}=[redacted]"
+    return f"{head}?{'&'.join(fields)}"
+
+
+class AccessLogRedaction(logging.Filter):
+    """Blank the credentials in the path of uvicorn's access line; leave the rest of the line, and
+    every other record, exactly as it came.
+
+    THE SHAPE IS READ OFF UVICORN, NOT GUESSED. All three of its HTTP implementations
+    (``httptools_impl``, ``h11_impl`` and ``zttp_impl`` in the pinned 0.52.4) log the line as
+    ``access_logger.info('%s - "%s %s HTTP/%s" %d', client, method, path, http_version, status)``,
+    with the path built by ``get_path_with_query_string``; its ``AccessFormatter`` unpacks the same
+    five. So the path is the third of exactly five arguments, and a record of any other shape is not
+    the access line.
+
+    IT NEVER RAISES. A filter runs inside ``logger.info``, which uvicorn calls from the ``send`` that
+    starts the response: an exception here would come out of that call and fail the request whose
+    line it was. Anything unexpected passes through untouched, and no line is ever dropped.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        with suppress(Exception):
+            args = record.args
+            if isinstance(args, tuple) and len(args) == 5 and isinstance(args[2], str):
+                client, method, path, http_version, status_code = args
+                record.args = (
+                    client,
+                    method,
+                    redact_query_credentials(path),
+                    http_version,
+                    status_code,
+                )
+        return True
+
+
+def install_access_log_redaction() -> None:
+    """Put :class:`AccessLogRedaction` on uvicorn's access logger, once however often it is asked.
+
+    ON THE LOGGER, NOT ON A HANDLER. The handlers belong to whatever configured logging — uvicorn's
+    defaults, a ``--log-config`` file, a process manager's worker class that swaps them for its own —
+    and ``logging.config`` replaces a logger's handlers while keeping its filters.
+    """
+    access = logging.getLogger("uvicorn.access")
+    if not any(isinstance(existing, AccessLogRedaction) for existing in access.filters):
+        access.addFilter(AccessLogRedaction())
+
+
 # --- Readiness ------------------------------------------------------------------------------------
 # The readiness probe's own deadline. Shorter than an uptime monitor's request timeout on purpose, so
 # a stalled database comes back as an explicit 503 the monitor can quote rather than as a client-side
@@ -1062,4 +1149,7 @@ def create_app() -> FastAPI:
     return app
 
 
+# AT IMPORT, which is before uvicorn writes its first access line: it configures logging, then imports
+# this module to find `app`, and only then serves.
+install_access_log_redaction()
 app = create_app()
