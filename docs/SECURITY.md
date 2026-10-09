@@ -711,9 +711,9 @@ no role check, because the link is the whole authority.
   address with one that carries neither before it checks anything, so it is not left in the address
   bar, a copied address, a bookmark or the entry Back returns to.
 - **What still carries the token on a request line** ([OPEN_FINDINGS.md](OPEN_FINDINGS.md)). The
-  handset's check is still the GET, so the GET stays for the builds in the field, and its token reaches
-  anything in front of the API that logs request lines: the box's nginx keeps Ubuntu's default access
-  log, and CloudFront would if its logging were switched on. `AccessLogRedaction` in
+  published handset builds, 0.0.6 to 0.0.15, check with the GET, so the GET stays for them, and its
+  token reaches anything in front of the API that logs request lines: the box's nginx keeps Ubuntu's
+  default access log, and CloudFront would if its logging were switched on. `AccessLogRedaction` in
   `backend/app/main.py`, attached to the `uvicorn.access` logger when the module is imported, keeps it
   out of uvicorn's own line, which used to write it into the service's journal — and a deploy whose
   health check fails prints that journal into its Actions log. It writes the value of `token` — and of
@@ -729,9 +729,11 @@ no role check, because the link is the whole authority.
   retires the token.
   The Android source took its half the same day: it asks `POST /api/auth/set-password/check` with the
   token in a JSON body, uses the GET only when that POST is answered 404 or 405 (a server without the
-  route), and reads a link's token from its fragment as well as its query — in no published build yet.
-  No deployed server answers that POST as of 2026-10-09 (the route is on the unmerged
-  `upgrade/dp-frontend` branch), so until it deploys the new build's checks still end in the GET.
+  route), and reads a link's token from its fragment as well as its query — in no published build as
+  of 2026-10-09; the next build published after 0.0.15 is the first to carry it. The production API
+  has answered that POST since `main` deployed the route on 2026-10-09 (measured that day: a token
+  that is not one is answered `200` with `"valid": false` and the reason `malformed`), so that build's
+  checks go out in a body, and its GET is left for a server from before the route.
 
 ### 3.6 Sessions are bound to the password they were opened with (2026-10-09)
 

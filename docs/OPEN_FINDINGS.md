@@ -632,11 +632,12 @@ failure (`WorkshopRepository.checkPasswordLink`, pinned by
 `android/app/src/test/java/com/designprototype/workshop/data/PasswordLinkCheckTest.kt`). It reads the
 token from either `?token=` or `#token=`, fragment first as the web reads it (`passwordLinkToken`,
 pinned by `PasswordSetupCopyTest`), and its debug request log replaces the fallback's token — OkHttp
-writes its `██` back percent-encoded, so the line reads `token=%E2%96%88%E2%96%88`. No deployed server
-has the POST route as of 2026-10-09 (it is written on the unmerged `upgrade/dp-frontend` branch), so
-until it deploys every check from the new build still ends in the GET. The entry stays open: the route
-itself, the web page's move to the POST and to the fragment, `link_for`'s switch, and the shipped
-builds, which still ask with the GET and read only the query.
+writes its `██` back percent-encoded, so the line reads `token=%E2%96%88%E2%96%88`. The production API
+has answered the POST since `main` deployed the route on 2026-10-09 (measured that day: a token that is
+not one is answered `200` with `"valid": false` and the reason `malformed`), so every check from the
+new build goes out in a body. The entry stays open until that build has replaced the shipped ones,
+0.0.6 to 0.0.15, which still ask with the GET and read only the query; `link_for`'s switch waits on
+the same, and neither form closes the browser's history.
 
 ---
 

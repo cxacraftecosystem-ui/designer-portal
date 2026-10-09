@@ -88,11 +88,10 @@ interface WorkshopRepositoryApi {
      * "reason", "purpose"}` in [PasswordLinkCheckDto]. See docs/OPEN_FINDINGS.md for the finding this
      * closes the handset's half of.
      *
-     * AS OF 2026-10-09 NO DEPLOYED SERVER HAS IT: `backend/app/api/routes/auth.py` on main serves only
-     * the GET below and `POST auth/set-password`, and the route is written on the unmerged
-     * `upgrade/dp-frontend` branch. A server older than this route answers it 404 (or 405);
-     * `WorkshopRepository.checkPasswordLink` then asks [checkPasswordLink] instead, so the handset
-     * works against both — and until the route deploys, every check ends in that GET.
+     * DEPLOYED SINCE 2026-10-09: `check_set_password_token_in_body` in `backend/app/api/routes/auth.py`
+     * on main, and the production API answered it that day. A server older than this route answers it
+     * 404 (or 405); `WorkshopRepository.checkPasswordLink` then asks [checkPasswordLink] instead, so
+     * the handset works against both.
      */
     @POST("auth/set-password/check")
     suspend fun checkPasswordLinkInBody(@Body body: PasswordLinkCheckRequest): PasswordLinkCheckDto
