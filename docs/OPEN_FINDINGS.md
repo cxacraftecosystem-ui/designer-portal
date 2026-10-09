@@ -642,25 +642,34 @@ for the queue. Open until that reading is taken.
 ## Closed on 2026-10-09 — by the toolchain upgrade
 
 Both found while moving the backend, the image, CI and the local stack to their newest releases, and
-closed in that change. Each names what fails without its fix.
+closed in that change — the first together with PR #24, which reached the same cause from the test
+side. Each names what fails without its fix.
 
 ### [MEDIUM] 37 integration tests failed on every CI runner whose site-packages listed pytest-asyncio before anyio (backend) — **CLOSED 2026-10-09**
 
 `Backend integration tests` reported the same 37 failures — `test_designer_roster_names.py`,
-`test_save_stage_resubmission.py`, `test_workshop_oversight_reassignment.py` — on Python 3.12.15 AND on
-3.14.8, all "RuntimeError: <asyncio.locks.Event ...> is bound to a different event loop". The comments
-that blamed the interpreter (checks.yml, docs/CI.md) and the one that called function scope the fix
-(test_save_stage_resubmission.py) were wrong. The cause was the ORDER the two async plugins were
-registered: both wrap `pytest_fixture_setup`, and with pytest-asyncio first an anyio test's async
-fixture ran on pytest-asyncio's event loop while the test ran on anyio's, so the Prisma connection a
-fixture opened was used from another loop. Every red run's pytest header read `plugins: asyncio-1.4.0,
-anyio-4.14.2`; the last green one read `plugins: anyio-4.14.2, asyncio-1.4.0`. The order came from how
-site-packages listed two `.dist-info` directories, so it flipped between images and never reproduced
-on NTFS, which lists them alphabetically. Reproduced without a database by forcing the order with `-p`.
+`test_save_stage_resubmission.py`, `test_workshop_oversight_reassignment.py` — on every run from
+2026-10-01, on Python 3.12.14, 3.12.15 and 3.14.8 alike, all "RuntimeError: <asyncio.locks.Event ...>
+is bound to a different event loop". The comments that blamed the interpreter (checks.yml,
+docs/CI.md) and the one that called function scope the fix (test_save_stage_resubmission.py) were
+wrong. The cause was the ORDER the two async plugins were registered: both wrap
+`pytest_fixture_setup`, the one registered last wraps outermost and takes an async fixture onto its
+own loop, and with pytest-asyncio registered first that was anyio — so an anyio test's async fixture
+ran on an anyio loop while `asyncio_mode = "auto"` ran the test on pytest-asyncio's, and the Prisma
+connection the fixture opened was used from another loop. Every red run's pytest header read
+`plugins: asyncio-1.4.0, anyio-4.14.2`; the last green one read `plugins: anyio-4.14.2,
+asyncio-1.4.0`. The order came from how site-packages listed two `.dist-info` directories, so it
+flipped between runner images and never reproduced on NTFS, which lists them alphabetically.
+Reproduced without a database, both by forcing the order with `-p` and by listing pytest-asyncio
+first in a scratch venv, with a probe recording which plugin drove the fixture and which the test.
 
-**Closed by** `addopts = ["-p", "anyio", "-p", "asyncio"]` in `backend/pyproject.toml`, a
-`pytest_configure` in `backend/tests/conftest.py` that refuses the other order at startup, and
-`backend/tests/test_async_plugin_order.py`, which fails under the old order — measured both ways.
+**Closed from both sides.** PR #24 (`201d269`) moved the three modules onto sync tests whose
+database work is one `asyncio.run` each, which leaves neither plugin anything to own. The toolchain
+upgrade pins the order for everything else: `addopts = ["-p", "anyio"]` in `backend/pyproject.toml`
+makes pytest-asyncio register last however site-packages is listed, a `pytest_configure` in
+`backend/tests/conftest.py` refuses the other order at startup, and
+`backend/tests/test_async_plugin_order.py` fails under the old order (measured both ways). The pin
+is what protects the forty-nine modules that still connect `db` in an async fixture.
 
 ### [HIGH] `docker compose up`, and with it e2e-live.yml, could not start: no MinIO image could be pulled (infra) — **CLOSED 2026-10-09**
 

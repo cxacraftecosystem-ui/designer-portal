@@ -468,11 +468,13 @@ and a developer's venv resolve to the **same** versions; before it, three machin
 the index offered that day, which is how an unpinned transitive dependency turns a green branch red
 overnight with no commit behind it.
 
-**It is compiled for Python 3.14 in a Linux container**, because the Python that resolves it must be
-the Python that runs it in production — and since 2026-10-09 that is 3.14 everywhere: the EC2 box
-builds every release venv with `python3.14` (`BOX_PYTHON` in `deploy-backend.yml`, installed from the
-deadsnakes PPA on Ubuntu 24.04), `backend/Dockerfile` is on `python:3.14-slim-trixie`, CI's two backend
-jobs and `e2e-live.yml` run 3.14 with `check-latest`, and `backend/pyproject.toml` requires `>= 3.14`.
+**It is compiled for Python 3.14 in a Linux container.** 3.14 because the owner's rule is the newest
+stable release of everything, production included — 3.14.8 is the newest stable Python, and 3.15 is
+still a release candidate — and because the Python that resolves the lock must be the Python that
+runs it. Since 2026-10-09 that is 3.14 everywhere: the EC2 box builds every release venv with
+`python3.14` (`BOX_PYTHON` in `deploy-backend.yml`, installed from the deadsnakes PPA on Ubuntu
+24.04), `backend/Dockerfile` is on `python:3.14-slim-trixie`, CI's two backend jobs and
+`e2e-live.yml` run 3.14 with `check-latest`, and `backend/pyproject.toml` requires `>= 3.14`.
 Linux and not a developer's Windows venv, because a lock compiled there carries that platform's
 environment markers: `uvloop` is marker-excluded on Windows and would silently drop out of the
 production install. Refresh it deliberately, never as a side effect of something else:
@@ -499,12 +501,6 @@ Two traps, both already sprung once:
   records `--upgrade`, so it reproduces a compile, not a refresh. (Older pip-tools also wrote
   `--no-index` into it, which passed for real resolves against no index at all; pip-tools 7.6.2,
   which compiled the current lock, no longer does.)
-
-**The 37 integration failures that used to be blamed on Python 3.12 were never about the
-interpreter.** The same 37 tests failed on 3.14.8. They were an accident of plugin ORDER: whichever of
-pytest-asyncio and anyio's plugin site-packages listed first claimed an anyio test's async fixtures
-for its own event loop. `backend/pyproject.toml` now loads them in a fixed order (`addopts`), and
-`backend/tests/conftest.py` refuses the other one at startup.
 
 ### 1.4 Publishing the Android release — one ordering constraint
 
@@ -811,7 +807,13 @@ same value in two places. Change one there and re-run this workflow (or push) to
   `postgres:17` service container (production's major; it was 16 until 2026-10-09) and a loopback DSN, running `prisma migrate deploy` and then the
   whole suite so the modules that skip here actually execute. `Backend tests` is deliberately
   unchanged — it is fast, needs no service, and it is the one that gates. The new job is advisory
-  until somebody has watched enough runs to know what it costs; see §1's table.
+  until somebody has watched enough runs to know what it costs; see §1's table. **Its 37 failures
+  of 2026-10-01 to 2026-10-09 were not the interpreter's** — the same 37 failed on 3.14.8. pytest
+  registered its two async plugins in whatever order site-packages listed them, a runner-image
+  update flipped that order, and an anyio test's async fixture then ran on a different event loop
+  from its test. PR #24 moved the three modules onto `asyncio.run`, and `backend/pyproject.toml`
+  now loads anyio's plugin first (`addopts`), which `backend/tests/conftest.py` enforces at
+  startup; [OPEN_FINDINGS.md](OPEN_FINDINGS.md) has the measurement.
 - **The Playwright suite is HALF a gate — corrected 2026-08-20.** `checks.yml` runs
   `npm run test:unit`, the `*-unit.spec.ts` selection minus two files excluded by name: pure-function
   specs, no dev server, no browser download, seconds rather than minutes. **No count and no duration

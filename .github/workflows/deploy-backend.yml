@@ -889,12 +889,13 @@ jobs:
 
       # ─── THE INTERPRETER EVERY RELEASE VENV IS BUILT WITH — INSTALLED HERE, NOT ASSUMED ─────────
       #
-      # 2026-10-09: the box moved from Ubuntu 24.04's own python3.12 to 3.14, the interpreter CI, the
-      # Dockerfile and the lock already ran. Ubuntu 24.04 (noble) has no python3.14 in its archive, so
-      # it comes from the deadsnakes PPA, which builds the current upstream patch for noble (3.14.8 on
-      # 2026-10-09). A box rebuilt from the 26.04 (resolute) AMI that infra/terraform/main.tf now
-      # selects has python3.14 as its SYSTEM interpreter, installed by user_data.sh, and never touches
-      # the PPA: the branch below only adds it on noble.
+      # 2026-10-09: the box moved from Ubuntu 24.04's own python3.12 to 3.14 — the newest stable
+      # Python, which the owner's rule (the latest stable release everywhere, production included)
+      # asks for — joining CI, the Dockerfile and the lock. Ubuntu 24.04 (noble) has no python3.14
+      # in its archive, so it comes from the deadsnakes PPA, which builds the current upstream patch
+      # for noble (3.14.8 on 2026-10-09). A box rebuilt from the 26.04 (resolute) AMI that
+      # infra/terraform/main.tf now selects has python3.14 as its SYSTEM interpreter, installed by
+      # user_data.sh, and never touches the PPA: the branch below only adds it on noble.
       #
       # IDEMPOTENT, AND CHEAP ON EVERY DEPLOY AFTER THE FIRST. Present and able to build a venv: the
       # only work is an `--only-upgrade` against the package lists apt-daily already refreshes, which

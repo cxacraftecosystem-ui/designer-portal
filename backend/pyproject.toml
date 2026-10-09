@@ -400,21 +400,31 @@ combine-as-imports = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
-# ─── THE TWO ASYNC PLUGINS ARE LOADED IN A FIXED ORDER, AND THE ORDER IS A FIX (2026-10-09) ────────
+# ─── ANYIO'S PLUGIN IS LOADED FIRST, AND THE ORDER IS A FIX (2026-10-09) ───────────────────────────
 #
-# pytest-asyncio (`asyncio_mode = "auto"` above) and anyio's plugin (the `pytest.mark.anyio` that 59
-# modules carry) both wrap `pytest_fixture_setup`, and whichever pluggy calls first claims an async
-# fixture for ITS event loop. Registered pytest-asyncio first, an async fixture of an anyio test runs
-# on pytest-asyncio's loop while the test runs on anyio's: the fixture's `db.connect()` binds Prisma's
-# httpx pool to one loop and the test's first query uses it from the other — "RuntimeError: <asyncio.
-# locks.Event ...> is bound to a different event loop". That is the 37 integration failures in
-# test_designer_roster_names.py, test_save_stage_resubmission.py and
-# test_workshop_oversight_reassignment.py, on Python 3.12 AND 3.14 alike.
+# pytest-asyncio (`asyncio_mode = "auto"` above hands it every async TEST) and anyio's plugin
+# (`pytest.mark.anyio`) both wrap `pytest_fixture_setup`, and the one registered LAST wraps
+# outermost and takes an async FIXTURE onto its own event loop. With pytest-asyncio registered
+# first, that is anyio: an anyio test's async fixture runs on an anyio loop while the test runs on
+# pytest-asyncio's, so a `db.connect()` in the fixture binds Prisma's httpx pool to one loop and the
+# test's first query uses it from the other — "RuntimeError: <asyncio.locks.Event ...> is bound to a
+# different event loop". That was the 37 integration failures of 2026-10-01 to 2026-10-09, whatever
+# the interpreter. Measured with a probe that records which plugin drove the fixture and which the
+# test: in that order, anyio and pytest-asyncio on two loops; in this one, pytest-asyncio on one.
 #
 # WITHOUT THIS LINE THE ORDER IS AN ACCIDENT of how site-packages happens to list two .dist-info
 # directories, so it differs between machines and between runner images: every red CI run printed
 # `plugins: asyncio-1.4.0, anyio-4.14.2`, the last green one `plugins: anyio-4.14.2, asyncio-1.4.0`,
-# and NTFS lists them alphabetically, which is why no laptop ever reproduced it. `-p` loads both
-# before autoload does, in the order written. tests/conftest.py refuses the other order outright,
-# and tests/test_async_plugin_order.py checks the property that actually matters.
-addopts = ["-p", "anyio", "-p", "asyncio"]
+# and NTFS lists them alphabetically, which is why no laptop ever reproduced it. `-p anyio` loads
+# anyio's plugin while pytest pre-parses its arguments, before entry-point autoload registers
+# pytest-asyncio, so pytest-asyncio is last however the directory is listed. NOT `-p asyncio` AS
+# WELL: pytest would also mark the standard library's `asyncio` for assertion rewriting and warn on
+# every run that it cannot (PytestAssertRewriteWarning), and autoload already puts pytest-asyncio
+# after anyio. Measured with pytest-asyncio listed first in site-packages: no flag splits fixture
+# from test, `-p anyio` joins them, `-p anyio -p asyncio` joins them and warns.
+#
+# The three modules that failed have since moved onto `asyncio.run` (PR #24) and need no order;
+# the pin is for the forty-nine that still connect `db` in an async fixture (see "reaching the
+# database" in tests/conftest.py). tests/conftest.py refuses the other order at startup, and
+# tests/test_async_plugin_order.py checks the property that actually matters.
+addopts = ["-p", "anyio"]

@@ -142,18 +142,15 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          # 3.14, THE INTERPRETER PRODUCTION RUNS: the EC2 box builds every release venv with
+          # 3.14 BECAUSE IT IS THE NEWEST STABLE PYTHON, AND PRODUCTION RUNS IT TOO. The owner's
+          # rule is the latest stable release of everything, production included; 3.14.8 is the
+          # newest (3.15 is still a release candidate). The EC2 box builds every release venv with
           # python3.14 since 2026-10-09 (BOX_PYTHON in deploy-backend.yml), the Dockerfile is on
-          # python:3.14-slim-trixie, and pyproject requires >= 3.14. So this job proves the suite on
-          # production's interpreter again. `check-latest` makes the patch python.org's newest
-          # rather than whatever the runner image cached (3.14.7 in the ubuntu-26.04 image of
-          # 2026-09-27, when 3.14.8 was current).
-          #
-          # A CORRECTION TO WHAT THIS COMMENT USED TO SAY. It blamed 37 integration failures on
-          # 3.12 ("a Prisma client left connected to one test's event loop and reused from another,
-          # which 3.14's asyncio does not trip on"). The same 37 failed on 3.14.8 as well: the cause
-          # was the ORDER in which pytest-asyncio and anyio's plugin happened to be registered, not
-          # the interpreter. backend/pyproject.toml now fixes that order — see `addopts` there.
+          # python:3.14-slim-trixie, and pyproject requires >= 3.14, so this job proves the suite on
+          # production's interpreter. `check-latest` makes the patch python.org's newest rather
+          # than whatever the runner image cached (3.14.7 in the ubuntu-26.04 image of 2026-09-27,
+          # when 3.14.8 was current). The 37 integration failures of 2026-10-01 to 2026-10-09 were
+          # plugin order, not the interpreter: see `addopts` in backend/pyproject.toml.
           python-version: "3.14"
           check-latest: true
           cache: pip
@@ -817,8 +814,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          # 3.14, production's interpreter, exactly as job 1 — whose comment carries the reasoning
-          # and the correction about the 37 failures this job used to report.
+          # 3.14 for job 1's reason: the newest stable Python, and the one production runs.
           python-version: "3.14"
           check-latest: true
           cache: pip
