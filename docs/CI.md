@@ -610,6 +610,15 @@ wrote a report counting 0 tests. The job now reads that report after the emulato
 when no test executed or one failed, writes the counts to the job summary, and keeps what the probes
 printed as `probes-logcat.txt` in the `android-instrumented-results` artifact.
 
+The second run (37935344589) failed that check, correctly, and its logcat showed why: SurfaceFlinger
+aborting in a loop (`!rcEnc->featureInfo()->hasReadColorBufferDma`), so the install found no package
+service. The runner image ships SDK Command-line Tools 12.0, whose avdmanager writes
+`target=android-0` for a minor-versioned image such as `android-37.0`; the emulator then boots it as
+API 3 without the graphics features Android 17 needs (ReactiveCircus/android-emulator-runner#482).
+So the job replaces `cmdline-tools/latest` with 23.0, the newest stable release on 2026-10-09,
+refuses an AVD whose `target=` is not the API level asked for, and builds both APKs before the
+emulator boots, so the compile does not compete with it for the runner's cores.
+
 **It is not wired into branch protection and must not be**: a required check a human has to remember
 to trigger is a required check that blocks every pull request forever.
 
