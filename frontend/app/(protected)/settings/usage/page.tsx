@@ -167,7 +167,7 @@ function CollectionPosture({ method }: { method: UsageCollectionMethod }) {
   return (
     <section className="panel border-amber-200 bg-amber-50 p-4">
       <div className="flex items-start gap-3">
-        <CircleAlert className="mt-0.5 h-5 w-5 flex-shrink-0 text-amber-700" aria-hidden />
+        <CircleAlert className="mt-0.5 h-5 w-5 shrink-0 text-amber-700" aria-hidden />
         <div className="min-w-0 flex-1 text-sm leading-6 text-amber-900">
           <p className="font-semibold">
             {method.consent.flowExists

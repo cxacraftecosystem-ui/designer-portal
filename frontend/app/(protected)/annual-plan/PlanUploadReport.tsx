@@ -82,7 +82,7 @@ function ProblemRow({ problem }: { problem: PlanProblem }) {
       {/* VERBATIM. The sentence was written on the server to be shown as it is. */}
       <p className="mt-1 text-sm leading-6 text-ink-700">{problem.reason}</p>
       {problem.value ? (
-        <p className="mt-1 break-words text-xs text-ink-muted">Cell text: {problem.value}</p>
+        <p className="mt-1 wrap-break-word text-xs text-ink-muted">Cell text: {problem.value}</p>
       ) : null}
     </li>
   );
@@ -171,7 +171,7 @@ export function PlanUploadReport({ report }: { report: Report }) {
         <section className="mt-4">
           <h3 className="text-sm font-semibold text-ink-900">What changed ({report.changes.length})</h3>
           <div className="mt-2 overflow-x-auto rounded-md border border-line-200">
-            <table className="w-full min-w-[46rem] text-left text-sm">
+            <table className="w-full min-w-184 text-left text-sm">
               <thead className="bg-surface-50 text-xs uppercase tracking-wide text-ink-500">
                 <tr>
                   <th className="px-3 py-2 font-medium">Workshop No.</th>

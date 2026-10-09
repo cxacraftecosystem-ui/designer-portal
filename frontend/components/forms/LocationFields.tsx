@@ -659,11 +659,11 @@ function mentions(text: string, names: readonly string[]) {
  * A notice inside the location card. Two tones only: `info` for what is happening, `warn` for what
  * the researcher has to do something about.
  *
- * `amber-100` behind `amber-800` rather than the repo's usual `bg-amber-50` pairing: 50 and 200 are
- * not in this project's amber ramp (tailwind.config.ts defines 100/500/800), so that pairing leaves
- * dark-brown text on whatever the card is — invisible on the dark theme. These warnings are the only
- * thing standing between a 14 km network estimate and a research record, so they have to be legible
- * in both themes, which a fixed light chip is.
+ * `amber-100` behind `amber-800` rather than the repo's usual `bg-amber-50` pairing: 100 and 800 are
+ * this project's own amber rungs (tailwind.config.ts writes 100/500/800 itself; 50 and 200 are
+ * Tailwind's stock shades, which do not pair with them), and both are literal colours the theme never
+ * inverts. These warnings are the only thing standing between a 14 km network estimate and a
+ * research record, so they have to be legible in both themes, which a fixed light chip is.
  */
 function CardNotice({
   tone,

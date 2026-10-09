@@ -77,9 +77,10 @@ test("main keeps its positioning and loses its z-index", () => {
 
 test("the fixed full-screen surfaces sit at the dialog rung, above the island's 50", () => {
   // The lightbox declares `aria-modal`; it used to share the island's rung and lose on source order.
-  expect(read(LIGHTBOX)).toContain('className="fixed inset-0 z-[100] grid place-items-center bg-black/70 p-4"');
+  // Tailwind 4 spells the rung `z-100`; Tailwind 3 needed the arbitrary `z-[100]` for it.
+  expect(read(LIGHTBOX)).toContain('className="fixed inset-0 z-100 grid place-items-center bg-black/70 p-4"');
   expect(read(LIGHTBOX)).not.toContain('className="fixed inset-0 z-50 grid place-items-center');
-  expect(read(EDITOR)).toContain('"fixed inset-0 z-[100] flex flex-col gap-2 overflow-y-auto bg-bg-0 p-4 sm:p-6"');
+  expect(read(EDITOR)).toContain('"fixed inset-0 z-100 flex flex-col gap-2 overflow-y-auto bg-bg-0 p-4 sm:p-6"');
 });
 
 /**
@@ -93,18 +94,19 @@ test("the fixed full-screen surfaces sit at the dialog rung, above the island's 
  * clickable. The scrim now sits at 90: above anything a page mounts, below the 100 dialog rung.
  */
 test("the nav sheet's scrim out-ranks the fixed chrome a page can mount", () => {
-  expect(read(NAV)).toContain('className="nav-sheet-overlay fixed inset-0 z-[90]"');
+  expect(read(NAV)).toContain('className="nav-sheet-overlay fixed inset-0 z-90"');
   // The rung it must clear. If the tray is ever raised, this pairing is what catches it.
   expect(read(UPLOAD_TRAY)).toContain('className="pointer-events-none fixed inset-x-0 bottom-0 z-40 px-4 pt-3"');
   // …and it must stay under the dialog rung, or a lightbox opened from a page would be dimmed by it.
-  expect(read(NAV)).not.toContain("nav-sheet-overlay fixed inset-0 z-[1");
+  // Either spelling of a three-digit rung: `z-100` (Tailwind 4) or `z-[100]` (Tailwind 3).
+  expect(read(NAV)).not.toMatch(/nav-sheet-overlay fixed inset-0 z-\[?1\d\d/);
 });
 
 test("PageSelvedge names the island's real rung", () => {
   const selvedge = read(SELVEDGE);
-  // The island is `z-50` (DynamicIslandNav); `z-[60]` is the skip link in AppShell.
-  expect(selvedge).not.toContain("The nav island is `z-[60]`");
-  expect(selvedge).toContain("is `z-50` and the skip link `z-[60]`");
+  // The island is `z-50` (DynamicIslandNav); `z-60` is the skip link in AppShell.
+  expect(selvedge).not.toMatch(/The nav island is `z-\[?60\]?`/);
+  expect(selvedge).toContain("is `z-50` and the skip link `z-60`");
   expect(read(NAV)).toContain("fixed inset-x-0 top-3 z-50 flex justify-center");
 });
 

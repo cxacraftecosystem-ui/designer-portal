@@ -113,7 +113,7 @@ export function FeedbackReportCard({
         printing it back at them is noise on the screen where they are looking for an answer.
       */}
       {showAuthor && (report.clientLabel || report.clientVersion || report.pagePath || report.platform) ? (
-        <p className="mt-2 break-words text-xs text-ink-300">
+        <p className="mt-2 wrap-break-word text-xs text-ink-300">
           {[report.clientLabel, report.clientVersion, report.pagePath, report.platform].filter(Boolean).join(" · ")}
         </p>
       ) : null}

@@ -417,7 +417,7 @@ export function FieldDialog({
             exit={reduce ? { opacity: 0 } : { opacity: 0, y: 6, scale: 0.98 }}
             transition={reduce ? { duration: 0 } : { type: "spring", stiffness: 420, damping: 34, mass: 0.7 }}
             className={cn(
-              "relative w-full rounded-xl border p-5 shadow-lg outline-none",
+              "relative w-full rounded-xl border p-5 shadow-lg outline-hidden",
               callerSetsMaxWidth ? null : "max-w-md",
               // One or the other, never both: two competing `bg-*` utilities resolve by stylesheet
               // order, not by the order they appear in this string.

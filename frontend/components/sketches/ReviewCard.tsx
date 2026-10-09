@@ -395,7 +395,7 @@ export function ReviewCard({
         <label className="grid gap-1">
           <span className="field-label">What you think of it</span>
           <textarea
-            className="field-input min-h-[4.5rem]"
+            className="field-input min-h-18"
             value={comment}
             maxLength={4000}
             onChange={(event) => setComment(event.target.value)}
@@ -406,7 +406,7 @@ export function ReviewCard({
         <label className="grid gap-1">
           <span className="field-label">What you would change</span>
           <textarea
-            className="field-input min-h-[4.5rem]"
+            className="field-input min-h-18"
             value={suggestion}
             maxLength={4000}
             onChange={(event) => setSuggestion(event.target.value)}

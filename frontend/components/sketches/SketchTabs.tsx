@@ -145,7 +145,7 @@ export function SketchTabPanel({
       id={`${idPrefix}-panel-${tabKey}`}
       aria-labelledby={`${idPrefix}-tab-${tabKey}`}
       tabIndex={-1}
-      className="mt-5 outline-none"
+      className="mt-5 outline-hidden"
     >
       {children}
     </div>

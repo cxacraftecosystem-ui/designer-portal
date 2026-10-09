@@ -139,6 +139,13 @@ Ink aliases still in components: `text-ink`=900, `text-ink-body`=700, `text-ink-
 stock and will not pair correctly. Inside a tinted card use `amber-100` + `amber-800`, never
 `amber-50`/`amber-200`. **`success` and `error` have only 100 and 600** — `success-500` does not exist.
 
+**Stock shades and the type scale are Tailwind 3's (since 2026-10-09).** Tailwind 4 redrew its stock
+palette in OKLCH; `tailwind3Stock` in `tailwind.config.ts` pins the stock amber, red, emerald, green
+and rose shades this app uses whose sRGB value moved (`red-700` stays `#b91c1c`). `tailwind3Type`
+pins `text-xs` … `text-4xl` to Tailwind 3's line heights written as lengths: Tailwind 4 writes them
+as ratios, which a child that sets its own size (every `text-[11px]` badge) multiplies by that size.
+Delete either block only as a deliberate design change.
+
 ### 3.6 Two traps that bite every new component
 
 - **`className="border"` alone** gives preflight's literal `#e5e7eb` (gray-200), which does not invert.
@@ -173,10 +180,11 @@ serving the page: `const ministry = !blocked && ministrySurface(pathname);`. The
 load-bearing, because what `<main>` holds on a refusal is `RouteLocked`, shown to somebody who is
 *not* a ministry account, and painting the accent onto that puts the mark in front of exactly the
 person it is not for. A component OUTSIDE those routes opts in by putting the same attribute on its
-own root — `MinistryDeskCard` on `/dashboard` does precisely that. One un-layered block at the **end
-of `globals.css`** hangs off the attribute; end-of-file is the placement that needs no reasoning
-about Tailwind v3 layer hoisting at all, and it is also what wins the source-order tie described
-below.
+own root — `MinistryDeskCard` on `/dashboard` does precisely that. One block at the **end of
+`globals.css`**, inside `@layer utilities` and after everything Tailwind generates, hangs off the
+attribute. Tailwind 4 emits real cascade layers, so an un-layered block there would beat every
+utility whatever its weight; inside the utilities layer selector weight decides, as it did under
+Tailwind 3, and the block still wins the source-order tie described below.
 
 **⚠ "Surface accent only — no orange on any action control" was OVERRULED on 2026-09-20.** That
 ruling is kept verbatim in the block's own header and in `e2e/ministry-surface-unit.spec.ts`,
@@ -1019,12 +1027,20 @@ plus legacy aliases `.ambient-light`, `.text-gradient-violet`.
 ⚠ **`cn()` in `lib/utils.ts` is `classes.filter(Boolean).join(" ")`** — not `tailwind-merge`, and
 neither `clsx` nor `tailwind-merge` is a dependency. Later classes do **not** win; CSS source order
 decides. A `@layer components` class is always beaten by any utility (so `class="field-button w-full"`
-works), but to beat another **utility** you need `!` (e.g. `!bg-transparent`).
+works), but to beat another **utility** you need the important modifier, which Tailwind 4 writes
+at the END (e.g. `bg-transparent!`; the old leading `!bg-transparent` still compiles, but write the
+new form).
 
-⚠ **Content globs are `./app`, `./components`, `./lib` only, `.ts`/`.tsx`.** A class written elsewhere,
-or built by string concatenation, is purged. Always write complete literal class strings.
-⚠ `postcss.config.js` loads only `tailwindcss` + `autoprefixer` — **no nesting plugin**. Arbitrary CSS
-nesting in `globals.css` will not compile; `@layer` blocks and plain at-rules do.
+⚠ **Content globs are `./app`, `./components`, `./lib` only, `.ts`/`.tsx`.** They are `content` in
+`tailwind.config.ts`, which `globals.css` loads with `@config`, and `globals.css` imports Tailwind with
+`source(none)` so that Tailwind 4 scans nothing else. A class written elsewhere, or built by string
+concatenation, is not compiled. Always write complete literal class strings.
+⚠ **Tailwind 4 (since 2026-10-09).** `postcss.config.js` loads only `@tailwindcss/postcss`, which
+prefixes and lowers nesting itself, so there is no autoprefixer. Its layers are real CSS cascade
+layers: an un-layered rule in `globals.css` beats every utility, so every plain rule there sits in
+`@layer base` (bare elements) or `@layer utilities` (anything carrying a class or an attribute) — the
+file's header says which and why. Recipes stay plain CSS in `@layer components`, not `@utility`, so
+every utility beats every recipe.
 
 ### 11.2 Which primitives are live, and which are dormant
 

@@ -213,7 +213,7 @@ export function MediaPreviewTile({
     >
       <button
         type="button"
-        className="relative grid aspect-[4/3] min-w-0 flex-[1_1_6rem] place-items-center overflow-hidden rounded-md bg-field-100 text-left text-ink-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-field-600"
+        className="relative grid aspect-4/3 min-w-0 flex-[1_1_6rem] place-items-center overflow-hidden rounded-md bg-field-100 text-left text-ink-muted focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-field-600"
         onClick={(event) => {
           // The outer card handles the open; keep the button for keyboard access without firing twice.
           event.stopPropagation();
@@ -439,7 +439,7 @@ export function MediaLightbox({ item, onClose }: { item: PreviewMedia; onClose: 
         links, so clicking one navigated away from an unsaved record form without a word. 100 is the
         app's dialog layer — `FieldDialog`'s default — and that is what this is.
       */
-      className="fixed inset-0 z-[100] grid place-items-center bg-black/70 p-4"
+      className="fixed inset-0 z-100 grid place-items-center bg-black/70 p-4"
       role="dialog"
       aria-modal="true"
       aria-label={`Preview ${item.name}`}
@@ -454,7 +454,7 @@ export function MediaLightbox({ item, onClose }: { item: PreviewMedia; onClose: 
         ref={panelRef}
         // -1 so it can be focused programmatically on open without becoming a Tab stop of its own.
         tabIndex={-1}
-        className="grid max-h-[92vh] w-full max-w-5xl gap-3 overflow-hidden rounded-lg bg-field-50 p-4 shadow-2xl focus:outline-none"
+        className="grid max-h-[92vh] w-full max-w-5xl gap-3 overflow-hidden rounded-lg bg-field-50 p-4 shadow-2xl focus:outline-hidden"
         onClick={(event) => event.stopPropagation()}
       >
         <div className="flex items-start justify-between gap-3">

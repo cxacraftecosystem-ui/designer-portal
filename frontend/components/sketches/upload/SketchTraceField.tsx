@@ -567,7 +567,9 @@ export function SketchTraceField({
    *
    * So: nothing until the first press, and after that the contents stay mounted and are hidden with
    * `hidden` (Tailwind's preflight makes it `display: none`, which also takes the subtree out of the
-   * accessibility tree and out of the tab order). This is also what makes `aria-controls` honest —
+   * accessibility tree and out of the tab order). Tailwind 4's preflight writes that rule
+   * `!important`. Tailwind 3's did not, and the panel's own `grid` beat it, so until the upgrade on
+   * 2026-10-09 a closed panel stayed on screen. This is also what makes `aria-controls` honest —
    * §17's "only while the panel is mounted" — because the id it names exists from the first press
    * onwards and never afterwards points at nothing.
    */
@@ -2315,7 +2317,7 @@ export function SketchTraceField({
           <h4
             ref={headingRef}
             tabIndex={-1}
-            className="text-sm font-medium text-ink-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-purple-600/40"
+            className="text-sm font-medium text-ink-900 focus:outline-hidden focus-visible:ring-2 focus-visible:ring-purple-600/40"
           >
             {CARD_TITLE}
           </h4>
@@ -3091,7 +3093,7 @@ export function SketchTraceField({
                   tabIndex={-1}
                   aria-labelledby={advancedToggleId}
                   hidden={!advancedOpen}
-                  className="mt-3 grid gap-4 focus:outline-none focus-visible:ring-2 focus-visible:ring-purple-600/40"
+                  className="mt-3 grid gap-4 focus:outline-hidden focus-visible:ring-2 focus-visible:ring-purple-600/40"
                 >
                   {/*
                     `onEdited={setEdited}` IS THE WHOLE WIRING, and it is a bare setter deliberately.

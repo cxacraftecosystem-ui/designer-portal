@@ -243,7 +243,7 @@ export function MediaCarousel({
         ── THE DEFECT ─────────────────────────────────────────────────────────────────────────────
 
         `MediaLightbox`, rendered at the foot of this component, does NOT portal: its root is a plain
-        `fixed inset-0 z-[100]` div (`components/media/MediaLightbox.tsx:314`), so while it is open it
+        `fixed inset-0 z-100` div (`components/media/MediaLightbox.tsx:314`), so while it is open it
         is still a CHILD of the section below and React's synthetic bubbling walks every keystroke
         made inside the dialog straight up into this handler. The dialog's own key handling is a
         `window` listener that answers Escape and Tab and nothing else
@@ -454,7 +454,7 @@ function ArrowButton({
       type="button"
       onClick={onClick}
       aria-label={label}
-      className={`absolute top-1/2 grid h-9 w-9 -translate-y-1/2 place-items-center rounded-full border border-line-200 bg-card/90 text-ink-700 shadow-sm backdrop-blur transition hover:border-purple-300 hover:text-purple-700 ${
+      className={`absolute top-1/2 grid h-9 w-9 -translate-y-1/2 place-items-center rounded-full border border-line-200 bg-card/90 text-ink-700 shadow-sm backdrop-blur-sm transition hover:border-purple-300 hover:text-purple-700 ${
         side === "left" ? "left-2" : "right-2"
       }`}
     >
@@ -506,7 +506,7 @@ function Slide({ item, onZoom }: { item: CarouselItem | null; onZoom: () => void
         loading="lazy"
         className="max-h-full max-w-full object-contain"
       />
-      <span className="absolute right-2 top-2 grid h-8 w-8 place-items-center rounded-full border border-line-200 bg-card/90 text-ink-700 opacity-0 shadow-sm backdrop-blur transition group-hover:opacity-100 group-focus-visible:opacity-100">
+      <span className="absolute right-2 top-2 grid h-8 w-8 place-items-center rounded-full border border-line-200 bg-card/90 text-ink-700 opacity-0 shadow-sm backdrop-blur-sm transition group-hover:opacity-100 group-focus-visible:opacity-100">
         <Maximize2 className="h-4 w-4" aria-hidden />
       </span>
     </button>

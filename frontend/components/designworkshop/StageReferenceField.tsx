@@ -1806,7 +1806,7 @@ export function StageReferenceSelect({
               <Search className="h-4 w-4 shrink-0 text-ink-500" aria-hidden />
               <input
                 ref={inputRef}
-                className="min-w-0 flex-1 bg-transparent text-sm text-ink-900 outline-none placeholder:text-ink-300"
+                className="min-w-0 flex-1 bg-transparent text-sm text-ink-900 outline-hidden placeholder:text-ink-300"
                 type="text"
                 role="combobox"
                 aria-expanded
@@ -2454,7 +2454,7 @@ export function StageReferenceMultiPicker({
           <div className="flex items-center gap-2 border-b border-line-200 px-3 py-2">
             <Search className="h-4 w-4 shrink-0 text-ink-500" aria-hidden />
             <input
-              className="min-w-0 flex-1 bg-transparent text-sm text-ink-900 outline-none placeholder:text-ink-300"
+              className="min-w-0 flex-1 bg-transparent text-sm text-ink-900 outline-hidden placeholder:text-ink-300"
               type="text"
               autoFocus
               role="combobox"
