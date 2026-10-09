@@ -347,8 +347,8 @@ private fun dwJoinCardFallbackDetail(outcome: String): String = when (outcome) {
             "that you scanned the card, and once they confirm you everything you have recorded is " +
             "already in place. Until then you will not see anybody else's stages."
     else ->
-        "The card was sent and the server answered, but this version of the app could not read what " +
-            "it said. Check the workshop list, and ask an administrator if you cannot see it."
+        "The card was sent. Check the workshop list, and ask an administrator if you cannot see " +
+            "the workshop there."
 }
 
 /** Shown only if a 403 or 422 arrives with no readable body. It claims nothing about any workshop. */
@@ -411,9 +411,8 @@ sealed interface DwJoinCardAction {
 
 /** The one sentence for "the server was not reachable", said the same way by all three actions. */
 private fun dwJoinCardOfflineMessage(): String =
-    "There is no connection, so a join card cannot be printed or cancelled right now. A card has to " +
-        "be made by the server — it is a key, not something this device can invent — so try again " +
-        "when there is signal."
+    "There is no connection, so a join card cannot be printed or cancelled right now. Join cards " +
+        "need a connection — try again when there is signal."
 
 /**
  * Print one single-use join card for this workshop.

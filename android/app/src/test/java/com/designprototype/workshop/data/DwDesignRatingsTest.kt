@@ -341,7 +341,7 @@ class DwDesignRatingsTest {
             stageSeen = true,
         )
         val refused = plan as DwArrangementPlan.Refused
-        assertTrue(refused.reason.contains("no name to record"))
+        assertTrue(refused.reason.contains("your name could not be recorded"))
     }
 
     @Test
@@ -361,7 +361,7 @@ class DwDesignRatingsTest {
             stageSeen = false,
         )
         val refused = plan as DwArrangementPlan.Refused
-        assertTrue(refused.reason.contains("has not read the stage"))
+        assertTrue(refused.reason.contains("these pieces are not on this phone"))
     }
 
     @Test
@@ -382,7 +382,7 @@ class DwDesignRatingsTest {
             stageSeen = false,
         )
         val refused = plan as DwArrangementPlan.Refused
-        assertTrue(refused.reason.contains("never read the repository's copy"))
+        assertTrue(refused.reason.contains("open this stage once with a connection"))
     }
 
     @Test
@@ -583,10 +583,10 @@ class DwDesignRatingsTest {
         assertEquals("Nobody has rated this piece yet.", dwLedgerEmptyNote(ledger(count = 0)))
         val withheld = dwLedgerEmptyNote(ledger(count = 5, canRead = false)).orEmpty()
         assertTrue(withheld.contains("5 designer(s) have rated this piece"))
-        assertTrue(withheld.contains("you can see the score, not the scorers"))
+        assertTrue(withheld.contains("You can see the score, not who gave it."))
         // A third state, and it is neither of the two: rows were readable and none came back.
         assertEquals(
-            "No rating rows came back for this round.",
+            "No ratings could be shown for this piece.",
             dwLedgerEmptyNote(ledger(count = 5, canRead = true)),
         )
     }
@@ -609,7 +609,7 @@ class DwDesignRatingsTest {
         // Never over an empty list: there is nothing for the note to describe.
         assertNull(dwLedgerNamesNote(ledger(count = 3, namesShown = false)))
         val note = dwLedgerNamesNote(ledger(rows = rows, namesShown = false)).orEmpty()
-        assertTrue(note.contains("the server's decision for this round"))
+        assertTrue(note.contains("not shown in this round"))
     }
 
     @Test
@@ -625,14 +625,14 @@ class DwDesignRatingsTest {
             dwRatingAttribution(DesignRatingDto(id = "r2", reviewerId = "u9")),
         )
         assertEquals(
-            "reviewer not named on this response",
+            "reviewer not named",
             dwRatingAttribution(DesignRatingDto(id = "r3")),
         )
         // Blank is treated as absent. The server omits the key rather than sending it empty, so a
         // blank can only come from a build or a proxy that filled it in — and "reviewer " is not a
         // sentence.
         assertEquals(
-            "reviewer not named on this response",
+            "reviewer not named",
             dwRatingAttribution(DesignRatingDto(id = "r4", reviewerId = "  ")),
         )
     }
@@ -655,7 +655,7 @@ class DwDesignRatingsTest {
                 )
             )
             assertTrue(apart.startsWith("Judged 1 Aug 2026"))
-            assertTrue(apart.contains("reached the server 15 Aug 2026"))
+            assertTrue(apart.contains("uploaded 15 Aug 2026"))
             val sameDay = dwRatingClockLine(
                 DesignRatingDto(
                     id = "r2",
@@ -708,7 +708,7 @@ class DwDesignRatingsTest {
         // behaviour of a phone with a flaky connection. Telling a designer "recorded" twice for one
         // judgement starts them wondering whether they filed two.
         assertEquals(
-            "The server already held this rating, unchanged.",
+            "This rating was already saved, unchanged.",
             dwRatingSavedNote(replayed = true, amended = false),
         )
         assertEquals("Your rating has been amended.", dwRatingSavedNote(false, amended = true))
@@ -721,7 +721,7 @@ class DwDesignRatingsTest {
         // shipped the first as a disguise for the second more than once.
         val offline = dwRoundFailure(offline = true, refusal = "ignored")
         assertTrue(offline.offline)
-        assertTrue(offline.message.contains("not an empty list"))
+        assertTrue(offline.message.contains("could not be loaded"))
         // A refusal the repository ANSWERED is quoted rather than replaced: only the server knows
         // whether the round is empty, unreachable to this account, or behind a migration nobody ran.
         val refused = dwRoundFailure(offline = false, refusal = DW_ROUND_REFUSED)
@@ -735,14 +735,14 @@ class DwDesignRatingsTest {
         // first is the push having already happened, the second is a workshop that has not been
         // created on the repository yet. Reporting either as "could not be sent" sends a designer
         // looking for a signal problem they do not have.
-        assertEquals("Saved. The repository already holds this arrangement.", dwPushNote(StagePush.AlreadySent))
-        assertTrue(dwPushNote(StagePush.NoRemoteYet).contains("has not been created on the repository yet"))
+        assertEquals("Saved. This arrangement was already uploaded.", dwPushNote(StagePush.AlreadySent))
+        assertTrue(dwPushNote(StagePush.NoRemoteYet).contains("after the workshop itself has been uploaded"))
         assertTrue(dwPushNote(StagePush.HeldBack(1)).contains("1 attachment "))
         assertTrue(dwPushNote(StagePush.HeldBack(3)).contains("3 attachments"))
         assertTrue(dwPushNote(StagePush.NotSent).contains("next sync"))
-        assertTrue(dwPushNote(StagePush.NothingToSend).contains("no local copy of this stage"))
+        assertTrue(dwPushNote(StagePush.NothingToSend).contains("once this stage has been opened"))
         assertEquals(
-            "Saved on this phone and sent to the repository.",
+            "Saved on this phone and uploaded.",
             dwPushNote(StagePush.Sent(StageSaveResultDto())),
         )
     }
