@@ -22,6 +22,7 @@ import androidx.compose.material.icons.filled.PermMedia
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.QrCode2
 import androidx.compose.material.icons.filled.QrCodeScanner
+import androidx.compose.material.icons.filled.RateReview
 import androidx.compose.material.icons.filled.Quiz
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Storage
@@ -377,10 +378,9 @@ internal val walkthroughJourney: List<WalkStep> = listOf(
         destination = NavDestination.REVIEW,
         body = "Everything you submit goes for review and comes back Approved, Rejected or Sent for " +
             "revision. Review is what turns a pile of field notes into a dataset somebody can cite, " +
-            "and it means you are never the last check on your own work. THIS HANDSET HAS NO " +
-            "SEPARATE REVIEW QUEUE — the web has a page of its own, and here the same menu row " +
-            "opens the record browser, which is the one surface where a reviewer can actually read " +
-            "a submission and act on it. Watch out: below Professor the status is locked and " +
+            "and it means you are never the last check on your own work. If you review other " +
+            "people's records, Review opens the queue of submissions waiting on a decision, where " +
+            "you approve, fix in place with Edit, send for revision or reject. Watch out: below Professor the status is locked and " +
             "everything you create is submitted as Pending. That is normal and not an error. A " +
             "record sent back for revision always carries comments explaining why — read them, " +
             "fix the record, and saving resubmits it.",
@@ -874,44 +874,18 @@ internal val WALKTHROUGH_DESIGNER_DECK = WalkthroughDeck(
  * handset was handed twenty-five cards about recording artisans, filling stages and generating a
  * report, exactly one of which describes a screen they can open, near the end of it.
  *
- * ── THREE CARDS AND NOT THE WEB'S FOUR, AND THE MISSING ONE IS A CAPABILITY ──────────────────────
+ * ── THE WEB'S FOUR CARDS, IN THE WEB'S ORDER ─────────────────────────────────────────────────────
  *
  * `frontend/components/guide/inspectorSteps.ts` teaches four: `inspection-list`, `inspection-read`,
- * `inspection-feedback` and `inspection-review-queue`. THE THIRD IS NOT A MISSING ENTRY POINT ON
- * THIS HANDSET, IT IS A MISSING CAPABILITY, and the difference is why it is not written below as a
- * step with a rewritten address. The Retrofit interface declares exactly five inspection endpoints —
- * `WorkshopRepositoryApi.kt` lines 1797, 1802, 1810, 1829 and 1841: four GETs and one PUT of the
- * inspector roster — and there is no `POST …/feedback` and no `POST …/send-back`, although the
- * backend serves both (`routes/design_workshop_inspections.py`: `record_inspection_feedback`,
- * `send_workshop_back_for_revision`). Over `InspectionDetailScreen.kt` and `InspectionListScreen.kt`,
- * `grep -rniE 'suggestion|feedback|correction|send.?back'` finds NOTHING, and
- * `grep -rn 'inspectionFeedback' android/app/src/main --include=*.kt` finds the field on the
- * payload's DTO and no reader of it anywhere under `ui/`.
- *
- * So this handset cannot file a correction AND CANNOT READ THE ONES ALREADY FILED. That second half
- * is worth stating because the web's own closing copy got it wrong in the other direction — it said
- * "the handset can read the suggestions already on a workshop", which the DTO makes plausible and
- * the screen makes false. The honest version is in [walkthroughInspectorOutro], as prose, on the
- * closing card, which is exactly where the web puts its equivalent (`INSPECTOR_TRACK.recapLead`).
- *
- * ⚠ WHAT MUST NOT HAPPEN IS A FOURTH STEP WITH `destination = null` AND THE WEB'S FIELD LIST ON IT.
- * That card would draw a heading reading "What the screen asks for" over the four controls of a
- * panel this phone does not have, on the one surface whose job is teaching a newcomer what things
- * are called. [walkthroughInspectorOmissions] is where the omission is REGISTERED instead, in one
- * place, with a test holding it to the web's own list so that a deck which quietly drops a second
- * card cannot pass as this decision.
- *
- * ── AND THE LAST CARD IS NOT PART OF THE INSPECTION SURFACE, ON PURPOSE ─────────────────────────
+ * `inspection-feedback` and `inspection-review-queue`, and so does this deck. Until 0.0.17 it taught
+ * three: the handset had no feedback box, and [walkthroughInspectorOmissions] registered the gap. The
+ * box is now on `InspectionDetailScreen` (`InspectionFeedbackPanel`), so the card is here and the
+ * register is empty — `WalkthroughDecksTest` holds the two together in both directions.
  *
  * `Review` is open to Field Contributor and above, so it is not the tier's own screen — but it is
- * the other half of what "Inspector / Reviewer" names, and at rank 37 an inspector outranks a
- * designer there, which is the only place in this product where that rank buys anything. Leaving it
- * out would teach an inspector that their whole job is the workshops somebody assigned them. Its
- * ADDRESS is rewritten to the record browser, which is not an invention: the header of this file
- * records that two of the web's steps naming web-only surfaces were already rewritten to name where
- * the capability lives on this handset, and the shipped `review` step does exactly that against the
- * same `NavDestination.REVIEW` — whose router arm says in as many words that "Android has no
- * standalone review queue: reviewing happens inside the record browser".
+ * the other half of what "Inspector / Reviewer" names, and on this handset it opens with the
+ * inspector's own workshops waiting for a decision (`InspectionAwaitingSection`) above the record
+ * queue every reviewer shares.
  */
 internal val walkthroughInspectorJourney: List<WalkStep> = listOf(
     WalkStep(
@@ -934,10 +908,10 @@ internal val walkthroughInspectorJourney: List<WalkStep> = listOf(
             "professor, which makes it the only row in this menu a master admin cannot reach. You " +
             "cannot ask for an assignment or give yourself one either: an admin makes them one " +
             "workshop at a time from that workshop's own stage index, which is a screen this " +
-            "account cannot open. The screen needs a connection every time — an inspection is read " +
-            "from the repository on each visit and nothing about it is kept on this phone, because " +
-            "an assignment an admin ended this morning has ended and a copy held here could not " +
-            "know that. And an empty list is a real answer: the page says \"No workshop is " +
+            "account cannot open. Without signal the screen shows the list this phone last saw, " +
+            "with the day it was saved printed above it, and a workshop whose assignment has ended " +
+            "is dropped from that copy the next time it is opened with signal. And an empty list is " +
+            "a real answer: the page says \"No workshop is " +
             "assigned to you\" and tells you in as many words that it is hiding nothing, a search " +
             "that matched nothing says so differently, and a load that failed keeps whatever rows " +
             "were already on screen and puts the failure above them — so a correct empty state and " +
@@ -981,23 +955,49 @@ internal val walkthroughInspectorJourney: List<WalkStep> = listOf(
             "record may have been corrected since and this stage would not have changed. And " +
             "answers to questions a workshop's own designer added are counted and not shown, " +
             "because the questions themselves are read through a route an inspection does not " +
-            "reach, and answers without their questions are not evidence of anything.",
+            "reach, and answers without their questions are not evidence of anything. Without " +
+            "signal the screen opens the copy of the workshop this phone kept the last time you " +
+            "read it, and says on its first line which day that was.",
+    ),
+    WalkStep(
+        id = "inspection-feedback",
+        title = "Correction suggestions · File a suggestion, or send the report back",
+        icon = Icons.Filled.RateReview,
+        destination = NavDestination.DESIGN_WORKSHOP_INSPECTIONS,
+        body = "Say what should be corrected, in the panel above the stages of the workshop you " +
+            "are reading. An inspection that ends in a verdict nobody can read is not a review: " +
+            "your note is recorded against this submission round under your name, and one of two " +
+            "buttons decides whether the report stays where it is or goes back. The panel lists " +
+            "every suggestion already on the record, round by round, with who filed it and which " +
+            "stage it is about, so you can read what colleagues asked for before asking again. " +
+            "Then \"What should be corrected?\", \"Which stage is it about?\" — the report as a " +
+            "whole, or one named stage — and the two buttons. Watch out: THE TWO BUTTONS DO " +
+            "DIFFERENT THINGS AND ONLY ONE OF THEM MOVES ANYTHING. \"File a suggestion\" records " +
+            "your note and leaves the report where it is; \"Send the report back\" records it AND " +
+            "moves the report to Needs revision, which is what puts it on its designers' desks, " +
+            "and it asks you to confirm. Neither can be edited or withdrawn once it is on the " +
+            "record. The box is closed until the report is handed in. WITHOUT SIGNAL YOUR NOTE IS " +
+            "KEPT ON THIS PHONE and listed under the register as waiting; when the phone is back " +
+            "online the report is read again first, and the note goes only if it is still the " +
+            "round you read. If the report has moved on — handed in again, withdrawn or approved " +
+            "— the note is held with the reason printed under it and nothing is lost: file it " +
+            "against the current round, put it back in the box, or discard it yourself.",
     ),
     WalkStep(
         id = "inspection-review-queue",
-        title = "Review · Work the record queue",
+        title = "Review · Work the queue",
         icon = Icons.Filled.Visibility,
         destination = NavDestination.REVIEW,
-        body = "Work the repository-wide queue of records waiting on a decision, which is the " +
-            "other half of the tier's own name. The inspection surface is the handful of " +
-            "workshops somebody assigned you; this is the standing job — artisans, products, " +
+        body = "Open Review and start with the workshops waiting for your decision: the reports " +
+            "you were appointed to inspect that have been handed in, with the ones sent back and " +
+            "waiting for their designers listed under them, and a line on any note of yours still " +
+            "on this phone. Below that is the repository-wide queue of records waiting on a " +
+            "decision, which is the other half of the tier's own name — artisans, products, " +
             "processes, tools and interviews submitted by anybody ranked below you, waiting to be " +
             "approved, rejected or sent back for revision — and it is the one place in this " +
             "product where the tier's RANK buys something rather than its set membership, because " +
-            "at 37 you outrank a designer and a designer's records reach your queue. THIS HANDSET " +
-            "HAS NO SEPARATE REVIEW QUEUE — the web has a page of its own, and here the same menu " +
-            "row opens the record browser, which is the one surface where a reviewer can read a " +
-            "submission and act on it. Watch out: THIS SCREEN IS NOT THE INSPECTION SURFACE AND IS " +
+            "at 37 you outrank a designer and a designer's records reach your queue. Watch out: " +
+            "THE RECORD QUEUE IS NOT THE INSPECTION SURFACE AND IS " +
             "NOT GATED LIKE IT. Review opens for Field Contributor and above — everybody with " +
             "somebody ranked below them — so the people working beside you in the queue are not " +
             "inspectors; what your tier changes is WHOSE records you see. You review strictly " +
@@ -1025,7 +1025,8 @@ private val walkthroughInspectorIntro = WalkStep(
     title = "What an inspection is, in order",
     icon = Icons.Filled.Explore,
     body = "${walkthroughInspectorJourney.size} steps, in the order an inspection happens — the " +
-        "list you were given, the workshop you read, and the wider record queue your tier opens. " +
+        "list you were given, the workshop you read, what you say about it, and the review queue " +
+        "your tier opens. " +
         "Your surface is not the designer's with the buttons removed: it is a different tree, " +
         "behind a different gate, reached through an assignment an admin makes one workshop at a " +
         "time. You cannot run a design & prototype workshop, and that is the point of the tier " +
@@ -1038,62 +1039,42 @@ private val walkthroughInspectorIntro = WalkStep(
 )
 
 /**
- * The inspector deck's closing card — and the one place on this handset that says what it cannot do.
+ * The inspector deck's closing card: the checklist read just before a note goes on the record.
  *
  * A CHECKLIST AND NOT A SUMMARY, on the same argument as the designer's: the moment it is read for
  * is the one just before somebody acts irreversibly. Here that moment is a suggestion being filed,
  * which cannot be edited or withdrawn, or a send-back, which moves a report onto somebody's desk.
- *
- * ⚠ AND IT OPENS BY SAYING NEITHER CAN BE DONE FROM THIS PHONE. That sentence is the whole reason
- * the deck is three cards and not four — see [walkthroughInspectorJourney] for the greps, and
- * [walkthroughInspectorOmissions] for the register a test holds to the web's own list. It is on the
- * CLOSING card rather than in a step of its own because a step is a door and this is the absence of
- * one: the web makes the identical placement, putting the same fact in `INSPECTOR_TRACK.recapLead`
- * rather than in a card. An inspector who reads this knows to finish the job in a browser; one who
- * is told nothing hunts the menu for a box that was never built, which this file's own header calls
- * worse than a missing step.
  */
 private val walkthroughInspectorOutro = WalkStep(
     id = "before-you-send-it-back",
     title = "Before you send a report back",
     icon = Icons.Filled.CheckCircle,
-    body = "FILING A CORRECTION IS A BROWSER JOB, and this is the one thing on this deck the " +
-        "handset cannot do. There is no box here to type a suggestion into and no button to send " +
-        "a report back — and this app cannot show you the suggestions already filed on a workshop " +
-        "either, although the payload it reads carries them. So read the workshop on the phone, in " +
-        "the courtyard, where the signal and the artisans are; then open a browser to say what is " +
-        "wrong. When you do: your note says what is wrong AND what it should say, because the " +
-        "designers read it exactly as written with no conversation attached. You picked the right " +
-        "stage, or chose the report as a whole on purpose rather than by leaving the box alone. " +
-        "You pressed the button you meant — filing a suggestion leaves the report where it is, and " +
-        "only sending it back puts it on the designers' desks. You are not deciding on a " +
-        "photograph you could not see, because media is counted on an inspection read and never " +
-        "carried. And a value that looks wrong may be a copy taken when the stage was saved, so " +
-        "the record it came from may have been corrected since without the stage changing.",
+    body = "Before you press either button: your note says what is wrong AND what it should say, " +
+        "because the designers read it exactly as written with no conversation attached. You " +
+        "picked the right stage, or chose the report as a whole on purpose rather than by leaving " +
+        "the choice alone. You read the suggestions already on the record, so you are not asking " +
+        "for something a colleague asked for last round. You pressed the button you meant — " +
+        "filing a suggestion leaves the report where it is, and only sending it back puts it on " +
+        "the designers' desks. You are not deciding on a photograph you could not see, because " +
+        "media is counted on an inspection read and never carried. A value that looks wrong may " +
+        "be a copy taken when the stage was saved, so the record it came from may have been " +
+        "corrected since without the stage changing. And if you wrote it without signal, check " +
+        "the panel when you are back online: a note the report moved on from is held there with " +
+        "the reason, waiting for you, not sent.",
 )
 
 /**
  * The web's inspector cards this handset deliberately does not teach, and nothing else.
  *
- * ONE REGISTER, IN ONE PLACE, WITH A TEST STANDING OVER IT. The failure this exists to prevent is
- * not the omission — the omission is argued in [walkthroughInspectorJourney] and is correct today —
- * it is the omission going UNNOTICED when it stops being correct. A handset that grows a feedback
- * box, or a second card quietly dropped from this deck while somebody was editing prose, both look
- * exactly like this file on the day they happen. `WalkthroughDecksTest` reads
+ * EMPTY SINCE 0.0.17, and kept rather than deleted. It held `inspection-feedback` while the handset
+ * had no feedback box; the box landed and the card with it. `WalkthroughDecksTest` reads
  * `frontend/components/guide/inspectorSteps.ts` at runtime and asserts that the web's ids minus this
- * deck's ids are EXACTLY this set: a third state is a red test, in either direction.
- *
- * It is a set of ids and not a set of reasons, because the reason belongs beside the greps that
- * prove it and a second copy of an argument is an argument that can disagree with itself.
+ * deck's ids are EXACTLY this set, so a card quietly dropped from this deck is a red test rather than
+ * an omission nobody decided.
  */
-internal val walkthroughInspectorOmissions: Set<String> = setOf(
-    // `POST /design-workshop-inspections/{id}/feedback` and `.../send-back` have no client method on
-    // this handset, `InspectionDetailScreen` draws no panel, and no screen under `ui/` reads the
-    // `inspectionFeedback` rows the payload already carries. A capability, not an address.
-    "inspection-feedback",
-)
+internal val walkthroughInspectorOmissions: Set<String> = emptySet()
 
-/** The inspector's deck: the opening card, three screens, and the closing checklist. */
+/** The inspector's deck: the opening card, four screens, and the closing checklist. */
 internal val WALKTHROUGH_INSPECTOR_DECK = WalkthroughDeck(
     id = "inspector",
     name = "Inspecting a workshop",

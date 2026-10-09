@@ -33,7 +33,9 @@ import com.designprototype.workshop.data.DwFieldStampDto
 import com.designprototype.workshop.data.DwValues
 import com.designprototype.workshop.data.DwInspectionAttempt
 import com.designprototype.workshop.data.DwInspectionDetailDto
+import com.designprototype.workshop.data.DwInspectionRead
 import com.designprototype.workshop.data.DwInspectionReading
+import com.designprototype.workshop.data.dwSavedInspectionSentence
 import com.designprototype.workshop.data.EntityDto
 import com.designprototype.workshop.data.FieldDto
 import com.designprototype.workshop.data.SchemaResponse
@@ -60,7 +62,10 @@ import retrofit2.HttpException
  *
  * ── THE ONE RULE THIS SCREEN EXISTS TO KEEP ──────────────────────────────────────────────────────
  *
- * **NOTHING HERE MAY OFFER A WRITE, AND NOTHING HERE MAY OFFER A CONTROL THE API WOULD 404.** The
+ * **NOTHING HERE MAY OFFER A WRITE TO THE WORKSHOP'S CONTENT, AND NOTHING HERE MAY OFFER A CONTROL
+ * THE API WOULD 404.** The one write on this screen is a NOTE — a correction suggestion or a
+ * send-back, in [InspectionFeedbackPanel], gated on the payload's own `mayRecordFeedback` and never
+ * on `readOnly`, which stays true. The
  * payload says `readOnly: true` on the wire precisely so that a screen cannot mistake it for the
  * designer's read, and [dwInspectionIsReadOnly] fails CLOSED on a payload that predates the key. The
  * refusal is not cosmetic: every stage-editing route, the report, the photo intake, the codes sheet,
@@ -132,6 +137,10 @@ fun InspectionDetailScreen(
     var reload by remember(workshopId) { mutableIntStateOf(0) }
     var loadError by remember(workshopId) { mutableStateOf<String?>(null) }
     var notOpen by remember(workshopId) { mutableStateOf(false) }
+    /** When the copy on screen was saved on this phone; null while it is a live read. */
+    var savedAt by remember(workshopId) { mutableStateOf<String?>(null) }
+    /** Bumped after every read, so the feedback panel re-reads what is queued on this phone. */
+    var readCount by remember(workshopId) { mutableIntStateOf(0) }
 
     LaunchedEffect(workshopId, reload, mayInspect) {
         if (!mayInspect) {
@@ -144,8 +153,19 @@ fun InspectionDetailScreen(
         // The registry FIRST, and off the device: it never fails for want of a connection, so the
         // headings and the field labels are in hand whatever the read below does.
         schema = runCatching { StageSchemaStore.load(appContext) }.getOrNull()
-        runCatching { repository.workshopUnderInspection(workshopId) }
-            .onSuccess { detail = it }
+        runCatching { repository.readWorkshopUnderInspection(appContext, workshopId) }
+            .onSuccess { read ->
+                detail = read.detail
+                savedAt = (read as? DwInspectionRead.Saved)?.savedAt
+                readCount++
+                // A LIVE READ IS THE MOMENT TO SEND WHAT WAS WRITTEN WITHOUT SIGNAL: each queued
+                // note is checked against the report as it now stands before it goes.
+                if (read is DwInspectionRead.Live) {
+                    runCatching { repository.syncInspectionNotes(appContext, workshopId) }
+                        .getOrNull()?.refreshed?.get(workshopId)?.let { detail = it }
+                    readCount++
+                }
+            }
             .onFailure { error ->
                 val status = (error as? HttpException)?.code()
                 // A 404 HERE IS DELIBERATELY NOT DIAGNOSED FURTHER, and that is the server's design
@@ -229,15 +249,28 @@ fun InspectionDetailScreen(
         // Not from the route this screen happens to call. `dwInspectionIsReadOnly` is what reads the
         // flag, it fails closed on a payload that predates it, and it is the one place the answer
         // changes the day this screen is shared with the designer's read.
+        savedAt?.let { InspectionNotice(dwSavedInspectionSentence(it), warning = true) }
+
         if (dwInspectionIsReadOnly(record.readOnly)) {
             InspectionNotice(
                 "Read-only. This is an inspection: every stage below is shown as the designers " +
                     "recorded it, with who wrote each field, and nothing here can be edited, " +
                     "submitted or deleted. Photographs, recordings and attachments are not carried " +
-                    "on an inspection read.",
+                    "on an inspection read. What you have to say about it goes in Correction " +
+                    "suggestions, below.",
                 warning = true
             )
         }
+
+        // ABOVE THE STAGES, as on the web: a panel under twenty-two stages is one an officer scrolls
+        // past on the way in and never finds on the way out.
+        InspectionFeedbackPanel(
+            repository = repository,
+            record = record,
+            stages = schema?.stages.orEmpty(),
+            onRecord = { detail = it },
+            refreshKey = readCount,
+        )
 
         val registry = schema
         if (registry == null || registry.stages.isEmpty()) {

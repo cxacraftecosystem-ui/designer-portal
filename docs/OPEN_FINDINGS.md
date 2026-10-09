@@ -1,8 +1,13 @@
 # Open findings
 
-**Status: 15 open, 1 decision recorded and 1 deferral, 95 closed.** Every count re-counted by
+**Status: 15 open, 1 decision recorded and 1 deferral, 98 closed.** Every count re-counted by
 heading on 2026-10-09; the entries closed on 2026-10-09 were checked against the tree that day, and
 the older closed sections were last re-checked on 2026-09-03.
+
+**Three Android parity gaps were closed on 2026-10-10 by building them**, and entered here already
+closed, since the handset's own copy had been saying each was missing: correction suggestions on the
+handset, its own review queue, and inspections that work without signal. 95 + 3 = 98 closed; the open
+count does not move.
 
 **Moving a set-password link's token off the web's request lines narrowed one entry the same day,
 and moved neither number.** The web now checks a link with `POST /api/auth/set-password/check`, the
@@ -640,6 +645,47 @@ new build goes out in a body. The entry stays open until that build has replaced
 the same, and neither form closes the browser's history.
 
 ---
+
+## Closed on 2026-10-10
+
+Three Android parity gaps that the handset's own screens and walkthrough admitted in so many words,
+found by the sweep of customer-visible copy (items F6, F7 and F12 of that sweep) and closed by
+building the features. None moved a permission: the handset calls the routes the web calls, behind
+the same doors.
+
+### [MEDIUM] An inspector on the handset could not read the correction suggestions on a workshop, file one, or send a report back (android) — **CLOSED 2026-10-10**
+
+The walkthrough's closing card said "FILING A CORRECTION IS A BROWSER JOB … this app cannot show you
+the suggestions already filed on a workshop either", and the web's inspector recap said the same.
+Both were true: `WorkshopRepositoryApi` declared no `POST …/feedback` or `…/send-back`, and nothing
+under `ui/` read the `inspectionFeedback` rows the payload carried. `InspectionDetailScreen` now draws
+`InspectionFeedbackPanel` above the stages — the register round by round with who filed each row,
+the box, the stage choice, and the two buttons, the send-back behind a confirmation — gated on the
+payload's `mayRecordFeedback` and on the report being under review, exactly as the web's panel is.
+The inspector deck teaches the `inspection-feedback` card and `walkthroughInspectorOmissions` is
+empty. Pinned by `InspectionNotesSyncTest` (routes, bodies, answers) and `WalkthroughDecksTest`.
+
+### [MEDIUM] The handset had no review queue of its own (android) — **CLOSED 2026-10-10**
+
+The menu's Review row opened the record browser and the walkthrough said "THIS HANDSET HAS NO
+SEPARATE REVIEW QUEUE". Review now opens `Screen.ReviewQueue`: for an Inspector / Reviewer, the
+assigned workshops whose report is waiting for a decision, the ones sent back below them, a count of
+the rest and a line on any of the inspector's notes still on the phone; then the record queue every
+reviewer shares. Pinned by `DesignWorkshopInspectionFeedbackTest` (the split) and
+`InspectionNotesSyncTest` (the list read, live and kept).
+
+### [MEDIUM] An inspection could not be read or annotated without signal (android) — **CLOSED 2026-10-10**
+
+`InspectionListScreen` said "This screen needs a connection … never kept on this phone". The last
+read of each assigned workshop and the last list are now kept per account and shown with the day
+they were saved; a read that answers 404 deletes them. A suggestion or send-back is kept on the phone
+first and sent when there is signal, after the workshop is read again: a report no longer under
+review, or handed in again since the note was written, holds the note with the reason and sends
+nothing; the server's own refusal (the 422 the web shows when a report has moved on) holds it the same
+way; an answer lost on the way back is recognised on the register by its device moment and not filed
+twice; nothing queued is deleted except by its author. The pass also runs on the app's
+"network came back" hook. Pinned by `InspectionNotesSyncTest` and
+`DesignWorkshopInspectionFeedbackTest`.
 
 ## Closed on 2026-10-09
 

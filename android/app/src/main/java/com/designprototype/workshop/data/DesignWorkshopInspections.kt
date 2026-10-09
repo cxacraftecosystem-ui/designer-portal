@@ -57,29 +57,14 @@ import java.util.Locale
  *
  * What an admin gets on the handset INSTEAD is the appointment screen, and the refusal copy names it.
  *
- * ── OFFLINE: AN INSPECTION IS NOT CACHED, AND THAT IS A DECISION ─────────────────────────────────
+ * ── OFFLINE, AND THE NOTE: SEE `DesignWorkshopInspectionFeedback.kt` ─────────────────────────────
  *
- * Everything else a designer does on this handset survives a courtyard with no signal, and the whole
- * design-workshop block of [WorkshopRepository] falls back to the device rather than throwing. This
- * feature deliberately does neither, and there are three reasons, in descending order of weight:
- *
- *  1. **THE SCOPE IS A ROW ON THE SERVER, AND IT CAN BE TAKEN AWAY.** An admin who ends an
- *     inspection this morning has ended it. A cached copy would keep a fortnight of somebody else's
- *     fieldwork readable on a phone whose access was withdrawn — which is the one failure a
- *     read-only scope must not have, and it cannot be repaired by anything this app does later.
- *  2. **AN INSPECTION IS A JUDGEMENT ABOUT WHAT THE RECORD SAYS NOW.** The provenance names in this
- *     payload are resolved server-side at read time; a stale copy would have an inspector reviewing
- *     — and possibly signing off on — a state of the workshop that no longer exists, with nothing on
- *     screen to say the two had diverged.
- *  3. **THERE IS NO WRITE PATH AND NONE MAY BE INVENTED.** `saveOrQueue` will not queue a 4xx, so a
- *     queued inspector write would LOSE the record: the server has no route to accept it, the outbox
- *     has no way to retry it into existence, and the inspector would be told their note was saved.
- *     Every route in this file is a GET for that reason, and the caching decision is downstream of
- *     it: there is no draft to hold, because there is nothing to send.
- *
- * So the repository methods THROW, exactly as the three viewer-administration calls do, and the
- * screens say "this needs a connection" in words before anything is attempted rather than after it
- * fails.
+ * Until 0.0.17 nothing here was kept on the phone and every route was a GET. The inspector now
+ * files correction suggestions and sends reports back from the handset, and both the read and the
+ * note work without signal: the last read is kept for the account that made it (and deleted the
+ * moment a read answers "not open to you"), and a note is kept on the phone first and checked
+ * against the report as it then stands before it is sent. That file carries the whole argument —
+ * the conflict rules, the refusals, and why a lost answer does not file a note twice.
  *
  * ── WHAT WAS COPIED FROM `DesignWorkshopViewers.kt`, AND WHAT DELIBERATELY WAS NOT ───────────────
  *
@@ -549,8 +534,7 @@ fun dwInspectionFailureMessage(
     val unknownOutcome = attempt == DwInspectionAttempt.SAVE
     return when {
         status == null ->
-            "This phone could not reach the repository. An inspection is read from the server every " +
-                "time, so unlike the 22 stages it cannot be opened without a connection. " +
+            "This phone could not get through just now. " +
                 if (unknownOutcome) {
                     "The request may still have landed — open this screen again on a connection to " +
                         "see who is inspecting this workshop before you save anything else."
