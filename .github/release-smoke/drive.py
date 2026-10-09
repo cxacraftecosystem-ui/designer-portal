@@ -493,15 +493,22 @@ def observe_keyboard_over_a_long_form() -> None:
     time.sleep(1.5)
     size = shell("wm size").strip().split()[-1]
     width, height = (int(v) for v in size.split("x"))
-    for _ in range(14):
-        shell(f"input swipe {width // 2} {int(height * 0.8)} {width // 2} {int(height * 0.25)} 300")
+    # The pictures scenario leaves the screen at the media rows, below the last text box. Walk back up
+    # until a text box sits in the lower part of the screen, where a keyboard would land on it.
+    target = None
+    for _ in range(24):
+        nodes = dump()
+        low = [n for n in edit_texts(nodes)
+               if n["bounds"][1] >= 150 and n["bounds"][3] <= height - 200 and n["bounds"][3] >= height * 0.62]
+        if low:
+            target = max(low, key=lambda n: n["bounds"][3])
+            break
+        shell(f"input swipe {width // 2} {int(height * 0.35)} {width // 2} {int(height * 0.52)} 300")
         time.sleep(0.6)
-    nodes = dump("keyboard-before")
-    boxes = [n for n in edit_texts(nodes) if n["bounds"][3] <= height - 150 and n["bounds"][1] >= 100]
-    if not boxes:
-        observations.append({"observation": "keyboard over a long form", "detail": "no text box on screen to focus"})
+    dump("keyboard-before")
+    if target is None:
+        observations.append({"observation": "keyboard over a long form", "detail": "no text box reached the lower screen"})
         return
-    target = max(boxes, key=lambda n: n["bounds"][3])
     tap(target)
     time.sleep(3.0)
     frame = ime_frame()

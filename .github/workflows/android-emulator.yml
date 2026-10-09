@@ -305,6 +305,19 @@ jobs:
               print("::error::No instrumented test executed. The emulator step's log names the device "
                     "error (an install that failed, a device that went away); the task does not fail on it.")
               sys.exit(1)
+          # A PASS THAT MEASURED NOTHING IS SAID OUT LOUD. A probe whose artifact is not staged here
+          # (DwAsrIndicProbeTest: this job stages no IndicConformer model) logs "NOT STAGED" and
+          # returns, which the report counts as a pass — and an Assume would not help, because AGP
+          # 9.4's report files an AssumptionViolatedException under failures (run 37951774101).
+          probes = pathlib.Path("app/build/outputs/androidTest-results/probes-logcat.txt")
+          unmeasured = [line.split("): ", 1)[-1][:160] for line in
+                        (probes.read_text(encoding="utf-8", errors="replace").splitlines() if probes.is_file() else [])
+                        if "NOT STAGED" in line]
+          if unmeasured:
+              note = f"{len(unmeasured)} probe(s) passed without measuring anything: " + " | ".join(unmeasured)
+              print(f"::warning::{note}")
+              with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+                  summary.write(note + "\n")
           if failures:
               print(f"::error::{failures} instrumented test(s) failed; see the android-instrumented-results artifact.")
               sys.exit(1)

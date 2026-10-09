@@ -53,7 +53,14 @@
 # Reached through `Retrofit.create(WorkshopRepositoryApi::class.java)` (`ApiClient.create`) and
 # `.create(SttProviderApi::class.java)` (TranscriptionProviders.kt:168) — a dynamic proxy, so
 # nothing statically calls these methods and R8 cannot see that they are used. Retrofit's own rules
-# cover the annotations and the generic signatures; this covers OUR interfaces by name.
+# cover the annotations and the generic signatures; this covers two of OUR interfaces by name.
+#
+# THERE ARE SEVEN, NOT TWO (counted 2026-10-09): UsageApi, DwReportHistoryApi, DwAsrModelEndpointApi,
+# DwJoinCardApi and DwWorkshopJoinApi are created the same way and named nowhere here. What keeps
+# them is Retrofit 3.0.0's own `-if interface * { @retrofit2.http.* <methods>; }
+# -keep,allowobfuscation interface <1>`, and the R8 release build of that day was read for all seven,
+# methods included, before it was launched on the API 37 emulator (android-emulator.yml's temporary
+# release-smoke job, docs/CI.md §1.5). The two lines below are belt and braces, not the only brace.
 -keep,allowobfuscation interface com.designprototype.workshop.data.WorkshopRepositoryApi { *; }
 -keep,allowobfuscation interface com.designprototype.workshop.ui.SttProviderApi { *; }
 

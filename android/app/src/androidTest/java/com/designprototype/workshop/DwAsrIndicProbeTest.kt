@@ -17,7 +17,6 @@ import com.k2fsa.sherpa.onnx.OfflineRecognizerConfig
 import com.k2fsa.sherpa.onnx.WaveReader
 import java.io.File
 import java.security.MessageDigest
-import org.junit.Assume.assumeTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 
@@ -69,8 +68,13 @@ import org.junit.runner.RunWith
  * a handset somebody is using.
  *
  * **AN ABSENT DIRECTORY IS A SKIP AND NOT A FAILURE.** Nothing in this repository ships these bytes,
- * so on any handset without them this test says so and is reported SKIPPED (since 2026-10-09; it
- * used to return and count as a pass). A failure would turn a measurement nobody staged into a red suite.
+ * so on any handset without them this test says so and returns. A failure would turn a measurement
+ * nobody staged into a red suite.
+ *
+ * THE RUNNER REPORTS THAT RETURN AS A PASS, and an `Assume` is no better: AGP 9.4's connected-test
+ * report files an `AssumptionViolatedException` under FAILURES (android-emulator.yml run 37951774101,
+ * 2026-10-09). So the "NOT STAGED" line this test logs is what says it measured nothing, and
+ * android-emulator.yml's verdict step turns that line into a warning on the run.
  */
 @RunWith(AndroidJUnit4::class)
 class DwAsrIndicProbeTest {
@@ -102,10 +106,7 @@ class DwAsrIndicProbeTest {
         if (!graph.isFile || !tokens.isFile) {
             say("NOT STAGED: ${graph.absolutePath} / ${tokens.absolutePath}. Nothing was measured. " +
                 "Push the artifact as this file's KDoc says and run again.")
-            // A SKIP, as the KDoc says, and reported as one. A bare `return` here counted as a PASS,
-            // so android-emulator.yml's report — which stages no IndicConformer model — showed a probe
-            // that had measured nothing as one that had succeeded.
-            assumeTrue("The IndicConformer artifact is not staged on this handset.", false)
+            return
         }
         say("graph        : ${graph.name} ${graph.length()} bytes")
         say("tokens       : ${tokens.name} ${tokens.length()} bytes")
