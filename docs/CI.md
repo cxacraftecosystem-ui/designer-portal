@@ -897,6 +897,17 @@ ranges that end at 9. npm installs them anyway and prints three of these blocks;
 fail, and `npx eslint . --max-warnings=0` runs all three under ESLint 10. The blocks go when the
 plugins widen their ranges. One that names any other package is new: read it.
 
+**`npm ci` in `frontend/` ends with `5 high severity vulnerabilities`.** Expected, true as of
+2026-10-09 (check with `npm audit` from `frontend/`). All five are one chain that only ESLint loads:
+`braces` 3.0.3 (GHSA-vfj7-8cjw-p6xm, a stack-exhaustion denial of service with no patched release;
+3.0.3 is its newest), through `micromatch` 4.0.8 and `fast-glob` 3.3.1, which `@next/eslint-plugin-next`
+16.4.0 pins exactly (fast-glob's newest is 3.3.3, and it still depends on the same `braces`), up to
+`eslint-config-next`. Nothing in that chain is in the site or the image's runtime stage; it runs when
+ESLint expands file globs. **Do not run the `npm audit fix --force` it suggests**: its only "fix" is
+`eslint-config-next@14.2.35`, two majors back from the `16.x` that has to match `next`. The findings
+go when `braces` publishes a fixed release or Next drops the `fast-glob` pin. Any other package in that
+report is new: read it.
+
 **Two production deployments per push.** Vercel's Git integration has been re-linked. It was removed
 outright (§2); if two deployments appear again, that is what happened. Unlink it, or at minimum
 restore the Ignored Build Step — see §3.2.

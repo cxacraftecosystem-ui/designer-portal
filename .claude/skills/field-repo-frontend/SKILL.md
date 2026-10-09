@@ -1042,7 +1042,11 @@ prefixes and lowers nesting itself, so there is no autoprefixer. Its layers are 
 layers: an un-layered rule in `globals.css` beats every utility, so every plain rule there sits in
 `@layer base` (bare elements) or `@layer utilities` (anything carrying a class or an attribute) — the
 file's header says which and why. Recipes stay plain CSS in `@layer components`, not `@utility`, so
-every utility beats every recipe.
+every utility beats every recipe. Tailwind 4's `hover:` applies only under `@media (hover: hover)`,
+so a phone never shows a hover state, not even the one a tap used to leave behind: anything revealed
+only by `hover:` or `group-hover:` must also be reachable another way. The one such reveal today,
+`MediaCarousel`'s zoom badge, is decoration on a slide that is itself the button, and it also shows
+on `group-focus-visible`.
 ⚠ **A vendor-prefixed declaration goes BEFORE its standard form** in `globals.css`. The production
 build's minifier (Lightning CSS) keeps only the prefixed one when it comes second: `.glass-card` and
 `.glass-dark` shipped `-webkit-backdrop-filter` alone, which Chromium does not implement, and were never
