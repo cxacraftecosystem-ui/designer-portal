@@ -710,6 +710,9 @@ no role check, because the link is the whole authority.
   on. The complete fix moves the token out of the URL, into a POST body or a header, in the next web
   and Android release; until then the GET stays, because the builds in the field call it
   ([OPEN_FINDINGS.md](OPEN_FINDINGS.md)).
+  The Android source took its half the same day: it asks `POST /api/auth/set-password/check` with the
+  token in a JSON body, uses the GET only when that POST is answered 404 or 405 (a server without the
+  route), and reads a link's token from its fragment as well as its query — in no published build yet.
 
 ### 3.6 Sessions are bound to the password they were opened with (2026-10-09)
 

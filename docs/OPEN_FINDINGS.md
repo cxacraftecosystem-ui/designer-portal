@@ -591,6 +591,16 @@ read it as easily as the query. It is not switched yet because the handset is of
 the token from the query: the next Android release must accept both forms, and `link_for` can move to
 the fragment once the builds that accept only the query have left the field. Open as of 2026-10-09.
 
+**The handset's half is in the Android source as of 2026-10-09**; no published build carries it yet. It
+checks a link with `POST /api/auth/set-password/check` and the token in a JSON body, falling back to the
+GET only when that POST is answered 404 or 405 — a server from before the route — and on no other
+failure (`WorkshopRepository.checkPasswordLink`, pinned by
+`android/app/src/test/java/com/designprototype/workshop/data/PasswordLinkCheckTest.kt`). It reads the
+token from either `?token=` or `#token=` (`passwordLinkToken`, pinned by `PasswordSetupCopyTest`), and
+its debug request log prints the fallback's token as `██`. The entry stays open: the route itself, the
+web page's move to the POST and to the fragment, `link_for`'s switch, and the shipped builds, which still
+ask with the GET and read only the query.
+
 ---
 
 ## Closed on 2026-10-09

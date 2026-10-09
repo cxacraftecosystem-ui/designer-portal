@@ -3710,8 +3710,27 @@ class WorkshopRepository(
      * draw the form anyway, because the network may simply be down and telling somebody their link is
      * invalid when it has not been examined sends them back to an administrator for nothing. The POST
      * is the authority either way. The web screen takes the same position in as many words.
+     *
+     * ── ASKED WITH THE TOKEN IN A BODY, AND IN THE ADDRESS ONLY WHEN THE SERVER CANNOT HEAR A BODY ──
+     *
+     * `POST /auth/set-password/check` first, because a request line is what logs keep (see
+     * [WorkshopRepositoryApi.checkPasswordLinkInBody]). The old `GET /auth/set-password?token=` is
+     * asked only when that POST is answered **404 or 405**: the two statuses that mean "no such route
+     * here", which is what a server from before the route answers. A handset outlives the deployment
+     * it was built against in both directions, so it has to work with either.
+     *
+     * NOTHING ELSE FALLS BACK, and that is the security half of the rule. A 5xx, a 422, a 429 or a
+     * dropped connection says nothing about whether the route exists; answering one by re-sending the
+     * token in a URL would put it back in the logs on exactly the days the server is struggling. Each
+     * is thrown, and the screen reads a thrown check as "unknown", as it always has.
      */
-    suspend fun checkPasswordLink(token: String): PasswordLinkCheckDto = api.checkPasswordLink(token)
+    suspend fun checkPasswordLink(token: String): PasswordLinkCheckDto =
+        try {
+            api.checkPasswordLinkInBody(PasswordLinkCheckRequest(token = token))
+        } catch (refused: HttpException) {
+            if (refused.code() != 404 && refused.code() != 405) throw refused
+            api.checkPasswordLink(token)
+        }
 
     /**
      * Redeem a link and set the password on it.

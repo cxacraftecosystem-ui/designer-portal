@@ -392,7 +392,9 @@ fun PasswordGateScreen(
  *
  * ── A FAILED CHECK IS NOT A DEAD LINK ────────────────────────────────────────────────────────────
  *
- * `GET /auth/set-password` is asked first because its six reason words are the only way to say
+ * The link check is asked first — `POST /auth/set-password/check`, with the token in its body, or
+ * the older `GET /auth/set-password` on a server without that route (see
+ * `WorkshopRepository.checkPasswordLink`) — because its six reason words are the only way to say
  * WHICH refusal this is — expired, withdrawn, already used — and "invalid link" leaves a person with
  * no next action. But a check that could not be MADE says nothing about the link: the phone may
  * simply have no signal, and telling somebody their link is dead when it has not been examined sends

@@ -38,8 +38,9 @@ import java.io.IOException
  *    of them and useful for none: expired means "ask for another", already-used means "go and sign
  *    in", which is the opposite of asking anybody for anything. A `when` that collapsed two of them
  *    would leave a person with no next action and would look completely fine on screen.
- * 3. **The token is extracted from a pasted LINK, and left alone when it is a bare token.** Get this
- *    wrong in either direction and the redeem screen refuses a link the server would have accepted.
+ * 3. **The token is extracted from a pasted LINK — from its query or, since 2026-10-09, from its
+ *    fragment — and left alone when it is a bare token.** Get this wrong in any direction and the
+ *    redeem screen refuses a link the server would have accepted.
  * 4. **The identifier hint is read off the HEADER and never out of the body.**
  *    `tests/test_platform_access_gate.py` asserts the refusal body holds nothing but `detail`, and
  *    `auth.py` records that a second field there "would be the first crack in a rule the whole
@@ -231,6 +232,55 @@ class PasswordSetupCopyTest {
     @Test
     fun `an empty paste is an empty token, not a request`() {
         assertEquals("", passwordLinkToken("   "))
+    }
+
+    // ── 3b. The same token when the link carries it in the FRAGMENT ─────────────────────────────
+    //
+    // Where the server is moving links: `/set-password#token=…`, because a fragment is never sent to
+    // any server, so the token stays out of the web host's request log and the browser's history.
+    // Links of the old shape stay in chat histories until they expire, so both are read, and they
+    // must give the same answer — a link that worked yesterday and is refused today because its
+    // token moved would look exactly like an expired one.
+
+    @Test
+    fun `a link carrying the token in its fragment yields the token`() {
+        assertEquals(
+            "abc.def",
+            passwordLinkToken("https://designer-repository.vercel.app/set-password#token=abc.def")
+        )
+    }
+
+    @Test
+    fun `the query form and the fragment form of one link give one token`() {
+        val token = "eyJ1IjoidXNlci0xIn0.c2lnbmF0dXJl_-"
+        val query = passwordLinkToken("https://designer-repository.vercel.app/set-password?token=$token")
+        val fragment = passwordLinkToken("https://designer-repository.vercel.app/set-password#token=$token")
+        assertEquals(token, query)
+        assertEquals(query, fragment)
+    }
+
+    @Test
+    fun `other parameters in the fragment are not swallowed into the token`() {
+        assertEquals("abc.def", passwordLinkToken("https://x/set-password#token=abc.def&from=email"))
+        assertEquals("abc.def", passwordLinkToken("https://x/set-password#from=email&token=abc.def"))
+        // A query that names something else, and the token in the fragment after it.
+        assertEquals("abc.def", passwordLinkToken("https://x/set-password?lang=hi#token=abc.def"))
+    }
+
+    @Test
+    fun `the percent-encoding a fragment carries is undone too`() {
+        assertEquals("abc=def", passwordLinkToken("https://x/set-password#token=abc%3Ddef"))
+    }
+
+    @Test
+    fun `a fragment that carries no token is not read as one`() {
+        // No token anywhere: the text goes to the server as typed, and its refusal word says why.
+        assertEquals("https://x/set-password#top", passwordLinkToken("https://x/set-password#top"))
+        // `token=` must open a parameter; the end of a longer name is not it.
+        assertEquals(
+            "https://x/set-password#notoken=abc",
+            passwordLinkToken("https://x/set-password#notoken=abc")
+        )
     }
 
     // ── 4. The identifier hint rides the header ──────────────────────────────────────────────────

@@ -29,8 +29,9 @@ import retrofit2.HttpException
  * The refusal sentence for a POST. `POST /auth/set-password` answers with the SERVER's own sentence
  * for every one of these reasons (`_SET_PASSWORD_REFUSALS` in backend/app/api/routes/auth.py), and
  * the redeem screen shows that verbatim rather than looking one up here. [passwordLinkRefusal] is
- * only for `GET /auth/set-password`, which answers with a reason WORD and no sentence — deliberately,
- * because the words a person reads are the client layer's job on that route and the server says so.
+ * only for the link CHECK — `POST /auth/set-password/check`, or `GET /auth/set-password` on a server
+ * older than that route — which answers with a reason WORD and no sentence, deliberately, because the
+ * words a person reads are the client layer's job on that route and the server says so.
  */
 
 /**
@@ -340,27 +341,41 @@ fun passwordLinkOffered(target: UserDto): Boolean = !target.passwordSetAt.isNull
  * screen accepts the whole link pasted, and also the bare token for the case where it reached them
  * without the address around it.
  *
+ * ── THE TOKEN IS IN THE QUERY OR IN THE FRAGMENT, AND BOTH ARE READ ──────────────────────────────
+ *
+ * Links issued until now carry it in the query, `/set-password?token=…`. The server is moving them to
+ * the FRAGMENT, `/set-password#token=…`, because a fragment is never sent to any server: the query
+ * puts the token in the web host's request log and in the browser's history the moment the link is
+ * opened (docs/OPEN_FINDINGS.md). The handset must read both — links of the old shape stay in chat
+ * histories until they expire, and builds up to 0.0.15, which read only the query, are why the
+ * server cannot switch until they have left the field. A tapped link reaches here whole, fragment
+ * included: `MainActivity.takePasswordLink` hands over `Uri.toString()`, and the manifest's filter
+ * matches on the path, which a fragment does not change.
+ *
  * ── WHAT IT WILL AND WILL NOT DO ─────────────────────────────────────────────────────────────────
  *
- * It reads `?token=` (or `&token=`) out of the text and otherwise returns the text as typed. It does
- * NOT validate the shape: the token is `base64url(payload).base64url(HMAC)` and the server checks the
- * signature, the shape, the expiry, the row AND the credential fingerprint. A client-side shape test
- * would only be able to produce a SEVENTH refusal — one the server does not have a word for — for a
- * string the server might well have accepted.
+ * It reads `token=` where it opens a parameter of the query or of the fragment — after `?`, `&` or
+ * `#` — and otherwise returns the text as typed. The first one found wins; a link never carries two.
+ * It does NOT validate the shape: the token is `base64url(payload).base64url(HMAC)` and the server
+ * checks the signature, the shape, the expiry, the row AND the credential fingerprint. A client-side
+ * shape test would only be able to produce a SEVENTH refusal — one the server does not have a word
+ * for — for a string the server might well have accepted.
  *
- * PERCENT-DECODING IS DONE HERE because the value is URL-encoded in the link and Retrofit will encode
- * whatever it is given again; sending the encoded form would put `%3D` in the token and the signature
- * would not verify. It is deliberately NOT a general decoder — only `%XX` pairs, and a malformed one
- * is left standing rather than throwing, because a person who pasted something odd is owed the
- * server's refusal and not a crash.
+ * PERCENT-DECODING IS DONE HERE because the value is URL-encoded in the link, and what the server
+ * verifies is the token itself: sent in the check's JSON body, or — to a server older than that
+ * route — in a query string Retrofit encodes again. Either way the encoded form would put `%3D` in
+ * the token and the signature would not verify. It is deliberately NOT a general decoder — only
+ * `%XX` pairs, and a malformed one is left standing rather than throwing, because a person who
+ * pasted something odd is owed the server's refusal and not a crash.
  */
 fun passwordLinkToken(pasted: String): String {
     val text = pasted.trim()
     if (text.isEmpty()) return ""
-    val marker = Regex("[?&]token=")
+    val marker = Regex("[?&#]token=")
     val match = marker.find(text) ?: return text
     val rest = text.substring(match.range.last + 1)
-    // The link may carry further parameters after the token, and a fragment after those.
+    // Further parameters may follow the token, in the query or in the fragment, and a query token may
+    // be followed by a fragment.
     val value = rest.takeWhile { it != '&' && it != '#' }
     return percentDecode(value)
 }
@@ -387,7 +402,8 @@ private fun percentDecode(value: String): String {
 }
 
 /**
- * One sentence per refusal from `GET /auth/set-password`, because each has a different next action.
+ * One sentence per refusal from the link check (`POST /auth/set-password/check`, or the older
+ * `GET /auth/set-password`; both answer the same words), because each has a different next action.
  *
  * ── KEYED ON THE SERVER'S REASON WORD, NEVER ON ITS PROSE ────────────────────────────────────────
  *

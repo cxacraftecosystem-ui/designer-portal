@@ -661,6 +661,14 @@ class MainActivity : ComponentActivity() {
      * The path is compared against the one `credential_links.SET_PASSWORD_PATH` defines, with a
      * trailing slash tolerated, so that a VIEW intent arriving through the questionnaire filters —
      * which match on MIME type and a `.dpwq` path — cannot be read as a password link.
+     *
+     * ── THE WHOLE URI, FRAGMENT INCLUDED ──────────────────────────────────────────────────────
+     *
+     * `Uri.toString()` and not a parameter read off it, because the token may be in either place:
+     * `?token=…` on every link issued so far, `#token=…` once the server moves links to the
+     * fragment, which no server ever receives. `uri.getQueryParameter("token")` would see only the
+     * first; `passwordLinkToken` reads both, and it is the one reader the paste box uses too. The
+     * filter still matches either shape, since a fragment does not change the path.
      */
     private fun takePasswordLink(intent: Intent?) {
         if (intent?.action != Intent.ACTION_VIEW) return

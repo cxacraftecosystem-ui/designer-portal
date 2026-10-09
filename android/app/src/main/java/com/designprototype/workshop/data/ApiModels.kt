@@ -894,6 +894,18 @@ data class SetPasswordRequest(
 )
 
 /**
+ * The body of `POST /auth/set-password/check`: the token, and nothing beside it.
+ *
+ * In a body because a body is not a request line, and request lines are what proxies and access logs
+ * write down — see `WorkshopRepositoryApi.checkPasswordLinkInBody`. Not a map, so the field name is
+ * spelled once, here, and a typo is a compile error rather than a 422.
+ */
+@Serializable
+data class PasswordLinkCheckRequest(
+    val token: String
+)
+
+/**
  * Is this link still good, and if not, in a word the screen can branch on.
  *
  * IT ANSWERS ABOUT THE LINK AND NEVER ABOUT THE ACCOUNT — no email, no name, no role. The route is
