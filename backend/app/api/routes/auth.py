@@ -938,9 +938,10 @@ async def me(current_user: Any = Depends(get_current_user)) -> dict[str, Any]:
 # Owner, 2026-08-30: *"implement all the measures, we will use just admin copies the link for now
 # though."* So: a single-use expiring token bound to the account's credential state, revocation, a
 # per-account issuing throttle, session revocation on redemption, and a transport behind an
-# interface — with the one shipped transport being "hand it to the admin to copy". **No mail
-# dependency was added.** See app/services/credential_links.py, which carries the whole argument
-# and names what was and was not ported from C:/dev/cxa-cms.
+# interface — "hand it to the admin to copy" by default, and since 2026-10-10 "e-mail it to the
+# account's own address" when mail is configured and the administrator chooses it. See
+# app/services/credential_links.py, which carries the whole argument and names what was and was
+# not ported from C:/dev/cxa-cms.
 
 
 def _link_payload(issued: credential_links.DeliveredLink) -> dict[str, Any]:
@@ -1008,7 +1009,13 @@ async def issue_password_link(
             user=target,
             purpose=credential_links.purpose_for(target),
             issued_by_id=current_user.id,
+            deliver_by=payload.delivery,
         )
+    except credential_links.DeliveryUnavailable as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="This link cannot be sent by e-mail. Copy it instead and pass it on yourself.",
+        ) from exc
     except credential_links.IssueThrottled as exc:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -1020,11 +1027,12 @@ async def issue_password_link(
         ) from exc
     # Ids, never the link: the link is a credential and the log is not a place for one.
     logger.info(
-        "auth: %s issued a %s password link %s for account %s",
+        "auth: %s issued a %s password link %s for account %s (%s)",
         current_user.id,
         issued.purpose,
         issued.id,
         target.id,
+        issued.deliveredBy,
     )
     return _link_payload(issued)
 

@@ -1,8 +1,13 @@
 # Open findings
 
-**Status: 15 open, 1 decision recorded and 1 deferral, 95 closed.** Every count re-counted by
-heading on 2026-10-09; the entries closed on 2026-10-09 were checked against the tree that day, and
+**Status: 15 open, 1 decision recorded and 1 deferral, 96 closed.** Every count re-counted by
+heading on 2026-10-10; the entries closed on 2026-10-09 were checked against the tree that day, and
 the older closed sections were last re-checked on 2026-09-03.
+
+**E-mail delivery, built on 2026-10-10, closed one entry.** No product could send e-mail: the
+walkthrough told directorate officers and inspectors so, and a correction suggestion could sit unread
+until somebody opened the workshop. It is under *Closed on 2026-10-10*, recorded and closed in the same
+change. Counted by heading: still 15 open, and 95 + 1 = 96 closed.
 
 **Moving a set-password link's token off the web's request lines narrowed one entry the same day,
 and moved neither number.** The web now checks a link with `POST /api/auth/set-password/check`, the
@@ -640,6 +645,38 @@ new build goes out in a body. The entry stays open until that build has replaced
 the same, and neither form closes the browser's history.
 
 ---
+
+## Closed on 2026-10-10
+
+### [MEDIUM] Nothing could be e-mailed, so a designer was never told about a correction and every password link was a copy and paste (backend, frontend) — **CLOSED 2026-10-10**
+
+There was no mail sender. The web walkthrough said so to directorate officers ("This product has no
+mail sender") and to the sanction checklist's reader, an inspector was told that a suggestion "may sit
+unread until somebody opens the workshop", and every set-password link had to be copied out of Users
+and passed on by hand.
+
+Built: an Amazon SES sender (SESv2 through boto3, `services/mailer.py`) behind an outbox
+(`EmailMessage`, migration `20261010100000_email_outbox`, `services/email_outbox.py`) that the
+existing `fieldrepo-queue` drain sends from, with compare-and-set claiming, retries with backoff for a
+throttle or SES fault, a permanent failure for a rejected message, and the row itself as the send log.
+Plain-text and HTML templates; bodies are rendered at send time and never stored or logged. Two
+triggers: an inspector filing a correction suggestion or sending a report back e-mails the workshop's
+designers (`notify_review_note`, after the write, never failing it), and a provisioner can choose
+"E-mail a password link" on Users (`delivery: "EMAIL"`), which queues the link Fernet-sealed, clears
+the seal once the message is dealt with, and hands the provisioner no copy. Each person can switch
+the review notices off in Settings (`emailReviewNotes`, opt-out). Mail is on only when
+`MAIL_FROM_ADDRESS` is set; otherwise every e-mail control is absent and nothing on screen mentions
+it. The walkthrough sentences above were rewritten to be true either way.
+
+**The owner's steps** (no AWS resource is created by this repository): verify the sending identity
+in SES ap-south-1, request production access there, grant the backend IAM user `ses:SendEmail`, and
+add `MAIL_FROM_ADDRESS` to `BACKEND_ENV` — [ENVIRONMENT.md](ENVIRONMENT.md), *E-mail (Amazon SES)*.
+
+Pinned by `tests/test_mailer.py` (the SES request and the retry classification, SES stubbed),
+`tests/test_email_outbox.py` (the seal, the drain, retries, expiry, the opt-out, the recipients, no
+link or address in a log line), `tests/test_review_note_triggers.py` (both inspection doors notify
+after their write, and a refused send-back notifies nobody) and `tests/test_email_db.py` (the
+preference routes, an e-mailed link against a real database, and the drain).
 
 ## Closed on 2026-10-09
 

@@ -290,7 +290,7 @@ export const DIRECTORATE_TRACK: GuideTrack = {
     "wrong address, a link nobody sent, a correction made in the directory and not on the workshop.",
   checklist: [
     "The Gmail address on the sanction order is the one on the signed document, character for character — it becomes the designer's sign-in identity and it cannot be edited afterwards.",
-    "The sign-in link has actually been sent. Nothing is emailed by this product; the link is on screen once, works once, and expires.",
+    "The sign-in link has actually been sent. It is on screen once, works once, and expires.",
     "Every workshop you opened has a designer named on it. Until it does, nobody can fill in a single stage of it.",
     "Both officer slots are filled. A workshop with no Assistant Director and no Regional Director is nobody's to read back.",
     "The artisan list's refused rows were corrected and re-uploaded, not left — the report names each one and why.",

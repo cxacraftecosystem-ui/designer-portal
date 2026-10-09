@@ -154,7 +154,7 @@ export const INSPECTOR_STEPS: GuideStep[] = [
       "“Send the report back” — moves it to Needs revision"
     ],
     watch: [
-      "⚠ THE TWO BUTTONS DO DIFFERENT THINGS AND ONLY ONE OF THEM MOVES ANYTHING. Filing a suggestion records your note and leaves the report exactly where it is. Sending it back records the same note AND moves the report to Needs revision, which is what actually puts it on its designers' desks. A suggestion filed on its own may sit unread until somebody opens the workshop.",
+      "⚠ THE TWO BUTTONS DO DIFFERENT THINGS AND ONLY ONE OF THEM MOVES ANYTHING. Filing a suggestion records your note and leaves the report exactly where it is. Sending it back records the same note AND moves the report to Needs revision, which is what actually puts it on its designers' desks. A suggestion filed on its own waits for its designers on the workshop and does not move the report.",
       "NEITHER CAN BE EDITED OR WITHDRAWN. An officer who changes their mind files another one, and both stay on the record. The screen says so under the buttons.",
       "THE BOX IS CLOSED UNTIL THE REPORT IS HANDED IN. If a workshop has not been submitted for inspection yet there is nothing to comment on, and the panel says so rather than accepting a note that would belong to no round. Its designers hand it in from the workshop's own screen.",
       "NOTHING YOU DO HERE CHANGES THE WORKSHOP'S CONTENT — not a stage value, not a photograph, not the completeness figure, not a record. What a send-back changes is the report's STATUS, and the designers are the ones who act on it next: they hand it back in by correcting the stages, and it returns to Pre-submission for a fresh pass.",
