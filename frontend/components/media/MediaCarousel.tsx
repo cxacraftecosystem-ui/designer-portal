@@ -243,11 +243,11 @@ export function MediaCarousel({
         ── THE DEFECT ─────────────────────────────────────────────────────────────────────────────
 
         `MediaLightbox`, rendered at the foot of this component, does NOT portal: its root is a plain
-        `fixed inset-0 z-100` div (`components/media/MediaLightbox.tsx:314`), so while it is open it
+        `fixed inset-0 z-100` div (`components/media/MediaLightbox.tsx:442`), so while it is open it
         is still a CHILD of the section below and React's synthetic bubbling walks every keystroke
         made inside the dialog straight up into this handler. The dialog's own key handling is a
         `window` listener that answers Escape and Tab and nothing else
-        (`MediaLightbox.tsx:254-296`), so Left, Right, Home and End were handled HERE, by the
+        (`MediaLightbox.tsx:382-424`), so Left, Right, Home and End were handled HERE, by the
         carousel underneath — and `zoomed` is a frozen snapshot of whatever was clicked (set once at
         the frame, never re-derived from `safeIndex`), so the frame, the "N of M" readout and the
         ringed thumbnail all stepped along behind a dialog that went on showing the original
@@ -266,7 +266,7 @@ export function MediaCarousel({
         Handing the dialog `item={current}` so it follows the carousel reads like the better answer
         and is a much larger change than a prop swap: that component's focus effect is keyed on
         `[onClose]` and its teardown does `if (opener?.isConnected) opener.focus()`
-        (`MediaLightbox.tsx:254-296`), so a subject that steps means re-writing another component's
+        (`MediaLightbox.tsx:382-424`), so a subject that steps means re-writing another component's
         focus protocol — every step would hand focus back to the thumbnail behind the overlay. The
         arrows inside a modal are the modal's business; this reading control stands down until it is
         the thing on screen again.

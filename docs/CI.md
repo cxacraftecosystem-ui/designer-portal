@@ -889,6 +889,14 @@ unread. One such line is expected and stays: `deploy-frontend.yml`'s global `ver
 esbuild's script blocked, because a global install has no `package.json` to approve it in and the
 CLI works without it (measured, and argued on that step).
 
+**`npm warn ERESOLVE overriding peer dependency` for three ESLint plugins.** Expected since
+2026-10-09, when ESLint went to 10. `eslint-config-next` 16.4.0 depends on `eslint-plugin-import`,
+`eslint-plugin-jsx-a11y` and `eslint-plugin-react`, and their newest releases (2.32.0, 6.10.2 and
+7.37.5, true as of 2026-10-09; check `npm view <plugin> peerDependencies`) still declare ESLint
+ranges that end at 9. npm installs them anyway and prints three of these blocks; the install does not
+fail, and `npx eslint . --max-warnings=0` runs all three under ESLint 10. The blocks go when the
+plugins widen their ranges. One that names any other package is new: read it.
+
 **Two production deployments per push.** Vercel's Git integration has been re-linked. It was removed
 outright (§2); if two deployments appear again, that is what happened. Unlink it, or at minimum
 restore the Ignored Build Step — see §3.2.
