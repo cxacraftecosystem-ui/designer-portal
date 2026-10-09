@@ -917,6 +917,12 @@ jobs:
       # documented rollback into a unit that cannot start. It is Ubuntu 24.04's own system Python
       # besides, which apt and cloud-init use. The step prints whether it is still there.
       #
+      # NEEDRESTART_SUSPEND=1 ON EVERY apt-get. Ubuntu 24.04 runs needrestart after apt changes
+      # anything, and non-interactively it can restart the services whose binaries were replaced —
+      # which, the moment a python3.14 patch lands, is fieldrepo and fieldrepo-queue, restarted on the
+      # OLD release in the middle of a deploy that restarts them on the new one a few steps later. The
+      # deploy owns those restarts; needrestart does not get a vote here.
+      #
       # libatomic1 RIDES ALONG because the Node the next steps pin for the Prisma CLI (26.x) links
       # against it — measured on a trixie-slim container, where its absence made every npm call exit
       # 127. Ubuntu server images normally carry it; asking costs one `dpkg -s`.
@@ -928,7 +934,7 @@ jobs:
           py="python${BOX_PYTHON}"
           apt_get() {
             for attempt in 1 2 3 4 5 6 7 8 9 10; do
-              if sudo DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=120 -o Dpkg::Use-Pty=0 "$@"; then
+              if sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 apt-get -o DPkg::Lock::Timeout=120 -o Dpkg::Use-Pty=0 "$@"; then
                 return 0
               fi
               echo "apt-get $1 failed (attempt ${attempt}/10); most often unattended-upgrades or apt-daily holding a lock. Retrying in 30 s." >&2
