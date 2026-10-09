@@ -131,7 +131,7 @@ jobs:
           # moved past the commit that was deployed. Build the commit that went out.
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
-      - name: Set up JDK 17
+      - name: Set up JDK 25
         uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
         with:
           distribution: temurin
