@@ -131,7 +131,11 @@ resource "aws_lambda_function" "cost_report" {
   function_name = "${var.project}-cost-report"
   role          = aws_iam_role.cost_report.arn
   handler       = "index.handler"
-  runtime       = "python3.12"
+  # python3.14, the newest Python AWS runs that is also upstream's newest stable
+  # (AWS lists python3.15, which is still a release candidate upstream). Needed
+  # provider 6.x: 5.x rejected anything past python3.13. index.py uses datetime,
+  # os, collections and boto3 only, so nothing in it changed.
+  runtime       = "python3.14"
 
   filename = data.archive_file.cost_report.output_path
   # WITHOUT THIS THE CODE NEVER UPDATES. Terraform compares the zip's hash, not its contents; omit

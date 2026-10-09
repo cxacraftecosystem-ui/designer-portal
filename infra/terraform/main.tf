@@ -96,13 +96,15 @@
 ###############################################################################
 
 terraform {
-  # ─── 1.10, NOT 1.5, AND THE BUMP IS LOAD-BEARING ───────────────────────────
-  # `use_lockfile` in the backend below is S3-native state locking, which landed
-  # in Terraform 1.10 and replaces the old DynamoDB lock table. On 1.5 this
-  # configuration does not merely lose locking — `terraform init` rejects the
-  # unknown argument, which is the right failure: a version that silently ran
-  # without locking would be the one case this block exists to prevent.
-  required_version = ">= 1.10.0"
+  # ─── THE FLOOR IS THE NEWEST TERRAFORM, 1.16.5 (2026-09-30) ─────────────────
+  # It was 1.10.0 — the release that brought `use_lockfile` (S3-native state
+  # locking, in the backend below), without which `terraform init` rejects the
+  # argument outright. That is still the hard minimum. The floor now sits at the
+  # newest release because the state is SHARED in S3: a binary older than the one
+  # that last wrote it should not be the next to write it, and the repository's
+  # rule is to run the latest stable toolchain everywhere. Raise it with each
+  # Terraform release you adopt (checkpoint-api.hashicorp.com/v1/check/terraform).
+  required_version = ">= 1.16.5"
 
   # ─── THE REMOTE STATE, AND WHY IT LIVES IN THE MEDIA BUCKET ────────────────
   #
@@ -196,10 +198,26 @@ terraform {
     use_lockfile = true
   }
 
+  # ─── THE PROVIDERS, AND THE LOCK FILE THAT IS NOW COMMITTED (2026-10-09) ────
+  # aws 6.x since 2026-10-09 (6.68.0 then), from the final 5.x (5.100.0). The v6
+  # upgrade guide was checked against every resource here: `aws_ami` already sets
+  # `owners`, `aws_eip` already uses `domain`, and nothing uses the attributes v6
+  # removed. The one state change is that `aws_instance.user_data` is stored as
+  # text rather than a hash, which `ignore_changes` already covers. It is also
+  # what lets the cost-report Lambda run python3.14: 5.x validated `runtime`
+  # against a list that ended at python3.13.
+  #
+  # `.terraform.lock.hcl` beside this file is committed (the root .gitignore
+  # names it as an exception), with hashes for linux_amd64, linux_arm64,
+  # windows_amd64, darwin_amd64 and darwin_arm64, so every operator installs
+  # the same provider builds. Refresh it in the same change as a version bump:
+  #   terraform init -upgrade
+  #   terraform providers lock -platform=linux_amd64 -platform=linux_arm64 \
+  #     -platform=windows_amd64 -platform=darwin_amd64 -platform=darwin_arm64
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = "~> 5.0"
+      version = "~> 6.68"
     }
     # Added 2026-09-17 for `data.archive_file` in cost_report.tf, which zips the cost-report
     # Lambda's single source file at plan time. The alternative is committing a binary .zip and
@@ -208,7 +226,7 @@ terraform {
     # NOTE: adding a provider requires `terraform init` before the next plan will run.
     archive = {
       source  = "hashicorp/archive"
-      version = "~> 2.4"
+      version = "~> 2.8"
     }
   }
 }
@@ -494,7 +512,13 @@ data "aws_ami" "ubuntu" {
   owners      = ["099720109477"] # Canonical
   filter {
     name   = "name"
-    values = ["ubuntu/images/hvm-ssd-gp3/ubuntu-noble-24.04-amd64-server-*"]
+    # UBUNTU 26.04 (resolute) SINCE 2026-10-09; it was 24.04 (noble). `ami` is in
+    # `ignore_changes` on the instance, so this decides only what a REBUILD or a
+    # second box is created from — the running box keeps its noble image. The
+    # newest match in ap-south-1 on that date: ami-039bcc649e447aea2
+    # (ubuntu-resolute-26.04-amd64-server-20261003, ImdsSupport v2.0).
+    # user_data.sh installs the 26.04 package names to go with it.
+    values = ["ubuntu/images/hvm-ssd-gp3/ubuntu-resolute-26.04-amd64-server-*"]
   }
   filter {
     name   = "virtualization-type"
@@ -693,8 +717,9 @@ resource "aws_instance" "api" {
   #
   # SAY THE REFUTATION FIRST, so nobody reads this block as a closed hole. An audit reported the
   # instance metadata service as exposed to SSRF because `metadata_options` was absent. It is not:
-  # Canonical's Ubuntu 24.04 AMIs are published with `ImdsSupport: v2.0`, so an instance launched
-  # from `data.aws_ami.ubuntu` above defaults to `HttpTokens = required` already. The finding was
+  # Canonical's Ubuntu 24.04 AMIs are published with `ImdsSupport: v2.0` — and so are the 26.04 ones
+  # `data.aws_ami.ubuntu` selects since 2026-10-09 (ami-039bcc649e447aea2, checked that day) — so an
+  # instance launched from it defaults to `HttpTokens = required` already. The finding was
   # checked against the AMI rather than against the absence of a block, and it did not survive that.
   #
   # SO WHY WRITE IT DOWN. Because "it defaults correctly" is a property of THE IMAGE, not of this
@@ -772,7 +797,8 @@ resource "aws_instance" "api" {
   # everything that implies (see the note on `key_name` above).
   #
   # `ami` JOINED THE LIST ON 2026-09-03, AND THE FIRST RECONCILIATION PLAN IS WHY. `data.aws_ami`
-  # asks for Canonical's MOST RECENT noble image, so every Canonical publish makes the data source
+  # asks for Canonical's MOST RECENT image of its series (noble then, resolute since 2026-10-09 —
+  # which makes the data source answer a different id at once), so every Canonical publish makes the data source
   # answer a new id — and `ami` is ForceNew, so the very first plan after the state was rebuilt
   # proposed DESTROYING the production instance to chase a fortnight-newer base image. The live
   # box's identity is managed by the deploy workflow, not by rebuild-time inputs; same argument as

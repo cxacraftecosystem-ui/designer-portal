@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# First-boot provisioning for the Design Prototype Workshop API box (Ubuntu 24.04).
+# First-boot provisioning for the Design Prototype Workshop API box (Ubuntu 26.04 "resolute", the
+# image main.tf selects since 2026-10-09; the box running today was built from 24.04 and is unaffected,
+# because this script only ever runs at a new box's first boot).
 # Installs system deps (including ffmpeg for Whisper audio chunking and nginx as
 # the reverse proxy so port 8000 is never exposed directly), prepares a swap file
 # so installs don't OOM on 1 GiB, and lays down the nginx site + systemd unit.
@@ -53,7 +55,11 @@ fi
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
-apt-get install -y python3.12-venv python3-pip git ffmpeg nginx
+# python3.14-venv: 3.14 is 26.04's SYSTEM Python, and every release venv is built with it
+# (BOX_PYTHON in deploy-backend.yml, whose install step finds it already here and skips the
+# deadsnakes PPA a 24.04 box needs). libatomic1: the Node the deploy pins for the Prisma CLI
+# (26.x) links against it. nginx, ffmpeg and git keep their 24.04 package names.
+apt-get install -y python3.14-venv python3-pip git ffmpeg nginx libatomic1
 
 # --- nginx reverse proxy: 80 -> 127.0.0.1:8000 -------------------------------
 cat > /etc/nginx/sites-available/fieldrepo <<'NGINX'
