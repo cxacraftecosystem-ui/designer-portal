@@ -421,7 +421,11 @@ fun SetPasswordLinkScreen(
     initialLink: String = "",
 ) {
     val scope = rememberCoroutineScope()
-    var pasted by remember { mutableStateOf(initialLink) }
+    // Keyed on the link it was opened with, so a SECOND link tapped while this screen is up replaces
+    // the first in the box — `MainActivity` hands it over as a new [initialLink] — instead of being
+    // dropped behind a box that still holds the stale one. A paste does not change [initialLink], so
+    // what somebody types or pastes here is never overwritten.
+    var pasted by remember(initialLink) { mutableStateOf(initialLink) }
     var next by remember { mutableStateOf("") }
     var confirm by remember { mutableStateOf("") }
     var reveal by remember { mutableStateOf(false) }

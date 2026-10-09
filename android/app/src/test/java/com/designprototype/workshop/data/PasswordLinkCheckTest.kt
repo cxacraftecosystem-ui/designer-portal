@@ -38,7 +38,9 @@ import java.io.IOException
  *     back in the logs exactly when the server is struggling.
  *  4. A gateway error on the POST is retried, as it was on the GET it replaces — the check reads and
  *     writes nothing.
- *  5. The debug request log prints the fallback GET's `token=` and a bearer header as `██`.
+ *  5. The debug request log blanks the fallback GET's `token=` (OkHttp writes its `██` back
+ *     percent-encoded), the bearer header, and the fresh session a password change sends back.
+ *  6. A 2xx body that does not say whether the link is valid is thrown, not read as "dead".
  *
  * Driven through the app's OWN stack — `ApiClient.httpClient` and `ApiClient.retrofit`, every
  * interceptor in order — with the socket replaced by an answer from memory, the shape
@@ -205,10 +207,24 @@ class PasswordLinkCheckTest {
         assertTrue("both were the POST", sent.all { it.isTheCheck() })
     }
 
+    // ── 6. An answer that does not answer ───────────────────────────────────────────────────────
+
+    @Test
+    fun `a 2xx body with no verdict in it is thrown, never read as a dead link`() {
+        // `valid` used to default to false, so this body hid the password boxes behind "This password
+        // link is not valid." Thrown, the screen treats the check as not examined and offers the form.
+        val repository = repository { Answer(200, """{"reason":null}""") }
+
+        val thrown = runCatching { runBlocking { repository.checkPasswordLink(token) } }.exceptionOrNull()
+
+        assertTrue("a body with no verdict fails to decode: $thrown", thrown is kotlinx.serialization.SerializationException)
+        assertTrue("and it brings no GET", sent.none { it.method == "GET" })
+    }
+
     // ── 5. The request log ──────────────────────────────────────────────────────────────────────
 
     @Test
-    fun `the request log prints neither the fallback's token nor a bearer header`() {
+    fun `the request log prints neither the fallback's token nor either session`() {
         val lines = mutableListOf<String>()
         val logger = object : HttpLoggingInterceptor.Logger {
             override fun log(message: String) {
@@ -225,6 +241,8 @@ class PasswordLinkCheckTest {
                     .protocol(Protocol.HTTP_1_1)
                     .code(200)
                     .message("OK")
+                    // What a password change answers with: the fresh session, in a header.
+                    .header(SESSION_TOKEN_HEADER, "the-fresh-session")
                     .body(expired.toResponseBody("application/json".toMediaType()))
                     .build()
             }
@@ -241,5 +259,7 @@ class PasswordLinkCheckTest {
         assertTrue("the line is still there to read: $log", log.contains("/api/auth/set-password?token="))
         assertFalse("the token is not: $log", log.contains(token))
         assertFalse("nor is the session: $log", log.contains("the-session-itself"))
+        assertTrue("the response header is named: $log", log.contains(SESSION_TOKEN_HEADER))
+        assertFalse("but the fresh session is not: $log", log.contains("the-fresh-session"))
     }
 }

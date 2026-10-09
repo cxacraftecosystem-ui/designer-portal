@@ -596,10 +596,13 @@ checks a link with `POST /api/auth/set-password/check` and the token in a JSON b
 GET only when that POST is answered 404 or 405 — a server from before the route — and on no other
 failure (`WorkshopRepository.checkPasswordLink`, pinned by
 `android/app/src/test/java/com/designprototype/workshop/data/PasswordLinkCheckTest.kt`). It reads the
-token from either `?token=` or `#token=` (`passwordLinkToken`, pinned by `PasswordSetupCopyTest`), and
-its debug request log prints the fallback's token as `██`. The entry stays open: the route itself, the
-web page's move to the POST and to the fragment, `link_for`'s switch, and the shipped builds, which still
-ask with the GET and read only the query.
+token from either `?token=` or `#token=`, fragment first as the web reads it (`passwordLinkToken`,
+pinned by `PasswordSetupCopyTest`), and its debug request log replaces the fallback's token — OkHttp
+writes its `██` back percent-encoded, so the line reads `token=%E2%96%88%E2%96%88`. No deployed server
+has the POST route as of 2026-10-09 (it is written on the unmerged `upgrade/dp-frontend` branch), so
+until it deploys every check from the new build still ends in the GET. The entry stays open: the route
+itself, the web page's move to the POST and to the fragment, `link_for`'s switch, and the shipped
+builds, which still ask with the GET and read only the query.
 
 ---
 

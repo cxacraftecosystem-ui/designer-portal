@@ -915,7 +915,14 @@ data class PasswordLinkCheckRequest(
  */
 @Serializable
 data class PasswordLinkCheckDto(
-    val valid: Boolean = false,
+    /**
+     * REQUIRED, with no default, and that is the screen's rule rather than a style. A default of
+     * `false` read a 2xx body that did not answer the question — `{}`, a proxy's page that happens to
+     * be JSON — as "this link is dead", printed a refusal and hid the password boxes. Without the
+     * default such a body fails to decode, and a check that could not be read is what
+     * `SetPasswordLinkScreen` treats as "not examined": it offers the form and lets the POST decide.
+     */
+    val valid: Boolean,
     /** The server's own reason WORD — never its sentence. See `dwSetPasswordRefusal`. */
     val reason: String? = null,
     val purpose: String? = null

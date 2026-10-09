@@ -251,6 +251,7 @@ import com.designprototype.workshop.ui.SESSION_ENDED_SENTENCE
 import com.designprototype.workshop.ui.SetPasswordLinkScreen
 import com.designprototype.workshop.ui.mustChangePasswordBlocks
 import com.designprototype.workshop.ui.passwordLinkOffered
+import com.designprototype.workshop.ui.isSetPasswordLinkAddress
 import com.designprototype.workshop.ui.WorkshopAccessQueueFailure
 import com.designprototype.workshop.ui.WorkshopAccessQueueView
 import com.designprototype.workshop.ui.workshopAccessQueueFailure
@@ -581,18 +582,17 @@ import java.time.LocalDate
 import java.time.ZoneId
 import java.util.Locale
 
-/**
- * The screen an administrator's password link points at, as the deep-link filter and this file both
- * have to spell it.
+/*
+ * The address an administrator's password link points at is `SET_PASSWORD_LINK_HOST` and
+ * `SET_PASSWORD_LINK_PATH` in ui/PasswordSetupCopy.kt, checked by `isSetPasswordLinkAddress`.
  *
- * ONE CONSTANT, THREE PLACES, AND THE THIRD IS IN ANOTHER LANGUAGE. `credential_links` on the
- * server defines this path and builds every link from it; `AndroidManifest.xml` names it in the VIEW
- * filter so the OS knows which links to offer this app for; and [MainActivity.takePasswordLink]
- * checks it again on the intent that arrives, because a filter is what the OS matched and not
+ * ONE ADDRESS, THREE PLACES, AND THE THIRD IS IN ANOTHER LANGUAGE. `credential_links` on the server
+ * defines the path and builds every link from it; `AndroidManifest.xml` names host and path in the
+ * VIEW filter so the OS knows which links to offer this app for; and [MainActivity.takePasswordLink]
+ * checks them again on the intent that arrives, because a filter is what the OS matched and not
  * evidence about what the app was handed. Changing the server's path changes every link already in
  * somebody's hands — its own comment says so — and would have to change the two here with it.
  */
-private const val SET_PASSWORD_LINK_PATH = "/set-password"
 
 class MainActivity : ComponentActivity() {
     /**
@@ -658,9 +658,21 @@ class MainActivity : ComponentActivity() {
      * the signature, the expiry, the row and the credential fingerprint — a client-side shape test
      * could only invent a seventh refusal for a string the server might well have accepted.
      *
-     * The path is compared against the one `credential_links.SET_PASSWORD_PATH` defines, with a
-     * trailing slash tolerated, so that a VIEW intent arriving through the questionnaire filters —
-     * which match on MIME type and a `.dpwq` path — cannot be read as a password link.
+     * The scheme, the host and the path are held to the three the filter names
+     * (`isSetPasswordLinkAddress`), with a trailing slash tolerated: the activity is exported for the
+     * launcher, so another app can address it EXPLICITLY with any data at all, and the filter never
+     * sees such an intent. A VIEW arriving through the questionnaire filters — a MIME type and a
+     * `.dpwq` path — is turned away by the same test.
+     *
+     * ── ONLY A DELIVERY THAT IS NEW ───────────────────────────────────────────────────────────
+     *
+     * [incomingPasswordLink] is cleared once the redeem screen takes it, but the launch [Intent] is
+     * not, and `onCreate` runs again on things `configChanges` does not cover — a change of
+     * language, a restore after the process was killed — and on a relaunch from Recents, which
+     * replays the intent that created the task. Each of those reopened the redeem screen over the
+     * sign-in card with the same, by then usually spent, link. So `onCreate` passes [restored] for a
+     * saved instance state, and an intent marked `FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY` is not a
+     * delivery at all. `onNewIntent` is always a fresh one.
      *
      * ── THE WHOLE URI, FRAGMENT INCLUDED ──────────────────────────────────────────────────────
      *
@@ -670,11 +682,12 @@ class MainActivity : ComponentActivity() {
      * first; `passwordLinkToken` reads both, and it is the one reader the paste box uses too. The
      * filter still matches either shape, since a fragment does not change the path.
      */
-    private fun takePasswordLink(intent: Intent?) {
-        if (intent?.action != Intent.ACTION_VIEW) return
+    private fun takePasswordLink(intent: Intent?, restored: Boolean = false) {
+        if (restored || intent == null) return
+        if (intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY != 0) return
+        if (intent.action != Intent.ACTION_VIEW) return
         val uri = intent.data ?: return
-        val path = uri.path?.trimEnd('/') ?: return
-        if (path != SET_PASSWORD_LINK_PATH) return
+        if (!isSetPasswordLinkAddress(uri.scheme, uri.host, uri.path)) return
         incomingPasswordLink.value = uri.toString()
     }
 
@@ -725,7 +738,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         takeQuestionnaireDelivery(intent)
-        takePasswordLink(intent)
+        takePasswordLink(intent, restored = savedInstanceState != null)
         askForLocalNetworkWhenTheApiNeedsIt()
         val tokenStore = TokenStore(applicationContext)
         val repository = WorkshopRepository(ApiClient.create(tokenStore), tokenStore)

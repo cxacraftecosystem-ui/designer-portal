@@ -354,8 +354,18 @@ fun passwordLinkOffered(target: UserDto): Boolean = !target.passwordSetAt.isNull
  *
  * ── WHAT IT WILL AND WILL NOT DO ─────────────────────────────────────────────────────────────────
  *
- * It reads `token=` where it opens a parameter of the query or of the fragment — after `?`, `&` or
- * `#` — and otherwise returns the text as typed. The first one found wins; a link never carries two.
+ * It reads `token=` where it opens a parameter of the fragment or of the query — after `#` or `&` in
+ * the fragment, after `?` or `&` in the query, or at the very start of a pasted `token=…` — and
+ * otherwise returns the text as typed. THE FRAGMENT IS READ FIRST, as the web's
+ * `takeLinkTokenFromAddress` reads it, so one link pasted on either client gives one token; a link
+ * never carries two, and this only settles which wins if one ever does.
+ *
+ * WHITESPACE ENDS A LINK. A base64url token holds none, and a paste is often the whole message — "Your
+ * link: https://…?token=… It expires at 14:12" — so the text is read one whitespace-separated run at
+ * a time and the first run that carries a token wins. Read whole, the words after the link went to
+ * the server as part of the token, came back "malformed", and hid the password boxes behind a refusal
+ * for a link that was good.
+ *
  * It does NOT validate the shape: the token is `base64url(payload).base64url(HMAC)` and the server
  * checks the signature, the shape, the expiry, the row AND the credential fingerprint. A client-side
  * shape test would only be able to produce a SEVENTH refusal — one the server does not have a word
@@ -371,14 +381,56 @@ fun passwordLinkOffered(target: UserDto): Boolean = !target.passwordSetAt.isNull
 fun passwordLinkToken(pasted: String): String {
     val text = pasted.trim()
     if (text.isEmpty()) return ""
-    val marker = Regex("[?&#]token=")
-    val match = marker.find(text) ?: return text
-    val rest = text.substring(match.range.last + 1)
-    // Further parameters may follow the token, in the query or in the fragment, and a query token may
-    // be followed by a fragment.
-    val value = rest.takeWhile { it != '&' && it != '#' }
-    return percentDecode(value)
+    for (run in text.split(PASTE_WHITESPACE)) {
+        tokenInLink(run)?.let { return percentDecode(it) }
+    }
+    return text
 }
+
+private val PASTE_WHITESPACE = Regex("\\s+")
+
+/** `token=` opening a parameter: at the start of the part, or after one of [openers]. */
+private fun parameterValue(part: String, openers: String): String? {
+    var from = 0
+    while (true) {
+        val at = part.indexOf("token=", from)
+        if (at < 0) return null
+        if (at == 0 || part[at - 1] in openers) {
+            // Further parameters may follow it, and in the query a fragment may follow too.
+            return part.substring(at + "token=".length).takeWhile { it != '&' && it != '#' }
+        }
+        from = at + 1
+    }
+}
+
+/** The token one whitespace-free run carries, fragment first — see [passwordLinkToken]. */
+private fun tokenInLink(run: String): String? {
+    val hash = run.indexOf('#')
+    if (hash >= 0) parameterValue(run.substring(hash + 1), openers = "&")?.let { return it }
+    return parameterValue(if (hash >= 0) run.substring(0, hash) else run, openers = "?&")
+}
+
+/**
+ * The host and path an administrator's link is issued for, as the manifest's VIEW filter names them.
+ * See [isSetPasswordLinkAddress].
+ */
+const val SET_PASSWORD_LINK_HOST = "designer-repository.vercel.app"
+const val SET_PASSWORD_LINK_PATH = "/set-password"
+
+/**
+ * Is this the address of an administrator's set-password link — https, on the web app's host, at the
+ * redeem path, a trailing slash tolerated?
+ *
+ * THE MANIFEST'S FILTER IS NOT THE CHECK. It decides which IMPLICIT intents the OS offers this app,
+ * and the activity is exported for the launcher, so any app on the phone can address it EXPLICITLY
+ * with whatever data it likes — `content://anything/set-password?token=…` included — and a filter
+ * never sees that intent. The redeem screen then sets a password with whatever token arrived, so
+ * what is read off an intent is held to the same three facts the filter states.
+ */
+fun isSetPasswordLinkAddress(scheme: String?, host: String?, path: String?): Boolean =
+    scheme.equals("https", ignoreCase = true) &&
+        host.equals(SET_PASSWORD_LINK_HOST, ignoreCase = true) &&
+        path?.trimEnd('/') == SET_PASSWORD_LINK_PATH
 
 private fun percentDecode(value: String): String {
     if (!value.contains('%')) return value

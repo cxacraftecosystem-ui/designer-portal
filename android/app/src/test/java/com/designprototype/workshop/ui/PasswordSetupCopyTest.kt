@@ -283,6 +283,55 @@ class PasswordSetupCopyTest {
         )
     }
 
+    // ── 3c. A paste that is the whole message, and a link that carries both ─────────────────────
+    //
+    // A designer copies the administrator's whole message more often than the link alone, and a
+    // base64url token holds no whitespace. Read whole, the words after the link were sent as part of
+    // the token, came back "malformed", and hid the password boxes for a link that was good.
+
+    @Test
+    fun `words pasted after the link are not part of the token`() {
+        assertEquals("abc.def", passwordLinkToken("https://x/set-password?token=abc.def expires at 14:12"))
+        assertEquals("abc.def", passwordLinkToken("https://x/set-password#token=abc.def\nAsk me if it fails."))
+    }
+
+    @Test
+    fun `words pasted before the link are skipped, a hash among them included`() {
+        assertEquals(
+            "abc.def",
+            passwordLinkToken("Message #3 from the admin: https://x/set-password?token=abc.def")
+        )
+    }
+
+    @Test
+    fun `a pasted token parameter on its own is read`() {
+        assertEquals("abc.def", passwordLinkToken("token=abc.def"))
+    }
+
+    @Test
+    fun `when a link carries both, the fragment wins, as on the web`() {
+        // `takeLinkTokenFromAddress` on the web reads the fragment first; one link pasted on either
+        // client must give one token.
+        assertEquals("BBB", passwordLinkToken("https://x/set-password?token=AAA#token=BBB"))
+    }
+
+    // ── 3d. What the activity will take from an intent ──────────────────────────────────────────
+
+    @Test
+    fun `only an https link to the web app's set-password path is an administrator's link`() {
+        assertTrue(isSetPasswordLinkAddress("https", "designer-repository.vercel.app", "/set-password"))
+        assertTrue(isSetPasswordLinkAddress("HTTPS", "Designer-Repository.vercel.app", "/set-password/"))
+        // An explicit intent from another app is never seen by the manifest's filter.
+        assertFalse(isSetPasswordLinkAddress("content", "designer-repository.vercel.app", "/set-password"))
+        assertFalse(isSetPasswordLinkAddress("http", "designer-repository.vercel.app", "/set-password"))
+        assertFalse(isSetPasswordLinkAddress("https", "evil.example.org", "/set-password"))
+        assertFalse(isSetPasswordLinkAddress("https", "designer-repository.vercel.app.evil.org", "/set-password"))
+        assertFalse(isSetPasswordLinkAddress("https", "designer-repository.vercel.app", "/set-password-x"))
+        // A questionnaire file arriving through the VIEW filters is not a password link either.
+        assertFalse(isSetPasswordLinkAddress("content", "media", "/external/downloads/form.dpwq"))
+        assertFalse(isSetPasswordLinkAddress(null, null, null))
+    }
+
     // ── 4. The identifier hint rides the header ──────────────────────────────────────────────────
 
     @Test

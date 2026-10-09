@@ -180,23 +180,21 @@ object ApiClient {
             .build()
 
     /**
-     * The OkHttp stack under [retrofit]: the gateway retry, the credential writes sent once, the
-     * session and its two signals, the timeouts.
-     *
-     * Internal, and separate from [retrofit], so a JVM test can run the app's OWN interceptors over a
-     * transport that answers from memory: `httpClient(store).newBuilder().addInterceptor(…)` puts the
-     * canned answer after the last of them, where the socket would be, and nothing is copied.
-     */
-    /**
-     * The request log, on debug builds only — and with the two credentials a log line could carry
+     * The request log, on debug builds only — and with the credentials a log line could carry
      * blanked out of it.
      *
      * `logcat` on a shared handset is not a private place (the issued-link panel says the same of a
      * link). BASIC writes each request line, and the one request line this app still sends with a
      * credential in it is the set-password link check's fallback GET, `?token=…`, kept for servers
-     * older than the POST. `redactQueryParams` prints that value as `██`; `redactHeader` does the same
-     * for the session should somebody raise the level to HEADERS while debugging. Internal, with the
-     * logger and level as parameters, so `PasswordLinkCheckTest` can read what it writes.
+     * older than the POST. `redactQueryParams` replaces that value — OkHttp 5.5 writes its `██` back
+     * into the URL percent-encoded, so the line reads `token=%E2%96%88%E2%96%88` — and `redactHeader`
+     * blanks the session both ways should somebody raise the level to HEADERS while debugging: the
+     * bearer token on the way out, and the fresh one a password change sends back in
+     * [SESSION_TOKEN_HEADER]. BODY must never be used here: it would print the check's
+     * `{"token": …}` and every password the sign-in and the two password screens send.
+     *
+     * Internal, with the logger and level as parameters, so `PasswordLinkCheckTest` can read what it
+     * writes.
      */
     internal fun httpLogging(
         logger: HttpLoggingInterceptor.Logger = HttpLoggingInterceptor.Logger.DEFAULT,
@@ -206,8 +204,17 @@ object ApiClient {
         this.level = level
         redactQueryParams("token")
         redactHeader("Authorization")
+        redactHeader(SESSION_TOKEN_HEADER)
     }
 
+    /**
+     * The OkHttp stack under [retrofit]: the gateway retry, the credential writes sent once, the
+     * session and its two signals, the timeouts.
+     *
+     * Internal, and separate from [retrofit], so a JVM test can run the app's OWN interceptors over a
+     * transport that answers from memory: `httpClient(store).newBuilder().addInterceptor(…)` puts the
+     * canned answer after the last of them, where the socket would be, and nothing is copied.
+     */
     internal fun httpClient(tokenStore: TokenStore): OkHttpClient {
         val logging = httpLogging()
 

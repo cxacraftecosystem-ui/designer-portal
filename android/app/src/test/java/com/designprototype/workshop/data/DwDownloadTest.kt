@@ -368,15 +368,15 @@ class DwDownloadTest {
         assertEquals(received, afterTwoSeconds.receivedBytes)
         assertEquals(received, afterFour.receivedBytes)
         assertEquals(received, afterEight.receivedBytes)
-        assertTrue(
-            "Silence must lower the reported rate.",
-            afterFour.bytesPerSecond!! < afterTwoSeconds.bytesPerSecond!!,
-        )
-        assertTrue(afterEight.bytesPerSecond!! < afterFour.bytesPerSecond!!)
+        val rateAfterTwo = afterTwoSeconds.bytesPerSecond!!
+        val rateAfterFour = afterFour.bytesPerSecond!!
+        val rateAfterEight = afterEight.bytesPerSecond!!
+        assertTrue("Silence must lower the reported rate.", rateAfterFour < rateAfterTwo)
+        assertTrue(rateAfterEight < rateAfterFour)
         // 2.5 MB/s measured over the two seconds after the first byte, halved by two more seconds of
         // nothing arriving. The first byte's own buffer is the origin, so it is in neither figure.
-        assertEquals(2_500_000.0, afterTwoSeconds.bytesPerSecond!!, 1.0)
-        assertEquals(1_250_000.0, afterFour.bytesPerSecond!!, 1.0)
+        assertEquals(2_500_000.0, rateAfterTwo, 1.0)
+        assertEquals(1_250_000.0, rateAfterFour, 1.0)
         assertTrue(dwTransferLine(afterFour).startsWith("5 MB of 349 MB · 1% · "))
     }
 
