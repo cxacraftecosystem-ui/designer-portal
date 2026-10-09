@@ -171,13 +171,21 @@ jobs:
         # until somebody raises the pin, which needs a python-build-standalone release carrying it
         # (usually days later) — a reason to say so on every run, not to stop every merge. A pin
         # that disagrees with itself is what fails, in backend/tests/test_box_interpreter_pin.py.
+        # `continue-on-error` AND the `|| true`s, because the first version of this step failed the
+        # job: this job runs in backend/, a relative path to the workflow missed, and the `run`
+        # shell's `-e` turned that into exit 2 — after which nothing was installed and ruff, which
+        # runs `if: !cancelled()`, failed with 127. Hence $GITHUB_WORKSPACE.
+        continue-on-error: true
         run: |
-          box="$(sed -nE 's/^ +BOX_PYTHON_VERSION: "([0-9.]+)"$/\1/p' .github/workflows/deploy-backend.yml)"
-          here="$(python -c 'import platform; print(platform.python_version())')"
+          box="$(sed -nE 's/^ +BOX_PYTHON_VERSION: "([0-9.]+)"$/\1/p' "$GITHUB_WORKSPACE/.github/workflows/deploy-backend.yml" || true)"
+          here="$(python -c 'import platform; print(platform.python_version())' || true)"
+          newer="$(python -c 'import sys; v = lambda s: tuple(int(p) for p in s.split(".")); print("ci" if v(sys.argv[1]) > v(sys.argv[2]) else "box")' "$here" "$box" 2>/dev/null || true)"
           if [ "$here" = "$box" ]; then
             echo "this job tests CPython $here, the version the API boxes run"
+          elif [ "$newer" = "ci" ]; then
+            echo "::warning::this job tests CPython $here; the API boxes are pinned to $box (BOX_PYTHON_* in deploy-backend.yml and infra/terraform/user_data.sh). Raise the pin to the newest python-build-standalone release that carries $here."
           else
-            echo "::warning::this job tests CPython $here; the API boxes are pinned to ${box:-<no pin found>} (BOX_PYTHON_* in deploy-backend.yml and infra/terraform/user_data.sh). Raise the pin to the newest python-build-standalone release that carries $here."
+            echo "::warning::this job tests CPython ${here:-<unknown>}, but the API boxes are pinned to ${box:-<no pin found>} (BOX_PYTHON_* in deploy-backend.yml). CI is behind production here; check what setup-python's check-latest found."
           fi
 
       - name: Install the backend and its test extras
