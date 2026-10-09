@@ -271,14 +271,14 @@ android {
      * `-if interface * { @retrofit2.http.* <methods>; }` rule keeps all seven), `-dontoptimize`, the
      * ML Kit registrars' constructors, the sherpa-onnx binding, and Credential Manager's provider.
      *
-     * WHAT IS STILL NOT PROVEN, stated because a shrunk build fails in a way that a green build
-     * hides. R8's failure mode is not a compile error — it is a `SerializationException` or a
-     * `NoSuchMethodError` at the first sync, on a build that installed and ran fine on a desk. This
-     * machine has no device and no emulator (`adb` is not installed), so nothing here exercises the
-     * shrunk APK at runtime. What IS checked is: the release build completes, the mapping is
-     * emitted, and `r8-removed.txt` is read to confirm nothing load-bearing was dropped. Before this
-     * ships, a release build must be run on real hardware through the offline loop — the same
-     * hardware gap the handover already records against the offline claim itself.
+     * WHAT IS PROVEN, AND WHAT IS STILL NOT. R8's failure mode is not a compile error — it is a
+     * `SerializationException` or a `NoSuchMethodError` at the first sync, on a build that installed
+     * and ran fine on a desk. On 2026-10-09 this shrunk build ran on the API 37 emulator (runs
+     * 37949869530, 37951774101, 37953735603; docs/CI.md §1.5): sign-in, both set-password
+     * link forms, the designer profile's Coil pictures, no crash or R8-shaped exception, and every
+     * class reached by name present. Never run shrunk: sync and media upload, dictation on ARM, a
+     * live camera, Credential Manager — so a release still goes through the offline loop on real
+     * hardware before it ships, the gap the handover records against the offline claim itself.
      *
      * `isShrinkResources` needs `isMinifyEnabled`; enabling it alone is an error rather than a
      * smaller APK.

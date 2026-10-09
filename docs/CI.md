@@ -635,8 +635,15 @@ the APK for everything reached by name (manifest classes and their constructors,
 `META-INF/services` files, sherpa-onnx's native methods against the library's exports, Credential
 Manager's provider, the seven Retrofit interfaces), then drove the app against a local stub: the
 sign-in card, set-password links in fragment and query form through the POST-404-GET fallback, a
-password sign-in, and the designer profile's https and loopback pictures drawn by Coil. Its scripts
-and runs are in that branch's history (`.github/release-smoke/`).
+password sign-in, and the designer profile's https and loopback pictures drawn by Coil. It ran green
+three times — 37949869530, 37951774101 and 37953735603, the last on 20c04fe — with no crash, no
+R8-shaped exception and no link token in the app's own log lines; its scripts are in that branch's
+history (`.github/release-smoke/`, removed in the commit after). Its last run also put the keyboard
+over the designer profile's lowest text box: the window panned the focused box to sit directly above
+the keyboard, so `SystemBarsInsetsRoot` leaving the IME inset alone does not hide the box being typed
+in on Android 17; the line under it and anything further down stay behind the keyboard until it
+closes. Sync, uploads, dictation on ARM, a live camera and Credential Manager were not exercised
+shrunk, and stay on the handset checklist.
 
 **It is not wired into branch protection and must not be**: a required check a human has to remember
 to trigger is a required check that blocks every pull request forever.
