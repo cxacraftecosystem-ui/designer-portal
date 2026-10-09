@@ -632,20 +632,23 @@ measurement: the API under a 1000M soft ceiling and no hard one, the queue under
 
 **The box on 3.12, read over SSM on 2026-10-09** (release `201d269`, 24 minutes after a restart, idle):
 `fieldrepo` 686 MB (`memory.current`), `fieldrepo-queue` 585 MB, both `memory.events` at zero, swap
-29 MB used of 2 GiB, and `MemAvailable` 384 MB of 1,905. Adding ~178 MB to each process puts the API
-near 865 MB (inside its soft ceiling, and it has no hard one) and the idle queue near 765 MB — about
-75 MB under its 800M soft ceiling, so a transcription job starts throttled, but nearly 400 MB under
-the 1100M hard stop, and `memory.max` does not count swap, so neither unit is expected to be killed by
-its ceiling. Raising the ceilings would not have helped: they are per-unit caps, not memory.
+29 MB used of 2 GiB, and `MemAvailable` 384 MB of 1,905 — 538 MB an hour and a half later, once the
+kernel had moved cold pages to swap, so on 3.12 it moves between about 380 and 540 MB. Adding ~178 MB
+to each process puts the API near 865 MB (inside its soft ceiling, and it has no hard one) and the
+idle queue near 765 MB — about 75 MB under its 800M soft ceiling, so a transcription job starts
+throttled, but nearly 400 MB under the 1100M hard stop, and `memory.max` does not count swap, so
+neither unit is expected to be killed by its ceiling. Raising the ceilings would not have helped:
+they are per-unit caps, not memory.
 
 **What the extra ~356 MB does take is `MemAvailable`, and the application reads it.**
 `app/services/memory_budget.budget_bytes` caps a read at a quarter of `MemAvailable` (8 MiB floor) —
 the cgroup files it also tries are the root's, which a systemd unit's process does not have — and four
 paths size themselves by it: audio-as-mp4 conversion, captions and media measurement (32 MiB ceilings
-each) and report images (96 MiB). At 384 MB available all four run at or near their ceilings; if
-`MemAvailable` falls by the full ~356 MB they drop towards the 8 MiB floor, and media between there
-and 32 MiB that is accepted today is refused. That is an estimate from the kernel's arithmetic, not a
-measurement — swapping cold pages out gives some back — which is why it is written down here.
+each) and report images (96 MiB). At 384-538 MB available all four run at or near their ceilings.
+Take the full ~356 MB away and the range becomes roughly 30-180 MB: at the top of it only the report
+images' cap shrinks (to ~43 MiB); at the bottom all four sit on the 8 MiB floor, and media between
+there and 32 MiB that is accepted today is refused. That is an estimate from the kernel's arithmetic,
+not a measurement — swapping cold pages out gives some back — which is why it is written down here.
 
 Read after the first 3.14 deploy, before calling it done: `systemctl status fieldrepo
 fieldrepo-queue` (the `Memory:` lines, and set both drop-ins and user_data.sh's base units from them)
