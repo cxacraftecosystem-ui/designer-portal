@@ -856,8 +856,29 @@ dependencies {
      * AT 1.6.2, read off `dl.google.com/dl/android/maven2` on 2026-10-09: `camera-core` 1,213,194
      * bytes, `camera-camera2` 1,184,080, `camera-lifecycle` 54,987, `camera-compose` 42,565.
      * `camera-camera2` nearly doubled because 1.6 rebuilt its internals on CameraPipe, the stack
-     * Google's own camera app runs on. The table and the paragraph after it are the reading taken
-     * when CameraX first arrived, at 1.5.3, and are kept as that record.
+     * Google's own camera app runs on, which now arrives as an artifact of its own. Every other row
+     * on the release classpath that nothing but CameraX asks for, worked out from the dump
+     * regenerated that day (`android/deps.txt`) and read off the same hosts (Maven Central for the
+     * non-AndroidX rows):
+     *
+     *     androidx.camera:camera-camera2-pipe:1.6.2                    1,585,622 bytes
+     *     androidx.camera.viewfinder:viewfinder-core:1.6.2                91,706
+     *     androidx.camera.viewfinder:viewfinder-compose:1.6.2             66,150
+     *     com.google.dagger:dagger:2.59                                   55,480
+     *     androidx.lifecycle:lifecycle-livedata:2.11.0                    54,902
+     *     org.jetbrains.kotlinx:atomicfu-jvm:0.28.0                       48,578
+     *     androidx.core:core-backported-fixes:1.0.0                       18,905
+     *     androidx.camera.featurecombinationquery:…:1.6.2                 18,525
+     *     jakarta.inject:jakarta.inject-api:2.0.1                         10,681
+     *     androidx.tracing:tracing-ktx:1.3.0                               6,095
+     *     com.google.auto.value:auto-value-annotations:1.6.3               5,906
+     *     androidx.lifecycle:lifecycle-livedata-core-ktx:2.11.0            5,663
+     *     androidx.concurrent:concurrent-futures-ktx:1.1.0                 5,605
+     *
+     * CameraPipe, Dagger, `jakarta.inject-api` and `core-backported-fixes` are new with 1.6: the
+     * 1.5.3 POMs name none of them. (`javax.inject:1`, which Dagger also wants, was already there
+     * through ML Kit.) The table and the paragraph after it are the reading taken when CameraX first
+     * arrived, at 1.5.3, and are kept as that record.
      *
      * Sizes read off `dl.google.com/dl/android/maven2` on 2026-08-24 — never inferred from a version
      * bump, which is what that document requires of a size claim:
@@ -874,14 +895,17 @@ dependencies {
      *                                                          ─────────────────────
      *                                                          2,122,923  (2.02 MiB)
      *
-     * The last two are the ONLY genuinely new non-camera rows and they were checked against
-     * `android/deps.txt` rather than assumed: `lifecycle-livedata-CORE:2.8.7` is already there
-     * (fourteen times), the full `lifecycle-livedata` is not, and `concurrent-futures-ktx` is not.
-     * Everything else CameraX asks for already resolves on `releaseRuntimeClasspath` —
-     * `concurrent-futures:1.1.0` (deps.txt line 64), `tracing:1.2.0` (line 104), `jspecify:1.0.0`
-     * (line 596), the empty `listenablefuture` stub already forced to `9999.0`,
-     * `kotlinx-coroutines-android` (already forced to 1.9.0, above camera-core's 1.8.1 request),
-     * `fragment:1.5.7` and `appcompat:1.6.1` (arriving via credentials → biometric).
+     * The last two were counted then as the ONLY genuinely new non-camera rows, checked against the
+     * pre-CameraX `android/deps.txt`: `lifecycle-livedata-CORE:2.8.7` was there (fourteen times),
+     * the full `lifecycle-livedata` was not, and `concurrent-futures-ktx` was not. That count missed
+     * three small rows the 1.5.3 POMs name as well, none of them in the pre-CameraX dump:
+     * `auto-value-annotations` (camera-core), `tracing-ktx` (camera-lifecycle) and `atomicfu`
+     * (viewfinder-core). Everything else CameraX asks for is pulled in by something else too, and
+     * the dump regenerated on 2026-10-09 lists it above the camera rows: `concurrent-futures:1.1.0`
+     * (deps.txt line 67), `tracing` (1.3.0 now, line 117), `jspecify:1.0.0` (line 87), the empty
+     * `listenablefuture` stub forced to `9999.0` (line 69), `kotlinx-coroutines-android` (1.10.2 now,
+     * above camera-core's 1.9.0 request), `fragment:1.5.7` and `appcompat` (1.7.1 now, 1.6.1 then),
+     * both arriving via credentials → biometric.
      *
      * `lifecycle-livedata` arrives because `CameraInfo.getTorchState()` is a `LiveData<Integer>` and
      * is read to drive the torch button. That is not an accident of the dependency graph — a torch
@@ -915,12 +939,13 @@ dependencies {
      *
      * ── `camera-compose` AND NOT `camera-view`, WHICH WOULD HAVE COST NO NEW ARTIFACT ──────────
      *
-     * `appcompat:1.6.1` and `fragment:1.5.7` are already on the release classpath, so `PreviewView`
-     * was free. `CameraXViewfinder` is taken anyway because it is a Compose composable in a codebase
-     * that is Compose all the way down, and because wrapping a `PreviewView` in an `AndroidView`
-     * inside a `Dialog` is the shape that produces the black-first-frame reports. What it does NOT
-     * buy is the reticle mapping: see `dwQrCropInBuffer`, which uses `ImageProxy.cropRect` and a
-     * `ViewPort` rather than the coordinate transformer, and says why.
+     * `appcompat` (1.7.1 since 2026-10-09) and `fragment:1.5.7` are already on the release
+     * classpath, so `PreviewView` was free. `CameraXViewfinder` is taken anyway because it is a
+     * Compose composable in a codebase that is Compose all the way down, and because wrapping a
+     * `PreviewView` in an `AndroidView` inside a `Dialog` is the shape that produces the
+     * black-first-frame reports. What it does NOT buy is the reticle mapping: see
+     * `dwQrCropInBuffer`, which uses `ImageProxy.cropRect` and a `ViewPort` rather than the
+     * coordinate transformer, and says why.
      *
      * ── THE APK COST IS AN ESTIMATE AND IS LABELLED AS ONE ────────────────────────────────────
      *
@@ -944,6 +969,13 @@ dependencies {
      * +700 KB to +1.2 MB of dex, which against the last measured shipping figure
      * (`docs/ASR-RUNTIME-MEASUREMENT.md` row E, 66,056,244 bytes) is 1.1%–1.8%. Do not quote it as
      * a measurement.
+     *
+     * That estimate is the 1.5.3 one, and 1.6.2 roughly doubles the camera bytecode R8 has to work
+     * through (CameraPipe, Dagger, atomicfu), so expect more. The whole release APK was read once on
+     * 2026-10-09, from a CI build of the 1.6.2 tree with every other upgrade of that day (android-build
+     * run 37931290718, ARM pair, R8 on, UNSIGNED): 78,637,438 bytes, against 77,451,931 for the
+     * signed 0.0.15 APK published 2026-09-20. That is a whole-app difference across three weeks of
+     * source, not CameraX's share, and it is still no measurement of CameraX.
      *
      * ── NO NEW PERMISSION AND NOTHING NEW IN THE INSTALL DIALOG ───────────────────────────────
      *

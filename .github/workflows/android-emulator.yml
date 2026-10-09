@@ -6,10 +6,18 @@ name: Android instrumented tests
 # counted 2026-09-03 — and android-build.yml runs none of them. It cannot: `connectedAndroidTest`
 # needs a device or an emulator, and that workflow compiles, lints and assembles on a bare runner.
 # So the ASR engine probes, the device-tier probe, the language-pack probe, the custom-section
-# store and the stage-authority device tests are all code that is compiled by CI and executed by
-# nobody. `DwCustomSectionStoreDeviceTest` and `DwStageAuthorityDeviceTest` carry eight assertions
-# each about behaviour that only exists on a real Android runtime; they are the two worth caring
-# about most, and they are exactly the two that a JVM unit test cannot replace.
+# store and the stage-authority device tests are code that only this workflow compiles and runs
+# (android-build.yml compiles the unit tests, not these). `DwCustomSectionStoreDeviceTest` and
+# `DwStageAuthorityDeviceTest` carry eight assertions each about behaviour that only exists on a
+# real Android runtime; they are the two worth caring about most, and they are exactly the two
+# that a JVM unit test cannot replace.
+#
+# A GREEN RUN USED TO PROVE NOTHING, AND THE FIRST ONE DID EXACTLY THAT. This workflow's first run
+# (37930568222, 2026-10-09) compiled, then its install failed — "Requested internal only, but not
+# enough space" — and the Gradle task logged "AndroidTestRunner failed on emulator-5554", ended
+# BUILD SUCCESSFUL and wrote a report counting 0 tests. `disk-size` below answers the install; the
+# step after the emulator answers the green, by reading that report: a run in which no test
+# executed, or in which one failed, is red.
 #
 # ─── WHY THIS IS `workflow_dispatch` ONLY, WHICH IS A COST DECISION AND NOT A TASTE ──────
 # An emulator job is the most expensive thing this repository could run. It needs KVM, boots a
@@ -123,6 +131,32 @@ jobs:
           echo "$sha  $aar" | sha256sum -c -
           test "$(stat -c%s "$aar")" = "38691998"
 
+      - name: Stage the pinned speech model for the engine probe
+        # DwAsrEngineProbeTest FAILS WHEN THE MODEL IS NOT STAGED, on purpose — a probe that quietly
+        # measured nothing is the failure it exists to catch. The files are the row `DW_ASR_MODELS`
+        # pins in android/app/src/main/java/com/designprototype/workshop/data/DwAsrModel.kt, unpacked
+        # from the release tarball that file's KDoc names, with the digest and size it records. The
+        # emulator step pushes them to /data/local/tmp/dwasr, where the probe's KDoc stages them (and
+        # one of the two places the app itself looks), and the probe hashes both files ON THE DEVICE
+        # against digests compiled into the APK before it loads anything: this digest guards the
+        # download, the probe's guards the load. Upstream's sample clips go too, so the probe decodes
+        # rather than only loads. When DW_ASR_MODELS pins another row, change name, digest and size.
+        run: |
+          set -euo pipefail
+          name="sherpa-onnx-omnilingual-asr-1600-languages-300M-ctc-int8-2025-11-12"
+          tarball="$RUNNER_TEMP/$name.tar.bz2"
+          curl -fsSL --retry 3 --retry-delay 5 -o "$tarball" \
+            "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/$name.tar.bz2"
+          echo "cdcd0559c7c73efed54209a926e321afc914d046c5fdbf3665f00dc78180e5ed  $tarball" | sha256sum -c -
+          test "$(stat -c%s "$tarball")" = "292571207"
+          tar -xjf "$tarball" -C "$RUNNER_TEMP"
+          rm "$tarball"
+          stage="$RUNNER_TEMP/dwasr"
+          mkdir -p "$stage/wav"
+          mv "$RUNNER_TEMP/$name/model.int8.onnx" "$RUNNER_TEMP/$name/tokens.txt" "$stage/"
+          find "$RUNNER_TEMP/$name" -name '*.wav' -exec mv -t "$stage/wav/" {} +
+          ls -lR "$stage"
+
       - name: Enable KVM for the emulator
         # WITHOUT THIS THE EMULATOR FALLS BACK TO SOFTWARE RENDERING AND THE JOB TIMES OUT. The
         # ubuntu-latest image has /dev/kvm but does not grant the runner user access to it; the udev
@@ -161,11 +195,66 @@ jobs:
             -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
             -no-snapshot-save -no-snapshot-load -camera-back none -camera-front none
           disable-animations: true
+          # 8 GB of userdata, sparse on the runner. The default partition could not take the debug
+          # APK (run 37930568222, above), and the staged model needs room twice: 365 MB in
+          # /data/local/tmp, and as much again once a probe copies it into the app's own storage.
+          # 4 GB of RAM because the engine probe holds that model in one process, and what the
+          # Nexus 6 profile would give is not something this file controls.
+          disk-size: 8G
+          ram-size: 4096M
           working-directory: android
-          # `:app:connectedDebugAndroidTest` and not `connectedAndroidTest`: the latter runs every
-          # variant, and this project only ever needs the debug one — release is signed with a key
-          # CI does not hold.
-          script: ./gradlew :app:connectedDebugAndroidTest --console=plain --stacktrace
+          # The action runs each line on its own (`sh -c`) and stops at the first that fails:
+          #  1-2. The staged model onto the device, where DwAsrEngineProbeTest's KDoc puts it.
+          #  3.   A bigger log buffer, so the probes' lines survive to the end of the run.
+          #  4.   `:app:connectedDebugAndroidTest` and not `connectedAndroidTest`: the latter runs
+          #       every variant, and this project only ever needs the debug one — release is signed
+          #       with a key CI does not hold. Its exit status is parked rather than acted on, so
+          #  5.   the probes' log is saved from a failed run too — what they print is the evidence
+          #       they exist for, and the emulator is gone once this script ends — and then
+          #  6.   the parked status fails the step.
+          script: |
+            "${ANDROID_HOME:-$ANDROID_SDK_ROOT}/platform-tools/adb" push "$RUNNER_TEMP/dwasr" /data/local/tmp/
+            "${ANDROID_HOME:-$ANDROID_SDK_ROOT}/platform-tools/adb" shell chmod -R 755 /data/local/tmp/dwasr
+            "${ANDROID_HOME:-$ANDROID_SDK_ROOT}/platform-tools/adb" logcat -G 16M || true
+            ./gradlew :app:connectedDebugAndroidTest --console=plain --stacktrace || echo "$?" > "$RUNNER_TEMP/connected-exit"
+            mkdir -p app/build/outputs/androidTest-results && "${ANDROID_HOME:-$ANDROID_SDK_ROOT}/platform-tools/adb" logcat -d -v time -s DWASRPROBE DWICPROBE DWXFERPROBE DWTIERPROBE DWPACKPROBE DWTIER2PROBE TestRunner AndroidRuntime DEBUG libc > app/build/outputs/androidTest-results/probes-logcat.txt
+            test ! -e "$RUNNER_TEMP/connected-exit"
+
+      - name: Fail unless instrumented tests ran, and none failed
+        # The other half of the first run's lesson (top of this file): the Gradle task's exit status
+        # does not mean "the tests ran", so this reads the report the task wrote. No test executed,
+        # whether none was found or every one was skipped, is a failure, and so is any failed test.
+        # The counts go to the job summary; `!cancelled()` so they are there after a red run as well.
+        if: ${{ !cancelled() }}
+        run: |
+          python3 - <<'PY'
+          import os, pathlib, re, sys
+          report = pathlib.Path("app/build/reports/androidTests/connected/debug/index.html")
+          if not report.is_file():
+              print(f"::error::{report} was not written, so this run says nothing about the tests.")
+              sys.exit(1)
+          html = report.read_text(encoding="utf-8", errors="replace")
+
+          def count(label):
+              m = re.search(r'<div class="counter">([0-9,]+)</div>\s*<p>%s</p>' % label, html)
+              return int(m.group(1).replace(",", "")) if m else None
+
+          tests, failures, skipped = count("tests"), count("failures"), count("skipped")
+          line = f"Instrumented tests: {tests} in the report, {failures} failed, {skipped} skipped."
+          print(line)
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+              summary.write(line + "\n")
+          if None in (tests, failures, skipped):
+              print(f"::error::The counters in {report} could not be read; its layout has changed.")
+              sys.exit(1)
+          if tests - skipped <= 0:
+              print("::error::No instrumented test executed. The emulator step's log names the device "
+                    "error (an install that failed, a device that went away); the task does not fail on it.")
+              sys.exit(1)
+          if failures:
+              print(f"::error::{failures} instrumented test(s) failed; see the android-instrumented-results artifact.")
+              sys.exit(1)
+          PY
 
       - name: Upload the instrumented-test results
         # `always()`: a red run is precisely when the HTML report and the per-test XML are worth

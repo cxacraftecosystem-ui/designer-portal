@@ -279,28 +279,6 @@ jobs:
         id: assemble
         run: ./gradlew :app:assembleDebug --console=plain --stacktrace
 
-      - name: TEMPORARY — print the release runtime classpath, to regenerate android/deps.txt
-        # One run only, removed by the next commit. `android/deps.txt` is a dump of this report that
-        # comments cite by line, and the machine that moved the toolchain on 2026-10-09 had no memory
-        # to run Gradle locally, so CI prints it once and the dump is taken from this step's log.
-        continue-on-error: true
-        run: ./gradlew :app:dependencies --configuration releaseRuntimeClasspath --console=plain
-
-      - name: TEMPORARY — build the unsigned release APK once, R8 and all
-        # Also one run only, removed by the same next commit. No workflow this branch may run builds
-        # the release variant, and AGP 9 changed what R8 does by default; this proves the release
-        # build and what publish-android.yml relies on (the unsigned file name, output-metadata's
-        # elements[0], two ABIs, the sherpa binding kept) before anybody tags.
-        continue-on-error: true
-        run: |
-          set -euo pipefail
-          ./gradlew :app:assembleRelease --console=plain --stacktrace
-          ls -l app/build/outputs/apk/release/
-          cat app/build/outputs/apk/release/output-metadata.json
-          unzip -l app/build/outputs/apk/release/app-release-unsigned.apk | awk '$4 ~ /^lib\//'
-          echo "k2fsa lines in mapping.txt: $(grep -c k2fsa app/build/outputs/mapping/release/mapping.txt)"
-          echo "k2fsa classes renamed: $(grep -E '^com\.k2fsa[^ ]* -> ' app/build/outputs/mapping/release/mapping.txt | awk '$1 != substr($3,1,length($3)-1)' | wc -l)"
-
       - name: Upload the debug APK
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

@@ -596,9 +596,19 @@ gh workflow run "Android instrumented tests" --ref <branch>
 It takes one input, `api-level`, defaulting to **`37.0`** — a string with the minor level, because
 the SDK publishes Android 17's platform and system images only as `android-37.0` and the runner
 builds both package names from the value verbatim. The emulator is `google_apis` / `x86_64` on a
-`Nexus 6` profile with animations disabled, and the job runs `./gradlew :app:connectedDebugAndroidTest`
-under JDK 25 with an explicit KVM udev step. It fetches and verifies the sherpa-onnx AAR the same
-way `android-build.yml` does; until 2026-10-09 it did not, so no run of it could have compiled.
+`Nexus 6` profile with animations disabled, 4 GB of RAM and an 8 GB data partition, and the job runs
+`./gradlew :app:connectedDebugAndroidTest` under JDK 25 with an explicit KVM udev step. It fetches and
+verifies the sherpa-onnx AAR the same way `android-build.yml` does — until 2026-10-09 it did not, so
+no run of it could have compiled — and it stages the speech model `DW_ASR_MODELS` pins at
+`/data/local/tmp/dwasr`, digest-checked from the release tarball `DwAsrModel.kt` names, because
+`DwAsrEngineProbeTest` fails rather than measure nothing.
+
+**A green run means tests ran, since 2026-10-09.** The workflow's first run that day (37930568222)
+went green with nothing executed: the debug APK did not fit the emulator's default data partition,
+and AGP 9.4's `connectedDebugAndroidTest` logged the failed install, ended `BUILD SUCCESSFUL` and
+wrote a report counting 0 tests. The job now reads that report after the emulator step and fails
+when no test executed or one failed, writes the counts to the job summary, and keeps what the probes
+printed as `probes-logcat.txt` in the `android-instrumented-results` artifact.
 
 **It is not wired into branch protection and must not be**: a required check a human has to remember
 to trigger is a required check that blocks every pull request forever.

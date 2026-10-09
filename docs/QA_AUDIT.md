@@ -209,14 +209,17 @@ Both source sets exist; the counts are generated into [REPO_FACTS.md](REPO_FACTS
 restated here. The unit suite is a **real gate**: the *Unit tests* step in
 `.github/workflows/android-build.yml` branches on whether `app/src/test` holds Kotlin or Java
 sources, takes the "running them for real" branch today, and carries no `continue-on-error` — so a
-failing Kotlin test fails the workflow. The instrumented set is **not** run: it needs an emulator,
-and the step's comment says to add a separate job with an emulator action rather than bolt one on.
+failing Kotlin test fails the workflow. The instrumented set is **not** run there: it needs an
+emulator, and the step's comment says to add a separate job with an emulator action rather than bolt
+one on. That job exists since 2026-09-03 — `.github/workflows/android-emulator.yml`, on demand and
+never a gate — and no run of it executed a test before 2026-10-09; [CI.md](CI.md) §1.5 says why.
 
 The gates on Android are therefore: it compiles, and its unit tests pass. Lint is advisory (§4).
 
 **What is still genuinely untested on Android is the UI and anything needing a device** — the
-instrumented set exists but nothing runs it, so no automated check exercises a screen, a permission
-prompt, the camera, or the offline outbox against real storage. That is the coverage gap; "no tests
+instrumented set runs only when somebody dispatches the emulator job, and none of its classes drives
+a screen, a permission prompt, the camera, or the offline outbox against real storage, so no
+automated check exercises any of them. That is the coverage gap; "no tests
 at all" was the wrong shape of it, and the wrong shape sends someone to build a harness that is
 already there.
 
