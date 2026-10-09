@@ -1041,6 +1041,11 @@ layers: an un-layered rule in `globals.css` beats every utility, so every plain 
 `@layer base` (bare elements) or `@layer utilities` (anything carrying a class or an attribute) — the
 file's header says which and why. Recipes stay plain CSS in `@layer components`, not `@utility`, so
 every utility beats every recipe.
+⚠ **A vendor-prefixed declaration goes BEFORE its standard form** in `globals.css`. The production
+build's minifier (Lightning CSS) keeps only the prefixed one when it comes second: `.glass-card` and
+`.glass-dark` shipped `-webkit-backdrop-filter` alone, which Chromium does not implement, and were never
+frosted there until 2026-10-09. `e2e/vendor-prefix-order-unit.spec.ts` holds every pair in the file to
+that order.
 
 ### 11.2 Which primitives are live, and which are dormant
 

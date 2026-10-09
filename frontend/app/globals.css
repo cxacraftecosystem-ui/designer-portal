@@ -524,18 +524,27 @@
     color: transparent;
   }
 
-  /* Frosted glass card on light mesh backdrops (auth). */
+  /*
+   * Frosted glass card on light mesh backdrops (auth).
+   *
+   * THE PREFIXED LINE GOES FIRST IN BOTH RECIPES, AND THE ORDER IS LOAD-BEARING (2026-10-09). The
+   * production build minifies this file with Lightning CSS, which keeps only the LAST of the pair
+   * when the prefixed declaration follows the standard one: with `-webkit-backdrop-filter` second,
+   * every build shipped `-webkit-backdrop-filter` alone, which Safari reads and Chromium ignores, so
+   * neither card was ever frosted in Chromium. With the standard line last, the build keeps both,
+   * prefixed first. The `-webkit-background-clip` pairs below are already in that order.
+   */
   .glass-card {
     background: rgba(255, 255, 255, 0.72);
-    backdrop-filter: blur(18px);
     -webkit-backdrop-filter: blur(18px);
+    backdrop-filter: blur(18px);
     border: 1px solid rgba(255, 255, 255, 0.6);
   }
 
   .glass-dark {
     background: rgba(30, 27, 46, 0.5);
-    backdrop-filter: blur(14px);
     -webkit-backdrop-filter: blur(14px);
+    backdrop-filter: blur(14px);
     border: 1px solid rgba(255, 255, 255, 0.14);
   }
 
