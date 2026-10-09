@@ -394,7 +394,7 @@ export function MeasureFromPhotoCard({
             <h4
               ref={headingRef}
               tabIndex={-1}
-              className="text-sm font-medium text-ink-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-purple-600/40"
+              className="text-sm font-medium text-ink-900 focus:outline-hidden focus-visible:ring-2 focus-visible:ring-purple-600/40"
             >
               {CARD_TITLE}
             </h4>

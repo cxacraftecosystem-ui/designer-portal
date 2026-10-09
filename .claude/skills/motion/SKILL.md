@@ -1,15 +1,18 @@
 ---
 name: motion
-description: Declarative animation in this repo — the shared motion vocabulary, the two reduced-motion switches that must both be honoured, springs and easing tied to the design tokens, variants/stagger, layout animation, and the hydration rules. framer-motion v12 IS Motion. Load before adding or changing ANY declarative animation in the web client.
+description: Declarative animation in this repo — the shared motion vocabulary, the two reduced-motion switches that must both be honoured, springs and easing tied to the design tokens, variants/stagger, layout animation, and the hydration rules. framer-motion v14 IS Motion. Load before adding or changing ANY declarative animation in the web client.
 ---
 
-# Motion (framer-motion v12) — the web client's declarative animation
+# Motion (framer-motion v14) — the web client's declarative animation
 
-`framer-motion@12.40.0` is installed and **is** Motion — the library was renamed to `motion` at v12,
-and the `framer-motion` package remains a published alias of the same code. Do **not** add the
-`motion` package alongside it: two copies of one library means two `MotionConfig` contexts, two
-reduced-motion subscriptions and layout animations that fight. Import from `framer-motion` — that
-is what the 23 files already using it import from, and consistency is the point.
+`framer-motion@14` is installed (`^14.0.0` since 2026-10-09) and **is** Motion — the library was
+renamed to `motion` at v12, and `motion@14.0.0` is still a thin wrapper that depends on
+`framer-motion@14.0.0`, the same code. Do **not** add the `motion` package alongside it: two copies of
+one library means two `MotionConfig` contexts, two reduced-motion subscriptions and layout animations
+that fight. Import from `framer-motion` — that is what the 28 files already using it import from, and
+consistency is the point. 13.0 and 14.0 removed only an optional `@emotion/is-prop-valid` fallback
+and internal APIs; the 13.x minors reworked how `useScroll` is driven internally, which is why the
+scroll-linked hero and the guide walkthrough are the screens to look at after any bump.
 
 GSAP is installed too and owns exactly one animation. See the `gsap` skill before reaching for it.
 
@@ -125,7 +128,7 @@ constant rather than skipping the hook, so hook order stays stable across render
 ## 7. Traps
 
 - **`useReducedMotion()` from framer-motion** — sees only the OS switch. Always `useAppReducedMotion()`.
-- **Adding the `motion` package** — it is the same library as the installed `framer-motion@12`.
+- **Adding the `motion` package** — it is the same library as the installed `framer-motion@14`.
 - **Inline `transition={{...}}`** — invisible to the preference; use a `guideMotion` factory.
 - **Animating layout and size at once** — pick one.
 - **`whileHover` on touch surfaces** — it sticks after a tap on mobile. Prefer `whileTap` +

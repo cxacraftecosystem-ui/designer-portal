@@ -50,7 +50,7 @@
  * `aspectRatio` is a NUMBER applied as an inline style rather than a class, and that is not laziness.
  * `cn()` in `lib/utils.ts` is `filter(Boolean).join(" ")` and NOT `tailwind-merge`
  * (`.claude/skills/field-repo-frontend/SKILL.md` §11.1: "later classes do not win, CSS source order
- * decides"), so appending `aspect-[3/4]` to a container that already has `aspect-video` is a coin
+ * decides"), so appending `aspect-3/4` to a container that already has `aspect-video` is a coin
  * toss decided by the order Tailwind happened to emit two utilities that set the same property. An
  * inline style has no such argument with anything. When it is given, `aspect-video` is not emitted at
  * all — and with the frame matching the source, `object-cover` crops nothing.
@@ -685,7 +685,7 @@ export function Reveal1({
           className={cn(
             "panel relative w-full select-none overflow-hidden rounded-lg",
             framed ? null : "aspect-video",
-            "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2",
+            "focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2",
             solo !== null ? "cursor-default" : isHorizontal ? "cursor-ew-resize" : "cursor-ns-resize",
             magnified && "cursor-grab"
           )}
@@ -788,21 +788,21 @@ export function Reveal1({
             that failed to load. The badge is what tells those two apart without leaving the frame.
           */}
           {showLabels && solo !== null && solo.label ? (
-            <span className="pointer-events-none absolute left-3 top-3 z-20 rounded-full bg-black/70 px-3 py-1 text-xs font-medium text-white backdrop-blur-sm">
+            <span className="pointer-events-none absolute left-3 top-3 z-20 rounded-full bg-black/70 px-3 py-1 text-xs font-medium text-white backdrop-blur-xs">
               {solo.label}
             </span>
           ) : null}
           {showLabels && solo === null ? (
             <>
               <div className="pointer-events-none absolute inset-0 z-20" style={{ clipPath: badgeClip }}>
-                <span className="absolute left-3 top-3 rounded-full bg-black/70 px-3 py-1 text-xs font-medium text-white backdrop-blur-sm">
+                <span className="absolute left-3 top-3 rounded-full bg-black/70 px-3 py-1 text-xs font-medium text-white backdrop-blur-xs">
                   {beforeLabel}
                 </span>
               </div>
               <div className="pointer-events-none absolute inset-0 z-20" style={{ clipPath: afterBadgeClip }}>
                 <span
                   className={cn(
-                    "absolute rounded-full bg-black/70 px-3 py-1 text-xs font-medium text-white backdrop-blur-sm",
+                    "absolute rounded-full bg-black/70 px-3 py-1 text-xs font-medium text-white backdrop-blur-xs",
                     isHorizontal ? "right-3 top-3" : "bottom-3 left-3"
                   )}
                 >

@@ -168,6 +168,18 @@ development; `.env.example` ships the line commented in.
 
 ### 3. Configure And Run Frontend
 
+Node 24 (`engines.node` in `frontend/package.json`, the major CI, the production build and Vercel all
+run) and npm 12 (`npm install --global npm@12`; no Node release ships it yet). npm 12 runs a
+dependency's install script only when `allowScripts` in `frontend/package.json` approves it, which is
+the policy every workflow installs under.
+
+TypeScript is installed twice, on purpose, the TypeScript team's side-by-side arrangement:
+`npx tsc --noEmit` runs TypeScript 7 (`"@typescript/native": "npm:typescript@^7"`), and the
+`typescript` package is the TS 6.0 API (`npm:@typescript/typescript6`), which typescript-eslint,
+`next build` and the two specs that call `transpileModule` import. TypeScript 7 ships no JavaScript
+API, and typescript-eslint supports TypeScript below 6.1. Replace both aliases with a plain
+`typescript` once TypeScript 7.1's API has shipped and typescript-eslint supports it.
+
 ```powershell
 cd frontend
 if (-not (Test-Path .env.local)) { Copy-Item .env.local.example .env.local }

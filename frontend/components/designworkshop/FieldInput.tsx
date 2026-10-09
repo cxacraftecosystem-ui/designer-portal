@@ -4368,7 +4368,7 @@ function MediaField({
           per-label casing is a judgement for whoever owns the copy, not something to guess at from a
           call site. */}
       {field.type === "FILE" && ids.length === 1 && !isLocalMediaRef(ids[0]) ? (
-        <DocumentPreview mediaId={ids[0]} noun={field.label.toLowerCase()} className="h-[28rem]" />
+        <DocumentPreview mediaId={ids[0]} noun={field.label.toLowerCase()} className="h-112" />
       ) : null}
 
       {extra

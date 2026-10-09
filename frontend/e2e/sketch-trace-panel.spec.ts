@@ -31,9 +31,11 @@ import * as ts from "typescript";
  * ────────────────────────────────────────────────────────────────────────────
  *
  * There is none installed — no `@playwright/experimental-ct-react`, no jsdom, no bundler beyond
- * Next's own (`package.json`'s devDependencies are playwright, eslint, typescript, tailwind, postcss,
- * autoprefixer), and `package.json` belongs to another unit. What IS installed is TypeScript and
- * React, so this file uses them directly:
+ * Next's own (`package.json`'s devDependencies are Playwright, ESLint and Next's config for it,
+ * TypeScript, Tailwind and PostCSS), and `package.json` belongs to another unit. What IS installed is
+ * TypeScript and React, so this file uses them directly. `typescript` is the TS 6.0 API package
+ * (`npm:@typescript/typescript6`), because TypeScript 7, which `tsc` runs as `@typescript/native`,
+ * ships no JavaScript API at all; `transpileModule` below exists only in the former.
  *
  *  1. `ts.transpileModule` compiles each real source file to CommonJS, one file at a time. No type
  *     checking, which is `npx tsc --noEmit`'s job and not this file's.

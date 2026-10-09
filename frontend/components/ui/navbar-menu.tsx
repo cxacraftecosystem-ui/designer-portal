@@ -65,14 +65,14 @@ export const MenuItem = ({
           transition={panelTransition}
         >
           {active === item && (
-            <div className="absolute left-1/2 top-[calc(100%_+_1.2rem)] -translate-x-1/2 transform pt-4">
+            <div className="absolute left-1/2 top-[calc(100%+1.2rem)] -translate-x-1/2 transform pt-4">
               <motion.div
                 transition={panelTransition}
                 // `layoutId` is kept under reduce: it is what makes ONE card exist across triggers
                 // rather than two, and at duration 0 the projection simply lands. Removing it would
                 // change the DOM identity of the panel, not merely how it travels.
                 layoutId="active" // layoutId ensures smooth animation
-                className="overflow-hidden rounded-2xl border border-line-200 bg-card/95 shadow-panel backdrop-blur-sm"
+                className="overflow-hidden rounded-2xl border border-line-200 bg-card/95 shadow-panel backdrop-blur-xs"
               >
                 <motion.div
                   layout // layout ensures smooth animation

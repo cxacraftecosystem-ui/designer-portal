@@ -179,7 +179,7 @@ export function MinistryDeskCard() {
               rather than ministry chrome — it is the same mark on every screen in the product, and
               the whole of the ministry accent is a SURFACE accent.
             */
-            className="flex items-start gap-3 rounded-md border border-line-200 bg-card p-3.5 transition-shadow hover:border-ministry-300 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-700"
+            className="flex items-start gap-3 rounded-md border border-line-200 bg-card p-3.5 transition-shadow hover:border-ministry-300 hover:shadow-md focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-purple-700"
           >
             {/*
               THE `dark:` PAIR IS NOT OPTIONAL. The ministry ramp is literal and does not invert, so

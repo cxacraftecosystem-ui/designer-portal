@@ -98,7 +98,7 @@ export function SortableTh({
         // header's height, and `uppercase`/`tracking` are inherited from the `<thead>` both roster
         // tables already set — a button resets neither, but it does reset `text-align`, so the row
         // would otherwise centre itself out of line with the non-sortable headers beside it.
-        className="-my-1 inline-flex max-w-full items-center gap-1.5 rounded py-1 text-left font-medium text-ink-500 transition-colors hover:text-purple-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-600/40"
+        className="-my-1 inline-flex max-w-full items-center gap-1.5 rounded py-1 text-left font-medium text-ink-500 transition-colors hover:text-purple-700 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-purple-600/40"
       >
         <span className="min-w-0 truncate">{label}</span>
         <Icon

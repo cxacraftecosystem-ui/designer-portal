@@ -660,13 +660,16 @@ includes `keep-supabase-active.yml` and `publish-android.yml`, which an earlier 
 two files still on mutable tags.** `backup-db.yml` and `monitor.yml` have no `uses:` at all: neither
 checks the repository out, deliberately.
 
-Two things are *not* pinned and both are on the record. `deploy-frontend.yml` installs
-`vercel@latest` — deliberate, because the CLI must match a platform that changes under it — and the
-Android toolchain under `android/` is pinned by VERSION, not by digest, with one exception: since
-2026-10-09 the Gradle wrapper carries a `distributionSha256Sum`, so a tampered distribution fails
-the wrapper's own check, and the vendored sherpa-onnx AAR, which no repository serves, is checked
-against its SHA-256 and byte size in all three Android workflows. AGP, Kotlin and every other
-library resolve by version, with no Gradle dependency-verification file.
+Three things are *not* pinned and all three are on the record. `deploy-frontend.yml` installs
+`vercel@latest` — deliberate, because the CLI must match a platform that changes under it. Every job
+that installs with npm installs `npm@12` first (2026-10-09; no Node release ships npm 12 yet), which
+follows its major the way `node-version-file`'s `engines.node` of `24.x` does, and is deleted once the
+Node that field resolves to brings npm 12 itself. And the Android toolchain under `android/` is pinned
+by VERSION, not by digest, with two exceptions: since 2026-10-09 the Gradle wrapper carries a
+`distributionSha256Sum`, so a tampered distribution fails the wrapper's own check, and the vendored
+sherpa-onnx AAR, which no repository serves, is checked against its SHA-256 and byte size in all three
+Android workflows. AGP, Kotlin and every other library resolve by version, with no Gradle
+dependency-verification file.
 
 Pinning introduces its own failure mode, which is a pin that rots. `.github/dependabot.yml` is what
 closes it: **github-actions weekly** (Monday 04:00 Asia/Kolkata, at most 3 open PRs, `ci` commit
@@ -933,7 +936,37 @@ deployments are *meant* to be disabled at the project level as well
 not (§3, step 2), so on that date this setting was the only layer behind the removed Git link.
 
 **`npm ci can only install packages when … in sync`.** `frontend/package-lock.json` is stale. Run
-`npm install` in `frontend/` and commit the lockfile (DEPLOYMENT_VERCEL.md §7.5).
+`npm install` in `frontend/` with npm 12 and commit the lockfile (DEPLOYMENT_VERCEL.md §7.5).
+
+**`npm warn install-scripts … had install scripts blocked because they are not covered by
+allowScripts`.** npm 12, which every job installs with since 2026-10-09, runs a dependency's
+`preinstall`, `install` or `postinstall` only when `allowScripts` in `frontend/package.json` approves
+it, and skips the rest without failing the install. A new line here is a dependency that has started
+shipping one, or an approved one that moved to a version the pinned entry does not name. Read what the
+script does, then `npm install-scripts approve <pkg>` (it writes a `pkg@version` entry) or
+`npm install-scripts deny <pkg>` from `frontend/`, and commit `package.json`. Never approve `--all`
+unread. One such line is expected and stays: `deploy-frontend.yml`'s global `vercel` install reports
+esbuild's script blocked, because a global install has no `package.json` to approve it in and the
+CLI works without it (measured, and argued on that step).
+
+**`npm warn ERESOLVE overriding peer dependency` for three ESLint plugins.** Expected since
+2026-10-09, when ESLint went to 10. `eslint-config-next` 16.4.0 depends on `eslint-plugin-import`,
+`eslint-plugin-jsx-a11y` and `eslint-plugin-react`, and their newest releases (2.32.0, 6.10.2 and
+7.37.5, true as of 2026-10-09; check `npm view <plugin> peerDependencies`) still declare ESLint
+ranges that end at 9. npm installs them anyway and prints three of these blocks; the install does not
+fail, and `npx eslint . --max-warnings=0` runs all three under ESLint 10. The blocks go when the
+plugins widen their ranges. One that names any other package is new: read it.
+
+**`npm ci` in `frontend/` ends with `5 high severity vulnerabilities`.** Expected, true as of
+2026-10-09 (check with `npm audit` from `frontend/`). All five are one chain that only ESLint loads:
+`braces` 3.0.3 (GHSA-vfj7-8cjw-p6xm, a stack-exhaustion denial of service with no patched release;
+3.0.3 is its newest), through `micromatch` 4.0.8 and `fast-glob` 3.3.1, which `@next/eslint-plugin-next`
+16.4.0 pins exactly (fast-glob's newest is 3.3.3, and it still depends on the same `braces`), up to
+`eslint-config-next`. Nothing in that chain is in the site or the image's runtime stage; it runs when
+ESLint expands file globs. **Do not run the `npm audit fix --force` it suggests**: its only "fix" is
+`eslint-config-next@14.2.35`, two majors back from the `16.x` that has to match `next`. The findings
+go when `braces` publishes a fixed release or Next drops the `fast-glob` pin. Any other package in that
+report is new: read it.
 
 **Two production deployments per push.** Vercel's Git integration has been re-linked. It was removed
 outright (§2); if two deployments appear again, that is what happened. Unlink it, or at minimum
@@ -960,10 +993,14 @@ Working as designed since 2026-10-09: the Checks run for that commit was cancell
 push to `main` started its own, and the newer commit's own deploy run ships both (§1.1). Look at that
 run, not this one.
 
-**Stage 2 warns "Production runs a different Node major from CI".** The project's Node.js Version is
-not the major `checks.yml` and the build run on. Set it in the dashboard
-([DEPLOYMENT_VERCEL.md](DEPLOYMENT_VERCEL.md) §1); the next publish picks it up. It is a warning
-because both majors run the current bundle; the risk is code that behaves differently between them.
+**Stage 2 warns about the project's Node.js Version.** Since 2026-10-09 `engines.node` in
+`frontend/package.json` decides the major CI, the build and production all run on, and Vercel takes it
+over the dashboard setting, so the warning means the dashboard disagrees with the repository. *"Vercel
+offers a newer Node major than this build"*: raise `engines.node` (with `@types/node` and
+`frontend/Dockerfile`'s `NODE_VERSION`). *"The project's Node.js Version is behind this build"*: raise
+the dashboard setting ([DEPLOYMENT_VERCEL.md](DEPLOYMENT_VERCEL.md) §1). *"frontend/package.json names
+no Node major"*: put `engines.node` back. Every remedy raises; never lower either side to meet the
+other. It is a warning because production runs the build's major either way.
 
 **Stage 2 warns "The frontend project holds database credentials".** A storage integration is
 connected to the Vercel project. Disconnect it from the project rather than deleting the variables

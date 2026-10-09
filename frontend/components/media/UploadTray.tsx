@@ -62,7 +62,7 @@ import { useUploads } from "@/lib/uploads";
  *
  * ── THE ONE OVERLAP THIS FILE CANNOT CLOSE ──────────────────────────────────────────────────────
  *
- * `components/ui/Toast.tsx` puts its viewport at `fixed bottom-4 right-4 z-[110]` with a
+ * `components/ui/Toast.tsx` puts its viewport at `fixed bottom-4 right-4 z-110` with a
  * `w-[min(24rem,calc(100vw-2rem))]` card. That is the same rectangle as this dock's right-hand end,
  * by construction and at a higher rung, so a toast is drawn INSIDE this card — measured 384 × 69px
  * at ≥640px and 328 × 89px at 360px — and the toast card takes pointer events, so it covers the

@@ -204,7 +204,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           past it straight to the page content. Visible only while focused. */}
       <a
         href="#main-content"
-        className="sr-only left-3 top-3 z-[60] rounded-md bg-purple-700 px-3 py-2 text-sm font-medium text-white focus:not-sr-only focus:fixed"
+        className="sr-only left-3 top-3 z-60 rounded-md bg-purple-700 px-3 py-2 text-sm font-medium text-white focus:not-sr-only focus:fixed"
       >
         Skip to content
       </a>
@@ -229,9 +229,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           both directions. Fixed chrome a PAGE mounts — `UploadTray`, `z-40` — was also held under
           level 10, and so under the nav sheet's scrim, which was `z-40` too. Uncapped, the two meet
           in the root stacking context and tree order decides; the nav renders first, so the dock
-          would have painted over an open `aria-modal` sheet. The sheet's overlay is `z-[90]` now
+          would have painted over an open `aria-modal` sheet. The sheet's overlay is `z-90` now
           for exactly that reason. Anything else mounted inside `main` is at or below `z-20` or is
-          one of the two `z-[100]` surfaces above. */}
+          one of the two `z-100` surfaces above. */}
       <PageSelvedge />
       <motion.main
         id="main-content"

@@ -1229,11 +1229,11 @@ function ProgressCell({ progress }: { progress: DesignRegisterPage["items"][numb
   if (!hasProgressFigure(progress)) {
     // NOT A ZERO AND NOT AN EMPTY CELL. "Nothing has been done" and "we could not ask" are the two
     // things this column must never say in place of each other.
-    return <span className="block max-w-[22rem] text-xs leading-5 text-ink-500">{sentence}</span>;
+    return <span className="block max-w-88 text-xs leading-5 text-ink-500">{sentence}</span>;
   }
   const percent = progress.percent ?? 0;
   return (
-    <div className="min-w-[12rem] max-w-[22rem]">
+    <div className="min-w-48 max-w-88">
       {/*
         ⚠ THE BAR IS DECORATION AND THE SENTENCE IS THE ANNOUNCEMENT, and it was the other way round
         until review caught it. It carried `role="progressbar"` with `aria-valuetext={sentence}` AND

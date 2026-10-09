@@ -560,7 +560,7 @@ export function SketchRectifyField({
                   slams it shut), and it takes no id from `Dropdown` to bind that label to. */}
               Sheet
               <select
-                className="field-input !w-auto !py-1 text-xs"
+                className="field-input w-auto! py-1! text-xs"
                 value={aspectKey}
                 onChange={(event) => setAspectKey(event.target.value)}
               >

@@ -1,8 +1,21 @@
 import type { Config } from "tailwindcss";
 
 /**
- * Design Prototype Workshop design tokens on Tailwind v3. THIS FILE IS THE SOURCE OF TRUTH for
- * every colour, radius, shadow and gradient the web app uses.
+ * Design Prototype Workshop design tokens. THIS FILE IS THE SOURCE OF TRUTH for every colour,
+ * radius, shadow and gradient the web app uses.
+ *
+ * TAILWIND 4 READS IT THROUGH `@config` IN app/globals.css (2026-10-09). The upgrade tool offered to
+ * move every token into a CSS `@theme` block and delete this file; that was declined, so the tokens,
+ * their arithmetic and the arguments beside them stay where every comment and document in the
+ * repository says they are, and two unit specs go on reading the ramps from here. Tailwind 4's
+ * compatibility layer takes everything below as written: `content` is still the list of files whose
+ * classes are compiled (globals.css imports Tailwind with `source(none)`, so nothing else is
+ * scanned), and `darkMode` still makes `dark:` mean "inside `[data-theme="dark"]`".
+ *
+ * Node prints a MODULE_TYPELESS_PACKAGE_JSON warning when Tailwind loads this file: it is TypeScript
+ * with `export default` in a package with no `"type"`, so Node parses it twice. That is harmless.
+ * `"type": "module"` would silence it by making every `.js` file in frontend/ an ES module,
+ * postcss.config.js (CommonJS) included.
  *
  * Purple ramp: OKLCH, hue locked at 305°; purple-700 is THE action color.
  * Tinted neutrals (ink/line/surface/bg-0) replace grey. Gold is a marketing
@@ -18,7 +31,9 @@ import type { Config } from "tailwindcss";
  *
  * Theming: every SEMANTIC neutral resolves through a CSS custom property declared in
  * app/globals.css as a bare "R G B" triplet, so `data-theme="dark"` on <html> repaints the whole
- * app without a single page edit. `<alpha-value>` keeps `bg-card/70`-style modifiers working.
+ * app without a single page edit. `<alpha-value>` is what Tailwind 3 substituted an opacity into;
+ * Tailwind 4 reads it as 1 and applies a modifier such as `bg-card/70` with `color-mix()` instead, so
+ * every such modifier still works and the placeholder can stay.
  * The purple, gold and ministry ramps stay literal — brand colour does not invert.
  */
 const neutral = (token: string) => `rgb(var(--${token}) / <alpha-value>)`;
@@ -222,6 +237,56 @@ const mango = {
   950: "oklch(0.255 0.052 71 / <alpha-value>)" /* #321e02 */
 };
 
+/**
+ * TAILWIND 3'S VALUES FOR THE STOCK SHADES THIS APP USES THAT TAILWIND 4 REDREW (2026-10-09).
+ *
+ * Tailwind 4 rebuilt its default palette in OKLCH. Most shades render exactly as before; these moved
+ * in sRGB, by up to 28 units in a channel — `text-red-700`, on about a hundred alerts and refusals,
+ * went from #b91c1c to roughly #c10007, a visibly hotter red, and `rose-700`, `amber-700` and the
+ * emerald greens shifted the same way. A build-tool upgrade is no time to recolour every notice in
+ * the product, so each keeps the value it had; the list is exactly the shades that compute
+ * differently, found by rendering every class string in app/, components/ and lib/ under both
+ * versions. Registered in `colors` below (amber's four beside its own three), so each merges into the
+ * stock scale exactly as `amber` always has (the shades not listed are Tailwind 4's, and render as
+ * Tailwind 3's did).
+ *
+ * Deleting this block adopts Tailwind 4's palette. That is a design change of its own: make it on
+ * purpose, and look at every alert, badge and status notice it repaints.
+ */
+const tailwind3Stock = {
+  amber: { 200: "#fde68a", 700: "#b45309", 900: "#78350f", 950: "#451a03" },
+  red: { 100: "#fee2e2", 200: "#fecaca", 400: "#f87171", 700: "#b91c1c" },
+  emerald: { 100: "#d1fae5", 200: "#a7f3d0", 400: "#34d399", 700: "#047857", 800: "#065f46", 900: "#064e3b" },
+  green: { 200: "#bbf7d0", 700: "#15803d" },
+  rose: { 700: "#be123c", 900: "#881337" }
+};
+
+/**
+ * TAILWIND 3'S TYPE SCALE, ITS LINE HEIGHTS WRITTEN AS LENGTHS (2026-10-09).
+ *
+ * Tailwind 4 gives `text-xs` … `text-4xl` the line heights Tailwind 3 gave them, but writes them as
+ * ratios where Tailwind 3 wrote lengths: `text-sm` is 0.875rem on calc(1.25 / 0.875), not on 1.25rem.
+ * On the element that carries the class the two are the same 20px. A CHILD is where they part: a
+ * length is inherited as it stands, a ratio is multiplied by the child's own font size. 49 class
+ * strings in app/, components/ and lib/ set an arbitrary size (`text-[11px]`, `text-[0.6875rem]` …)
+ * and no leading of their own, so each takes its line box from a parent; under the ratios a badge
+ * inside a `text-sm` control shrank, and the sign-in card's "Coming soon" pill went from 24px to
+ * 19.7px tall. So the scale is Tailwind 3's, entry for entry. `5xl` and up are `1` in both versions
+ * and stay stock.
+ *
+ * Deleting this block adopts Tailwind 4's ratios. Look at every small badge and pill first.
+ */
+const tailwind3Type: Record<string, [string, { lineHeight: string }]> = {
+  xs: ["0.75rem", { lineHeight: "1rem" }],
+  sm: ["0.875rem", { lineHeight: "1.25rem" }],
+  base: ["1rem", { lineHeight: "1.5rem" }],
+  lg: ["1.125rem", { lineHeight: "1.75rem" }],
+  xl: ["1.25rem", { lineHeight: "1.75rem" }],
+  "2xl": ["1.5rem", { lineHeight: "2rem" }],
+  "3xl": ["1.875rem", { lineHeight: "2.25rem" }],
+  "4xl": ["2.25rem", { lineHeight: "2.5rem" }]
+};
+
 const config: Config = {
   content: ["./app/**/*.{ts,tsx}", "./components/**/*.{ts,tsx}", "./lib/**/*.{ts,tsx}"],
   // ThemeProvider stamps data-theme onto <html>; the "class" strategy keeps `dark:` usable too.
@@ -234,6 +299,7 @@ const config: Config = {
         // Legacy slots — everything resolves to the two brand faces.
         serif: ["var(--font-jakarta)", "var(--font-inter)", "ui-sans-serif", "sans-serif"]
       },
+      fontSize: tailwind3Type,
       colors: {
         purple,
         gold,
@@ -272,7 +338,11 @@ const config: Config = {
         thread: { DEFAULT: gold[500], soft: gold[200] },
         // Brand-native logo colors (Android launcher icon) — never re-themed.
         logo: { cream: "#FAF9F5", terracotta: "#CC785C", ink: "#181715" },
-        amber: { 100: "#fef3c7", 500: "#f59e0b", 800: "#92400e" },
+        amber: { 100: "#fef3c7", 500: "#f59e0b", 800: "#92400e", ...tailwind3Stock.amber },
+        red: tailwind3Stock.red,
+        emerald: tailwind3Stock.emerald,
+        green: tailwind3Stock.green,
+        rose: tailwind3Stock.rose,
         success: { 100: "#dcfce7", 600: "#15803d" },
         error: { 100: "#fee2e2", 600: "#dc2626" },
         background: neutral("bg-0"),

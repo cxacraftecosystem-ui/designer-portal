@@ -62,9 +62,11 @@ Never load Google-hosted fonts.
 
 - Both `display: "swap"`.
 - **`font-serif` is not a serif.** It is a legacy slot pointed at Jakarta. Never use it to mean serif.
-- `fontSize`, `spacing`, `screens`, `letterSpacing`, `zIndex` are **stock Tailwind** — only
-  `fontFamily`, `colors`, `borderRadius`, `boxShadow`, `transitionTimingFunction`, `keyframes` and
-  `animation` are extended. `plugins: []`. No `tailwindcss-animate`.
+- `spacing`, `screens`, `letterSpacing`, `zIndex` are **stock Tailwind** — only `fontFamily`,
+  `fontSize`, `colors`, `borderRadius`, `boxShadow`, `transitionTimingFunction`, `keyframes` and
+  `animation` are extended. `fontSize` only restates Tailwind 3's stock scale, `text-xs` …
+  `text-4xl` with their line heights as lengths (`tailwind3Type`, §3.5), so the sizes are stock.
+  `plugins: []`. No `tailwindcss-animate`.
 - Breakpoints are stock: `sm` 640 · `md` 768 · `lg` 1024 · `xl` 1280 · `2xl` 1536.
 
 ---
@@ -139,6 +141,13 @@ Ink aliases still in components: `text-ink`=900, `text-ink-body`=700, `text-ink-
 stock and will not pair correctly. Inside a tinted card use `amber-100` + `amber-800`, never
 `amber-50`/`amber-200`. **`success` and `error` have only 100 and 600** — `success-500` does not exist.
 
+**Stock shades and the type scale are Tailwind 3's (since 2026-10-09).** Tailwind 4 redrew its stock
+palette in OKLCH; `tailwind3Stock` in `tailwind.config.ts` pins the stock amber, red, emerald, green
+and rose shades this app uses whose sRGB value moved (`red-700` stays `#b91c1c`). `tailwind3Type`
+pins `text-xs` … `text-4xl` to Tailwind 3's line heights written as lengths: Tailwind 4 writes them
+as ratios, which a child that sets its own size (every `text-[11px]` badge) multiplies by that size.
+Delete either block only as a deliberate design change.
+
 ### 3.6 Two traps that bite every new component
 
 - **`className="border"` alone** gives preflight's literal `#e5e7eb` (gray-200), which does not invert.
@@ -173,10 +182,11 @@ serving the page: `const ministry = !blocked && ministrySurface(pathname);`. The
 load-bearing, because what `<main>` holds on a refusal is `RouteLocked`, shown to somebody who is
 *not* a ministry account, and painting the accent onto that puts the mark in front of exactly the
 person it is not for. A component OUTSIDE those routes opts in by putting the same attribute on its
-own root — `MinistryDeskCard` on `/dashboard` does precisely that. One un-layered block at the **end
-of `globals.css`** hangs off the attribute; end-of-file is the placement that needs no reasoning
-about Tailwind v3 layer hoisting at all, and it is also what wins the source-order tie described
-below.
+own root — `MinistryDeskCard` on `/dashboard` does precisely that. One block at the **end of
+`globals.css`**, inside `@layer utilities` and after everything Tailwind generates, hangs off the
+attribute. Tailwind 4 emits real cascade layers, so an un-layered block there would beat every
+utility whatever its weight; inside the utilities layer selector weight decides, as it did under
+Tailwind 3, and the block still wins the source-order tie described below.
 
 **⚠ "Surface accent only — no orange on any action control" was OVERRULED on 2026-09-20.** That
 ruling is kept verbatim in the block's own header and in `e2e/ministry-surface-unit.spec.ts`,
@@ -577,7 +587,7 @@ Verified by `frontend/e2e/nav-sheet-scroll.spec.ts`.
 <AnimatePresence>
   <motion.div className="nav-sheet-overlay fixed inset-0 z-40" …>   {/* opacity layer, 0.18s */}
     <div aria-hidden onClick={closeSheet} style={{ touchAction: "none" }}
-         className="absolute inset-0 bg-ink-900/20 backdrop-blur-sm" />   {/* SIBLING, not parent */}
+         className="absolute inset-0 bg-ink-900/20 backdrop-blur-xs" />   {/* SIBLING, not parent */}
     <motion.div role="dialog" aria-modal="true" aria-label="Navigation"
       className="nav-sheet relative mx-auto w-[min(680px,92vw)] rounded-xl border border-line-200
                  bg-card shadow-lg" … />
@@ -613,7 +623,7 @@ it carries a real trap:
   ends and treats `!panel.contains(activeElement)` as "at the far end".
 - `useEffect(() => { setSheetOpen(false); setActive(null); }, [pathname])` is the reset net — and it
   deliberately does **not** steal focus.
-- Skip link, first in tab order: `sr-only left-3 top-3 z-[60] … focus:not-sr-only focus:fixed` →
+- Skip link, first in tab order: `sr-only left-3 top-3 z-60 … focus:not-sr-only focus:fixed` →
   `#main-content`.
 
 ### 7.9 Active-route resolution — longest base wins
@@ -999,7 +1009,7 @@ under `LocalAppPreferences.current.reducedMotion`. `FLASH_MILLIS = 1400L` — th
 
 | Class | Renders |
 |---|---|
-| `.field-input` | `w-full rounded-md border border-line-200 bg-card px-3.5 py-2.5 text-sm text-ink-900 outline-none transition placeholder:text-ink-300 focus:border-purple-600 focus:ring-4 focus:ring-purple-600/15` |
+| `.field-input` | `w-full rounded-md border border-line-200 bg-card px-3.5 py-2.5 text-sm text-ink-900 outline-hidden transition placeholder:text-ink-300 focus:border-purple-600 focus:ring-4 focus:ring-purple-600/15` |
 | `.field-label` | `text-xs font-medium uppercase tracking-wide text-ink-500` |
 | `.field-button` | `inline-flex min-h-10 items-center justify-center gap-2 rounded-md bg-purple-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-purple-800 hover:shadow-cta disabled:cursor-not-allowed disabled:bg-line-200 disabled:text-ink-500 disabled:shadow-none` |
 | `.field-button-secondary` | same box, `border border-line-200 bg-card text-ink-900`, `hover:border-purple-300 hover:bg-purple-50`, `disabled:opacity-60` |
@@ -1019,12 +1029,29 @@ plus legacy aliases `.ambient-light`, `.text-gradient-violet`.
 ⚠ **`cn()` in `lib/utils.ts` is `classes.filter(Boolean).join(" ")`** — not `tailwind-merge`, and
 neither `clsx` nor `tailwind-merge` is a dependency. Later classes do **not** win; CSS source order
 decides. A `@layer components` class is always beaten by any utility (so `class="field-button w-full"`
-works), but to beat another **utility** you need `!` (e.g. `!bg-transparent`).
+works), but to beat another **utility** you need the important modifier, which Tailwind 4 writes
+at the END (e.g. `bg-transparent!`; the old leading `!bg-transparent` still compiles, but write the
+new form).
 
-⚠ **Content globs are `./app`, `./components`, `./lib` only, `.ts`/`.tsx`.** A class written elsewhere,
-or built by string concatenation, is purged. Always write complete literal class strings.
-⚠ `postcss.config.js` loads only `tailwindcss` + `autoprefixer` — **no nesting plugin**. Arbitrary CSS
-nesting in `globals.css` will not compile; `@layer` blocks and plain at-rules do.
+⚠ **Content globs are `./app`, `./components`, `./lib` only, `.ts`/`.tsx`.** They are `content` in
+`tailwind.config.ts`, which `globals.css` loads with `@config`, and `globals.css` imports Tailwind with
+`source(none)` so that Tailwind 4 scans nothing else. A class written elsewhere, or built by string
+concatenation, is not compiled. Always write complete literal class strings.
+⚠ **Tailwind 4 (since 2026-10-09).** `postcss.config.js` loads only `@tailwindcss/postcss`, which
+prefixes and lowers nesting itself, so there is no autoprefixer. Its layers are real CSS cascade
+layers: an un-layered rule in `globals.css` beats every utility, so every plain rule there sits in
+`@layer base` (bare elements) or `@layer utilities` (anything carrying a class or an attribute) — the
+file's header says which and why. Recipes stay plain CSS in `@layer components`, not `@utility`, so
+every utility beats every recipe. Tailwind 4's `hover:` applies only under `@media (hover: hover)`,
+so a phone never shows a hover state, not even the one a tap used to leave behind: anything revealed
+only by `hover:` or `group-hover:` must also be reachable another way. The one such reveal today,
+`MediaCarousel`'s zoom badge, is decoration on a slide that is itself the button, and it also shows
+on `group-focus-visible`.
+⚠ **A vendor-prefixed declaration goes BEFORE its standard form** in `globals.css`. The production
+build's minifier (Lightning CSS) keeps only the prefixed one when it comes second: `.glass-card` and
+`.glass-dark` shipped `-webkit-backdrop-filter` alone, which Chromium does not implement, and were never
+frosted there until 2026-10-09. `e2e/vendor-prefix-order-unit.spec.ts` holds every pair in the file to
+that order.
 
 ### 11.2 Which primitives are live, and which are dormant
 
@@ -1175,7 +1202,7 @@ default offset 6, `CLOSE_ON_SCROLL_GRACE_MS 600`. Data attributes: `data-anchore
 
 ### 11.6 `Toast`
 
-`DEFAULT_DURATION 5000`, `MAX_VISIBLE 3`, viewport `z-[110]`, bottom-right (clear of the island).
+`DEFAULT_DURATION 5000`, `MAX_VISIBLE 3`, viewport `z-110`, bottom-right (clear of the island).
 
 - Mounted **once** in `app/layout.tsx`. A nested provider renders a second `aria-live` region that
   screen readers announce twice.

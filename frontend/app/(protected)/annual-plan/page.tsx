@@ -450,7 +450,7 @@ export default function AnnualPlanPage() {
       ) : (
         <div className="panel overflow-hidden">
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[64rem] text-left text-sm">
+            <table className="w-full min-w-5xl text-left text-sm">
               <thead className="bg-surface-50 text-xs uppercase tracking-wide text-ink-500">
                 <tr>
                   <th className="px-4 py-2 font-medium">Workshop No.</th>
@@ -514,7 +514,7 @@ export default function AnnualPlanPage() {
                           <>
                             <button
                               type="button"
-                              className="field-button-secondary !min-h-8 !px-2.5 !py-1 text-xs"
+                              className="field-button-secondary min-h-8! px-2.5! py-1! text-xs"
                               onClick={() => setPromoting(entry)}
                               disabled={busyId === entry.id}
                             >
@@ -523,7 +523,7 @@ export default function AnnualPlanPage() {
                             </button>
                             <button
                               type="button"
-                              className="field-button-secondary !min-h-8 !px-2.5 !py-1 text-xs"
+                              className="field-button-secondary min-h-8! px-2.5! py-1! text-xs"
                               onClick={() => void act(entry, "withdraw")}
                               disabled={busyId === entry.id}
                             >
@@ -535,7 +535,7 @@ export default function AnnualPlanPage() {
                         {entry.standing === "WITHDRAWN" ? (
                           <button
                             type="button"
-                            className="field-button-secondary !min-h-8 !px-2.5 !py-1 text-xs"
+                            className="field-button-secondary min-h-8! px-2.5! py-1! text-xs"
                             onClick={() => void act(entry, "reinstate")}
                             disabled={busyId === entry.id}
                           >

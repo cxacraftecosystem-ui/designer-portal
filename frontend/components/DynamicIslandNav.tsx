@@ -1031,16 +1031,16 @@ export function DynamicIslandNav() {
 
       {/* Full navigation sheet: keyboard-reachable path to every destination the user qualifies for.
 
-          The overlay's rung is `z-[90]`, not the `z-40` it shipped with, and the reason is
+          The overlay's rung is `z-90`, not the `z-40` it shipped with, and the reason is
           `AppShell`'s <main>. That element used to carry `z-10`, which made it a stacking context
           and quietly capped everything a page mounts — however high the page declared it — below
           this scrim. It carries no z-index now (the media lightbox and the full-screen editor, both
-          `z-[100]`, could not otherwise clear the island), so in-page fixed chrome competes with
+          `z-100`, could not otherwise clear the island), so in-page fixed chrome competes with
           this overlay directly in the ROOT stacking context, and a tie there is settled by tree
           order alone — which this loses, because the nav renders BEFORE <main>. `UploadTray` is
           fixed at `z-40`, so at the old rung an upload in flight painted its dock over an open
           `aria-modal` sheet: undimmed and still clickable. 90 clears anything a page mounts and
-          stays below the `z-[100]` dialog rung, so this scrim still yields to a true modal. */}
+          stays below the `z-100` dialog rung, so this scrim still yields to a true modal. */}
       <AnimatePresence>
         {sheetOpen ? (
           <motion.div
@@ -1048,7 +1048,7 @@ export function DynamicIslandNav() {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={reduce ? NO_MOTION : { duration: 0.18 }}
-            className="nav-sheet-overlay fixed inset-0 z-[90]"
+            className="nav-sheet-overlay fixed inset-0 z-90"
           >
             {/* The scrim is its own element rather than the sheet's parent: `touch-action: none` is
                 what stops a drag on the dimmed page from panning it on iOS, and from an ancestor
@@ -1057,7 +1057,7 @@ export function DynamicIslandNav() {
               aria-hidden
               onClick={closeSheet}
               style={{ touchAction: "none" }}
-              className="absolute inset-0 bg-ink-900/20 backdrop-blur-sm"
+              className="absolute inset-0 bg-ink-900/20 backdrop-blur-xs"
             />
             <motion.div
               ref={sheetRef}

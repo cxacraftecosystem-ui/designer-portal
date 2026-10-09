@@ -88,7 +88,7 @@ function ProblemRow({ problem }: { problem: SanctionParseProblem }) {
       {/* VERBATIM. The sentence was written on the server to be shown as it is. */}
       <p className="mt-1 text-sm leading-6 text-ink-700">{problem.reason}</p>
       {problem.value ? (
-        <p className="mt-1 break-words text-xs text-ink-muted">Cell text: {problem.value}</p>
+        <p className="mt-1 wrap-break-word text-xs text-ink-muted">Cell text: {problem.value}</p>
       ) : null}
     </li>
   );
