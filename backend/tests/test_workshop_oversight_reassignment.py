@@ -52,12 +52,38 @@ functions that ran and returned successfully.
 
     docker compose up -d postgres
     cd backend && .venv/Scripts/python.exe -m prisma migrate deploy --schema prisma/schema.prisma
+
+── HOW EVERY TEST HERE REACHES THE DATABASE, AND THE CI FAILURE THAT DECIDED IT ────────────────────
+
+The services are called directly — there is no ``TestClient`` — and every test is SYNC: ``world``
+seeds its rows in an ``asyncio.run`` of its own and returns them as values, and each test hands its
+work, as one coroutine, to :func:`_in_a_private_loop`, which runs it under ``asyncio.run`` between a
+blind ``db.connect()`` and a ``db.disconnect()`` in a ``finally``. That is the shape ``conftest.py``
+names under "HOW A DATABASE-BACKED MODULE IS SUPPOSED TO REACH THE DATABASE".
+
+UNTIL 2026-10-09 ``world`` WAS AN ASYNC FIXTURE THAT CONNECTED, AND THE TESTS WERE ASYNC; on every
+CI run from 2026-10-01 on — PR #24's run 37916529287 among them — all 16 failed with
+``RuntimeError: <asyncio.locks.Event ...> is bound to a different event loop``, raised inside the
+Prisma client's httpx pool. The fixture had connected and seeded on one loop and the test reused
+that keep-alive connection from another: pytest-asyncio (``asyncio_mode = "auto"``) runs every async
+test on its own loop, while an async fixture in a ``pytest.mark.anyio`` module goes to whichever of
+the two plugins pytest registered LAST. On CI that order comes from an unsorted directory listing,
+and it flipped between runner images with no commit — ``plugins: anyio-4.14.2, asyncio-1.4.0`` on
+the last green main run (2026-09-21), ``plugins: asyncio-1.4.0, anyio-4.14.2`` on every red one.
+``conftest.py`` records the measurement and how to reproduce it on a laptop.
+
+This shape leaves neither plugin anything to decide, and ``asyncio.run`` makes a loop nothing else
+shares and closes it, with the connection it opened, before anything else runs. What crosses from
+the seed's loop to a test's is data: Prisma's model objects are pydantic values that hold no client,
+no engine and no connection, so they mean the same thing in any loop.
 """
 
 from __future__ import annotations
 
+import asyncio
 import uuid
-from typing import Any
+from collections.abc import Awaitable, Callable
+from typing import Any, TypeVar
 
 import pytest
 from conftest import needs_db
@@ -73,14 +99,29 @@ SETUP_ENTITY = "workshopSetup"
 STAGE_THREE = "WORKSHOP_PLAN_PARTICIPANTS_OPENING"
 PLAN_ENTITY = "workshopPlan"
 
-pytestmark = pytest.mark.anyio
-
 PASSWORD = "workshop-oversight-reassignment-password"
 
+_T = TypeVar("_T")
 
-@pytest.fixture
-def anyio_backend():
-    return "asyncio"
+
+def _in_a_private_loop(work: Callable[[], Awaitable[_T]]) -> _T:
+    """Run database work with ``db`` connected, in an event loop that exists for that call alone.
+
+    ``asyncio.run`` creates the loop and closes it on the way out, and the connection is opened and
+    closed inside it, so nothing the work touched — the query engine, the httpx pool in front of it,
+    the events its streams wait on — can be reached from any other loop afterwards. The connect is
+    BLIND and the disconnect UNCONDITIONAL, which is right here and only here: no other loop holds
+    ``db`` while this one runs, and the next call connects afresh.
+    """
+
+    async def connected() -> _T:
+        await db.connect()
+        try:
+            return await work()
+        finally:
+            await db.disconnect()
+
+    return asyncio.run(connected())
 
 
 async def _designer(stamp: str, slug: str, name: str, *, with_profile: bool) -> Any:
@@ -117,7 +158,7 @@ async def _designer(stamp: str, slug: str, name: str, *, with_profile: bool) -> 
 
 
 @pytest.fixture
-async def world():
+def world() -> dict[str, Any]:
     """An officer, two designers with profiles, one without, and a workshop naming the first.
 
     The workshop is created the way the ordinary doors create one — an ADMIN creator plus a viewer
@@ -126,10 +167,15 @@ async def world():
     to the officer and grant the designer through ``attach_the_named_designer``). A fixture that put
     the designer in ``createdById`` would be testing a workshop this product does not make, and the
     residual-grant defect would be invisible in it.
+
+    SYNC, AND SEEDED IN A LOOP OF ITS OWN that is closed before the test starts; see the module
+    docstring for the failure the async version of this fixture produced. FUNCTION-SCOPED, because
+    every test here moves this workshop's viewer rows or its promoted column and then asserts on the
+    exact state it left — a shared workshop would make each test's answer depend on the one before.
     """
     stamp = uuid.uuid4().hex[:8]
-    await db.connect()
-    try:
+
+    async def seed() -> dict[str, Any]:
         officer = await db.user.create(
             data={
                 "email": f"oversight-officer-{stamp}@example.org",
@@ -166,7 +212,7 @@ async def world():
         await db.designworkshopviewer.create_many(
             data=[{"designWorkshopId": workshop.id, "userId": outgoing.id}]
         )
-        yield {
+        return {
             "officer": officer,
             "creator": creator,
             "outgoing": outgoing,
@@ -175,8 +221,8 @@ async def world():
             "stranger": stranger,
             "workshop": workshop,
         }
-    finally:
-        await db.disconnect()
+
+    return _in_a_private_loop(seed)
 
 
 async def _viewer_ids(workshop_id: str) -> set[str]:
@@ -260,7 +306,7 @@ async def _a_workshop_whose_stage_one_names_its_designer(world: dict[str, Any]) 
 
 
 @needs_db
-async def test_naming_a_different_designer_takes_the_outgoing_one_off_the_workshop(world) -> None:
+def test_naming_a_different_designer_takes_the_outgoing_one_off_the_workshop(world) -> None:
     """**DEFECT 1.** The route says replace; before this it added.
 
     The residual row is not a cosmetic leftover — ``docs/PERMISSIONS.md`` states what it confers:
@@ -268,24 +314,28 @@ async def test_naming_a_different_designer_takes_the_outgoing_one_off_the_worksh
     the export ledger". So a designer removed from a ministry workshop could keep writing to it, and
     the officer who removed them had no route in the product that could take it away.
     """
-    world_workshop = world["workshop"]
-    answer = await oversight.reassign_designer(
-        world_workshop, world["incoming"].id, actor=world["officer"]
-    )
 
-    assert await _viewer_ids(world_workshop.id) == {world["incoming"].id}, (
-        "the outgoing designer still holds a viewer row, so they still hold every stage write on a "
-        "workshop the ministry has reassigned away from them"
-    )
-    assert answer["removedDesigner"]["userId"] == world["outgoing"].id
-    assert answer["stillHaveAccess"] == [], (
-        "the answer must name who ELSE can still write to this workshop; the officers screen has "
-        "no viewer list and no route that could show them"
-    )
+    async def scenario() -> None:
+        world_workshop = world["workshop"]
+        answer = await oversight.reassign_designer(
+            world_workshop, world["incoming"].id, actor=world["officer"]
+        )
+
+        assert await _viewer_ids(world_workshop.id) == {world["incoming"].id}, (
+            "the outgoing designer still holds a viewer row, so they still hold every stage write "
+            "on a workshop the ministry has reassigned away from them"
+        )
+        assert answer["removedDesigner"]["userId"] == world["outgoing"].id
+        assert answer["stillHaveAccess"] == [], (
+            "the answer must name who ELSE can still write to this workshop; the officers screen "
+            "has no viewer list and no route that could show them"
+        )
+
+    _in_a_private_loop(scenario)
 
 
 @needs_db
-async def test_a_co_designer_the_reassignment_did_not_name_keeps_access_and_is_reported(
+def test_a_co_designer_the_reassignment_did_not_name_keeps_access_and_is_reported(
     world,
 ) -> None:
     """AMBIGUITY REMOVES NOBODY, AND SAYS SO.
@@ -297,23 +347,29 @@ async def test_a_co_designer_the_reassignment_did_not_name_keeps_access_and_is_r
     ``designerName`` plus the two oversight rows, and the only viewer screen in the product is
     behind ``require_admin``, which the assigning MINISTRY_ADMIN is outside.
     """
-    workshop = world["workshop"]
-    await db.designworkshopviewer.create_many(
-        data=[{"designWorkshopId": workshop.id, "userId": world["stranger"].id}]
-    )
 
-    answer = await oversight.reassign_designer(workshop, world["incoming"].id, actor=world["officer"])
+    async def scenario() -> None:
+        workshop = world["workshop"]
+        await db.designworkshopviewer.create_many(
+            data=[{"designWorkshopId": workshop.id, "userId": world["stranger"].id}]
+        )
 
-    assert world["stranger"].id in await _viewer_ids(workshop.id), (
-        "a co-designer was removed by a call that named somebody else; this route knows nothing "
-        "about their membership and must not decide it"
-    )
-    assert [row["userId"] for row in answer["stillHaveAccess"]] == [world["stranger"].id]
-    assert answer["removedDesigner"]["userId"] == world["outgoing"].id
+        answer = await oversight.reassign_designer(
+            workshop, world["incoming"].id, actor=world["officer"]
+        )
+
+        assert world["stranger"].id in await _viewer_ids(workshop.id), (
+            "a co-designer was removed by a call that named somebody else; this route knows "
+            "nothing about their membership and must not decide it"
+        )
+        assert [row["userId"] for row in answer["stillHaveAccess"]] == [world["stranger"].id]
+        assert answer["removedDesigner"]["userId"] == world["outgoing"].id
+
+    _in_a_private_loop(scenario)
 
 
 @needs_db
-async def test_the_outgoing_designer_is_not_guessed_at_when_two_viewers_would_write_one_name(
+def test_the_outgoing_designer_is_not_guessed_at_when_two_viewers_would_write_one_name(
     world,
 ) -> None:
     """Deleting a viewer row is a REVOCATION, and a revocation made on a guess is worse than a stale
@@ -325,24 +381,30 @@ async def test_the_outgoing_designer_is_not_guessed_at_when_two_viewers_would_wr
     row is the lead, which is the arrangement the "why there is no ``designer`` capacity" note
     defends. So nobody is removed and both are reported.
     """
-    workshop = world["workshop"]
-    twin = await _designer(uuid.uuid4().hex[:8], "twin", "A. Sharma", with_profile=True)
-    await db.designworkshopviewer.create_many(
-        data=[{"designWorkshopId": workshop.id, "userId": twin.id}]
-    )
 
-    answer = await oversight.reassign_designer(workshop, world["incoming"].id, actor=world["officer"])
+    async def scenario() -> None:
+        workshop = world["workshop"]
+        twin = await _designer(uuid.uuid4().hex[:8], "twin", "A. Sharma", with_profile=True)
+        await db.designworkshopviewer.create_many(
+            data=[{"designWorkshopId": workshop.id, "userId": twin.id}]
+        )
 
-    assert answer["removedDesigner"] is None
-    assert {world["outgoing"].id, twin.id} <= await _viewer_ids(workshop.id)
-    assert {row["userId"] for row in answer["stillHaveAccess"]} == {
-        world["outgoing"].id,
-        twin.id,
-    }, "an ambiguous answer has to be REPORTED; silence is what made the stale grant invisible"
+        answer = await oversight.reassign_designer(
+            workshop, world["incoming"].id, actor=world["officer"]
+        )
+
+        assert answer["removedDesigner"] is None
+        assert {world["outgoing"].id, twin.id} <= await _viewer_ids(workshop.id)
+        assert {row["userId"] for row in answer["stillHaveAccess"]} == {
+            world["outgoing"].id,
+            twin.id,
+        }, "an ambiguous answer has to be REPORTED; silence is what made the stale grant invisible"
+
+    _in_a_private_loop(scenario)
 
 
 @needs_db
-async def test_a_designer_who_has_never_opened_their_profile_still_moves_the_promoted_column(
+def test_a_designer_who_has_never_opened_their_profile_still_moves_the_promoted_column(
     world,
 ) -> None:
     """**DEFECT 2, AND IT IS THE ONE THAT PUT THE WRONG NAME ON A MINISTRY DOCUMENT.**
@@ -358,26 +420,30 @@ async def test_a_designer_who_has_never_opened_their_profile_still_moves_the_pro
     AccessRoster row and a DesignerRoster row and NO profile), so this is the ordinary case rather
     than an edge one.
     """
-    workshop = world["workshop"]
-    assert (
-        await db.designerprofile.find_unique(where={"userId": world["profileless"].id})
-    ) is None, "the fixture is not exercising the branch this test is about"
 
-    answer = await oversight.reassign_designer(
-        workshop, world["profileless"].id, actor=world["officer"]
-    )
+    async def scenario() -> None:
+        workshop = world["workshop"]
+        assert (
+            await db.designerprofile.find_unique(where={"userId": world["profileless"].id})
+        ) is None, "the fixture is not exercising the branch this test is about"
 
-    assert answer["designerName"] == "C. Nayak", (
-        f"the promoted column reads {answer['designerName']!r}; a workshop reassigned to a designer "
-        "with no profile row still names the designer it was taken away from"
-    )
-    reread = await db.designworkshop.find_unique(where={"id": workshop.id})
-    assert reread.designerName == "C. Nayak"
-    assert answer["stagesWritten"], "no stage was written, so nothing can have moved the column"
+        answer = await oversight.reassign_designer(
+            workshop, world["profileless"].id, actor=world["officer"]
+        )
+
+        assert answer["designerName"] == "C. Nayak", (
+            f"the promoted column reads {answer['designerName']!r}; a workshop reassigned to a "
+            "designer with no profile row still names the designer it was taken away from"
+        )
+        reread = await db.designworkshop.find_unique(where={"id": workshop.id})
+        assert reread.designerName == "C. Nayak"
+        assert answer["stagesWritten"], "no stage was written, so nothing can have moved the column"
+
+    _in_a_private_loop(scenario)
 
 
 @needs_db
-async def test_the_reassignment_never_writes_the_officers_own_name_into_the_report(world) -> None:
+def test_the_reassignment_never_writes_the_officers_own_name_into_the_report(world) -> None:
     """The defect ``seed_designer_prefill``'s docstring names, asserted against rows.
 
     ``prefill_from_profile(user_id or actor.id)`` is one plausible extra word, and what it produces
@@ -387,12 +453,16 @@ async def test_the_reassignment_never_writes_the_officers_own_name_into_the_repo
     asserts the outcome, because a second fallback added anywhere else in the chain would satisfy
     the source test and still produce the wrong name.
     """
-    workshop = world["workshop"]
-    answer = await oversight.reassign_designer(
-        workshop, world["incoming"].id, actor=world["officer"]
-    )
-    assert answer["designerName"] == "B. Mohanty"
-    assert world["officer"].name not in str(answer["designerName"])
+
+    async def scenario() -> None:
+        workshop = world["workshop"]
+        answer = await oversight.reassign_designer(
+            workshop, world["incoming"].id, actor=world["officer"]
+        )
+        assert answer["designerName"] == "B. Mohanty"
+        assert world["officer"].name not in str(answer["designerName"])
+
+    _in_a_private_loop(scenario)
 
 
 # ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -405,7 +475,7 @@ async def test_the_reassignment_never_writes_the_officers_own_name_into_the_repo
 
 
 @needs_db
-async def test_a_co_designer_can_be_added_without_touching_the_reports_designer(world) -> None:
+def test_a_co_designer_can_be_added_without_touching_the_reports_designer(world) -> None:
     """**THE HALF OF THIS DOOR THAT IS A GRANT**, and the half that must not come with it.
 
     Before 0.0.12 the only way to give a second designer access from ``/officers`` was to NAME them,
@@ -414,26 +484,31 @@ async def test_a_co_designer_can_be_added_without_touching_the_reports_designer(
     ``designerName`` exactly as it stands — and ``stagesWritten`` empty is the machine-readable
     half of that: an empty list means the prefill arm did not run at all.
     """
-    workshop = world["workshop"]
-    answer = await oversight.set_named_designers(
-        workshop,
-        user_ids=[world["outgoing"].id, world["stranger"].id],
-        lead_user_id=None,
-        actor=world["officer"],
-    )
 
-    assert await _viewer_ids(workshop.id) == {world["outgoing"].id, world["stranger"].id}
-    assert answer["designerName"] == "A. Sharma", (
-        "adding a co-designer moved the name on the report's cover; that is defect 2 in a new place"
-    )
-    assert answer["stagesWritten"] == [], "the prefill arm ran on a save that only added access"
-    assert answer["removedDesigners"] == []
-    reread = await db.designworkshop.find_unique(where={"id": workshop.id})
-    assert reread.designerName == "A. Sharma"
+    async def scenario() -> None:
+        workshop = world["workshop"]
+        answer = await oversight.set_named_designers(
+            workshop,
+            user_ids=[world["outgoing"].id, world["stranger"].id],
+            lead_user_id=None,
+            actor=world["officer"],
+        )
+
+        assert await _viewer_ids(workshop.id) == {world["outgoing"].id, world["stranger"].id}
+        assert answer["designerName"] == "A. Sharma", (
+            "adding a co-designer moved the name on the report's cover; that is defect 2 in a new "
+            "place"
+        )
+        assert answer["stagesWritten"] == [], "the prefill arm ran on a save that only added access"
+        assert answer["removedDesigners"] == []
+        reread = await db.designworkshop.find_unique(where={"id": workshop.id})
+        assert reread.designerName == "A. Sharma"
+
+    _in_a_private_loop(scenario)
 
 
 @needs_db
-async def test_a_co_designer_can_be_taken_off_and_the_answer_names_them(world) -> None:
+def test_a_co_designer_can_be_taken_off_and_the_answer_names_them(world) -> None:
     """**THE REMOVAL THAT HAD NO ROUTE ANYWHERE A MINISTRY ADMIN COULD REACH.**
 
     ``remove_one_viewer``'s own docstring names the defect verbatim: *"before this existed the
@@ -442,26 +517,30 @@ async def test_a_co_designer_can_be_taken_off_and_the_answer_names_them(world) -
     second half of that sentence. The answer names who lost access because a viewer row IS write
     access to every stage — a silent stale grant was the whole defect the first time.
     """
-    workshop = world["workshop"]
-    await db.designworkshopviewer.create_many(
-        data=[{"designWorkshopId": workshop.id, "userId": world["stranger"].id}]
-    )
 
-    answer = await oversight.set_named_designers(
-        workshop, user_ids=[world["outgoing"].id], lead_user_id=None, actor=world["officer"]
-    )
+    async def scenario() -> None:
+        workshop = world["workshop"]
+        await db.designworkshopviewer.create_many(
+            data=[{"designWorkshopId": workshop.id, "userId": world["stranger"].id}]
+        )
 
-    assert await _viewer_ids(workshop.id) == {world["outgoing"].id}
-    assert [row["userId"] for row in answer["removedDesigners"]] == [world["stranger"].id]
-    assert answer["removedDesigners"][0]["name"] == "D. Patnaik", (
-        "the officer is shown an account id rather than a person"
-    )
-    assert answer["designerName"] == "A. Sharma"
-    assert answer["stagesWritten"] == []
+        answer = await oversight.set_named_designers(
+            workshop, user_ids=[world["outgoing"].id], lead_user_id=None, actor=world["officer"]
+        )
+
+        assert await _viewer_ids(workshop.id) == {world["outgoing"].id}
+        assert [row["userId"] for row in answer["removedDesigners"]] == [world["stranger"].id]
+        assert answer["removedDesigners"][0]["name"] == "D. Patnaik", (
+            "the officer is shown an account id rather than a person"
+        )
+        assert answer["designerName"] == "A. Sharma"
+        assert answer["stagesWritten"] == []
+
+    _in_a_private_loop(scenario)
 
 
 @needs_db
-async def test_taking_every_designer_off_a_workshop_takes_the_name_off_its_cover_too(world) -> None:
+def test_taking_every_designer_off_a_workshop_takes_the_name_off_its_cover_too(world) -> None:
     """**THE ONE-WAY DOOR, OPENED (2026-09-20)** — this test asserted the refusal until that date.
 
     The refusal said "nobody is the designer" was not an expressible state. It is one and always
@@ -482,24 +561,28 @@ async def test_taking_every_designer_off_a_workshop_takes_the_name_off_its_cover
     would NULL the craft, the cluster, the state, the district and both dates along with the name.
     The stage-backed arm, which is the ordinary one, is the test below.
     """
-    workshop = world["workshop"]
-    answer = await oversight.set_named_designers(
-        workshop, user_ids=[], lead_user_id=None, actor=world["officer"]
-    )
 
-    assert await _viewer_ids(workshop.id) == set(), "the last designer kept their stage writes"
-    assert [row["userId"] for row in answer["removedDesigners"]] == [world["outgoing"].id]
-    assert answer["designerName"] is None, (
-        "the workshop is for nobody and its cover still names the designer it was taken from"
-    )
-    assert answer["designers"] == []
-    reread = await db.designworkshop.find_unique(where={"id": workshop.id})
-    assert reread.designerName is None
-    assert reread.title == workshop.title, "the NOT NULL promoted column was written too"
+    async def scenario() -> None:
+        workshop = world["workshop"]
+        answer = await oversight.set_named_designers(
+            workshop, user_ids=[], lead_user_id=None, actor=world["officer"]
+        )
+
+        assert await _viewer_ids(workshop.id) == set(), "the last designer kept their stage writes"
+        assert [row["userId"] for row in answer["removedDesigners"]] == [world["outgoing"].id]
+        assert answer["designerName"] is None, (
+            "the workshop is for nobody and its cover still names the designer it was taken from"
+        )
+        assert answer["designers"] == []
+        reread = await db.designworkshop.find_unique(where={"id": workshop.id})
+        assert reread.designerName is None
+        assert reread.title == workshop.title, "the NOT NULL promoted column was written too"
+
+    _in_a_private_loop(scenario)
 
 
 @needs_db
-async def test_the_cover_name_is_blanked_on_stage_one_and_nothing_else_on_it_is(world) -> None:
+def test_the_cover_name_is_blanked_on_stage_one_and_nothing_else_on_it_is(world) -> None:
     """**THE ORDINARY ARM, AND THE HALF THAT WOULD LOOK DONE.**
 
     ``designerName`` is a PROMOTED column whose single source is stage 1's own ``designerName``
@@ -515,46 +598,57 @@ async def test_the_cover_name_is_blanked_on_stage_one_and_nothing_else_on_it_is(
     ``craftName``, ``clusterName`` and ``venue`` on the header under a 200 — the incident
     ``seed_designer_prefill``'s docstring records, from the other end.
     """
-    record = await _a_workshop_whose_stage_one_names_its_designer(world)
-    before = await _stage_data(record.id, STAGE_ONE, SETUP_ENTITY)
-    assert before["designerName"] == "B. Mohanty", "the fixture never named anybody on the stage"
-    assert before["designerInstitution"] == "National Institute of Design"
 
-    answer = await oversight.set_named_designers(
-        record, user_ids=[], lead_user_id=None, actor=world["officer"]
-    )
+    async def scenario() -> None:
+        record = await _a_workshop_whose_stage_one_names_its_designer(world)
+        before = await _stage_data(record.id, STAGE_ONE, SETUP_ENTITY)
+        assert before["designerName"] == "B. Mohanty", (
+            "the fixture never named anybody on the stage"
+        )
+        assert before["designerInstitution"] == "National Institute of Design"
 
-    assert answer["stagesWritten"] == [STAGE_ONE], (
-        "no stage was written, so nothing can have blanked the field the column is promoted from"
-    )
-    after = await _stage_data(record.id, STAGE_ONE, SETUP_ENTITY)
-    assert not str(after.get("designerName") or "").strip(), (
-        "stage 1 still names the designer, so the next save of it re-promotes the name onto the "
-        "cover of a workshop nobody is on"
-    )
-    assert after["designerInstitution"] == "National Institute of Design", (
-        "a field the removal was never about was taken with it"
-    )
-    assert after["craftName"] == "Sambalpuri Ikat"
-    assert after["clusterName"] == "Barpali"
-    assert after["venue"] == "Weavers' Centre"
+        answer = await oversight.set_named_designers(
+            record, user_ids=[], lead_user_id=None, actor=world["officer"]
+        )
 
-    plan = await _stage_data(record.id, STAGE_THREE, PLAN_ENTITY)
-    assert plan["designerQualification"] == "M.Des (Textile Design)", (
-        "stage 3 was rewritten; nothing on it is promoted and nothing on it is the authorship"
-    )
-    assert plan["designerProfile"], "the designer's biography was deleted by a removal of access"
+        assert answer["stagesWritten"] == [STAGE_ONE], (
+            "no stage was written, so nothing can have blanked the field the column is promoted "
+            "from"
+        )
+        after = await _stage_data(record.id, STAGE_ONE, SETUP_ENTITY)
+        assert not str(after.get("designerName") or "").strip(), (
+            "stage 1 still names the designer, so the next save of it re-promotes the name onto "
+            "the cover of a workshop nobody is on"
+        )
+        assert after["designerInstitution"] == "National Institute of Design", (
+            "a field the removal was never about was taken with it"
+        )
+        assert after["craftName"] == "Sambalpuri Ikat"
+        assert after["clusterName"] == "Barpali"
+        assert after["venue"] == "Weavers' Centre"
 
-    reread = await db.designworkshop.find_unique(where={"id": record.id})
-    assert reread.designerName is None
-    assert reread.craftName == "Sambalpuri Ikat", "a promoted column nobody asked about was nulled"
-    assert reread.clusterName == "Barpali"
-    assert reread.venue == "Weavers' Centre"
-    assert await _viewer_ids(record.id) == set()
+        plan = await _stage_data(record.id, STAGE_THREE, PLAN_ENTITY)
+        assert plan["designerQualification"] == "M.Des (Textile Design)", (
+            "stage 3 was rewritten; nothing on it is promoted and nothing on it is the authorship"
+        )
+        assert plan["designerProfile"], (
+            "the designer's biography was deleted by a removal of access"
+        )
+
+        reread = await db.designworkshop.find_unique(where={"id": record.id})
+        assert reread.designerName is None
+        assert reread.craftName == "Sambalpuri Ikat", (
+            "a promoted column nobody asked about was nulled"
+        )
+        assert reread.clusterName == "Barpali"
+        assert reread.venue == "Weavers' Centre"
+        assert await _viewer_ids(record.id) == set()
+
+    _in_a_private_loop(scenario)
 
 
 @needs_db
-async def test_the_blanked_cover_name_is_not_put_back_by_the_next_stage_one_save(world) -> None:
+def test_the_blanked_cover_name_is_not_put_back_by_the_next_stage_one_save(world) -> None:
     """**WHY THE COLUMN IS NOT WRITTEN DIRECTLY, ASSERTED AS THE SAVE THAT WOULD HAVE UNDONE IT.**
 
     ``_coerce_promoted`` rewrites every promoted column from the stage row on every save that
@@ -566,23 +660,29 @@ async def test_the_blanked_cover_name_is_not_put_back_by_the_next_stage_one_save
     This is that save, made by the ordinary path after the removal. It is the whole reason the field
     and the column go together in one act.
     """
-    record = await _a_workshop_whose_stage_one_names_its_designer(world)
-    await oversight.set_named_designers(
-        record, user_ids=[], lead_user_id=None, actor=world["officer"]
-    )
 
-    await _save_stage_one(record.id, world["officer"], {"venue": "Community hall, Barpali"})
+    async def scenario() -> None:
+        record = await _a_workshop_whose_stage_one_names_its_designer(world)
+        await oversight.set_named_designers(
+            record, user_ids=[], lead_user_id=None, actor=world["officer"]
+        )
 
-    reread = await db.designworkshop.find_unique(where={"id": record.id})
-    assert reread.designerName is None, (
-        "the next stage-1 save re-promoted the name off a stage field that was never blanked; the "
-        "column had been written directly"
-    )
-    assert reread.venue == "Community hall, Barpali", "the control: that save did reach the header"
+        await _save_stage_one(record.id, world["officer"], {"venue": "Community hall, Barpali"})
+
+        reread = await db.designworkshop.find_unique(where={"id": record.id})
+        assert reread.designerName is None, (
+            "the next stage-1 save re-promoted the name off a stage field that was never blanked; "
+            "the column had been written directly"
+        )
+        assert reread.venue == "Community hall, Barpali", (
+            "the control: that save did reach the header"
+        )
+
+    _in_a_private_loop(scenario)
 
 
 @needs_db
-async def test_dropping_the_named_designer_while_others_remain_is_refused(world) -> None:
+def test_dropping_the_named_designer_while_others_remain_is_refused(world) -> None:
     """Taking the report's own author off a workshop OTHERS are still on is NAMING SOMEBODY ELSE.
 
     The co-designer beside them may go freely, so the refusal has to be about the LEAD specifically
@@ -595,24 +695,32 @@ async def test_dropping_the_named_designer_while_others_remain_is_refused(world)
     different words, and the one-way door would have stayed shut. With a team of three you are
     choosing which of them the report names; with nobody left there is nothing to choose.
     """
-    workshop = world["workshop"]
-    await db.designworkshopviewer.create_many(
-        data=[{"designWorkshopId": workshop.id, "userId": world["stranger"].id}]
-    )
 
-    with pytest.raises(Exception) as exc:
-        await oversight.set_named_designers(
-            workshop, user_ids=[world["stranger"].id], lead_user_id=None, actor=world["officer"]
+    async def scenario() -> None:
+        workshop = world["workshop"]
+        await db.designworkshopviewer.create_many(
+            data=[{"designWorkshopId": workshop.id, "userId": world["stranger"].id}]
         )
-    assert getattr(exc.value, "status_code", None) == 422
-    assert "A. Sharma" in str(getattr(exc.value, "detail", "")), (
-        "the refusal must name the designer it is about; an officer cannot act on 'that designer'"
-    )
-    assert await _viewer_ids(workshop.id) == {world["outgoing"].id, world["stranger"].id}
+
+        with pytest.raises(Exception) as exc:
+            await oversight.set_named_designers(
+                workshop,
+                user_ids=[world["stranger"].id],
+                lead_user_id=None,
+                actor=world["officer"],
+            )
+        assert getattr(exc.value, "status_code", None) == 422
+        assert "A. Sharma" in str(getattr(exc.value, "detail", "")), (
+            "the refusal must name the designer it is about; an officer cannot act on 'that "
+            "designer'"
+        )
+        assert await _viewer_ids(workshop.id) == {world["outgoing"].id, world["stranger"].id}
+
+    _in_a_private_loop(scenario)
 
 
 @needs_db
-async def test_naming_a_different_lead_in_the_set_moves_the_column_and_the_access_together(
+def test_naming_a_different_lead_in_the_set_moves_the_column_and_the_access_together(
     world,
 ) -> None:
     """**THE REPLACEMENT, EXPRESSED AS A SET** — and both halves have to land.
@@ -622,26 +730,30 @@ async def test_naming_a_different_lead_in_the_set_moves_the_column_and_the_acces
     defects this whole file is named after: a cover page naming somebody who cannot open the record,
     or a designer removed from a ministry workshop who can still write to it.
     """
-    workshop = world["workshop"]
-    answer = await oversight.set_named_designers(
-        workshop,
-        user_ids=[world["incoming"].id],
-        lead_user_id=world["incoming"].id,
-        actor=world["officer"],
-    )
 
-    assert await _viewer_ids(workshop.id) == {world["incoming"].id}
-    assert [row["userId"] for row in answer["removedDesigners"]] == [world["outgoing"].id]
-    assert answer["designerName"] == "B. Mohanty"
-    assert answer["stagesWritten"], "no stage was written, so nothing can have moved the column"
-    reread = await db.designworkshop.find_unique(where={"id": workshop.id})
-    assert reread.designerName == "B. Mohanty"
-    assert {row["userId"] for row in answer["designers"]} == {world["incoming"].id}
-    assert [row["isLead"] for row in answer["designers"]] == [True]
+    async def scenario() -> None:
+        workshop = world["workshop"]
+        answer = await oversight.set_named_designers(
+            workshop,
+            user_ids=[world["incoming"].id],
+            lead_user_id=world["incoming"].id,
+            actor=world["officer"],
+        )
+
+        assert await _viewer_ids(workshop.id) == {world["incoming"].id}
+        assert [row["userId"] for row in answer["removedDesigners"]] == [world["outgoing"].id]
+        assert answer["designerName"] == "B. Mohanty"
+        assert answer["stagesWritten"], "no stage was written, so nothing can have moved the column"
+        reread = await db.designworkshop.find_unique(where={"id": workshop.id})
+        assert reread.designerName == "B. Mohanty"
+        assert {row["userId"] for row in answer["designers"]} == {world["incoming"].id}
+        assert [row["isLead"] for row in answer["designers"]] == [True]
+
+    _in_a_private_loop(scenario)
 
 
 @needs_db
-async def test_a_lead_with_no_profile_row_still_moves_the_promoted_column_through_this_door(
+def test_a_lead_with_no_profile_row_still_moves_the_promoted_column_through_this_door(
     world,
 ) -> None:
     """**DEFECT 2, ASSERTED ON THE SECOND DOOR**, because it is a defect of the BLOCK, not the route.
@@ -653,26 +765,30 @@ async def test_a_lead_with_no_profile_row_still_moves_the_promoted_column_throug
     block is shared by both doors precisely so this cannot be true of one and false of the other;
     this is the assertion that says the sharing actually happened.
     """
-    workshop = world["workshop"]
-    assert (
-        await db.designerprofile.find_unique(where={"userId": world["profileless"].id})
-    ) is None, "the fixture is not exercising the branch this test is about"
 
-    answer = await oversight.set_named_designers(
-        workshop,
-        user_ids=[world["profileless"].id],
-        lead_user_id=world["profileless"].id,
-        actor=world["officer"],
-    )
+    async def scenario() -> None:
+        workshop = world["workshop"]
+        assert (
+            await db.designerprofile.find_unique(where={"userId": world["profileless"].id})
+        ) is None, "the fixture is not exercising the branch this test is about"
 
-    assert answer["designerName"] == "C. Nayak"
-    reread = await db.designworkshop.find_unique(where={"id": workshop.id})
-    assert reread.designerName == "C. Nayak"
-    assert world["officer"].name not in str(answer["designerName"])
+        answer = await oversight.set_named_designers(
+            workshop,
+            user_ids=[world["profileless"].id],
+            lead_user_id=world["profileless"].id,
+            actor=world["officer"],
+        )
+
+        assert answer["designerName"] == "C. Nayak"
+        reread = await db.designworkshop.find_unique(where={"id": workshop.id})
+        assert reread.designerName == "C. Nayak"
+        assert world["officer"].name not in str(answer["designerName"])
+
+    _in_a_private_loop(scenario)
 
 
 @needs_db
-async def test_the_workshops_creator_in_the_body_is_a_no_op_rather_than_a_second_grant(
+def test_the_workshops_creator_in_the_body_is_a_no_op_rather_than_a_second_grant(
     world,
 ) -> None:
     """Their access is ``createdById``, and a viewer row beside it is a SECOND source of truth.
@@ -681,23 +797,27 @@ async def test_the_workshops_creator_in_the_body_is_a_no_op_rather_than_a_second
     viewers PUT for the same stated reason. The body has to tolerate the id rather than refuse the
     whole save: the officer ticked the person the screen told them opened the workshop.
     """
-    workshop = world["workshop"]
-    answer = await oversight.set_named_designers(
-        workshop,
-        user_ids=[world["outgoing"].id, world["creator"].id],
-        lead_user_id=None,
-        actor=world["officer"],
-    )
 
-    assert await _viewer_ids(workshop.id) == {world["outgoing"].id}, (
-        "the creator was given a redundant viewer row, so revoking their access now takes two "
-        "deletions in two tables"
-    )
-    assert world["creator"].id not in {row["userId"] for row in answer["designers"]}
+    async def scenario() -> None:
+        workshop = world["workshop"]
+        answer = await oversight.set_named_designers(
+            workshop,
+            user_ids=[world["outgoing"].id, world["creator"].id],
+            lead_user_id=None,
+            actor=world["officer"],
+        )
+
+        assert await _viewer_ids(workshop.id) == {world["outgoing"].id}, (
+            "the creator was given a redundant viewer row, so revoking their access now takes two "
+            "deletions in two tables"
+        )
+        assert world["creator"].id not in {row["userId"] for row in answer["designers"]}
+
+    _in_a_private_loop(scenario)
 
 
 @needs_db
-async def test_the_read_the_screen_was_missing_marks_exactly_one_row_as_the_lead(world) -> None:
+def test_the_read_the_screen_was_missing_marks_exactly_one_row_as_the_lead(world) -> None:
     """``named_designer_rows`` — the key whose ABSENCE was headline finding 3 of the investigation.
 
     ``GET /design-workshop-oversight/{id}`` answered ``designerName`` as a STRING with no ids in it,
@@ -705,25 +825,29 @@ async def test_the_read_the_screen_was_missing_marks_exactly_one_row_as_the_lead
     to compare a change against. ``isLead`` is carried on EVERY row, including ``False``, so a
     client can tell "not the lead" from "this server does not answer the question".
     """
-    workshop = world["workshop"]
-    await db.designworkshopviewer.create_many(
-        data=[{"designWorkshopId": workshop.id, "userId": world["stranger"].id}]
-    )
-    reread = await db.designworkshop.find_unique(where={"id": workshop.id})
 
-    rows = await oversight.named_designer_rows(reread)
+    async def scenario() -> None:
+        workshop = world["workshop"]
+        await db.designworkshopviewer.create_many(
+            data=[{"designWorkshopId": workshop.id, "userId": world["stranger"].id}]
+        )
+        reread = await db.designworkshop.find_unique(where={"id": workshop.id})
 
-    assert {row["userId"] for row in rows} == {world["outgoing"].id, world["stranger"].id}
-    assert all("isLead" in row for row in rows)
-    assert [row["userId"] for row in rows if row["isLead"]] == [world["outgoing"].id]
-    assert world["creator"].id not in {row["userId"] for row in rows}, (
-        "the creator is in `designers`; they hold no viewer row and an empty list here means "
-        "'nobody but whoever opened it', which the screen says in words"
-    )
+        rows = await oversight.named_designer_rows(reread)
+
+        assert {row["userId"] for row in rows} == {world["outgoing"].id, world["stranger"].id}
+        assert all("isLead" in row for row in rows)
+        assert [row["userId"] for row in rows if row["isLead"]] == [world["outgoing"].id]
+        assert world["creator"].id not in {row["userId"] for row in rows}, (
+            "the creator is in `designers`; they hold no viewer row and an empty list here means "
+            "'nobody but whoever opened it', which the screen says in words"
+        )
+
+    _in_a_private_loop(scenario)
 
 
 @needs_db
-async def test_unfiling_an_artisan_clears_the_link_and_deletes_no_record(world) -> None:
+def test_unfiling_an_artisan_clears_the_link_and_deletes_no_record(world) -> None:
     """**UNFILES; NEVER DELETES** — and answers ``False`` rather than raising when there is nothing
     to do.
 
@@ -734,33 +858,37 @@ async def test_unfiling_an_artisan_clears_the_link_and_deletes_no_record(world) 
     ``RecordNotFoundError`` — and the third is the reason the predicate carries the workshop: a
     stale screen must not be able to unfile a record from somewhere it was not looking at.
     """
-    workshop = world["workshop"]
-    other = await db.designworkshop.create(
-        data={
-            "title": f"Roster neighbour {uuid.uuid4().hex[:8]}",
-            "templateId": "DCH_STANDARD",
-            "createdById": world["creator"].id,
-        }
-    )
-    artisan = await db.artisan.create(
-        data={
-            "name": "Roster artisan",
-            "place": "Puri",
-            "designWorkshopId": workshop.id,
-            "createdById": world["creator"].id,
-        }
-    )
 
-    assert await oversight.unlink_artisan_from_workshop(workshop.id, artisan.id) is True
-    assert await oversight.unlink_artisan_from_workshop(workshop.id, artisan.id) is False
+    async def scenario() -> None:
+        workshop = world["workshop"]
+        other = await db.designworkshop.create(
+            data={
+                "title": f"Roster neighbour {uuid.uuid4().hex[:8]}",
+                "templateId": "DCH_STANDARD",
+                "createdById": world["creator"].id,
+            }
+        )
+        artisan = await db.artisan.create(
+            data={
+                "name": "Roster artisan",
+                "place": "Puri",
+                "designWorkshopId": workshop.id,
+                "createdById": world["creator"].id,
+            }
+        )
 
-    still_there = await db.artisan.find_unique(where={"id": artisan.id})
-    assert still_there is not None, "an unfiling deleted a regulated person-record"
-    assert still_there.designWorkshopId is None
+        assert await oversight.unlink_artisan_from_workshop(workshop.id, artisan.id) is True
+        assert await oversight.unlink_artisan_from_workshop(workshop.id, artisan.id) is False
 
-    await db.artisan.update(where={"id": artisan.id}, data={"designWorkshopId": other.id})
-    assert await oversight.unlink_artisan_from_workshop(workshop.id, artisan.id) is False, (
-        "a stale screen unfiled a record from a workshop it was not looking at"
-    )
-    reread = await db.artisan.find_unique(where={"id": artisan.id})
-    assert reread.designWorkshopId == other.id
+        still_there = await db.artisan.find_unique(where={"id": artisan.id})
+        assert still_there is not None, "an unfiling deleted a regulated person-record"
+        assert still_there.designWorkshopId is None
+
+        await db.artisan.update(where={"id": artisan.id}, data={"designWorkshopId": other.id})
+        assert await oversight.unlink_artisan_from_workshop(workshop.id, artisan.id) is False, (
+            "a stale screen unfiled a record from a workshop it was not looking at"
+        )
+        reread = await db.artisan.find_unique(where={"id": artisan.id})
+        assert reread.designWorkshopId == other.id
+
+    _in_a_private_loop(scenario)

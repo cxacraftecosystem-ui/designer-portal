@@ -34,8 +34,9 @@ THIS MODULE USED TO DO EXACTLY THAT, TWICE PER TEST. A module-scoped ``world`` h
 for the whole module, while a function-scoped ``year`` fixture called ``db.connect()`` and
 ``delete_many`` from the test's own loop and a ``_rows`` helper did the same for every read-back.
 That is 57 ``ERROR at setup`` here — and then three more in ``tests/test_save_stage_resubmission.py``,
-a module with a correct fixture and no client of its own, failing with ``RuntimeError: Event loop is
-closed`` because a half-opened connection outlived this module.
+a module with no client of its own, failing with ``RuntimeError: Event loop is closed`` because a
+half-opened connection outlived this module. (Its own async fixture was a second, separate defect,
+which red CI runs exposed from 2026-10-01 on; that module's docstring records it.)
 
 ``tests/test_workshop_join_sync.py`` carries the simple form of the convention that works and
 ``tests/test_sanction_orders.py`` the longer one; this file is on the longer one. **Every database

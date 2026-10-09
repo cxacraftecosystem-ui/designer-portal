@@ -42,12 +42,37 @@ screen, and is never written from a login attempt. So the rule stayed and the so
 
 ``scripts/backfill_roster_names.py`` applies the same repair to rows that already exist, through the
 same two functions, so there is one implementation of every rule above.
+
+── HOW EVERY TEST HERE REACHES THE DATABASE, AND THE CI FAILURE THAT DECIDED IT ────────────────────
+
+Every test is SYNC. Its database work is one coroutine handed to :func:`_in_a_private_loop`, which
+runs it under ``asyncio.run`` between a blind ``db.connect()`` and a ``db.disconnect()`` in a
+``finally`` — the shape ``conftest.py`` names under "HOW A DATABASE-BACKED MODULE IS SUPPOSED TO
+REACH THE DATABASE". There is no ``TestClient`` here, and that was never what made a loop safe.
+
+UNTIL 2026-10-09 THE TESTS WERE ASYNC, and ``stamp`` was an async fixture that awaited
+``db.connect()``. On every CI run from 2026-10-01 on — PR #24's run 37916529287 among them — all 17
+failed with ``RuntimeError: <asyncio.locks.Event ...> is bound to a different event loop``, raised
+inside the Prisma client's httpx pool: the fixture had connected on one loop, and the test's first
+query reused the keep-alive connection ``connect()`` had opened there from another. Two async
+plugins were live: pytest-asyncio (``asyncio_mode = "auto"``) runs every async test on its own loop,
+and an async fixture in a ``pytest.mark.anyio`` module goes to whichever plugin pytest registered
+LAST. On CI that is decided by an unsorted directory listing, and it flipped between runner images
+with no commit: ``plugins: anyio-4.14.2, asyncio-1.4.0`` on the last green main run (2026-09-21),
+``plugins: asyncio-1.4.0, anyio-4.14.2`` on every red one. ``conftest.py`` records the measurement
+and the local reproduction (``python -m pytest -p asyncio -p anyio``).
+
+This shape leaves neither plugin anything to decide — no async fixture to take, no async test to run
+— and ``asyncio.run`` makes a loop nothing else shares and closes it, with the connection it opened,
+before the next test starts. ``stamp`` stays FUNCTION-scoped for its own reason, given on it below.
 """
 
+import asyncio
 import os
 import uuid
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, TypeVar
 
 import pytest
 
@@ -66,8 +91,9 @@ pytestmark = [
         not _LOCAL,
         reason="needs a LOCAL database; refuses to run against a remote DATABASE_URL",
     ),
-    pytest.mark.anyio,
 ]
+
+_T = TypeVar("_T")
 
 #: What an administrator typed on the designer roster itself. Section 3 asserts this exact string
 #: survives an allow-list edit, rather than merely asserting "a name is present" — a code path that
@@ -79,26 +105,41 @@ ROSTER_OWN_NAME = "Dr S. Raghavan (roster screen, typed by hand)"
 ACCESS_NAME = "Sowmya Raghavan"
 
 
-@pytest.fixture(scope="module")
-def anyio_backend():
-    return "asyncio"
+def _in_a_private_loop(work: Callable[[], Awaitable[_T]]) -> _T:
+    """Run one test's database work with ``db`` connected, in an event loop of its own.
+
+    ``asyncio.run`` creates the loop and closes it on the way out, and the connection is opened and
+    closed inside it, so nothing the work touched — the query engine, the httpx pool in front of it,
+    the events its streams wait on — can be reached from any other loop afterwards. The connect is
+    BLIND and the disconnect UNCONDITIONAL, which is right here and only here: no other loop holds
+    ``db`` while this one runs, and the next test's ``asyncio.run`` connects afresh.
+    """
+
+    async def connected() -> _T:
+        await db.connect()
+        try:
+            return await work()
+        finally:
+            await db.disconnect()
+
+    return asyncio.run(connected())
 
 
 @pytest.fixture
-async def stamp():
-    """A fresh suffix per test, and a connection open for the duration.
+def stamp() -> str:
+    """A fresh suffix per test, and nothing else — the test opens its own connection.
 
     FUNCTION-SCOPED RATHER THAN MODULE-SCOPED, unlike the fixture in
     ``test_designer_empanelment_auto.py``, because almost every test here WRITES to the two rosters
     and then asserts on the state of a specific row. Sharing one set of addresses across tests would
     make the order they run in part of what is being asserted, and the way that fails is a suite
     that is green until somebody adds a test in the middle of it.
+
+    It used to be async and hold a connection open for the test, which is the shape the module
+    docstring records failing: a fixture's connection lives on the fixture's loop, and nothing
+    guaranteed that was the test's.
     """
-    await db.connect()
-    try:
-        yield uuid.uuid4().hex[:8]
-    finally:
-        await db.disconnect()
+    return uuid.uuid4().hex[:8]
 
 
 async def _admit(email: str, *, full_name: str | None) -> Any:
@@ -130,23 +171,27 @@ async def _roster_row(email: str) -> Any:
 # ══════════════════════════════════════════════════════════════════════════════════════
 
 
-async def test_an_empanelment_is_created_carrying_the_allow_lists_name(stamp):
+def test_an_empanelment_is_created_carrying_the_allow_lists_name(stamp):
     """THE HEADLINE FIX. Fifteen live rows looked like this and showed a bare address."""
     email = f"names-carried-{stamp}@example.org"
-    await _admit(email, full_name=ACCESS_NAME)
 
-    assert await ensure_empanelled(email) is True
+    async def scenario() -> None:
+        await _admit(email, full_name=ACCESS_NAME)
 
-    row = await _roster_row(email)
-    assert row is not None, "the empanelment itself must still be created"
-    assert row.fullName == ACCESS_NAME, (
-        "the roster row must show the name the administrator typed on the allow-list; a bare "
-        "address here IS the reported defect"
-    )
-    assert row.isActive is True
+        assert await ensure_empanelled(email) is True
+
+        row = await _roster_row(email)
+        assert row is not None, "the empanelment itself must still be created"
+        assert row.fullName == ACCESS_NAME, (
+            "the roster row must show the name the administrator typed on the allow-list; a bare "
+            "address here IS the reported defect"
+        )
+        assert row.isActive is True
+
+    _in_a_private_loop(scenario)
 
 
-async def test_no_name_on_the_allow_list_leaves_the_column_null_rather_than_empty(stamp):
+def test_no_name_on_the_allow_list_leaves_the_column_null_rather_than_empty(stamp):
     """THE HONEST ANSWER IS NULL, AND IT IS NOT THE EMPTY STRING.
 
     Both render identically on the roster screen, so this looks like pedantry until somebody writes
@@ -156,15 +201,19 @@ async def test_no_name_on_the_allow_list_leaves_the_column_null_rather_than_empt
     ambiguity in the first place.
     """
     email = f"names-none-{stamp}@example.org"
-    await _admit(email, full_name=None)
 
-    assert await ensure_empanelled(email) is True
+    async def scenario() -> None:
+        await _admit(email, full_name=None)
 
-    row = await _roster_row(email)
-    assert row.fullName is None
+        assert await ensure_empanelled(email) is True
+
+        row = await _roster_row(email)
+        assert row.fullName is None
+
+    _in_a_private_loop(scenario)
 
 
-async def test_an_empanelment_with_no_allow_list_row_at_all_is_still_created(stamp):
+def test_an_empanelment_with_no_allow_list_row_at_all_is_still_created(stamp):
     """THE NAME LOOKUP MUST NOT BE ABLE TO REFUSE THE EMPANELMENT.
 
     ``ensure_empanelled`` is called from ``auth.login``. Somebody signing in as a DESIGNER whose
@@ -174,11 +223,14 @@ async def test_an_empanelment_with_no_allow_list_row_at_all_is_still_created(sta
     """
     email = f"names-noaccess-{stamp}@example.org"
 
-    assert await ensure_empanelled(email) is True
+    async def scenario() -> None:
+        assert await ensure_empanelled(email) is True
 
-    row = await _roster_row(email)
-    assert row is not None
-    assert row.fullName is None
+        row = await _roster_row(email)
+        assert row is not None
+        assert row.fullName is None
+
+    _in_a_private_loop(scenario)
 
 
 # ══════════════════════════════════════════════════════════════════════════════════════
@@ -186,7 +238,7 @@ async def test_an_empanelment_with_no_allow_list_row_at_all_is_still_created(sta
 # ══════════════════════════════════════════════════════════════════════════════════════
 
 
-async def test_the_name_is_found_across_a_gmail_dot(stamp):
+def test_the_name_is_found_across_a_gmail_dot(stamp):
     """The allow-list holds the DOTTED spelling; the empanelment is written under the MAILBOX.
 
     This is the live pairing, not a hypothetical: ``tanyavanvari.nift@gmail.com`` was admitted under
@@ -195,19 +247,24 @@ async def test_the_name_is_found_across_a_gmail_dot(stamp):
     """
     dotted = f"names.dot.{stamp}@gmail.com"
     mailbox = f"namesdot{stamp}@gmail.com"
-    await _admit(dotted, full_name=ACCESS_NAME)
 
-    assert await ensure_empanelled(dotted) is True
+    async def scenario() -> None:
+        await _admit(dotted, full_name=ACCESS_NAME)
 
-    # Created under the mailbox, which is ``canonical_email``'s job and is asserted here because the
-    # name lookup has to survive that translation rather than depend on the spelling that arrived.
-    assert await _roster_row(dotted) is None
-    row = await _roster_row(mailbox)
-    assert row is not None
-    assert row.fullName == ACCESS_NAME
+        assert await ensure_empanelled(dotted) is True
+
+        # Created under the mailbox, which is ``canonical_email``'s job and is asserted here because
+        # the name lookup has to survive that translation rather than depend on the spelling that
+        # arrived.
+        assert await _roster_row(dotted) is None
+        row = await _roster_row(mailbox)
+        assert row is not None
+        assert row.fullName == ACCESS_NAME
+
+    _in_a_private_loop(scenario)
 
 
-async def test_the_canonical_spelling_wins_when_both_rows_carry_a_name(stamp):
+def test_the_canonical_spelling_wins_when_both_rows_carry_a_name(stamp):
     """DETERMINISM WHEN THE ALLOW-LIST HOLDS THE SAME MAILBOX TWICE.
 
     ``AccessRoster.email`` is unique and two spellings are two different strings, so this state is
@@ -217,15 +274,19 @@ async def test_the_canonical_spelling_wins_when_both_rows_carry_a_name(stamp):
     """
     dotted = f"names.tie.{stamp}@gmail.com"
     mailbox = f"namestie{stamp}@gmail.com"
-    await _admit(dotted, full_name="Typed under the dotted spelling")
-    await _admit(mailbox, full_name="Typed under the mailbox")
 
-    for _ in range(3):
-        assert await name_on_the_allow_list(dotted) == "Typed under the mailbox"
-        assert await name_on_the_allow_list(mailbox) == "Typed under the mailbox"
+    async def scenario() -> None:
+        await _admit(dotted, full_name="Typed under the dotted spelling")
+        await _admit(mailbox, full_name="Typed under the mailbox")
+
+        for _ in range(3):
+            assert await name_on_the_allow_list(dotted) == "Typed under the mailbox"
+            assert await name_on_the_allow_list(mailbox) == "Typed under the mailbox"
+
+    _in_a_private_loop(scenario)
 
 
-async def test_a_row_without_a_name_never_shadows_one_that_has_a_name(stamp):
+def test_a_row_without_a_name_never_shadows_one_that_has_a_name(stamp):
     """A NAMELESS ROW MUST NOT WIN THE TIE JUST BY BEING THE CANONICAL SPELLING.
 
     Sorting the matches by spelling BEFORE discarding the nameless ones would do exactly that, and
@@ -237,13 +298,17 @@ async def test_a_row_without_a_name_never_shadows_one_that_has_a_name(stamp):
     """
     dotted = f"names.shadow.{stamp}@gmail.com"
     mailbox = f"namesshadow{stamp}@gmail.com"
-    await _admit(mailbox, full_name=None)
-    await _admit(dotted, full_name=ACCESS_NAME)
 
-    assert await name_on_the_allow_list(dotted) == ACCESS_NAME
+    async def scenario() -> None:
+        await _admit(mailbox, full_name=None)
+        await _admit(dotted, full_name=ACCESS_NAME)
+
+        assert await name_on_the_allow_list(dotted) == ACCESS_NAME
+
+    _in_a_private_loop(scenario)
 
 
-async def test_a_canonical_address_cannot_reach_a_dotted_allow_list_row(stamp):
+def test_a_canonical_address_cannot_reach_a_dotted_allow_list_row(stamp):
     """**THE LIMIT OF THE LIVE LOOKUP, PINNED AS A FACT RATHER THAN LEFT AS A SURPRISE.**
 
     ``email_match_keys`` returns the literal spelling and ADDS the canonical one. So it walks from a
@@ -267,12 +332,16 @@ async def test_a_canonical_address_cannot_reach_a_dotted_allow_list_row(stamp):
     """
     dotted = f"names.oneway.{stamp}@gmail.com"
     mailbox = f"namesoneway{stamp}@gmail.com"
-    await _admit(dotted, full_name=ACCESS_NAME)
 
-    assert await name_on_the_allow_list(dotted) == ACCESS_NAME
-    assert await name_on_the_allow_list(mailbox) is None, (
-        "if this now finds the name, the live lookup has been widened — see the docstring"
-    )
+    async def scenario() -> None:
+        await _admit(dotted, full_name=ACCESS_NAME)
+
+        assert await name_on_the_allow_list(dotted) == ACCESS_NAME
+        assert await name_on_the_allow_list(mailbox) is None, (
+            "if this now finds the name, the live lookup has been widened — see the docstring"
+        )
+
+    _in_a_private_loop(scenario)
 
 
 # ══════════════════════════════════════════════════════════════════════════════════════
@@ -280,7 +349,7 @@ async def test_a_canonical_address_cannot_reach_a_dotted_allow_list_row(stamp):
 # ══════════════════════════════════════════════════════════════════════════════════════
 
 
-async def test_adopting_a_name_refuses_a_row_that_already_has_one(stamp):
+def test_adopting_a_name_refuses_a_row_that_already_has_one(stamp):
     """FILL, NEVER OVERWRITE — the rule that makes it safe to call this on every admin edit.
 
     The name on the designer roster was typed there, on that screen, about that empanelment. The
@@ -288,34 +357,42 @@ async def test_adopting_a_name_refuses_a_row_that_already_has_one(stamp):
     get an invitation out of the door.
     """
     email = f"names-keep-{stamp}@example.org"
-    await _admit(email, full_name=ACCESS_NAME)
-    await db.designerroster.create(
-        data={"email": email, "fullName": ROSTER_OWN_NAME, "isActive": True}
-    )
 
-    assert await adopt_allow_list_name(email, ACCESS_NAME) is False
+    async def scenario() -> None:
+        await _admit(email, full_name=ACCESS_NAME)
+        await db.designerroster.create(
+            data={"email": email, "fullName": ROSTER_OWN_NAME, "isActive": True}
+        )
 
-    row = await _roster_row(email)
-    assert row.fullName == ROSTER_OWN_NAME, (
-        "an administrator's own words on the roster screen must survive an allow-list edit"
-    )
+        assert await adopt_allow_list_name(email, ACCESS_NAME) is False
+
+        row = await _roster_row(email)
+        assert row.fullName == ROSTER_OWN_NAME, (
+            "an administrator's own words on the roster screen must survive an allow-list edit"
+        )
+
+    _in_a_private_loop(scenario)
 
 
-async def test_adopting_a_name_fills_a_row_that_has_none(stamp):
+def test_adopting_a_name_fills_a_row_that_has_none(stamp):
     """THE OTHER ORDER OF EVENTS: the empanelment exists first, the name arrives afterwards."""
     email = f"names-late-{stamp}@example.org"
-    await _admit(email, full_name=ACCESS_NAME)
-    await db.designerroster.create(data={"email": email, "fullName": None, "isActive": True})
 
-    assert await adopt_allow_list_name(email, ACCESS_NAME) is True
-    assert (await _roster_row(email)).fullName == ACCESS_NAME
+    async def scenario() -> None:
+        await _admit(email, full_name=ACCESS_NAME)
+        await db.designerroster.create(data={"email": email, "fullName": None, "isActive": True})
 
-    # IDEMPOTENT, and it reports honestly: the second call changes nothing and says so, which is
-    # what lets the backfill's count line mean "rows I wrote" rather than "rows I looked at".
-    assert await adopt_allow_list_name(email, ACCESS_NAME) is False
+        assert await adopt_allow_list_name(email, ACCESS_NAME) is True
+        assert (await _roster_row(email)).fullName == ACCESS_NAME
+
+        # IDEMPOTENT, and it reports honestly: the second call changes nothing and says so, which is
+        # what lets the backfill's count line mean "rows I wrote" rather than "rows I looked at".
+        assert await adopt_allow_list_name(email, ACCESS_NAME) is False
+
+    _in_a_private_loop(scenario)
 
 
-async def test_no_google_display_name_can_reach_the_designer_roster(stamp):
+def test_no_google_display_name_can_reach_the_designer_roster(stamp):
     """THE RULE THE ORIGINAL ``fullName is None`` WAS REALLY PROTECTING, kept intact.
 
     A display name is chosen by whoever owns the Google account and can be changed by them at any
@@ -326,20 +403,26 @@ async def test_no_google_display_name_can_reach_the_designer_roster(stamp):
     holding the ADMIN'S name instead.
     """
     email = f"names-google-{stamp}@example.org"
-    await db.user.create(
-        data={
-            "email": email,
-            "name": "APPROVE ME — urgent request from IT",
-            "role": "DESIGNER",
-        }
-    )
-    await _admit(email, full_name=ACCESS_NAME)
 
-    assert await ensure_empanelled(email) is True
+    async def scenario() -> None:
+        await db.user.create(
+            data={
+                "email": email,
+                "name": "APPROVE ME — urgent request from IT",
+                "role": "DESIGNER",
+            }
+        )
+        await _admit(email, full_name=ACCESS_NAME)
 
-    row = await _roster_row(email)
-    assert row.fullName == ACCESS_NAME
-    assert "IT" not in (row.fullName or ""), "a Google display name must never reach this column"
+        assert await ensure_empanelled(email) is True
+
+        row = await _roster_row(email)
+        assert row.fullName == ACCESS_NAME
+        assert "IT" not in (row.fullName or ""), (
+            "a Google display name must never reach this column"
+        )
+
+    _in_a_private_loop(scenario)
 
 
 # ══════════════════════════════════════════════════════════════════════════════════════
@@ -348,17 +431,21 @@ async def test_no_google_display_name_can_reach_the_designer_roster(stamp):
 
 
 @pytest.mark.parametrize("blank", ["", "   ", "\t\n"])
-async def test_a_whitespace_only_allow_list_name_is_not_carried(stamp, blank):
+def test_a_whitespace_only_allow_list_name_is_not_carried(stamp, blank):
     """NULL AND ``"   "`` ARE THE SAME FACT TO THE ROSTER SCREEN — both fall back to the address."""
     email = f"names-blank-{abs(hash(blank))}-{stamp}@example.org"
-    await _admit(email, full_name=blank)
 
-    assert await name_on_the_allow_list(email) is None
-    assert await ensure_empanelled(email) is True
-    assert (await _roster_row(email)).fullName is None
+    async def scenario() -> None:
+        await _admit(email, full_name=blank)
+
+        assert await name_on_the_allow_list(email) is None
+        assert await ensure_empanelled(email) is True
+        assert (await _roster_row(email)).fullName is None
+
+    _in_a_private_loop(scenario)
 
 
-async def test_adopting_a_blank_name_is_a_no_op_rather_than_a_write_of_null(stamp):
+def test_adopting_a_blank_name_is_a_no_op_rather_than_a_write_of_null(stamp):
     """CLEARING A NAME IS AN EDIT AN ADMIN MAKES ON THE ROSTER SCREEN, DELIBERATELY.
 
     It is not something that should happen to them as a side effect of tidying a different row next
@@ -366,16 +453,20 @@ async def test_adopting_a_blank_name_is_a_no_op_rather_than_a_write_of_null(stam
     erase what the roster screen holds.
     """
     email = f"names-blankwrite-{stamp}@example.org"
-    await db.designerroster.create(
-        data={"email": email, "fullName": ROSTER_OWN_NAME, "isActive": True}
-    )
 
-    assert await adopt_allow_list_name(email, "   ") is False
-    assert await adopt_allow_list_name(email, None) is False
-    assert (await _roster_row(email)).fullName == ROSTER_OWN_NAME
+    async def scenario() -> None:
+        await db.designerroster.create(
+            data={"email": email, "fullName": ROSTER_OWN_NAME, "isActive": True}
+        )
+
+        assert await adopt_allow_list_name(email, "   ") is False
+        assert await adopt_allow_list_name(email, None) is False
+        assert (await _roster_row(email)).fullName == ROSTER_OWN_NAME
+
+    _in_a_private_loop(scenario)
 
 
-async def test_adopting_a_name_for_an_empanelment_that_does_not_exist_writes_nothing(stamp):
+def test_adopting_a_name_for_an_empanelment_that_does_not_exist_writes_nothing(stamp):
     """IT FILLS A ROW; IT DOES NOT CREATE ONE.
 
     Creating an empanelment is ``ensure_empanelled``'s decision and carries the create-only rule
@@ -384,8 +475,11 @@ async def test_adopting_a_name_for_an_empanelment_that_does_not_exist_writes_not
     """
     email = f"names-absent-{stamp}@example.org"
 
-    assert await adopt_allow_list_name(email, ACCESS_NAME) is False
-    assert await _roster_row(email) is None
+    async def scenario() -> None:
+        assert await adopt_allow_list_name(email, ACCESS_NAME) is False
+        assert await _roster_row(email) is None
+
+    _in_a_private_loop(scenario)
 
 
 # ══════════════════════════════════════════════════════════════════════════════════════
@@ -393,7 +487,7 @@ async def test_adopting_a_name_for_an_empanelment_that_does_not_exist_writes_not
 # ══════════════════════════════════════════════════════════════════════════════════════
 
 
-async def test_a_suspended_empanelment_takes_the_name_and_keeps_its_suspension(stamp):
+def test_a_suspended_empanelment_takes_the_name_and_keeps_its_suspension(stamp):
     """A NAME IS NOT A STANDING, AND THIS IS THE ASSERTION THAT SAYS SO IN CODE.
 
     ``adopt_allow_list_name`` does not consult ``isActive``, which is the correct behaviour and also
@@ -404,26 +498,30 @@ async def test_a_suspended_empanelment_takes_the_name_and_keeps_its_suspension(s
     """
     email = f"names-suspended-{stamp}@example.org"
     revoked_at = datetime(2026, 3, 14, 9, 30, tzinfo=UTC)
-    await db.designerroster.create(
-        data={
-            "email": email,
-            "fullName": None,
-            "isActive": False,
-            "revokedAt": revoked_at,
-            "notes": "Suspended by an administrator in March.",
-        }
-    )
 
-    assert await adopt_allow_list_name(email, ACCESS_NAME) is True
+    async def scenario() -> None:
+        await db.designerroster.create(
+            data={
+                "email": email,
+                "fullName": None,
+                "isActive": False,
+                "revokedAt": revoked_at,
+                "notes": "Suspended by an administrator in March.",
+            }
+        )
 
-    row = await _roster_row(email)
-    assert row.fullName == ACCESS_NAME
-    assert row.isActive is False, "naming a row must not be able to let anybody sign in"
-    assert row.revokedAt is not None and row.revokedAt.replace(tzinfo=UTC) == revoked_at
-    assert row.notes == "Suspended by an administrator in March."
+        assert await adopt_allow_list_name(email, ACCESS_NAME) is True
+
+        row = await _roster_row(email)
+        assert row.fullName == ACCESS_NAME
+        assert row.isActive is False, "naming a row must not be able to let anybody sign in"
+        assert row.revokedAt is not None and row.revokedAt.replace(tzinfo=UTC) == revoked_at
+        assert row.notes == "Suspended by an administrator in March."
+
+    _in_a_private_loop(scenario)
 
 
-async def test_a_suspended_empanelment_is_still_never_revived_by_the_name_carrying_path(stamp):
+def test_a_suspended_empanelment_is_still_never_revived_by_the_name_carrying_path(stamp):
     """THE CREATE-ONLY RULE, RE-ASSERTED THROUGH THE DOOR THAT JUST GAINED A NEW READ.
 
     ``ensure_empanelled`` gained an ``AccessRoster`` lookup on its create path. If that read were
@@ -434,20 +532,24 @@ async def test_a_suspended_empanelment_is_still_never_revived_by_the_name_carryi
     """
     email = f"names-revoked-{stamp}@example.org"
     revoked_at = datetime(2026, 1, 5, 12, 0, tzinfo=UTC)
-    await _admit(email, full_name=ACCESS_NAME)
-    await db.designerroster.create(
-        data={
-            "email": email,
-            "fullName": ROSTER_OWN_NAME,
-            "isActive": False,
-            "revokedAt": revoked_at,
-            "notes": "Revoked. Do not restore from the allow-list.",
-        }
-    )
 
-    assert await ensure_empanelled(email) is False
+    async def scenario() -> None:
+        await _admit(email, full_name=ACCESS_NAME)
+        await db.designerroster.create(
+            data={
+                "email": email,
+                "fullName": ROSTER_OWN_NAME,
+                "isActive": False,
+                "revokedAt": revoked_at,
+                "notes": "Revoked. Do not restore from the allow-list.",
+            }
+        )
 
-    row = await _roster_row(email)
-    assert row.isActive is False
-    assert row.fullName == ROSTER_OWN_NAME
-    assert row.notes == "Revoked. Do not restore from the allow-list."
+        assert await ensure_empanelled(email) is False
+
+        row = await _roster_row(email)
+        assert row.isActive is False
+        assert row.fullName == ROSTER_OWN_NAME
+        assert row.notes == "Revoked. Do not restore from the allow-list."
+
+    _in_a_private_loop(scenario)
