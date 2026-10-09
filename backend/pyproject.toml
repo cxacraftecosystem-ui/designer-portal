@@ -31,6 +31,16 @@ dependencies = [
     "google-auth>=2.29.0",
     "requests>=2.32.0",
     "pydub>=0.25.1",
+    # THE `audioop` MODULE pydub IS BUILT ON, WHICH PYTHON 3.13 REMOVED (PEP 594). pydub 0.25.1 — its
+    # newest release — does `import audioop` and falls back to `import pyaudioop`, a module that does
+    # not exist, so on 3.14 `import pydub` itself raises ModuleNotFoundError. Both callers catch that
+    # quietly: data_browser's audio-as-mp4 conversion answers 503 "pydub is not installed", and
+    # ai._split_audio_into_chunks returns None, so a recording over Whisper's size limit goes up whole
+    # and is refused. Nothing in CI imports the real pydub (test_media_convert_bound.py stubs it), and
+    # production ran 3.12 until 2026-10-09, so the break would have shipped silently with the move to
+    # 3.14. audioop-lts is the maintained port of the removed module; tests/test_audio_runtime_deps.py
+    # imports pydub for real so the next interpreter move cannot lose it again.
+    "audioop-lts>=0.2.2",
     "openpyxl>=3.1.2",
     # PDF rendering for the workshop report (app/services/report_pdf.py). A CORE dependency, not
     # an extra, because app/api/routes/design_workshops.py imports it at module scope and the API

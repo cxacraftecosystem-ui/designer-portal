@@ -622,20 +622,38 @@ for `migrate`, or moved to Alembic. Until then, keep caching the 5.17.0 engines 
 Prisma's CDN), keep databases on 17, and do not move production to a new Python minor without
 re-measuring the client import. Open as of 2026-10-09.
 
-### [LOW] On Python 3.14 each process carries ~170 MiB more, and the box's memory ceilings were set on 3.12 (backend) — opened 2026-10-09
+### [MEDIUM] On Python 3.14 each process carries ~170 MiB more, and the box's memory ceilings and the app's read caps were set on 3.12 (backend) — opened 2026-10-09
 
 Importing the generated Prisma client — which uvicorn and the queue worker both do at start — holds
 727 MiB on 3.14.8 against 557 MiB on 3.12.15, measured in identical containers on 2026-10-09 with the
 import fix in place (without it, 3.14 needs over a gigabyte and many minutes). The systemd ceilings in
 `.github/workflows/deploy-backend.yml` and `infra/terraform/user_data.sh` were sized from a 3.12
-measurement: the API at ~634 MB under a 1000M soft ceiling, the queue under 800M soft / 1100M hard. On
-3.14 the API should sit near ~800 MB, still inside its ceiling, but the queue's idle footprint lands
-close to its own soft ceiling and leaves less of the hard stop for ffmpeg and transcription.
+measurement: the API under a 1000M soft ceiling and no hard one, the queue under 800M soft / 1100M hard.
 
-Nothing was raised on an estimate. After the first deploy on 3.14, read the `Memory:` line of
-`systemctl status fieldrepo` and `systemctl status fieldrepo-queue` and set both drop-ins (and the
-base units in user_data.sh) from those numbers, as the comment above the memory drop-ins already asks
-for the queue. Open until that reading is taken.
+**The box on 3.12, read over SSM on 2026-10-09** (release `201d269`, 24 minutes after a restart, idle):
+`fieldrepo` 686 MB (`memory.current`), `fieldrepo-queue` 585 MB, both `memory.events` at zero, swap
+29 MB used of 2 GiB, and `MemAvailable` 384 MB of 1,905. Adding ~178 MB to each process puts the API
+near 865 MB (inside its soft ceiling, and it has no hard one) and the idle queue near 765 MB — about
+75 MB under its 800M soft ceiling, so a transcription job starts throttled, but nearly 400 MB under
+the 1100M hard stop, and `memory.max` does not count swap, so neither unit is expected to be killed by
+its ceiling. Raising the ceilings would not have helped: they are per-unit caps, not memory.
+
+**What the extra ~356 MB does take is `MemAvailable`, and the application reads it.**
+`app/services/memory_budget.budget_bytes` caps a read at a quarter of `MemAvailable` (8 MiB floor) —
+the cgroup files it also tries are the root's, which a systemd unit's process does not have — and four
+paths size themselves by it: audio-as-mp4 conversion, captions and media measurement (32 MiB ceilings
+each) and report images (96 MiB). At 384 MB available all four run at or near their ceilings; if
+`MemAvailable` falls by the full ~356 MB they drop towards the 8 MiB floor, and media between there
+and 32 MiB that is accepted today is refused. That is an estimate from the kernel's arithmetic, not a
+measurement — swapping cold pages out gives some back — which is why it is written down here.
+
+Read after the first 3.14 deploy, before calling it done: `systemctl status fieldrepo
+fieldrepo-queue` (the `Memory:` lines, and set both drop-ins and user_data.sh's base units from them)
+and `free -m` (`available`). If `available` sits near the 8 MiB-floor arithmetic (~130 MB or less
+makes every one of the four caps smaller than its ceiling), the box needs memory — the next instance
+size — or each process needs to stop carrying the client's TypedDicts at run time
+(`backend/tests/scale/_lean_prisma_types.py` shows they can be stubbed); a ceiling edit will not do it.
+Open until those readings are taken.
 
 ---
 

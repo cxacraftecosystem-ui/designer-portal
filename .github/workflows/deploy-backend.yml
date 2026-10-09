@@ -1221,11 +1221,15 @@ jobs:
           # The 634 MB above was measured on 3.12. Importing the generated Prisma client — which both
           # units do at start — holds ~170 MiB more on 3.14 even with the fix in
           # scripts/generate_prisma_client.py: 727 MiB against 557 MiB right after the import,
-          # measured in identical containers. So expect the API near ~800 MB, still under its 1000M
-          # soft ceiling, and the queue's IDLE footprint close to its own 800M soft ceiling, leaving
-          # less of its 1100M hard stop for ffmpeg and transcription than before. Nothing here was
-          # raised on an estimate; read both `systemctl status` memory lines after the first 3.14
-          # deploy and set these from them, exactly as this comment asks for the queue.
+          # measured in identical containers. Read on the box over SSM the same day, idle on 3.12:
+          # the API at 686 MB and the queue at 585 MB, `memory.events` all zero. So expect the API
+          # near ~865 MB, still under its 1000M soft ceiling (and it has no hard one), and the
+          # queue's IDLE footprint near ~765 MB, about 75 MB under its own 800M soft ceiling — a job
+          # starts throttled — but nearly 400 MB under the 1100M hard stop, which counts RAM and not
+          # swap. Nothing here was raised on an estimate; read both `systemctl status` memory lines
+          # after the first 3.14 deploy and set these from them, exactly as this comment asks for the
+          # queue. The extra ~356 MB also comes out of the box's MemAvailable, which the app's
+          # memory_budget reads to size its media reads — docs/OPEN_FINDINGS.md has that half.
           write_dropin fieldrepo.service memory.conf <<'CONF'
           [Service]
           MemoryAccounting=yes

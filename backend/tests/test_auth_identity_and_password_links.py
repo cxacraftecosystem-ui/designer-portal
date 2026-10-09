@@ -816,7 +816,7 @@ async def test_the_seed_script_resets_only_the_master_admin_and_every_password_i
 
 
 def test_a_password_too_long_to_check_is_simply_wrong():
-    """Anything over the 4096-character cap passlib enforced (``security.MAX_CHECKED_PASSWORD_LENGTH``
+    """Anything over the 4096-byte cap passlib enforced (``security.MAX_CHECKED_PASSWORD_BYTES``
     since bcrypt replaced passlib on 2026-10-09) is never checked at all, and the sign-in and
     dataset-token bodies are unbounded on purpose. A megabyte pasted at the front door must be a
     wrong password, not a 500 — and not a check of its first 72 bytes."""

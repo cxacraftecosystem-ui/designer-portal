@@ -279,7 +279,8 @@ first because it is the one that changed under this document's feet.
 - Passwords are stored as bcrypt hashes — `$2b$`, cost 12 — written by `bcrypt` itself since 2026-10-09
   (`backend/app/core/security.py`; until then through passlib, which is unmaintained and could not run on
   bcrypt 5). The new code truncates to bcrypt's 72 bytes explicitly and keeps passlib's two refusals (a
-  NUL character, more than 4096 characters), so every stored hash verifies exactly as before —
+  NUL character, more than 4096 bytes of UTF-8 — passlib measured the encoded secret, not its
+  characters), so every stored hash verifies exactly as before —
   `backend/tests/test_password_hash_compat.py` checks hashes passlib wrote. An account
   CREATED by Google sign-in has no password hash at all; an account that has a password keeps it when
   its owner later signs in with Google (§3.3).

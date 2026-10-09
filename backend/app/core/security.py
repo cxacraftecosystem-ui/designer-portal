@@ -23,8 +23,9 @@ at all — its backend self-test hashes a password longer than 72 bytes, which b
 silently and bcrypt 5 refuses — so it was holding bcrypt at 4.0.1. The functions below reproduce what
 passlib did with that backend, rule for rule: the same ``$2b$`` hash at cost 12, the same 72-byte
 truncation (now written out instead of left to the library), the same refusal of a NUL character and
-of anything over passlib's 4096-character cap. Every hash already in the database verifies exactly as
-it did; ``tests/test_password_hash_compat.py`` holds hashes passlib wrote and checks them.
+of anything over passlib's 4096-byte cap (UTF-8 bytes, not characters: see
+:data:`MAX_CHECKED_PASSWORD_BYTES`). Every hash already in the database verifies exactly as it did;
+``tests/test_password_hash_compat.py`` holds hashes passlib wrote and checks them.
 
 ``python-jose`` gave way to PyJWT. jose's last release depends on ``ecdsa``, which carries an unfixed
 timing weakness (CVE-2024-23342); this module only ever used HMAC, which PyJWT does with the standard
@@ -55,12 +56,18 @@ BCRYPT_ROUNDS = 12
 #: did on our behalf — so every hash it wrote verifies against exactly the bytes it was made from.
 BCRYPT_MAX_SECRET_BYTES = 72
 
-#: The longest password :func:`verify_password` will check at all, in CHARACTERS. It is passlib's
+#: The longest password :func:`verify_password` will check at all, in UTF-8 BYTES. It is passlib's
 #: ``MAX_PASSWORD_SIZE``: passlib refused anything longer, and the sign-in answered "wrong password".
-#: Kept, rather than dropped with passlib, because without it a 5,000-character paste whose first
-#: 72 bytes happened to be the password would now sign in where it used to be refused — a change to
-#: what a credential check answers, which is not a library upgrade's to make.
-MAX_CHECKED_PASSWORD_LENGTH = 4096
+#: Kept, rather than dropped with passlib, because without it a 5,000-byte paste whose first 72 bytes
+#: happened to be the password would now sign in where it used to be refused — a change to what a
+#: credential check answers, which is not a library upgrade's to make.
+#:
+#: BYTES AND NOT CHARACTERS, BECAUSE THAT IS WHERE passlib MEASURED IT. Its bcrypt handler encodes the
+#: secret to UTF-8 first and then applies the cap (``_norm_digest_args`` in passlib/handlers/bcrypt.py,
+#: 1.7.4), so 2,085 characters of which 2,012 are ``é`` — 4,097 bytes — were refused. Measured against
+#: passlib 1.7.4 with bcrypt 4.0.1 on 2026-10-09: a character count here accepted that paste, and any
+#: other multi-byte paste of 4,097 to 16,384 bytes, whenever its first 72 bytes were the password.
+MAX_CHECKED_PASSWORD_BYTES = 4096
 
 #: The longest password this product will STORE, on every field that sets one: ``UserCreate``,
 #: ``UserUpdate``, ``ChangePasswordRequest`` and ``SetPasswordRequest``. ONE NUMBER, because they
@@ -115,13 +122,18 @@ def _uncheckable(password: str) -> str | None:
     one — the OpenBSD C original keys on a C string and stops there, while pyca/bcrypt (4 and 5,
     measured) keys on all of them — so passlib refused it rather than write a hash whose meaning
     depends on the library. Refusing it still is what keeps every verdict what it was. And more than
-    :data:`MAX_CHECKED_PASSWORD_LENGTH` characters (``PasswordSizeError``). The answer never quotes
-    the password.
+    :data:`MAX_CHECKED_PASSWORD_BYTES` bytes of UTF-8 (``PasswordSizeError``). The character count
+    is tested first only because it is free and implies the byte count (a character is at least one
+    byte), so a pasted megabyte is refused without being encoded. The answer never quotes the
+    password.
     """
     if "\x00" in password:
         return "a password may not contain a NUL character"
-    if len(password) > MAX_CHECKED_PASSWORD_LENGTH:
-        return f"a password may not be longer than {MAX_CHECKED_PASSWORD_LENGTH} characters"
+    if (
+        len(password) > MAX_CHECKED_PASSWORD_BYTES
+        or len(password.encode("utf-8")) > MAX_CHECKED_PASSWORD_BYTES
+    ):
+        return f"a password may not be longer than {MAX_CHECKED_PASSWORD_BYTES} bytes of UTF-8"
     return None
 
 
@@ -146,7 +158,7 @@ def verify_password(password: str, password_hash: str | None) -> bool:
         # The sign-in and dataset-token bodies are unbounded on purpose, so a pasted megabyte — or a
         # NUL — arrives here. Something that long, or that cannot be a bcrypt key, is not this
         # account's password, which is all a sign-in asks: False, never a 500, and never a check of
-        # its first 72 bytes (see MAX_CHECKED_PASSWORD_LENGTH).
+        # its first 72 bytes (see MAX_CHECKED_PASSWORD_BYTES).
         return False
     # A MALFORMED STORED HASH still raises — `bcrypt.checkpw` answers ValueError("Invalid salt") —
     # because that is a broken row an operator must hear about, not a wrong password. passlib raised

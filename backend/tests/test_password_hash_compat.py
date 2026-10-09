@@ -15,8 +15,10 @@ The cases are the ones where the two implementations could plausibly have disagr
   * A MULTI-BYTE CHARACTER ACROSS THE 72nd BYTE. The cut is on bytes, so ``é`` and ``è`` — which share
     their first UTF-8 byte — collapse to the same key when that byte is the 72nd. Odd, but it is what
     every existing hash means, so it is what the new code must answer.
-  * passlib's REFUSALS: a NUL character, and more than 4096 characters. Both answered "wrong
-    password" on sign-in and refused to hash; both still do.
+  * passlib's REFUSALS: a NUL character, and more than 4096 BYTES of UTF-8 — bytes, because passlib
+    encoded the secret before it measured it. Both answered "wrong password" on sign-in and refused
+    to hash; both still do. The multi-byte rows are the ones a character count got wrong: 2,085
+    characters can be 4,097 bytes, and passlib refused them.
 
 Each bcrypt check at cost 12 is a fraction of a second, so the table is kept to the cases that
 discriminate.
@@ -26,7 +28,7 @@ import pytest
 
 from app.core.security import (
     BCRYPT_ROUNDS,
-    MAX_CHECKED_PASSWORD_LENGTH,
+    MAX_CHECKED_PASSWORD_BYTES,
     hash_password,
     verify_password,
 )
@@ -61,7 +63,13 @@ PASSLIB_HASHES = {
         ("a" * 71 + "\xe9", "a" * 72, False),
         # passlib's refusals were "wrong password", never a 500 and never a check of 72 bytes.
         ("the-real-one", "the-real-one\x00", False),
-        ("a" * 72, "a" * (MAX_CHECKED_PASSWORD_LENGTH + 1), False),
+        ("a" * 72, "a" * (MAX_CHECKED_PASSWORD_BYTES + 1), False),
+        # THE CAP IS ON UTF-8 BYTES. Each verdict below is passlib 1.7.4's own, measured 2026-10-09:
+        # 4,096 bytes are checked (and match, since the first 72 bytes are the password), 4,097 bytes
+        # are refused however few characters carry them.
+        ("a" * 72, "a" * 72 + "\xe9" * 2012, True),  # 2,084 characters, 4,096 bytes
+        ("a" * 72, "a" * 73 + "\xe9" * 2012, False),  # 2,085 characters, 4,097 bytes
+        ("a" * 72, "a" * 72 + "\xe9" * 2100, False),  # 2,172 characters, 4,272 bytes
     ],
 )
 def test_a_hash_passlib_wrote_answers_as_it_did(stored_for, typed, expected):
@@ -78,14 +86,23 @@ def test_a_new_hash_has_the_format_and_cost_passlib_wrote():
     assert verify_password("not-the-real-one", stored) is False
 
 
-@pytest.mark.parametrize("password", ["has\x00a NUL", "x" * (MAX_CHECKED_PASSWORD_LENGTH + 1)])
+@pytest.mark.parametrize(
+    "password",
+    [
+        "has\x00a NUL",
+        "x" * (MAX_CHECKED_PASSWORD_BYTES + 1),
+        # 2,049 characters, 4,098 bytes: passlib raised PasswordSizeError for it (measured 2026-10-09).
+        "\xe9" * 2049,
+    ],
+)
 def test_what_passlib_refused_to_hash_is_still_refused(password):
     with pytest.raises(ValueError, match="password may not"):
         hash_password(password)
 
 
-def test_the_longest_checkable_password_still_hashes():
-    assert verify_password("x" * MAX_CHECKED_PASSWORD_LENGTH, hash_password("x" * MAX_CHECKED_PASSWORD_LENGTH))
+@pytest.mark.parametrize("password", ["x" * MAX_CHECKED_PASSWORD_BYTES, "\xe9" * 2048])
+def test_the_longest_checkable_password_still_hashes(password):
+    assert verify_password(password, hash_password(password))
 
 
 def test_a_malformed_stored_hash_raises_rather_than_answering():
