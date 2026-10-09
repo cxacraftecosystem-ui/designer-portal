@@ -1,6 +1,6 @@
 package com.designprototype.workshop.data
 
-import com.jakewharton.retrofit2.converter.kotlinx.serialization.asConverterFactory
+import retrofit2.converter.kotlinx.serialization.asConverterFactory
 import kotlinx.serialization.json.Json
 import okhttp3.Call
 import okhttp3.Callback
@@ -284,6 +284,13 @@ class InterviewArtisanScopeWireTest {
     /** An OkHttp call that never opens a socket: it hands back [body] for whatever it is asked. */
     private class CannedCall(private val req: Request, private val body: String) : Call {
         override fun request(): Request = req
+        // OkHttp 5.3 added these five to `okhttp3.Call`. A canned call carries no event listener
+        // and no tags, so each answers as an empty one would.
+        override fun addEventListener(eventListener: okhttp3.EventListener) = Unit
+        override fun <T : Any> tag(type: kotlin.reflect.KClass<T>): T? = null
+        override fun <T> tag(type: Class<out T>): T? = null
+        override fun <T : Any> tag(type: kotlin.reflect.KClass<T>, computeIfAbsent: () -> T): T = computeIfAbsent()
+        override fun <T : Any> tag(type: Class<T>, computeIfAbsent: () -> T): T = computeIfAbsent()
         override fun execute(): Response = canned()
         override fun enqueue(responseCallback: Callback) = responseCallback.onResponse(this, canned())
         override fun cancel() = Unit

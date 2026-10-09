@@ -6,6 +6,13 @@ import android.content.ContextWrapper
 import androidx.compose.foundation.background
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.displayCutout
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.systemBars
+import androidx.compose.foundation.layout.union
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.MaterialTheme
@@ -802,9 +809,10 @@ fun DesignWorkshopTheme(
 
     // System bars follow the theme instead of staying cream. res/values(-night)/styles.xml paints
     // them correctly for the very first frame (before Compose runs); this keeps them in step when
-    // the theme flips at runtime. On API 35+ (targetSdk 35) the platform ignores the two colour
-    // setters and enforces edge-to-edge — the icon-contrast flags below are what still matter
-    // there, and the window background from styles.xml shows through.
+    // the theme flips at runtime. On API 35+ the platform ignores the two colour setters and draws
+    // the app edge to edge (targetSdk 37 since 2026-10-09, with no opt-out) — the icon-contrast
+    // flags below are what still matter there, and what shows behind the bars is the theme
+    // background `SystemBarsInsetsRoot` paints across the whole window.
     val view = LocalView.current
     if (!view.isInEditMode) {
         val barColor = colorScheme.background.toArgb()
@@ -828,6 +836,48 @@ fun DesignWorkshopTheme(
             shapes = FieldShapes,
             content = content
         )
+    }
+}
+
+/**
+ * THE ACTIVITY WINDOW'S EDGES, PAID FOR ONCE, HERE — the root every screen of `MainActivity` sits in.
+ *
+ * ── WHY IT EXISTS: THE OPT-OUT IS GONE ──────────────────────────────────────────────────────────
+ *
+ * Android 15 draws an app that targets API 35 edge to edge, behind the status bar and the navigation
+ * bar, and Android 16 removed the attribute that opted out of it for apps targeting 36 and up. This
+ * app never opted out and, until 2026-10-09, never paid an inset by hand, so on an Android 15+ handset
+ * the shared header would sit under the status bar and the last row of a long form under the gesture
+ * pill — reasoned from the platform rule and the absence of any inset handling, and one of the checks
+ * on an Android 15+ handset before a release. Targeting 37 makes the rule unconditional, so it is met
+ * here once rather than screen by screen.
+ *
+ * ── WHAT IT DOES, AND WHY IT IS ONE BOX RATHER THAN `enableEdgeToEdge()` ────────────────────────
+ *
+ * The theme's background is painted across the WHOLE window — so the strip behind the status bar is
+ * this app's colour in whichever theme the designer chose, not the platform window background, which
+ * follows the SYSTEM's dark setting — and the content is padded by the system bars and the display
+ * cutout. On Android 14 and older the platform still fits the window to the system bars, those insets
+ * reach Compose as zero, and nothing moves on the fleet's older phones. That is the reason for not
+ * calling `enableEdgeToEdge()`: it would have put those phones edge to edge too, a visible change on
+ * every handset to fix a defect only the newer ones had.
+ *
+ * THE KEYBOARD IS NOT IN IT, deliberately. `WindowInsets.ime` is left to the screens that already pad
+ * for it with `imePadding()` and to what the window does by itself, exactly as before this root
+ * existed; adding it here would change how every form scrolls when the keyboard opens, which is a
+ * decision for a handset in the hand. Dialogs are not under this root and need not be — each is a
+ * window of its own that fits the system decor, and `DwQrLiveScanner`, the one that does not, pays its
+ * own insets.
+ */
+@Composable
+fun SystemBarsInsetsRoot(content: @Composable () -> Unit) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+            .windowInsetsPadding(WindowInsets.systemBars.union(WindowInsets.displayCutout)),
+    ) {
+        content()
     }
 }
 

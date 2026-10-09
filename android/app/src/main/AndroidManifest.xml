@@ -20,6 +20,16 @@
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.CAMERA" />
+    <!-- The camera is WANTED, not REQUIRED, and saying so is what lint's
+         PermissionImpliesUnsupportedChromeOsHardware asked for from the day android-build.yml began
+         running lint. A CAMERA permission with no feature line makes stores and ChromeOS treat
+         `android.hardware.camera` as required. It is not: every QR surface also takes a picked image and
+         a typed code, and a photograph field takes a file, so a handset or Chromebook with no back
+         camera is a reduced app, not an unusable one. This changes nothing on a sideloaded install,
+         which is the only way this app reaches a phone today. -->
+    <uses-feature
+        android:name="android.hardware.camera"
+        android:required="false" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />

@@ -29,7 +29,7 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import coil.compose.AsyncImage
+import coil3.compose.AsyncImage
 import com.designprototype.workshop.report.Align
 import com.designprototype.workshop.report.Block
 import com.designprototype.workshop.report.BulletListBlock

@@ -44,9 +44,15 @@ on:
   workflow_dispatch:
     inputs:
       api-level:
-        description: "Android API level to run the emulator at"
+        # A STRING, and "37.0" rather than 37: since Android 16 the SDK publishes platforms and
+        # system images under a minor level (`platforms;android-37.0`,
+        # `system-images;android-37.0;google_apis;x86_64`), and the runner builds both package
+        # names from this value verbatim — there is no `android-37` package for it to find.
+        # 37.0 is the targetSdk (Android 17); 37.2, the newest platform, is published only as the
+        # 16 KB-page `google_apis_ps16k` image, which this job's fixed `target` does not name.
+        description: "Android API level to run the emulator at (e.g. 37.0)"
         type: string
-        default: "34"
+        default: "37.0"
 
 permissions:
   contents: read
@@ -75,11 +81,11 @@ jobs:
         uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
         with:
           distribution: temurin
-          # 17 for the same reason android-build.yml pins it, and that reason is not a preference:
-          # android/app/build.gradle.kts pins sourceCompatibility/targetCompatibility to VERSION_17
-          # and kotlinOptions.jvmTarget to "17". AGP 8.7 rejects a lower JDK and a higher one moves
-          # the default bytecode target. This must track that file.
-          java-version: "17"
+          # 25 for the same reason android-build.yml runs it, and it is the JDK that RUNS Gradle,
+          # not the bytecode level: android/app/build.gradle.kts and the core-* modules pin Java 17
+          # (Android's documented ceiling) explicitly, so the class files are the same 61 either
+          # way. Keep the three Android workflows on one value.
+          java-version: "25"
           cache: gradle
 
       - name: Make the Gradle wrapper executable
@@ -89,13 +95,33 @@ jobs:
 
       - name: Ensure the required Android SDK packages are installed
         # Mirrors android-build.yml deliberately: which platform and build-tools versions are
-        # preinstalled drifts with the runner image, compileSdk/targetSdk are 35, and AGP 8.7.3
-        # wants build-tools 35.x. Both installs are no-ops when already present.
+        # preinstalled drifts with the runner image, the app compiles against the 37.2 platform,
+        # and it pins build-tools 37.0.0. Both installs are no-ops when already present. (The
+        # emulator action installs the platform for `api-level` itself; this is the one the
+        # build compiles against.)
         run: |
           set -euo pipefail
           sdkmanager="${ANDROID_HOME:-$ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager"
           yes | "$sdkmanager" --licenses > /dev/null 2>&1 || true
-          "$sdkmanager" "platforms;android-35" "build-tools;35.0.0" > /dev/null
+          "$sdkmanager" "platforms;android-37.2" "build-tools;37.0.0" > /dev/null
+
+      - name: Fetch the vendored sherpa-onnx AAR
+        # WITHOUT THIS STEP NOTHING IN THIS JOB COMPILES, and until 2026-10-09 it was missing: the
+        # offline speech engine is a bare file in the gitignored `android/app/libs/`, bound
+        # through the `flatDir` in settings.gradle.kts, so `connectedDebugAndroidTest` stopped at
+        #   Could not find :sherpa-onnx-static-link-onnxruntime-<version>:
+        # before a single probe ran. android-build.yml carries the full argument; this is the
+        # same fetch, with the same name, digest and size, verified the same way — and
+        # DwAsrEngineProbeTest, which this job exists to run, is the probe of exactly this file.
+        run: |
+          set -euo pipefail
+          aar="app/libs/sherpa-onnx-static-link-onnxruntime-1.13.8.aar"
+          sha="b22c3fc1b6a45666d28892bb2f7694beeb77a8362d7ebd77c1a5431ec9435471"
+          mkdir -p app/libs
+          curl -fsSL --retry 3 --retry-delay 5 -o "$aar" \
+            "https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.8/sherpa-onnx-static-link-onnxruntime-1.13.8.aar"
+          echo "$sha  $aar" | sha256sum -c -
+          test "$(stat -c%s "$aar")" = "38691998"
 
       - name: Enable KVM for the emulator
         # WITHOUT THIS THE EMULATOR FALLS BACK TO SOFTWARE RENDERING AND THE JOB TIMES OUT. The
@@ -120,7 +146,7 @@ jobs:
         # a first-party `actions/*` one, which makes the pin matter more rather than less.
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
         with:
-          api-level: ${{ inputs.api-level || '34' }}
+          api-level: ${{ inputs.api-level || '37.0' }}
           # `google_apis` rather than the bare `default` image: the probes touch Play-services-shaped
           # APIs on some paths, and google_apis is the image that has them without pulling in the
           # Play Store (which needs a different, slower image and a signed-in account).

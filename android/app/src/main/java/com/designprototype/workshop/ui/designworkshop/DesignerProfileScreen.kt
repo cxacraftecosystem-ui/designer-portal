@@ -47,7 +47,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
-import coil.compose.AsyncImage
+import coil3.compose.AsyncImage
 // The app-level unsaved-work guard, which owns the Save / Discard / Keep editing prompt and is wired
 // into the system back gesture, the header arrow and every menu row. Reused rather than reinvented:
 // a second prompt with its own wording is two answers to one question.

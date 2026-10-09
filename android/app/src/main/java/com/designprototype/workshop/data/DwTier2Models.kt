@@ -97,24 +97,30 @@ package com.designprototype.workshop.data
  *
  * `com.google.ai.edge.litertlm:litertlm-android:0.16.0` exists on Google's Maven, is Apache-2.0,
  * `minSdkVersion 24`, and carries `liblitertlm_jni.so` for `arm64-v8a` and `x86_64` only. Adding it to
- * this module does not compile: `javap -v` on `com.google.ai.edge.litertlm.Engine` reads
- * `kotlin.Metadata(mv=[2,3,0])`, this repository is on Kotlin **2.0.21**, and the compiler stops with
+ * this module did not compile while it was on Kotlin 2.0.21: `javap -v` on
+ * `com.google.ai.edge.litertlm.Engine` reads `kotlin.Metadata(mv=[2,3,0])`, and the compiler stopped with
  * *"The binary version of its metadata is 2.3.0, expected version is 2.0.0"* followed by an internal
- * compiler error. **Every published version has the same problem, and "every" was checked against
+ * compiler error. **Every published version had the same problem, and "every" was checked against
  * `maven-metadata.xml` rather than assumed** — an earlier note here called 0.8.0 the oldest release,
  * which is wrong: that file lists twenty versions and the oldest is `0.0.0-alpha06`. `javap -v` on
  * `Engine` across the range reads `mv=[2,3,0]` for 0.10.0, 0.11.0, 0.13.1, 0.15.0 and 0.16.0, and
  * `mv=[2,2,0]` for the two oldest, `0.0.0-alpha06` and `0.9.0-alpha01`. So the floor across the whole
- * catalogue is 2.2.0, still above the 2.0.0 this compiler expects, and there is no version to pin
- * back to: the prerequisite is a Kotlin upgrade of the whole project.
+ * catalogue is 2.2.0, still above the 2.0.0 that compiler expected, and there was no version to pin
+ * back to: the prerequisite was a Kotlin upgrade of the whole project.
+ *
+ * **THAT PREREQUISITE WAS MET ON 2026-10-09**, by the toolchain move rather than for Tier 2: the project
+ * compiles with Kotlin 2.4.21 now, and a 2.4 compiler reads metadata up to 2.5.0, above litertlm's
+ * 2.3.0. Nothing was re-measured by compiling the runtime in, so the one sentence below still stands
+ * as written — there is no runtime in this build — and what it would take is now the build work alone.
  *
  * The alternative was priced rather than assumed: `com.google.mediapipe:tasks-genai:0.10.35` is pure
  * Java, carries no Kotlin metadata and WOULD compile here — but Google's own README calls that LLM
  * route "in maintenance mode", it takes `.task` bundles, and Gemma 4 publishes none for mobile.
  */
 const val DW_TIER2_RUNTIME_ABSENCE: String =
-    // THE KOTLIN VERSION IS THE REASON AND IT IS NOT ON THE SCREEN. A designer holding the phone can do
-    // nothing with a metadata version, and this app's own rule is that a refusal names what would
+    // THE TECHNICAL REASON IS NOT ON THE SCREEN — it was the Kotlin version until 2026-10-09, and is now
+    // only that nobody has built the runtime. A designer holding the phone can do nothing with a
+    // metadata version either way, and this app's own rule is that a refusal names what would
     // change it in terms the reader can act on — here that is "somebody has to build it". The measured
     // detail lives in this file's header and in docs/TIER2-LANGUAGE-MODEL-MEASUREMENT.md, which is
     // where the person who CAN act on it will look.

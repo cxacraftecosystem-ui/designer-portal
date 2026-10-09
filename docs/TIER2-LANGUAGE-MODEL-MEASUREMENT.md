@@ -206,6 +206,13 @@ states no minSdk, Kotlin or AGP requirement at all.
 **So the first cost of Tier 2 is upgrading `org.jetbrains.kotlin.android`, `.plugin.compose` and
 `.plugin.serialization` from 2.0.21 to ≥ 2.3.x, project-wide.** Nobody had priced that.
 
+> **Paid on 2026-10-09, for a reason of its own.** The whole Android toolchain moved that day: Kotlin
+> 2.4.21, AGP 9.4.1 (whose built-in Kotlin replaces `org.jetbrains.kotlin.android`, which is no longer
+> applied anywhere) and Gradle 9.8.1. A 2.4 compiler reads Kotlin metadata up to 2.5.0, so the
+> `mv=[2,3,0]` gate measured above no longer stands in front of `litertlm-android`. Nothing in this
+> document was re-measured: litertlm has not been compiled in, the APK figures below are still the
+> 2.0.21-era probe's, and Tier 2 still has no runtime in the app.
+
 The alternative, priced for comparison: `com.google.mediapipe:tasks-genai:0.10.35` — AAR 42,371,846 B,
 `minSdkVersion 21`, four ABIs, **pure Java with no Kotlin metadata, so it compiles here unchanged** and
 it has `AudioModelOptions`/`VisionModelOptions`. Against it: Google's README calls that LLM route *"in
@@ -412,4 +419,5 @@ R8 strips a JNI entry point silently, and the failure shows up as a native crash
 **Every line above is derived from the AAR's contents (the `javap` surface and the `.so`'s symbol table)
 and none of it has been exercised against R8**, because the release build cannot be produced yet. Treat
 it as a starting point to verify, not as a measured configuration — the honest state is *unmeasured*, and
-the way to settle it is `:app:assembleRelease` plus a load on a handset once the Kotlin upgrade lands.
+the way to settle it is `:app:assembleRelease` plus a load on a handset — and since the Kotlin upgrade
+landed on 2026-10-09, nothing but that work stands in the way.

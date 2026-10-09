@@ -130,7 +130,7 @@ Three properties of that wait are worth knowing before you rely on it:
 |---|---|---|---|---|
 | 1 | Deploy backend to EC2 | `.github/workflows/deploy-backend.yml` | `push` to `main` | `wait-for-checks` (§1.1) → rsync into `releases/<sha>-<run_id>.<attempt>` (per deploy ATTEMPT, so a re-run never writes into the tree that is serving) → write that release's `.env` → build or reuse a venv from `requirements.lock` → `prisma migrate deploy` → **flip the `current` symlink** → restart `fieldrepo` + `fieldrepo-queue` → poll `/health`. See §1.2 for the release layout and the rollback command. |
 | 2 | Deploy frontend to Vercel | `.github/workflows/deploy-frontend.yml` | `workflow_run` on **1** completing | gate → `wait-for-checks` (§1.1, and it runs exactly where **1**'s copy could not) → `vercel pull` → **assert the pulled env carries what the app needs** (and, since 2026-10-09, *warn* when the project's Node.js Version differs from the build's major or the pulled env holds a database credential) → `vercel build --prod` → **assert those values actually reached the bundle** → `vercel deploy --prebuilt --prod` → `vercel alias set` onto the production alias → smoke-check the alias → **assert the bundle the CDN serves is the one that was verified** |
-| 3 | Android build | `.github/workflows/android-build.yml` | `workflow_run` on **2** completing, plus `pull_request` | JDK 17 → `compileDebugKotlin` → `testDebugUnitTest` → `lintDebug` (advisory) → `assembleDebug` → upload APK |
+| 3 | Android build | `.github/workflows/android-build.yml` | `workflow_run` on **2** completing, plus `pull_request` | JDK 25 → `compileDebugKotlin` → `testDebugUnitTest` plus the four `:core-*` engine suites → `lintDebug` (advisory) → `assembleDebug` → upload APK |
 | — | Checks | `.github/workflows/checks.yml` | **every** `pull_request`, `push` to `main`, `workflow_dispatch` — **no `paths:` filter, deliberately** | Four independent jobs plus a packaging job. The three that gate: `Backend tests` (whole pytest suite, DSN `ci.invalid` so the database-backed modules skip — and, despite the job's name, a last step that runs `ruff check .` over `backend/` and can fail the build on its own; the dated baseline in `backend/pyproject.toml` is what keeps it green), `Web typecheck, lint and unit specs` (`tsc --noEmit`, `eslint . --max-warnings=0`, `npm run test:unit`), `Docs check` (`node docs/tools/check-docs.mjs`). **`Backend integration tests` is the fourth and is deliberately advisory** — a `postgres:16` service container, `prisma migrate deploy`, then the *whole* suite with a loopback DSN so the database-backed modules that skip in job 1 actually run. Its last step asserts that `conftest` reported a local database, because a job that silently ran the same DB-less suite would prove nothing while looking green. It is not in `GATING_JOBS` and must not be added to branch protection until somebody has watched a few runs and knows what it costs. |
 
 **The other six workflows in this repository.** Naming them rather than counting them is the rule
@@ -593,9 +593,12 @@ that only exists on a real Android runtime and that no JVM unit test can replace
 gh workflow run "Android instrumented tests" --ref <branch>
 ```
 
-It takes one input, `api-level`, defaulting to **34**; the emulator is `google_apis` / `x86_64` on a
+It takes one input, `api-level`, defaulting to **`37.0`** — a string with the minor level, because
+the SDK publishes Android 17's platform and system images only as `android-37.0` and the runner
+builds both package names from the value verbatim. The emulator is `google_apis` / `x86_64` on a
 `Nexus 6` profile with animations disabled, and the job runs `./gradlew :app:connectedDebugAndroidTest`
-under JDK 17 with an explicit KVM udev step.
+under JDK 25 with an explicit KVM udev step. It fetches and verifies the sherpa-onnx AAR the same
+way `android-build.yml` does; until 2026-10-09 it did not, so no run of it could have compiled.
 
 **It is not wired into branch protection and must not be**: a required check a human has to remember
 to trigger is a required check that blocks every pull request forever.
@@ -614,12 +617,17 @@ checks the repository out, deliberately.
 
 Two things are *not* pinned and both are on the record. `deploy-frontend.yml` installs
 `vercel@latest` — deliberate, because the CLI must match a platform that changes under it — and the
-Android toolchain (Gradle, AGP) under `android/` is outside this rule.
+Android toolchain under `android/` is pinned by VERSION, not by digest, with one exception: since
+2026-10-09 the Gradle wrapper carries a `distributionSha256Sum`, so a tampered distribution fails
+the wrapper's own check. AGP, Kotlin and every library resolve by version, with no Gradle
+dependency-verification file.
 
 Pinning introduces its own failure mode, which is a pin that rots. `.github/dependabot.yml` is what
 closes it: **github-actions weekly** (Monday 04:00 Asia/Kolkata, at most 3 open PRs, `ci` commit
 prefix), plus **npm on `/frontend`** and **pip on `/backend`** monthly, minor-and-patch grouped and
-majors left individual. It does **not** refresh `backend/requirements.lock` — that is pip-compile
+majors left individual, plus **gradle on `/android`** monthly since 2026-10-09 (the Kotlin compiler
+and its two plugins grouped so they move as one, and the Gradle wrapper bumped with the rest). It
+does **not** refresh `backend/requirements.lock` — that is pip-compile
 output, so a pip PR moves the range in `pyproject.toml` and the lock has to be recompiled in the same
 PR (§1.3). `pip` also ignores **ruff** (minor and major) and **bcrypt** (entirely).
 
@@ -809,11 +817,14 @@ same value in two places. Change one there and re-run this workflow (or push) to
   [REPO_FACTS.md](REPO_FACTS.md), which also records that the generated table itself once asserted
   this absence and had never looked. The **Unit tests** step in `android-build.yml` branches on
   whether `app/src/test` holds sources — it now takes the "running them for real" branch, and it
-  carries no `continue-on-error`, so a failing Kotlin test fails the workflow. **The step's own
-  comment still describes the NO-SOURCE case as the current state** and needs the same correction;
-  it belongs to the Android workstream, not to this document. Instrumented tests are still not run —
-  they need an emulator; add a separate job with an emulator action rather than bolting one onto
-  this build, which is what that step's comment says and is still right.
+  carries no `continue-on-error`, so a failing Kotlin test fails the workflow. The step's own
+  comment, which used to describe the NO-SOURCE case, has been corrected to say so. **Since
+  2026-10-09 the step also runs the vendored engine's four suites** (`:core-imaging:test`,
+  `:core-vector:test`, `:core-pipeline:test`, `:core-export:test`), so `:core-pipeline`'s
+  `ParityTest` — the reason `frontend/lib/trace/**` is in the workflow's `paths:` filter — finally
+  runs in CI; before that date nothing in CI ran it. Instrumented tests are still not run here:
+  they need an emulator, and `android-emulator.yml` (§1.5) runs them on demand rather than in
+  front of every compile.
 - ~~**No web typecheck/lint gate of its own.**~~ **BUILT — 2026-08-20.** The `Web typecheck, lint and
   unit specs` job runs `npx tsc --noEmit` and `npx eslint . --max-warnings=0` on every pull request,
   so the answer arrives before the merge rather than as a `next build` failure after the backend has
@@ -910,10 +921,12 @@ connected to the Vercel project. Disconnect it from the project rather than dele
 one by one, and leave the integration and the store alone ([DEPLOYMENT_VERCEL.md](DEPLOYMENT_VERCEL.md)
 §2.3).
 
-**Android build fails on the SDK.** The workflow installs `platforms;android-35` and
-`build-tools;35.0.0` explicitly because runner images drift. If `compileSdk` in
-`android/app/build.gradle.kts` moves, update that step and the JDK pin together — the JDK 17 pin
-tracks `sourceCompatibility`/`jvmTarget` in the same file.
+**Android build fails on the SDK.** The three Android workflows install `platforms;android-37.2`
+and `build-tools;37.0.0` explicitly because runner images drift. If `compileSdk` or
+`buildToolsVersion` in `android/app/build.gradle.kts` moves, update those steps and
+`publish-android.yml`'s `BUILD_TOOLS_VERSION` with it. The JDK pin (25) is a separate choice: it is
+the JDK that runs Gradle, while the Java 17 bytecode level is set by `compileOptions` and
+`jvmTarget` in the build files and does not follow it.
 
 **A deploy hangs on the health poll.** Stage 1 polls `http://127.0.0.1:8000/health` 40 times at 2 s
 and dumps `journalctl -u fieldrepo -n 80` on failure. Read that output first; the usual causes are a

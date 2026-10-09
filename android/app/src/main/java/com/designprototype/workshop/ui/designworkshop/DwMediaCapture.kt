@@ -61,8 +61,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
-import coil.compose.AsyncImage
-import coil.request.ImageRequest
+import coil3.compose.AsyncImage
+import coil3.request.ImageRequest
 import com.designprototype.workshop.data.AttachedImage
 import com.designprototype.workshop.data.DW_DEFAULT_MAX_ITEMS
 import com.designprototype.workshop.data.DwFieldType
@@ -1392,10 +1392,19 @@ private fun DwAttachmentRow(
      * `DwMediaBridge`, carried through `FieldRenderer` and `StageScreen` to reach every card that
      * draws an attachment, and each of those hops is a place for one gallery's readings to end up
      * under another's.
+     *
+     * ── AND WHY THE FIRST VALUE IS READ INSIDE `remember` ─────────────────────────────────────────
+     *
+     * Seeding from the store's current entry keeps the first frame from drawing "nothing reported"
+     * for a row that is half-way through sending. It is read once per row, inside `remember`: a
+     * `StateFlow.value` read in the composition body is not observed and is re-read on every pass
+     * (lint: StateFlowValueCalledInComposition), and the collection is what observes it anyway.
      */
-    val uploadState by remember(mediaId) {
+    val uploadUpdates = remember(mediaId) {
         DwMediaUploadProgress.states.map { it[mediaId] }.distinctUntilChanged()
-    }.collectAsState(initial = DwMediaUploadProgress.states.value[mediaId])
+    }
+    val uploadSeed = remember(mediaId) { DwMediaUploadProgress.states.value[mediaId] }
+    val uploadState by uploadUpdates.collectAsState(initial = uploadSeed)
     val fileUri = remember(item?.absolutePath) { item?.let { Uri.fromFile(File(it.absolutePath)) } }
     val exists = remember(item?.absolutePath) { item?.let { File(it.absolutePath).exists() } ?: false }
 

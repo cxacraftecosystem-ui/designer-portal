@@ -37,13 +37,21 @@ uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 4. Run the `app` configuration on an emulator.
 5. Log in with the admin email and password from your private backend `.env`, or use Google sign-in after OAuth is configured.
 
-The default emulator API base URL is `http://10.0.2.2:8000/api/`, which routes from the Android emulator to the host computer. For a physical device, keep source code unchanged and add an ignored local override in `android/local.properties`:
+A build with no override talks to production (the CloudFront default in `app/build.gradle.kts`). To point the emulator at the backend on your computer, add an ignored local override in `android/local.properties`; `10.0.2.2` routes from the Android emulator to the host computer:
+
+```properties
+apiBaseUrl=http://10.0.2.2:8000/api/
+```
+
+For a physical device, keep source code unchanged and use your computer's LAN address instead:
 
 ```properties
 apiBaseUrl=http://YOUR_COMPUTER_LAN_IP:8000/api/
 ```
 
-Run the backend on `0.0.0.0` so the phone can reach it over the same Wi-Fi network.
+Run the backend on `0.0.0.0` so the phone can reach it over the same Wi-Fi network. Plain HTTP is allowed only to the emulator and loopback hosts, so a LAN address also needs a temporary `<domain>` entry in `app/src/main/res/xml/network_security_config.xml` — that file says how, and neither change is to be committed.
+
+**On Android 17 (the app targets API 37 since 2026-10-09), a debug build asks for the "Nearby devices" permission at first launch when `apiBaseUrl` is a LAN or emulator address.** Android 17 blocks an app's traffic to the local network until `ACCESS_LOCAL_NETWORK` is granted, and the connection does not fail, it times out — so allow it, or the sign-in will spin and fail. Only the debug manifest (`app/src/debug/AndroidManifest.xml`) declares that permission, so a release build pointed at a LAN host cannot reach it on Android 17; `localhost` through `adb reverse` is loopback and needs nothing.
 
 Command-line debug build:
 

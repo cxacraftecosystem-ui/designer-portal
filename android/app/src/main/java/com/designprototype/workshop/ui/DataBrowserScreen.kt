@@ -93,7 +93,7 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import coil.compose.AsyncImage
+import coil3.compose.AsyncImage
 import com.designprototype.workshop.data.DataCrumbDto
 import com.designprototype.workshop.data.DataFolderInfoDto
 import com.designprototype.workshop.data.DataManifestFileDto

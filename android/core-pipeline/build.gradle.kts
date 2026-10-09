@@ -1,14 +1,17 @@
 /*
- * VENDORED FROM `F:/Offline-Tracer/android/core-pipeline/build.gradle.kts`, WITH TWO DELIBERATE CHANGES.
+ * VENDORED FROM `F:/Offline-Tracer/android/core-pipeline/build.gradle.kts`, WITH FOUR DELIBERATE CHANGES.
  *
  * The source under `src/` is byte-for-byte upstream and must stay that way — `android/UPSTREAM-
  * MANIFEST-KOTLIN.txt` records a SHA-256 for every file and this build script's own digest, both
  * as vendored here and as it stands upstream. THIS FILE IS THE ONLY ONE OF THE FIVE IN THIS MODULE
- * THAT DIFFERS, and it differs in exactly two places, each with its own note below:
+ * THAT DIFFERS, and it differs in exactly four places, each with its own note below:
  *
  *     1. upstream       kotlin { jvmToolchain(17) }
  *        here          kotlin { compilerOptions { jvmTarget = JVM_17 } } + java { ...17 }
  *     2. here only     tasks.withType<KotlinCompile> { incremental = false }
+ *     3. here only     -Xjdk-release=17 beside that jvmTarget (since 2026-10-09)
+ *     4. upstream       kotlinx-serialization-json:1.7.3 (as vendored on 2026-08-27)
+ *        here          kotlinx-serialization-json:1.11.0 (since 2026-10-09)
  *
  * The first one, and why:
  *
@@ -23,15 +26,18 @@
  * The two ways out of that are to let Gradle DOWNLOAD a JDK 17 (a toolchain resolver plugin in
  * `settings.gradle.kts`, i.e. a network fetch at configuration time, in the repository whose whole
  * premise is a handset that has been offline for a fortnight), or to compile ON the JDK that is
- * running the build and EMIT 17 bytecode. The second is what `:app` has always done —
- * `kotlinOptions.jvmTarget = "17"` with `compileOptions` at `JavaVersion.VERSION_17` — so this is
- * the module falling in line with the build it now belongs to, not a target change. The class-file
- * version produced is 61 either way; only the compiler that produces it moves, from 17 to 21.
+ * running the build and EMIT 17 bytecode. The second is what `:app` does — a `jvmTarget` of 17
+ * (written `kotlinOptions.jvmTarget = "17"` until AGP 9 dropped that block on 2026-10-09,
+ * `kotlin { compilerOptions }` since) with `compileOptions` at `JavaVersion.VERSION_17` — so this
+ * is the module falling in line with the build it now belongs to, not a target change. The
+ * class-file version produced is 61 either way; only the compiler that produces it moves, from 17
+ * to 21 on this machine and to 25 on CI (since 2026-10-09). Note 3 is why that move needed one
+ * more line.
  *
  * THE `java { }` BLOCK IS NOT DECORATION. Without it `targetCompatibility` defaults to the JDK
- * running the build (21) while Kotlin emits 17, and the Kotlin plugin fails the build with
- * "Inconsistent JVM-target compatibility detected". It is here to keep javac and kotlinc agreeing,
- * even though this module contains no `.java` sources at all.
+ * running the build (21 here, 25 on CI) while Kotlin emits 17, and the Kotlin plugin fails the
+ * build with "Inconsistent JVM-target compatibility detected". It is here to keep javac and
+ * kotlinc agreeing, even though this module contains no `.java` sources at all.
  */
 
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
@@ -44,6 +50,8 @@ plugins {
 kotlin {
     compilerOptions {
         jvmTarget.set(JvmTarget.JVM_17)
+        // Note 3, below the `java { }` block.
+        freeCompilerArgs.add("-Xjdk-release=17")
     }
 }
 
@@ -51,6 +59,22 @@ java {
     sourceCompatibility = JavaVersion.VERSION_17
     targetCompatibility = JavaVersion.VERSION_17
 }
+
+/*
+ * 3. `-Xjdk-release=17`: COMPILE AGAINST THE JDK 17 API, NOT MERELY TO JDK 17 BYTECODE.
+ *
+ * `jvmTarget` fixes the class-file version; it does not stop the compiler binding a call to a
+ * method the JDK running the build has and an Android handset does not. Upstream's
+ * `jvmToolchain(17)` compiled against JDK 17 itself and got that guarantee for free, and so did CI
+ * here while it ran Gradle on JDK 17. Since 2026-10-09 CI runs Gradle on JDK 25, where a call such
+ * as `mutableList.removeFirst()` can bind to the JDK 21 `List` member instead of Kotlin's own
+ * extension: a `NoSuchMethodError` on every handset older than Android 15, from code that compiled
+ * and passed its tests on the desktop. This flag makes kotlinc read the JDK 17 signatures (the
+ * running JDK's own `ct.sym`), so the engine binds exactly as it does upstream. No source here
+ * makes such a call today; the flag is what keeps a re-vendoring from changing that silently.
+ * `:app` needs no such flag — it compiles against `android.jar`, and lint's `NewApi` reads what
+ * it calls.
+ */
 
 /*
  * KOTLIN INCREMENTAL COMPILATION IS OFF FOR THIS MODULE, AND IT IS OFF BECAUSE THE BUILD FAILS
@@ -92,7 +116,11 @@ dependencies {
     api(project(":core-imaging"))
     api(project(":core-vector"))
     api(project(":core-export"))
-    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
+    // Note 4: the version `:app` declares, so the engine and the app's DTOs share one runtime
+    // (app/build.gradle.kts says why that is checked). 1.11.0 is the newest stable as of
+    // 2026-10-09; it is built with Kotlin 2.3.20, which the 2.0.21 compiler used until that day
+    // could not read, so it moved with the compiler.
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
     testImplementation(kotlin("test"))
 }
 

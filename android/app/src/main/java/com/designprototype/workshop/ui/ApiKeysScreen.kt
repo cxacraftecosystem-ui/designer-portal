@@ -74,6 +74,7 @@ import java.time.OffsetDateTime
 import java.time.ZoneId
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
+import androidx.compose.ui.platform.LocalLocale
 import java.util.Locale
 
 /*
@@ -1012,7 +1013,9 @@ private fun ApiKeyClearPanel(secret: ManagedSecretDto, state: ApiKeysState, busy
 @Composable
 private fun ApiKeyFieldLabel(text: String) {
     Text(
-        text.uppercase(Locale.getDefault()),
+        // The composition's locale, which recomposes when the person changes their language;
+        // `Locale.getDefault()` read here would not (lint: NonObservableLocale).
+        text.uppercase(LocalLocale.current.platformLocale),
         style = MaterialTheme.typography.labelSmall,
         fontWeight = FontWeight.SemiBold,
         color = MaterialTheme.colorScheme.onSurfaceVariant

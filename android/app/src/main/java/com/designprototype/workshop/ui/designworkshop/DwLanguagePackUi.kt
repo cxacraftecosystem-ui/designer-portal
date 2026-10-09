@@ -320,13 +320,22 @@ internal class DwLanguagePackController(
         }
         val answer = withTimeoutOrNull(PACK_CHECK_TIMEOUT_MS) {
             suspendCancellableCoroutine<Result<DwRecognitionSupport>> { continuation ->
-                checkSupport(
-                    engine = engine,
-                    // `isActive` guards a service that calls back twice, which would otherwise throw
-                    // IllegalStateException out of somebody else's binder thread.
-                    onAnswer = { answer -> if (continuation.isActive) continuation.resume(Result.success(answer)) },
-                    onFailure = { code -> if (continuation.isActive) continuation.resume(Result.failure(DwPackCheckFailure(code))) },
-                )
+                // THE API-33 GATE, WRITTEN A THIRD TIME, HERE, WHERE LINT CAN SEE IT. `refresh` has
+                // already returned below TIRAMISU and `engine()` answers null there, so the `else`
+                // never runs; but lint's NewApi check cannot follow either gate into this lambda and
+                // reported the call as an error. A suppression would also have hidden the real
+                // regression — somebody deleting the first two gates — so the gate is stated.
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    checkSupport(
+                        engine = engine,
+                        // `isActive` guards a service that calls back twice, which would otherwise
+                        // throw IllegalStateException out of somebody else's binder thread.
+                        onAnswer = { answer -> if (continuation.isActive) continuation.resume(Result.success(answer)) },
+                        onFailure = { code -> if (continuation.isActive) continuation.resume(Result.failure(DwPackCheckFailure(code))) },
+                    )
+                } else {
+                    continuation.resume(Result.failure(DwPackCheckFailure(SpeechRecognizer.ERROR_CLIENT)))
+                }
             }
         }
         checking = false

@@ -223,6 +223,7 @@ import com.designprototype.workshop.data.QuestionnaireSectionDto
 import com.designprototype.workshop.data.questionnaireSaveRefusal
 import com.designprototype.workshop.data.QuestionnaireSectionUpdateRequest
 import com.designprototype.workshop.data.TokenStore
+import com.designprototype.workshop.data.apiHostNeedsLocalNetwork
 import com.designprototype.workshop.data.ToolCreateRequest
 import com.designprototype.workshop.data.UserDto
 import com.designprototype.workshop.data.WorkshopCreateRequest
@@ -398,6 +399,7 @@ import com.designprototype.workshop.ui.MapScreen
 import com.designprototype.workshop.ui.WorkshopScopeSelect
 import com.designprototype.workshop.ui.rememberWorkshopScope
 import com.designprototype.workshop.ui.ProvideAppPreferences
+import com.designprototype.workshop.ui.SystemBarsInsetsRoot
 import com.designprototype.workshop.ui.SearchRecordTypes
 import com.designprototype.workshop.ui.SearchScreen
 import com.designprototype.workshop.ui.SearchableMultiSelectField
@@ -434,7 +436,7 @@ import com.designprototype.workshop.ui.WalkthroughDialog
 import com.designprototype.workshop.ui.markWalkthroughSeen
 import com.designprototype.workshop.ui.walkthroughSeen
 import kotlinx.coroutines.launch
-import coil.compose.AsyncImage
+import coil3.compose.AsyncImage
 import retrofit2.HttpException
 import android.app.DatePickerDialog
 import androidx.activity.compose.BackHandler
@@ -679,6 +681,30 @@ class MainActivity : ComponentActivity() {
         incomingQuestionnaire.value = candidate
     }
 
+    /**
+     * A developer's backend on the LAN or the emulator's host, reachable again on Android 17.
+     *
+     * Since 2026-10-09 the app targets API 37, and Android 17 blocks traffic to the local network
+     * until `ACCESS_LOCAL_NETWORK` is granted; a TCP connection to a blocked address does not fail,
+     * it times out. Only a DEBUG build can be in that position — production is a public CloudFront
+     * host, and only `src/debug/AndroidManifest.xml` declares the permission — so on any other build
+     * this asks nothing. Asked at launch because the first request is the sign-in, and a permission
+     * granted after a request has already timed out reads as a broken backend. The answer needs no
+     * handling: a refusal leaves exactly the timeout the permission exists to explain, and the next
+     * request after a grant simply goes through.
+     */
+    private val localNetworkPermission =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
+
+    private fun askForLocalNetworkWhenTheApiNeedsIt() {
+        if (!BuildConfig.DEBUG) return
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.CINNAMON_BUN) return
+        if (!apiHostNeedsLocalNetwork(BuildConfig.DEFAULT_API_BASE_URL)) return
+        val permission = Manifest.permission.ACCESS_LOCAL_NETWORK
+        if (ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED) return
+        localNetworkPermission.launch(permission)
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         // `setIntent` so that a configuration change re-reading `getIntent()` sees the delivery that
@@ -692,6 +718,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         takeQuestionnaireDelivery(intent)
         takePasswordLink(intent)
+        askForLocalNetworkWhenTheApiNeedsIt()
         val tokenStore = TokenStore(applicationContext)
         val repository = WorkshopRepository(ApiClient.create(tokenStore), tokenStore)
         val googleAuthClient = GoogleAuthClient(this)
@@ -707,21 +734,24 @@ class MainActivity : ComponentActivity() {
                 // "Larger text" is applied here — ProvideAppPreferences scales the density every `sp`
                 // in the app resolves against, so type grows and the layout does not.
                 ProvideAppPreferences(preferences) {
-                    RepositoryApp(
-                        repository = repository,
-                        googleAuthClient = googleAuthClient,
-                        incomingQuestionnaire = incomingQuestionnaire.value,
-                        onIncomingQuestionnaireConsumed = { incomingQuestionnaire.value = null },
-                        incomingPasswordLink = incomingPasswordLink.value,
-                        onIncomingPasswordLinkConsumed = { incomingPasswordLink.value = null },
-                        preferences = preferences,
-                        onPreferencesChanged = { next ->
-                            // Apply first, persist second: the switch must feel instant. The screen
-                            // itself owns the PUT; the device copy is ours.
-                            preferences = next
-                            preferencesStore.write(next)
-                        }
-                    )
+                    // The window's edges, paid once for every screen below: see `SystemBarsInsetsRoot`.
+                    SystemBarsInsetsRoot {
+                        RepositoryApp(
+                            repository = repository,
+                            googleAuthClient = googleAuthClient,
+                            incomingQuestionnaire = incomingQuestionnaire.value,
+                            onIncomingQuestionnaireConsumed = { incomingQuestionnaire.value = null },
+                            incomingPasswordLink = incomingPasswordLink.value,
+                            onIncomingPasswordLinkConsumed = { incomingPasswordLink.value = null },
+                            preferences = preferences,
+                            onPreferencesChanged = { next ->
+                                // Apply first, persist second: the switch must feel instant. The
+                                // screen itself owns the PUT; the device copy is ours.
+                                preferences = next
+                                preferencesStore.write(next)
+                            }
+                        )
+                    }
                 }
             }
         }

@@ -53,10 +53,12 @@ import com.designprototype.workshop.data.UserDto
  * `Surface(fillMaxSize())` and everything below this comment stayed exactly as it was.
  *
  * ⚠ AND THE WINDOW IS DELIBERATELY LEFT FITTING THE SYSTEM DECOR. `decorFitsSystemWindows = false`
- * exists on the classpath and `DwQrLiveScanner` uses it, but `WindowInsets` appears NOWHERE else
- * under `src/main` — this app has never paid insets by hand. Going edge-to-edge here would draw the
- * pinned header under the status bar and Skip under the gesture pill on every tall handset, with no
- * established helper anywhere in the tree to fix it.
+ * exists on the classpath and `DwQrLiveScanner` uses it; the activity window behind this dialog has
+ * paid its system-bar insets once, at its root, since 2026-10-09 (`SystemBarsInsetsRoot` in
+ * `Theme.kt`, because targetSdk 37 leaves it no opt-out from edge to edge). A Dialog is a window of
+ * its own and that root does not reach it, so going edge-to-edge HERE would draw the pinned header
+ * under the status bar and Skip under the gesture pill on every tall handset unless this file paid
+ * the insets itself — and fitting the decor already gets that right for nothing.
  *
  * ── WHY THIS IS A DIALOG AND NOT A `Screen` ──────────────────────────────────────────────────────
  *

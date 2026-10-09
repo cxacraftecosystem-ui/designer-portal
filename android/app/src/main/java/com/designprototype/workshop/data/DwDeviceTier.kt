@@ -1374,7 +1374,7 @@ val DW_TIER1_CATALOGUE: List<DwModelPlan> = listOf(
  *
  *  | the bar it set | where it is met |
  *  |---|---|
- *  | the libraries ship in the package | `lib/arm64-v8a/libsherpa-onnx-jni.so`, **23,646,824 bytes**, read off the installed `base.apk`. `implementation(":sherpa-onnx-static-link-onnxruntime-1.13.5@aar")` in `app/build.gradle.kts` |
+ *  | the libraries ship in the package | `lib/arm64-v8a/libsherpa-onnx-jni.so`, **23,646,824 bytes**, read off the installed `base.apk`. `implementation(":sherpa-onnx-static-link-onnxruntime-1.13.5@aar")` in `app/build.gradle.kts` — 1.13.8 since 2026-10-09, 24,169,352 bytes in that AAR |
  *  | a loader exists | `ui/designworkshop/DwAsrSpeechModel.kt` — `OfflineRecognizer` over the verified model in `filesDir`, gated on `dwAsrModelMayLoad` |
  *  | a model exists | [DW_TIER1_CATALOGUE], one row, every number off a handset |
  *  | the wiring into `DwDictationLadder` | `DwDictationRung.APP_SPEECH_MODEL` no longer steps past itself in `beginAt`; it decodes |
