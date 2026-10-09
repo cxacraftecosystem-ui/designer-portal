@@ -1,6 +1,7 @@
 ###############################################################################
 # Design Prototype Workshop infrastructure: S3 (media) + IAM (media access)
-# + EC2 t3.micro (FastAPI behind nginx). This Terraform provisions NO DATABASE:
+# + EC2 (FastAPI behind nginx; t3.medium since the 2026-10-09 rebuild was declared,
+# see `aws_instance.api`). This Terraform provisions NO DATABASE:
 # the box points at a managed PostgreSQL named only by DATABASE_URL in the
 # backend's environment, which is why the box is stateless and can be rebuilt
 # anytime without data loss. Which provider that is, is a deployment fact and is
@@ -181,6 +182,15 @@ terraform {
   #      to a create and a replacement is one. A replacement row on this
   #      instance is never acceptable in a routine plan; find the ForceNew
   #      attribute it names and pin or ignore that, as `ami` itself had to be.
+  #
+  #      ONE EXCEPTION, DECLARED ON PURPOSE ON 2026-10-09: the Ubuntu 26.04
+  #      rebuild. The instance now declares an encrypted root volume, which is
+  #      ForceNew, so against the running box every plan wants to replace it —
+  #      and `prevent_destroy` on the instance turns that into an ERROR rather
+  #      than a prompt. That error is expected until the rebuild is done; the
+  #      lifecycle block at the bottom of `aws_instance.api` is the procedure,
+  #      and it never destroys anything. Until then, plan or apply anything
+  #      else with `-target`.
   #
   # NOTHING IN THIS CHANGE WAS RUN. No `init`, no `plan`, no `apply` — this file
   # only declares the intent, and a declaration that has not been reconciled is
@@ -666,6 +676,17 @@ resource "aws_iam_instance_profile" "ssm" {
 resource "aws_instance" "api" {
   ami = data.aws_ami.ubuntu.id
 
+  # ─── t3.medium FOR THE UBUNTU 26.04 REBUILD, DECIDED 2026-10-09 ─────────────────────────────
+  # The owner's decision of 2026-10-09: rebuild the API box on Ubuntu 26.04, blue/green, as a
+  # t3.medium — the same 2 vCPU with 4 GiB. Python 3.14 holds ~170 MiB more per process than 3.12
+  # did, ~356 MB across uvicorn and the queue worker, and that comes straight out of the
+  # MemAvailable the app's memory_budget sizes its media reads by: on 2 GiB the arithmetic leaves
+  # 30-180 MB, where every media cap shrinks toward its 8 MiB floor (docs/OPEN_FINDINGS.md has the
+  # finding). On demand in ap-south-1 that is $0.0448/hr against the t3.small's $0.0224 (AWS
+  # price list, read 2026-10-09). THE BOX RUNNING ON THAT DATE IS STILL THE t3.small below, and
+  # this line does not resize it in place: the lifecycle block at the bottom of this resource
+  # explains why the plan cannot apply it to that box, and how the rebuild is done instead.
+  #
   # ─── t3.small SINCE 2026-09-17, AND THE 1 GiB BOX IS WHY ────────────────────────────────────
   # This was `t3.micro` (2 vCPU / 1 GiB) from the first apply until the backend deploy failed on
   # 2026-09-17 in a way that finally got measured. The deploy's own post-mortem step — added the
@@ -695,7 +716,7 @@ resource "aws_instance" "api" {
   # instance's hourly cost. Applied in place: EC2 stops the instance, swaps the type and starts it,
   # which is a few minutes of downtime and NOT a replacement — the EBS root volume, the private
   # address and `aws_eip.api` all survive it. The swap file stays: it is a floor, not the plan.
-  instance_type = "t3.small"
+  instance_type = "t3.medium"
 
   # KEPT, THOUGH PORT 22 IS CLOSED, AND KEPT DELIBERATELY. `key_name` is ForceNew: removing it from
   # this configuration does not detach a key pair, it DESTROYS AND RECREATES the instance — which on
@@ -753,9 +774,18 @@ resource "aws_instance" "api" {
   # outage, and is the thing to read before changing this line.
   user_data = file("${path.module}/user_data.sh")
 
+  # ENCRYPTED FROM THE 2026-10-09 REBUILD ON. The root volume of the box running that day is not
+  # (vol-059f77ad999ff4077 reads `Encrypted: false`, and EBS encryption by default is off in this
+  # account and region — both read that day), and that volume holds every release's plaintext `.env`:
+  # docs/SECURITY.md P3. `encrypted` is ForceNew on a root volume, so it cannot be switched on in
+  # place, which is the other half of why this lands as a rebuild. The key is the AWS-managed
+  # `aws/ebs` one — nothing of our own to rotate or lose. 30 GiB stays: the live box used 9.8 of 29
+  # GiB with three releases kept, and each python-build-standalone build adds ~251 MB under
+  # /opt/cpython, so there is no reason to pay for more.
   root_block_device {
     volume_size = 30
     volume_type = "gp3"
+    encrypted   = true
   }
 
   tags = {
@@ -792,9 +822,10 @@ resource "aws_instance" "api" {
   # files say so, at length). Nothing here makes the script optional; it makes editing it free.
   #
   # TO DELIBERATELY PUSH A NEW BOOT SCRIPT ONTO THE RUNNING BOX, which is a thing almost nobody
-  # should want: remove this block for one apply, accept the stop/start in a window, put it back.
-  # `terraform apply -replace=aws_instance.api` is the other way and it is a rebuild, with
-  # everything that implies (see the note on `key_name` above).
+  # should want: remove `user_data` from the list for one apply, accept the stop/start in a window,
+  # put it back. `terraform apply -replace=aws_instance.api` used to be the other way; it is a
+  # rebuild that terminates the box, and `prevent_destroy` below now refuses it — the rebuild has its
+  # own procedure, at the end of this block.
   #
   # `ami` JOINED THE LIST ON 2026-09-03, AND THE FIRST RECONCILIATION PLAN IS WHY. `data.aws_ami`
   # asks for Canonical's MOST RECENT image of its series (noble then, resolute since 2026-10-09 —
@@ -804,8 +835,41 @@ resource "aws_instance" "api" {
   # box's identity is managed by the deploy workflow, not by rebuild-time inputs; same argument as
   # `user_data`, same shape: an EXISTING instance keeps its image, and a deliberate rebuild (or a
   # second box) still gets the current one, because ignore_changes never touches a create.
+  #
+  # ─── prevent_destroy, AND HOW THE 26.04 REBUILD IS DONE INSTEAD, ADDED 2026-10-09 ───────────
+  # FROM 2026-10-09 THIS RESOURCE DESCRIBES THE BOX THE REBUILD CREATES, NOT THE ONE RUNNING:
+  # t3.medium, Ubuntu 26.04, an encrypted root. The encrypted root is ForceNew, so against the
+  # running t3.small every plan wants to REPLACE this instance — terminate production, create an
+  # empty box, and move the Elastic IP onto it before anything has been deployed there. That is not
+  # the rebuild the owner decided (blue/green; the old box stopped and kept, never terminated), so
+  # `prevent_destroy` makes that plan an ERROR instead of a "yes" away from an outage. The rebuild
+  # never needs a destroy:
+  #
+  #   1. terraform state rm aws_instance.api
+  #        Terraform forgets the running box. Nothing in AWS changes; it keeps serving through the
+  #        Elastic IP.
+  #   2. terraform plan -target=aws_instance.api      (read it: one create, nothing destroyed)
+  #      terraform apply -target=aws_instance.api
+  #        Creates the 26.04 t3.medium; user_data.sh installs the pinned CPython at first boot.
+  #        `aws_eip.api` is outside the target, so the address stays on the old box.
+  #   3. Point the EC2_HOST secret at the new box's own public IP (`terraform state show
+  #      aws_instance.api`, `public_ip`), run deploy-backend.yml by workflow_dispatch, and read
+  #      /health/ready and the CORS answer it asserts.
+  #   4. terraform plan -target=aws_eip.api && terraform apply -target=aws_eip.api
+  #        The Elastic IP moves to the new instance, in place. Targeted, because the untargeted plan
+  #        of 2026-10-09 also carried older drift — the cost-report Lambda's python3.12 -> 3.14
+  #        runtime and its e-mail subscription — which is its own decision.
+  #   5. Point EC2_HOST back at the Elastic IP, and stop — do not terminate — the old instance:
+  #        aws ec2 stop-instances --instance-ids i-0e091ca8e6b417b52
+  #      It is out of the state, so Terraform never touches it again. Rolling back is
+  #      `aws ec2 associate-address` of the Elastic IP to it after starting it.
+  #
+  # Until step 2, plan or apply anything else with `-target`. After it, the guard protects the new
+  # box the same way; lifting it is a one-line, reviewable edit, which is the right amount of
+  # friction on the one resource whose loss is an outage.
   lifecycle {
-    ignore_changes = [user_data, ami]
+    ignore_changes  = [user_data, ami]
+    prevent_destroy = true
   }
 }
 

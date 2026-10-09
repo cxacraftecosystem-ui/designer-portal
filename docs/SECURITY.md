@@ -300,7 +300,7 @@ first because it is the one that changed under this document's feet.
 | Media object keys / public URLs | `MediaFile.url` in Postgres, and in every client | Plaintext, and the URL alone grants read access |
 | Auth token (web) | `localStorage["field_repo_token"]` | Plaintext, readable by any script on the origin |
 | Auth token (Android) | `SharedPreferences("field_repository_auth")`, `MODE_PRIVATE` | Plaintext file in app-private storage; readable on a rooted device, and `android:allowBackup="true"` means it can leave the device in a backup |
-| `.env` on EC2 | `/home/ubuntu/app/current/backend/.env`, `EnvironmentFile=` | Plaintext on an unencrypted-by-default EBS volume; holds `DATABASE_URL`, `JWT_SECRET`, AWS keys, every AI provider key. `current` is a symlink to the live release ([CI.md](CI.md) §1.2), and **each release directory keeps the `.env` it was deployed with** — three retained releases, plus any directory a failed deploy attempt left behind since 2026-09-17, so the number of plaintext copies is `ls /home/ubuntu/app/releases \| wc -l` and not a constant |
+| `.env` on EC2 | `/home/ubuntu/app/current/backend/.env`, `EnvironmentFile=` | Plaintext on the EBS root volume — unencrypted on the box running on 2026-10-09, encrypted at rest on the Ubuntu 26.04 rebuild `infra/terraform/main.tf` declares that day (§5 P3); holds `DATABASE_URL`, `JWT_SECRET`, AWS keys, every AI provider key. `current` is a symlink to the live release ([CI.md](CI.md) §1.2), and **each release directory keeps the `.env` it was deployed with** — three retained releases, plus any directory a failed deploy attempt left behind since 2026-09-17, so the number of plaintext copies is `ls /home/ubuntu/app/releases \| wc -l` and not a constant |
 | Temporary media during processing | `tempfile` on the EC2 disk (ffmpeg/transcription) | Plaintext; removed after the job |
 | CSV / dataset exports | Streamed to the downloader | Plaintext; once downloaded the data is outside every control in this document |
 
@@ -1359,6 +1359,13 @@ credential along with the old code.
 1. **EC2 console → Volumes:** check *Encrypted*. If `Not encrypted`, snapshot → copy snapshot with
    encryption enabled → create a volume from the copy → attach (requires a stop/start window). Set
    *Account attributes → EBS encryption by default* so future volumes are covered.
+   **Status 2026-10-09:** the running box's root volume reads `Encrypted: false`, and EBS encryption by
+   default is off in `ap-south-1` (both read that day). The Ubuntu 26.04 rebuild declared in
+   `infra/terraform/main.tf` the same day gives the replacement box `encrypted = true` on its root
+   (the AWS-managed `aws/ebs` key), so the snapshot route is not needed for this box — the old volume
+   stops mattering once the old instance is retired. Its plaintext `.env` copies are still on it while
+   it sits stopped as the rollback, so terminate it, with its volume, once the rebuild has held.
+   The account-level default is still worth setting.
 2. Move secrets to **AWS Systems Manager Parameter Store (SecureString)** or Secrets Manager and
    have the deploy fetch them at start, rather than writing a plaintext `.env`.
 3. `chmod 600 /home/ubuntu/app/releases/*/backend/.env` (systemd `EnvironmentFile=` reads it as

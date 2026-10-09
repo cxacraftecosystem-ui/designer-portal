@@ -373,6 +373,12 @@ Seconds, no build, no network fetch. **The one thing a flip cannot undo is an ap
 the release you are rolling back to predates a migration that has run, the old code meets a schema it
 was not written for, and the symlink will not save you — that is a restore, not a rollback.
 
+**Each release runs the interpreter it was built with**, so a rollback also needs that interpreter on
+the box: `/usr/bin/python3.12` for the releases built before 2026-10-09, the pinned upstream CPython
+under `/opt/cpython/` for every release since. Nothing in the deploy removes one a released tree still
+uses, and its "Install the pinned CPython on the box" step prints every rollback target's interpreter
+on each run and warns about any that would not start ([DEPLOY_AWS.md](../backend/DEPLOY_AWS.md) §3.1).
+
 **Rolling back the web app is a different command, and the obvious one does not work.** Measured
 2026-10-09, `designer-repository.vercel.app` was an alias set by hand rather than one of the Vercel
 project's domains, and Instant Rollback, `vercel rollback` and `vercel promote` move only the
@@ -418,8 +424,10 @@ updated to bake the same paths and limits into the base units, so a **rebuilt** 
 deployed one without this step ever having run; the two are deliberately redundant and are not
 allowed to disagree.
 
-**The memory limits, and why they are asymmetric.** This is a **t3.small** — 2 GiB of RAM and a
-2 GiB swap file — and the queue runs ffmpeg and AI transcription. Unbounded, the kernel's OOM killer
+**The memory limits, and why they are asymmetric.** The box running on 2026-10-09 is a **t3.small**
+— 2 GiB of RAM and a 2 GiB swap file — and the Ubuntu 26.04 rebuild declared that day in
+`infra/terraform/main.tf` is a **t3.medium** (4 GiB) with the same limits, kept until they are re-read
+there. The queue runs ffmpeg and AI transcription. Unbounded, the kernel's OOM killer
 picks by badness score, which on this box has meant **uvicorn dying because the queue was hungry**,
 with the API then 502-ing for a reason that appears nowhere in its own logs. So `fieldrepo` gets
 `MemoryHigh=1000M` and deliberately **no** `MemoryMax`: killing the API to save memory is the outcome
@@ -469,12 +477,19 @@ the index offered that day, which is how an unpinned transitive dependency turns
 overnight with no commit behind it.
 
 **It is compiled for Python 3.14 in a Linux container.** 3.14 because the owner's rule is the newest
-stable release of everything, production included — 3.14.8 is the newest stable Python, and 3.15 is
-still a release candidate — and because the Python that resolves the lock must be the Python that
-runs it. Since 2026-10-09 that is 3.14 everywhere: the EC2 box builds every release venv with
-`python3.14` (`BOX_PYTHON` in `deploy-backend.yml`, installed from the deadsnakes PPA on Ubuntu
-24.04), `backend/Dockerfile` is on `python:3.14-slim-trixie`, CI's two backend jobs and
-`e2e-live.yml` run 3.14 with `check-latest`, and `backend/pyproject.toml` requires `>= 3.14`.
+stable release of everything, production included, and because the Python that resolves the lock
+must be the Python that runs it. Since 2026-10-09 that is 3.14 everywhere: the EC2 box builds every
+release venv with **upstream CPython 3.14.8**, a python-build-standalone build pinned by URL and
+SHA-256 and installed root-owned under `/opt/cpython/3.14.8+20261003` (`BOX_PYTHON_*` in
+`deploy-backend.yml`, the same four values in `infra/terraform/user_data.sh`, held together by
+`backend/tests/test_box_interpreter_pin.py`) — not Ubuntu 26.04's own 3.14.4 and not the deadsnakes
+PPA; `backend/Dockerfile` is on `python:3.14-slim-trixie`; CI's two backend jobs and `e2e-live.yml`
+run 3.14 with `check-latest`, and the backend job annotates any run whose patch has moved past the
+box's pin; and `backend/pyproject.toml` requires `>= 3.14`. **3.15.0 reached python.org on
+2026-10-09 and is not the target yet**: that day python-build-standalone's newest release carried
+3.15.0rc3, setup-python's manifest stopped at 3.15.0-rc.3, Docker Hub had no `python:3.15`,
+httptools 0.8.0 and PyYAML 6.0.3 (uvicorn[standard]'s, both their newest) had no cp315 wheel, and
+prisma-client-py was never tested on it. `deploy-backend.yml`'s job env says how to raise the pin.
 Linux and not a developer's Windows venv, because a lock compiled there carries that platform's
 environment markers: `uvloop` is marker-excluded on Windows and would silently drop out of the
 production install. Refresh it deliberately, never as a side effect of something else:

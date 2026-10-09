@@ -2,8 +2,10 @@
 name = "design-workshop-backend"
 version = "0.1.0"
 description = "API-first FastAPI backend for Design Prototype Workshop capture, review and report generation."
-# 3.14 EVERYWHERE SINCE 2026-10-09: the EC2 box (deploy-backend.yml installs it from deadsnakes on
-# Ubuntu 24.04), backend/Dockerfile, and every CI job. 3.15 is a release candidate, not a target.
+# 3.14 EVERYWHERE SINCE 2026-10-09: the EC2 box (upstream CPython 3.14.8, a pinned
+# python-build-standalone build; BOX_PYTHON_* in deploy-backend.yml), backend/Dockerfile, and every
+# CI job. 3.15.0 reached python.org on 2026-10-09 and is not a target until the builds and wheels
+# this stack needs exist; deploy-backend.yml's job env lists what was missing that day.
 requires-python = ">=3.14"
 dependencies = [
     "fastapi>=0.111.0",

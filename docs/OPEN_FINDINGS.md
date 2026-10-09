@@ -609,7 +609,11 @@ was raised to its newest release on 2026-10-09; this one cannot be, and it now h
 
 * **PostgreSQL 18.** The 5.17 schema engine predates it, so `prisma migrate` is unproven there. Local
   and CI databases stay on 17, production's major — which the production provider caps at 17 anyway.
-* **Python 3.15**, when it is released: the project was never tested on it upstream and will not be.
+* **Python 3.15**, released on python.org on 2026-10-09: the project was never tested on it upstream
+  and will not be. It was one of five reasons the API boxes were pinned to 3.14.8 that day, beside
+  python-build-standalone, setup-python and Docker Hub not carrying 3.15.0 yet and two of
+  uvicorn[standard]'s dependencies shipping no cp315 wheel (`.github/workflows/deploy-backend.yml`'s
+  job env has the list).
 
 It also forces one patch to generated code. The client it writes for this schema is 675,391 lines of
 TypedDicts without `from __future__ import annotations`, which Python 3.14 imports in tens of minutes
@@ -657,6 +661,13 @@ makes every one of the four caps smaller than its ceiling), the box needs memory
 size — or each process needs to stop carrying the client's TypedDicts at run time
 (`backend/tests/scale/_lean_prisma_types.py` shows they can be stubbed); a ceiling edit will not do it.
 Open until those readings are taken.
+
+**The memory half was decided the same day, before any reading: the next instance size.** The owner
+chose to rebuild the box on Ubuntu 26.04 as a **t3.medium** (4 GiB), blue/green;
+`infra/terraform/main.tf` declares it, with the procedure, and the systemd ceilings are unchanged on it.
+That box also runs a different build of 3.14.8 — upstream CPython from python-build-standalone rather
+than the container images the 727 MiB was measured in — so the readings above are to be taken on the
+new box after its first deploy, and this stays open until they are.
 
 ---
 

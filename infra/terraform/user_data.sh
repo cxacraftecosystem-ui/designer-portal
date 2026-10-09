@@ -4,7 +4,8 @@
 # because this script only ever runs at a new box's first boot).
 # Installs system deps (including ffmpeg for Whisper audio chunking and nginx as
 # the reverse proxy so port 8000 is never exposed directly), prepares a swap file
-# so installs don't OOM on 1 GiB, and lays down the nginx site + systemd unit.
+# (a floor, written for a 1 GiB box), lays down the nginx site + systemd units, and
+# installs the pinned CPython every release venv is built with (the last section).
 # The actual code is deployed by the GitHub Actions workflow (deploy-backend.yml).
 #
 # ON THE `fieldrepo` NAMES BELOW. The unit files, the nginx site and the systemctl calls kept their
@@ -44,7 +45,7 @@
 # on disk the process answering there was started from. Its site file below is unchanged.
 set -euxo pipefail
 
-# --- swap (protects the 1 GiB box during pip/prisma installs) ----------------
+# --- swap (written for a 1 GiB box's pip/prisma installs; still a floor) -----
 if [ ! -f /swapfile ]; then
   fallocate -l 2G /swapfile
   chmod 600 /swapfile
@@ -55,11 +56,10 @@ fi
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
-# python3.14-venv: 3.14 is 26.04's SYSTEM Python, and every release venv is built with it
-# (BOX_PYTHON in deploy-backend.yml, whose install step finds it already here and skips the
-# deadsnakes PPA a 24.04 box needs). libatomic1: the Node the deploy pins for the Prisma CLI
-# (26.x) links against it. nginx, ffmpeg and git keep their 24.04 package names.
-apt-get install -y python3.14-venv python3-pip git ffmpeg nginx libatomic1
+# No Python package since 2026-10-09: 26.04's python3.14 (3.14.4) stays as the OS's own, and the
+# release venvs are built from the pinned CPython the last section installs. curl and ca-certificates
+# fetch it, openssl names prisma's query engine, and libatomic1 is for the Node the deploy pins (26.x).
+apt-get install -y git ffmpeg nginx libatomic1 curl ca-certificates openssl
 
 # --- nginx reverse proxy: 80 -> 127.0.0.1:8000 -------------------------------
 cat > /etc/nginx/sites-available/fieldrepo <<'NGINX'
@@ -125,14 +125,14 @@ EnvironmentFile=/home/ubuntu/app/current/backend/.env
 # of one that sets it. The deploy workflow refuses a .env that sets it true.
 Environment=MEDIA_QUEUE_WORKER_ENABLED=false
 ExecStart=/home/ubuntu/app/current/backend/.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1
-# A SOFT CEILING AND DELIBERATELY NO HARD ONE. 2 GiB of RAM on this box (t3.small since
-# 2026-09-17), shared with the queue worker, nginx and the kernel. Over MemoryHigh the cgroup is
-# throttled and reclaimed hard, so a heavy request gets slower instead of the kernel's OOM killer
-# choosing a victim by badness score — which on this box has meant it choosing UVICORN because the
-# QUEUE was the hungry one, and the API then 502ing for a reason that appears nowhere in its own
-# log. There is no MemoryMax here on purpose: killing the API to save memory is precisely the
-# outcome these limits exist to prevent. The queue's unit below is the one that carries a hard stop,
-# because losing the queue is recoverable and losing the API is an outage.
+# A SOFT CEILING AND DELIBERATELY NO HARD ONE. 4 GiB of RAM on the t3.medium main.tf declares (2 GiB
+# on the t3.small this was set on), shared with the queue worker, nginx and the kernel. Over
+# MemoryHigh the cgroup is throttled and reclaimed hard, so a heavy request gets slower instead of
+# the kernel's OOM killer choosing a victim by badness score — which on this box has meant it
+# choosing UVICORN because the QUEUE was the hungry one, and the API then 502ing for a reason that
+# appears nowhere in its own log. There is no MemoryMax here on purpose: killing the API to save
+# memory is precisely the outcome these limits exist to prevent. The queue's unit below is the one
+# that carries a hard stop, because losing the queue is recoverable and losing the API is an outage.
 #
 # 1000M, RAISED FROM 500M ON 2026-09-17, AND THE OLD VALUE IS WHY THE BOX WAS RESIZED. 500M was set
 # to fit two soft ceilings plus headroom inside 1 GiB and was written down as "a first setting, not
@@ -173,9 +173,9 @@ User=ubuntu
 WorkingDirectory=/home/ubuntu/app/current/backend
 EnvironmentFile=/home/ubuntu/app/current/backend/.env
 ExecStart=/home/ubuntu/app/current/backend/.venv/bin/python -m app.worker
-# THE ONLY HARD MEMORY STOP ON THIS BOX, and it is on the queue rather than on the API for a
-# reason. This process runs ffmpeg and AI transcription; one large audio job can take it past what
-# is left of 2 GiB after uvicorn and the kernel, and unbounded it is the thing that triggers the OOM
+# THE ONLY HARD MEMORY STOP ON THIS BOX, and it is on the queue rather than on the API for a reason.
+# This process runs ffmpeg and AI transcription; one large audio job can take it past what is left
+# of the box's RAM after uvicorn and the kernel, and unbounded it is the thing that triggers the OOM
 # killer — which then does not necessarily kill IT. MemoryHigh throttles it first (slow, still
 # working); MemoryMax kills it if it keeps climbing, which is survivable: Restart=always brings it
 # back and the job is retried.
@@ -187,9 +187,10 @@ ExecStart=/home/ubuntu/app/current/backend/.venv/bin/python -m app.worker
 # thrashes here, read the memory line in `systemctl status fieldrepo-queue` and raise it from THAT
 # number rather than doubling again.
 #
-# The two soft ceilings total 1800M on 1906 MiB of usable RAM, which is the same bet the old pair
-# made inside 1 GiB: MemoryHigh bounds one cgroup, it does not reserve memory, and these two do not
-# peak together. MemoryMax here is the one hard stop on the box, and it stays on the queue.
+# The two soft ceilings total 1800M on the t3.small's 1906 MiB of usable RAM, which is the same bet
+# the old pair made inside 1 GiB: MemoryHigh bounds one cgroup, it does not reserve memory, and these
+# two do not peak together (an easy bet on the t3.medium). MemoryMax here is the one hard stop on the
+# box, and it stays on the queue.
 MemoryHigh=800M
 MemoryMax=1100M
 Restart=always
@@ -214,3 +215,35 @@ systemctl enable fieldrepo-queue || true
 # can see the shape the units expect rather than having to infer it from a broken symlink.
 mkdir -p /home/ubuntu/app/releases
 chown -R ubuntu:ubuntu /home/ubuntu/app
+
+# --- the interpreter the release venvs are built with: upstream CPython, pinned by digest ---
+# The SAME four values as BOX_PYTHON_* in .github/workflows/deploy-backend.yml (its job env says why,
+# and how to raise them; backend/tests/test_box_interpreter_pin.py fails when the two disagree), and
+# the install its "Install the pinned CPython on the box" step repeats on every deploy. LAST, on
+# purpose: a failed download or a digest mismatch (refused before tar runs) stops the script with
+# the box otherwise provisioned, cloud-init's log says why, and the first deploy tries again.
+# (EC2 caps user data at 16 KB, which `terraform validate` enforces: keep these comments short.)
+BOX_PYTHON_VERSION="3.14.8"
+BOX_PYTHON_BUILD="20261003"
+BOX_PYTHON_URL="https://github.com/astral-sh/python-build-standalone/releases/download/20261003/cpython-3.14.8%2B20261003-x86_64-unknown-linux-gnu-install_only.tar.gz"
+BOX_PYTHON_SHA256="371b6c281bbb09b29279e9e3a2996bab4ae2ea03cca52bf869f8bd89286b0ae8"
+box_python_home="/opt/cpython/${BOX_PYTHON_VERSION}+${BOX_PYTHON_BUILD}"
+if [ ! -e "$box_python_home" ]; then
+  install -d -o root -g root -m 0755 /opt/cpython
+  stage="$(mktemp -d /opt/cpython/.incoming.XXXXXX)"
+  trap 'rm -rf "$stage"' EXIT
+  chmod 0755 "$stage"
+  curl -fsSL --proto '=https' --tlsv1.2 --retry 5 --retry-delay 10 --retry-all-errors --connect-timeout 30 --max-time 900 -o "$stage/python.tar.gz" "$BOX_PYTHON_URL"
+  # `sha256sum -c` exits non-zero on a mismatch, and `set -e` ends the script before tar can run.
+  echo "${BOX_PYTHON_SHA256}  $stage/python.tar.gz" | sha256sum -c -
+  tar -xzf "$stage/python.tar.gz" -C "$stage" --no-same-owner
+  rm -f "$stage/python.tar.gz"
+  chown -R root:root "$stage/python"
+  chmod -R go-w "$stage/python"
+  printf '%s\n' "$BOX_PYTHON_SHA256" > "$stage/python/.pbs-sha256"
+  printf '%s\n' "$BOX_PYTHON_URL" > "$stage/python/.pbs-url"
+  mv -T "$stage/python" "$box_python_home"
+  rm -rf "$stage"
+  trap - EXIT
+fi
+"$box_python_home/bin/python${BOX_PYTHON_VERSION%.*}" -I -c 'import sys, platform, ssl, sqlite3, ensurepip, venv; assert platform.python_version() == sys.argv[1], platform.python_version(); print("CPython", platform.python_version(), "from", sys.base_prefix, "|", ssl.OPENSSL_VERSION)' "$BOX_PYTHON_VERSION"

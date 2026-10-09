@@ -78,7 +78,8 @@ metadata row, not 400 MB of bandwidth.
 
 Worth drawing in full, because the two facts that dominate this system's behaviour are both
 invisible in the logical diagram above: **the database is in a different AWS region from the web
-box**, and **the box is a single burstable t3.micro**.
+box**, and **the box is a single burstable EC2 instance** — a t3.micro when this was drawn, a t3.small
+from 2026-09-17, and a t3.medium from the Ubuntu 26.04 rebuild declared on 2026-10-09.
 
 ```mermaid
 flowchart TB
@@ -88,7 +89,7 @@ flowchart TB
   subgraph edge["AWS edge"]
     CF["CloudFront distribution<br/>d3ekigkotd1xa2.cloudfront.net<br/>TLS 1.2+ · IPv4 and IPv6"]
   end
-  subgraph ec2["EC2 t3.micro · ap-south-1 · 2 burstable vCPU · 1 GiB"]
+  subgraph ec2["EC2 · ap-south-1 · 2 burstable vCPU · t3.small 2 GiB, t3.medium 4 GiB from the 26.04 rebuild"]
     NX["nginx :80<br/>client_max_body_size 200M<br/>proxy_read_timeout 300s"]
     UV["uvicorn :8000 on 127.0.0.1<br/><b>--workers 1</b>"]
     QW["fieldrepo-queue<br/>python -m app.worker"]
@@ -625,7 +626,7 @@ flowchart TB
   end
   subgraph aws["AWS ap-south-1"]
     CF2[CloudFront]
-    E["EC2 t3.micro<br/>nginx + uvicorn(1) + fieldrepo-queue"]
+    E["EC2 t3.small, t3.medium from the 26.04 rebuild<br/>nginx + uvicorn(1) + fieldrepo-queue"]
     S3B[(S3 media bucket)]
   end
   subgraph sb["Managed PostgreSQL — co-located since 2026-09-02"]

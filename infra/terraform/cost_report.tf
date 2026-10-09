@@ -131,8 +131,9 @@ resource "aws_lambda_function" "cost_report" {
   function_name = "${var.project}-cost-report"
   role          = aws_iam_role.cost_report.arn
   handler       = "index.handler"
-  # python3.14, the newest Python AWS runs that is also upstream's newest stable
-  # (AWS lists python3.15, which is still a release candidate upstream). Needed
+  # python3.14, the minor the API boxes and CI run. AWS lists python3.15, and
+  # upstream released 3.15.0 on 2026-10-09; this moves with the boxes when their
+  # pin does (deploy-backend.yml's job env says what holds that back). Needed
   # provider 6.x: 5.x rejected anything past python3.13. index.py uses datetime,
   # os, collections and boto3 only, so nothing in it changed.
   runtime       = "python3.14"

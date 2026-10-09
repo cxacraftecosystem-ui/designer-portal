@@ -142,15 +142,18 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          # 3.14 BECAUSE IT IS THE NEWEST STABLE PYTHON, AND PRODUCTION RUNS IT TOO. The owner's
-          # rule is the latest stable release of everything, production included; 3.14.8 is the
-          # newest (3.15 is still a release candidate). The EC2 box builds every release venv with
-          # python3.14 since 2026-10-09 (BOX_PYTHON in deploy-backend.yml), the Dockerfile is on
+          # 3.14 BECAUSE PRODUCTION RUNS IT, AND IT IS THE NEWEST PYTHON THIS STACK CAN RUN. The
+          # owner's rule is the latest stable release of everything, production included. The EC2
+          # box runs upstream CPython 3.14.8 since 2026-10-09 — a python-build-standalone build pinned
+          # by digest (BOX_PYTHON_* in deploy-backend.yml) — the Dockerfile is on
           # python:3.14-slim-trixie, and pyproject requires >= 3.14, so this job proves the suite on
-          # production's interpreter. `check-latest` makes the patch python.org's newest rather
-          # than whatever the runner image cached (3.14.7 in the ubuntu-26.04 image of 2026-09-27,
-          # when 3.14.8 was current). The 37 integration failures of 2026-10-01 to 2026-10-09 were
-          # plugin order, not the interpreter: see `addopts` in backend/pyproject.toml.
+          # production's interpreter, and the next step says on every run whether the patch still
+          # matches. 3.15.0 reached python.org on 2026-10-09; this action's manifest, Docker Hub and
+          # python-build-standalone did not carry it that day, and deploy-backend.yml's job env lists
+          # what else holds it back. `check-latest` makes the patch python.org's newest rather than
+          # whatever the runner image cached (3.14.7 in the ubuntu-26.04 image of 2026-09-27, when
+          # 3.14.8 was current). The 37 integration failures of 2026-10-01 to 2026-10-09 were plugin
+          # order, not the interpreter: see `addopts` in backend/pyproject.toml.
           python-version: "3.14"
           check-latest: true
           cache: pip
@@ -160,6 +163,22 @@ jobs:
           cache-dependency-path: |
             backend/requirements.lock
             backend/pyproject.toml
+
+      - name: Say whether production runs the patch this job tests
+        # NEVER FAILS, ON PURPOSE (2026-10-09). The API boxes run exactly BOX_PYTHON_VERSION from
+        # deploy-backend.yml, a pinned python-build-standalone build, while this job tests the
+        # newest 3.14 `check-latest` finds. On the day python.org ships a patch the two part company
+        # until somebody raises the pin, which needs a python-build-standalone release carrying it
+        # (usually days later) — a reason to say so on every run, not to stop every merge. A pin
+        # that disagrees with itself is what fails, in backend/tests/test_box_interpreter_pin.py.
+        run: |
+          box="$(sed -nE 's/^ +BOX_PYTHON_VERSION: "([0-9.]+)"$/\1/p' .github/workflows/deploy-backend.yml)"
+          here="$(python -c 'import platform; print(platform.python_version())')"
+          if [ "$here" = "$box" ]; then
+            echo "this job tests CPython $here, the version the API boxes run"
+          else
+            echo "::warning::this job tests CPython $here; the API boxes are pinned to ${box:-<no pin found>} (BOX_PYTHON_* in deploy-backend.yml and infra/terraform/user_data.sh). Raise the pin to the newest python-build-standalone release that carries $here."
+          fi
 
       - name: Install the backend and its test extras
         # `[dev]`, not a bare install: pytest-asyncio lives there, and `asyncio_mode = "auto"` is
