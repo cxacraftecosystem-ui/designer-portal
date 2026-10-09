@@ -236,10 +236,10 @@ data class DwHeld(val state: DwHeldState, val text: String) {
      */
     val sentence: String
         get() = when (state) {
-            DwHeldState.UNRECORDED -> "The repository kept whatever it already held for this " +
-                "question and did not send it back, so what it holds is UNRECORDED here."
-            DwHeldState.NOTHING -> "The repository holds no answer to this question."
-            DwHeldState.HOLDS -> "The repository still holds: “$text”."
+            DwHeldState.UNRECORDED -> "The earlier answer to this question was kept online, but " +
+                "it is not shown here."
+            DwHeldState.NOTHING -> "There is no earlier answer to this question online."
+            DwHeldState.HOLDS -> "The answer saved online is still: “$text”."
         }
 
     companion object {
@@ -344,13 +344,13 @@ data class DwStageRefusalReport(
             val nothing = refusals.count { it.held.state == DwHeldState.NOTHING }
             val them = if (count == 1) "it" else "them"
             if (count > 0) {
-                append("The repository refused $count of your answer${if (count == 1) "" else "s"}")
+                append("$count of your answer${if (count == 1) " was" else "s were"} not accepted")
                 when {
-                    holds > 0 -> append(" and kept what it already held for $them")
+                    holds > 0 -> append(", and the earlier answer${if (count == 1) " was" else "s were"} kept")
                     // Measured, and what it measured was an empty box. Said, because a designer who
                     // is told their previous answer is safe there will not go looking for it.
                     nothing == refusals.size && refusals.isNotEmpty() ->
-                        append(", and holds no previous answer under ${if (count == 1) "it" else "any of them"}")
+                        append(", and there is no earlier answer for ${if (count == 1) "it" else "any of them"}")
                 }
                 append(". ")
             }
@@ -360,8 +360,8 @@ data class DwStageRefusalReport(
                 val keys = droppedCustomKeys.size
                 append(
                     "Everything else in this stage was saved except " +
-                        "$keys of this workshop's own question${if (keys == 1) "" else "s"} " +
-                        "(${droppedCustomKeys.joinToString(", ").take(160)}), which the sections no " +
+                        "$keys of this workshop's own question${if (keys == 1) "" else "s"}, " +
+                        "which the sections no " +
                         "longer ask — so the answer${if (keys == 1) "" else "s"} this phone holds " +
                         "for ${if (keys == 1) "it" else "them"} " +
                         "${if (keys == 1) "was" else "were"} not stored. The sections have been " +
@@ -378,7 +378,7 @@ data class DwStageRefusalReport(
             // DATED ONLY WHEN IT IS NOT THIS COMPOSITION'S OWN. A designer who has just pressed save
             // does not need to be told when; a designer who left the stage and came back on the app's
             // own instruction is looking at what the repository said THEN, and is owed the time.
-            recordedAt?.let { append(" Recorded when this stage was last saved to the repository, at $it.") }
+            recordedAt?.let { append(" Recorded when this stage was last saved online, at $it.") }
         }
 }
 
@@ -431,7 +431,7 @@ fun dwDecodeStageRefusalsFromSent(
     errors.forEach { (scope, payload) ->
         val fields = fieldMessages(payload)
         if (fields.isEmpty()) {
-            unplaced += "$scope: ${DwValues.text(payload).ifBlank { "refused, with no reason given" }}"
+            unplaced += "$scope: ${DwValues.text(payload).ifBlank { "not accepted, with no reason given" }}"
             return@forEach
         }
         val match = SCOPED_ROW.matchEntire(scope)
@@ -732,6 +732,6 @@ private fun fieldMessages(payload: JsonElement): Map<String, String> {
     return obj.entries
         .associate { (key, value) ->
             key to ((value as? JsonPrimitive)?.content ?: DwValues.text(value))
-                .ifBlank { "was not accepted, and the repository gave no reason" }
+                .ifBlank { "was not accepted" }
         }
 }

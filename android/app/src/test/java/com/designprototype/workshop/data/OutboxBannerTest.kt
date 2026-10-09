@@ -58,7 +58,7 @@ class OutboxBannerTest {
         )
         assertTrue(
             "the designer must be told the walk to find a signal is pointless:\n${line.text}",
-            line.text.contains("A sync will NOT move them"),
+            line.text.contains("Syncing will not send them"),
         )
         assertTrue(
             "nothing has been deleted, and saying so is what stops a panic:\n${line.text}",
@@ -112,10 +112,10 @@ class OutboxBannerTest {
         assertTrue(
             "the singular has to carry through the whole sentence, not just the count:\n" +
                 one.lines.single().text,
-            one.lines.single().text.contains("A sync will NOT move it"),
+            one.lines.single().text.contains("Syncing will not send it"),
         )
         val many = outboxDeviceBanner(OutboxCounts(waiting = 0, refused = 4), online = true)!!
-        assertTrue(many.lines.single().text.contains("A sync will NOT move them"))
+        assertTrue(many.lines.single().text.contains("Syncing will not send them"))
     }
 
     // ── The third thing a connection does not move ─────────────────────────────────────────────

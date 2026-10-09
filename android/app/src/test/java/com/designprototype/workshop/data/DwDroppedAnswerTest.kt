@@ -118,14 +118,14 @@ class DwDroppedAnswerTest {
     @Test
     fun `the row says the answers were not stored, and never that they were refused`() {
         val summary = status(droppedAnswers = 1).summary
-        assertEquals("1 answer not stored — the rest is backed up", summary)
+        assertEquals("1 answer not stored — the rest is saved online", summary)
         // THE WORD MATTERS. "Refused" is an answer the repository read and declined, and its remedy is
         // to correct it on the form. This one it had nowhere to put, and correcting it is impossible:
         // the section that asked the question is gone. One word sends half the designers to a stage
         // with no marks on it to hunt for a box that does not exist.
         assertFalse("\n$summary", summary.contains("refused"))
         assertFalse("nothing here is waiting for a connection", summary.contains("waiting to upload"))
-        assertEquals("2 answers not stored — the rest is backed up", status(droppedAnswers = 2).summary)
+        assertEquals("2 answers not stored — the rest is saved online", status(droppedAnswers = 2).summary)
     }
 
     @Test
@@ -134,8 +134,8 @@ class DwDroppedAnswerTest {
         // holding the phone. Folded together, correcting the refusal would leave the row still
         // refusing to say "backed up" with nothing on screen explaining why.
         assertEquals(
-            "2 answers refused, 1 stage with a deletion not sent, 3 answers not stored — " +
-                "the rest is backed up",
+            "2 answers not accepted, 1 stage with a deletion not sent, 3 answers not stored — " +
+                "the rest is saved online",
             status(refusedAnswers = 2, unsentDeletions = 1, droppedAnswers = 3).summary,
         )
     }
@@ -180,8 +180,7 @@ class DwDroppedAnswerTest {
         assertTrue(
             "not 'correct it' — there is no box to correct:\n${banner.detail}",
             banner.detail.contains(
-                "Open the workshop once with a connection — it re-reads the sections, and the next " +
-                    "sync clears this."
+                "Open the workshop once with a connection to clear this."
             ),
         )
         assertFalse(
@@ -189,7 +188,7 @@ class DwDroppedAnswerTest {
             banner.detail.contains("a sync will NOT change that"),
         )
         assertFalse("\n${banner.detail}", banner.detail.contains("correct them"))
-        assertTrue("and where the rest of the work is", banner.detail.contains("Everything else is on the server"))
+        assertTrue("and where the rest of the work is", banner.detail.contains("Everything else is saved online"))
     }
 
     @Test
@@ -218,9 +217,9 @@ class DwDroppedAnswerTest {
             workshops = 1, stages = 0, files = 0, bytesText = "0 B",
             failures = 0, refusedAnswers = 2, unsentDeletions = 0, droppedAnswers = 1,
         )!!
-        assertEquals("2 answers refused · 1 answer not stored", banner.headline)
-        assertTrue(banner.detail, banner.detail.contains("the repository has already read them and declined"))
-        assertTrue(banner.detail, banner.detail.contains("re-reads the sections"))
+        assertEquals("2 answers not accepted · 1 answer not stored", banner.headline)
+        assertTrue(banner.detail, banner.detail.contains("Those answers were not accepted"))
+        assertTrue(banner.detail, banner.detail.contains("with a connection to clear this"))
         assertEquals(
             "the drop's sentence must appear exactly once",
             1,

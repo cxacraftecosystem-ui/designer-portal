@@ -309,7 +309,7 @@ class StageAuthorityEarnedByReadingTest {
         assertFalse("a sweep is something the designer can see, so it is not 'nothing new'", fold.isNothingNew)
         val notice = requireNotNull(fold.notice)
         assertTrue(notice, notice.contains("You had deleted everything in tool"))
-        assertTrue(notice, notice.contains("2 rows the server still holds"))
+        assertTrue(notice, notice.contains("2 entries still saved online"))
         assertTrue(
             "it has to say the next save is what does it, while there is still time to act",
             notice.contains("the next save will delete")
@@ -322,8 +322,8 @@ class StageAuthorityEarnedByReadingTest {
         // rows this phone has never shown them. What is true — and checked against Postgres, where
         // `deletedAt` is stamped and the row is kept — is that the deletion is recorded rather than
         // erased, so the sentence names the fact that makes it fixable instead of an impossible action.
-        assertTrue(notice, notice.contains("records a deletion rather than erasing the row"))
-        assertTrue(notice, notice.contains("can be brought back by whoever runs it"))
+        assertTrue(notice, notice.contains("a deleted entry is kept"))
+        assertTrue(notice, notice.contains("an administrator can bring them back"))
         assertFalse(
             "it must not ask a designer to retype rows it never showed them:\n$notice",
             notice.contains("add the rows back here"),
@@ -403,9 +403,9 @@ class StageAuthorityEarnedByReadingTest {
         )
         val notice = dwFoldServerStage(spec, StageDraft(stageId = spec.key), bucket, spec.key).notice
         requireNotNull(notice)
-        assertTrue(notice.contains("read from the server"))
+        assertTrue(notice.contains("latest online version"))
         assertTrue(notice.contains("loomsWorking"))
-        assertTrue(notice.contains("1 row"))
+        assertTrue(notice.contains("1 entry"))
         assertTrue(notice.contains("dyeVatCount"))
         assertTrue(
             "and it must promise the thing a designer will be worried about",

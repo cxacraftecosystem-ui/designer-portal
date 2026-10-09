@@ -233,7 +233,7 @@ class DwStageRefusalTest {
         // `costLine[2]` is the SECOND row of the collection (entry index 2, singleton at 0).
         assertEquals("250", byKey.getValue("amount").held.text)
         assertEquals("3", byKey.getValue("dyeVatCount").held.text)
-        assertTrue(byKey.getValue("totalCost").sentence.contains("still holds: “6500”"))
+        assertTrue(byKey.getValue("totalCost").sentence.contains("is still: “6500”"))
     }
 
     @Test
@@ -245,7 +245,7 @@ class DwStageRefusalTest {
         )
         val filled = dwHoldingsFrom(report, StageBucketDto())
         assertEquals(DwHeldState.NOTHING, filled.refusals.single().held.state)
-        assertTrue(filled.refusals.single().sentence.contains("holds no answer"))
+        assertTrue(filled.refusals.single().sentence.contains("no earlier answer"))
     }
 
     // ── The sentences a designer actually reads ──────────────────────────────────────────────────
