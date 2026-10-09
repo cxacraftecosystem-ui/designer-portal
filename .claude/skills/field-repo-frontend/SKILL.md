@@ -62,9 +62,11 @@ Never load Google-hosted fonts.
 
 - Both `display: "swap"`.
 - **`font-serif` is not a serif.** It is a legacy slot pointed at Jakarta. Never use it to mean serif.
-- `fontSize`, `spacing`, `screens`, `letterSpacing`, `zIndex` are **stock Tailwind** — only
-  `fontFamily`, `colors`, `borderRadius`, `boxShadow`, `transitionTimingFunction`, `keyframes` and
-  `animation` are extended. `plugins: []`. No `tailwindcss-animate`.
+- `spacing`, `screens`, `letterSpacing`, `zIndex` are **stock Tailwind** — only `fontFamily`,
+  `fontSize`, `colors`, `borderRadius`, `boxShadow`, `transitionTimingFunction`, `keyframes` and
+  `animation` are extended. `fontSize` only restates Tailwind 3's stock scale, `text-xs` …
+  `text-4xl` with their line heights as lengths (`tailwind3Type`, §3.5), so the sizes are stock.
+  `plugins: []`. No `tailwindcss-animate`.
 - Breakpoints are stock: `sm` 640 · `md` 768 · `lg` 1024 · `xl` 1280 · `2xl` 1536.
 
 ---
@@ -585,7 +587,7 @@ Verified by `frontend/e2e/nav-sheet-scroll.spec.ts`.
 <AnimatePresence>
   <motion.div className="nav-sheet-overlay fixed inset-0 z-40" …>   {/* opacity layer, 0.18s */}
     <div aria-hidden onClick={closeSheet} style={{ touchAction: "none" }}
-         className="absolute inset-0 bg-ink-900/20 backdrop-blur-sm" />   {/* SIBLING, not parent */}
+         className="absolute inset-0 bg-ink-900/20 backdrop-blur-xs" />   {/* SIBLING, not parent */}
     <motion.div role="dialog" aria-modal="true" aria-label="Navigation"
       className="nav-sheet relative mx-auto w-[min(680px,92vw)] rounded-xl border border-line-200
                  bg-card shadow-lg" … />
@@ -621,7 +623,7 @@ it carries a real trap:
   ends and treats `!panel.contains(activeElement)` as "at the far end".
 - `useEffect(() => { setSheetOpen(false); setActive(null); }, [pathname])` is the reset net — and it
   deliberately does **not** steal focus.
-- Skip link, first in tab order: `sr-only left-3 top-3 z-[60] … focus:not-sr-only focus:fixed` →
+- Skip link, first in tab order: `sr-only left-3 top-3 z-60 … focus:not-sr-only focus:fixed` →
   `#main-content`.
 
 ### 7.9 Active-route resolution — longest base wins
@@ -1007,7 +1009,7 @@ under `LocalAppPreferences.current.reducedMotion`. `FLASH_MILLIS = 1400L` — th
 
 | Class | Renders |
 |---|---|
-| `.field-input` | `w-full rounded-md border border-line-200 bg-card px-3.5 py-2.5 text-sm text-ink-900 outline-none transition placeholder:text-ink-300 focus:border-purple-600 focus:ring-4 focus:ring-purple-600/15` |
+| `.field-input` | `w-full rounded-md border border-line-200 bg-card px-3.5 py-2.5 text-sm text-ink-900 outline-hidden transition placeholder:text-ink-300 focus:border-purple-600 focus:ring-4 focus:ring-purple-600/15` |
 | `.field-label` | `text-xs font-medium uppercase tracking-wide text-ink-500` |
 | `.field-button` | `inline-flex min-h-10 items-center justify-center gap-2 rounded-md bg-purple-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-purple-800 hover:shadow-cta disabled:cursor-not-allowed disabled:bg-line-200 disabled:text-ink-500 disabled:shadow-none` |
 | `.field-button-secondary` | same box, `border border-line-200 bg-card text-ink-900`, `hover:border-purple-300 hover:bg-purple-50`, `disabled:opacity-60` |
@@ -1196,7 +1198,7 @@ default offset 6, `CLOSE_ON_SCROLL_GRACE_MS 600`. Data attributes: `data-anchore
 
 ### 11.6 `Toast`
 
-`DEFAULT_DURATION 5000`, `MAX_VISIBLE 3`, viewport `z-[110]`, bottom-right (clear of the island).
+`DEFAULT_DURATION 5000`, `MAX_VISIBLE 3`, viewport `z-110`, bottom-right (clear of the island).
 
 - Mounted **once** in `app/layout.tsx`. A nested provider renders a second `aria-live` region that
   screen readers announce twice.

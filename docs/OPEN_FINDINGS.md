@@ -15,7 +15,7 @@ heading closed. Counted by heading: still 15 open and 95 closed.
 
 **A verifier's pass over what the release writes to logs and terminals moved both numbers by one,
 the same day.** It closed a set-password link's token reaching the API's journal every time the link
-was checked — both clients send the token in the query string of `GET /api/auth/set-password`, and
+was checked — both clients sent the token in the query string of `GET /api/auth/set-password`, and
 uvicorn's access log wrote the line down — and opened what that fix cannot reach: anything in front of
 the API that logs the request line, the box's own nginx first. Its four smaller findings were fixed in
 the same change and never entered here, since none was outstanding: the operator script's argument
@@ -611,7 +611,7 @@ asking the POST; the GET can go once the builds that call it have left the field
 token only from the query. So opening a link still sends the token to the web host: in the request for
 the page, and again as the `Referer` of every stylesheet, script and font the page asks for before its
 script can rewrite the address (measured 2026-10-09 against a production build: 17 such requests, all
-to the web host's own origin; the API saw none, because `Referer-Policy: strict-origin-when-cross-origin`
+to the web host's own origin; the API saw none, because `Referrer-Policy: strict-origin-when-cross-origin`
 sends another origin only the origin). The web already reads `#token=`, so moving `link_for` to the
 fragment needs no web release: the next Android release must accept both forms, and `link_for` moves
 once the builds that accept only the query have left the field. A fragment is never sent to any server
