@@ -86,7 +86,9 @@ import com.designprototype.workshop.ui.field
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.Interceptor
@@ -1711,8 +1713,21 @@ internal class DwAsrModelController(
      * `SystemClock.elapsedRealtime` and NOT `currentTimeMillis`: it is monotonic. A wall clock that
      * an NTP sync steps backwards mid-download would hand the meter a negative span and produce a
      * speed nobody could explain.
+     *
+     * ── IT IS ALSO WHERE A PAUSE OR A CANCEL IS NOTICED, SO THE CHECK COMES FIRST ──────────────
+     *
+     * The three copy loops that call this once a buffer block in `read` and `write`, which never
+     * look at the coroutine: a stop reaches them only where they suspend, and this function is the
+     * only place they can. Its one suspension, the `withContext` below, is skipped inside the
+     * throttle and skipped for good once [pause] or [cancel] has nulled [meter]. So until
+     * 2026-10-09 a Pause left the fetch running to the end of the file while the card said Paused,
+     * still spending the designer's data, and a Cancel left it running too.
+     * `DwAsrModelTransferProbeTest` caught it the first time CI ran it: the part-file grew by
+     * 2,890,183 bytes after the pause had been asked for and half a second waited out. The check
+     * costs one read of a flag per buffer.
      */
     private suspend fun publishProgress(movedThisAttempt: Long, attemptTotal: Long) {
+        currentCoroutineContext().ensureActive()
         val now = SystemClock.elapsedRealtime()
         // The second condition is the escape hatch that guarantees the LAST frame is drawn however
         // close to the previous one it falls. It has to be measured in the same currency as the first
