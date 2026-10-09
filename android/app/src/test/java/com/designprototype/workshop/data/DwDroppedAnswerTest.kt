@@ -223,7 +223,7 @@ class DwDroppedAnswerTest {
         assertEquals(
             "the drop's sentence must appear exactly once",
             1,
-            Regex("re-reads the sections").findAll(banner.detail).count(),
+            Regex("sections no longer ask").findAll(banner.detail).count(),
         )
         assertFalse(banner.waiting)
     }

@@ -387,7 +387,7 @@ class OutboxBannerTest {
         val nothing = outboxRetryAllMessage(
             OutboxRetryResult(requestedSent = false, refusedSent = 0, refusedTried = 0, othersSent = 0)
         )
-        assertTrue(nothing, nothing.contains("nothing refused"))
+        assertTrue(nothing, nothing.contains("nothing to try again"))
     }
 
     /**

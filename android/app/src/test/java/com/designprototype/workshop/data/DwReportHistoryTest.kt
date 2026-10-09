@@ -395,7 +395,7 @@ class DwReportHistoryTest {
     fun `a file made on a phone puts the device's clock in the window, and the limits say so`() {
         val diff = dwDiffExports(history(), "e1", "e2")!!
         assertTrue("e2 was made on a phone with no network", diff.deviceClockInvolved)
-        assertTrue(dwDiffLimits(diff, history()).any { it.contains("device’s clock") })
+        assertTrue(dwDiffLimits(diff, history()).any { it.contains("phone’s clock") })
 
         val serverOnly = history(exports = listOf(export("e1", t0), export("e2", t2, onDevice = false)))
         val quiet = dwDiffExports(serverOnly, "e1", "e2")!!

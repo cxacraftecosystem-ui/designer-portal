@@ -376,7 +376,7 @@ class UsageConsentCopyTest {
         assertNotEquals(empty, failed)
 
         // The clause that does the work, kept from `offlineListLine`.
-        assertTrue(offline.orEmpty().contains("not a claim that there are none"))
+        assertTrue(offline.orEmpty().contains("nothing to show until it connects"))
         // The loading line is the shared one, verbatim.
         assertEquals(loadingListLine("requests"), loading)
     }

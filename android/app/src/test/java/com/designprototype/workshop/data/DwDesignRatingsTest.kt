@@ -785,7 +785,7 @@ class DwDesignRatingsTest {
         )
         assertNull(hidden.reviewerId)
         assertEquals(
-            "reviewer not named on this response",
+            "reviewer not named",
             dwRatingAttribution(hidden),
         )
         val shown = json.decodeFromString<DesignRatingDto>(

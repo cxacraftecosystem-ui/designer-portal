@@ -202,7 +202,7 @@ class DwStageRefusalTest {
         val held = report.refusals.single().held
         assertEquals(DwHeldState.UNRECORDED, held.state)
         assertEquals("UNRECORDED", held.text)
-        assertTrue(report.refusals.single().sentence.contains("UNRECORDED"))
+        assertTrue(report.refusals.single().sentence.contains("it is not shown here"))
     }
 
     @Test
