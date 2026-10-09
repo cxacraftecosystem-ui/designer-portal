@@ -1684,6 +1684,12 @@ internal class DwAsrModelController(
      * and its numbers on screen under the new heading. A phase is a different quantity of a different
      * thing moving at a different speed; it gets its own total, its own clock and its own zero.
      *
+     * THAT ZERO STARTS THE STALL CLOCK AND NOT THE RATE. A FETCH opens its meter as soon as the
+     * response headers are in, and a host may then think for seconds before the body's first byte;
+     * the meter measures the rate from the first observation that carries bytes, so that wait reads
+     * as "measuring…" and, past `DW_RATE_STALL_MILLIS`, as stalled — never as a crawl with hours
+     * left. See "THE RATE STARTS AT THE FIRST BYTE" on [DwTransferMeter].
+     *
      * @param fedByTick true when the phase's producer only bumps [countedBytes] — see [tick].
      */
     private suspend fun startMeter(

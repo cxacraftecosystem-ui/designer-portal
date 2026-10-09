@@ -125,7 +125,7 @@ no key is skipped wherever it sits.
 |---|---|---|---|
 | Backend unit (`backend/tests/`) | 227 | 4889 `def test_` | `python -m pytest -rf --durations=15` from `backend/` |
 | Web end-to-end (`frontend/e2e/`) | 209 | 2649 `test(` | Playwright, `frontend/playwright.config.ts` |
-| Android unit (`android/app/src/test/`) | 241 | 3223 `@Test` | `./gradlew :app:testDebugUnitTest` from `android/` |
+| Android unit (`android/app/src/test/`) | 241 | 3225 `@Test` | `./gradlew :app:testDebugUnitTest` from `android/` |
 | Android instrumented (`android/app/src/androidTest/`) | 8 | 24 `@Test` | needs a device; not run in CI |
 
 The backend case count is `def test_` occurrences; pytest reports a larger number because
@@ -155,7 +155,7 @@ and this one asserted an absence it had never looked for.
 | `frontend/app` | 95 | 54,764 | 95 | 54,764 |
 | `frontend/components` | 302 | 130,947 | 302 | 130,947 |
 | `frontend/lib` | 126 | 67,681 | 126 | 67,681 |
-| `android/app/src/main/java` | 265 | 230,477 | 265 | 230,477 |
+| `android/app/src/main/java` | 265 | 230,512 | 265 | 230,512 |
 
 Two columns because the two numbers get quoted interchangeably and disagree by however much work is
 uncommitted. **Tracked** is `git ls-files`, which is the figure to use in a write-up — it is
