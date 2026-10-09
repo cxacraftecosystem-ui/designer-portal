@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1.7
+# syntax=docker/dockerfile:1
 # ---------------------------------------------------------------------------------------------
 # Design Prototype Workshop web client — multi-stage image.
 #
@@ -18,7 +18,9 @@
 # `npm install` and never carries the ~600 MB dependency tree the build needed.
 # ---------------------------------------------------------------------------------------------
 
-ARG NODE_VERSION=22
+# The major frontend/package.json's `engines.node` names (24.x), which is also the Node Vercel runs the
+# site on and the one every workflow builds it with. Move them together, never this one alone.
+ARG NODE_VERSION=24
 
 
 # =============================================================================================
@@ -34,7 +36,13 @@ COPY frontend/package.json frontend/package-lock.json ./
 # `npm ci` rather than `npm install`: it installs exactly the locked tree and fails loudly if
 # package.json and the lockfile have drifted, instead of silently resolving something new.
 # devDependencies are needed here — typescript, tailwind and postcss all run during the build.
-RUN npm ci --no-audit --no-fund
+#
+# npm 12 first, because it is the npm every workflow installs with: no Node image ships it yet, and it
+# skips any dependency install script frontend/package.json's `allowScripts` does not approve. The
+# bundled npm 11 runs every script, so an image built with it would run whatever the policy leaves out,
+# which neither CI nor the production build ever runs.
+RUN npm install --global npm@12 --no-audit --no-fund \
+ && npm ci --no-audit --no-fund
 
 
 # =============================================================================================

@@ -612,9 +612,12 @@ includes `keep-supabase-active.yml` and `publish-android.yml`, which an earlier 
 two files still on mutable tags.** `backup-db.yml` and `monitor.yml` have no `uses:` at all: neither
 checks the repository out, deliberately.
 
-Two things are *not* pinned and both are on the record. `deploy-frontend.yml` installs
-`vercel@latest` — deliberate, because the CLI must match a platform that changes under it — and the
-Android toolchain (Gradle, AGP) under `android/` is outside this rule.
+Three things are *not* pinned and all three are on the record. `deploy-frontend.yml` installs
+`vercel@latest` — deliberate, because the CLI must match a platform that changes under it. Every job
+that installs with npm installs `npm@12` first (2026-10-09; no Node release ships npm 12 yet), which
+follows its major the way `node-version-file`'s `engines.node` of `24.x` does, and is deleted once the
+Node that field resolves to brings npm 12 itself. And the Android toolchain (Gradle, AGP) under
+`android/` is outside this rule.
 
 Pinning introduces its own failure mode, which is a pin that rots. `.github/dependabot.yml` is what
 closes it: **github-actions weekly** (Monday 04:00 Asia/Kolkata, at most 3 open PRs, `ci` commit
@@ -873,7 +876,18 @@ deployments are *meant* to be disabled at the project level as well
 not (§3, step 2), so on that date this setting was the only layer behind the removed Git link.
 
 **`npm ci can only install packages when … in sync`.** `frontend/package-lock.json` is stale. Run
-`npm install` in `frontend/` and commit the lockfile (DEPLOYMENT_VERCEL.md §7.5).
+`npm install` in `frontend/` with npm 12 and commit the lockfile (DEPLOYMENT_VERCEL.md §7.5).
+
+**`npm warn install-scripts … had install scripts blocked because they are not covered by
+allowScripts`.** npm 12, which every job installs with since 2026-10-09, runs a dependency's
+`preinstall`, `install` or `postinstall` only when `allowScripts` in `frontend/package.json` approves
+it, and skips the rest without failing the install. A new line here is a dependency that has started
+shipping one, or an approved one that moved to a version the pinned entry does not name. Read what the
+script does, then `npm install-scripts approve <pkg>` (it writes a `pkg@version` entry) or
+`npm install-scripts deny <pkg>` from `frontend/`, and commit `package.json`. Never approve `--all`
+unread. One such line is expected and stays: `deploy-frontend.yml`'s global `vercel` install reports
+esbuild's script blocked, because a global install has no `package.json` to approve it in and the
+CLI works without it (measured, and argued on that step).
 
 **Two production deployments per push.** Vercel's Git integration has been re-linked. It was removed
 outright (§2); if two deployments appear again, that is what happened. Unlink it, or at minimum
@@ -900,10 +914,14 @@ Working as designed since 2026-10-09: the Checks run for that commit was cancell
 push to `main` started its own, and the newer commit's own deploy run ships both (§1.1). Look at that
 run, not this one.
 
-**Stage 2 warns "Production runs a different Node major from CI".** The project's Node.js Version is
-not the major `checks.yml` and the build run on. Set it in the dashboard
-([DEPLOYMENT_VERCEL.md](DEPLOYMENT_VERCEL.md) §1); the next publish picks it up. It is a warning
-because both majors run the current bundle; the risk is code that behaves differently between them.
+**Stage 2 warns about the project's Node.js Version.** Since 2026-10-09 `engines.node` in
+`frontend/package.json` decides the major CI, the build and production all run on, and Vercel takes it
+over the dashboard setting, so the warning means the dashboard disagrees with the repository. *"Vercel
+offers a newer Node major than this build"*: raise `engines.node` (with `@types/node` and
+`frontend/Dockerfile`'s `NODE_VERSION`). *"The project's Node.js Version is behind this build"*: raise
+the dashboard setting ([DEPLOYMENT_VERCEL.md](DEPLOYMENT_VERCEL.md) §1). *"frontend/package.json names
+no Node major"*: put `engines.node` back. Every remedy raises; never lower either side to meet the
+other. It is a warning because production runs the build's major either way.
 
 **Stage 2 warns "The frontend project holds database credentials".** A storage integration is
 connected to the Vercel project. Disconnect it from the project rather than deleting the variables
