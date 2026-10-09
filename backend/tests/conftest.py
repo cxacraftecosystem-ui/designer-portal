@@ -582,15 +582,60 @@ def _clear_account_credential_budget():
 # Read in full before writing a database-backed suite:
 #
 #     tests/test_workshop_join_sync.py          - THE PATTERN. Copy this one.
+#     tests/test_save_stage_resubmission.py     - THE SAME RULE WITH NO CLIENT AT ALL: a module
+#                                                 that calls services directly. Copy this for that.
 #     tests/test_seed_shared_questionnaire.py   - THE ARGUMENT, and read it for that ONLY. Its header
 #                                                 states the rule and records thirteen tests that once
 #                                                 failed for exactly this reason -- but its own CODE is
 #                                                 the older shape: a module-scoped `anyio_backend` and
 #                                                 an async fixture (see its lines 65-71). It gets away
-#                                                 with it, and a suite copied from it would not. Read
-#                                                 its prose; take its structure from the file above.
+#                                                 with it for the reason the last paragraph below
+#                                                 gives, and a suite copied from it would not. Read
+#                                                 its prose; take its structure from the two above.
 #
-# `tests/test_save_stage_resubmission.py` keeps an open-if-needed/close-what-you-opened fixture of
-# its own, and is allowed to: that module starts NO `TestClient`, so it owns its event loop and
-# nothing else shares its connection. Its docstring says so, and says not to give it a client
-# without revisiting the decision. That is the distinction the removed helper had lost.
+# ── NOT STARTING A CLIENT IS NOT THE SAME AS OWNING THE LOOP. Measured on CI, 2026-10-09. ─────────
+#
+# The note that stood here said it was. It let `tests/test_save_stage_resubmission.py` keep an async
+# connection fixture because "that module starts NO `TestClient`, so it owns its event loop and
+# nothing else shares its connection". Every module of that shape — an async fixture that awaits
+# `db.connect()`, async tests that then await `db`, no client — went red at once:
+# `test_designer_roster_names.py` (17), `test_workshop_oversight_reassignment.py` (16) and
+# `test_save_stage_resubmission.py` (4), 37 tests, each with the first error quoted above, raised
+# inside the Prisma client's httpx pool. The fixture had connected on one loop, and the test's
+# first query reused the keep-alive connection that `connect()` had opened there from another.
+#
+# TWO ASYNC PLUGINS WERE SPLITTING EACH FIXTURE FROM ITS TEST. `asyncio_mode = "auto"` hands every
+# async TEST to pytest-asyncio, which runs it on its own loop. An async FIXTURE goes to whichever
+# plugin's `pytest_fixture_setup` wrapper pluggy calls outermost — the one REGISTERED LAST — and
+# when that is anyio, it takes every fixture whose request involves `anyio_backend` (which
+# `pytest.mark.anyio` adds to every async test of the module) onto an anyio loop of its own. Scope
+# does not enter into it, which is why making the fixture function-scoped only seemed to cure
+# `test_save_stage_resubmission.py`: it was green for as long as pytest-asyncio registered last.
+#
+# THE ORDER IS AN ACCIDENT OF THE FILESYSTEM, which is how it changed with no commit. pytest
+# registers entry-point plugins in the order `importlib.metadata` finds their dist-info
+# directories, which is `os.listdir` over site-packages: alphabetical on Windows, unsorted on
+# Linux. The `plugins:` line of pytest's header prints it. The last green main run (35585752223,
+# 2026-09-21, runner image ubuntu-24.04 20260907, Python 3.12.14) reads `anyio-4.14.2,
+# asyncio-1.4.0`; every red run since reads `asyncio-1.4.0, anyio-4.14.2` — 36921021542 on
+# 2026-10-01 (image 20260927, the SAME Python 3.12.14, a frontend-only change), and on 2026-10-09
+# both 3.12.15 and PR #24's 37916529287 on 3.14.8. So it was the runner image, not the
+# interpreter. A Windows laptop lists `anyio` first and never failed; forcing CI's order there,
+# `python -m pytest -p asyncio -p anyio <the three modules>`, failed the same 37 (measured
+# 2026-10-09), as `httpx.WriteTimeout` rather than the RuntimeError: the same connection,
+# stranded on the fixture's loop, stalling on its write instead of being refused on its read.
+#
+# THE RULE ABOVE ANSWERS IT, CLIENT OR NO CLIENT. A module that calls services directly writes SYNC
+# tests, and each test's database work is ONE `asyncio.run` of a coroutine that connects `db`, does
+# the work and disconnects in a `finally`; a seed is a SYNC fixture that returns plain values from
+# an `asyncio.run` of its own (Prisma's model objects hold no client, so they are values). With no
+# async fixture and no async test there is nothing for either plugin to own, so their order decides
+# nothing, and nothing can outlive the loop that bound it. All three modules are on that shape now,
+# and pass locally in both registration orders.
+#
+# FORTY-NINE MODULES STILL CONNECT `db` IN AN ASYNC FIXTURE under `pytest.mark.anyio`, and which
+# loop those fixtures run on flipped with the order too. They stayed green in both orders only
+# because none of their async tests awaits the shared `db` — each reaches the database through
+# its `TestClient`, a private `Prisma()` of its own, or a fake — so nothing else ever uses the
+# fixture's connection. The first `await db.…` added to an async test in one of them is this
+# failure again, which is the strongest argument there is for moving them onto the pattern.
