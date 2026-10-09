@@ -667,7 +667,11 @@ chose to rebuild the box on Ubuntu 26.04 as a **t3.medium** (4 GiB), blue/green;
 `infra/terraform/main.tf` declares it, with the procedure, and the systemd ceilings are unchanged on it.
 That box also runs a different build of 3.14.8 — upstream CPython from python-build-standalone rather
 than the container images the 727 MiB was measured in — so the readings above are to be taken on the
-new box after its first deploy, and this stays open until they are.
+new box after its first deploy, and this stays open until they are. A first reading of that build, in
+an ubuntu:26.04 container running the deploy's own steps on 2026-10-09: the API settled at 793 MiB
+resident (VmRSS; 821 MiB with its query engine) after its first requests, inside its 1000M soft
+ceiling and close to the ~865 MB `deploy-backend.yml` estimates. The queue worker was not measured
+there, and a container is not the box.
 
 ---
 
