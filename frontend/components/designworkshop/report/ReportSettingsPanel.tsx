@@ -76,7 +76,8 @@ export function ReportSettingsPanel({
   settings,
   onSaved,
   online,
-  draftPending
+  draftPending,
+  readOnlyReason = null
 }: {
   workshopId: string;
   registry: DwRegistry | null;
@@ -87,6 +88,13 @@ export function ReportSettingsPanel({
   online: boolean;
   /** Stage 20 has edits on this device that have not reached the server yet. */
   draftPending: boolean;
+  /**
+   * Why this reader may generate the report and not change its settings, or null — today a post they
+   * hold on the workshop (`useHeldPostRefusal`). The settings ARE stage 20, a stage write the server
+   * refuses whoever inspects or supervises the workshop; generating the report is not refused, so
+   * only this panel's boxes and Save are held, and the sentence is drawn where the Save would be.
+   */
+  readOnlyReason?: string | null;
 }) {
   const entity = useMemo(() => reportSettingsEntity(registry), [registry]);
   const [open, setOpen] = useState(false);
@@ -126,7 +134,7 @@ export function ReportSettingsPanel({
   }, []);
 
   async function save() {
-    if (!entity) return;
+    if (!entity || readOnlyReason) return;
     setSaving(true);
     setError(null);
     try {
@@ -229,20 +237,22 @@ export function ReportSettingsPanel({
             onPatch={patch}
             workshopId={workshopId}
             stageKey={REPORT_STAGE_KEY}
-            disabled={saving}
+            disabled={saving || Boolean(readOnlyReason)}
           />
           <div className="panel flex flex-wrap items-center gap-3 p-4">
             <button
               type="button"
               className="field-button"
               onClick={save}
-              disabled={saving || !dirty || !online || draftPending}
+              disabled={saving || !dirty || !online || draftPending || Boolean(readOnlyReason)}
             >
               {saving ? "Saving…" : "Save settings"}
             </button>
             {/* Said BEFORE the click. A disabled button with the reason beside it is a fact about
                 the world; a button that fails when pressed is an app that looks broken. */}
-            {!online ? (
+            {readOnlyReason ? (
+              <span className="text-sm text-ink-muted">{readOnlyReason}</span>
+            ) : !online ? (
               <span className="text-sm text-ink-muted">No connection — these are stored on the server.</span>
             ) : !dirty ? (
               <span className="text-sm text-ink-muted">

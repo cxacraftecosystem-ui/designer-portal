@@ -38,6 +38,10 @@ from app.services.sanction_orders import Refusal, StandingVerdict
 from app.services.sanction_orders_xlsx import ParsedSanctionRow, ParsedSanctionSheet
 from app.services.xlsx_table import ParseProblem
 
+#: The real verdict, kept before the ``world`` fixture stubs it, for the one refusal it answers
+#: without a database (the master admin's mailbox).
+REAL_STANDING_VERDICT = sanction_orders.designer_standing_verdict
+
 
 class Officer:
     id = "officer-1"
@@ -542,6 +546,30 @@ async def test_a_standing_refusal_refuses_the_row_and_asks_nothing(world, senten
     assert row["verdict"] == REFUSED
     assert row["reason"] == sentence
     assert row["questions"] == []
+
+
+@pytest.mark.parametrize(
+    "spelling",
+    ["new.master@gmail.com", "newmaster@gmail.com", "New.Master+sheet@googlemail.com"],
+)
+async def test_the_master_admins_mailbox_is_refused_by_the_real_verdict_and_never_confirmed(
+    world, monkeypatch, spelling
+):
+    """R4. The register created the account on the master admin's mailbox when no row held it yet,
+    and the master's first Google sign-in promoted it with the officer's password still on it. Every
+    spelling of that mailbox is a standing refusal now — asked by the REAL ``designer_standing_verdict``
+    here, not the stub, because it is answered before the first read: REFUSED, nothing asked, and the
+    sentence is the form's own."""
+    from app.core.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "master_admin_email", "new.master@gmail.com")
+    monkeypatch.setattr(sanction_orders, "designer_standing_verdict", REAL_STANDING_VERDICT)
+    answer = await review(world, parsed_row(names=["Somebody Else"], emails=[spelling]))
+    row = only(answer)
+    assert row["verdict"] == REFUSED
+    assert row["reason"] == sanction_orders.SANCTION_MASTER_MAILBOX
+    assert row["questions"] == []
+    assert answer["ready"] == [] and answer["needsReview"] == []
 
 
 async def test_a_standing_refusal_beats_a_question_on_the_same_row(world):

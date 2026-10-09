@@ -174,7 +174,9 @@ export function UnfiledRecordDialog({
     } catch (cause) {
       // Stays IN the dialog. The refusal that matters most here is the 409 — somebody else filed
       // this record while the report was on screen — and it names the workshop it went to, which is
-      // information the admin loses if the dialog closes under them.
+      // information the admin loses if the dialog closes under them. The other is the 403 an admin
+      // who inspects or supervises the record's design workshop meets (2026-10-09), which names the
+      // post. Both are printed as the server wrote them.
       setError(readableError(cause, "That record could not be filed just now."));
     } finally {
       setBusy(null);
@@ -202,6 +204,9 @@ export function UnfiledRecordDialog({
       const result = await discardUnfiledRecord(record.bucket, record.row.id);
       await onDone(discardedNotice(result));
     } catch (cause) {
+      // VERBATIM, and in the dialog: a row a design workshop claims is refused with a 409 for every
+      // admin (2026-10-09), whose sentence sends them to the record's or file's own screen — and the
+      // link that opens it is the first thing in this dialog.
       setError(readableError(cause, "That record could not be deleted just now."));
     } finally {
       setBusy(null);

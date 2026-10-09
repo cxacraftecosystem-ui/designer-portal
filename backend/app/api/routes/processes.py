@@ -15,7 +15,10 @@ from app.core.deps import (
 from app.schemas.records import ProcessCreate, ProcessStepInput, ProcessUpdate
 from app.services.access import guard_record_edit, record_revision
 from app.services.pagination import normalize_pagination, page_payload
-from app.services.record_design_workshop import assert_payload_workshop
+from app.services.record_design_workshop import (
+    assert_may_write_a_record_filed_under,
+    assert_payload_workshop,
+)
 from app.services.records import (
     RECORD_STATUSES,
     Relation,
@@ -422,7 +425,8 @@ async def create_process(
     # puts it inside that workshop's scoped lists and totals, which is a change to somebody
     # else's record. Ungated, any client could post a stranger's workshop id and file into it,
     # which is the hole `_require_attachable_workshop` was written to close one door over.
-    await assert_payload_workshop(data, current_user)
+    # `filed_under=None`: a row that does not exist yet leaves no workshop.
+    await assert_payload_workshop(data, current_user, filed_under=None)
     stamp_workshop_submission(data, check=check)
     data["createdById"] = current_user.id
     merge_field_provenance(data, current_user, previous=None)
@@ -505,10 +509,12 @@ async def update_process(
     if "workshopId" in data and data.get("workshopId") != process.workshopId:
         check = await enforce_workshop_submission(current_user, data.get("workshopId"))
     # Same gate on the PATCH, so the create-time check cannot be bypassed by filing the record
-    # afterwards. Keyed on PRESENCE, so an edit that does not mention the workshop is not
-    # re-validated — a record filed under a workshop the designer was later removed from must
-    # still be editable by them.
-    await assert_payload_workshop(data, current_user)
+    # afterwards. The destination is keyed on PRESENCE, so an edit that does not mention the
+    # workshop is not re-validated — a record filed under a workshop the designer was later removed
+    # from must still be editable by them. `filed_under` is the workshop the stored row names, whose
+    # inspector and two directors may not change this process at all — its fields, its steps, an
+    # unfile or a move out (2026-10-09).
+    await assert_payload_workshop(data, current_user, filed_under=process.designWorkshopId)
     # THE STEP LIST IS A RELATION AND IS GUARDED LIKE ONE, BEFORE ANYTHING IS WRITTEN — AND THE
     # AUDIT ROW COUNTS AS SOMETHING WRITTEN. Until this block existed, any signed-in account — not
     # the creator, not an admin, not a grantee, any account that could log in — could send
@@ -628,5 +634,8 @@ async def update_process(
 @router.delete("/{process_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_process(process_id: str, current_user: Any = Depends(get_current_user)) -> None:
     assert_can_delete(current_user)
-    await require_record(db.process, process_id)
+    process = await require_record(db.process, process_id)
+    # Not by the inspector or a director of the workshop it is filed under, admins included: its
+    # records are its content (``services/record_design_workshop``, 2026-10-09).
+    await assert_may_write_a_record_filed_under(process.designWorkshopId, current_user)
     await db.process.delete(where={"id": process_id})

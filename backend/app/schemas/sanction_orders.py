@@ -18,15 +18,17 @@ the officer's form has always sent.
 
 The obvious implementation of "record a sanction order and create the designer's account" is to
 post ``UserCreate`` and then post the order. It is not available and it should not be made
-available. ``UserCreate.password`` is ``Field(min_length=8, max_length=256)`` with NO default
-(``app/schemas/users.py``) and ``APIModel`` is ``extra="forbid"`` (``app/schemas/common.py``), so a
-sanction body can neither omit a password nor add ``invite: true``; and ``POST /api/users`` is
-``require_admin``, where ``is_admin`` is the SET ``{ADMIN, MASTER_ADMIN}`` and not a rank, so a
-MINISTRY_ADMIN at 48 is refused by it outright. Loosening either — making the password optional on
-the one route an administrator uses by hand, or widening the one route in this product that mints
-accounts — is a real cost paid to serve a caller that does not use that door. The sanction service
-mints its own unguessable password instead; the argument is written out at
-``app/services/sanction_orders.py::create_from_sanction``.
+available. ``UserCreate.password`` is ``Field(min_length=8, max_length=MAX_PASSWORD_LENGTH)`` — the
+one 200-character ceiling every password field shares — with NO default (``app/schemas/users.py``)
+and ``APIModel`` is ``extra="forbid"`` (``app/schemas/common.py``), so a sanction body can neither
+omit a password nor add ``invite: true``; and ``POST /api/users`` is
+``require_account_provisioner`` — MINISTRY_ADMIN, ADMIN and MASTER_ADMIN since 2026-10-09 — so the
+Assistant and Regional Directors this register also serves are refused by it outright, and a
+Ministry Admin it admits would be handing a designer a password it typed rather than a link.
+Loosening either — making the password optional on the route a provisioner uses by hand, or
+widening that route below the provisioners — is a real cost paid to serve a caller that does not
+use that door. The sanction service mints its own unguessable password instead; the argument is
+written out at ``app/services/sanction_orders.py::create_from_sanction``.
 
 ══ THE MONEY IS A ``Decimal`` HERE AND A ``str`` ON THE WAY OUT, AND NEITHER IS EVER A ``float`` ══
 

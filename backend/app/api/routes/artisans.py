@@ -13,7 +13,10 @@ from app.services.access import guard_record_edit
 from app.services.artisan_identity import mask_aadhaar, normalize_aadhaar
 from app.services.concurrency import gather_reads
 from app.services.pagination import normalize_pagination, page_payload
-from app.services.record_design_workshop import assert_payload_workshop
+from app.services.record_design_workshop import (
+    assert_may_write_a_record_filed_under,
+    assert_payload_workshop,
+)
 from app.services.record_filters import (
     artisan_workshop_clause,
     resolve_craft_ids,
@@ -437,8 +440,6 @@ async def create_artisan(
     current_user: Any = Depends(require_record_creator),
 ) -> dict[str, Any]:
     data = clean_data(payload.model_dump())
-    data = await resolve_craft_id(data, current_user)
-    data = await attach_location(data)
     # Workshop entries: enforce assignment, then flag + pin a late submission for admin approval.
     check = await enforce_workshop_submission(current_user, data.get("workshopId"))
     # THE DESIGN & PROTOTYPE WORKSHOP is a DIFFERENT SCOPE with different machinery, so it needs
@@ -449,7 +450,15 @@ async def create_artisan(
     # puts it inside that workshop's scoped lists and totals, which is a change to somebody
     # else's record. Ungated, any client could post a stranger's workshop id and file into it,
     # which is the hole `_require_attachable_workshop` was written to close one door over.
-    await assert_payload_workshop(data, current_user)
+    # `filed_under=None`: a row that does not exist yet is filed nowhere.
+    #
+    # BOTH GATES COME BEFORE THE TWO LINES BELOW THEM, BECAUSE BOTH OF THOSE LINES WRITE (2026-10-09).
+    # `attach_location` mints a `Location` row from the payload and `resolve_craft_id` may mint a
+    # craft, so a create refused AFTER them left behind a `Location` nothing references and, for a
+    # craft name the register lacked, a craft no record uses — on every refused save.
+    await assert_payload_workshop(data, current_user, filed_under=None)
+    data = await resolve_craft_id(data, current_user)
+    data = await attach_location(data)
     stamp_workshop_submission(data, check=check)
     data["createdById"] = current_user.id
     merge_field_provenance(data, current_user, previous=None)
@@ -510,18 +519,22 @@ async def update_artisan(
     # A caller shown a masked number who saves without touching it means "leave it alone" — for the
     # Pehchan card as much as for the Aadhaar, since both are masked on the way out to them.
     data = drop_masked_identity_numbers(data)
-    data = await resolve_craft_id(data, current_user)
-    data = await attach_location(data)
     # Moving a record into (or between) workshops is a workshop submission too, so the create-time
     # guard can't be bypassed by PATCHing the workshop in afterwards.
     check = None
     if "workshopId" in data and data.get("workshopId") != artisan.workshopId:
         check = await enforce_workshop_submission(current_user, data.get("workshopId"))
     # Same gate on the PATCH, so the create-time check cannot be bypassed by filing the record
-    # afterwards. Keyed on PRESENCE, so an edit that does not mention the workshop is not
-    # re-validated — a record filed under a workshop the designer was later removed from must
-    # still be editable by them.
-    await assert_payload_workshop(data, current_user)
+    # afterwards. The destination is keyed on PRESENCE, so an edit that does not mention the
+    # workshop is not re-validated — a record filed under a workshop the designer was later removed
+    # from must still be editable by them. `filed_under` is the workshop the stored row names, and
+    # its inspector and its two directors may not change this artisan at all — not unfile it, which
+    # is the oversight screen's unlink refused on this door too, and not edit a field of it either,
+    # because the records filed under a workshop are its content (2026-10-09). Above the craft and
+    # location lines, which write, for the create route's reason.
+    await assert_payload_workshop(data, current_user, filed_under=artisan.designWorkshopId)
+    data = await resolve_craft_id(data, current_user)
+    data = await attach_location(data)
     # ONE TRANSACTION FOR THE AUDIT ROW AND THE ROW IT DESCRIBES (2026-09-03). ``guard_record_edit``
     # ends in ``record_revision``, which used to COMMIT on its own thirty lines before the update
     # below — so a request that died in that gap (P2024 on a cross-region pool, a dropped connection)
@@ -734,5 +747,8 @@ async def get_artisan_questionnaire(
 @router.delete("/{artisan_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_artisan(artisan_id: str, current_user: Any = Depends(get_current_user)) -> None:
     assert_can_delete(current_user)
-    await require_record(db.artisan, artisan_id)
+    artisan = await require_record(db.artisan, artisan_id)
+    # Not by the inspector or a director of the workshop it is filed under, admins included: its
+    # records are its content (``services/record_design_workshop``, 2026-10-09).
+    await assert_may_write_a_record_filed_under(artisan.designWorkshopId, current_user)
     await db.artisan.delete(where={"id": artisan_id})

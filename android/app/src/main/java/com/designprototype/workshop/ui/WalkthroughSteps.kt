@@ -1135,7 +1135,8 @@ internal val WALKTHROUGH_DECKS: List<WalkthroughDeck> =
  * still, because the rank instinct is actively wrong here — INSPECTOR is 37, which sits BETWEEN
  * DESIGNER (35) and PROFESSOR (40), so `rank >= RANK_INSPECTOR` would open the inspector's deck for
  * a professor, all three directorate tiers, an admin and the master admin: six of the eleven tiers,
- * every one of which the inspection surface refuses by name. `FieldPermissions.canInspectDesignWorkshops`
+ * none of which this handset's inspection door admits (the server's has admitted an appointed admin
+ * since 2026-10-09; that is web-only here). `FieldPermissions.canInspectDesignWorkshops`
  * delegates to the data layer's set, which is the same set the two inspection screens re-derive
  * before they issue a request, so the deck that opens and the screens it teaches cannot disagree.
  *

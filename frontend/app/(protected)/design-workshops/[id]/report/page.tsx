@@ -108,6 +108,7 @@ import { CloudOff, Download, FileText } from "lucide-react";
 import { PageHeader } from "@/components/PageHeader";
 import { FieldBlock } from "@/components/tasks/TaskPrimitives";
 import { Dropdown } from "@/components/ui/Dropdown";
+import { heldPostReason, useHeldPostRefusal } from "@/components/designworkshop/HeldPostNotice";
 import { countCodeSpans, useReportMediaUrls } from "@/components/designworkshop/report/ReportBlock";
 import { ReportAccentPicker, resolvePreviewPalette } from "@/components/designworkshop/report/ReportAccentPicker";
 import { ReportSheets } from "@/components/designworkshop/report/ReportSheet";
@@ -213,6 +214,13 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
   const [remoteId, setRemoteId] = useState<string | null>(null);
   /** True once the draft has been read and there is no server record to generate a report from. */
   const [localOnly, setLocalOnly] = useState(false);
+  /**
+   * Why this reader may generate the report and not change what it is built from, or null — a post
+   * they hold on the workshop. Generating is not refused to whoever inspects or supervises a workshop;
+   * stage 20, which the settings panel and the colour's Save write, is. So only those two writes are
+   * held, each where it is offered. See `HeldPostNotice`.
+   */
+  const postRefusal = useHeldPostRefusal(remoteId);
 
   const [registry, setRegistry] = useState<DwRegistry | null>(null);
   const [detail, setDetail] = useState<DwDetail | null>(null);
@@ -986,6 +994,17 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
                 check the picker reported a saved colour that had never left the laptop.
               */
               if (!remoteId) return;
+              // A post held on this workshop: keeping the colour is a stage-20 write the server
+              // refuses them, so it is refused here in the server's own words — and held, with its
+              // own sentence, while that is still being asked. The colour still applies to whatever
+              // is downloaded from this page — generating is theirs to do.
+              const heldReason = heldPostReason(postRefusal);
+              if (heldReason) {
+                setError(
+                  `${heldReason} The colour is still applied to any file you download from this page right now.`
+                );
+                return;
+              }
               if (!online) {
                 setError(
                   "There is no connection, so this colour cannot be saved to the workshop yet. It is still applied to any " +
@@ -1173,6 +1192,7 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
           settings={settings}
           online={online}
           draftPending={stage20Pending}
+          readOnlyReason={heldPostReason(postRefusal)}
           onSaved={() => {
             // The document the server builds has just changed, so the pages below are stale until
             // they are rebuilt. Two round trips is cheap next to a designer approving a preview of

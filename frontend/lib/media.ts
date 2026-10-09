@@ -1,4 +1,12 @@
-import { API_BASE, ApiError, apiFetch, getToken, listResource, type ApiFetchOptions } from "@/lib/api";
+import {
+  API_BASE,
+  ApiError,
+  apiFetch,
+  getToken,
+  listResource,
+  sessionOwesPasswordChange,
+  type ApiFetchOptions
+} from "@/lib/api";
 // "Is this the network?" is asked in ONE place for the whole web client, and this module is not
 // exempt from it just because its second leg talks to a bucket instead of to the API. `StorageError`
 // is DECLARED there rather than here so the classification can read its `status`: an S3 403 or 413
@@ -1538,7 +1546,10 @@ function beaconDeleteStagedObject(objectKey: string) {
  * next pass. Nothing branches on the number today — it is a signal for the console and for tests.
  */
 export async function sweepStagedObjects(): Promise<number> {
-  if (typeof window === "undefined" || !getToken()) return 0;
+  // Nor while the account owes a new password: the server refuses every DELETE until it is chosen,
+  // and this runs on a timer that a gated tab would otherwise go on spending them on. The journal is
+  // untouched either way (a 401 never forgets a key), so this costs nothing but the wait.
+  if (typeof window === "undefined" || !getToken() || sessionOwesPasswordChange()) return 0;
   const journal = readJournal();
   const now = Date.now();
   const stale = Object.keys(journal)
@@ -1552,8 +1563,9 @@ export async function sweepStagedObjects(): Promise<number> {
     // these DELETEs comes back 401. Carrying on would fire the rest of the batch with no
     // Authorization header at all — nineteen guaranteed failures, and nineteen more chances for a
     // future edit to decide they were terminal. Stop; the journal is durable and the next sweep,
-    // under a live session, still has every key.
-    if (!getToken()) break;
+    // under a live session, still has every key. A gated 401 KEEPS the token, so the gate is asked
+    // for separately — `apiFetch` raises it on that same refusal.
+    if (!getToken() || sessionOwesPasswordChange()) break;
   }
   return attempted;
 }
@@ -2745,6 +2757,12 @@ export type MediaProcessingJobType = "TRANSCRIPTION" | "MEASUREMENT";
  * as for anyone else. Hence `Pick<...>` rather than `MediaFile` — typing it as the full row would
  * compile and then render a dead player, which is exactly the lie lib/types warns about on
  * `MediaFile.url`. Use the media table (or `GET /media/{id}`) when the bytes are wanted.
+ *
+ * THE PICK CARRIES THE FILE'S TWO WORKSHOP LINKS (`designWorkshopId`, and the `linkedRecordType` /
+ * `linkedRecordId` tag), which the masking leaves in place — the encoder drops the bytes and the
+ * transcript, nothing else. They are what `MediaJobsPanel` holds Retry on: a re-queued transcription
+ * is written back onto the file later, and the server refuses that re-queue to whoever inspects or
+ * supervises a workshop the file belongs to (`retry_media_processing_job`, 2026-10-09).
  */
 export type MediaProcessingJob = {
   id: string;
@@ -2765,7 +2783,17 @@ export type MediaProcessingJob = {
   completedAt?: string | null;
   createdAt: string;
   mediaFileId: string;
-  mediaFile?: Pick<MediaFile, "id" | "originalFilename" | "mediaType" | "mimeType" | "transcriptStatus"> | null;
+  mediaFile?: Pick<
+    MediaFile,
+    | "id"
+    | "originalFilename"
+    | "mediaType"
+    | "mimeType"
+    | "transcriptStatus"
+    | "designWorkshopId"
+    | "linkedRecordType"
+    | "linkedRecordId"
+  > | null;
   requestedById?: string | null;
   requestedBy?: { id: string; name?: string | null; email?: string | null } | null;
 };
@@ -2794,7 +2822,9 @@ export function listMediaProcessingJobs(params: {
 /**
  * `POST /media/jobs/{id}/retry` — back to QUEUED, `runAfter` now, lock and error cleared, so the
  * next drain picks it up. **`require_admin`**: gate any control that calls this on `isAdmin(user)`,
- * not on ownership — the uploader of the failed file may not re-run it.
+ * not on ownership — the uploader of the failed file may not re-run it. And hold it for an admin who
+ * inspects or supervises a workshop the job's file belongs to: the server refuses them with the 403
+ * naming the post (`useHeldPostRefusals` over `mediaWorkshopIds(job.mediaFile)`, as the panel does).
  */
 export function retryMediaProcessingJob(jobId: string) {
   return apiFetch<MediaProcessingJob>(`/media/jobs/${jobId}/retry`, { method: "POST" });

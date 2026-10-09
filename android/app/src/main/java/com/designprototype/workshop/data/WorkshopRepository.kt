@@ -8,11 +8,15 @@ import android.os.Environment
 import android.provider.MediaStore
 import android.provider.OpenableColumns
 import android.widget.Toast
+import androidx.annotation.VisibleForTesting
 // Borrowed from the ui package, and the direction is backwards on purpose: the consolidated
 // questionnaire's DTOs live beside their screen because this file and ApiModels.kt were being edited
 // concurrently when that feature landed. Re-declaring them here would give the app two spellings of
 // one wire format; if they ever move into ApiModels.kt this import is the only line to delete.
 import com.designprototype.workshop.ui.ConsolidatedQuestionnaireDto
+// Backwards for a different reason: the gate's one reading of `mustChangePassword` lives with its
+// copy and is pinned by `PasswordSetupCopyTest`, and the outbox must hold back on exactly that test.
+import com.designprototype.workshop.ui.mustChangePasswordBlocks
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
@@ -926,7 +930,13 @@ class WorkshopRepository(
     // server does with the file.
     private val completeJson = Json { ignoreUnknownKeys = true; explicitNulls = false }
     private val syncMutex = Mutex()
-    private val sweptStagedObjects = java.util.concurrent.atomic.AtomicBoolean(false)
+    /**
+     * Spent by the first [syncOutbox] pass of the process that gets past the password gate: the
+     * staged sweep and the orphan reclaim run once per process, off this latch. Visible to the tests
+     * only so `SyncOutboxPasswordGateTest` can see that a gated pass leaves it unspent.
+     */
+    @VisibleForTesting
+    internal val sweptStagedObjects = java.util.concurrent.atomic.AtomicBoolean(false)
 
     init {
         /*
@@ -3602,6 +3612,23 @@ class WorkshopRepository(
         return user
     }
 
+    /**
+     * Mark the cached profile as owing a new password, because the server has just said so about this
+     * session and the profile could not be re-read to learn it the ordinary way.
+     *
+     * Reached only when `GET /me` ITSELF comes back gated, which the server's allow-list says it never
+     * should — so this is the fallback for a deployment or a proxy that disagrees with the contract,
+     * and the honest reading of what it said is still "this account must choose a new password".
+     * WRITTEN TO THE TOKEN STORE and not only returned, so a relaunch with no signal puts the same gate
+     * up instead of a dashboard whose every request will be refused. Null when there is no cached
+     * profile to mark, which the caller answers by signing out.
+     */
+    fun holdForPasswordChange(): UserDto? {
+        val held = cachedUser()?.copy(mustChangePassword = true) ?: return null
+        tokenStore.setUser(held)
+        return held
+    }
+
     /* ══════════════════════════════════════════════════════════════════════════════════════════
      * PASSWORDS: the first-login change, and the administrator's one-off link
      * ══════════════════════════════════════════════════════════════════════════════════════════
@@ -3626,12 +3653,37 @@ class WorkshopRepository(
      * hold somebody on the gate screen after they had satisfied it — asking a second time for a
      * password they just set. Best-effort: the write has landed by then, and reporting a failed
      * re-read as a failed change would invite them to do it again.
+     *
+     * AND WHEN THE RE-READ FAILS, THE FLAG IS CLEARED IN THE STORE ANYWAY. The server cleared it in
+     * the same write that took the password, so the pre-change profile still sitting in [TokenStore]
+     * is the one thing that has not caught up — and it is what a cold start reads. Left there, a
+     * relaunch with no signal put the person back on the gate, asking for a "current" password that
+     * no longer works, in front of drafts they could not reach until signal returned. The same
+     * correction covers a re-read that answered from a cache older than the write.
+     *
+     * THE ANSWER'S TOKEN IS ADOPTED FIRST, BEFORE THE RE-READ. The write has just retired the token
+     * this call was made with (see [WorkshopRepositoryApi.changeOwnPassword]), so a `/me` sent with
+     * it is a plain 401 and every request after it too. The fresh one comes in the
+     * [SESSION_TOKEN_HEADER] response header, and the body is never searched for one — see
+     * [ChangePasswordResponse] for the shipped builds a token there breaks. A blank or absent header
+     * — a server older than the fingerprint, where the old session goes on working — leaves the store
+     * exactly as it was; storing a blank one would sign the person out of the session they just
+     * repaired.
      */
     suspend fun changeOwnPassword(currentPassword: String, newPassword: String) {
-        api.changeOwnPassword(
+        val answer = api.changeOwnPassword(
             ChangePasswordRequest(currentPassword = currentPassword, newPassword = newPassword)
         )
-        runCatching { refreshUser() }
+        // THE SAME EXCEPTION THE BARE DECLARATION THREW, with the buffered error body inside it, so
+        // the gate reads the status and then the server's sentence exactly as it always has. And
+        // before the header is looked at: a refused change has retired nothing, so there is nothing
+        // to adopt.
+        if (!answer.isSuccessful) throw HttpException(answer)
+        answer.headers()[SESSION_TOKEN_HEADER]?.takeIf { it.isNotBlank() }?.let { tokenStore.setToken(it) }
+        val profile = runCatching { refreshUser() }.getOrNull() ?: cachedUser()
+        if (profile?.mustChangePassword == true) {
+            tokenStore.setUser(profile.copy(mustChangePassword = false))
+        }
     }
 
     /**
@@ -6682,6 +6734,13 @@ class WorkshopRepository(
      * every record queued behind it, for ever.
      */
     suspend fun syncOutbox(context: Context): Int {
+        // NOTHING LEAVES WHILE THIS ACCOUNT OWES A NEW PASSWORD. The server answers every one of
+        // these routes with a gated 401 until it has one, so a pass now would spend the signal to
+        // learn nothing — and checked FIRST, before the once-per-process housekeeping below, so the
+        // staged sweep and the reclaim are not used up on a pass that cannot reach the server. The
+        // queue keeps everything; the pass after the change sends it. `MainActivity`'s loop holds
+        // back for the same reason, and this covers every other caller, the outbox tray included.
+        if (mustChangePasswordBlocks(cachedUser())) return 0
         // App-start housekeeping, not per-upload work. This is the app's existing "signed in, or the
         // network just came back" hook and the only one that carries a Context, so the first pass of
         // the process also reclaims objects an earlier run left staged. Detached, so a slow sweep

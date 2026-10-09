@@ -190,6 +190,15 @@ notes for anyone scripting this:
 connection six times, and one run here survived the database vanishing mid-script and still finished
 with `exit 0` and all six accounts `updated`.
 
+**Its passwords are final, never temporary, and every run makes them so again** (since 2026-10-09).
+The API now refuses an account carrying `mustChangePassword` everything but the change-password
+screen's own routes, so a seeded account left flagged — or one this dev database had flagged before —
+would sign in and then be refused the very pages a spec exists to test. Re-seed rather than clearing
+the flag by hand — between runs, not during one: every run writes a fresh hash, and since 2026-10-09
+a changed password ends every session opened with the old one, so a re-seed signs out whatever is
+signed in as those accounts. `scripts/seed_admin.py` is the opposite on purpose: every password it
+writes is temporary, so do not point `E2E_EMAIL` at the account it seeds.
+
 ### 4. Do not read a row count out of `pg_stat_user_tables`
 
 Several specs skip themselves when the repository has no craft to assign a fixture artisan to

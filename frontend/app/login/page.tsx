@@ -333,10 +333,26 @@ function StandingRefusal({ gate, onContinue }: { gate: UsageConsentGate; onConti
  */
 function LoginView() {
   const router = useRouter();
-  const { login, loginWithGoogle, logout, refreshMe, user } = useAuth();
+  const { login, loginWithGoogle, logout, markPasswordChanged, refreshMe, user } = useAuth();
   const { toast } = useToast();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  /**
+   * THE PASSWORD OF THE LAST SIGN-IN THAT SUCCEEDED ON THIS VISIT — what the gate below is handed as
+   * the current password, so the ordinary path is not asked for it twice. NEVER `password`, the live
+   * box: after a refused attempt that box still held the wrong password, and on the Google path the
+   * gate then hid its own "Current password" box behind that leftover and sent it on every try.
+   *
+   * Written at four moments and no others, the discipline Android's `doorPassword` keeps
+   * (`MainActivity.kt`): set as a password attempt goes out, emptied when that attempt fails, at the
+   * top of the Google callback, and when the gate is satisfied or abandoned. Set BEFORE the request
+   * rather than after it, because `login()` hands React the flagged account the instant it resolves,
+   * and the render that draws the gate must already have the password in it.
+   *
+   * STATE AND NOT A REF, because the gate reads it while rendering — `react-hooks/refs` refuses a ref
+   * read during render, and rightly: a ref that changed would not redraw anything.
+   */
+  const [doorPassword, setDoorPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   /**
@@ -393,26 +409,21 @@ function LoginView() {
    */
   const signingIn = useRef(false);
   /**
-   * True once THIS visit has replaced the temporary password, so the gate below closes even if the
-   * `/me` that would have proved it never lands.
-   *
-   * DERIVED-PLUS-A-LATCH RATHER THAN A COPY OF THE ACCOUNT. `passwordGate` reads the live `user`, so
-   * a session that was ALREADY open when this page loaded meets the gate too — not only the sign-in
-   * that has just happened — and there is no second copy of the flag to go stale. The latch is what
-   * covers the one case the derivation cannot: `changeOwnPassword` has succeeded server-side, and the
-   * best-effort `refreshMe()` after it fails on a dropped connection. Without it the person would be
-   * asked a second time for a password they had just set, and told the current one was wrong.
-   */
-  const [passwordSet, setPasswordSet] = useState(false);
-  /**
    * The account that must choose its own password before it is let in, or null.
+   *
+   * DERIVED FROM THE LIVE ACCOUNT, WITH NO LATCH OF ITS OWN. A session that was ALREADY open when this
+   * page loaded meets the gate too, and there is no second copy of the flag to go stale. The latch
+   * that closes the gate after a successful change — even when the `/me` that would prove it never
+   * lands — is `AuthProvider.markPasswordChanged`, and it is the same one `AppShell` uses: this page
+   * used to keep its own, and the dashboard it navigated to started with a fresh one reading false
+   * over a still-stale account, so the person was asked a second time.
    *
    * Held apart from `held` for the same reason `hint` is held apart from `refusal`: two gates that
    * answer two different questions, and folding them into one piece of state would oblige somebody to
    * invent a precedence between "your earlier consent answer stands" and "set a password". The
    * ordering is expressed where it belongs — in the render below, consent first — and is argued there.
    */
-  const passwordGate = !passwordSet && mustChangePassword(user) ? user : null;
+  const passwordGate = mustChangePassword(user) ? user : null;
 
   useEffect(() => {
     if (user && !signingIn.current && !held && !passwordGate) router.replace("/dashboard");
@@ -593,6 +604,10 @@ function LoginView() {
       window.google?.accounts.id.initialize({
         client_id: googleClientId,
         callback: async (response) => {
+          // FIRST, before anything can return: whatever an earlier password attempt left behind is
+          // not this sign-in's password, and the gate must ask for the current one instead of
+          // silently sending a leftover. See `doorPassword`.
+          setDoorPassword("");
           /*
             THE LOAD-BEARING HALF OF THE CONSENT GATE ON THE GOOGLE PATH.
 
@@ -701,6 +716,9 @@ function LoginView() {
     setRefusal(null);
     setHint(null);
     signingIn.current = true;
+    // What this attempt sends, held for the gate BEFORE the request — see `doorPassword` for why the
+    // order matters — and taken back in the catch below if the attempt is refused.
+    setDoorPassword(password);
     try {
       const account = await login(email, password);
       const standing = await settleConsent(account);
@@ -713,6 +731,7 @@ function LoginView() {
       if (mustChangePassword(account)) return;
       router.replace("/dashboard");
     } catch (err) {
+      setDoorPassword("");
       describeFailure(err);
     } finally {
       signingIn.current = false;
@@ -770,12 +789,17 @@ function LoginView() {
           telling somebody, on the very screen that is about to refuse them, that they were about to
           be let in.
         */}
-        {/* THREE SENTENCES CUT TO ONE, 2026-08-30. The claim itself is unchanged and still true —
-            approval first, Crowdsource Volunteer on arrival — and the half that was dropped
-            ("signing in tells you so and puts you in the queue") is not lost: `SignInRefusal` says
-            it, in the server's own words, at the moment it is actually relevant. */}
+        {/* THREE SENTENCES CUT TO ONE, 2026-08-30, and the half that was dropped ("signing in tells
+            you so and puts you in the queue") is not lost: `SignInRefusal` says it, in the server's
+            own words, at the moment it is actually relevant.
+            ⚠ IT SAID "new accounts join as Crowdsource Volunteers" UNTIL 2026-10-09, which had
+            stopped being the whole truth twice over: an admission row carries the tier the
+            administrator chose (Crowdsource Volunteer is only the default), and a Ministry Admin,
+            an admin or the master admin can now create a password account outright at /users,
+            with no admission and no first Google sign-in at all. */}
         <p className="relative z-10 text-xs text-white/40">
-          By invitation. An administrator approves your address first; new accounts join as Crowdsource Volunteers.
+          By invitation. An administrator approves your address first, and a new account joins at the tier they
+          chose, or as a Crowdsource Volunteer — or they create the account for you outright.
         </p>
       </aside>
 
@@ -816,26 +840,24 @@ function LoginView() {
             <StandingRefusal gate={held} onContinue={() => setHeld(null)} />
           ) : passwordGate ? (
             <FirstPasswordGate
-              // The password typed at the door THIS visit, so the ordinary path never asks for it
-              // twice. Empty on the Google path and on a session that was already open when this
-              // page loaded, and `FirstPasswordGate` draws the box whenever its host hands it "" —
-              // which, since the gate also stands above the protected tree, is three cases and no
-              // longer two. Read that component's header rather than counting them from here.
-              currentPassword={password}
+              // The password of the last sign-in that SUCCEEDED this visit, so the ordinary path never
+              // asks for it twice — and "" on the Google path and on a session that was already open
+              // when this page loaded, which is what makes `FirstPasswordGate` draw its box. Never the
+              // live `password` box: see `doorPassword` for what that used to send.
+              currentPassword={doorPassword}
               onDone={() => {
-                setPasswordSet(true);
-                // BEST-EFFORT AND DELIBERATELY NOT AWAITED-INTO-THE-BRANCH, the treatment
-                // `settleConsent` gives its own re-read: the password IS set by this point, and
-                // folding a failed `/me` into the same outcome would tell somebody their password
-                // could not be saved when it had been. The latch above is what makes the gate close
-                // either way; the refresh is only a cache invalidation.
-                refreshMe().catch(() => undefined);
+                setDoorPassword("");
+                // THE ONE LATCH, the same `AppShell` uses — it clears the flag on the account in
+                // `AuthProvider`, so the dashboard this navigates to reads an account that no longer
+                // owes anything, whether or not the `/me` it starts ever lands. A failed re-read is
+                // not folded into this outcome: the password IS set by this point.
+                markPasswordChanged();
                 router.replace("/dashboard");
               }}
               onSignOut={() => {
                 // The escape, and it lands back on this same card with the form live — `logout`
                 // clears the session, which drops `user`, which drops `passwordGate`.
-                setPasswordSet(false);
+                setDoorPassword("");
                 setPassword("");
                 logout().catch(() => undefined);
               }}

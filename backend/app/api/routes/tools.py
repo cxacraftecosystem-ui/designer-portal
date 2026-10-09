@@ -23,7 +23,10 @@ from app.schemas.records import (
 from app.services.access import effective_tier_for_record, guard_record_edit, record_revision
 from app.services.concurrency import gather_reads
 from app.services.pagination import normalize_pagination, page_payload
-from app.services.record_design_workshop import assert_payload_workshop
+from app.services.record_design_workshop import (
+    assert_may_write_a_record_filed_under,
+    assert_payload_workshop,
+)
 from app.services.records import (
     RECORD_STATUSES,
     Relation,
@@ -871,7 +874,6 @@ async def create_tool(
     # helpers validate the WHOLE batch before this route writes anything, so a 404 or a 403 here
     # leaves no row and no link behind.
     await _resolve_artisan_links(data, artisan_ids, current_user, tool=None)
-    data = await attach_location(data)
     check = await enforce_workshop_submission(current_user, data.get("workshopId"))
     # THE DESIGN & PROTOTYPE WORKSHOP is a DIFFERENT SCOPE with different machinery, so it needs
     # its own gate beside the line above rather than instead of it: `workshopId` is
@@ -881,7 +883,11 @@ async def create_tool(
     # puts it inside that workshop's scoped lists and totals, which is a change to somebody
     # else's record. Ungated, any client could post a stranger's workshop id and file into it,
     # which is the hole `_require_attachable_workshop` was written to close one door over.
-    await assert_payload_workshop(data, current_user)
+    # `filed_under=None`: a row that does not exist yet is filed nowhere. Both gates come before
+    # ``attach_location``, the first line here that WRITES, so a refused create leaves no
+    # ``Location`` behind (2026-10-09) — the replay's reason, at the gates.
+    await assert_payload_workshop(data, current_user, filed_under=None)
+    data = await attach_location(data)
     stamp_workshop_submission(data, check=check)
     data["createdById"] = current_user.id
     merge_field_provenance(data, current_user, previous=None)
@@ -968,17 +974,19 @@ async def update_tool(
     derived |= await _resolve_artisan_links(
         data, artisan_ids, current_user, tool=tool, tool_id=tool_id
     )
-    data = await attach_location(data)
     # Re-check workshop assignment + window if this edit moves the tool into/between workshops, so the
     # create-time guard can't be bypassed by PATCHing the workshop in afterwards.
     check = None
     if "workshopId" in data and data.get("workshopId") != tool.workshopId:
         check = await enforce_workshop_submission(current_user, data.get("workshopId"))
     # Same gate on the PATCH, so the create-time check cannot be bypassed by filing the record
-    # afterwards. Keyed on PRESENCE, so an edit that does not mention the workshop is not
-    # re-validated — a record filed under a workshop the designer was later removed from must
-    # still be editable by them.
-    await assert_payload_workshop(data, current_user)
+    # afterwards. The destination is keyed on PRESENCE, so an edit that does not mention the
+    # workshop is not re-validated — a record filed under a workshop the designer was later removed
+    # from must still be editable by them. `filed_under` is the workshop the stored row names, whose
+    # inspector and two directors may not change this record at all, an unfile and a move out
+    # included (2026-10-09). Above ``attach_location``, which writes, for the create route's reason.
+    await assert_payload_workshop(data, current_user, filed_under=tool.designWorkshopId)
+    data = await attach_location(data)
     # ONE TRANSACTION FOR THE AUDIT ROW AND THE ROW IT DESCRIBES (2026-09-03). ``guard_record_edit``
     # ends in ``record_revision``, which used to COMMIT on its own a handful of statements before the
     # update below — so a request that died in the gap (P2024 on a cross-region pool, a dropped
@@ -1159,7 +1167,10 @@ async def update_tool(
 @router.delete("/{tool_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_tool(tool_id: str, current_user: Any = Depends(get_current_user)) -> None:
     assert_can_delete(current_user)
-    await require_record(db.tooldocumentation, tool_id)
+    tool = await require_record(db.tooldocumentation, tool_id)
+    # Not by the inspector or a director of the workshop it is filed under, admins included: its
+    # records are its content (``services/record_design_workshop``, 2026-10-09).
+    await assert_may_write_a_record_filed_under(tool.designWorkshopId, current_user)
     await db.tooldocumentation.delete(where={"id": tool_id})
 
 
@@ -1183,8 +1194,12 @@ async def assign_tool_artisans(
     professor outranking its author, or a collaborator holding an EDIT-tier grant on the tool — may
     assign it to any artisan; anyone else may only assign it to artisans THEY created. Validation
     happens for the WHOLE batch before any link is written, so a rejected request never leaves
-    partial state behind."""
+    partial state behind.
+
+    A tool's artisan links are part of the tool, so whoever inspects or supervises the workshop it
+    is filed under changes none of them, here or on the unassign below (2026-10-09)."""
     tool = await require_record(db.tooldocumentation, tool_id)
+    await assert_may_write_a_record_filed_under(tool.designWorkshopId, current_user)
     may_assign_any = await _may_manage_tool_links(tool, tool_id, current_user)
     existing = await db.toolartisan.find_many(where={"toolId": tool_id})
     have = {link.artisanId for link in existing}
@@ -1221,6 +1236,7 @@ async def unassign_tool_artisan(
     owner, a professor above its author, an EDIT-grant collaborator, an admin, or the artisan's own
     creator (so a mistaken self-service link is reversible by the person who made it)."""
     tool = await require_record(db.tooldocumentation, tool_id)
+    await assert_may_write_a_record_filed_under(tool.designWorkshopId, current_user)
     if not await _may_manage_tool_links(tool, tool_id, current_user):
         artisan = await db.artisan.find_unique(where={"id": artisan_id})
         if not artisan or getattr(artisan, "createdById", None) != current_user.id:

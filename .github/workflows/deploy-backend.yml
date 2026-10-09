@@ -302,7 +302,9 @@ jobs:
   #
   # WHAT THIS DOES. It polls the REST API for the Checks run whose head SHA is exactly the commit
   # being deployed, and waits for the three jobs that branch protection names. Success hands over
-  # to `deploy`; a failure or a timeout fails the run before anything on the box is touched.
+  # to `deploy`; a failure or a timeout fails the run before anything on the box is touched. A run
+  # that was CANCELLED is neither (2026-10-09): if main has moved past this commit, the newer
+  # commit's own run deploys both, so this one ends green as `superseded` and deploys nothing.
   #
   # WHY THE THREE JOBS AND NOT THE WHOLE RUN, which is the decision most worth reading here.
   # checks.yml gained a `Backend integration tests` job on the same day, which stands up a Postgres
@@ -332,8 +334,13 @@ jobs:
     permissions:
       contents: read
       actions: read
+    # `true` only when the Checks run for this commit was cancelled AND main has moved past it; the
+    # `deploy` job's `if:` refuses on it. Unset on every other path, which reads as "not superseded".
+    outputs:
+      superseded: ${{ steps.poll.outputs.superseded }}
     steps:
       - name: Poll for the gating jobs
+        id: poll
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SHA: ${{ github.sha }}
@@ -344,6 +351,9 @@ jobs:
         run: |
           set -euo pipefail
           api="repos/${GITHUB_REPOSITORY}/actions"
+          # What the last poll saw, for the message at the end: a cancelled run that nothing re-ran
+          # is not a slow suite, and the timeout must not say it is.
+          last=""
           # 60 × 20 s. Twenty minutes is roughly double the measured wall clock of the three
           # gating jobs, which leaves room for a queued runner without letting a stuck run hold
           # the box's deploy open indefinitely.
@@ -352,26 +362,37 @@ jobs:
             # the day somebody edits `name:` at the top of that file, and would break silently —
             # an empty result is indistinguishable from "not started yet".
             runs="$(gh api "${api}/workflows/checks.yml/runs?head_sha=${SHA}&per_page=30" 2>/dev/null || echo '{"workflow_runs":[]}')"
-            # Prefer the `push` run for this SHA; fall back to whatever run exists for it. On main
-            # the push run is the one that matters, but a re-run or a dispatch of Checks against
-            # the same commit is just as good an answer and there is no reason to ignore it.
-            run_id="$(printf '%s' "$runs" | jq -r '([.workflow_runs[] | select(.event=="push")][0] // .workflow_runs[0]) | .id // ""')"
+            # Prefer a run for this SHA that was not CANCELLED, the `push` run first among those, and
+            # fall back to whatever run exists for it. A re-run or a dispatch of Checks against the same
+            # commit is just as good an answer, and on main a dispatch is also what cancels a push run
+            # still in flight (both land in checks.yml's concurrency group), so preferring `push`
+            # outright graded the cancelled run and never looked at the green one beside it.
+            run_id="$(printf '%s' "$runs" | jq -r '([.workflow_runs[] | select(.conclusion != "cancelled")] | ([.[] | select(.event == "push")][0] // .[0])) // .workflow_runs[0] | .id // ""')"
             if [ -z "$run_id" ]; then
               echo "attempt ${attempt}/60: no Checks run for ${SHA} yet"
+              last=""
               sleep 20
               continue
             fi
             jobs="$(gh api "${api}/runs/${run_id}/jobs?per_page=100" 2>/dev/null || echo '{"jobs":[]}')"
+            # A CANCELLED JOB IS NOT A FAILED ONE, and since 2026-10-09 it has its own verdict. Checks
+            # cancels a run in progress when a newer push to main starts its own, and this loop used to
+            # file that under "failed": two merges a few minutes apart turned the earlier commit's run
+            # red with a diagnosis that was not true. Every other conclusion that is not `success`
+            # (failure, timed_out, skipped, …) still fails, and still wins over a cancelled job.
             verdict="$(printf '%s' "$jobs" | jq -r --argjson want "$GATING_JOBS" '
               [ .jobs[] | select(.name | IN($want[])) ]                       as $g
               | ($want - [ $g[].name ])                                        as $missing
               | ([ $g[] | select(.status != "completed") | .name ])            as $running
-              | ([ $g[] | select(.status == "completed" and .conclusion != "success") | .name ]) as $bad
+              | ([ $g[] | select(.status == "completed" and .conclusion == "cancelled") | .name ]) as $cancelled
+              | ([ $g[] | select(.status == "completed" and .conclusion != "success" and .conclusion != "cancelled") | .name ]) as $bad
               | if   ($bad | length) > 0     then "fail " + ($bad | join(", "))
                 elif (($missing + $running) | length) > 0 then "wait " + (($missing + $running) | join(", "))
+                elif ($cancelled | length) > 0 then "cancelled " + ($cancelled | join(", "))
                 else "pass" end')"
             state="${verdict%% *}"
             detail="${verdict#* }"
+            last="$state"
             case "$state" in
               pass)
                 echo "Checks passed for ${SHA} — run ${run_id}"
@@ -382,12 +403,53 @@ jobs:
                 echo "::error::Checks failed for ${SHA} (${detail}). Not deploying. See ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${run_id}"
                 exit 1
                 ;;
+              cancelled)
+                # SUPERSEDED, OR CANCELLED WITH NOTHING NEWER BEHIND IT? Only main's tip can say. If
+                # main has moved on, the newer commit's own run of this pipeline carries this one's
+                # changes with it (every push to main starts deploy-backend.yml, and the frontend stage
+                # chains off that), so the honest end is green, with nothing shipped and a notice
+                # saying why. `superseded=true` is what the `deploy` job's `if:` refuses on, so a
+                # cancelled commit never ships from here. If this SHA is still the tip, nothing newer
+                # will ship it: keep polling, because a re-run or a dispatch of Checks may yet finish
+                # (the selection above prefers it). A tip that cannot be read counts as "still the
+                # tip", which is the direction that waits rather than the one that skips.
+                tip="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq .object.sha 2>/dev/null || true)"
+                if ! grep -Eq '^[0-9a-f]{40}$' <<< "$tip"; then tip=""; fi
+                if [ -n "$tip" ] && [ "$tip" != "$SHA" ]; then
+                  echo "::notice title=Superseded by a newer commit on main::Checks on ${SHA} was cancelled (${detail}), and main has moved on to ${tip}. That commit's own run of this pipeline ships these changes with its own, so this run ships nothing."
+                  echo "superseded=true" >> "$GITHUB_OUTPUT"
+                  {
+                    echo "### Superseded by a newer commit — nothing shipped from this run"
+                    echo ""
+                    echo "Checks on \`${SHA}\` was cancelled (\`${detail}\`), and \`main\` has moved on to"
+                    echo "\`${tip}\`. That commit's own run of this pipeline ships these changes with its own."
+                    echo ""
+                    echo "[Cancelled Checks run](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${run_id})"
+                  } >> "$GITHUB_STEP_SUMMARY"
+                  exit 0
+                fi
+                echo "attempt ${attempt}/60: Checks on ${SHA} was cancelled (${detail}) and main's tip reads '${tip:-unreadable}', so nothing newer will ship it; waiting for a re-run or a dispatch of Checks"
+                ;;
               *)
                 echo "attempt ${attempt}/60: still waiting on ${detail}"
                 ;;
             esac
             sleep 20
           done
+          # Cancelled at the tip, and nothing re-ran it: say that, not "timed out", or the reader goes
+          # looking for a slow suite that never ran.
+          if [ "$last" = "cancelled" ]; then
+            echo "::error::Checks on ${SHA} was CANCELLED, not failed (${detail}), and nothing re-ran it within 20 minutes. Main's tip read '${tip:-unreadable}' at the last look, so no newer run will ship this commit, and nothing has been shipped from this one. Re-run that Checks run (or dispatch Checks on main), then re-run this workflow. A gating job that hits its own timeout-minutes also ends as cancelled: if one did, the suite is the problem."
+            {
+              echo "### Stopped — Checks on this commit was cancelled, not failed"
+              echo ""
+              echo "\`${detail}\` was cancelled on \`${SHA}\` and nothing re-ran it within twenty minutes, so"
+              echo "nothing was shipped. Re-run the Checks run, then re-run this workflow."
+              echo ""
+              echo "[Checks run](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${run_id})"
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
           echo "::error::timed out after 20 minutes waiting for the Checks jobs on ${SHA}. Nothing was deployed. If the suite is genuinely this slow now, raise the loop bound here rather than deleting the gate; to ship past it in an emergency, run this workflow from the Actions tab — workflow_dispatch skips the wait by design."
           exit 1
 
@@ -406,10 +468,16 @@ jobs:
     #   • wait-for-checks succeeded            → deploy (the normal, gated path)
     #   • wait-for-checks was skipped          → deploy (manual dispatch, or nothing to gate)
     #   • wait-for-checks failed or cancelled  → DO NOT deploy
+    #   • wait-for-checks said `superseded`    → DO NOT deploy. Its job succeeded, because Checks
+    #                                            on this commit was cancelled by a newer push and
+    #                                            that push's own run deploys both (2026-10-09). This
+    #                                            run's `deploy` is then skipped, so `changes` never
+    #                                            counts it as the commit last deployed.
     if: >-
       ${{ !cancelled()
           && needs.changes.result == 'success'
           && (needs.wait-for-checks.result == 'success' || needs.wait-for-checks.result == 'skipped')
+          && needs.wait-for-checks.outputs.superseded != 'true'
           && (needs.changes.outputs.backend == 'true' || github.event_name == 'workflow_dispatch') }}
     runs-on: ubuntu-latest
     steps:
@@ -1253,7 +1321,12 @@ jobs:
       # local dev server, which is routinely pointed at THIS deployed API rather than a local backend
       # — omitting it would break every developer's browser while looking like an API fault. The
       # Android client is unaffected either way: a native HTTP client does not do CORS.
-      - name: Pin the CORS origins
+      #
+      # 2026-10-09: the same step now pins `NEXT_PUBLIC_APP_URL`, the origin every password, invite
+      # and sanction link is built on. It is pinned HERE for the reasons above, and because the two
+      # values are one fact: a link has to open on an origin this API accepts. The block beside the
+      # `printf` carries the rest.
+      - name: Pin the CORS origins and the link origin
         env:
           SHA: ${{ env.REL_ID }}
         run: |
@@ -1305,15 +1378,50 @@ jobs:
           # keep an old one until its alias is actually retired. What changed is only that this
           # particular host had no alias to retire.
           #
-          # NOT LISTED, deliberately: `design-repository-kappa.vercel.app`, Vercel's auto-generated
-          # URL for this project, which DOES serve an older deployment of this app. It is not a
-          # destination anyone is given, and listing it would put a stale build's origin on the
-          # allow-list for as long as the deployment behind it exists.
+          # NOT LISTED, deliberately: `design-repository-kappa.vercel.app`, the domain Vercel generated
+          # for this project. This paragraph said it "DOES serve an older deployment of this app", and
+          # that was wrong. Measured 2026-10-09 through the Vercel API, it is the project's ONLY project
+          # domain, so `vercel deploy --prod` moves it onto every new deployment and it serves the
+          # CURRENT build (except after an Instant Rollback, which stops `--prod` moving any project
+          # domain until a promote; docs/DEPLOYMENT_VERCEL.md §3.1). `designer-repository.vercel.app`
+          # is the one that was hand-set, and only deploy-frontend.yml's `vercel alias set` step
+          # moves it. The decision stands for a better
+          # reason than the one given: nobody is given kappa as an address, and the dashboard change
+          # agreed on 2026-10-09 is to turn it into a 308 redirect to `designer-repository.vercel.app`.
+          # A redirected host never sends a preflight of its own, so listing it would only add a second
+          # origin that can reach the API.
           printf 'BACKEND_CORS_ORIGINS=%s\n' 'https://designer-repository.vercel.app,http://localhost:3000' >> .env
           # Assert the key landed on a line of its own. `grep -q` rather than `grep -c`: a count of
           # zero exits 1, which under `set -e` fails the step with no explanation of what was wrong.
           grep -q '^BACKEND_CORS_ORIGINS=' .env || { echo "CORS origins did not land on their own line"; exit 1; }
           echo "CORS origins pinned"
+
+          # ── THE LINK ORIGIN, PINNED BESIDE THE CORS ORIGIN — 2026-10-09 ──────────────────────
+          #
+          # Every set-password, invite and sanction link the API issues is built as
+          # `${NEXT_PUBLIC_APP_URL}/set-password?token=…` (`link_for` in
+          # backend/app/services/credential_links.py). backend/app/core/config.py defaults that
+          # setting to `http://localhost:3000` and validates nothing more. So a BACKEND_ENV that drops
+          # the line, or names any host but the production alias, issues links that land on a
+          # developer's laptop or on an origin the CORS list above refuses, where every call the page
+          # makes fails its preflight. Nothing would go red: the deploy, /health and the CORS
+          # assertion all pass, and the first person to notice would be somebody who cannot set a
+          # password. Account provisioning (2026-10-09) lets ministry admins issue these links as well
+          # as admins, for the accounts they create, which made the gap worth closing.
+          #
+          # The origin must be the FIRST entry of the CORS list above, written out again rather than
+          # derived, in the same style. If the production alias ever changes, change both lines in one
+          # commit. Pinned for the reasons the CORS block gives: it is public, and a secret nobody can
+          # print cannot be edited one line at a time. Same delete-then-append, so this value wins
+          # over anything BACKEND_ENV carried. Same newline guarantee, which the CORS `printf` above
+          # has just restored.
+          sed -i '/^NEXT_PUBLIC_APP_URL=/d' .env
+          printf 'NEXT_PUBLIC_APP_URL=%s\n' 'https://designer-repository.vercel.app' >> .env
+          # `-x` matches the WHOLE line and `-F` reads the pattern literally, so this asserts the value
+          # as well as the placement: a trailing slash, a quote or a glued neighbour all fail here
+          # rather than in somebody's inbox.
+          grep -qxF 'NEXT_PUBLIC_APP_URL=https://designer-repository.vercel.app' .env || { echo "link origin did not land on its own line"; exit 1; }
+          echo "link origin pinned"
           REMOTE
 
       # ─── THE VENV, AND WHY IT IS COPIED RATHER THAN REBUILT OR HARD-LINKED ──────────────────
@@ -2201,7 +2309,7 @@ jobs:
           if ! echo "${hdr}" | grep -qi "^access-control-allow-origin: ${origin}"; then
             echo "::error::the API refuses CORS for ${origin}, so no browser on the live site can call it. Every request fails the preflight with 'Disallowed CORS origin' and the user sees only 'failed to fetch'."
             echo "::error::BACKEND_CORS_ORIGINS on the server is: $(grep -E "^BACKEND_CORS_ORIGINS=" /home/ubuntu/app/current/backend/.env 2>/dev/null || echo "<not found in the current release's .env>")"
-            echo "::error::Fix the 'Pin the CORS origins' step in this workflow, not the box by hand: the step rewrites .env on every deploy and would overwrite a manual edit."
+            echo "::error::Fix the 'Pin the CORS origins and the link origin' step in this workflow, not the box by hand: the step rewrites .env on every deploy and would overwrite a manual edit."
             exit 1
           fi
           echo "CORS: ${origin} is allowed"

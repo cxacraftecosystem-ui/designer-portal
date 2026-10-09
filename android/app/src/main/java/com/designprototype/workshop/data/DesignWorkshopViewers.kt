@@ -350,6 +350,19 @@ private fun dwJsTrim(text: String): String = text.trim { c ->
  *    line, and from any chance of the admin noticing before they saved. The screen holds every
  *    account it has been shown and hands the still-ticked ones back here.
  *
+ * **THE READER IS NEVER OFFERED AS A NEW CHOICE**, since 2026-10-09: the save refuses the person
+ * saving with a 409 ("nobody appoints themselves"), and offering a tick the save refuses is the
+ * defect the server's own `eligible_viewers` docstring names. Left out HERE, by the client, rather
+ * than by sending the `workshopId` the server accepts for the same purpose: the request stays the
+ * one the workshop-create dialog sends too (where naming yourself is allowed), and the filter holds
+ * against a server older than that parameter. A designer row another admin gave the reader is still
+ * drawn, in the [viewers] group, because the whole-set PUT would delete a row it does not draw — and
+ * it is never marked "has access, no longer eligible": the reader is absent from the eligible group
+ * because this function left them out, which says nothing about the designer roster.
+ *
+ * @param readerId the account reading this screen, or null when it is not known. **NO DEFAULT,
+ *   DELIBERATELY**: a call site that forgets it offers the one choice the save refuses, and nothing
+ *   on screen says so until the 409.
  * @param eligibleListComplete this answer is the WHOLE eligible set — not a search result, not cut at
  *   the ceiling. **NO DEFAULT, DELIBERATELY**, because it decides whether a granted account absent
  *   from [eligible] is marked "has access, no longer eligible", and that mark is a claim about the
@@ -368,13 +381,17 @@ fun dwViewerChoices(
     eligible: List<DwEligibleViewerDto>,
     viewers: List<DwViewerDto>,
     creatorId: String,
+    readerId: String?,
     eligibleListComplete: Boolean,
     retained: List<DwEligibleViewerDto> = emptyList(),
 ): List<DwViewerChoice> {
+    val reader = readerId?.takeIf { it.isNotBlank() }
     val choices = ArrayList<DwViewerChoice>(eligible.size + retained.size + viewers.size)
     val seen = HashSet<String>()
     (eligible + retained).forEach { person ->
-        if (person.id.isBlank() || person.id == creatorId || !seen.add(person.id)) return@forEach
+        if (person.id.isBlank() || person.id == creatorId || person.id == reader || !seen.add(person.id)) {
+            return@forEach
+        }
         choices += DwViewerChoice(
             userId = person.id,
             name = person.name,
@@ -390,8 +407,9 @@ fun dwViewerChoices(
             email = row.email,
             role = row.role,
             // OFFERED EITHER WAY — that is what stops the revocation — but only MARKED when the
-            // absence proves something. Over a search result or a cut list it proves nothing.
-            grantedButIneligible = eligibleListComplete,
+            // absence proves something. Over a search result or a cut list it proves nothing, and
+            // for the reader's own row it proves only that the first loop left the reader out.
+            grantedButIneligible = eligibleListComplete && row.userId != reader,
         )
     }
     return choices
@@ -520,6 +538,13 @@ enum class DwViewerAttempt { READ, SAVE }
  * additions not. Telling an admin their revocation did not happen when it did is the worst sentence
  * this screen could print, so those arms send them back to look instead.
  *
+ * **THE 403'S ROLE CLAUSE IS ONLY FOR A READER THE ROLE COULD BE REFUSING.** Since 2026-10-09 an
+ * admin is refused here too, when they inspect or supervise THIS workshop: the server's own sentence
+ * says so ("You are this workshop's inspector, so you can read it but not change it…"), and adding
+ * that the act "is open to admins and the master admin only" told an admin it was open to them in
+ * the sentence after the one refusing them. `viewerAdministrationFailure` on the web makes the same
+ * cut on the same flag.
+ *
  * Pure, and split from the Retrofit exception on purpose: `status`/`serverMessage` are extracted by
  * the one caller that has an `HttpException` in its hand (reading the error body CONSUMES it, so it
  * can only be read once), which leaves every sentence here assertable in a JVM test with no HTTP
@@ -527,11 +552,14 @@ enum class DwViewerAttempt { READ, SAVE }
  *
  * @param status the HTTP status, or null for "nothing answered": no signal, DNS, a socket dropped.
  * @param serverMessage FastAPI's `detail`, already unwrapped by `apiErrorMessage`, or null.
+ * @param readerIsAdmin the account reading is an admin, whom the role clause cannot be about. NO
+ *   DEFAULT, because it decides whether a claim about who may act is printed.
  */
 fun dwViewerFailureMessage(
     status: Int?,
     serverMessage: String?,
     attempt: DwViewerAttempt = DwViewerAttempt.READ,
+    readerIsAdmin: Boolean,
 ): String {
     val said = serverMessage?.trim()?.takeIf { it.isNotEmpty() }
     val unknownOutcome = attempt == DwViewerAttempt.SAVE
@@ -551,7 +579,10 @@ fun dwViewerFailureMessage(
                 "in again and try once more."
 
         // The server's own words FIRST, because "Admin access required" is what was actually
-        // decided; the clause after it is why, and who to ask.
+        // decided; the clause after it is why, and who to ask — for a reader it can be about.
+        status == 403 && readerIsAdmin ->
+            (said?.asSentence() ?: "The repository refused this. ") + "Nothing was changed."
+
         status == 403 ->
             said.asSentence() +
                 "Deciding who may open a design & prototype workshop is administration, so it is " +

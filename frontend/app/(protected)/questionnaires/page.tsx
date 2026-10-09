@@ -18,11 +18,12 @@
  * whole point of the feature is that they build the instrument in Excel.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ClipboardList, Download, FileSpreadsheet, Plus, Upload } from "lucide-react";
 
+import { attachHold, HeldPostNotice, useHeldPostRefusal, writesHeld } from "@/components/designworkshop/HeldPostNotice";
 import { EmptyState } from "@/components/EmptyState";
 import { Field, TextInput } from "@/components/FormControls";
 import { DictationUnavailableNotice } from "@/components/richtext/DictationUnavailableNotice";
@@ -126,6 +127,16 @@ export default function QuestionnairesPage() {
   const [newDescription, setNewDescription] = useState("");
   const [creating, setCreating] = useState(false);
   const [newWorkshopId, setNewWorkshopId] = useState("");
+  /*
+    A WORKSHOP THE READER INSPECTS OR SUPERVISES TAKES NO NEW QUESTIONNAIRE FROM THEM (2026-10-09).
+    Attaching changes what the workshop's report says, and the create door asks the stage save's own
+    gate of it, so a post holder's create is refused with the 403 naming the post. Held on the
+    workshop CHOSEN — while its answer is out as well — and the picker stays live: another workshop,
+    or none, is the way forward. The upload and reuse dialogs hold their own choice the same way.
+  */
+  const createWorkshopHold = useHeldPostRefusal(newWorkshopId || null);
+  const createHold = attachHold(createWorkshopHold, "this questionnaire");
+  const createHoldId = useId();
   /** The kind on the create form. `""` is the blank row and means "not stated", which is allowed. */
   const [newKind, setNewKind] = useState("");
   /**
@@ -306,7 +317,9 @@ export default function QuestionnairesPage() {
     // async work — after the first `await` it reads as null and every field comes back empty.
     const form = new FormData(event.currentTarget);
     const title = String(form.get("title") ?? "").trim();
-    if (!title) return;
+    // A held Create is disabled; this keeps the rule for Enter in the title box, and for a queued
+    // create, which would otherwise be banked on this device and refused on every replay.
+    if (!title || writesHeld(createHold)) return;
     setCreating(true);
     setError(null);
     try {
@@ -618,8 +631,14 @@ export default function QuestionnairesPage() {
           {/* Once for the form, because two microphones would otherwise print the same grey
               paragraph twice where a browser has no recogniser. See the component. */}
           <DictationUnavailableNotice />
+          {/* Why Create is held, beside it — see `createHold`. */}
+          <HeldPostNotice refusal={createHold} id={createHoldId} className="" sayPending />
           <div className="flex gap-2">
-            <button className="field-button" disabled={creating}>
+            <button
+              className="field-button"
+              disabled={creating || writesHeld(createHold)}
+              aria-describedby={typeof createHold === "string" ? createHoldId : undefined}
+            >
               {creating ? "Creating…" : "Create questionnaire"}
             </button>
             <button type="button" className="field-button-secondary" onClick={() => setFormOpen(false)}>

@@ -94,9 +94,13 @@ import { Layers } from "lucide-react";
 
 import { PageHeader } from "@/components/PageHeader";
 import { AiLayersPanel } from "@/components/designworkshop/AiLayersPanel";
+import { HeldPostNotice, heldPostReason, useHeldPostRefusal } from "@/components/designworkshop/HeldPostNotice";
 
 export default function DesignWorkshopAiLayersPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
+  // A post holder reads every layer and signs none — and nobody signs one while that is still being
+  // asked, which the verbs say in their own place (`heldPostReason`). See `HeldPostNotice`.
+  const postRefusal = useHeldPostRefusal(id);
 
   return (
     <>
@@ -111,7 +115,8 @@ export default function DesignWorkshopAiLayersPage({ params }: { params: Promise
         }
       />
 
-      <AiLayersPanel workshopId={id} />
+      <HeldPostNotice refusal={postRefusal} />
+      <AiLayersPanel workshopId={id} readOnlyReason={heldPostReason(postRefusal)} />
     </>
   );
 }

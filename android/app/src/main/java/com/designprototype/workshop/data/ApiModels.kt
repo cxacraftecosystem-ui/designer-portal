@@ -92,11 +92,12 @@ data class UserDto(
     val usageConsentBasis: String? = null,
     val usageConsentVersion: String? = null,
     /**
-     * WHETHER THE PASSWORD ON THIS ACCOUNT WAS TYPED BY SOMEBODY ELSE.
+     * WHETHER THIS ACCOUNT MUST CHOOSE A NEW PASSWORD BEFORE IT MAY DO ANYTHING ELSE.
      *
-     * True when an administrator chose it — `POST /api/users`, or a password written through
-     * `PATCH /api/users/{id}` for another person. It is a shared secret by construction: one person
-     * picked it, typed it into a form, and read it out or messaged it to another.
+     * True when an administrator chose the password — `POST /api/users`, or a password written
+     * through `PATCH /api/users/{id}` for another person, a shared secret by construction — and,
+     * since 2026-10-09, when an administrator requires a change at the next sign-in without touching
+     * the password at all. So it does NOT mean "somebody else typed this", and no screen may say so.
      *
      * ── IT ARRIVES FOR FREE, AND UNTIL 2026-08-31 NOTHING READ IT ─────────────────────────────
      *
@@ -106,11 +107,12 @@ data class UserDto(
      * an account created with a temporary password signed in, worked normally, and nobody was ever
      * asked to replace it. `ui/PasswordGate.kt` is this client's half of closing that.
      *
-     * ── THE SERVER REPORTS, THE CLIENT REFUSES ────────────────────────────────────────────────
+     * ── THE DOOR STILL OPENS, AND EVERYTHING BEHIND IT IS REFUSED ─────────────────────────────
      *
      * `POST /auth/login` still mints a token for an account carrying this, deliberately: the only
-     * route that can change a password needs a bearer token, so a 403 at the door would be a demand
-     * the account could never satisfy. Identical reasoning, identical shape, to the consent gate.
+     * route that can change a password needs a bearer token, so a refusal at the door would be a
+     * demand the account could never satisfy. Since 2026-10-09 every other route outside a short
+     * allow-list answers that token with a gated 401 — see `data/PasswordChangeRequired.kt`.
      *
      * NULLABLE, and the null means "this server predates the column". Read it through
      * [mustChangePasswordBlocks], never as a raw `== true` at a call site: an absent field is neither
@@ -120,9 +122,9 @@ data class UserDto(
     val mustChangePassword: Boolean? = null,
     /**
      * ISO-8601, or null. A null BESIDE a Google account means "has never had a password", which is
-     * the distinction this column exists to make; see schema.prisma. Read by nothing on this client
-     * today — carried so the field is decoded rather than dropped, the discipline [DwDictateDto]'s
-     * own docstring sets out.
+     * the distinction this column exists to make; see schema.prisma. Read by `passwordLinkOffered`,
+     * which decides whether an administrator is offered a set-password link for the account — the
+     * provider alone was the wrong proxy, because a Google sign-in keeps a password the account has.
      */
     val passwordSetAt: String? = null
 )
@@ -803,15 +805,51 @@ data class MediaQueueRunDto(
  * The signed-in account replacing its own password.
  *
  * `currentPassword` IS REQUIRED EVEN WHEN `mustChangePassword` IS SET, and the server is right to
- * insist: the flag means "the password you hold was typed for you", not "anybody holding this
- * handset may replace it". The person always has it — they used it to get the token this call is
- * made with — so the gate screen carries it forward rather than asking twice.
+ * insist: the flag means "the password you hold must be replaced", not "anybody holding this handset
+ * may replace it". The person always has it — they used it to get the token this call is made with —
+ * so the gate screen carries it forward rather than asking twice.
+ *
+ * Every refusal is a sentence: 400 for a wrong current password (still charged to the account's
+ * guessing budget), for a `newPassword` equal to the current one, and for an account with no
+ * password; 422 for a length outside 8..200 (`MIN_PASSWORD_LENGTH`/`MAX_PASSWORD_LENGTH` in
+ * `ui/PasswordSetupCopy.kt`); 429 when the budget is spent.
  */
 @Serializable
 data class ChangePasswordRequest(
     val currentPassword: String,
     val newPassword: String
 )
+
+/**
+ * What a successful change answers in its BODY: `{"ok": true}`, exactly what it has always answered.
+ *
+ * THE NEW SESSION IS NOT IN HERE, AND MUST NEVER BE. Since 2026-10-09 every session token carries a
+ * fingerprint of the password it was opened with, so the change this call makes ends every older
+ * session of the account, the one making the call included. The token this handset goes on with is
+ * minted after the write and comes back in the [SESSION_TOKEN_HEADER] response header instead,
+ * because of every handset already in the field: builds 0.0.6–0.0.15 decode this body as
+ * `Map<String, Boolean>`, a string beside `ok` fails that decode after the server has taken the
+ * password, and the decoder's message quotes the value — which the gate shows as the reason the
+ * change failed. A token in the body would put a live session on screen. Those builds never read
+ * the header; they meet one plain 401 at their next request and sign in with the password just
+ * chosen.
+ *
+ * A TYPE WITH `ok` ALONE, and not that map, for the same hazard turned the other way: this client
+ * decodes with `ignoreUnknownKeys`, so a key a later server adds — of any type — is skipped instead
+ * of turning a change that landed into a failure on screen. Nothing reads `ok`; a 2xx is the
+ * success, as it was for the map.
+ */
+@Serializable
+data class ChangePasswordResponse(
+    val ok: Boolean = false,
+)
+
+/**
+ * The response header `POST /auth/change-password` hands the fresh session back in. Mirrors the
+ * server's spelling; spelled once here. Read by `WorkshopRepository.changeOwnPassword`, off a 2xx
+ * only — see [ChangePasswordResponse] for why it is a header and not a field of the body.
+ */
+const val SESSION_TOKEN_HEADER = "X-Session-Token"
 
 /** An administrator asking for a password link for somebody else's account. */
 @Serializable

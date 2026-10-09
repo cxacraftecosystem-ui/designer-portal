@@ -56,6 +56,7 @@ from app.schemas import design_workshop_review_loop
 from app.services import (
     custom_sections,
     design_workshop_data,
+    design_workshop_posts,
     dictation_consent,
     entry_provenance,
     rich_text,
@@ -67,7 +68,7 @@ from app.services.design_workshop_viewers import (
     _assert_every_id_may_be_granted,
     has_viewer_grant,
 )
-from app.services.designers import prefill_from_profile
+from app.services.designers import PREFILL_MAP, prefill_from_profile
 from app.services.report_annexures import annexure_warnings, attach_transcripts
 from app.services.report_builder import ReferencedRecord, WorkshopData, build_report
 from app.services.report_custom_sections import (
@@ -244,7 +245,45 @@ async def _refuse_if_the_officer_is_authoring_what_they_sanctioned(
     )
 
 
-async def load_workshop_or_404(workshop_id: str, user: Any, *, for_edit: bool = False) -> Any:
+async def _refuse_if_the_caller_holds_a_supervisory_post(
+    record: Any, user: Any, *, for_edit: bool
+) -> None:
+    """403 when the caller is about to WRITE a workshop they inspect or supervise.
+
+    THE OWNER'S RULING OF 2026-10-09: whoever holds an inspection or an Assistant / Regional Director
+    post on a workshop reads it and does not write it — **even through the admin arm of
+    :func:`load_workshop_or_404`**, which is the whole reason this runs AFTER the who-may-enter test
+    rather than being a fourth arm of it. An ADMIN or MASTER_ADMIN appointed to inspect a workshop
+    passes that test on role alone; without this they could rewrite the report they are inspecting.
+    The rules around it — who may be appointed, and why authorship rather than creation bars an
+    appointment — are in ``services/design_workshop_posts``.
+
+    403 AND NOT 404, for the reason the sanctioning-officer refusal above gives: the caller has
+    already been admitted and is looking at this workshop on their own screen, so they are owed the
+    reason, which names the post.
+
+    COSTS NOTHING ON THE HOT PATH. A DESIGNER can hold no such post, so a designer's stage save — the
+    write somebody is standing in a courtyard waiting for — is answered on a role string already in
+    memory. Every other role pays two indexed reads, gathered into one round trip.
+
+    The test itself is ``design_workshop_posts.refuse_a_holders_write``, shared with every door
+    that writes this workshop's content or designer team without coming through this loader — the
+    oversight screen's artisan list and designer doors, the viewers PUT, an access-request approval,
+    a join card, and a record form taking a record OUT of the workshop — so no two doors can answer
+    the same holder differently.
+    """
+    if not for_edit:
+        return
+    await design_workshop_posts.refuse_a_holders_write(record.id, user)
+
+
+async def load_workshop_or_404(
+    workshop_id: str,
+    user: Any,
+    *,
+    for_edit: bool = False,
+    barred_to_post_holders: bool = True,
+) -> Any:
     """Fetch a workshop the caller may see, or raise.
 
     A soft-deleted workshop is a 404 to READ for everyone but an admin, who needs to be able to
@@ -297,6 +336,14 @@ async def load_workshop_or_404(workshop_id: str, user: Any, *, for_edit: bool = 
     What a grant buys stops here, at the LOAD: read, and the stage writes that go through this same
     helper. It is not delete and it is not re-granting, both of which are gated separately and
     deliberately were not widened — see ``app/services/design_workshop_viewers.py``.
+
+    ``barred_to_post_holders`` IS FALSE FOR EXACTLY ONE CALLER, and the default is the rule. With
+    ``for_edit=True`` this loader refuses (403) whoever holds the workshop's inspection or one of its
+    two director posts, because they read a workshop and do not write it. The owner's ruling that
+    made that precise (2026-10-09) also says what such a holder KEEPS, and one of those acts loads
+    for edit: ``POST /{id}/exports``, the ledger row recording a report the holder could already
+    generate. It passes False and keeps everything else ``for_edit`` means — the deleted-workshop
+    409 and the sanctioning officer's refusal.
     """
     record = await db.designworkshop.find_unique(where={"id": workshop_id})
     if record is None:
@@ -320,6 +367,9 @@ async def load_workshop_or_404(workshop_id: str, user: Any, *, for_edit: bool = 
         # people the clause is turning away.
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Record not found")
     await _refuse_if_the_officer_is_authoring_what_they_sanctioned(record, user, for_edit=for_edit)
+    await _refuse_if_the_caller_holds_a_supervisory_post(
+        record, user, for_edit=for_edit and barred_to_post_holders
+    )
     # WHO-MAY-ENTER IS ANSWERED BEFORE IS-IT-DELETED, AND THAT ORDER IS THE FIX RATHER THAN THE
     # STYLE. The deleted check used to run FIRST, so a non-admin got 404 before the `for_edit`
     # 409 below could ever be reached — and the only accounts that reach this helper with
@@ -364,6 +414,121 @@ async def entry_rows(workshop_id: str, *, stage_key: str | None = None) -> list[
     if stage_key:
         where["stageKey"] = stage_key
     return await db.dwstageentry.find_many(where=where, order={"ordinal": "asc"})
+
+
+# --------------------------------------------------------------------------------------
+# Who has written a workshop's stages
+# --------------------------------------------------------------------------------------
+
+
+def _cover_entity_keys() -> frozenset[str]:
+    """The entity a workshop's own header columns are promoted from: stage 1's cover.
+
+    Read off ``PROMOTED_COLUMNS`` rather than named, so the day the cover moves this moves with it.
+    """
+    return frozenset(path.partition(".")[0] for path in PROMOTED_COLUMNS)
+
+
+def _profile_copied_field_keys() -> frozenset[str]:
+    """The fields a designer's PROFILE is copied into — ``designers.PREFILL_MAP``'s targets."""
+    return frozenset(field_key for _column, field_key in PREFILL_MAP)
+
+
+def _repeating_entity_keys() -> frozenset[str]:
+    """Every registry entity that holds many rows (participants, sketches, prototypes...)."""
+    return frozenset(
+        entity.key
+        for spec in stages()
+        for entity in spec.entities
+        if entity.cardinality is not Cardinality.SINGLETON
+    )
+
+
+async def stage_writers(
+    workshop_ids: Iterable[str], user_ids: Iterable[str]
+) -> set[tuple[str, str]]:
+    """``{(workshop id, user id)}`` for every pair where that account has WRITTEN that workshop.
+
+    ── WHAT COUNTS, AND THE OWNER'S RULING IT IMPLEMENTS ───────────────────────────────────────────
+
+    The separation of duties of 2026-10-09 (``services/design_workshop_posts``) bars an AUTHOR from
+    inspecting or supervising a workshop, and says authorship is holding designer access to it or
+    having written its stages — **not** having created it, because sanctioning officers and
+    administrators open workshops as an administrative act. The trap is that opening one WRITES
+    stages: ``seed_designer_prefill`` stamps every value it seeds to the account that pressed create
+    (deliberately — see its provenance paragraph), and naming a designer on the oversight screen
+    copies their profile in under the assigner's stamp. Counting every stamp would therefore make
+    createdById an author by the back door. So a write counts when it is:
+
+    * a ``designer``-source field stamp (``entry_provenance``) naming the account on a live entry,
+      EXCEPT on the workshop's cover — the entity its header columns are promoted from, which the
+      opening, a sanction order and the naming of a designer all fill in on an administrator's
+      behalf — and EXCEPT on the fields a designer's profile is copied into, which are the designer's
+      words whoever caused the copy; or
+    * a live row of a REPEATING entity the account created. The opening never creates one, so this
+      is honest for every row it finds, and it is what attributes entries saved before field stamps
+      existed. An artisan-list import files stage 3's participants under the importer, and that IS
+      writing the report's attendance table — so an importer counts, which is the conservative side
+      of a rule whose cost on the other side is somebody reviewing their own work.
+
+    ``reference`` stamps never count: they name whoever recorded the shared RECORD a value was copied
+    from, not anybody who worked on this workshop.
+
+    ── WHY RAW SQL ─────────────────────────────────────────────────────────────────────────────────
+
+    The stamps live in ``fieldProvenance``, a JSON map keyed by field, and "which accounts does any
+    key name" has no Prisma filter. Reading the rows instead would ship every entry's ``data`` to this
+    process to answer a yes/no — for the ministry register that is up to five hundred workshops'
+    worth of fieldwork per page view. Postgres answers it from ``jsonb_each`` and hands back pairs.
+    The statement is a constant and every value is a bound array, the shape
+    ``dictation_consent.stage_attached_workshop_ids`` already uses over this same table.
+    """
+    workshops = sorted({str(w) for w in workshop_ids if w})
+    people = sorted({str(u) for u in user_ids if u})
+    if not workshops or not people:
+        return set()
+    rows = await db.query_raw(
+        _STAGE_WRITERS_SQL,
+        workshops,
+        people,
+        sorted(_cover_entity_keys()),
+        sorted(_profile_copied_field_keys()),
+        entry_provenance.SOURCE_DESIGNER,
+        sorted(_repeating_entity_keys()),
+    )
+    return {
+        (str(row["workshopId"]), str(row["userId"]))
+        for row in rows
+        if row.get("workshopId") and row.get("userId")
+    }
+
+
+#: :func:`stage_writers`' statement. $1 the workshops, $2 the accounts, $3 the cover entities, $4 the
+#: profile-copied fields, $5 the ``designer`` stamp source, $6 the repeating entities. An empty array
+#: is safe in every position: ``= ANY('{}')`` is false, so an empty $3 or $4 excludes nothing and an
+#: empty $6 counts no row.
+_STAGE_WRITERS_SQL = """
+SELECT e."designWorkshopId" AS "workshopId", s.value ->> 'by' AS "userId"
+FROM "DwStageEntry" AS e
+CROSS JOIN LATERAL jsonb_each(
+    CASE WHEN jsonb_typeof(e."fieldProvenance") = 'object'
+         THEN e."fieldProvenance" ELSE '{}'::jsonb END
+) AS s
+WHERE e."deletedAt" IS NULL
+  AND e."designWorkshopId" = ANY($1::text[])
+  AND NOT (e."entityKey" = ANY($3::text[]))
+  AND NOT (s.key = ANY($4::text[]))
+  AND jsonb_typeof(s.value) = 'object'
+  AND s.value ->> 'source' = $5
+  AND s.value ->> 'by' = ANY($2::text[])
+UNION
+SELECT e."designWorkshopId" AS "workshopId", e."createdById" AS "userId"
+FROM "DwStageEntry" AS e
+WHERE e."deletedAt" IS NULL
+  AND e."designWorkshopId" = ANY($1::text[])
+  AND e."entityKey" = ANY($6::text[])
+  AND e."createdById" = ANY($2::text[])
+"""
 
 
 def workshop_summary(record: Any) -> dict[str, Any]:
@@ -4088,8 +4253,16 @@ def named_designer_team(
     return lead, ordered
 
 
-async def assert_every_designer_may_be_named(user_ids: set[str]) -> None:
+async def assert_every_designer_may_be_named(
+    user_ids: set[str], *, workshop_id: str | None = None, appointing: str | None = None
+) -> None:
     """Raise the viewers screen's own 422 if any of these accounts may not run this workshop.
+
+    ``workshop_id`` and ``appointing`` are for a workshop that EXISTS — the oversight screen's two
+    designer doors pass both, and the viewers screen's rule then also refuses, with a 409, somebody
+    who inspects or supervises that workshop and an actor naming themselves (see
+    ``services/design_workshop_posts``). The create doors pass neither: a workshop that does not
+    exist yet has no posts, and its creator is subtracted from the set before this is asked.
 
     **THE RULE IS IMPORTED AND NEVER COPIED**, exactly as ``design_workshop_grants`` and
     ``design_workshop_access`` import it. ``_assert_every_id_may_be_granted`` reads the DESIGNER
@@ -4128,7 +4301,7 @@ async def assert_every_designer_may_be_named(user_ids: set[str]) -> None:
 
     An empty set is a no-op, so a body that named nobody costs no query at all.
     """
-    await _assert_every_id_may_be_granted(user_ids)
+    await _assert_every_id_may_be_granted(user_ids, workshop_id=workshop_id, appointing=appointing)
 
 
 async def attach_the_named_designer(

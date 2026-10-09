@@ -13,12 +13,14 @@ import {
   canManageQuestionnaire,
   canManageUsers,
   canManageWorkshops,
+  canProvisionAccounts,
   canReview,
   canRunDesignWorkshops,
   canSeeDataTile,
   canViewDesignWorkshopData,
   isAdmin,
-  isMasterAdmin
+  isMasterAdmin,
+  provisionableRoles
 } from "@/lib/permissions";
 import type { User, UserRole } from "@/lib/types";
 
@@ -95,12 +97,18 @@ test("the three tiers run a workshop and reach no other design-workshop set, bec
   //
   // THE POINT THE OLD NAME WAS MAKING SURVIVES AND IS NOW SHARPER. Each of these is its own SET, so
   // gaining one buys nothing in the others: the three RUN a workshop, and still cannot OPEN a bare
-  // one, cannot INSPECT one, and cannot EXPORT its rows. Under a rank ladder all four would have
-  // moved together, which is the drift a set exists to prevent.
+  // one or EXPORT its rows. Under a rank ladder all of them would have moved together, which is the
+  // drift a set exists to prevent.
+  //
+  // INSPECTING MOVED FOR ONE OF THE THREE ON 2026-10-09, AND ONLY BY APPOINTMENT. The owner's ruling
+  // lets a Ministry Admin be appointed — by somebody else — to inspect a workshop, so the inspection
+  // surface opens for that tier; the Assistant Director and Regional Director may not be appointed to
+  // inspect and are refused it as before. It is still a set and still not a floor: the tier between
+  // them, at 45, stays out while 48 is in.
   for (const role of DIRECTORATE) {
     expect(canRunDesignWorkshops(user(role)), role).toBe(true);
     expect(canCreateDesignWorkshops(user(role)), role).toBe(false);
-    expect(canInspectDesignWorkshops(user(role)), role).toBe(false);
+    expect(canInspectDesignWorkshops(user(role)), role).toBe(role === "MINISTRY_ADMIN");
     // EXPORT is the half that did NOT move on 2026-09-13, and it is the half that takes rows out of
     // the product. A professor has read-without-export since 2026-08-30; these three inherit that
     // exact shape rather than a wider one.
@@ -157,4 +165,32 @@ test("the minting ceiling is inclusive of the caller's own tier and stops below 
   expect(assistant).toContain("ASSISTANT_DIRECTOR");
   expect(assistant).not.toContain("REGIONAL_DIRECTOR");
   expect(assistant).not.toContain("MINISTRY_ADMIN");
+});
+
+test("account provisioning is a set: the ministry admin and both admin tiers, and nobody else", () => {
+  // The owner's ruling of 2026-10-09: MINISTRY_ADMIN creates password accounts and looks after their
+  // passwords on /users, BESIDE `isAdmin` rather than inside it — so the second assertion in this
+  // loop is the first test's, restated where the new power sits next to it.
+  const PROVISIONERS: UserRole[] = ["MASTER_ADMIN", "ADMIN", "MINISTRY_ADMIN"];
+  for (const role of ALL_ROLES) {
+    expect(canProvisionAccounts(user(role)), role).toBe(PROVISIONERS.includes(role));
+  }
+  expect(isAdmin(user("MINISTRY_ADMIN"))).toBe(false);
+
+  // The two directorate posts below it, and Professor, keep promotion rights only.
+  for (const role of ["REGIONAL_DIRECTOR", "ASSISTANT_DIRECTOR", "PROFESSOR"] as const) {
+    expect(canProvisionAccounts(user(role)), role).toBe(false);
+    expect(provisionableRoles(user(role)), role).toEqual([]);
+    expect(canManageUsers(user(role)), role).toBe(true);
+  }
+
+  // The create ceiling is the minting ceiling above: inclusive of one's own tier, below admin for a
+  // ministry admin, and MASTER_ADMIN for a master admin alone.
+  const ministry = provisionableRoles(user("MINISTRY_ADMIN"));
+  expect(ministry).toEqual(assignableRoles(user("MINISTRY_ADMIN")));
+  expect(ministry).toContain("MINISTRY_ADMIN");
+  expect(ministry).not.toContain("ADMIN");
+  expect(provisionableRoles(user("ADMIN"))).toContain("ADMIN");
+  expect(provisionableRoles(user("ADMIN"))).not.toContain("MASTER_ADMIN");
+  expect(provisionableRoles(user("MASTER_ADMIN"))).toContain("MASTER_ADMIN");
 });

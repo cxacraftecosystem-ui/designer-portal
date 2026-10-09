@@ -185,7 +185,7 @@ function markHandled(userId: string): void {
 }
 
 export function DesignerProfileOnboarding() {
-  const { user } = useAuth();
+  const { user, passwordChangeRequired } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
   const checking = useRef(false);
@@ -194,6 +194,15 @@ export function DesignerProfileOnboarding() {
     // `user` is null until `AuthProvider` has resolved `/me`; there is nothing to decide yet, and
     // deciding on the absence would send every anonymous first paint to a designer form.
     if (!user) return;
+    /*
+      NOT WHILE THE ACCOUNT OWES A NEW PASSWORD. This component sits BESIDE `AppShell`, not inside
+      it, so the gate that replaces every protected page does not stop it — and the server refuses
+      the profile read for a gated account, so the request would buy nothing but a refusal. Nor is
+      there anything to redirect TO: the profile page is behind the same gate. Nothing is marked, so
+      the check is simply made once the password is chosen — `markPasswordChanged` hands down a new
+      `user`, and this effect runs again on the landing route the gate gives way to.
+    */
+    if (passwordChangeRequired) return;
     // Rule 2: a DESIGNER, not the wider set that may run a workshop.
     if (user.role !== "DESIGNER") return;
     // Rule 3: only from a landing route, and never from the destination (which would loop).
@@ -245,7 +254,7 @@ export function DesignerProfileOnboarding() {
       // a guard that will be.
       if (!settled) checking.current = false;
     };
-  }, [user, pathname, router]);
+  }, [user, passwordChangeRequired, pathname, router]);
 
   return null;
 }

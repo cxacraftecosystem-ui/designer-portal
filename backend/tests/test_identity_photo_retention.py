@@ -249,9 +249,17 @@ class _MediaFiles:
         return None
 
     async def update(self, **kwargs: Any) -> Any:
+        from prisma import Json
+
         row = await self.find_unique(where=kwargs.get("where") or {})
         for key, value in (kwargs.get("data") or {}).items():
-            setattr(row, key, value)
+            # A Json column takes ``Json(...)`` on the way in and gives the plain value back on the
+            # way out, which is what reading the row afterwards sees. A bare dict is REFUSED by the
+            # real client, so it is refused here too: this store accepted one for as long as the
+            # route sent one, and the route answered 500 against Postgres all that time.
+            if key == "extraMetadata" and isinstance(value, (dict, list)):
+                raise AssertionError("extraMetadata reached the client unwrapped; Postgres refuses it")
+            setattr(row, key, value.data if isinstance(value, Json) else value)
         return row
 
     async def delete(self, **kwargs: Any) -> Any:
@@ -284,6 +292,22 @@ def _photo(media_id: str = "med_1", **extra) -> Row:
     return Row(**columns)
 
 
+def _held_by_no_workshop(monkeypatch) -> None:
+    """No photograph here belongs to a design workshop anybody serves on.
+
+    Since 2026-10-09 the decision first asks which workshops hold the file, for an account that
+    could hold a post there — the ADMIN below — reading tables this file does not fake through
+    ``design_workshop_posts``' own client. That refusal is ``tests/test_admin_serve_as.py``'s to
+    prove; here every photograph is held by none.
+    """
+    from app.services import design_workshop_posts
+
+    async def _none(_media):
+        return set()
+
+    monkeypatch.setattr(design_workshop_posts, "media_design_workshop_ids", _none)
+
+
 def _decide(monkeypatch, rows, *, user=DESIGNER, media_id="med_1", decision=DISCARD, storage=None):
     """Call the route directly and hand back what it said AND what the store now holds."""
     deleted: list[str] = []
@@ -296,6 +320,7 @@ def _decide(monkeypatch, rows, *, user=DESIGNER, media_id="med_1", decision=DISC
     store = _DB(rows)
     monkeypatch.setattr(routes, "db", store)
     monkeypatch.setattr(routes, "delete_object", _delete_object)
+    _held_by_no_workshop(monkeypatch)
     body = asyncio.run(
         routes.decide_identity_photograph(mediaId=media_id, decision=decision, current_user=user)
     )

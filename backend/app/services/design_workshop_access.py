@@ -185,6 +185,7 @@ from fastapi import HTTPException, status
 
 from app.core.db import db
 from app.core.deps import is_admin
+from app.services import design_workshop_posts as posts
 from app.services.design_workshop_viewers import (
     _assert_every_id_may_be_granted,
     has_viewer_grant,
@@ -922,6 +923,10 @@ async def decide(request_id: str, *, decision: str, note: str | None, admin: Any
     rather than read-then-delete, for the reason this module's header gives about two round trips
     with a window in the middle. There is nothing to report when it deletes nothing: the ordinary
     case is somebody an admin is granting who never scanned a spent card at all.
+
+    **AN ADMIN WHO IS THE WORKSHOP'S INSPECTOR, ASSISTANT DIRECTOR OR REGIONAL DIRECTOR DECIDES
+    NEITHER WAY (403, 2026-10-09)** — both decisions shape the designer team that post reads and does
+    not write. Asked once the row is found, so an unknown id is still the ordinary 404.
     """
     if decision not in DECISIONS:
         raise HTTPException(
@@ -942,6 +947,13 @@ async def decide(request_id: str, *, decision: str, note: str | None, admin: Any
         # admin screen is a worse way to find out.
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Record not found")
 
+    # NOT DECIDED BY AN ADMIN WHO SERVES ON THIS WORKSHOP, EITHER WAY (2026-10-09). A grant writes
+    # the workshop's designer team and a refusal takes a capture-only foothold off it; its inspector
+    # and its two directors read that team and do not shape it. The 403 every such write gives them
+    # (``design_workshop_posts.refuse_a_holders_write``), before the requester is looked at — another
+    # admin decides, and the queue row waits for them untouched.
+    await posts.refuse_a_holders_write(row.designWorkshopId, admin)
+
     if decision == "GRANTED":
         # ELIGIBILITY FIRST, AND IT IS A READ, so it happens before anything is written and outside
         # the transaction below. The rule is the viewers module's own — it reads the designer roster
@@ -955,7 +967,14 @@ async def decide(request_id: str, *, decision: str, note: str | None, admin: Any
         # ``file_request`` will not file for a creator, but an admin can grant a row filed before the
         # workshop changed hands.
         if row.requestedById != workshop.createdById:
-            await _assert_every_id_may_be_granted({row.requestedById})
+            # ASKED ABOUT THIS WORKSHOP (2026-10-09): its inspector or supervising officer may not
+            # be made one of its designers, and nobody approves their own request — 409, from
+            # ``services/design_workshop_posts``.
+            await _assert_every_id_may_be_granted(
+                {row.requestedById},
+                workshop_id=row.designWorkshopId,
+                appointing=getattr(admin, "id", None),
+            )
             async with db.tx() as tx:
                 # ONE ROW FOR ONE ACCOUNT, AND THE PROMOTION'S SECOND HALF, IN ONE TRANSACTION.
                 #

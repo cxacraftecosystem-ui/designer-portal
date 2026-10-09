@@ -64,6 +64,8 @@ def _artisan(**overrides: Any) -> SimpleNamespace:
         "location": SimpleNamespace(village="Bagru", district="Jaipur", state="Rajasthan", pincode="303007"),
         "workshops": [],
         "workshopId": None,
+        # Read by the update route since 2026-10-09: it is the workshop an unfile or a move leaves.
+        "designWorkshopId": None,
         "place": "Bagru",
         "address": "By the dyeing tanks",
         "phone": "9876543210",

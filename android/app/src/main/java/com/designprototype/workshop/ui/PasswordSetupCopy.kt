@@ -1,6 +1,12 @@
 package com.designprototype.workshop.ui
 
+import com.designprototype.workshop.data.SessionVerdict
 import com.designprototype.workshop.data.UserDto
+import com.designprototype.workshop.data.apiErrorMessage
+import com.designprototype.workshop.data.isPasswordChangeRequired
+import com.designprototype.workshop.data.sessionVerdict
+import kotlinx.coroutines.CancellationException
+import retrofit2.HttpException
 
 /**
  * THE WORDS AND THE RULES BEHIND THE TWO PASSWORD SCREENS, with no Compose in sight.
@@ -54,15 +60,18 @@ fun passwordRuleLine(suffix: String? = null): String =
     "At least $MIN_PASSWORD_LENGTH characters." + (suffix?.let { " $it" } ?: "")
 
 /**
- * Must this account choose its own password before it is let into the product?
+ * Must this account choose a new password before it is let into the product?
  *
- * ── THE SERVER REPORTS AND THE CLIENT REFUSES, WHICH IS THE CONSENT GATE'S OWN SHAPE ─────────────
+ * ── THE DOOR STILL OPENS; EVERYTHING BEHIND IT IS REFUSED ────────────────────────────────────────
  *
  * `POST /auth/login` mints a token for an account carrying `mustChangePassword`, deliberately: the
- * only route that can change a password needs a bearer token, so a 403 at the door would be a demand
- * the account could never satisfy. `usageConsentBlocks` sits three files away and says the identical
- * thing about the identical arrangement, and the two gates are `when` arms side by side in
- * `RepositoryApp` for that reason.
+ * only route that can change a password needs a bearer token, so a refusal at the door would be a
+ * demand the account could never satisfy. Since 2026-10-09 the server also refuses every OTHER route
+ * for that token with a gated 401 (see `data/PasswordChangeRequired.kt`), so this is no longer the
+ * only thing holding the line — but it is still the only thing that can show the person what to do,
+ * and the same answer is what holds this app's own background sends back while the gate is up. The
+ * consent gate (`usageConsentBlocks`) has the door half of this shape and not the refusal half, and
+ * the two are `when` arms side by side in `RepositoryApp`.
  *
  * ── A NULL IS "NO GATE", NEVER "GATE OPEN" AND NEVER "GATE SHUT" ─────────────────────────────────
  *
@@ -72,6 +81,253 @@ fun passwordRuleLine(suffix: String? = null): String =
  * same rule `usageConsentBlocks` states as `?.required == true`.
  */
 fun mustChangePasswordBlocks(user: UserDto?): Boolean = user?.mustChangePassword == true
+
+/**
+ * The longest password this product will store, mirrored for [MIN_PASSWORD_LENGTH]'s reason.
+ *
+ * The server refuses anything longer on every password field it takes — create, update, change and
+ * set-password — so refusing it here says so in a sentence before the round trip rather than as a
+ * schema complaint after it. Counted in characters (code points), the way the server counts them.
+ */
+const val MAX_PASSWORD_LENGTH = 200
+
+/**
+ * The first-password gate's heading and its one sentence.
+ *
+ * ── NEUTRAL, BECAUSE THE GATE NO LONGER HAS ONE CAUSE ────────────────────────────────────────────
+ *
+ * It said "An administrator set your password", which was true while the only road onto the screen
+ * was an account somebody else had created. An administrator can now also require a change at the
+ * next sign-in WITHOUT touching the password — of somebody who chose their own — and telling that
+ * person an administrator set it reads as "somebody has been into my account". The sentence is the
+ * server's own `detail` for a session held at the gate, word for word, and the web gate says it too,
+ * so a person who meets it in all three places reads one thing three times.
+ */
+const val PASSWORD_GATE_HEADING = "Set a new password"
+const val PASSWORD_GATE_SENTENCE = "Choose a new password to continue."
+
+/**
+ * What changing the password does to the account's other sessions — the second clause of the rule
+ * line under the gate's boxes.
+ *
+ * It said "Other devices stay signed in." until 2026-10-09, which was true of a server that compared
+ * nothing. Since then a session token carries a fingerprint of the password it was opened with, so
+ * the change ends every session of the account but the fresh one the answer carries, which
+ * `WorkshopRepository.changeOwnPassword` adopts. That is also what retires a session somebody else
+ * opened with a temporary password. `PASSWORD_CHANGE_SESSIONS` in `frontend/lib/passwordChange.ts`,
+ * word for word.
+ *
+ * ── "SIGNED OUT" IS THE SERVER'S REFUSAL; WHEN A DEVICE NOTICES IS THE CLIENT'S ───────────────────
+ *
+ * The old token is refused from the moment of the change, everywhere. A web tab drops it at its next
+ * request. This build notices at its next request too, whichever screen or queue makes it: a plain
+ * 401 raises `SessionEndedSignal`, the root confirms it with `GET /me`, and the sign-in card says
+ * [SESSION_ENDED_SENTENCE]. Builds before this one read a session verdict only at launch, so the
+ * tablet in the next room keeps its dead token, its queues retry with it, and nothing sends anybody to
+ * sign in until the app is reopened or signed out by hand. Nothing queued is lost on either.
+ */
+const val PASSWORD_CHANGE_SESSIONS = "You stay signed in here, and are signed out everywhere else."
+
+/**
+ * What the sign-in card says when the session this handset held has ended — `SessionVerdict.EXPIRED`,
+ * at launch or, through `SessionEndedSignal`, after any request answered with a plain 401.
+ *
+ * It said "Your session expired. Please sign in again." Since 2026-10-09 the commonest reason is not
+ * time: a password changed on the website, on another phone, by an administrator or through a
+ * redeemed link retires every session opened with the old one — and the person this happens to has to
+ * know WHICH password to type next. Both of the ways it happens to somebody are named, with the one
+ * answer that serves both.
+ */
+const val SESSION_ENDED_SENTENCE = "This sign-in has ended. If your password was changed on another " +
+    "device or by an administrator, sign in with the new one."
+
+/**
+ * Why a new password may not be sent yet, as the sentence to show — or null when it may.
+ *
+ * Shared by both screens that set one. [current] is the password the first-password gate will send
+ * as the current one, typed or carried from the door; the redeem screen has none and passes nothing.
+ *
+ * ── THE PAIR IS CHECKED HERE BECAUSE THE SERVER NEVER SEES THE SECOND BOX ────────────────────────
+ *
+ * It takes one new password, so a mismatch it cannot detect would be filed as the person's choice.
+ *
+ * ── AND THE SAME PASSWORD IS REFUSED HERE AS WELL AS THERE ───────────────────────────────────────
+ *
+ * The gate exists to replace a secret somebody else may know, and re-entering the temporary password
+ * used to satisfy it. The server now refuses that and stays the authority; this only spares the round
+ * trip where the screen already holds the current password. Raw strings, compared exactly: a password
+ * is never trimmed.
+ */
+fun newPasswordRefusal(next: String, confirm: String, current: String = ""): String? {
+    val length = next.codePointCount(0, next.length)
+    return when {
+        length < MIN_PASSWORD_LENGTH -> passwordRuleLine()
+        length > MAX_PASSWORD_LENGTH -> "At most $MAX_PASSWORD_LENGTH characters."
+        next != confirm -> "The two passwords do not match."
+        // `newPasswordProblem` in `frontend/lib/passwordChange.ts` says the same, word for word.
+        current.isNotEmpty() && next == current ->
+            "Your new password must be different from your current one."
+        else -> null
+    }
+}
+
+/**
+ * After the server refused a change sent with the password carried from the door, must the gate now
+ * ask for the current password itself?
+ *
+ * ── ONLY ON A 400 ────────────────────────────────────────────────────────────────────────────────
+ *
+ * `POST /auth/change-password` answers a wrong current password with 400 (a 401 until 2026-10-09,
+ * which the web could not tell from a dead session). The carried password can be wrong for a real
+ * reason — an administrator set another between the sign-in and this screen — and a box the screen
+ * keeps hidden is a box nobody can correct, which left "Sign out instead" as the only control that
+ * worked. A 400 is the family that refusal belongs to; showing the box after one of its siblings costs
+ * a person one retype. A 401 is the SESSION and not the password, and a 429 is the guessing budget,
+ * where a fresh box would only invite another guess.
+ */
+fun passwordGateAsksForCurrentAfter(status: Int?): Boolean = status == 400
+
+/**
+ * What the gate says when the change did not leave the phone, or did not land — the sentences it has
+ * always shown when a failure carried no words of its own.
+ *
+ * TRUE ONLY WHEN SOMETHING HAS SAID SO. They are shown after a refusal the server answered, or after
+ * `GET /me` has confirmed the account still owes a password; never on the strength of a missing
+ * answer alone. See [passwordGateAfterFailure].
+ */
+const val PASSWORD_CHANGE_NOT_SENT = "Your new password did not reach the server, so nothing has " +
+    "changed. Try again."
+const val PASSWORD_CHANGE_NOT_SENT_OFFLINE = "This phone has no connection, so nothing has changed. " +
+    "Try again where there is a signal."
+
+/**
+ * The change may have landed and this session has since been refused: the gate signs out and the
+ * sign-in card says this. Two passwords, in the order to try them, because only the server knows
+ * which one it holds.
+ */
+const val PASSWORD_MAY_ALREADY_BE_IN_EFFECT = "Your new password may already be in effect. Sign in " +
+    "with it; if it is refused, use the one you were given."
+
+/**
+ * The change's answer was lost and the question asked afterwards went unanswered too. The gate stays
+ * up and says so — a retry finds out either way — with the same two passwords for whoever signs out.
+ */
+const val PASSWORD_CHANGE_UNCONFIRMED = "This phone could not tell whether your new password was " +
+    "saved. Try again; if you sign out instead, sign in with the new password, and if it is refused, " +
+    "use the one you were given."
+
+/** What the first-password gate does once `POST /auth/change-password` has failed. */
+sealed interface PasswordGateAfterFailure {
+    /** Stay on the gate and say [message]. */
+    data class Stay(val message: String) : PasswordGateAfterFailure
+
+    /** The session this handset held has been refused: sign out, and put [message] on the card. */
+    data class SignOut(val message: String) : PasswordGateAfterFailure
+
+    /** The server no longer asks this account for a new password: the gate is satisfied by [profile]. */
+    data class Satisfied(val profile: UserDto) : PasswordGateAfterFailure
+}
+
+/**
+ * Did this failure of `POST /auth/change-password` settle what happened to the password?
+ *
+ * ── AN ANSWER FROM THE ROUTE DID ─────────────────────────────────────────────────────────────────
+ *
+ * A 400, 403, 422 or 429, or a gated 401, is the application refusing INSTEAD of writing, and its
+ * sentence says why: the current password was wrong, the new one is the old one, the guessing budget
+ * is spent.
+ *
+ * ── THREE FAILURES DID NOT ───────────────────────────────────────────────────────────────────────
+ *
+ * The server commits the new password before it answers, and from that moment the token the request
+ * carried is retired. So a failure that may have happened AFTER the request was sent proves nothing
+ * about the password:
+ *
+ *  * **No answer at all** — a read timeout, a connection dropped mid-answer, a body that would not
+ *    decode.
+ *  * **A 5xx** — the gateway in front of the origin, or the origin itself, may fail after the write.
+ *  * **A plain 401** — the token is dead, and this very change is one of the things that kills it: a
+ *    retry of a change that landed meets exactly this.
+ */
+fun changePasswordOutcomeKnown(failure: Throwable): Boolean {
+    val status = (failure as? HttpException)?.code() ?: return false
+    return when {
+        status >= 500 -> false
+        status == 401 -> failure.isPasswordChangeRequired()
+        else -> true
+    }
+}
+
+/**
+ * What the gate does after a failed change, decided BEFORE a word is shown.
+ *
+ * ── WHY IT ASKS INSTEAD OF GUESSING ──────────────────────────────────────────────────────────────
+ *
+ * On a field connection the answer to a change that landed is lost often enough to matter. The gate
+ * used to report every failure the same way, so somebody whose new password was already in force was
+ * told nothing had changed — and the retry, sent with the session the change had retired, came back
+ * "This session is no longer valid". They signed out, typed the temporary password they had been
+ * told was still theirs, were refused, and concluded they were locked out.
+ *
+ * So where the failure settles nothing ([changePasswordOutcomeKnown]), [probe] — `GET /me` with the
+ * session this handset still holds — is asked first, and its answer chooses the sentence:
+ *
+ *  * **A plain 401:** the held session is dead, most likely retired by this very change. Sign out with
+ *    [PASSWORD_MAY_ALREADY_BE_IN_EFFECT].
+ *  * **The account still owes a password** (the flag, or the gate's own 401): nothing landed, so the
+ *    gate's usual words are now true, and they are what it says.
+ *  * **It owes none:** the server no longer asks for a change — a server older than the fingerprint
+ *    kept the session and cleared the flag in the same write — so the gate is satisfied.
+ *  * **No answer, or any other:** nothing is known. Stay, and say [PASSWORD_CHANGE_UNCONFIRMED].
+ *
+ * The failure's body is read once, and only on the arms that show its words. A cancelled coroutine is
+ * not a failure and is rethrown: a screen that has left must not decide anything.
+ */
+suspend fun passwordGateAfterFailure(
+    failure: Throwable,
+    online: Boolean,
+    probe: suspend () -> UserDto,
+): PasswordGateAfterFailure {
+    if (failure is CancellationException) throw failure
+    // The gate's usual words — the server's own sentence where the failure carries one. A function,
+    // so the body is read only by an arm that shows it: `apiErrorMessage` consumes the buffer.
+    fun usualWords() = PasswordGateAfterFailure.Stay(
+        failure.apiErrorMessage(if (online) PASSWORD_CHANGE_NOT_SENT else PASSWORD_CHANGE_NOT_SENT_OFFLINE)
+    )
+    if (changePasswordOutcomeKnown(failure)) return usualWords()
+    val profile = try {
+        probe()
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (unanswered: Throwable) {
+        return when (unanswered.sessionVerdict()) {
+            SessionVerdict.EXPIRED -> PasswordGateAfterFailure.SignOut(PASSWORD_MAY_ALREADY_BE_IN_EFFECT)
+            SessionVerdict.CHOOSE_NEW_PASSWORD -> usualWords()
+            SessionVerdict.REFUSED, SessionVerdict.KEEP ->
+                PasswordGateAfterFailure.Stay(PASSWORD_CHANGE_UNCONFIRMED)
+        }
+    }
+    return if (mustChangePasswordBlocks(profile)) usualWords() else PasswordGateAfterFailure.Satisfied(profile)
+}
+
+/**
+ * May an administrator be offered a set-password link for this account?
+ *
+ * ── "HAS A PASSWORD", NOT "DOES NOT SIGN IN WITH GOOGLE" ─────────────────────────────────────────
+ *
+ * The button was hidden for every account whose `authProvider` read GOOGLE, on the premise that such
+ * an account has no password to set. Until 2026-10-09 a Google sign-in rewrote the provider on ANY
+ * account, keeping the password and its `passwordSetAt` — so the premise was false for every account
+ * that had used both doors, which includes the ones administrators provision with a Gmail address.
+ * `passwordSetAt` is the fact the button needs: every account holding a password was stamped when
+ * the column arrived, so its absence means the account has never had one.
+ *
+ * AND AN ACCOUNT THAT HAS NEVER HAD ONE GETS NO LINK, whatever its provider. Giving it a password is
+ * a decision, taken on the web's users page, not a side effect of handing somebody a link. The web
+ * draws its "Password link" on the identical test (`hasPassword` in
+ * `frontend/app/(protected)/users/accountAdmin.ts`).
+ */
+fun passwordLinkOffered(target: UserDto): Boolean = !target.passwordSetAt.isNullOrBlank()
 
 /**
  * The token inside whatever a designer pasted.

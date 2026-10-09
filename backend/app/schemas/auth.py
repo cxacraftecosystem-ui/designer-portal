@@ -1,5 +1,6 @@
 from pydantic import Field, model_validator
 
+from app.core.security import MAX_PASSWORD_LENGTH
 from app.schemas.common import APIModel
 
 
@@ -48,11 +49,12 @@ class TokenResponse(APIModel):
 
 
 class IssuePasswordLinkRequest(APIModel):
-    """An administrator asking for a password link for somebody else's account.
+    """An account provisioner asking for a password link for somebody else's account.
 
-    No ``purpose``: it is derived from whether the account has ever had a password, because the two
-    purposes differ only in a lifetime and an admin choosing "invite" for an account that already
-    has a password would mint a three-day credential for a live account.
+    No ``purpose``: it is derived (``credential_links.purpose_for``) from whether the account has a
+    password and whether it has ever signed in, because the two purposes differ only in a lifetime
+    and a provisioner choosing "invite" for an account somebody is already using would mint a
+    three-day credential for a live account.
     """
 
     userId: str = Field(min_length=1, max_length=64)
@@ -63,7 +65,7 @@ class SetPasswordRequest(APIModel):
     sign in — which is why the token is the entire authority and is checked four ways."""
 
     token: str = Field(min_length=1, max_length=1024)
-    password: str = Field(min_length=8, max_length=200)
+    password: str = Field(min_length=8, max_length=MAX_PASSWORD_LENGTH)
 
 
 class ChangePasswordRequest(APIModel):
@@ -73,7 +75,10 @@ class ChangePasswordRequest(APIModel):
     means "the password you were given was not chosen by you", not "anybody at this keyboard may
     replace it". An account with NO password at all (Google-provisioned) cannot use this route —
     there is nothing to prove — and is told so.
+
+    Both fields share the one ceiling (``security.MAX_PASSWORD_LENGTH``) the admin forms use, so any
+    temporary password an administrator can set is one this form can accept back.
     """
 
-    currentPassword: str = Field(min_length=1, max_length=200)
-    newPassword: str = Field(min_length=8, max_length=200)
+    currentPassword: str = Field(min_length=1, max_length=MAX_PASSWORD_LENGTH)
+    newPassword: str = Field(min_length=8, max_length=MAX_PASSWORD_LENGTH)

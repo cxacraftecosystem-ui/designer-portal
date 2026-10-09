@@ -306,6 +306,10 @@ def test_every_module_that_writes_a_user_row_also_invalidates_the_identity_cache
         "app/api/routes/access.py",
         "app/api/routes/auth.py",
         "app/api/routes/users.py",
+        # Account creation moved here from routes/users on 2026-10-09 so the operator script
+        # (scripts/provision_account.py, which writes no User row of its own) and the route share one
+        # writer. It invalidates exactly as the route did.
+        "app/services/account_provisioning.py",
         "scripts/seed_admin.py",
         "scripts/seed_test_accounts.py",
         # The sessionsValidFrom backfill (2026-09-03) writes User rows from OUTSIDE any serving

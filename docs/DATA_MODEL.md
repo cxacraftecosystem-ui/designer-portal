@@ -396,7 +396,7 @@ erDiagram
 
 | System | Question it answers | Granted by |
 |---|---|---|
-| Role (`User.role`) | what *kind* of thing may you do at all | a professor or admin, on the Users page |
+| Role (`User.role`) | what *kind* of thing may you do at all | set when an account provisioner (Ministry Admin, Admin, Master Admin) creates a password account, or by the allow-list row a Google sign-in is admitted on; changed afterwards by a professor or above, on the Users page |
 | `WorkshopAssignment` | may you work **in this workshop** | an admin — either by assigning, or by deciding a user's own request |
 | `DataAccessGrant` | may you see **another researcher's** records | that researcher, the record owner |
 
@@ -458,6 +458,24 @@ roster masked to their last four digits — so the alternative that was declined
 Nothing about `REVISION_REDACTED_FIELDS` itself changed; what changed is that the reason for
 refusing to widen it is spent.
 
+### The sign-in columns on `User`
+
+These columns decide how an account signs in and whether it may go on doing so. No column was added for
+account provisioning or the forced password change on 2026-10-09 — what changed is who writes them
+and what the server does with one of them — nor for binding each session to its password the same
+day: a token carries a digest computed from `passwordHash`, and nothing about it is stored. Who may do
+what with them is [PERMISSIONS.md](PERMISSIONS.md) §1.2; the security reading is
+[SECURITY.md](SECURITY.md) §3.
+
+| Column | Holds | Written by |
+|---|---|---|
+| `passwordHash` | bcrypt, or NULL for an account that has never had a password | account creation at `POST /api/users` (`services/account_provisioning.py`); a provisioner's `PATCH /api/users/{id}`; the owner at `POST /api/auth/change-password`; a password link's redemption; the sanction register's first credential; `scripts/seed_admin.py` and `scripts/provision_account.py`; `scripts/seed_test_accounts.py` for the end-to-end accounts |
+| `authProvider` | `LOCAL` or `GOOGLE` — how the account was made | `LOCAL` for every password account; `GOOGLE` for an account a Google sign-in created. **A password account stays `LOCAL` when its owner later signs in with Google** — so the provider alone no longer says whether an account has a password; `passwordSetAt` does |
+| `passwordSetAt` | when the current password was set; NULL beside a NULL hash means nobody ever set one | every write of `passwordHash` above, without exception, in the same write. The doors that stamp the watermark too take one timestamp for both, after bcrypt (2026-10-09) |
+| `mustChangePassword` | the password this account holds was chosen by somebody else | raised by a provisioner creating the account (default true) or setting somebody's password (default true), by `PATCH /api/users/{id}` with `{mustChangePassword: true}`, and by `scripts/seed_admin.py`; cleared by change-password and by a link's redemption; **withdrawn** by a provisioner sending `{mustChangePassword: false}` on its own for an account it manages, which makes the present password final and ends no session (owner's ruling, 2026-10-09); and written false by `scripts/seed_test_accounts.py`, whose end-to-end passwords are final. **The sanction register no longer raises it** (2026-10-09): the account it mints holds a random password nobody was shown, and its INVITE link sets the real one; the comment above the column in `backend/prisma/schema.prisma` lists the same writers. **Enforced by the server since 2026-10-09**: every authenticated route outside an allow-list answers 401 while it is set, except for the account at `MASTER_ADMIN_EMAIL` and an account with no password. A `PATCH` that raises the account's role answers 409 while it is set on an account with a password, unless the same request sets a new one |
+| `firstLoginAt` | the first time the account actually got IN, through either credential; written once | the sign-in path, after every admission gate. Decides the purpose of a password link for an account that has a password: INVITE (72 hours) while it is NULL on an account created on or after 2026-08-30 17:00 UTC, RESET (2 hours) otherwise; an account with no password always gets INVITE. **NULL means "never signed in" only from that instant** (`credential_links.FIRST_LOGIN_TRACKED_SINCE`): the column's migration backfilled nothing, so an older account carries a NULL it never earned |
+| `sessionsValidFrom` | the revocation watermark — a token minted before it is refused | a link's redemption; barring the address on the allow-list; ending an empanelment; a provisioner setting somebody's password or raising their `mustChangePassword`; the seed script resetting an existing master admin. A writer that sets or flags a password takes the timestamp after the password is hashed and every check has run, immediately before the write (2026-10-09). [SECURITY.md](SECURITY.md) §3.2 keeps the list. **Not the only way a session ends since 2026-10-09**: every token also carries a fingerprint of the `passwordHash` it was opened with, so any password change — `POST /api/auth/change-password` included, which writes no watermark — ends the sessions the old password opened without touching this column ([SECURITY.md](SECURITY.md) §3.6) |
+
 ### 5.1 `SanctionOrder` — the ministry's instrument, and the one row that writes both rosters
 
 Added 2026-09-13 (migration `20260913110000_sanction_orders`); **made multi-designer on 2026-09-16**
@@ -506,8 +524,11 @@ village.
 sign-in doors look `User.email` up LITERALLY, so the account is written under the literal lower-cased
 address; both rosters and this column are written under `canonical_email`, because that is the key
 the gates read. Getting either backwards is silent at write time and locks somebody out days later —
-a canonical `User.email` 401s a password sign-in and is missed by Google sign-in, which then mints a
-second account.
+a canonical `User.email` 401s a password sign-in typed under the spelling the designer was given.
+(It was also missed by Google sign-in, which then minted a second account, until 2026-10-09: a Google
+sign-in now lands on the one password account on the same mailbox, and the users screen will not
+create an account at, or move one onto, a mailbox another account uses — [SECURITY.md](SECURITY.md)
+§3.3 and §3.4.)
 
 **Both `User` foreign keys are `Restrict`, so a sanction order makes TWO people undeletable** — the
 officer who recorded it and the designer it names. `backend/app/api/routes/users.py` carries two
@@ -579,7 +600,11 @@ Assistant Director and exactly one Regional Director. Its primary key is
 members — **the pair IS the identity**, so re-assigning a capacity to a different person is an UPDATE
 of the same row rather than a second row, and a `@@unique([designWorkshopId, userId, capacity])`
 would have admitted two Assistant Directors where the requirement and the line on the report have
-room for one.
+room for one. **Who may fill a slot is not in the schema**: the Assistant Director tier the AD slot,
+the Regional Director tier the RD slot, and since 2026-10-09 a Ministry Admin, an admin or the master
+admin either slot by appointment — never both slots of one workshop, and never alongside its
+inspection. The primary key cannot express the last two, so they are rules in
+`backend/app/services/design_workshop_posts.py` ([PERMISSIONS.md](PERMISSIONS.md) §4.8).
 
 **AN ENUM AND NOT TEXT, which is the OPPOSITE of the choice `workshopKind` and `FeedbackReport`
 made**, so the reason has to be stated rather than assumed. Those two are closed lists a product
@@ -796,8 +821,8 @@ Every enum, and the thing to know about each. The list of names is generated int
 
 | Enum | Values | Note |
 |---|---|---|
-| `UserRole` | the eleven tiers, `DESIGNER` at 35, `INSPECTOR` at 37 and the three directorate tiers at 42/45/48 | strictly ordered by rank, but **`can_run_design_workshops` is a SET** (Designer/Admin/Master Admin), so both a Professor and an Inspector outrank a Designer and still cannot run a design workshop. `INSPECTOR` reaches a workshop only through the read-only per-workshop scope — see [PERMISSIONS.md](PERMISSIONS.md) §1 and §4.5 |
-| `AuthProvider` | `LOCAL`, `GOOGLE` | a Google account has no password hash at all |
+| `UserRole` | the eleven tiers, `DESIGNER` at 35, `INSPECTOR` at 37 and the three directorate tiers at 42/45/48 | strictly ordered by rank, but **`can_run_design_workshops` is a SET** (`DESIGN_WORKSHOP_ROLES`: Designer, the three directorate tiers, Admin, Master Admin — this cell named three until 2026-10-09), so both a Professor and an Inspector outrank a Designer and still cannot run a design workshop. `INSPECTOR` reaches a workshop only through the read-only per-workshop scope, which the three administering tiers may also hold by appointment — see [PERMISSIONS.md](PERMISSIONS.md) §1, §4.5 and §4.8 |
+| `AuthProvider` | `LOCAL`, `GOOGLE` | an account a Google sign-in CREATED has no password hash at all; a password account stays `LOCAL`, hash and all, when its owner later signs in with Google — see "The sign-in columns on `User`" in §5 |
 | `RecordStatus` | `DRAFT`, `PENDING`, `APPROVED`, `REJECTED`, `NEEDS_REVISION` | `NEEDS_REVISION` is the "sent back with comments" state |
 | `ReviewRecordType` | artisan, workshop, product, tool, process, questionnaire, media | processes and interviews are reviewable because the late-submission gate can pin them `PENDING` |
 | `MediaType` | image, video, audio, pdf, document, other | |
@@ -822,6 +847,7 @@ database will not.
 | The relationships in every `erDiagram` | Hand-written against `backend/prisma/schema.prisma`. Re-derive with the one-liner below and diff the result against §2–§5. |
 | Column semantics and the four surprises (§2.1, §2.3, §2.4, §3) | The schema comments. Each is quoted from a comment that lives next to the column; if the comment and this file disagree, the schema wins and this file is wrong. |
 | Paths and line references | `node docs/tools/check-docs.mjs` resolves every path mentioned here. |
+| The sign-in columns on `User` (§5) | Their writers are code, not comments: `backend/app/services/account_provisioning.py`, `backend/app/api/routes/users.py`, `backend/app/api/routes/auth.py` and `backend/app/services/sanction_orders.py`, with the server's hold in `password_change_pending` and the session binding to `passwordHash` in `password_credential`, both in `backend/app/core/deps.py`, and the INVITE/RESET choice in `purpose_for` in `backend/app/services/credential_links.py`. Re-check the writers with `grep -rn -e '"mustChangePassword"' -e '"sessionsValidFrom"' -e '"passwordHash"' backend/app backend/scripts`. Added 2026-10-09. |
 
 Re-derive the relation graph after any migration:
 

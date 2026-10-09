@@ -991,6 +991,9 @@ def designer_client(client):
         # Never used: the token below is minted directly, as it is for the admin above. The field
         # is required by ``UserCreate`` and bounded at 8 characters, so it is spelled to say so.
         "password": "unused-password",
+        # And final rather than temporary, because the token below then acts AS this designer: since
+        # 2026-10-09 the API refuses a flagged account everything but the change-password screen.
+        "mustChangePassword": False,
     })
     assert created.status_code == 201, created.text
     return _AsDesigner(

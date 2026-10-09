@@ -103,6 +103,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Star, Upload } from "lucide-react";
 
+import { HeldPostNotice, heldPostReason, useHeldPostRefusal } from "@/components/designworkshop/HeldPostNotice";
 import { ReviewPanel } from "@/components/sketches/ReviewPanel";
 import { SketchTabPanel, SketchTabs, type SketchTab } from "@/components/sketches/SketchTabs";
 import { UploadTabHost } from "@/components/sketches/UploadTabHost";
@@ -160,6 +161,16 @@ export type SketchesWorkspaceProps = {
 export function SketchesWorkspace({ workshopId, tab, onTabChange, idPrefix }: SketchesWorkspaceProps) {
   const [entityKey, setEntityKey] = useState<RateableEntityKey>("prototype");
   const [registry, setRegistry] = useState<DwRegistry | null>(null);
+  /*
+    WHY THIS READER MAY RATE AND NOT FILE, or null — a post they hold on this workshop (since
+    2026-10-09 an admin may be its inspector, Assistant Director or Regional Director). Asked once here
+    for both tabs and both routes: the upload tab files into stage rows and the review tab writes the
+    arrangement into them, and the server refuses both to a post holder; a rating has its own door and
+    is untouched. Both are held while that is still being asked as well (`heldPostReason`): the review
+    tab says so where its arrangement controls would be, and the notice says it for the upload tab,
+    whose controls have no sentence of their own. See `HeldPostNotice`.
+  */
+  const postRefusal = useHeldPostRefusal(workshopId);
 
   /*
     THE REGISTRY IS READ ONCE HERE AND HANDED DOWN. Both tabs need it — the upload host to name the
@@ -194,6 +205,7 @@ export function SketchesWorkspace({ workshopId, tab, onTabChange, idPrefix }: Sk
 
   return (
     <>
+      <HeldPostNotice refusal={postRefusal} sayPending={tab === "upload"} />
       <SketchTabs
         tabs={TABS}
         active={tab}
@@ -204,7 +216,7 @@ export function SketchesWorkspace({ workshopId, tab, onTabChange, idPrefix }: Sk
 
       {tab === "upload" ? (
         <SketchTabPanel idPrefix={idPrefix} tabKey="upload">
-          <UploadTabHost workshopId={workshopId} registry={registry} />
+          <UploadTabHost workshopId={workshopId} registry={registry} readOnlyReason={heldPostReason(postRefusal)} />
         </SketchTabPanel>
       ) : (
         <SketchTabPanel idPrefix={idPrefix} tabKey="review">
@@ -241,7 +253,13 @@ export function SketchesWorkspace({ workshopId, tab, onTabChange, idPrefix }: Sk
               );
             })}
           </div>
-          <ReviewPanel workshopId={workshopId} round="PEER" readsStageRows entityKey={entityKey} />
+          <ReviewPanel
+            workshopId={workshopId}
+            round="PEER"
+            readsStageRows
+            entityKey={entityKey}
+            readOnlyReason={heldPostReason(postRefusal)}
+          />
         </SketchTabPanel>
       )}
     </>

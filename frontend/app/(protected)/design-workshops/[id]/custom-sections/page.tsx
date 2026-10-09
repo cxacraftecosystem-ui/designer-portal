@@ -28,15 +28,20 @@
  * changes.
  */
 
-import { use } from "react";
+import { use, useId } from "react";
 import Link from "next/link";
 import { ListPlus } from "lucide-react";
 
 import { CustomSectionsEditor } from "@/components/designworkshop/CustomSectionsEditor";
+import { HeldPostNotice, heldPostReason, useHeldPostRefusal } from "@/components/designworkshop/HeldPostNotice";
 import { PageHeader } from "@/components/PageHeader";
 
 export default function DesignWorkshopCustomSectionsPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
+  // A post holder reads the definition and does not change it — and nobody changes it while that is
+  // still being asked. See `HeldPostNotice`.
+  const postRefusal = useHeldPostRefusal(id);
+  const heldNoticeId = useId();
 
   return (
     <>
@@ -51,7 +56,12 @@ export default function DesignWorkshopCustomSectionsPage({ params }: { params: P
         }
       />
 
-      <CustomSectionsEditor workshopId={id} />
+      <HeldPostNotice refusal={postRefusal} id={heldNoticeId} sayPending />
+      <CustomSectionsEditor
+        workshopId={id}
+        readOnlyReason={heldPostReason(postRefusal)}
+        describedBy={postRefusal ? heldNoticeId : undefined}
+      />
     </>
   );
 }

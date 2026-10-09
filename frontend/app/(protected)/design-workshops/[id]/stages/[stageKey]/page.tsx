@@ -52,12 +52,13 @@
  *    banner in the protected layout says it again from anywhere in the app.
  */
 
-import { Fragment, Suspense, use, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, Suspense, use, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ChevronLeft, ChevronRight, CloudOff, Layers } from "lucide-react";
 
 import { CustomSectionsForm } from "@/components/designworkshop/CustomSections";
+import { HeldPostNotice, useHeldPostRefusal, writesHeld } from "@/components/designworkshop/HeldPostNotice";
 import {
   CollectionTable,
   EntityForm,
@@ -440,6 +441,24 @@ function DesignWorkshopStagePageBody({
    */
   const [unopenable, setUnopenable] = useState(false);
   const [saving, setSaving] = useState(false);
+  /**
+   * Why this reader may read this stage and not save it, or null — a post they hold on the workshop.
+   *
+   * Since 2026-10-09 an admin may be appointed a workshop's inspector, Assistant Director or Regional
+   * Director, and the server then refuses them every stage save on it, through the admin arm too. So
+   * the form is locked exactly as a save in flight locks it (`locked`, below) and the notice above it
+   * says why — before a word is typed into an IndexedDB draft the repository will refuse for ever.
+   * Asked of `serverId`, so a workshop only this device holds asks nothing. See `HeldPostNotice`.
+   *
+   * LOCKED WHILE THE ANSWER IS OUT TOO (`undefined`, for an account that may appoint). With the lock
+   * waiting for the refusal, an admin who held a post could type for the length of the staffing reads
+   * — every keystroke banked into that draft — and then have the box disabled under the caret.
+   */
+  const postRefusal = useHeldPostRefusal(serverId);
+  /** The notice's live region, which both Save buttons name while a refusal is shown. */
+  const heldNoticeId = useId();
+  /** No box takes input while a save is in flight — or, for a post holder, at all. */
+  const locked = saving || writesHeld(postRefusal);
   /**
    * Entities a row has been REMOVED from in this session. See decision 2 in the file header: it is
    * what arms `replaceCollections`, and it is a set of entity keys rather than a boolean so the
@@ -1258,7 +1277,10 @@ function DesignWorkshopStagePageBody({
   }
 
   async function save(submit: boolean) {
-    if (!stage) return;
+    // Both buttons are disabled for a post holder, and while that is being asked; this is the line
+    // that keeps it so if a third caller ever arrives. The server would refuse it with the same
+    // sentence the notice shows.
+    if (!stage || writesHeld(postRefusal)) return;
     const target = draftIdRef.current;
     setSaving(true);
     setError(null);
@@ -1751,7 +1773,7 @@ function DesignWorkshopStagePageBody({
       // The server files every custom coercion failure under the one reserved key, keyed by the
       // designer's own field key — see `save_stage`, which uses `CUSTOM_ENTITY_KEY` for exactly this.
       errors={errors[CUSTOM_ENTITY_KEY]}
-      disabled={saving}
+      disabled={locked}
       source={customSource}
       stale={customStale}
       // The readiness screen builds its links against the same synthetic entity key the adapter renders
@@ -1828,6 +1850,11 @@ function DesignWorkshopStagePageBody({
           on close.
         </div>
       ) : null}
+      {/* Why every box below is locked, for a reader who holds a post on this workshop. Above the save
+          regions, because it is the reason there will be no save to report. A live region of its own,
+          mounted from first paint (unlike the standing banners argued below): it is the one sentence
+          on this page that arrives a round trip AFTER the page and switches every control off. */}
+      <HeldPostNotice refusal={postRefusal} id={heldNoticeId} sayPending />
       {/*
         THE OUTCOME OF A SAVE, IN TWO REGIONS THAT ARE MOUNTED FROM FIRST PAINT.
 
@@ -2051,7 +2078,7 @@ function DesignWorkshopStagePageBody({
         <div className="grid gap-5">
           {/* First, because it governs every file the stage uploads and a designer who captures it
               after attaching thirty photographs has stamped none of them. */}
-          <StageRecordingPlaceCard value={recordingPlace} onChange={setRecordingPlace} disabled={saving} />
+          <StageRecordingPlaceCard value={recordingPlace} onChange={setRecordingPlace} disabled={locked} />
 
           {/*
             STAGE 9 ONLY, AND ABOVE THE BOXES IT IS ABOUT.
@@ -2119,7 +2146,7 @@ function DesignWorkshopStagePageBody({
                   onPatch={patchSingletonMany}
                   workshopId={id}
                   errors={errors[entity.key]}
-                  disabled={saving}
+                  disabled={locked}
                   stageKey={stageKey}
                   capture={capture}
                   focus={focus}
@@ -2132,7 +2159,7 @@ function DesignWorkshopStagePageBody({
                   onRowsChange={(rows, removed) => patchCollection(entity.key, rows, removed)}
                   workshopId={id}
                   errorsByIndex={collectionErrors(entity)}
-                  disabled={saving}
+                  disabled={locked}
                   stageKey={stageKey}
                   capture={capture}
                   focus={focus}
@@ -2209,13 +2236,25 @@ function DesignWorkshopStagePageBody({
             ) : null}
 
             <div className="flex flex-wrap items-center gap-2">
-              <button type="button" className="field-button" disabled={saving} onClick={() => save(false)}>
+              <button
+                type="button"
+                className="field-button"
+                disabled={locked}
+                aria-describedby={postRefusal ? heldNoticeId : undefined}
+                onClick={() => save(false)}
+              >
                 {saving ? "Saving…" : "Save stage"}
               </button>
               {/* The strict pass is a SEPARATE control and never the default: a stage left
                   half-filled overnight is the normal state of this app, and a Save that refused
                   incomplete work would lose the day's capture rather than bank it. */}
-              <button type="button" className="field-button-secondary" disabled={saving} onClick={() => save(true)}>
+              <button
+                type="button"
+                className="field-button-secondary"
+                disabled={locked}
+                aria-describedby={postRefusal ? heldNoticeId : undefined}
+                onClick={() => save(true)}
+              >
                 Save and check required fields
               </button>
               {/* The honest three-state readout. Wording, not colour, carries it: a designer deciding

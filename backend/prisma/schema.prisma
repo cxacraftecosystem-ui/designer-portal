@@ -217,19 +217,28 @@ model User {
   ///
   /// `passwordHash` is nullable and every Google-provisioned account carries NULL, so until this
   /// column existed the two were indistinguishable and no screen could honestly say "set a
-  /// password" to one and not the other. This is stamped every time a password is written — by an
-  /// admin at `POST /api/users`, by the owner at `POST /api/auth/change-password`, or through a
-  /// reset link — so NULL alongside a NULL hash means nobody has ever set one.
+  /// password" to one and not the other. This is stamped every time a password is written — by a
+  /// provisioner (MINISTRY_ADMIN, ADMIN, MASTER_ADMIN) at `POST /api/users` or `PATCH
+  /// /api/users/{id}`, by the sanction register for the designer account it mints, by
+  /// `scripts/seed_admin.py`, by the owner at `POST /api/auth/change-password`, or through a
+  /// password link — so NULL alongside a NULL hash means nobody has ever set one.
   passwordSetAt      DateTime?
-  /// The account must set its own password before it does anything else. Set when an ADMIN types
-  /// a password for somebody (`POST /api/users`, and a password written through `PATCH
-  /// /api/users/{id}` for anybody but yourself), cleared the moment the owner sets their own.
+  /// The account must set its own password before it does anything else. Set by a provisioner
+  /// (MINISTRY_ADMIN, ADMIN, MASTER_ADMIN) at `POST /api/users` (on unless the body says false),
+  /// when `PATCH /api/users/{id}` sets somebody else's password or raises the flag, and by
+  /// `scripts/seed_admin.py`; cleared the moment the owner sets their own
+  /// (`POST /api/auth/change-password`, or a password link), and withdrawn by a provisioner's
+  /// `PATCH /api/users/{id}` sending `{mustChangePassword: false}` (which ends no session). NOT by
+  /// the sanction register since 2026-10-09: the account it mints holds a random password nobody
+  /// was told, so there is no shared secret to retire, and it is created with the flag off.
   ///
-  /// IT REPORTS, IT DOES NOT REFUSE, and that is the same decision `usageConsentGate` took one
-  /// column over, for the same reason: the only way to change a password is a route that needs a
-  /// bearer token, so refusing the sign-in would leave the account permanently unable to comply.
-  /// It rides out on `serialize_user`, both clients read it, and both send the person to the
-  /// change-password screen and nowhere else.
+  /// SINCE 2026-10-09 IT REFUSES AS WELL AS REPORTS. The sign-in still succeeds — the only way to
+  /// change a password is a route that needs a bearer token — but every other authenticated route
+  /// answers 401 with `X-Password-Change-Required: 1` outside `deps.PASSWORD_CHANGE_ALLOWED_ROUTES`
+  /// (see `deps.refuse_while_password_change_pending`), so a password somebody else typed cannot be
+  /// used for anything but replacing it. The account at `MASTER_ADMIN_EMAIL` is exempt, and an
+  /// account with no password is never held. It still rides out on `serialize_user`, and both
+  /// clients draw the change-password screen from it.
   mustChangePassword Boolean  @default(false)
   /// The first time this account actually got IN. `AccessRoster.firstSeenAt` and
   /// `DesignerRoster.firstSeenAt` answer the same question about an ADDRESS an admin invited;
@@ -247,6 +256,13 @@ model User {
   ///
   /// NULL means "nothing has ever been revoked", which is every account today; the check is
   /// skipped entirely for those, so this costs the hot path one `is None`.
+  ///
+  /// NOT THE ONLY WAY A SESSION ENDS, SINCE 2026-10-09. Every bearer token minted from that date
+  /// also carries the fingerprint of the password it was opened with (`security.CREDENTIAL_CLAIM`),
+  /// and `deps._user_from_bearer` refuses it once the account holds another — so ANY password
+  /// change retires the older sessions independently of this column, and `POST
+  /// /api/auth/change-password` writes none. Tokens minted before that date carry no fingerprint
+  /// and are ended only by this column, or by expiring.
   sessionsValidFrom  DateTime?
   createdAt    DateTime     @default(now())
   updatedAt    DateTime     @updatedAt

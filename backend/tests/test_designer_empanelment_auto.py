@@ -1746,6 +1746,9 @@ async def test_ending_an_empanelment_leaves_an_admin_alone_when_the_account_is_a
             "name": f"Aliased Admin {world['stamp']}",
             "password": API_PASSWORD,
             "role": "DESIGNER",
+            # A FINAL password: the account is promoted below, and since 2026-10-09 a promotion
+            # waits while a temporary one stands (``account_provisioning``, rule 5).
+            "mustChangePassword": False,
         },
         headers=_headers(world),
     )
@@ -1876,6 +1879,8 @@ async def test_ending_an_empanelment_leaves_an_admins_access_to_the_product_alon
             "name": f"Runs Workshops Too {world['stamp']}",
             "password": API_PASSWORD,
             "role": "DESIGNER",
+            # Final, for the same reason as the Gmail-alias case above: it is promoted next.
+            "mustChangePassword": False,
         },
         headers=_headers(world),
     )

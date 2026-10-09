@@ -507,7 +507,13 @@ def test_the_designer_directory_offers_no_admin_account_to_an_officer(monkeypatc
     assert {"ADMIN", "MASTER_ADMIN"} <= roles, (
         "the default must still admit admins — the two admin-adjacent doors depend on it"
     )
-    assert {"role": {"in": ["ADMIN", "MASTER_ADMIN"]}} in arms, arms
+    # THE ROSTER-EXEMPT ARM IS EVERY WORKSHOP ROLE BUT DESIGNER since 2026-10-09 — it read
+    # ["ADMIN", "MASTER_ADMIN"] and so hid the three directorate tiers the viewer write accepts.
+    # The narrow door above is unchanged by that, which is the half this test exists for.
+    assert {"role": {"in": designers_service.roster_exempt_workshop_roles()}} in arms, arms
+    assert set(designers_service.roster_exempt_workshop_roles()) == (
+        set(designers_service.workshop_capable_roles()) - {"DESIGNER"}
+    )
 
     # And the fifth door is the one that asks for the narrow set.
     source = inspect.getsource(sanction_routes.list_sanction_designers)

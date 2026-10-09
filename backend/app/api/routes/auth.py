@@ -2,7 +2,7 @@ import logging
 from datetime import UTC, datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from fastapi.encoders import jsonable_encoder
 from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token as google_id_token
@@ -14,7 +14,8 @@ from app.core.deps import (
     get_current_user,
     invalidate_cached_user,
     is_break_glass_master,
-    require_admin,
+    password_credential,
+    require_account_provisioner,
     role_rank,
     role_value,
 )
@@ -28,6 +29,11 @@ from app.schemas.auth import (
     TokenResponse,
 )
 from app.services import access_roster, credential_links, identity, usage
+from app.services.account_provisioning import (
+    GOOGLE_ONLY_LINK_DETAIL,
+    assert_may_reset_credentials,
+    issuer_still_manages,
+)
 from app.services.designers import ensure_empanelled, mark_roster_seen, roster_allows
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -429,6 +435,102 @@ def verify_google_token(token: str) -> dict[str, Any]:
     ) from last_error
 
 
+#: Two or more password accounts are filed under spellings of the one mailbox Google just verified.
+#: 409 and not a guess: which of them is "this person" is an administrator's call, and the person
+#: still has a way in that needs no guessing — the password of whichever account is theirs.
+GOOGLE_AMBIGUOUS_ACCOUNT_DETAIL = (
+    "More than one account on this site uses this Google mailbox under different spellings, so "
+    "signing in with Google cannot tell which one is yours. Sign in with your email address and "
+    "password instead, and ask an administrator to merge or correct the duplicate accounts."
+)
+
+#: The configured master admin signed in with Google and found, at the literal address, a password
+#: account that is not a master admin's. 409, and the account is not touched: promoting it would hand
+#: MASTER_ADMIN to whoever chose that password, and nothing in the API can take a master admin's
+#: password back. ``scripts/seed_admin.py`` can — it rewrites the hash, which also ends every session
+#: the old password opened — so the sentence names it. See :func:`_refuse_to_promote_a_password_account`.
+MASTER_ADDRESS_HOLDS_A_PASSWORD_ACCOUNT_DETAIL = (
+    "An account that signs in with a password somebody else set already sits at the master admin's "
+    "address, so signing in with Google cannot make it the master admin's account. Nothing was "
+    "changed. Whoever runs the server has to run scripts/seed_admin.py first: it gives that account "
+    "a new password and ends every session the old one opened. Then sign in again."
+)
+
+
+def _auth_provider(account: Any) -> str:
+    """``LOCAL`` or ``GOOGLE``, from a live row (a Prisma enum member) or a hand-built one (a str)."""
+    provider = getattr(account, "authProvider", None)
+    return str(getattr(provider, "value", provider) or "").upper()
+
+
+async def _local_account_on_the_mailbox(email: str) -> Any | None:
+    """The one LOCAL account filed under another spelling of this mailbox, or None.
+
+    Asked only after the literal lookup missed. It reads
+    ``access_roster.accounts_on_the_mailbox_for_sign_in``: the same answer as the
+    ``accounts_on_the_mailbox`` the allow-list's session revocation and its mirror guard trust —
+    every spelling of ONE mailbox (Gmail dots, ``+tags``, ``googlemail.com``, letter case) and no
+    part of anybody else's — but with the Gmail fold done by Postgres, so a sign-in reads the matching
+    accounts and not every Gmail account there is (2026-10-09). That function argues the equivalence.
+
+    LOCAL ONLY, as the owner ruled: these are accounts a provisioner made with a password for this
+    mailbox. A GOOGLE account under another spelling was itself made by a Google sign-in, and folding
+    one Google identity into another is not a case this decision covers.
+
+    A LOOKUP THAT COULD NOT ANSWER falls back to the old behaviour — a new account — and says so at
+    ERROR. The cost of that is the duplicate this function exists to prevent, which an administrator
+    can see and fix; refusing instead would lock every new Google user out of a deployment with more
+    than twenty thousand Gmail accounts.
+    """
+    accounts = await access_roster.accounts_on_the_mailbox_for_sign_in(email)
+    if accounts is None:
+        logger.error(
+            "auth: could not check every spelling of a Google mailbox for an existing password "
+            "account (the Gmail sweep was cut); a new account may be created beside one. Raise "
+            "access_roster.GMAIL_ACCOUNT_SWEEP_LIMIT."
+        )
+        return None
+    local = [account for account in accounts if _auth_provider(account) == "LOCAL"]
+    if len(local) > 1:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=GOOGLE_AMBIGUOUS_ACCOUNT_DETAIL
+        )
+    return local[0] if local else None
+
+
+def _refuse_to_promote_a_password_account(account: Any) -> None:
+    """409 when the master's Google sign-in would promote an account somebody else holds a password to.
+
+    THE ELEVATION IS WRITTEN ONTO TWO KINDS OF ACCOUNT ONLY (2026-10-09): one that is ALREADY a
+    master admin — the master signing in again, seeded with a password or not — and one with NO
+    password, which only a Google sign-in on this very mailbox could have made, so nobody else holds
+    a credential to it. Anything else at the configured address is an account a provisioner, the
+    sanction register before it refused the mailbox, or a reconfigured ``MASTER_ADMIN_EMAIL`` put
+    there, and its password belongs to whoever chose it: promoting it handed them a MASTER_ADMIN
+    session that no API door can take back, since nobody resets a master admin's password but the
+    master. The other doors no longer plant such an account (``POST /api/users`` and the address
+    change refuse the mailbox to all but a master admin, the register refuses it outright); this is
+    the defence beneath them, for whatever is already in the table.
+
+    LOGGED AT ERROR, because it is the state an operator must repair by hand: ``scripts/seed_admin.py``
+    takes the account over with a new password, and the next Google sign-in then finds a master admin.
+    The account's id and role are logged, never its password or hash.
+    """
+    if role_value(account) == "MASTER_ADMIN" or getattr(account, "passwordHash", None) is None:
+        return
+    logger.error(
+        "auth: the configured master admin signed in with Google and found account %s (role %s, "
+        "with a password somebody else set) at MASTER_ADMIN_EMAIL. It was NOT promoted. Run "
+        "scripts/seed_admin.py to take the account over, then sign in again.",
+        getattr(account, "id", None),
+        role_value(account),
+    )
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail=MASTER_ADDRESS_HOLDS_A_PASSWORD_ACCOUNT_DETAIL,
+    )
+
+
 async def login_with_google(token: str) -> tuple[Any, Any | None]:
     """The Google branch: verify, decide admission, and only then provision.
 
@@ -482,26 +584,53 @@ async def login_with_google(token: str) -> tuple[Any, Any | None]:
     # promote them by hand, which is exactly the manual step the roster exists to remove.
     rostered = await roster_allows(email)
 
-    # ── THE ACCOUNT IS STILL KEYED ON THE EXACT ADDRESS GOOGLE SENT, AND THAT IS A KNOWN GAP ──────
+    # ── WHICH ACCOUNT A GOOGLE IDENTITY SIGNS IN TO — THE OWNER'S DECISION OF 2026-10-09 ─────────
     #
-    # Both gates above now ask about the MAILBOX: `access_row` and `roster_allows` look up the
-    # literal address AND its Gmail-canonical form in one query, so an admin's dots no longer decide
-    # whether somebody may sign in (see `app.services.designers.canonical_email`). `User` is NOT a
-    # roster and is deliberately not part of that change — this line is an account-identity lookup,
-    # not an admission decision, and widening it would change which existing account a sign-in
-    # attaches to, which is not a question Fix 2 was asked to answer.
+    # Both gates above ask about the MAILBOX: `access_row` and `roster_allows` look up the literal
+    # address AND its Gmail-canonical form, so an admin's dots do not decide whether somebody may
+    # sign in. Account identity used to stop there: this lookup was the literal address alone, so an
+    # account a provisioner created at `sandy.craft3@gmail.com`, whose owner then signed in with
+    # Google as `sandycraft3@gmail.com`, was admitted and then MISSED, and a second `User` row was
+    # created for one person — their workshops split across two accounts with no merge path.
     #
-    # WHAT THAT LEAVES OPEN, so the next reader does not have to find it the hard way: an account
-    # created by hand through `POST /api/users` at `sandy.craft3@gmail.com`, whose owner then signs
-    # in through Google as `sandycraft3@gmail.com`, is admitted by the gates and then MISSES here —
-    # so a second `User` row is created for one person, and their workshops end up split across two
-    # accounts. It needs Google's own claim and an admin's typing to disagree, which is why it is
-    # rare; it is not impossible, and the fix is a decision about account identity (fold the two, or
-    # refuse the second and say so) rather than another canonicalisation call.
+    # NOW: the literal address first, and on a miss the one LOCAL account whose address is the same
+    # mailbox (``_local_account_on_the_mailbox``). Exactly one is signed in to; several is a refusal,
+    # because choosing between two accounts for one person is a decision for an administrator, not
+    # for a sort order. Safe because Google has verified that this caller controls the mailbox
+    # (``email_verified`` above), and every spelling the fold joins is, by Google's own published
+    # rule, delivered to that one mailbox — the fold is applied to nothing else.
+    #
+    # NEVER FOR THE CONFIGURED MASTER ADMIN (2026-10-09). The master's sign-in ends in MASTER_ADMIN
+    # being written onto whatever account it lands on, so a fold here would promote an account a
+    # provisioner made under another spelling of the master's mailbox — with the password that
+    # provisioner chose still on it — to the one tier nobody can manage. That needs only an account
+    # planted before the master's first Google sign-in on a deployment where the master's own row does
+    # not exist yet (a handover, an unseeded box), and it was reachable: ``is_master_email`` compared
+    # strings. So the master signs in to the literal address or to a new account there, and the
+    # elevation below is written only onto an account found under that literal address — and only
+    # onto one that is already a master admin or holds no password, since a password at that address
+    # may be somebody else's (``_refuse_to_promote_a_password_account``, also 2026-10-09).
     existing = await db.user.find_unique(where={"email": email})
+    found_literally = existing is not None
+    if existing is None and role != "MASTER_ADMIN":
+        existing = await _local_account_on_the_mailbox(email)
+    if existing and role == "MASTER_ADMIN" and found_literally:
+        # BEFORE ANY WRITE, the avatar included: an account at the master's address that is not a
+        # master admin and holds a password somebody else chose is refused, not promoted.
+        _refuse_to_promote_a_password_account(existing)
     if existing:
-        data = {"name": name, "avatarUrl": avatar_url, "authProvider": "GOOGLE"}
-        if role == "MASTER_ADMIN":
+        # AN ACCOUNT WITH A PASSWORD KEEPS WHAT A PROVISIONER GAVE IT. Signing in with Google is a
+        # second way into the same account, not a conversion: the hash stays (the person may still
+        # sign in with it), ``authProvider`` stays LOCAL (``passwordSetAt`` and the provider are how
+        # the users screen says whether a password link makes sense), the admin-typed name stays (a
+        # Google display name is the owner's to change at will, an institution's record is not), and
+        # ``mustChangePassword`` stays — the temporary password is still live and still has to go.
+        # Only the avatar, which nobody types, is refreshed. A Google-only account behaves exactly
+        # as it always did.
+        data: dict[str, Any] = {"avatarUrl": avatar_url}
+        if existing.passwordHash is None:
+            data.update({"name": name, "authProvider": "GOOGLE"})
+        if role == "MASTER_ADMIN" and found_literally:
             data["role"] = "MASTER_ADMIN"
             data["canManageQuestionnaire"] = True
         elif rostered and role_rank(existing) < ROLE_RANK["DESIGNER"]:
@@ -511,8 +640,10 @@ async def login_with_google(token: str) -> tuple[Any, Any | None]:
             # their own next sign-in — losing their admin rights to a row they added to help
             # somebody else, with the demotion invisible in the login response.
             data["role"] = "DESIGNER"
+        # By id, not by the address Google sent: an account found through the mailbox fold is
+        # stored under a different spelling, and a write keyed on Google's would miss it.
         updated = await db.user.update(
-            where={"email": email},
+            where={"id": existing.id},
             data=data,
         )
         # Sign-in is a WRITE to the identity the rest of the app authorises against: it can rename
@@ -743,7 +874,10 @@ async def login(payload: LoginRequest) -> dict[str, Any]:
     #
     # WHERE THE ENFORCEMENT ACTUALLY LIVES, said plainly so nobody adds a second copy: in the
     # clients, at the screen. A server-side belt — if one is ever wanted — belongs on the PROTECTED
-    # routes as a dependency, never as a refusal at this door, for reason 1.
+    # routes as a dependency, never as a refusal at this door, for reason 1. The forced password
+    # change got exactly that belt on 2026-10-09 (``deps.refuse_while_password_change_pending``,
+    # inside ``get_current_user``), and its allow-list includes the consent routes so the two gates
+    # can be owed at the same sign-in; this door still mints the token either way.
     #
     # NOTHING IS WRITTEN HERE. Reading the gate is a `getattr` and a string comparison on the row
     # already in hand; the sign-in path pays no query for it, and this line adds no failure mode to
@@ -759,11 +893,23 @@ async def login(payload: LoginRequest) -> dict[str, Any]:
             payload[USAGE_CONSENT_GATE_KEY]["state"],
         )
 
-    access_token = create_access_token(
+    return {"accessToken": _session_token(user), "tokenType": "bearer", "user": payload}
+
+
+def _session_token(user: Any) -> str:
+    """The session token both doors hand out — the sign-in, and the change-password answer.
+
+    BOUND TO THE PASSWORD IT WAS OPENED WITH (2026-10-09): ``password_credential`` is the
+    fingerprint of the hash on the row in hand, so a token minted from a row read just before a
+    reset carries the OLD password's fingerprint and is refused on first use
+    (``deps._user_from_bearer``). On the password path that row is the one the password was verified
+    against; on the Google path it is the row the sign-in just wrote.
+    """
+    return create_access_token(
         subject=user.id,
         extra_claims={"email": user.email, "role": enum_value(user.role)},
+        credential=password_credential(user),
     )
-    return {"accessToken": access_token, "tokenType": "bearer", "user": payload}
 
 
 @router.post("/logout")
@@ -805,26 +951,55 @@ def _link_payload(issued: credential_links.DeliveredLink) -> dict[str, Any]:
     }
 
 
+def _is_google_only(account: Any) -> bool:
+    """No password, and Google is how it signs in — so a password link has nothing to do."""
+    return account.passwordHash is None and _auth_provider(account) == "GOOGLE"
+
+
 @router.post("/password-links", status_code=status.HTTP_201_CREATED)
 async def issue_password_link(
-    payload: IssuePasswordLinkRequest, current_user: Any = Depends(require_admin)
+    payload: IssuePasswordLinkRequest, current_user: Any = Depends(require_account_provisioner)
 ) -> dict[str, Any]:
-    """Mint a set-password link for another account. Admin only.
+    """Mint a set-password link for another account: an account provisioner, for an account it may
+    manage, never for itself.
 
-    ADMIN AND NOT MASTER ADMIN, matching ``POST /api/users`` — the account that can CREATE somebody
-    with a password of the admin's choosing can obviously hand them a link to change it, and gating
-    the safer of the two more tightly would only push admins back to typing passwords for people.
+    **THE TARGET IS AUTHORISED NOW, AND THAT CLOSED A TAKEOVER (2026-10-09).** This route used to ask
+    only whether the CALLER was an admin, never whom the link was for — and ``POST /auth/set-password``
+    has no role check by design, because the link is the whole authority. So any ADMIN could mint a
+    link for a MASTER_ADMIN or a peer ADMIN, redeem it, own that account and sign its holder out of
+    every device. It now asks ``account_provisioning.assert_may_reset_credentials``: the same
+    ``assert_can_manage_target`` that ``PATCH /users/{id}`` asks, plus the own-account refusal — a
+    link to yourself is a password set without the current one, the takeover
+    ``POST /auth/change-password`` exists to prevent.
 
-    THE THROTTLE IS PER SUBJECT, NOT PER ADMIN. Redeeming a link revokes the account's sessions, so
-    without it an administrator could sign a colleague out of their own laptop as often as they
-    could press the button — the gap cxa-cms has and this deliberately does not copy. Two admins
+    PROVISIONERS AND NOT ADMINS ONLY, matching ``POST /api/users``: whoever can create somebody with a
+    password of their choosing can hand them a link to choose their own, and gating the safer of the
+    two more tightly would only push people back to typing passwords for each other.
+
+    A GOOGLE ACCOUNT WITH NO PASSWORD IS A 422, not a link: there is nothing to reset, and a link
+    would quietly give a Google-only account a second way in. The PURPOSE is
+    ``credential_links.purpose_for`` — INVITE (72 h) for an account nobody has used yet, RESET (2 h)
+    for one somebody has.
+
+    THE THROTTLE IS PER SUBJECT, NOT PER ISSUER. Redeeming a link revokes the account's sessions, so
+    without it a provisioner could sign a colleague out of their own laptop as often as they could
+    press the button — the gap cxa-cms has and this deliberately does not copy. Two provisioners
     taking turns is the same harm, which is why the budget belongs to the person being reset.
     """
     target = await db.user.find_unique(where={"id": payload.userId})
     if target is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    assert_may_reset_credentials(current_user, target)
+    if _is_google_only(target):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=GOOGLE_ONLY_LINK_DETAIL
+        )
     try:
-        issued = await credential_links.issue_link(user=target, issued_by_id=current_user.id)
+        issued = await credential_links.issue_link(
+            user=target,
+            purpose=credential_links.purpose_for(target),
+            issued_by_id=current_user.id,
+        )
     except credential_links.IssueThrottled as exc:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -834,28 +1009,43 @@ async def issue_password_link(
             ),
             headers={"retry-after": str(exc.retry_after_minutes * 60)},
         ) from exc
+    # Ids, never the link: the link is a credential and the log is not a place for one.
     logger.info(
-        "auth: %s issued a %s password link for %s",
-        current_user.email,
+        "auth: %s issued a %s password link %s for account %s",
+        current_user.id,
         issued.purpose,
-        target.email,
+        issued.id,
+        target.id,
     )
     return _link_payload(issued)
 
 
 @router.post("/password-links/{link_id}/revoke")
 async def revoke_password_link(
-    link_id: str, current_user: Any = Depends(require_admin)
+    link_id: str, current_user: Any = Depends(require_account_provisioner)
 ) -> dict[str, bool]:
     """Withdraw a link that has not been used yet — "I pasted that into the wrong window".
 
     The fingerprint alone cannot answer this: the account's password has not changed, so the token
     still verifies and would go on working until it expired. This is the reason the table exists.
+
+    AUTHORISED ON THE ACCOUNT THE LINK IS FOR, exactly as issuing is, so a provisioner can withdraw
+    only links it could have issued. A missing link is a 404 BEFORE anything is authorised, which
+    reveals nothing: the id is an unguessable cuid from an issuing response.
     """
+    row = await credential_links.link_row(link_id)
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Link not found")
+    target = await db.user.find_unique(where={"id": row.userId})
+    if target is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Link not found")
+    assert_may_reset_credentials(current_user, target)
     found = await credential_links.revoke_link(link_id)
     if not found:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Link not found")
-    logger.info("auth: %s revoked password link %s", current_user.email, link_id)
+    logger.info(
+        "auth: %s revoked password link %s for account %s", current_user.id, link_id, target.id
+    )
     return {"ok": True}
 
 
@@ -874,8 +1064,41 @@ async def check_set_password_token(token: str = "") -> dict[str, Any]:
     "ask for another", revoked means "ask the administrator what happened", used means "you already
     set it, go and sign in" — and a single "invalid link" leaves a person with none of them.
     """
-    verdict = await credential_links.describe_token(token)
+    verdict = await _link_verdict(token)
     return {"valid": verdict.ok, "reason": verdict.reason, "purpose": verdict.purpose}
+
+
+async def _link_verdict(raw: str | None) -> credential_links.TokenVerdict:
+    """``credential_links.describe_token``, plus the one question it cannot ask on its own: may the
+    account that ISSUED this link still manage the account it is for?
+
+    A link is authorised once, at issue, against tiers that can move before it is used. Promoted past
+    its issuer's reach, an account's link would let the issuer set a password they could never have
+    set by any other door — a ministry admin's invitation, redeemed after an admin made the invitee
+    an ADMIN, is a ministry admin choosing an admin's password. ``PATCH /users/{id}`` withdraws the
+    links of an account it promotes; this catches a rank that moved any other way, and an issuer who
+    was demoted. Answered as REVOKED, with that reason's sentence ("This link was withdrawn. Ask the
+    administrator for a new one."), because that is what it now is: the next action is a new link
+    from somebody who may issue one. See ``account_provisioning.issuer_still_manages`` for who still
+    may — a master admin always, a link nobody issued always.
+
+    Read on both the check and the redemption, so the screen never draws a password box for a link
+    the redemption would refuse.
+    """
+    verdict = await credential_links.describe_token(raw)
+    if not verdict.ok or verdict.issued_by_id is None:
+        return verdict
+    issuer = await db.user.find_unique(where={"id": verdict.issued_by_id})
+    target = await db.user.find_unique(where={"id": verdict.user_id})
+    if target is not None and not issuer_still_manages(issuer, target):
+        # Ids only, like every other line about a credential here.
+        logger.info(
+            "auth: refused password link for account %s: its issuer %s can no longer manage it",
+            verdict.user_id,
+            verdict.issued_by_id,
+        )
+        return credential_links.TokenVerdict(False, credential_links.REVOKED)
+    return verdict
 
 
 @router.post("/set-password")
@@ -884,7 +1107,8 @@ async def set_password(payload: SetPasswordRequest) -> dict[str, bool]:
 
     ``describe_token`` runs the signature, the shape, the expiry, the row (revoked? already used?)
     AND the credential fingerprint. A caller that skipped the last of those would have built a link
-    that works for ever.
+    that works for ever. :func:`_link_verdict` adds a fifth since 2026-10-09: the account that issued
+    the link must still be able to manage this one, or the link reads as withdrawn.
 
     ── WHAT A REDEMPTION WRITES, AND WHY EACH OF THE FIVE IS THERE ───────────────────────────────
 
@@ -896,11 +1120,19 @@ async def set_password(payload: SetPasswordRequest) -> dict[str, bool]:
     * ``sessionsValidFrom`` — **SESSION REVOCATION, PORTED FROM cxa-cms AND THE REASON THE COLUMN
       EXISTS.** The usual reason somebody is resetting is that a session they no longer control is
       live somewhere; leaving it live would make the reset theatre. Every token minted before this
-      instant is refused by ``deps._user_from_bearer``.
+      instant is refused by ``deps._user_from_bearer`` — and, since 2026-10-09, every token minted
+      with the old password whenever it was minted, because the new hash changes the fingerprint
+      each token carries. The stamp is taken AFTER bcrypt, just before the write, so a sign-in racing
+      the redemption cannot post-date it by the length of the hash.
     * the ``usedAt`` stamp on the row — belt to the fingerprint's braces, and what lets the screen
       say "this link has already been used" instead of a bare refusal.
+
+    **THE TEMPORARY PASSWORD CANNOT BE CHOSEN AGAIN HERE** while the account still carries
+    ``mustChangePassword`` (2026-10-09) — the same rule ``change_password`` applies, so a link is not
+    a way to "change" a shared secret into itself and clear the flag. The link stays good for a second
+    try: nothing is written before the refusal.
     """
-    verdict = await credential_links.describe_token(payload.token)
+    verdict = await _link_verdict(payload.token)
     if not verdict.ok:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -908,11 +1140,19 @@ async def set_password(payload: SetPasswordRequest) -> dict[str, bool]:
                 verdict.reason or "", "This password link is not valid."
             ),
         )
-    now = datetime.now(UTC)
+    account = await db.user.find_unique(where={"id": verdict.user_id})
+    if (
+        account is not None
+        and account.mustChangePassword
+        and verify_password(payload.password, account.passwordHash)
+    ):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=SAME_PASSWORD_DETAIL)
+    password_hash = hash_password(payload.password)
+    now = datetime.now(UTC)  # after bcrypt — see the docstring
     await db.user.update(
         where={"id": verdict.user_id},
         data={
-            "passwordHash": hash_password(payload.password),
+            "passwordHash": password_hash,
             "passwordSetAt": now,
             "mustChangePassword": False,
             "sessionsValidFrom": now,
@@ -923,6 +1163,19 @@ async def set_password(payload: SetPasswordRequest) -> dict[str, bool]:
     logger.info("auth: password set through a %s link for account %s", verdict.purpose, verdict.user_id)
     return {"ok": True}
 
+
+#: A new password that IS the one the account holds now. Shared by link redemption and
+#: ``change_password``, which refuse it for the same reason: the forced change exists to retire a
+#: password somebody else chose, and "changing" it to itself would clear the flag and keep the secret.
+SAME_PASSWORD_DETAIL = (
+    "Choose a password different from the one you have now. A password somebody else gave you has "
+    "to be replaced, not typed again."
+)
+
+#: A current password that does not match. 400, NOT 401, since 2026-10-09: the web client tears the
+#: whole session down on ANY 401 sent with a token, so one typo in the change-password screen's
+#: "current password" box used to sign the person out of the screen they were trying to finish.
+CURRENT_PASSWORD_WRONG_DETAIL = "Current password is incorrect"
 
 #: One sentence per refusal, because each has a different next action. Kept beside the route rather
 #: than in the service: the service answers WHY in a word a client can branch on, and the words a
@@ -937,9 +1190,40 @@ _SET_PASSWORD_REFUSALS = {
 }
 
 
+#: ``change_password``'s answer to an account with no password. Two sentences, chosen by provider,
+#: because the remedy differs and a wrong one sends the person to a refusal: a Google account has
+#: nothing to change and no link to ask for (``POST /auth/password-links`` refuses one, 422), while a
+#: password-less LOCAL account can be sent a link.
+GOOGLE_ACCOUNT_HAS_NO_PASSWORD_DETAIL = (
+    "This account signs in with Google and has no password to change."
+)
+NO_PASSWORD_YET_DETAIL = (
+    "This account has no password to change. Ask an administrator for a set-password link."
+)
+
+#: The header ``change_password``'s answer carries the caller's NEW session token in (2026-10-09).
+#:
+#: A HEADER AND NOT A FIELD IN THE BODY, AND THE REASON IS A CLIENT ALREADY IN PEOPLE'S HANDS. The
+#: body has been ``{"ok": true}`` since the route existed, and Android builds 0.0.6 to 0.0.15 decode
+#: it as ``Map<String, Boolean>``: a string beside ``ok`` makes that decode throw AFTER the password
+#: has changed, and the gate shows the decoder's message — which quotes the whole token — as a
+#: change that failed. Those builds never read this header, so to them the answer is byte for byte
+#: what it always was; their next request is one plain 401, because the token they hold is bound to
+#: the old password, and the person signs in again with the one they just chose. The web and the
+#: next Android build read the header and switch to the token before they re-read ``/me``.
+#:
+#: IT MUST BE IN ``expose_headers`` IN app/main.py — imported there, not retyped — or the browser
+#: hides it from JavaScript while the handset reads it, and the web signs the person out of the very
+#: session the change was made from: the divergence no server test can see unless it sends an
+#: ``Origin``.
+SESSION_TOKEN_HEADER = "X-Session-Token"
+
+
 @router.post("/change-password")
 async def change_password(
-    payload: ChangePasswordRequest, current_user: Any = Depends(get_current_user)
+    payload: ChangePasswordRequest,
+    response: Response,
+    current_user: Any = Depends(get_current_user),
 ) -> dict[str, bool]:
     """The signed-in account replacing its own password. The route ``mustChangePassword`` sends
     somebody to.
@@ -949,13 +1233,10 @@ async def change_password(
     replace it" — and the person always has the password, because they used it to get the token they
     are calling this with.
 
-    AN ACCOUNT WITH NO PASSWORD CANNOT USE THIS ROUTE and is told which route it should use. There
-    is nothing to prove here, and accepting an empty current password would turn a stolen Google
-    session into a permanent password on the account.
-
-    IT DOES NOT REVOKE SESSIONS, unlike a link redemption, and the difference is who is asking. A
-    person changing their own password from inside a session they are using has not lost control of
-    anything; signing them out of their own phone for tidiness is a worse answer than leaving it.
+    AN ACCOUNT WITH NO PASSWORD CANNOT USE THIS ROUTE and is told what it can do instead
+    (:data:`GOOGLE_ACCOUNT_HAS_NO_PASSWORD_DETAIL`, :data:`NO_PASSWORD_YET_DETAIL`). There is nothing
+    to prove here, and accepting an empty current password would turn a stolen Google session into a
+    permanent password on the account.
 
     **AND THE PER-ACCOUNT GUESSING BUDGET CLOSES THE OTHER HALF OF THAT SAME ARGUMENT, 2026-09-03.**
     The paragraph above says this route exists so that a stolen session cannot become a permanent
@@ -975,13 +1256,38 @@ async def change_password(
     wrong password, so somebody who types their own password correctly spends nothing however often
     they change it. The 400 above is not charged either: an account with no password to compare
     against has had nothing guessed at it.
+
+    **TWO ANSWERS CHANGED ON 2026-10-09, BOTH 400.** A wrong current password is a 400 rather than a
+    401 — still charged to the budget — because the web client signs the whole session out on any
+    401, so one typo here used to throw the person out of the very screen the flag holds them on. And
+    a new password equal to the current one is refused (not charged — it is not a guess), because
+    accepting it let the forced change be "completed" by typing the administrator's temporary
+    password twice, which clears the flag and keeps the shared secret.
+
+    **AND EVERY OTHER SESSION OF THE ACCOUNT ENDS, WHILE THIS ONE CONTINUES ON A NEW TOKEN (also
+    2026-10-09).** A session token is minted AFTER the write, so it carries the new password's
+    fingerprint, while every token minted with the old one — the person's other devices, and anybody
+    else's — is refused from its next request (``deps._user_from_bearer``). This route used to leave
+    them all running, on the argument that a person changing their own password from inside their
+    own session has lost control of nothing. That holds for the person and fails for the password: a
+    forced change retires a password somebody else typed and sent, and every session opened with
+    it — the provisioner's, anybody's who read the chat it went over — was RELEASED by the change
+    rather than ended, with full access for up to seven days. No ``sessionsValidFrom`` is written:
+    the fingerprint retires exactly the sessions the old password opened, and a watermark stamped
+    here would also refuse the new token, whose ``iat`` falls in the same wall second.
+
+    **THE NEW TOKEN RIDES IN THE ``X-Session-Token`` HEADER, AND THE BODY IS STILL EXACTLY
+    ``{"ok": true}``.** See :data:`SESSION_TOKEN_HEADER` for the shipped handsets that break on any
+    second field in this body. A client that does not adopt the token meets one plain 401 and signs
+    in again with the password just chosen.
     """
     if current_user.passwordHash is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
-                "This account has no password to change. Ask an administrator for a "
-                "set-password link."
+                GOOGLE_ACCOUNT_HAS_NO_PASSWORD_DETAIL
+                if _auth_provider(current_user) == "GOOGLE"
+                else NO_PASSWORD_YET_DETAIL
             ),
         )
     allowed, _retry = account_credential_attempt(current_user.id)
@@ -995,18 +1301,28 @@ async def change_password(
         )
     if not verify_password(payload.currentPassword, current_user.passwordHash):
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail="Current password is incorrect"
+            status_code=status.HTTP_400_BAD_REQUEST, detail=CURRENT_PASSWORD_WRONG_DETAIL
         )
     # The password was right, so nothing was spent — the same refund, on the same rule, as the
     # sign-in path. Everything from here down is a write that cannot be a wrong password.
     account_credential_refund(current_user.id)
-    await db.user.update(
+    if verify_password(payload.newPassword, current_user.passwordHash):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=SAME_PASSWORD_DETAIL)
+    password_hash = hash_password(payload.newPassword)
+    updated = await db.user.update(
         where={"id": current_user.id},
         data={
-            "passwordHash": hash_password(payload.newPassword),
+            "passwordHash": password_hash,
             "passwordSetAt": datetime.now(UTC),
             "mustChangePassword": False,
         },
     )
     invalidate_cached_user(current_user.id)
+    if updated is None:  # deleted between authenticating this request and the write
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="User no longer exists"
+        )
+    # Minted from the row the write returned, so it carries the NEW password's fingerprint — the one
+    # session the change does not end. In the header, never the body: see SESSION_TOKEN_HEADER.
+    response.headers[SESSION_TOKEN_HEADER] = _session_token(updated)
     return {"ok": True}

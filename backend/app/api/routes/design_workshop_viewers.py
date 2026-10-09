@@ -25,6 +25,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from app.core.db import db
 from app.core.deps import require_admin
 from app.schemas.design_workshop_viewers import DesignWorkshopViewersIn
+from app.services import design_workshop_posts as posts
 from app.services.design_workshop_viewers import (
     eligible_viewers,
     replace_viewers,
@@ -51,7 +52,10 @@ async def _workshop_or_404(workshop_id: str) -> Any:
 @router.get("/eligible-viewers")
 async def list_eligible_viewers(
     search: str | None = Query(None, max_length=120),
-    _: Any = Depends(require_admin),
+    # The workshop these accounts would be granted on, when it already exists — see the last
+    # paragraph of the docstring.
+    workshopId: str | None = Query(None, max_length=64),
+    current_user: Any = Depends(require_admin),
 ) -> dict[str, Any]:
     """The accounts that may be given access to a design workshop at all.
 
@@ -75,8 +79,20 @@ async def list_eligible_viewers(
     ``truncated`` in the answer says the list was cut. Both clients must say so when it is true and
     say nothing when it is false; that is the whole contract, and an empty list with no explanation
     is this repository's most repeated bug class.
+
+    **THE CALLER IS LEFT OUT WHEN ``workshopId`` IS SENT, AND ONLY THEN (2026-10-09).** This list
+    feeds two doors that disagree about the reader. The viewers PUT below works on a workshop that
+    exists, and granting yourself designer access there is a 409 (``services/design_workshop_posts``)
+    — so offering the reader would be offering a refusal. ``POST /design-workshops`` reads the same
+    list for its create form, and there the creator naming themselves is allowed: they are
+    subtracted before the eligibility rule, no viewer row is written for them, and naming themselves
+    the lead copies their own profile into stage 1. A client that sends no ``workshopId`` gets the
+    list exactly as before. The id is not looked up; it says which door the list feeds.
     """
-    return await eligible_viewers(search=search)
+    return await eligible_viewers(
+        search=search,
+        exclude_user_id=current_user.id if (workshopId or "").strip() else None,
+    )
 
 
 @router.get("/{workshop_id}/viewers")
@@ -107,8 +123,21 @@ async def set_viewers(
     Idempotent: saving an unchanged screen writes nothing. Naming the creator is harmless. An
     unknown or ineligible id refuses the entire call with a 422 naming the account, never a silent
     skip — see ``services/design_workshop_viewers``.
+
+    THREE MORE REFUSALS, ALL ABOUT THIS WORKSHOP (2026-10-09, ``services/design_workshop_posts``):
+
+    * **409** for adding somebody who is the workshop's inspector, Assistant Director or Regional
+      Director — whoever inspects or supervises a workshop does not write it;
+    * **409** for an admin adding themselves. Refused as an ACT, not a state: an admin somebody else
+      put on the list may re-save it with themselves still on it;
+    * **403** for an admin who holds one of those posts here, whatever the body says, asked before
+      the list is read or written: the designer team is part of the workshop they read and do not
+      change.
+
+    The two 409s join the 422's sentences when both kinds arise, so one trip still names everything.
     """
     record = await _workshop_or_404(workshop_id)
+    await posts.refuse_a_holders_write(workshop_id, current_user)
     viewers = await replace_viewers(
         workshop_id,
         payload.userIds,

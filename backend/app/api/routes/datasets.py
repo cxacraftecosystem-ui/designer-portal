@@ -92,6 +92,8 @@ from app.core.deps import (
     is_admin,
     is_break_glass_master,
     is_master_admin,
+    password_change_pending,
+    password_credential,
     require_dataset_admin,
 )
 from app.core.security import create_access_token, verify_password
@@ -683,6 +685,13 @@ _TOKEN_THROTTLED_DETAIL = (
     "a correct password does not count against this limit."
 )
 
+#: An account still holding a password somebody else chose for it. 403 rather than 401: the
+#: credential is right, and a job that retried on a 401 would only be refused the same way again.
+DATASET_TOKEN_NEEDS_OWN_PASSWORD_DETAIL = (
+    "This account must choose its own password before it can be issued a dataset token. Sign in to "
+    "the web app, set a new password when asked, then request the token again with that password."
+)
+
 
 @router.post("/token")
 async def mint_dataset_token(payload: LoginRequest) -> dict[str, Any]:
@@ -803,12 +812,36 @@ async def mint_dataset_token(payload: LoginRequest) -> dict[str, Any]:
     # before the mint, so a barred account leaves with a refusal instead of a token. See the
     # docstring for why it sits after the rank check rather than before it.
     await assert_access_admits(user.email, is_master=is_break_glass_master(user))
+    # ── AND NOT FOR A PASSWORD SOMEBODY ELSE CHOSE (2026-10-09) ──────────────────────────────────
+    #
+    # This door turns an email and a password into a THIRTY-DAY credential over the whole
+    # repository, and it never looked at ``mustChangePassword`` — so a temporary password an
+    # administrator typed for somebody, and which that person had been told to replace, was enough
+    # to take one. A machine credential has no screen to send anybody to, so the answer is a
+    # refusal with the remedy in it. AFTER the access gate on purpose: a barred account must read
+    # the barring sentence, not be sent to change a password that is not what stands in its way.
+    # ``password_change_pending`` is the predicate the session gate uses, so the one account exempt
+    # there — the configured master admin — is the one exempt here; a second master admin holding a
+    # temporary password is refused like anybody else. A token minted BEFORE the flag was raised is
+    # not held but retired: raising it stamps ``sessionsValidFrom``, and the password the owner then
+    # chooses changes the fingerprint the token carries. See the SCOPED TOKENS banner in
+    # app/core/deps.py for what the operator sees.
+    if password_change_pending(user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=DATASET_TOKEN_NEEDS_OWN_PASSWORD_DETAIL,
+        )
 
     minutes = get_settings().dataset_token_expires_minutes
     token = create_access_token(
         subject=user.id,
         extra_claims={"scope": DATASET_READ_SCOPE, "email": user.email},
         expires_minutes=minutes,
+        # BOUND TO THE PASSWORD IT WAS MINTED WITH (2026-10-09), like every session token: the day
+        # the account's password changes — by its owner, a provisioner, a link — this credential is
+        # refused with a plain 401 and the job's operator mints a new one with the new password.
+        # See the SCOPED TOKENS banner in app/core/deps.py.
+        credential=password_credential(user),
     )
     return {
         "accessToken": token,

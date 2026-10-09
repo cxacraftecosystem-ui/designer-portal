@@ -51,10 +51,12 @@ import java.io.File
  *
  * INSPECTOR is rank 37, BETWEEN designer (35) and professor (40). Every threshold instinct therefore
  * admits the six tiers above it — professor, the three directorate posts, admin and master admin —
- * and the inspection surface refuses all six BY NAME, because `INSPECTION_ROLES` is a set with one
- * member. A default written as `rank >= RANK_INSPECTOR` would open an inspector's deck for the
- * master admin and look entirely reasonable in review. Walking every tier is what makes that a
- * failure with a name on it instead of a deck nobody notices they were handed.
+ * and the handset's inspection door admits none of the six, because `canInspectDesignWorkshops` is
+ * set membership on one tier. (Since 2026-10-09 the SERVER's inspection surface also admits the
+ * three administering tiers, by appointment; this handset leaves that to the web under D5, so on this
+ * phone their deck is still the designer's.) A default written as `rank >= RANK_INSPECTOR` would open
+ * an inspector's deck for the master admin and look entirely reasonable in review. Walking every tier
+ * is what makes that a failure with a name on it instead of a deck nobody notices they were handed.
  */
 class WalkthroughDecksTest {
 
@@ -255,13 +257,14 @@ class WalkthroughDecksTest {
         // THE INSPECTOR / REVIEWER TIER AND NOBODY ELSE. Written as a sweep over every tier rather
         // than as two assertions, because the interesting half is the ten answers that are NOT the
         // inspector's deck: the rank ladder puts six tiers ABOVE 37, every threshold instinct admits
-        // them, and the inspection surface refuses all six by name.
+        // them, and the handset's inspection door admits none of them (an admin appointed to inspect
+        // does that on the web — D5).
         everyRole.forEach { role ->
             val expected = if (role == "INSPECTOR") "inspector" else "designer"
             assertEquals(
-                "a $role opens on the wrong walkthrough. The inspection surface is set membership " +
-                    "on {INSPECTOR} and is refused to an admin, the master admin and a professor " +
-                    "by name, so this default is a set and never a rank floor.",
+                "a $role opens on the wrong walkthrough. The handset's inspection door is set " +
+                    "membership on {INSPECTOR} — it refuses a professor, and leaves an admin appointed " +
+                    "to inspect to the web — so this default is a set and never a rank floor.",
                 expected,
                 walkthroughDeckFor(account(role)).id
             )

@@ -170,6 +170,8 @@ export function MediaPreviewTile({
   action,
   onRemove,
   removeLabel = "Discard",
+  removeHeld = false,
+  removeDescribedBy,
   progress = null,
   failed = false,
   statusLabel = null,
@@ -180,6 +182,14 @@ export function MediaPreviewTile({
   action?: ReactNode;
   onRemove?: () => void;
   removeLabel?: string;
+  /**
+   * Draw the remove control HELD — there, and disabled — rather than live: a stored file whose
+   * removal this reader would be refused (a post holder's, see `HeldPostNotice`). Held and not
+   * hidden, so the tile still says the file can be removed by somebody; `removeDescribedBy` names the
+   * region that says why, and the caller puts a word on the tile (`statusLabel`).
+   */
+  removeHeld?: boolean;
+  removeDescribedBy?: string;
   /** 0..1 while this file is being pre-uploaded; null when there is no transfer to show. */
   progress?: number | null;
   failed?: boolean;
@@ -261,13 +271,15 @@ export function MediaPreviewTile({
           {onRemove ? (
             <button
               type="button"
+              disabled={removeHeld}
               onClick={(event) => {
                 event.stopPropagation();
-                onRemove();
+                if (!removeHeld) onRemove();
               }}
               aria-label={`${removeLabel} ${item.name}`}
+              aria-describedby={removeHeld ? removeDescribedBy : undefined}
               title={`${removeLabel} ${item.name}`}
-              className="grid h-7 w-7 shrink-0 place-items-center rounded-full border border-line-200 bg-card text-ink-muted transition hover:border-red-300 hover:bg-red-50 hover:text-red-700"
+              className="grid h-7 w-7 shrink-0 place-items-center rounded-full border border-line-200 bg-card text-ink-muted transition enabled:hover:border-red-300 enabled:hover:bg-red-50 enabled:hover:text-red-700 disabled:cursor-not-allowed disabled:opacity-60"
             >
               <X className="h-4 w-4" aria-hidden />
             </button>

@@ -231,12 +231,14 @@ const STATUS_OPTIONS = [
  * The two doors have DIFFERENT audiences and neither contains the other: `/officers` is
  * `canAssignWorkshopOversight` = {MINISTRY_ADMIN, ADMIN, MASTER_ADMIN}, which refuses an Assistant
  * Director and a Regional Director by name ("the supervised must not choose the supervisor"), while
- * `/officers/monitored` is `canReadWorkshopOversight` = {ASSISTANT_DIRECTOR, REGIONAL_DIRECTOR,
- * MINISTRY_ADMIN}, which refuses an admin by name. So an unfiltered list would send an Assistant
- * Director — the tier this whole explainer exists for — to a padlock panel, which is a worse answer
- * than the empty list it replaces. `canAccessRoute` is asked rather than the two predicates being
- * re-listed here, so a row cannot drift from the guard that actually decides: the same one-line fix
- * `guide-tracks-unit.spec.ts` names for `GuideOutro`'s tiles.
+ * `/officers/monitored` is `canReadWorkshopOversight` — every account that may be named in either
+ * post: the two directorate posts and, since 2026-10-09, those same three administering tiers. So
+ * an unfiltered list would send an Assistant Director — the tier this whole explainer exists for —
+ * to a padlock panel on `/officers`, which is a worse answer than the empty list it replaces.
+ * `canAccessRoute` is asked rather than the two predicates being re-listed here, so a row cannot
+ * drift from the guard that actually decides: the same one-line fix `guide-tracks-unit.spec.ts`
+ * names for `GuideOutro`'s tiles — and it is why nothing here had to change when the second door
+ * opened to the admins.
  *
  * IT IS NOT THE WHOLE TEST, THOUGH. `canAccessRoute` admits an ADMIN to `/officers`, and an admin's
  * list is not row-scoped at all — see `emptyScopeDoors`, which is where that arm lives and where the
@@ -1661,6 +1663,14 @@ function DesignWorkshopsPageBody() {
 
             React state rather than a FormData name, like `templateId` above it and for the same
             reason: a themed dropdown is a `<button>` and submits nothing of its own.
+
+            THE READER IS OFFERED HERE, AND NO `excludeUserIds` IS PASSED, ON PURPOSE. The pickers on
+            an EXISTING workshop leave the reader out because naming yourself there is the
+            self-appointment the server answers with a 409. A create is not that act:
+            `POST /design-workshops` subtracts the creator from `designerUserIds` before it validates
+            anything and writes no viewer row for them — their access is `createdById` — so an admin
+            ticking themselves as the lead of a workshop they will run is accepted, and leaving the
+            reader off would refuse what the API allows.
           */}
           <WorkshopDesignerPicker
             values={designerUserIds}

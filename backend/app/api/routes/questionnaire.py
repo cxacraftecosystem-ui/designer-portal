@@ -46,6 +46,7 @@ from app.services.questionnaire_consolidation import (
 )
 from app.services.record_design_workshop import (
     assert_may_file_under,
+    assert_may_write_a_record_filed_under,
     assert_payload_workshop,
 )
 from app.services.record_filters import (
@@ -1687,15 +1688,18 @@ async def update_interview(
         # ``status``, ``recordedAt`` and ``recordedTimezone`` are NOT NULL and stay out.
         clearable=("interviewDate", "place", "language", "notes"),
     )
-    data = await attach_location(data)
     # Moving a record into (or between) workshops is a workshop submission too, so the create-time
     # guard can't be bypassed by PATCHing the workshop in afterwards.
     check = None
     if "workshopId" in data and data.get("workshopId") != interview.workshopId:
         check = await enforce_workshop_submission(current_user, data.get("workshopId"))
-    # Same gate on the PATCH, keyed on PRESENCE. See the create above and
-    # `services/record_design_workshop.py`.
-    await assert_payload_workshop(data, current_user)
+    # Same gate on the PATCH, its destination keyed on PRESENCE. See the create above and
+    # `services/record_design_workshop.py`. `filed_under` is the workshop the stored row names, whose
+    # inspector and two directors may not change this sitting at all — its fields, its artisans, its
+    # answers, an unfile or a move out (2026-10-09). Above ``attach_location``, which WRITES a
+    # ``Location`` row, so a refused PATCH leaves none behind.
+    await assert_payload_workshop(data, current_user, filed_under=interview.designWorkshopId)
+    data = await attach_location(data)
     # ONE TRANSACTION FOR THE AUDIT ROW AND THE ROW IT DESCRIBES (2026-09-03). ``guard_record_edit``
     # ends in ``record_revision``, which used to COMMIT on its own several statements before the
     # update below — so a request that died in the gap (P2024 on a cross-region pool, a dropped
@@ -1979,6 +1983,14 @@ async def merge_interview_into(
         )
     source = await require_record(db.questionnaireinterview, interview_id)
     target = await require_record(db.questionnaireinterview, target_id)
+
+    # NOT BY A HOLDER OF EITHER SIDE'S WORKSHOP (2026-10-09). The merge rewrites the target and
+    # deletes the source, so it is a write to both, and a sitting filed under a design workshop is
+    # that workshop's content, which its inspector and its two directors do not change. Asked of
+    # BOTH sides, and before the scope refusal below, so a holder is told about their post whichever
+    # side it is on — and the day the scope rule loosens, this rule does not loosen with it.
+    for side in sorted({source.designWorkshopId or "", target.designWorkshopId or ""} - {""}):
+        await assert_may_write_a_record_filed_under(side, current_user)
 
     if _merge_scope(source) != _merge_scope(target):
         raise HTTPException(
@@ -2274,5 +2286,8 @@ async def delete_interview(
     interview_id: str, current_user: Any = Depends(get_current_user)
 ) -> None:
     assert_can_delete(current_user)
-    await require_record(db.questionnaireinterview, interview_id)
+    interview = await require_record(db.questionnaireinterview, interview_id)
+    # Not by the inspector or a director of the workshop it is filed under, admins included: its
+    # records are its content (``services/record_design_workshop``, 2026-10-09).
+    await assert_may_write_a_record_filed_under(interview.designWorkshopId, current_user)
     await db.questionnaireinterview.delete(where={"id": interview_id})

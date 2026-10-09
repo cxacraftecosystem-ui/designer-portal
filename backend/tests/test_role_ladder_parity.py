@@ -278,14 +278,18 @@ MIRRORS: tuple[Mirror, ...] = (
             }
         ),
         why=(
-            "The officer's own read surface — the workshops a Ministry Admin has assigned this "
-            "account to supervise. Mirrors `OFFICER_ROLES` in "
-            "services/design_workshop_oversight.py. "
-            "ADMIN AND MASTER_ADMIN ARE IN `absent` ON PURPOSE, which makes this the second "
-            "non-monotonic rule in the client: `assert_oversight_surface` answers them a 403 BY "
-            "NAME, because an admin scoped by their own oversight rows sees an empty page and "
-            "reads it as a broken deployment. A tier added to this list without that argument "
-            "being re-made would be offered a menu entry, a route and an empty page."
+            "The three directorate tiers as ROLES — the TIER set behind `isDirectorateTier`, which "
+            "`guideTrackFor` reads to pick the directorate walkthrough deck and "
+            "`oversightRefusalMeansNoPosts` reads to decide how a refusal of Workshops I monitor is "
+            "read: an Assistant Director refused it has met a fault, an administrator refused it "
+            "holds no posts. Same members as `OFFICER_ROLES` in services/design_workshop_oversight.py. "
+            "IT IS NO LONGER THE DOOR TO THE OFFICER'S READ SURFACE: since 2026-10-09 that is "
+            "`canReadWorkshopOversight`, over the two post-holder sets registered below, which admit "
+            "the administrator tiers by appointment. ADMIN AND MASTER_ADMIN ARE IN `absent` because "
+            "they are not directorate tiers, whatever post they may be named to. A new tier "
+            "defaulting IN is shown the directorate deck and has an honest 'you hold no posts' drawn "
+            "as a fault; one defaulting OUT is a directorate officer whose real fault is drawn as an "
+            "empty list, on the deck of a tier it is not."
         ),
     ),
     # THE THIRD NON-MONOTONIC SET IN THAT FILE, AND THE ONLY ONE THAT GATES NO CAPABILITY AT ALL.
@@ -365,6 +369,124 @@ MIRRORS: tuple[Mirror, ...] = (
             "behind each one is, for the whole country. A new tier defaulting OUT is a ministry "
             "post that cannot see its own programme. Neither is a decision that should happen by "
             "nobody having thought about it, which is what this row exists to prevent."
+        ),
+    ),
+    # WHO PROVISIONS PASSWORD ACCOUNTS ON /users, 2026-10-09. The twin of
+    # `app/core/deps.py::ACCOUNT_PROVISIONER_ROLES`, and `partial` for the reason the rows above are:
+    # a new tier must be DECIDED onto one side. The pattern accepts the literal on one line or on
+    # several, because both shapes are the set idiom that file uses.
+    Mirror(
+        path="frontend/lib/permissions.ts",
+        binding="ACCOUNT_PROVISIONER_ROLES",
+        kind="partial",
+        pattern=r"export const ACCOUNT_PROVISIONER_ROLES: readonly UserRole\[\] = \[([\s\S]*?)\];",
+        absent=frozenset(
+            {
+                "CROWDSOURCE_VOLUNTEER",
+                "FIELD_CONTRIBUTOR",
+                "RESEARCHER",
+                "DESIGNER",
+                "INSPECTOR",
+                "PROFESSOR",
+                "ASSISTANT_DIRECTOR",
+                "REGIONAL_DIRECTOR",
+            }
+        ),
+        why=(
+            "Who is shown the create-account form, the temporary-password and require-a-new-"
+            "password controls and the password-link action on /users. Mirrors "
+            "`ACCOUNT_PROVISIONER_ROLES` in app/core/deps.py, which gates `POST /api/users` and both "
+            "password-link routes. MINISTRY_ADMIN IS OFFERED AND IS STILL NOT AN ADMIN: deleting "
+            "accounts, granting capabilities and overturning a barring stay `isAdmin`. A new tier "
+            "defaulting IN can mint accounts and reset passwords for everybody below it; one "
+            "defaulting OUT is a ministry post shown a users table it cannot add anybody to."
+        ),
+    ),
+    # WHO MAY HOLD A POST ON ONE WORKSHOP, 2026-10-09 (owner's ruling D3). Three holder sets, each the
+    # twin of a server set in `services/design_workshop_inspectors.py` / `design_workshop_oversight.py`
+    # and each `partial` for the reason the rows above are. They are DOORS on the web — the inspector
+    # surface and Workshops I monitor open to whoever may hold the post — so a tier defaulting into
+    # one of them is a menu entry for a page the API refuses, and one defaulting out is an appointed
+    # officer who cannot find the workshop they were appointed to.
+    Mirror(
+        path="frontend/lib/permissions.ts",
+        binding="INSPECTION_HOLDER_ROLES",
+        kind="partial",
+        pattern=r"export const INSPECTION_HOLDER_ROLES: readonly UserRole\[\] = \[([\s\S]*?)\];",
+        absent=frozenset(
+            {
+                "CROWDSOURCE_VOLUNTEER",
+                "FIELD_CONTRIBUTOR",
+                "RESEARCHER",
+                "DESIGNER",
+                "PROFESSOR",
+                "ASSISTANT_DIRECTOR",
+                "REGIONAL_DIRECTOR",
+            }
+        ),
+        why=(
+            "Who may be appointed to inspect a workshop, and so who is shown Workshops to inspect. "
+            "Mirrors `INSPECTION_HOLDER_ROLES` in services/design_workshop_inspectors.py: the "
+            "Inspector / Reviewer tier and the three administrator tiers. THE TWO DIRECTORATE POSTS "
+            "AND THE PROFESSOR ARE IN `absent` THOUGH ALL THREE OUTRANK AN INSPECTOR — the ruling "
+            "named the administrator tiers and nobody else. A new tier defaulting IN is a menu entry "
+            "and an open URL for a surface the API refuses it; one defaulting OUT is an account the "
+            "server lets be appointed an inspector that cannot find the workshop it was appointed to."
+        ),
+    ),
+    Mirror(
+        path="frontend/lib/permissions.ts",
+        binding="ASSISTANT_DIRECTOR_HOLDER_ROLES",
+        kind="partial",
+        pattern=(
+            r"export const ASSISTANT_DIRECTOR_HOLDER_ROLES: readonly UserRole\[\] = \[([\s\S]*?)\];"
+        ),
+        absent=frozenset(
+            {
+                "CROWDSOURCE_VOLUNTEER",
+                "FIELD_CONTRIBUTOR",
+                "RESEARCHER",
+                "DESIGNER",
+                "INSPECTOR",
+                "PROFESSOR",
+                "REGIONAL_DIRECTOR",
+            }
+        ),
+        why=(
+            "Who may be named a workshop's Assistant Director, and so who is shown Workshops I "
+            "monitor. Mirrors `ASSISTANT_DIRECTOR_HOLDER_ROLES` in "
+            "services/design_workshop_oversight.py, the AD entry of `OVERSIGHT_CAPACITY_ROLES`. A "
+            "REGIONAL DIRECTOR IS IN `absent`: filed in the wrong slot, the right name prints beside "
+            "the wrong post on a ministry document. A new tier defaulting IN is offered a surface "
+            "the API refuses it; one defaulting OUT is an officer the server appointed who has no "
+            "door to the workshop they supervise."
+        ),
+    ),
+    Mirror(
+        path="frontend/lib/permissions.ts",
+        binding="REGIONAL_DIRECTOR_HOLDER_ROLES",
+        kind="partial",
+        pattern=(
+            r"export const REGIONAL_DIRECTOR_HOLDER_ROLES: readonly UserRole\[\] = \[([\s\S]*?)\];"
+        ),
+        absent=frozenset(
+            {
+                "CROWDSOURCE_VOLUNTEER",
+                "FIELD_CONTRIBUTOR",
+                "RESEARCHER",
+                "DESIGNER",
+                "INSPECTOR",
+                "PROFESSOR",
+                "ASSISTANT_DIRECTOR",
+            }
+        ),
+        why=(
+            "Who may be named a workshop's Regional Director — the twin of the row above, slot for "
+            "slot, and with the same two costs: a tier defaulting IN is offered Workshops I monitor "
+            "by a server that refuses it, one defaulting OUT is an appointed officer with no door. "
+            "Mirrors `REGIONAL_DIRECTOR_HOLDER_ROLES` in services/design_workshop_oversight.py, the "
+            "RD entry of `OVERSIGHT_CAPACITY_ROLES`; an ASSISTANT DIRECTOR is in `absent` for the "
+            "wrong-slot reason above."
         ),
     ),
     # ── frontend, rendered ──────────────────────────────────────────────────────────────────────
@@ -451,13 +573,15 @@ MIRRORS: tuple[Mirror, ...] = (
         kind="closed",
         pattern=r"const ROLES: UserRole\[\] = \[([\s\S]*?)\n\];",
         why=(
-            "Pins the INSPECTOR tier's own gate on the web, and it is the row where a short tuple "
-            "does the most damage in this file. `canInspectDesignWorkshops` is the one client "
-            "predicate whose refusal is NOT monotonic in rank -- `assert_inspection_surface` 403s an "
-            "ADMIN and a MASTER ADMIN by name -- and the spec proves that by asserting the predicate "
-            "is false for every member of this tuple EXCEPT 'INSPECTOR'. A tier missing from the "
-            "tuple is therefore a tier silently excused from the assertion, on the one surface where "
-            "a wrongly-admitted account is offered a menu entry and an open URL that 403s.\n"
+            "Pins the inspection surface's gate on the web, and it is the row where a short tuple "
+            "does the most damage in this file. `canInspectDesignWorkshops` is a client predicate "
+            "whose refusal is NOT monotonic in rank, and since 2026-10-09 the spec asserts, tier by "
+            "tier over this tuple, that it is true exactly for its own `MAY_BE_APPOINTED` -- "
+            "INSPECTOR, MINISTRY_ADMIN, ADMIN and MASTER_ADMIN, the members of "
+            "`INSPECTION_HOLDER_ROLES` -- and false for the professor and both directorate posts "
+            "that outrank an inspector. A tier missing from the tuple is therefore a tier silently "
+            "excused from the assertion, on the one surface where a wrongly-admitted account is "
+            "offered a menu entry and an open URL that 403s.\n"
             "REGISTERED BECAUSE THE SWEEP BELOW FOUND IT, in the same way and for the same reason "
             "`DashboardTileParityTest.kt` was: the spec was written by the web lane of the Inspector "
             "wave hours before the handset lane ran this suite, and it named all eleven tiers with no "
@@ -651,13 +775,16 @@ MIRRORS: tuple[Mirror, ...] = (
         kind="closed",
         pattern=r"private val everyRole = listOf\(([\s\S]*?)\n[ \t]*\)",
         why=(
-            "The tuple that pins the INSPECTOR tier's own gate, and the row where a short tuple "
-            "would do the most damage of any in this file. `canInspectDesignWorkshops` is set "
-            "membership on {INSPECTOR} and is the ONE client predicate whose refusal is not "
-            "monotonic in rank -- `assert_inspection_surface` 403s an ADMIN and a MASTER ADMIN by "
-            "name. The test proves that by FILTERING this tuple and comparing the result to "
-            "['INSPECTOR'], and by filtering it again for the rank floor a reader would reach for "
-            "instead, so a tier missing here is a tier silently excused from both halves.\n"
+            "The tuple that pins the INSPECTOR tier's own gate on the handset, and the row where a "
+            "short tuple would do the most damage of any in this file. The handset's "
+            "`canInspectDesignWorkshops` is set membership on {INSPECTOR}, a refusal that is not "
+            "monotonic in rank. It is a TIER set and no longer the server's door: since 2026-10-09 "
+            "`assert_inspection_surface` admits `INSPECTION_HOLDER_ROLES`, so the three "
+            "administrator tiers reach the surface by appointment, while the handset's set is "
+            "unchanged because ministry and admin work is web-only (D5). The test pins the "
+            "handset's set by FILTERING this tuple and comparing the result to ['INSPECTOR'], and "
+            "by filtering it again for the rank floor a reader would reach for instead, so a tier "
+            "missing here is a tier silently excused from both halves.\n"
             "It also asserts that the read door and the appointment door are DISJOINT by walking "
             "every tier, which is a claim that grows weaker with every tier the tuple lacks."
         ),
@@ -775,12 +902,14 @@ MIRRORS: tuple[Mirror, ...] = (
             "makes that sweep exhaustive: the test walks every tier and asserts which deck it lands "
             "on.\n"
             "THE LADDER GIVES THE WRONG ANSWER FOR THIS ROW, WHICH IS WHY COMPLETENESS MATTERS HERE "
-            "MORE THAN ON MOST. INSPECTOR is 37, BETWEEN designer (35) and professor (40), and "
-            "`canInspectDesignWorkshops` is set membership on {INSPECTOR} -- so the SIX tiers above "
-            "37 (professor, the three directorate posts, admin, master admin) all clear every "
-            "threshold instinct and are all refused the surface by name. A tier missing from this "
-            "tuple is a tier nobody ever asked the question about, on the one file whose reason for "
-            "existing is asking it.\n"
+            "MORE THAN ON MOST. INSPECTOR is 37, BETWEEN designer (35) and professor (40), and the "
+            "handset's `canInspectDesignWorkshops` is set membership on {INSPECTOR} -- so the SIX "
+            "tiers above 37 (professor, the three directorate posts, admin, master admin) all clear "
+            "every threshold instinct and all open on the designer's deck. (The server's inspection "
+            "surface is no longer that set: since 2026-10-09 it admits the three administrator "
+            "tiers by appointment, and the handset keeps the tier set under D5.) A tier missing "
+            "from this tuple is a tier nobody ever asked the question about, on the one file whose "
+            "reason for existing is asking it.\n"
             "ON THE HANDSET IT IS STILL A DEFAULT AND NOT A GATE -- every deck ships for everybody "
             "and the opening card switches between them -- so a wrong answer costs one tap rather "
             "than a refusal, which is also exactly why it would go unnoticed: nothing breaks, nobody "
@@ -1025,6 +1154,58 @@ def test_every_ranked_mirror_uses_the_server_s_numbers(mirror: Mirror) -> None:
     # And the whole dict, so a tier present in one and absent in the other cannot slip past the
     # comparison above (which only looks at keys the mirror already has).
     assert ranks == dict(ROLE_RANK), f"{mirror.path}: `{mirror.binding}` is not deps.py's ladder."
+
+
+def test_the_web_provisioner_set_is_the_servers() -> None:
+    """``ACCOUNT_PROVISIONER_ROLES`` on the web against the server's frozenset, directly.
+
+    The ``partial`` row above holds the web literal to its own ``absent`` list, which is a third
+    hand-kept copy; this holds the two that actually decide to each other. A disagreement is a create
+    form shown to somebody the API answers with a 403, or a ministry post with no form at all.
+    """
+    from app.core.deps import ACCOUNT_PROVISIONER_ROLES
+
+    (mirror,) = [m for m in MIRRORS if m.binding == "ACCOUNT_PROVISIONER_ROLES"]
+    offered = _named_tiers(_body(mirror)) & TIERS
+    assert offered == set(ACCOUNT_PROVISIONER_ROLES), (
+        f"frontend/lib/permissions.ts offers account provisioning to {sorted(offered)}; "
+        f"app/core/deps.py grants it to {sorted(ACCOUNT_PROVISIONER_ROLES)}"
+    )
+
+
+def test_the_web_post_holder_sets_are_the_servers() -> None:
+    """The three post-holder sets on the web against the server's, directly (ruling D3, 2026-10-09).
+
+    The same argument as the provisioner test above: the ``partial`` rows hold each web literal to a
+    hand-kept ``absent`` list, and this holds it to the frozenset that actually decides. A
+    disagreement is a door on the web the API refuses, or an appointed officer with no door at all.
+    """
+    from app.services.design_workshop_inspectors import INSPECTION_HOLDER_ROLES
+    from app.services.design_workshop_oversight import (
+        ASSISTANT_DIRECTOR_HOLDER_ROLES,
+        OVERSIGHT_CAPACITY_ROLES,
+        REGIONAL_DIRECTOR_HOLDER_ROLES,
+    )
+
+    # THE SERVER'S SETS BY THEIR OWN NAMES, which the web declarations deliberately share — so a
+    # failure names one constant on each side. The capacity map the oversight write validates against
+    # is held to the same two, so the sets compared here are the ones the write actually asks.
+    assert OVERSIGHT_CAPACITY_ROLES == {
+        "ASSISTANT_DIRECTOR": ASSISTANT_DIRECTOR_HOLDER_ROLES,
+        "REGIONAL_DIRECTOR": REGIONAL_DIRECTOR_HOLDER_ROLES,
+    }, "the oversight write validates against sets other than the two named holder sets"
+    server = {
+        "INSPECTION_HOLDER_ROLES": INSPECTION_HOLDER_ROLES,
+        "ASSISTANT_DIRECTOR_HOLDER_ROLES": ASSISTANT_DIRECTOR_HOLDER_ROLES,
+        "REGIONAL_DIRECTOR_HOLDER_ROLES": REGIONAL_DIRECTOR_HOLDER_ROLES,
+    }
+    for binding, expected in server.items():
+        (mirror,) = [m for m in MIRRORS if m.binding == binding]
+        offered = _named_tiers(_body(mirror)) & TIERS
+        assert offered == set(expected), (
+            f"frontend/lib/permissions.ts says {sorted(offered)} may hold `{binding}`; the server "
+            f"says {sorted(expected)}"
+        )
 
 
 def test_the_self_enforcing_claim_is_true_of_the_source() -> None:

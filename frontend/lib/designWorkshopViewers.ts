@@ -42,11 +42,19 @@
  *
  * 3. **Eligibility is a SET, not a rank threshold, and the server owns it.**
  *    `GET /design-workshops/eligible-viewers` returns only accounts that could actually run a
- *    design workshop — `canRunDesignWorkshops` is DESIGNER/ADMIN/MASTER_ADMIN and a DESIGNER whose
- *    roster row is suspended is excluded, because granting them a viewer row would produce a
- *    workshop they still cannot open. The client must NOT re-derive that list from the user
- *    directory: the two would drift, and the drift shows up as an admin granting access that the
- *    next sign-in refuses, with nothing on screen saying why.
+ *    design workshop — `canRunDesignWorkshops`, whose set is `DESIGN_WORKSHOP_ROLES` (a designer,
+ *    the three directorate tiers, an admin and the master admin) — and a DESIGNER whose roster row
+ *    is suspended is excluded, because granting them a viewer row would produce a workshop they
+ *    still cannot open. The client must NOT re-derive that list from the user directory or narrow
+ *    it by role: the two would drift, and the drift shows up as an admin granting access that the
+ *    next sign-in refuses, with nothing on screen saying why. (This sentence named three roles
+ *    for a set of six until 2026-10-09; it is a set named once, in `lib/permissions`, for that
+ *    reason.)
+ *
+ *    WHETHER A PERSON MAY HOLD A ROW ON *THIS* WORKSHOP is a second question, answered on save.
+ *    Since the owner's ruling of 2026-10-09 the server refuses a designer row to anybody who
+ *    inspects the workshop or is its Assistant Director or Regional Director, and to the person
+ *    saving — a 409 whose sentence names the rule, which a panel prints rather than pre-empts.
  *
  * 4. **THE ELIGIBLE LIST IS CAPPED, THE CAP IS REACHED, AND ONLY THE SERVER CAN SEE PAST IT.**
  *    `eligible-viewers` answers at most `ELIGIBLE_VIEWER_LIMIT` (2000) accounts ordered by name, and
@@ -77,6 +85,7 @@
 
 import { ApiError, apiFetch, buildQuery } from "@/lib/api";
 import type { DwSummary } from "@/lib/designWorkshops";
+import { isUnreachable } from "@/lib/offline";
 import type { UserRole, WorkshopType } from "@/lib/types";
 
 /* ────────────────────────────────────────────────────────────────────────────
@@ -236,6 +245,22 @@ export function eligibleViewerNotice({
   return "";
 }
 
+/**
+ * Does somebody's ABSENCE from the eligible list prove they are barred — so that their existing row
+ * (designer access, an inspection) may be labelled "no longer eligible"?
+ *
+ * Only when the list on screen is the whole eligible set (nothing cut, nothing searched; see each
+ * panel's `eligibleListIsComplete`), and NEVER FOR THE READER. The reader is missing from every such
+ * list because nobody appoints themselves — the server leaves the caller out of the directory and the
+ * panels drop them again — not because of the access list. So a row somebody else gave them used to
+ * read as barred on their own screen. Shared by the viewers and the inspectors panels, which draw the
+ * same suffix for the same reason; the handset's pickers owe the same exception (`dwViewerChoices`,
+ * `dwInspectorChoices`).
+ */
+export function absenceProvesIneligible(listComplete: boolean, userId: string, readerId: string | null): boolean {
+  return listComplete && userId !== readerId;
+}
+
 /* ────────────────────────────────────────────────────────────────────────────
  * Reading a failure honestly
  * ──────────────────────────────────────────────────────────────────────────── */
@@ -263,6 +288,44 @@ export function eligibleViewerNotice({
  */
 export function viewerAdministrationMissing(error: unknown): boolean {
   return error instanceof ApiError && error.status === 404;
+}
+
+/**
+ * What a failed or refused request on the viewers panel says, told apart in words. It lives here
+ * rather than in `DesignWorkshopViewersPanel` so the decision can be exercised without a renderer.
+ *
+ * `isUnreachable` and not `isTransient`: the latter answers "is it worth retrying" and counts every
+ * 5xx as yes, so a repository that ANSWERED and then failed would be reported as a connection
+ * problem — which sends an admin to look at their signal and leaves a real fault wearing an offline
+ * message. A server that spoke gets its own sentence shown, because `apiFetch` has already unpacked
+ * FastAPI's 422 list into a readable one that names the offending field.
+ *
+ * A 409 IS A SEPARATION-OF-DUTIES REFUSAL and its sentence names the rule: since the owner's ruling
+ * of 2026-10-09 a designer row is refused to anybody who inspects or supervises the workshop, and to
+ * the person saving. And the 403's role clause is only for a reader the role could be refusing — an
+ * admin refused here has met a rule about THIS workshop (a post they hold on it, say), which the
+ * server's own sentence names.
+ */
+export function viewerAdministrationFailure(
+  error: unknown,
+  fallback: string,
+  readerIsAdmin: boolean
+): string {
+  if (!(error instanceof ApiError) || isUnreachable(error)) {
+    return "This device cannot reach the repository, so nothing was sent and nothing has changed. Check the connection and try again.";
+  }
+  if (error.status === 403) {
+    return readerIsAdmin
+      ? `The repository refused this. ${error.message}`
+      : `The repository refused this. ${error.message} Deciding who may see a design workshop is administration, so it is open to admins and the master admin only.`;
+  }
+  if (error.status === 409 || error.status === 422) {
+    return `The repository would not accept this. ${error.message}`;
+  }
+  if (error.status === 404) {
+    return `${error.message} This workshop may have been deleted since the list was loaded — reload the page to see the current list.`;
+  }
+  return error.message || fallback;
 }
 
 /* ────────────────────────────────────────────────────────────────────────────

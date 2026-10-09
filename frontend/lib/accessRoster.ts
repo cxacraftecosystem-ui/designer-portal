@@ -153,21 +153,50 @@ export async function addToAccessRoster(body: {
 }
 
 /**
+ * The decision's answer: the row, and — on an APPROVE that left an existing account at its tier — the
+ * server's sentence saying so.
+ *
+ * `accountPromotionHeld` (2026-10-09): approving is also a promotion of an account that already
+ * exists, and an account still holding a temporary password somebody typed for it is NOT promoted,
+ * because the promotion would carry that password to a tier above whoever typed it. The approval of
+ * the ADDRESS stands — a refusal would have left the person's access undecided over a question about
+ * their tier — so the answer is a 200 and this field carries the sentence, naming the two ways on.
+ * `null` on every other decision; ABSENT from a server older than the rule, which promoted regardless.
+ * Read it through {@link promotionHeldSentence}.
+ */
+export type AccessDecisionAnswer = AccessRosterEntry & { accountPromotionHeld?: string | null };
+
+/**
  * `POST /access/roster/{id}/decision` — the action the queue exists for.
  *
  * APPROVE also lifts an existing account to `role` when that is higher than the account already
- * holds (never lower). REJECT is final until an admin says otherwise: the person's next attempt
- * bumps their attempt count and they are told they were not approved, rather than quietly rejoining
- * the queue an admin has just cleared. Re-opening a rejection is this same call with APPROVE.
+ * holds (never lower) — unless it still holds a temporary password, which keeps its tier and says so
+ * in {@link AccessDecisionAnswer.accountPromotionHeld}. REJECT is final until an admin says
+ * otherwise: the person's next attempt bumps their attempt count and they are told they were not
+ * approved, rather than quietly rejoining the queue an admin has just cleared. Re-opening a rejection
+ * is this same call with APPROVE.
  */
 export async function decideAccessRequest(
   id: string,
   body: { decision: "APPROVE" | "REJECT"; role?: UserRole | null; notes?: string | null }
-): Promise<AccessRosterEntry> {
-  return apiFetch<AccessRosterEntry>(`/access/roster/${id}/decision`, {
+): Promise<AccessDecisionAnswer> {
+  return apiFetch<AccessDecisionAnswer>(`/access/roster/${id}/decision`, {
     method: "POST",
     body: JSON.stringify(body)
   });
+}
+
+/**
+ * The server's sentence when an approval left the account's tier where it was, or null.
+ *
+ * SHOWN AS THE SERVER WROTE IT, in place of this screen's own "may sign in" receipt: it already says
+ * the address is approved, names the tier the account keeps and the one that was approved, and the two
+ * ways to finish the promotion — none of which this client could say better or knows. Anything that
+ * is not a non-blank string (null, absent, an older server's silence) is no sentence.
+ */
+export function promotionHeldSentence(answer: Pick<AccessDecisionAnswer, "accountPromotionHeld"> | null | undefined): string | null {
+  const sentence = answer?.accountPromotionHeld;
+  return typeof sentence === "string" && sentence.trim() ? sentence.trim() : null;
 }
 
 /** `PATCH /access/roster/{id}` — correct the admin-typed columns. Cannot move `status`; that is the decision endpoint's job alone. */

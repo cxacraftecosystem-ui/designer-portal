@@ -463,7 +463,7 @@ async def test_eligibility_is_the_viewers_screens_own_rule_asked_about_that_one_
     """
     asked: list[set[str]] = []
 
-    async def _assert(user_ids: set[str]) -> None:
+    async def _assert(user_ids: set[str], **_workshop_context: Any) -> None:
         asked.append(set(user_ids))
 
     monkeypatch.setattr(service, "_assert_every_id_may_be_granted", _assert)
@@ -486,7 +486,7 @@ async def test_a_whole_ticked_TEAM_is_asked_about_in_ONE_call_and_never_id_by_id
     """
     asked: list[set[str]] = []
 
-    async def _assert(user_ids: set[str]) -> None:
+    async def _assert(user_ids: set[str], **_workshop_context: Any) -> None:
         asked.append(set(user_ids))
 
     monkeypatch.setattr(service, "_assert_every_id_may_be_granted", _assert)
@@ -506,7 +506,7 @@ async def test_naming_nobody_costs_no_eligibility_QUERY_at_all(monkeypatch):
     """
     asked: list[set[str]] = []
 
-    async def _assert(user_ids: set[str]) -> None:
+    async def _assert(user_ids: set[str], **_workshop_context: Any) -> None:
         asked.append(set(user_ids))
 
     monkeypatch.setattr(service, "_assert_every_id_may_be_granted", _assert)

@@ -69,13 +69,33 @@
  * stated when it happens. The one control that DOES filter in the browser is the artisan roster,
  * because its options are one workshop's own rows and not a window over a table.
  *
- * ── A MINISTRY ADMIN IS IN THE DIRECTORY AND FITS NEITHER SLOT ───────────────────────────────
+ * ── WHO MAY BE NAMED: THE SERVER'S DIRECTORIES, MINUS THE READER ─────────────────────────────
  *
- * `capacities` on each row says which slots that account may hold, and it is EMPTY for a Ministry
- * Admin. The row is drawn DISABLED with the reason rather than omitted: a directory that answers
- * "who are the officers" and silently leaves out a third of them is a directory somebody will
- * conclude is broken, and a row that is offered and then 422s is worse than one that explains
- * itself. `SelectOption.disabled` is what carries that now the control is a dropdown.
+ * `capacities` on each officer row says which slots that account may hold. Until the owner's ruling
+ * of 2026-10-09 it was EMPTY for a Ministry Admin, who was listed and could never be chosen. Ruling
+ * D3 lets a Ministry Admin, an admin and the master admin be named designer, Assistant Director,
+ * Regional Director or inspector on a workshop, so every picker on this page offers them — from the
+ * server's directory, never from a role list re-derived here — and a row that cannot fill the slot
+ * being chosen is drawn DISABLED with its own reason rather than omitted (`pickers.ts`).
+ *
+ * NO PICKER ON A WORKSHOP THAT EXISTS OFFERS THE READER. Nobody appoints themselves; the server
+ * refuses it with a 409 and leaves the appointer out of its officer and inspector directories, and
+ * the pickers here drop them too, so an older server cannot put the one refused choice at the top of
+ * the list. THE START FORM'S DESIGNER PICKER DOES OFFER THEM, and that is the server's rule rather
+ * than an exception to it: opening a workshop appoints nobody, and the create door subtracts the
+ * creator from the named set before it validates anything. The other separation rules — one person
+ * may not hold both posts on a workshop, nor inspect a workshop they also supervise, nor be named on
+ * a workshop they authored — are per-workshop facts the server answers on save with a 409 whose
+ * sentence names the rule; every panel prints that sentence verbatim rather than guessing.
+ *
+ * ── A POST ON THE CHOSEN WORKSHOP MAKES IT READ-ONLY FOR THE READER ──────────────────────────
+ *
+ * An assigner may hold a post on the very workshop they have chosen here. While they do, that
+ * workshop is read-only for them — its content (its stages, its details, its artisan list) and its
+ * designer team alike — so the page says so under the picker, points them at the read-only page the
+ * post opens it on, and switches off the two panels here that write it: Designers and the artisan
+ * list. Naming OTHER people to its posts stays open: supervising a workshop is not a reason to be
+ * unable to staff it. Generating its report stays theirs too, on the workshop's own Report screen.
  */
 
 import Link from "next/link";
@@ -91,6 +111,7 @@ import { DateRangePicker, toIsoDate } from "@/components/forms/DateTimeField";
 import { Field, TextInput } from "@/components/FormControls";
 import { FieldBlock } from "@/components/tasks/TaskPrimitives";
 import { Dropdown, MultiSelectDropdown, type DropdownOption } from "@/components/ui/Dropdown";
+import { HeldPostNotice } from "@/components/designworkshop/HeldPostNotice";
 import { WorkshopDesignerPicker } from "@/components/designworkshop/WorkshopDesignerPicker";
 import { DesignWorkshopInspectorsPanel } from "@/components/settings/DesignWorkshopInspectorsPanel";
 import { ApiError } from "@/lib/api";
@@ -106,7 +127,17 @@ import {
 } from "@/lib/designWorkshops";
 import { formatDate } from "@/lib/format";
 import { isUnreachable } from "@/lib/offline";
-import { canAssignWorkshopOversight, isAdmin, roleLabel } from "@/lib/permissions";
+import {
+  canAssignWorkshopOversight,
+  heldPostEditRefusal,
+  heldPostReadPath,
+  isAdmin,
+  roleLabel,
+  selfReleaseRefusal,
+  selfReleaseRefused,
+  workshopPostsHeldBy,
+  type WorkshopPost
+} from "@/lib/permissions";
 import { ImportReport } from "./ImportReport";
 import {
   ARTISAN_ACCEPT,
@@ -124,6 +155,7 @@ import {
   listWorkshopArtisans,
   putWorkshopDesigners,
   putWorkshopOversight,
+  readWorkshopStaffing,
   unlinkWorkshopArtisan,
   uploadArtisanList,
   type ArtisanImportReport,
@@ -134,8 +166,10 @@ import {
   type DwRosterArtisan,
   type DwStaffingFilter,
   type DwViewerRow,
-  type DwWorkshopOversight
+  type DwWorkshopOversight,
+  type DwWorkshopStaffing
 } from "./oversight";
+import { officerOptionsForPost, officersOfferedTo } from "./pickers";
 
 /** 300 ms, this app's number, for the reason every other debounced search here gives. */
 const SEARCH_DEBOUNCE_MS = 300;
@@ -195,6 +229,43 @@ export default function WorkshopOversightPage() {
   const [workshop, setWorkshop] = useState<DwSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  /**
+   * WHO HOLDS WHAT ON THE CHOSEN WORKSHOP, read once at page level so the picker's link and the
+   * artisan list can ask whether the READER holds a post there. The panels below keep their own
+   * reads — each is a whole edit in flight — and call `refreshStaffing` after a save, so taking the
+   * reader off a post lifts the read-only notice without a reload.
+   *
+   * `null` is "not known", and a failed read stays `null` rather than becoming "holds nothing": the
+   * notice is a courtesy ahead of the server's own 403, never a claim that no post is held.
+   */
+  const [staffing, setStaffing] = useState<DwWorkshopStaffing | null>(null);
+  const staffingGeneration = useRef(0);
+  const workshopId = workshop?.id ?? null;
+
+  const refreshStaffing = useCallback(() => {
+    const current = staffingGeneration.current + 1;
+    staffingGeneration.current = current;
+    if (!workshopId || !allowed) {
+      setStaffing(null);
+      return;
+    }
+    readWorkshopStaffing(workshopId)
+      .then((answer) => {
+        if (staffingGeneration.current === current) setStaffing(answer);
+      })
+      .catch(() => {
+        if (staffingGeneration.current === current) setStaffing(null);
+      });
+  }, [workshopId, allowed]);
+
+  useEffect(() => {
+    setStaffing(null);
+    refreshStaffing();
+  }, [refreshStaffing]);
+
+  const posts = useMemo(() => workshopPostsHeldBy(user, staffing ?? {}), [user, staffing]);
+  const readOnlyReason = heldPostEditRefusal(posts);
+
   if (!loading && !allowed) {
     return (
       <div>
@@ -250,7 +321,21 @@ export default function WorkshopOversightPage() {
         </div>
       ) : null}
 
-      <WorkshopPicker chosen={workshop} onChoose={setWorkshop} onError={setError} />
+      <WorkshopPicker
+        chosen={workshop}
+        onChoose={setWorkshop}
+        onError={setError}
+        posts={posts}
+        staffing={staffing}
+      />
+
+      {workshop && readOnlyReason ? (
+        // UNDER THE PICKER AND ABOVE EVERY PANEL, because it is about the workshop and not about one
+        // control. Worded, not merely tinted: colour alone is a signal some readers never get.
+        <p className="mt-4 rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-sm leading-5 text-amber-800">
+          {readOnlyReason}
+        </p>
+      ) : null}
 
       {workshop ? (
         <>
@@ -262,8 +347,15 @@ export default function WorkshopOversightPage() {
             key={workshop.id}
             workshop={workshop}
             onError={setError}
+            onSaved={refreshStaffing}
+            readOnlyReason={readOnlyReason}
           />
-          <OversightPanel key={`oversight-${workshop.id}`} workshop={workshop} onError={setError} />
+          <OversightPanel
+            key={`oversight-${workshop.id}`}
+            workshop={workshop}
+            onError={setError}
+            onSaved={refreshStaffing}
+          />
           {/*
             THE FOURTH PANEL, MOUNTED AND NOT REBUILT. It is the same component /workshop-access/
             manage draws, told which workshop rather than choosing one — see its header for why a
@@ -277,9 +369,18 @@ export default function WorkshopOversightPage() {
             comes, and the panel surfaces the server's sentence verbatim rather than pre-empting it.
           */}
           <div className="mt-4">
-            <DesignWorkshopInspectorsPanel key={`inspectors-${workshop.id}`} workshopId={workshop.id} />
+            <DesignWorkshopInspectorsPanel
+              key={`inspectors-${workshop.id}`}
+              workshopId={workshop.id}
+              onSaved={refreshStaffing}
+            />
           </div>
-          <ArtisanListPanel key={`artisans-${workshop.id}`} workshop={workshop} onError={setError} />
+          <ArtisanListPanel
+            key={`artisans-${workshop.id}`}
+            workshop={workshop}
+            onError={setError}
+            readOnlyReason={readOnlyReason}
+          />
         </>
       ) : (
         <section className="panel mt-4 p-4 text-sm text-ink-700">
@@ -315,11 +416,17 @@ const STAFFING_ROWS: DropdownOption[] = [
 function WorkshopPicker({
   chosen,
   onChoose,
-  onError
+  onError,
+  posts,
+  staffing
 }: {
   chosen: DwSummary | null;
   onChoose: (workshop: DwSummary | null) => void;
   onError: (message: string | null) => void;
+  /** The posts the READER holds on the chosen workshop — see the page's `staffing`. */
+  posts: readonly WorkshopPost[];
+  /** The chosen workshop's people, or null while unknown. Read for the designer-row arm below. */
+  staffing: DwWorkshopStaffing | null;
 }) {
   // WHO IS READING, because the link into the workshop tree below is not offered to everybody and
   // the rule is about this account rather than about the page's gate. See that link's comment.
@@ -379,6 +486,9 @@ function WorkshopPicker({
       : staffed === "staffed"
         ? "No design & prototype workshop has a designer named on it yet."
         : "There are no design & prototype workshops yet. Start one above.";
+
+  /** Where a post the reader holds on the chosen workshop lets them read it, or null. */
+  const readPath = chosen ? heldPostReadPath(posts, chosen.id) : null;
 
   return (
     <section className="panel p-4">
@@ -440,12 +550,24 @@ function WorkshopPicker({
             correct: that is where the reader now is.
 
             AND THE ABSENCE IS EXPLAINED RATHER THAN LEFT BLANK, which is this page's own rule for
-            the Ministry Admin rows in the officer directory — a control that is simply missing is
-            indistinguishable from one that is broken. `/officers/monitored` is NOT the fallback and
-            must not be offered as one: `GET /design-workshop-oversight/assigned/{id}` scopes to the
-            officer's OWN assignment rows, and a Ministry Admin cannot be named in either capacity.
+            the disabled rows in its pickers — a control that is simply missing is indistinguishable
+            from one that is broken.
+
+            TWO ARMS JOINED THEM ON 2026-10-09, both from the owner's ruling D3. A Ministry Admin may
+            now be NAMED on a workshop's designer team by somebody else, which is the loader's third
+            arm — so the team `staffing` carries is read for the reader's own row. And a reader who
+            holds a POST on this workshop is offered the READ-ONLY page that post opens it on, ahead
+            of everything else: the workshop tree would still open for an admin, and every save in
+            it would be refused, so the link that would resolve is not the link that would help.
+            `/officers/monitored/{id}` is right only then — it is scoped to the reader's own rows.
           */}
-          {chosen.createdById === user?.id || isAdmin(user) ? (
+          {readPath ? (
+            <Link href={readPath} className="field-button-secondary">
+              Read this workshop
+            </Link>
+          ) : chosen.createdById === user?.id ||
+            isAdmin(user) ||
+            Boolean(user && staffing?.designers?.some((row) => row.userId === user.id)) ? (
             <Link href={`/design-workshops/${chosen.id}`} className="field-button-secondary">
               Open this workshop
             </Link>
@@ -728,6 +850,13 @@ function StartWorkshopForm({
         search box, a notice, the picker) rather than a box. `fetchEligible` points it at THIS
         page's door: the picker's default is `GET /design-workshops/eligible-viewers`, which is
         `require_admin` and 403s the Ministry Admin this form is for.
+
+        THE READER IS OFFERED HERE, unlike on the Designers panel below. That panel writes to a
+        workshop that exists, where naming yourself is the self-appointment the server answers with
+        a 409. This form CREATES one: `open_design_workshop` subtracts the creator from the named set
+        before it validates anything and writes no designer row for them — their access is the
+        workshop's `createdById` — so ticking yourself is accepted, and leaving the reader off would
+        refuse what the API allows.
       */}
       <WorkshopDesignerPicker
         values={designerUserIds}
@@ -805,11 +934,25 @@ function StartWorkshopForm({
  */
 function DesignerPanel({
   workshop,
-  onError
+  onError,
+  onSaved,
+  readOnlyReason = null
 }: {
   workshop: DwSummary;
   onError: (message: string | null) => void;
+  /** Told after every save the server accepted, so the page re-reads who holds what. */
+  onSaved?: () => void;
+  /**
+   * Why the reader may see this team and not change it, or null — a post they hold on this workshop.
+   * Naming a designer is a write to the workshop's designer team (it also copies the lead's profile
+   * into stage 1), and the server refuses it to whoever inspects or supervises the workshop. The team
+   * stays on screen; the picker and Save are held, and the sentence is drawn above them.
+   */
+  readOnlyReason?: string | null;
 }) {
+  const { user } = useAuth();
+  /** The notice's live region, which Save names while it explains why Save is held. */
+  const heldNoticeId = useId();
   /** The saved set, as the server last answered it. `null` is "still asking". */
   const [held, setHeld] = useState<DwNamedDesigner[] | null>(null);
   const [baseline, setBaseline] = useState<string[]>([]);
@@ -952,7 +1095,8 @@ function DesignerPanel({
   async function save() {
     // `emptiesTheWorkshop` is deliberately absent from this list: it is a WARNING, not a refusal,
     // and a guard that quietly swallowed the click would be the disabled button all over again.
-    if (!dirty || overCap || dropsTheLeadWithNoReplacement) return;
+    // `readOnlyReason` is not swallowed silently either: the button it disables has it written above.
+    if (!dirty || overCap || dropsTheLeadWithNoReplacement || readOnlyReason) return;
     setSaving(true);
     setRefusal(null);
     setSaved(null);
@@ -998,6 +1142,7 @@ function DesignerPanel({
           .filter(Boolean)
           .join(" ")
       );
+      onSaved?.();
     } catch (err) {
       // PANEL-LEVEL, not a toast and not the page banner: the refusal is about THIS panel's
       // control, the panel is tall, and `aria-live="polite"` never interrupts — which is exactly
@@ -1048,6 +1193,9 @@ function DesignerPanel({
           {saved}
         </div>
       ) : null}
+      {/* The page draws the same sentence above every panel; it is repeated HERE because this is
+          the panel it switches off, and the other two panels beside it stay live for the reader. */}
+      <HeldPostNotice refusal={readOnlyReason} id={heldNoticeId} className="mt-3" />
 
       {held === null ? (
         <p className="mt-3 text-sm text-ink-700">Loading…</p>
@@ -1059,11 +1207,14 @@ function DesignerPanel({
               onChange={setSelected}
               lead={leadIntent}
               onLeadChange={setLeadChoice}
-              disabled={saving}
+              disabled={saving || Boolean(readOnlyReason)}
               // THIS PAGE'S DOOR, not the picker's default. `GET /design-workshops/eligible-viewers`
               // is `require_admin` and 403s a Ministry Admin; this one runs the same query behind
               // the same predicate as the page and answers the same four keys.
               fetchEligible={listAssignableDesigners}
+              // NEVER THE READER, who may not name themselves. Still DRAWN if they already hold a
+              // designer row here, because this is a whole-set save and an undrawn row is a removal.
+              excludeUserIds={user ? [user.id] : undefined}
             />
           </div>
 
@@ -1149,8 +1300,9 @@ function DesignerPanel({
               className="field-button"
               // `emptiesTheWorkshop` is NOT in this list, and that is the whole of the fix: the
               // notice above explains the consequence and the officer decides.
-              disabled={!dirty || saving || overCap || dropsTheLeadWithNoReplacement}
+              disabled={!dirty || saving || overCap || dropsTheLeadWithNoReplacement || Boolean(readOnlyReason)}
               onClick={save}
+              aria-describedby={readOnlyReason ? heldNoticeId : undefined}
               type="button"
             >
               <Save className="h-4 w-4" aria-hidden />
@@ -1231,11 +1383,15 @@ function DesignerPanel({
  */
 function OversightPanel({
   workshop,
-  onError
+  onError,
+  onSaved
 }: {
   workshop: DwSummary;
   onError: (message: string | null) => void;
+  /** Told after every change the server accepted, so the page re-reads who holds what. */
+  onSaved?: () => void;
 }) {
+  const { user } = useAuth();
   const [current, setCurrent] = useState<DwWorkshopOversight | null>(null);
   const [query, setQuery] = useState("");
   const applied = useDebounced(query);
@@ -1302,6 +1458,12 @@ function OversightPanel({
    * somebody else was naming a Regional Director would silently undo their work.
    */
   async function assign(capacity: DwOversightCapacity, userId: string | null) {
+    // NOBODY TAKES THEMSELVES OFF A POST. A slot the reader holds is switched off below; this keeps the
+    // rule for any other way in, and says the server's reason rather than spending its 409.
+    if (user?.id && (current?.oversight ?? []).some((row) => row.capacity === capacity && row.userId === user.id)) {
+      setRefusal(selfReleaseRefused(capacity));
+      return;
+    }
     setSaving(true);
     setRefusal(null);
     const body =
@@ -1313,7 +1475,11 @@ function OversightPanel({
       // THE SERVER'S SET, NEVER AN ECHO OF WHAT WAS SENT — two administrators on one screen must not
       // each end up believing their own payload was the outcome.
       setCurrent((currently) => (currently ? { ...currently, oversight: result.oversight } : currently));
+      onSaved?.();
     } catch (err) {
+      // A SEPARATION-OF-DUTIES REFUSAL IS A 409 WHOSE SENTENCE NAMES THE RULE — the same person in
+      // both posts, an inspector of this workshop, somebody who authored it, the reader themselves —
+      // and it reaches the reader verbatim, which is the only wording that says what to do instead.
       setRefusal(describeRefusal(err, "that officer"));
     } finally {
       setSaving(false);
@@ -1324,61 +1490,30 @@ function OversightPanel({
     () => new Map((current?.oversight ?? []).map((row) => [row.capacity, row])),
     [current]
   );
+  /** The base of the two slots' own-post notes, each suffixed with its capacity. */
+  const ownPostNote = useId();
 
   /**
-   * The rows for one slot: who may hold it, then who may not and why, then whoever holds it now.
-   *
-   * **THE INELIGIBLE ARE DRAWN AND EXPLAINED RATHER THAN OMITTED**, which is the rule this panel
-   * has always kept and the reason it is worth keeping: this directory answers "who are the
-   * officers", and one that silently leaves out a third of them is a directory somebody will
-   * conclude is broken. `SelectOption.disabled` is what carries it now the control is a dropdown,
-   * and the row's `hint` says why — which `SearchableSelect` also SEARCHES, so typing "ministry"
-   * finds the explanation rather than nothing.
-   *
-   * **AND THE HOLDER IS ALWAYS OFFERED**, even when the current search does not reach them and even
-   * when their account has since been suspended off the directory. A trigger with no matching row
-   * reads as though nothing were chosen, on the one control whose whole job is to say who is.
+   * The rows for each slot — who may hold it, who may not and why, and whoever holds it now — built
+   * by `officerOptionsForPost` (`pickers.ts`), which also leaves the reader out: nobody appoints
+   * themselves. ONE ARRAY PER SLOT, MEMOISED, so a re-render that changed nothing hands the dropdown
+   * the same options rather than a fresh array to re-pin its selection against.
    */
-  const rowsFor = useCallback(
-    (capacity: DwOversightCapacity): DropdownOption[] => {
-      const rows: DropdownOption[] = [];
-      const offered = new Set<string>();
-      const add = (officer: DwOfficer, eligible: boolean) => {
-        if (offered.has(officer.id)) return;
-        offered.add(officer.id);
-        rows.push({
-          value: officer.id,
-          label: personLabel(officer),
-          hint: eligible
-            ? `${officer.email} · ${roleLabel(officer.role)}`
-            : `${officer.email} · ${roleLabel(officer.role)} — supervises the scheme rather than one workshop, so this post is not theirs to hold`,
-          disabled: !eligible,
-          ...(eligible ? {} : { group: "Cannot hold this post" })
-        });
-      };
-      for (const officer of officers ?? []) {
-        if (officer.capacities.includes(capacity)) add(officer, true);
-      }
-      for (const officer of officers ?? []) {
-        if (!officer.capacities.includes(capacity)) add(officer, false);
-      }
-      const holder = held.get(capacity);
-      if (holder && !offered.has(holder.userId)) {
-        const remembered = seen.get(holder.userId);
-        add(
-          remembered ?? {
-            id: holder.userId,
-            name: holder.name,
-            email: holder.email,
-            role: holder.role,
-            capacities: [capacity]
-          },
-          true
-        );
-      }
-      return rows;
-    },
-    [officers, held, seen]
+  const rowsByCapacity = useMemo(
+    () =>
+      new Map<DwOversightCapacity, DropdownOption[]>(
+        CAPACITIES.map((capacity) => [
+          capacity,
+          officerOptionsForPost({
+            officers,
+            capacity,
+            holder: held.get(capacity),
+            remembered: seen,
+            readerId: user?.id
+          })
+        ])
+      ),
+    [officers, held, seen, user?.id]
   );
 
   return (
@@ -1388,10 +1523,14 @@ function OversightPanel({
       </h2>
       <p className="mt-1 text-xs leading-5 text-ink-500">
         One of each per workshop. They can READ every stage of this workshop and change none of it —
-        an oversight row is not access to the workshop, and it does not let them save anything. A
-        Ministry Admin supervises the scheme rather than one workshop and cannot be named in either
-        slot. Choosing &ldquo;Nobody is assigned&rdquo; takes the post off this workshop; the change
-        is saved the moment it is made, and nothing else on the page moves with it.
+        an oversight row is not access to the workshop, and while somebody holds the post they cannot
+        save anything on it, even if they could before. Either post may be held by an officer of that
+        tier, or by a Ministry Admin, an admin or the master admin — never by you, and never by the
+        same person as the other post, by somebody who worked on this workshop or by one of its
+        inspectors. Choosing &ldquo;Nobody is assigned&rdquo; takes the post off this workshop; the
+        change is saved the moment it is made, and nothing else on the page moves with it. A post you
+        hold yourself is the one exception: nobody takes themselves off a post, so that slot stays as
+        it is until another administrator changes it.
       </p>
 
       {refusal ? (
@@ -1403,6 +1542,14 @@ function OversightPanel({
       <div className="mt-3 grid gap-3 sm:grid-cols-2">
         {CAPACITIES.map((capacity) => {
           const row = held.get(capacity);
+          /*
+            THE READER'S OWN POST STAYS AS IT IS. Choosing anybody else, or "Nobody is assigned", would
+            take them off it, and nobody takes themselves off a post (`selfReleaseRefusal`) — the
+            server answers it with a 409. So the slot is drawn with them in it and switched off, with
+            the reason under it; the other slot stays theirs to fill.
+          */
+          const own = Boolean(user?.id) && row?.userId === user?.id;
+          const ownNoteId = `${ownPostNote}-${capacity}`;
           return (
             <FieldBlock key={capacity} label={CAPACITY_LABELS[capacity]}>
               {current === null ? (
@@ -1413,11 +1560,12 @@ function OversightPanel({
                     ariaLabel={`The ${CAPACITY_LABELS[capacity]} of this workshop`}
                     // FILTERS NOTHING AND FILLS A FIELD, so the default `advanceOnSelect` is right:
                     // the reader's next stop is the other slot.
-                    disabled={saving}
+                    disabled={saving || own}
+                    describedBy={own ? ownNoteId : undefined}
                     // THE UNASSIGN, INSIDE THE CONTROL. See this panel's header.
                     noneLabel="Nobody is assigned"
                     onChange={(next) => assign(capacity, next || null)}
-                    options={rowsFor(capacity)}
+                    options={rowsByCapacity.get(capacity) ?? []}
                     placeholder="Nobody is assigned"
                     /*
                       ONE TERM, BOTH SLOTS, ONE REQUEST PER KEYSTROKE. The two dropdowns read the
@@ -1440,6 +1588,14 @@ function OversightPanel({
                       {row.assignedAt ? ` · supervising since ${formatDate(row.assignedAt)}` : ""}
                     </p>
                   ) : null}
+                  {own ? (
+                    <p
+                      id={ownNoteId}
+                      className="rounded-md border border-amber-500/30 bg-amber-100 px-2.5 py-1.5 text-xs leading-5 text-amber-800"
+                    >
+                      {selfReleaseRefusal(capacity)}
+                    </p>
+                  ) : null}
                 </>
               )}
             </FieldBlock>
@@ -1447,11 +1603,13 @@ function OversightPanel({
         })}
       </div>
 
-      {officers !== null && officers.length === 0 ? (
+      {officers !== null && officersOfferedTo(officers, user?.id) === 0 ? (
+        // ASKED OF WHO IS OFFERED, NOT OF THE SERVER'S ANSWER: an older server still lists the
+        // reader, who is left out above, so a list holding only them is an empty one to read.
         <p className="mt-3 text-sm text-ink-700">
           {applied
-            ? "No officer matches that search."
-            : "No account holds one of the three ministry posts yet. An admin sets a role on Users."}
+            ? "Nobody else who may hold either post matches that search."
+            : "Nobody else may be named in either post yet. An Assistant Director or Regional Director account, or another Ministry Admin, admin or master admin, is what this list offers — an admin sets a role on Users."}
         </p>
       ) : null}
       {truncated ? (
@@ -1502,11 +1660,26 @@ function OversightPanel({
  */
 function ArtisanListPanel({
   workshop,
-  onError
+  onError,
+  readOnlyReason
 }: {
   workshop: DwSummary;
   onError: (message: string | null) => void;
+  /**
+   * Why the READER may not change this workshop's roster — they hold a post on it — or null.
+   *
+   * THIS PANEL AND THE DESIGNERS PANEL, AND NEITHER OF THE OTHER TWO. This one writes the
+   * workshop's CONTENT: an upload files artisan records against it and writes a row per artisan into
+   * stage 3, and taking somebody off unfiles them. The Designers panel writes its DESIGNER TEAM, and
+   * the coordinator's ruling of 2026-10-09 takes both from a post holder (it said "this panel and no
+   * other" until that ruling). Naming the Assistant Director, the Regional Director and the
+   * inspectors names OTHER people to posts, which a post holder may still do. Reading stays open —
+   * the roster, the import history and the pro-forma — because a post takes the workshop's writes
+   * away and nothing else.
+   */
+  readOnlyReason?: string | null;
 }) {
+  const locked = Boolean(readOnlyReason);
   const [downloading, setDownloading] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [refusal, setRefusal] = useState<string | null>(null);
@@ -1579,7 +1752,9 @@ function ArtisanListPanel({
 
   async function upload(files: File[]) {
     const [file] = files;
-    if (!file) return;
+    // `DropCard` already ignores a drop while disabled; checked again here so the lock does not
+    // depend on one component's handling of four drag events.
+    if (!file || locked) return;
     setUploading(true);
     setRefusal(null);
     setReport(null);
@@ -1607,7 +1782,7 @@ function ArtisanListPanel({
    * unfiled while this one was choosing is reflected rather than resurrected.
    */
   async function removeUnticked() {
-    if (!comingOff.length) return;
+    if (!comingOff.length || locked) return;
     setRemoving(true);
     setRefusal(null);
     setRosterSaved(null);
@@ -1641,6 +1816,14 @@ function ArtisanListPanel({
   return (
     <section className="panel mt-4 p-4">
       <h2 className="font-display text-base font-bold tracking-tight text-ink-900">Artisan list</h2>
+      {readOnlyReason ? (
+        // THE REASON, ON THE PANEL WHOSE CONTROLS IT SWITCHES OFF. The page says it once above the
+        // panels; a disabled upload with no sentence beside it reads as a broken upload.
+        <p className="mt-1 text-xs leading-5 text-ink-500">
+          You cannot change this workshop&rsquo;s artisan list while you hold a post on it — the
+          roster and its uploads are read-only for you until that post is taken off you.
+        </p>
+      ) : null}
 
       {/* ── WHO IS ON IT ─────────────────────────────────────────────────────────────────────── */}
       <FieldBlock
@@ -1667,7 +1850,7 @@ function ArtisanListPanel({
           <MultiSelectDropdown
             ariaLabel="Artisans on this workshop"
             confirmLabel="Done"
-            disabled={removing}
+            disabled={removing || locked}
             emptyLabel="No artisan is filed against this workshop."
             onChange={setKeeping}
             options={rosterOptions}
@@ -1719,7 +1902,7 @@ function ArtisanListPanel({
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <button
             className="field-button"
-            disabled={removing}
+            disabled={removing || locked}
             onClick={removeUnticked}
             type="button"
           >
@@ -1776,7 +1959,7 @@ function ArtisanListPanel({
           buttonLabel="Choose the filled-in pro-forma"
           accept={ARTISAN_ACCEPT}
           acceptSentence="One Excel workbook (.xlsx), up to 4 MB."
-          disabled={uploading}
+          disabled={uploading || locked}
           validate={artisanUploadRefusal}
           onFiles={upload}
         >

@@ -134,10 +134,13 @@ export function MinistryDeskCard() {
     a row is absent because that destination is not this account's, which is a fact about the account
     rather than about the data. (The awaiting count above is a request, and it is the one thing on
     this card that is: it is a number ABOUT one row, not a decision about which rows there are, and
-    when it fails it leaves the pill absent rather than the row.) The master admin is refused
-    `/officers/monitored` BY NAME on the server, so telling them "one destination is hidden from you"
-    would be reporting a rule as a loss. The walkthrough below is where the rules are explained, and
-    it is one click away.
+    when it fails it leaves the pill absent rather than the row.) A row this account's role cannot
+    open — `/annual-plan` and `/officers` for an Assistant Director, say — is the rule, not a loss,
+    and telling them "a destination is hidden from you" would be reporting it as one. (The example
+    this paragraph gave until 2026-10-09 was the master admin refused `/officers/monitored` by name;
+    since then any of the three administering tiers may be named to monitor a workshop, and the master
+    admin's desk carries that row.) The walkthrough below is where the rules are explained, and it is
+    one click away.
 
     WHAT IS NOT SILENT IS A STEP THAT DOES NOT EXIST. `MINISTRY_APPROVAL_GAP` is rendered under the
     grid because these rows are drawn "in the order a workshop reaches them", and an ordered sequence
@@ -266,7 +269,7 @@ export function MinistryDeskCard() {
         — it carries a deck for the ministry posts that says, screen by screen, which post each one is
         for, and for the three posts it is the deck that opens. The three do not have the same powers:
         two of these screens refuse a Regional Director even though they outrank an Assistant
-        Director, and one refuses an admin by name.
+        Director.
       </p>
     </section>
   );

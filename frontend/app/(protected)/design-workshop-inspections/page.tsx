@@ -21,6 +21,16 @@
  * empty state and a silent failure look identical, and the person reading it has no other surface to
  * cross-check against.
  *
+ * ── SINCE 2026-10-09 THE PAGE IS AN ADMIN'S TOO, AND "NONE" HAS ONE SENTENCE ─────────────────
+ *
+ * The owner's ruling D3 lets a Ministry Admin, an admin and the master admin be appointed to inspect
+ * a workshop, so they open this page like an Inspector / Reviewer does and read only the workshops
+ * they were appointed to. The empty state says "You do not hold any inspection posts" to everybody
+ * ({@link inspectionEmptyState}), and a 403 met by an admin means exactly that — a server that admits
+ * them only once they hold a row, or one older than the ruling — so it is drawn as the same empty
+ * state rather than as a banner ({@link inspectionRefusalMeansNoPosts}). An Inspector / Reviewer
+ * refused here has met a fault and still gets the banner.
+ *
  * ── WHY THE ROUTE IS A SIBLING OF /design-workshops AND NOT A PAGE INSIDE IT ──────────────────
  *
  * Because the API's prefix is, for a reason that is a guard rail rather than a filing decision:
@@ -44,6 +54,8 @@ import { StatusBadge } from "@/components/StatusBadge";
 import { ApiError } from "@/lib/api";
 import {
   ELIGIBLE_INSPECTOR_SEARCH_MAX,
+  inspectionEmptyState,
+  inspectionRefusalMeansNoPosts,
   listInspectableDesignWorkshops
 } from "@/lib/designWorkshopInspections";
 import type { DwSummary } from "@/lib/designWorkshops";
@@ -123,6 +135,13 @@ export default function DesignWorkshopInspectionsPage() {
       })
       .catch((err) => {
         if (generation.current !== current) return;
+        if (inspectionRefusalMeansNoPosts(err, user)) {
+          // NOT A FAILURE: an admin the server will not yet show this list to holds no inspection
+          // posts, and that is exactly what the empty state says. See the header.
+          setData({ items: [], total: 0, page: 1, pageSize: PAGE_SIZE, pages: 0 });
+          setError(null);
+          return;
+        }
         // The list is NOT emptied. An empty table under an error banner reads as "nothing is
         // assigned to me", which is the one thing this screen must never say by accident.
         setError(describeFailure(err));
@@ -131,11 +150,10 @@ export default function DesignWorkshopInspectionsPage() {
 
   /*
     THE SAME PREDICATE THE API APPLIES, APPLIED HERE TOO — a mirror and not a narrowing.
-    `assert_inspection_surface` refuses everybody outside `INSPECTION_ROLES` with a 403, INCLUDING
-    admins and the master admin, so this refusal is identical for an admin, a designer and a
-    volunteer. It names the door each of them actually wants rather than dead-ending on a padlock,
-    because an admin who is told only "forbidden" on a READ surface, in a product where admins read
-    everything, will reasonably conclude the deployment is broken.
+    `assert_inspection_surface` refuses everybody who may not be appointed to inspect, which since
+    2026-10-09 leaves out a designer, a professor and the two directorate posts and lets in the three
+    administering tiers. It names the door each refused reader actually wants rather than
+    dead-ending on a padlock.
 
     `ROUTE_GUARDS` already refuses this path above the page — this is the second of the two lines,
     kept because a page that renders its shell before the guard settles would flash a list header at
@@ -153,9 +171,10 @@ export default function DesignWorkshopInspectionsPage() {
             Inspector / Reviewer access required
           </h1>
           <p className="mx-auto mt-3 max-w-lg text-sm leading-6 text-ink-500">
-            The inspection surface belongs to the Inspector / Reviewer tier, and shows only the workshops an admin has
-            assigned to that account. Designers and admins read design &amp; prototype workshops on Design workshops
-            instead, and an admin chooses who inspects a workshop on Manage workshop access.
+            Workshops to inspect shows the design &amp; prototype workshops an account has been appointed to inspect,
+            so it opens for whoever may be appointed: the Inspector / Reviewer tier, a Ministry Admin, an admin and
+            the master admin. Designers read design &amp; prototype workshops on Design workshops instead; who
+            inspects a workshop is chosen on Workshop oversight.
           </p>
           <p className="mt-3 text-xs text-ink-500">
             You are signed in as <span className="font-medium text-ink-700">{roleLabel(user?.role)}</span>.
@@ -179,7 +198,7 @@ export default function DesignWorkshopInspectionsPage() {
     <div>
       <PageHeader
         title="Workshops to inspect"
-        description="The design & prototype workshops an admin has assigned you to inspect. You can read every stage of one and change none of it."
+        description="The design & prototype workshops you have been appointed to inspect. You can read every stage of one and change none of it."
         icon={<FileSearch className="h-5 w-5" aria-hidden />}
       />
 
@@ -209,14 +228,7 @@ export default function DesignWorkshopInspectionsPage() {
           <div className="p-4 text-sm text-ink-700">Loading…</div>
         ) : rows.length === 0 ? (
           <div className="p-4">
-            <EmptyState
-              title={applied ? "No workshop under your inspection matches that search" : "No workshop is assigned to you"}
-              body={
-                applied
-                  ? "This searches only the workshops assigned to you, which is the whole of what you can read here. Clear the search to see them all."
-                  : "An admin assigns inspections one workshop at a time, on Manage workshop access. Until they have, there is nothing here to read — this page is not hiding anything from you, and nothing failed to load."
-              }
-            />
+            <EmptyState {...inspectionEmptyState(Boolean(applied))} />
           </div>
         ) : (
           <ul className="divide-y divide-line-200">

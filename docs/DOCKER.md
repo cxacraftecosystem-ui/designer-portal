@@ -302,6 +302,49 @@ docker compose exec api python scripts/seed_questionnaire.py
 `seed_admin.py` refuses to run without `ADMIN_PASSWORD`; it seeds `MASTER_ADMIN_EMAIL` as the
 master admin, plus `ADMIN_EMAIL` as a plain admin when the two differ.
 
+**Every password it writes is temporary** (since 2026-10-09). A value typed into an `-e` flag or a
+`.env` file is a shared secret, so both seeded accounts carry `mustChangePassword`: the first sign-in
+asks for a new password, and until the `ADMIN_EMAIL` account has chosen its own the API answers it
+`401` with `X-Password-Change-Required: 1` on everything outside the short allow-list the
+change-password screen needs. The account at `MASTER_ADMIN_EMAIL` is the break-glass and is exempt
+from that refusal; the screens still ask it. **Re-running the script resets the master admin and
+nobody else** — a new temporary password, the flag raised again, and its live sessions ended — and
+prints a line saying it left an existing `ADMIN_EMAIL` account alone, where it used to overwrite that
+account's password and role.
+
+**Pointing `MASTER_ADMIN_EMAIL` at an address that already has a password account needs this script
+first** (since 2026-10-09) — a handover to a colleague who already signs in with a password, say. The
+master's Google sign-in makes the account at that address the master admin only when it already is
+one or holds no password; any other holds a password that whoever chose it still knows, so the
+sign-in answers `409` naming `scripts/seed_admin.py`, changes nothing, and logs the account's id and
+role at ERROR. Run the script with the new address in `MASTER_ADMIN_EMAIL`: it takes that account over
+— a new temporary password, `MASTER_ADMIN`, every session the old password opened ended — and the
+next Google sign-in then finds a master admin. An address with no account yet, or with one that has
+no password (a Google sign-in made it), needs nothing ([SECURITY.md](SECURITY.md) §3.3).
+
+Any other account is made with the operator script, which calls the same code as `POST /api/users`
+as the existing account `--actor-email` names, and refuses what that route would refuse it:
+
+```bash
+read -rs PROVISION_PASSWORD && export PROVISION_PASSWORD     # typed, not echoed
+docker compose exec -e PROVISION_PASSWORD api python -m scripts.provision_account \
+  --email person@example.org --name "A Person" --role DESIGNER --actor-email you@example.org
+# a dry run: it prints what it WOULD do and writes nothing. Re-run with --apply to write.
+unset PROVISION_PASSWORD
+```
+
+The password comes from `PROVISION_PASSWORD` and from nowhere else — the script has no flag for it,
+because a command line lands in shell history and the process table — and `-e PROVISION_PASSWORD`
+with no `=` hands the container the host's value without putting it on this command line either.
+`--actor-email` must name an account the API would let do this: a provisioner (Ministry Admin and
+above), admitted on the allow-list, and not itself waiting to replace a temporary password — so the
+seeded `ADMIN_EMAIL` account can act only once it has signed in and chosen its own password, and the
+master admin can act straight away. The new account carries `mustChangePassword` unless
+`--no-must-change` is given. With `--google-only` (and `PROVISION_PASSWORD` unset) it creates **no**
+account: it writes an ACTIVE allow-list row at `--role`, and the person's first Google sign-in
+creates the account at that tier — an Admin-only act, as it is on the access screen.
+[PERMISSIONS.md](PERMISSIONS.md) §1.2 has the rules both scripts obey.
+
 Note that the migration runs in its **own** container, not via `exec api`. `prisma migrate` is a
 Node program, and the runtime image has no Node — that is the whole point of the three-stage
 build. The `migrate` service is built from the Dockerfile's `prisma` stage, which has the CLI, the
@@ -402,4 +445,5 @@ docker compose config | sed -n '/^  api:/,/^  [a-z]/p' | grep -oE '^      [A-Z_0
 | Both images actually build | The same job, **on a manual run only** (`gh workflow run Checks`). Two image builds per push is CI time nobody asked for, and nothing deploys these images. |
 | Environment defaults | `docker-compose.yml`'s `${VAR:-default}` interpolation, and `backend/app/core/config.py` behind it. [ENVIRONMENT.md](ENVIRONMENT.md) is the index of the names. |
 | The refusal-to-boot guard | `docker/backend/entrypoint.sh`. It classifies a database host by SHAPE, not by provider name — see the note in `PROVIDER_ALLOWLIST` in `docs/tools/check-docs.mjs` about the two stale vendor mentions in its header. |
+| What the two account scripts write | Their own docstrings, `backend/scripts/seed_admin.py` and `backend/scripts/provision_account.py`, and the tests that pin them: `test_the_seed_script_resets_only_the_master_admin_and_every_password_it_writes_is_temporary` in `backend/tests/test_auth_identity_and_password_links.py`, and the script's cases at the foot of `backend/tests/test_account_provisioning.py` — `test_the_script_*`, `test_the_password_comes_from_the_environment_and_is_never_echoed` and `test_google_only_*`. Why a handover onto an existing password account needs `seed_admin.py` first is `_refuse_to_promote_a_password_account` in `backend/app/api/routes/auth.py`, pinned by `test_the_masters_google_sign_in_promotes_no_account_somebody_else_holds_a_password_to` in the same identity test file. This document repeats only what an operator needs at the prompt. |
 | The bucket and database names must not be renamed | Stated at length in `docker-compose.yml` beside each one. Both are `initdb`/`mc mb` facts: renaming either asks an already-initialised volume for something that was never created. Nothing automated can catch this — it is a comment because it has to be. |

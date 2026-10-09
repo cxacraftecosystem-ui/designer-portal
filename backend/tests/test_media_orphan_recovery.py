@@ -234,6 +234,17 @@ def test_an_untagged_row_is_never_an_orphan(monkeypatch):
 def _relink(monkeypatch, media_id: str, rec_type: str, target_id: str, **tables):
     seen: list[tuple[str, Any]] = []
     monkeypatch.setattr(media_routes, "db", _DB(seen, **tables))
+    # NO FILE HERE BELONGS TO A DESIGN WORKSHOP ANY ADMIN SERVES ON. Since 2026-10-09 a relink first
+    # asks which workshops hold the file and which one it would arrive under, reading tables this
+    # file does not fake through ``design_workshop_posts``' own client; that refusal is
+    # ``tests/test_admin_serve_as.py``'s to prove.
+    from app.services import design_workshop_posts as posts
+
+    async def _held_by_no_workshop(*_args: Any, **_kwargs: Any) -> set[str]:
+        return set()
+
+    monkeypatch.setattr(posts, "media_design_workshop_ids", _held_by_no_workshop)
+    monkeypatch.setattr(posts, "link_filing", _held_by_no_workshop)
     payload = SimpleNamespace(linkedRecordType=rec_type, linkedRecordId=target_id)
     return asyncio.run(
         media_routes.relink_media(media_id=media_id, payload=payload, current_user=ADMIN)

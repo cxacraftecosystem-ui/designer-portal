@@ -446,16 +446,16 @@ export const NAV_ITEMS: NavItem[] = [
   // is deliberately outside `DESIGN_WORKSHOP_ROLES` — a frozenset, not a rank floor — so every
   // `/design-workshops`-family route refuses it exactly as it refuses a professor, and gating this
   // row on that predicate would hide the only surface the tier exists for from the only tier that
-  // can use it. The reverse is true too: a designer, an admin and a master admin all see the four
-  // rows above and none of them sees this one.
+  // can use it. The reverse is true too: a designer sees the four rows above and not this one.
   //
-  // AN ADMIN DOES NOT SEE IT, WHICH LOOKS LIKE A BUG AND IS THE SERVER'S OWN RULE.
-  // `assert_inspection_surface` answers an admin a 403 by name — scoped by their own inspection rows
-  // an admin sees an empty page and reads it as a broken feature, and scoped by "everything, because
-  // they are an admin" this becomes a second full read of every workshop in the repository. What an
-  // admin gets is the other half of the feature: choosing who inspects what, on Manage workshop
-  // access. So this is a MIRROR of the API's refusal, not a narrowing of it, and drawing the row for
-  // an admin would put a padlock behind a menu entry.
+  // A MINISTRY ADMIN, AN ADMIN AND THE MASTER ADMIN SEE IT TOO, SINCE 2026-10-09. The owner ruled
+  // that day that any of the three may be APPOINTED to inspect one workshop by somebody else, and
+  // `assert_inspection_surface` now admits every account that may be (`INSPECTION_HOLDER_ROLES`),
+  // scoped strictly by the caller's own inspection rows — never "everything, because they are an
+  // admin", which would make this a second full read of every workshop in the repository. One who
+  // holds no rows is told "You do not hold any inspection posts", an answer rather than a fault.
+  // Until that ruling the server refused an admin here by name and this row mirrored the refusal.
+  // Choosing who inspects what is still the other half of the feature, on Workshop oversight.
   //
   // THE `ROUTE_GUARDS` ROW EXISTS and was written in the same change as this entry rather than owed
   // afterwards: `/design-workshop-inspections` in `lib/permissions.ts`, with its twin row in
@@ -474,37 +474,42 @@ export const NAV_ITEMS: NavItem[] = [
   // below, character for character — so the two clients agree by adoption rather than by luck, and
   // the ordinary rule applies again: the handset owns this wording and the web copies it.
   //
-  // FOUR SENTENCES IN THIS FAMILY ARE DELIBERATELY *NOT* SHARED, and a parity pass must not "fix"
-  // them into agreement. Each names WHERE AN ADMIN APPOINTS AN INSPECTOR, and that place differs by
-  // client on purpose: the web says "on Manage workshop access" (the panel is mounted on
-  // `/workshop-access/manage`), the handset says "from that workshop's own stage index" (its control
-  // hangs off `StageIndexScreen`, so the workshop is already in hand and there is no hundred-title
-  // dropdown on the one screen where the wrong row misassigns an examination). The four are every
-  // hit of `grep -c "Manage workshop access"` across this feature's web files: the route guard's
-  // message in `lib/permissions.ts`, two on the list page (its description and its empty state) and
-  // the detail page's 404. Where the handset has the counterpart sentence — the refusal and the
-  // empty state — the two agree word for word up to that final clause and differ only in it, which
-  // is the shape to preserve. Unifying that clause would send an admin to a screen their client
-  // does not have.
+  // THE SENTENCES IN THIS FAMILY THAT SAY WHERE INSPECTORS ARE APPOINTED ARE DELIBERATELY *NOT*
+  // SHARED WITH THE HANDSET, and a parity pass must not "fix" them into agreement. The place differs
+  // by client on purpose: the web says "on Workshop oversight" (the panel is mounted on `/officers`,
+  // the screen a Ministry Admin can reach, as well as on `/workshop-access/manage`; it said "on
+  // Manage workshop access" until 2026-10-09), the handset says "from that workshop's own stage
+  // index" (its control hangs off `StageIndexScreen`, so the workshop is already in hand and there is
+  // no hundred-title dropdown on the one screen where the wrong row misassigns an examination). They
+  // are the hits of `grep -rn "on Workshop oversight"` across this feature's web files: the route
+  // guard's message in `lib/permissions.ts`, the list page, its empty state, and the detail page's
+  // refusals. Where the handset has the counterpart sentence — the refusal and the empty state — the
+  // two agree up to that final clause and differ only in it, which is the shape to preserve.
+  // Unifying that clause would send an admin to a screen their client does not have.
   {
     href: "/design-workshop-inspections",
     label: "Workshops to inspect",
     icon: FileSearch,
     group: "Browse",
     can: canInspectDesignWorkshops,
-    gate: "assert_inspection_surface (INSPECTION_ROLES, services/design_workshop_inspectors.py)"
+    gate: "assert_inspection_surface (INSPECTION_HOLDER_ROLES, services/design_workshop_inspectors.py)"
   },
 
   // ── THE SIXTH SCOPE, BOTH HALVES, ADDED 2026-09-13 ────────────────────────────────────────────
   //
-  // TWO ROWS AND NOT ONE, because they gate DISJOINT audiences and neither is the other's superset.
-  // A Ministry Admin sees both (they choose who monitors a workshop AND may be assigned one); an
-  // ADMIN sees only the first; an Assistant Director or Regional Director sees only the second.
+  // TWO ROWS AND NOT ONE, because they gate OVERLAPPING audiences and neither is the other's
+  // superset. The three administering tiers — a Ministry Admin, an admin, the master admin — see
+  // both: they choose who monitors a workshop AND, since 2026-10-09, may be named to monitor one by
+  // somebody else. An Assistant Director or Regional Director sees only the second. (Until that
+  // ruling an ADMIN saw only the first and was refused the second by name.)
   //
   // `canAssignWorkshopOversight` AND NOT `isAdmin` on the first row: a MINISTRY_ADMIN is its primary
   // user and is not an admin by any predicate in this file. `canReadWorkshopOversight` AND NOT a
-  // rank floor on the second: an ADMIN outranks every officer tier and is REFUSED there by name, so
-  // a floor would draw the row for every admin and land them on a padlock.
+  // rank floor on the second, although since 2026-10-09 a floor at Assistant Director would happen
+  // to draw the same rows: the server's door is `OVERSIGHT_HOLDER_ROLES`, a SET of every account
+  // that may be named in either post, and a floor would admit the next tier added above 42 that the
+  // server does not — a padlock behind a menu entry. (The old reason was sharper: an ADMIN
+  // outranked every officer tier and was refused there by name.)
   //
   // A REGIONAL DIRECTOR IS REFUSED THE FIRST ROW AND THEY OUTRANK AN ASSISTANT DIRECTOR. The
   // supervised do not choose the supervisor — the same rule the row above states one rung down.
@@ -566,7 +571,7 @@ export const NAV_ITEMS: NavItem[] = [
     icon: Binoculars,
     group: "Browse",
     can: canReadWorkshopOversight,
-    gate: "assert_oversight_surface (OFFICER_ROLES, services/design_workshop_oversight.py)"
+    gate: "assert_oversight_surface (OVERSIGHT_HOLDER_ROLES, services/design_workshop_oversight.py)"
   },
   { href: "/tools?assign=1", label: "Assign tools to artisans", icon: Wrench, group: "Browse", can: canCreateRecords, gate: "get_current_user + owner/EDIT-grant/admin per artisan" },
 

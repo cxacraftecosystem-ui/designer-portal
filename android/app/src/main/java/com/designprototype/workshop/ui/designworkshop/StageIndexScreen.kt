@@ -205,7 +205,9 @@ fun StageIndexScreen(
      * NOT THE SAME QUESTION AS [onOpenViewers], and the two rows sit apart on this screen for that
      * reason. That one decides who may WORK on this record - a viewer row admits its holder to all
      * 22 stages and every write on them. This one decides who may EXAMINE it, read-only, and the
-     * server refuses at import time to let one account hold both on one workshop.
+     * server never lets one account hold both on one workshop (since 2026-10-09 a per-workshop rule —
+     * an author is refused its inspection, an inspector every write — where it used to be an
+     * import-time check on the two role sets).
      */
     onOpenInspectors: () -> Unit,
     /**

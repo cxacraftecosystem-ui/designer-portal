@@ -39,6 +39,9 @@ class DesignWorkshopViewersTest {
 
     private val creator = "u-creator"
 
+    /** The admin holding the phone — somebody none of the cases below is about, unless it says so. */
+    private val reader = "u-reader"
+
     private fun eligible(id: String, name: String = id, role: String = "DESIGNER") =
         DwEligibleViewerDto(id = id, name = name, email = "$id@example.org", role = role)
 
@@ -67,6 +70,7 @@ class DesignWorkshopViewersTest {
             eligible = listOf(eligible(creator), eligible("u-b")),
             viewers = listOf(granted(creator), granted("u-b")),
             creatorId = creator,
+            readerId = reader,
             eligibleListComplete = true,
         )
 
@@ -83,6 +87,7 @@ class DesignWorkshopViewersTest {
             eligible = listOf(eligible("u-active")),
             viewers = listOf(granted("u-suspended")),
             creatorId = creator,
+            readerId = reader,
             // THE WHOLE eligible set — which is what makes the mark below a fact rather than a guess.
             eligibleListComplete = true,
         )
@@ -114,6 +119,7 @@ class DesignWorkshopViewersTest {
             eligible = emptyList(),
             viewers = listOf(granted("u-a"), granted("u-b")),
             creatorId = creator,
+            readerId = reader,
             // The load's own claim, and the reason it must not be made after a failure: an empty
             // COMPLETE list is a legal answer from a repository whose designers are all suspended.
             eligibleListComplete = true,
@@ -133,6 +139,7 @@ class DesignWorkshopViewersTest {
             eligible = listOf(eligible("u-a"), eligible("u-b")),
             viewers = listOf(granted("u-b")),
             creatorId = creator,
+            readerId = reader,
             eligibleListComplete = true,
         )
 
@@ -149,6 +156,7 @@ class DesignWorkshopViewersTest {
             eligible = listOf(eligible(""), eligible("u-a")),
             viewers = listOf(granted("")),
             creatorId = creator,
+            readerId = reader,
             eligibleListComplete = true,
         )
 
@@ -164,10 +172,52 @@ class DesignWorkshopViewersTest {
             eligible = listOf(eligible("u-z", name = "Zoya"), eligible("u-a", name = "Aarav")),
             viewers = emptyList(),
             creatorId = creator,
+            readerId = reader,
             eligibleListComplete = true,
         )
 
         assertEquals(listOf("u-z", "u-a"), choices.map { it.userId })
+    }
+
+    @Test
+    fun `the admin reading is never offered to themselves, but a row they hold is kept unmarked`() {
+        // Since 2026-10-09 the save answers 409 to anybody naming themselves ("nobody appoints
+        // themselves"), and this handset asks `eligible-viewers` without a `workshopId`, so the server
+        // still offers the reader. Offering a tick the save refuses is the defect the web fixed by
+        // filtering the reader out, and this is the handset's copy of that filter.
+        //
+        // THE ROW THEY ALREADY HOLD IS THE OTHER HALF. Another admin may have put the reader on this
+        // workshop's team; the whole-set PUT deletes any row the picker does not draw, so it is drawn
+        // — and NOT marked "has access, no longer eligible", because on a complete list the reader is
+        // absent only because the first group left them out.
+        val choices = dwViewerChoices(
+            eligible = listOf(eligible(reader, role = "ADMIN"), eligible("u-a")),
+            viewers = listOf(granted(reader, role = "ADMIN"), granted("u-suspended")),
+            creatorId = creator,
+            readerId = reader,
+            eligibleListComplete = true,
+            retained = listOf(eligible(reader, role = "ADMIN")),
+        )
+
+        assertEquals(listOf("u-a", reader, "u-suspended"), choices.map { it.userId })
+        assertFalse(
+            "the reader's own row is no evidence about the designer roster",
+            choices.first { it.userId == reader }.grantedButIneligible
+        )
+        assertTrue(
+            "the mark still says what it can prove about everybody else",
+            choices.first { it.userId == "u-suspended" }.grantedButIneligible
+        )
+
+        // And a reader who holds no row is simply not on the list at all.
+        val unheld = dwViewerChoices(
+            eligible = listOf(eligible(reader, role = "ADMIN"), eligible("u-a")),
+            viewers = emptyList(),
+            creatorId = creator,
+            readerId = reader,
+            eligibleListComplete = true,
+        )
+        assertEquals(listOf("u-a"), unheld.map { it.userId })
     }
 
     // ── Reaching past the server's ceiling ───────────────────────────────────────────────────────
@@ -311,6 +361,7 @@ class DesignWorkshopViewersTest {
             eligible = answer,
             viewers = emptyList(),
             creatorId = creator,
+            readerId = reader,
             // A search result is never the whole eligible set.
             eligibleListComplete = false,
             retained = listOf(ticked),
@@ -343,6 +394,7 @@ class DesignWorkshopViewersTest {
                 eligible = answer.users,
                 viewers = team,
                 creatorId = creator,
+                readerId = reader,
                 eligibleListComplete = answer.complete,
             )
             // STILL OFFERED — that is what stops the revocation — and simply not labelled.
@@ -354,7 +406,7 @@ class DesignWorkshopViewersTest {
         val known = DwEligibleViewers(users = emptyList(), truncated = false, search = null)
         assertTrue(known.complete)
         assertTrue(
-            dwViewerChoices(known.users, team, creator, known.complete).all { it.grantedButIneligible }
+            dwViewerChoices(known.users, team, creator, reader, known.complete).all { it.grantedButIneligible }
         )
     }
 
@@ -430,7 +482,7 @@ class DesignWorkshopViewersTest {
         // options list keeps the ineligible holder, `adopt` ticks them, and the payload therefore
         // still names them after the admin adds somebody else.
         val viewers = listOf(granted("u-suspended"))
-        val choices = dwViewerChoices(listOf(eligible("u-new")), viewers, creator, true)
+        val choices = dwViewerChoices(listOf(eligible("u-new")), viewers, creator, reader, true)
         var selection = DwViewerSelection.adopt(viewers, creator)
 
         // Exactly what the multi-select hands back after one tap: every currently-ticked option plus
@@ -519,7 +571,9 @@ class DesignWorkshopViewersTest {
 
     @Test
     fun `a 403 carries the server's own words and then says who can do this`() {
-        val message = dwViewerFailureMessage(403, "Admin access required", DwViewerAttempt.SAVE)
+        // A reader the role clause CAN be about — the admin-only gate refusing somebody who is not one.
+        val message =
+            dwViewerFailureMessage(403, "Admin access required", DwViewerAttempt.SAVE, readerIsAdmin = false)
 
         // `require_admin` raises its detail with no final stop; every message in
         // `services/design_workshop_viewers` ends in one. Both have to read as prose.
@@ -533,9 +587,30 @@ class DesignWorkshopViewersTest {
     }
 
     @Test
+    fun `an admin refused for the post they hold is told the server's reason and nothing else`() {
+        // Since 2026-10-09 an admin who inspects or supervises THIS workshop may not change its
+        // designer team, and the server says exactly that. Following it with "open to admins and the
+        // master admin only" told an admin, in the next sentence, that the act was open to them.
+        val holder = "You are this workshop's inspector, so you can read it but not change it: whoever " +
+            "inspects or supervises a workshop does not write it. Ask whoever made the appointment to " +
+            "take you off that post if you need to work on it."
+
+        val message = dwViewerFailureMessage(403, holder, DwViewerAttempt.SAVE, readerIsAdmin = true)
+
+        assertEquals("$holder Nothing was changed.", message)
+        assertFalse(message.contains("admins and the master admin only"))
+
+        // And with no sentence from the server at all, it still says it was a refusal.
+        assertEquals(
+            "The repository refused this. Nothing was changed.",
+            dwViewerFailureMessage(403, null, DwViewerAttempt.SAVE, readerIsAdmin = true)
+        )
+    }
+
+    @Test
     fun `a refusal is never reported as being offline`() {
         listOf(403, 404, 422).forEach { status ->
-            val message = dwViewerFailureMessage(status, "no", DwViewerAttempt.SAVE)
+            val message = dwViewerFailureMessage(status, "no", DwViewerAttempt.SAVE, readerIsAdmin = true)
             assertFalse(
                 "HTTP $status must not send an admin looking for signal",
                 message.contains("could not reach")
@@ -545,28 +620,28 @@ class DesignWorkshopViewersTest {
 
     @Test
     fun `a 5xx is not a connection problem and does not claim a save was harmless`() {
-        val read = dwViewerFailureMessage(503, null, DwViewerAttempt.READ)
+        val read = dwViewerFailureMessage(503, null, DwViewerAttempt.READ, readerIsAdmin = true)
         assertTrue(read.contains("not a connection problem"))
         assertTrue(read.contains("Nothing was changed"))
 
         // `replace_viewers` issues its delete_many and its create_many as two statements, so a fault
         // between them leaves the removals applied and the additions not. Promising an admin their
         // revocation did not happen when it did is the worst sentence this screen could print.
-        val save = dwViewerFailureMessage(503, null, DwViewerAttempt.SAVE)
+        val save = dwViewerFailureMessage(503, null, DwViewerAttempt.SAVE, readerIsAdmin = true)
         assertFalse(save.contains("Nothing was changed"))
         assertTrue(save.contains("may have landed"))
     }
 
     @Test
     fun `no answer at all says the app cannot do this offline, and does not guess at a save`() {
-        val read = dwViewerFailureMessage(null, null, DwViewerAttempt.READ)
+        val read = dwViewerFailureMessage(null, null, DwViewerAttempt.READ, readerIsAdmin = true)
         assertTrue(read.contains("could not reach the repository"))
         // The one capability in this app that a courtyard defeats, said as such rather than as a
         // generic failure — every other design-workshop screen works with no signal at all.
         assertTrue(read.contains("cannot be done offline"))
         assertTrue(read.contains("Nothing has been changed."))
 
-        val save = dwViewerFailureMessage(null, null, DwViewerAttempt.SAVE)
+        val save = dwViewerFailureMessage(null, null, DwViewerAttempt.SAVE, readerIsAdmin = true)
         assertFalse(save.contains("Nothing has been changed."))
         assertTrue(save.contains("may still have landed"))
     }
@@ -577,7 +652,7 @@ class DesignWorkshopViewersTest {
             "cannot sign in at all. Restore their roster entry first; a viewer row on its own would " +
             "leave this screen saying they have access while they are shown a refusal. Nothing was changed."
 
-        val message = dwViewerFailureMessage(422, detail, DwViewerAttempt.SAVE)
+        val message = dwViewerFailureMessage(422, detail, DwViewerAttempt.SAVE, readerIsAdmin = true)
 
         assertTrue("the server's text is the only one that knows WHICH account", message.contains(detail))
     }

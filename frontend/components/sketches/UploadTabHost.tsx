@@ -496,7 +496,21 @@ function useDecodedPhotograph(
   return decoded;
 }
 
-export function UploadTabHost({ workshopId, registry }: { workshopId: string; registry: DwRegistry | null }) {
+export function UploadTabHost({
+  workshopId,
+  registry,
+  readOnlyReason = null
+}: {
+  workshopId: string;
+  registry: DwRegistry | null;
+  /**
+   * Why this reader may look and not file, or null — today a post they hold on the workshop
+   * (`useHeldPostRefusal`). Everything this tab files lands in the workshop's stage rows, which the
+   * server refuses whoever inspects or supervises it, so every control that writes is held exactly
+   * as a write in flight holds it (`frozen`); the workspace draws the sentence above the tabs.
+   */
+  readOnlyReason?: string | null;
+}) {
   const [sketches, setSketches] = useState<StageRows | null>(null);
   const [prototypes, setPrototypes] = useState<StageRows | null>(null);
   const [sketchRow, setSketchRow] = useState<string>("");
@@ -504,6 +518,8 @@ export function UploadTabHost({ workshopId, registry }: { workshopId: string; re
   const [notice, setNotice] = useState<string | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  /** Nothing that writes may be pressed while a write is in flight — or, for a post holder, at all. */
+  const frozen = busy || Boolean(readOnlyReason);
 
   /* ── ONE PHOTOGRAPH FOR THE WHOLE SKETCHES HALF ─────────────────────────────────────────────
 
@@ -1299,7 +1315,7 @@ export function UploadTabHost({ workshopId, registry }: { workshopId: string; re
             emptyWord="No sketches in this workshop yet"
             addWord="Add a sketch"
             onAdd={sketches?.reconciled ? () => void addRow("sketch") : undefined}
-            busy={busy}
+            busy={frozen}
           />
           <RowPicker
             label="Prototype"
@@ -1313,7 +1329,7 @@ export function UploadTabHost({ workshopId, registry }: { workshopId: string; re
             emptyWord="No prototypes in this workshop yet"
             addWord="Add a prototype"
             onAdd={prototypes?.reconciled ? () => void addRow("prototype") : undefined}
-            busy={busy}
+            busy={frozen}
           />
         </div>
 
@@ -1351,7 +1367,7 @@ export function UploadTabHost({ workshopId, registry }: { workshopId: string; re
           modelLabel={model.label}
           turntableLabel={turntable.label}
           turntableCount={turntableHeld}
-          disabled={busy || !anythingReady}
+          disabled={frozen || !anythingReady}
           /*
             ── THE ONE PICKER FOR THE SKETCHES HALF, AND WHAT IT IS FOR ─────────────────────────
 
@@ -1516,14 +1532,14 @@ export function UploadTabHost({ workshopId, registry }: { workshopId: string; re
               row={chosenSketch ?? NO_ROW}
               photoFieldLabels={sketchPhotoFields.map((entry) => entry.label)}
               /*
-                NARROWER THAN THE PANEL'S OWN `disabled`, WHICH IS `busy || !anythingReady`, and the
+                NARROWER THAN THE PANEL'S OWN `disabled`, WHICH IS `frozen || !anythingReady`, and the
                 pair is deliberate rather than drifted. The panel takes files for either half and a
                 workshop very often has sketches and no prototypes yet, so ANDing the two halves
                 would grey out the tracing card because nobody has made a prototype — see
                 `anythingReady` above. This card writes a number into a SKETCH row, so the sketch
                 half being writable is the whole of its question.
               */
-              disabled={busy || !sketchReady}
+              disabled={frozen || !sketchReady}
               /*
                 THE SAME PHOTOGRAPH THE TRACING PANEL IS WORKING FROM, so one upload serves both —
                 and the escape hatch beside it, so a designer who needs a DIFFERENT picture here (the
@@ -1601,7 +1617,7 @@ export function UploadTabHost({ workshopId, registry }: { workshopId: string; re
               targets={prototypeTargets}
               row={chosenPrototype ?? NO_ROW}
               photoFieldLabels={prototypePhotoFields.map((entry) => entry.label)}
-              disabled={busy || !prototypeReady}
+              disabled={frozen || !prototypeReady}
               onUseDifferentPhoto={choosePrototypeMeasurePhoto}
               working={prototypeWorking}
               onPropose={(key, value) => {

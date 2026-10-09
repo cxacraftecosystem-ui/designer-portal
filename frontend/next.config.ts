@@ -11,8 +11,10 @@ import type { NextConfig } from "next";
  *   Only add it if this app is ever moved onto the EC2 box / a container.
  * - No rewrites/proxy to the API. The browser calls the backend origin directly
  *   (`lib/api.ts` -> `${NEXT_PUBLIC_API_URL}/api/...`), so no API traffic passes through a Vercel
- *   Function and signed-S3 uploads stay off Vercel's bandwidth. (The three `[id]/edit` routes still
- *   render on demand — dynamic segment, no generateStaticParams — but fetch nothing server-side.)
+ *   Function and signed-S3 uploads stay off Vercel's bandwidth. (Every page under a dynamic segment
+ *   — `find frontend/app -name page.tsx -path '*[*'` lists them; none declares
+ *   generateStaticParams — still renders on demand, but fetches nothing server-side. This said "the
+ *   three `[id]/edit` routes" until 2026-10-09, a count that had long since stopped being the list.)
  */
 
 const isProduction = process.env.NODE_ENV === "production";

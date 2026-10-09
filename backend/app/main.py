@@ -18,9 +18,11 @@ from starlette.datastructures import MutableHeaders
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.api.router import api_router
+from app.api.routes.auth import SESSION_TOKEN_HEADER
 from app.api.routes.usage import UNRECORDED_TEMPLATES
 from app.core.config import get_settings
 from app.core.db import connect_db, db, disconnect_db
+from app.core.deps import PASSWORD_CHANGE_REQUIRED_HEADER
 from app.core.security import verify_jwt_configuration
 from app.scale import install_rate_limit
 from app.services import usage
@@ -947,7 +949,26 @@ def create_app() -> FastAPI:
         # for the identical reason, and forgetting it would produce the identical divergence: the
         # sign-in screen falls back to neutral chrome in the browser while the handset draws the
         # right panel, and no server test can see the difference.
-        expose_headers=["X-Access-Status", "X-Sign-In-Hint"],
+        #
+        # `X-Password-Change-Required` (2026-10-09) is the one that costs the most if it is missing:
+        # it is what tells the web client that a 401 means "this account must choose a new password"
+        # rather than "this session is over". Hidden from JavaScript, every refusal of a flagged
+        # account would read as a dead session, and the browser would throw away a token the person
+        # needs in order to change their password at all. Imported, not retyped — see
+        # `deps.PASSWORD_CHANGE_REQUIRED_HEADER`.
+        #
+        # `X-Session-Token` (2026-10-09) carries the NEW session token on the answer to
+        # `POST /api/auth/change-password`, whose body has to stay `{"ok": true}` for the handsets
+        # already in the field. A password change ends every session opened with the old password,
+        # the one that made the change included, so hidden from JavaScript the web client would keep
+        # the token the server has just retired and be signed out on its next request — while the
+        # handset adopted the new one. Imported, not retyped — see `auth.SESSION_TOKEN_HEADER`.
+        expose_headers=[
+            "X-Access-Status",
+            "X-Sign-In-Hint",
+            PASSWORD_CHANGE_REQUIRED_HEADER,
+            SESSION_TOKEN_HEADER,
+        ],
     )
     # Added AFTER CORS so it wraps it (Starlette runs the most recently added middleware outermost),
     # which is what puts the security headers on preflight responses too.

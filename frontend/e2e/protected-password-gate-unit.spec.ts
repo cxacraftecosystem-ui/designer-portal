@@ -10,10 +10,11 @@
  * indefinitely, because nothing in the protected tree ever read the flag and a session that never
  * revisits /login never meets the door.
  *
- * The server REPORTS and deliberately never refuses (see `mustChangePassword` in `lib/signIn.ts`:
- * `POST /auth/change-password` needs a bearer token, so a 403 at the door would be a demand the
- * account could never satisfy). The client is therefore the whole of the enforcement, and half of
- * the client was not enforcing.
+ * The server then only REPORTED the flag. Since the owner's ruling it also refuses — every route
+ * outside a short allow-list answers 401 with `X-Password-Change-Required` (the sign-in itself still
+ * succeeds, because `POST /auth/change-password` needs a bearer token) — and `apiFetch` meets that
+ * refusal by keeping the session and having `AuthProvider` re-read `/me`, so it is THIS gate the
+ * refused tab shows. `e2e/password-change-enforcement-unit.spec.ts` drives that half.
  *
  * ── WHY THESE ARE THE THINGS PINNED ─────────────────────────────────────────────────────────────
  *
@@ -34,7 +35,8 @@
  *      person who does NOT know their temporary password can use, and it lives outside
  *      `app/(protected)/` — under it, this gate would have locked the one door that opens it.
  *   5. **A completed change must close the gate even if the `/me` proving it never lands**, or a
- *      dropped connection re-locks somebody the second after they complied.
+ *      dropped connection re-locks somebody the second after they complied — through the ONE latch
+ *      in `AuthProvider` that `/login` uses too, never a second one here.
  *
  * Everything here is a source assertion or a pure function, for this repository's usual reason:
  * there is no React renderer in devDependencies, so a judgement inside JSX is only ever exercised by
@@ -59,9 +61,10 @@ const GATE = read("components", "FirstPasswordGate.tsx");
 const LOGIN = read("app", "login", "page.tsx");
 const LAYOUT = read("app", "(protected)", "layout.tsx");
 const SET_PASSWORD = read("app", "set-password", "page.tsx");
+const AUTH = read("components", "AuthProvider.tsx");
 
 /** Where the gate's own branch begins in `AppShell`. Every ordering test below is measured off it. */
-const gateAt = APP_SHELL.indexOf("if (!passwordSet && mustChangePassword(user))");
+const gateAt = APP_SHELL.indexOf("if (mustChangePassword(user)) {");
 
 /* ────────────────────────────────────────────────────────────────────────────
  * 1. The gate exists in the protected tree at all
@@ -189,7 +192,8 @@ test("the protected host asks for the current password, because it never saw one
   // over what was typed at the door seconds ago; a session that was already open cannot, which is
   // exactly Android's "a session that was already open when the app was launched" case.
   expect(APP_SHELL).toMatch(/currentPassword=""/);
-  expect(GATE).toMatch(/const askCurrent = currentPassword\.length === 0;/);
+  // And after a refusal on ANY host, so the box is never hidden behind a password the server refused.
+  expect(GATE).toMatch(/const askCurrent = currentPassword\.length === 0 \|\| currentRefusals > 0;/);
 });
 
 /* ────────────────────────────────────────────────────────────────────────────
@@ -223,15 +227,37 @@ test("the gate carries a way out that is not a way in", () => {
  * ──────────────────────────────────────────────────────────────────────────── */
 
 test("a completed change closes the gate even if the /me that would prove it never lands", () => {
-  // Regression 5, and the same latch `/login` carries. `changeOwnPassword` has already succeeded
+  // Regression 5, and the SAME latch `/login` uses — `AuthProvider.markPasswordChanged`, which
+  // clears the flag on the account this branch reads. `changeOwnPassword` has already succeeded
   // server-side by this point; folding a failed best-effort re-read into the same outcome would
   // re-lock somebody the second after they complied and tell them the password was wrong.
-  expect(APP_SHELL).toContain("setPasswordSet(true)");
-  expect(APP_SHELL.slice(gateAt)).toMatch(/refreshMe\(\)\.catch\(\(\) => undefined\)/);
+  expect(APP_SHELL.slice(gateAt, gateAt + 600)).toContain("onDone={markPasswordChanged}");
+  expect(LOGIN).toContain("markPasswordChanged();");
+  // The re-read is the latch's own business, best-effort, and starts after the flag is down.
+  const latch = AUTH.slice(AUTH.indexOf("const markPasswordChanged = useCallback("));
+  const body = latch.slice(0, latch.indexOf("}, [refreshMe]);"));
+  expect(body.indexOf("mustChangePassword: false"), "the account is patched first").toBeGreaterThan(-1);
+  expect(body.indexOf("mustChangePassword: false")).toBeLessThan(body.indexOf("void refreshMe();"));
 });
 
-test("the latch is state above the branch, not a copy of the flag", () => {
-  // A stored copy of `mustChangePassword` would go stale in the other direction: an administrator
-  // who sets the flag on a session that is already open would be ignored until a reload.
-  expect(APP_SHELL).toMatch(/const \[passwordSet, setPasswordSet\] = useState\(false\);/);
+test("there is one latch, and it is not a copy of the flag", () => {
+  // Two used to exist — one per host — and they did not know about each other: a person who chose a
+  // password at the door met a FRESH latch reading false on the dashboard and was asked again, and
+  // this host's was never reset, so a flag raised again later in the same tab was ignored. A stored
+  // copy of `mustChangePassword` would go stale the other way: an administrator who sets the flag on
+  // an open session would be ignored until a reload. The branch reads the live account; the latch
+  // patches that account; a `/me` sent after the change can raise the flag again and is obeyed.
+  expect(APP_SHELL, "no host keeps a latch of its own").not.toMatch(/setPasswordSet|const \[passwordSet,/);
+  expect(LOGIN).not.toMatch(/setPasswordSet|const \[passwordSet,/);
+  expect(APP_SHELL.slice(gateAt, gateAt + 40)).toContain("if (mustChangePassword(user)) {");
+  expect(AUTH).toMatch(/adopt\(probe <= changedAtProbe\.current \? \{ \.\.\.me, mustChangePassword: false \} : me\);/);
+});
+
+test("a refused current password does not cost the protected host its session", () => {
+  // This host draws the "Current password" box (it never saw one), so a typo there is the common
+  // case. The server answers it with a 400 — a 401 here once threw the token away and hard-reloaded
+  // the tab onto the sign-in form, and "Current password is incorrect" was never seen. The gate
+  // empties the box, keeps the session, and says what the server said.
+  expect(GATE).toContain("if (currentPasswordRefused(err)) {");
+  expect(GATE).toMatch(/import \{[^}]*currentPasswordRefused[^}]*\} from "@\/lib\/passwordChange"/);
 });

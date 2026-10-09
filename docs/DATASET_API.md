@@ -48,7 +48,14 @@ Notes:
 - **Admin rank is read from the live user row, never from the token's `role` claim.** A dataset token
   can outlive its holder's tenure.
 - **Revocation is by account.** There is no token store; demoting or deleting the account invalidates
-  every token it minted, within the identity cache's 5-second TTL.
+  every token it minted, within the identity cache's 5-second TTL, and suspending or rejecting its
+  address on the access screen stops the token at its next use. **Since 2026-10-09 so does any change
+  of the account's password, and raising its `mustChangePassword`** — each retires every token minted
+  before it, for good: the job's log shows a plain `401` "This session is no longer valid. Sign in
+  again." with no `X-Password-Change-Required` header, and the remedy is a new token minted with the
+  password the account holds now ([SECURITY.md](SECURITY.md) §3.4 and §3.6). A token minted before
+  that release carries no password fingerprint, so a password change does not retire it before it
+  expires; a raised flag still does.
 - Lifetime is `DATASET_TOKEN_EXPIRES_MINUTES` (default 30 days). Longer than a session token
   *because* it is narrower.
 - A non-admin is refused at **issue** time, not at first use.

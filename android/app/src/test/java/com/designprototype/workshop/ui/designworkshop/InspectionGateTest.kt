@@ -17,29 +17,38 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * THE TWO DOORS OF THE INSPECTION FEATURE, WALKED TIER BY TIER — AND THEY ARE DISJOINT.
+ * THE TWO DOORS OF THE INSPECTION FEATURE ON THIS HANDSET, WALKED TIER BY TIER — AND THEY ARE DISJOINT.
  *
  * ── WHY THIS FILE EXISTS, AND WHY READING THE CODE IS NOT ENOUGH ─────────────────────────────────
  *
  * Every other capability predicate on this handset has the property that a MASTER_ADMIN passes
  * whatever a lesser tier passes: they are rank floors, or — for `canRunDesignWorkshops` — a set that
- * still contains both admin tiers. **`canInspectDesignWorkshops` breaks that outright.** The server's
- * `INSPECTION_ROLES` is `frozenset({"INSPECTOR"})` and `assert_inspection_surface` answers 403 to an
- * ADMIN and to a MASTER ADMIN BY NAME, with an argument in its own docstring: an admin scoped by
- * their own inspection rows sees an empty page and reads it as a broken feature, and an admin scoped
- * by "everything" turns this prefix into a second full read of the archive.
+ * still contains both admin tiers. **`canInspectDesignWorkshops` breaks that outright.** It is set
+ * membership on the Inspector / Reviewer tier — the server's `INSPECTION_ROLES`, `{"INSPECTOR"}`.
+ *
+ * ── AND IT IS NARROWER THAN THE SERVER'S DOOR, ON PURPOSE ────────────────────────────────────────
+ *
+ * Until 2026-10-09 it was the server's door too: `assert_inspection_surface` answered 403 to an ADMIN
+ * and to a MASTER ADMIN by name. The owner's ruling of that date lets a Ministry Admin, an admin and
+ * the master admin be APPOINTED to inspect a workshop, so the server now admits those three tiers as
+ * well (`INSPECTION_HOLDER_ROLES`), each scoped by the rows it holds. The handset's set did not move:
+ * ministry and admin work is web-only (D5, `docs/DECISION-ministry-surfaces-web-only.md`), so an
+ * admin appointed to inspect reads that workshop on the web or through Design workshops, and this
+ * phone never offers them the inspector's list. Everything below pins the HANDSET's set. If the
+ * handset is ever taught the ruling, it is that decision that changes first — and these assertions,
+ * and the menu row, with it.
  *
  * So the ONE predicate a reader reaches for by habit — `rank(role) >= RANK_INSPECTOR` — is wrong for
- * SIX of the eleven tiers, and every one of those six is an account that would be OFFERED the menu
- * row and then landed on a 403. It was three of eight until 2026-09-13; the three directorate tiers
- * at 42/45/48 all clear 37 and are all refused, which is the same non-monotonicity arriving three
- * more times rather than a new defect. It is not a hypothesis that somebody reaches for it: the brief this
- * work was commissioned from said "for INSPECTOR and above" in exactly those words, and the web lane
- * had to correct it against the source before shipping.
+ * SIX of the eleven tiers, and every one of those six is an account that would be OFFERED a menu row
+ * this handset has decided not to offer it. It was three of eight until 2026-09-13; the three
+ * directorate tiers at 42/45/48 all clear 37 and are all refused, which is the same non-monotonicity
+ * arriving three more times rather than a new defect. It is not a hypothesis that somebody reaches for
+ * it: the brief this work was commissioned from said "for INSPECTOR and above" in exactly those words,
+ * and the web lane had to correct it against the source before shipping.
  *
- * The mistake is invisible on a phone. The drawer would carry an extra row, the row would open a
- * screen, the screen would ask, and the server would refuse — with nothing anywhere saying that the
- * refusal was the design rather than a fault.
+ * The mistake is invisible on a phone. For the professor and the directorate posts the drawer would
+ * carry an extra row, the row would open a screen, the screen would ask, and the server would refuse
+ * — with nothing anywhere saying that the refusal was the design rather than a fault.
  *
  * ── THE ASSERTION IS EQUALITY WITH A SET, NEVER "AT LEAST" ───────────────────────────────────────
  *
@@ -50,10 +59,14 @@ import org.junit.Test
  *
  * ── AND THE SECOND DOOR IS ASSERTED TO BE THE FIRST ONE'S COMPLEMENT ─────────────────────────────
  *
- * [mayAdministerInspections] is `require_admin`. Nothing in this repository previously had a pair of
- * gates over one feature where passing one PROVES you fail the other, so the fact is written down
- * here rather than left for a reader to notice: an account that can appoint an inspector can never
- * read an inspection, and vice versa.
+ * [mayAdministerInspections] is `deps.is_admin` — narrower, again on purpose, than the server's
+ * `require_workshop_assigner`, which also admits a Ministry Admin. Nothing in this repository
+ * previously had a pair of gates over one feature where passing one PROVES you fail the other, so the
+ * fact is written down here rather than left for a reader to notice: on this handset an account that
+ * can appoint an inspector can never read an inspection, and vice versa. It is a property of the
+ * handset's two sets and no longer of the server's — since 2026-10-09 an admin may appoint inspectors
+ * and be appointed one — and it is what keeps the two screens from ever both opening for one account
+ * on this phone.
  */
 class InspectionGateTest {
 
@@ -81,8 +94,9 @@ class InspectionGateTest {
     fun `exactly one tier may read an inspection, and it is not the top of the ladder`() {
         val admitted = everyRole.filter { canInspectDesignWorkshops(it) }
         assertEquals(
-            "INSPECTION_ROLES is frozenset({\"INSPECTOR\"}) and assert_inspection_surface 403s " +
-                "everybody else by name — including both admin tiers",
+            "the handset's read door is the Inspector / Reviewer tier — the server's INSPECTION_ROLES. " +
+                "The server also admits the three administering tiers by appointment since 2026-10-09, " +
+                "and this handset leaves that to the web (D5)",
             listOf("INSPECTOR"),
             admitted
         )
@@ -91,8 +105,10 @@ class InspectionGateTest {
     @Test
     fun `a master admin is refused the read surface, which no other predicate in this app does`() {
         // WRITTEN OUT SEPARATELY FROM THE EQUALITY ABOVE, because it is the single fact a reader is
-        // most likely to disbelieve and "re-derive" back to a rank comparison. If this line ever
-        // needs deleting, the server's `assert_inspection_surface` is what has to change first.
+        // most likely to disbelieve and "re-derive" back to a rank comparison. The server stopped
+        // refusing an appointed admin on 2026-10-09; this handset still refuses every admin, because
+        // ministry and admin work is web-only. If this line ever needs deleting, it is that decision
+        // that has to change first, and the menu row with it.
         assertFalse(canInspectDesignWorkshops("MASTER_ADMIN"))
         assertFalse(canInspectDesignWorkshops("ADMIN"))
         // And the tier immediately ABOVE the inspector on the ladder is refused too, so nobody can
@@ -139,9 +155,9 @@ class InspectionGateTest {
     fun `appointing an inspector is admin only`() {
         val admitted = everyRole.filter { mayAdministerInspections(user(it)) }
         assertEquals(
-            "both administration routes are Depends(require_admin) — deps.is_admin, and NOT the " +
-                "workshop's creator, who is refused by name so that the inspected cannot choose the " +
-                "inspector",
+            "on this handset the appointment screen is deps.is_admin — the server's " +
+                "require_workshop_assigner also admits a Ministry Admin, whose surfaces are web-only — " +
+                "and never a designer, so that the inspected cannot choose the inspector",
             listOf("ADMIN", "MASTER_ADMIN"),
             admitted
         )
@@ -150,8 +166,10 @@ class InspectionGateTest {
 
     @Test
     fun `the two doors are disjoint - passing one proves you fail the other`() {
-        // The fact this whole feature turns on, and the reason the appointment screen has its OWN
-        // predicate rather than reusing the read one. Nothing else in this app has this shape.
+        // The fact this whole feature turns on ON THIS HANDSET, and the reason the appointment screen
+        // has its OWN predicate rather than reusing the read one. Nothing else in this app has this
+        // shape. (The server's two doors overlap since 2026-10-09 — an admin may appoint, and be
+        // appointed — and the handset keeps them apart by keeping its read door to the tier.)
         everyRole.forEach { role ->
             assertFalse(
                 "$role passes both doors, which no account may",
@@ -164,11 +182,15 @@ class InspectionGateTest {
 
     @Test
     fun `an inspector may not run a design workshop, so widening either set is visible here`() {
-        // `INSPECTION_ROLES` and `deps.DESIGN_WORKSHOP_ROLES` are asserted DISJOINT at import time on
-        // the server, and this is the handset's copy of that invariant. If they ever overlap, one
-        // account becomes eligible to hold both a viewer row — which carries STAGE WRITES, because
-        // `load_workshop_or_404(for_edit=True)` performs no role check — and an inspection row, which
-        // is read-only, on the same workshop.
+        // Until 2026-10-09 the server asserted `INSPECTION_ROLES` and `deps.DESIGN_WORKSHOP_ROLES`
+        // DISJOINT at import time, and this was the handset's copy of that invariant. The owner's
+        // ruling put the administering tiers in both on purpose and moved the property to the
+        // WORKSHOP: its author is refused its inspection, and its inspector every write to it
+        // (`services/design_workshop_posts`). The handset knows nothing of per-workshop posts, so its
+        // two predicates stay disjoint and this pins them: if they ever overlapped, one account would
+        // be offered a viewer row's STAGE WRITES — `load_workshop_or_404(for_edit=True)` performs no
+        // role check — and a read-only inspection of the same workshop, with nothing on this phone to
+        // say which one it holds.
         assertFalse(FieldPermissions.canRunDesignWorkshops(user("INSPECTOR")))
         everyRole.forEach { role ->
             assertFalse(

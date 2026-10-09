@@ -3,26 +3,29 @@
 import { DraftingCompass, Save } from "lucide-react";
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 
+import { useAuth } from "@/components/AuthProvider";
+import { HeldPostNotice, useHeldPostRefusal, writesHeld } from "@/components/designworkshop/HeldPostNotice";
 import { SearchInput } from "@/components/SearchInput";
 import { FieldBlock } from "@/components/tasks/TaskPrimitives";
 import { Dropdown, MultiSelectDropdown, type DropdownOption } from "@/components/ui/Dropdown";
 import { useToast } from "@/components/ui/Toast";
-import { ApiError, listResource } from "@/lib/api";
+import { listResource } from "@/lib/api";
 import { listDesignWorkshops, type DwSummary } from "@/lib/designWorkshops";
 import {
+  absenceProvesIneligible,
   designWorkshopType,
   eligibleViewerNotice,
   ELIGIBLE_VIEWER_SEARCH_MAX,
   listDesignWorkshopViewers,
   listEligibleDesignWorkshopViewers,
   putDesignWorkshopViewers,
+  viewerAdministrationFailure,
   viewerAdministrationMissing,
   type DwEligibleViewer,
   type DwViewer
 } from "@/lib/designWorkshopViewers";
 import { formatDateTime } from "@/lib/format";
-import { isUnreachable } from "@/lib/offline";
-import { roleLabel } from "@/lib/permissions";
+import { isAdmin, roleLabel } from "@/lib/permissions";
 import { WORKSHOP_TYPE_LABELS, type Workshop, type WorkshopType } from "@/lib/types";
 import {
   designWorkshopOptions,
@@ -162,32 +165,17 @@ function personLabel(person: { name?: string | null; email?: string | null } | n
 }
 
 /**
- * The four failures this panel can suffer, told apart in words.
- *
- * `isUnreachable` and not `isTransient`: the latter answers "is it worth retrying" and counts every
- * 5xx as yes, so a repository that ANSWERED and then failed would be reported as a connection
- * problem — which sends an admin to look at their signal and leaves a real fault wearing an offline
- * message. A server that spoke gets its own sentence shown, because `apiFetch` has already unpacked
- * FastAPI's 422 list into a readable one that names the offending field.
+ * The failures this panel can suffer, told apart in words — `viewerAdministrationFailure` in
+ * `lib/designWorkshopViewers`, where the decision can be exercised without a renderer.
  */
-function describeFailure(error: unknown, fallback: string): string {
-  if (!(error instanceof ApiError) || isUnreachable(error)) {
-    return "This device cannot reach the repository, so nothing was sent and nothing has changed. Check the connection and try again.";
-  }
-  if (error.status === 403) {
-    return `The repository refused this. ${error.message} Deciding who may see a design workshop is administration, so it is open to admins and the master admin only.`;
-  }
-  if (error.status === 422) {
-    return `The repository would not accept this. ${error.message}`;
-  }
-  if (error.status === 404) {
-    return `${error.message} This workshop may have been deleted since the list was loaded — reload the page to see the current list.`;
-  }
-  return error.message || fallback;
-}
+const describeFailure = viewerAdministrationFailure;
 
 export function DesignWorkshopViewersPanel({ refreshToken }: { refreshToken?: number }) {
   const { toast } = useToast();
+  const { user } = useAuth();
+  /** Who is choosing — never offered a designer row by their own hand: nobody appoints themselves. */
+  const readerId = user?.id ?? null;
+  const readerIsAdmin = isAdmin(user);
 
   /**
    * What the design-workshop read answered — three states, and the middle one is the whole point.
@@ -412,13 +400,13 @@ export function DesignWorkshopViewersPanel({ refreshToken }: { refreshToken?: nu
               return;
             }
             setEligible([]);
-            setLoadError(describeFailure(err, "Unable to load the designers who may be given access"));
+            setLoadError(describeFailure(err, "Unable to load the designers who may be given access", readerIsAdmin));
           });
       },
       term ? SEARCH_DEBOUNCE_MS : 0
     );
     return () => window.clearTimeout(timer);
-  }, [refreshToken, search]);
+  }, [refreshToken, search, readerIsAdmin]);
 
   /* ── The chosen workshop's current viewers ──────────────────────────────── */
 
@@ -437,6 +425,17 @@ export function DesignWorkshopViewersPanel({ refreshToken }: { refreshToken?: nu
     [knownWorkshops, workshopId]
   );
   const creatorId = selectedWorkshop?.createdById ?? "";
+  /**
+   * Why the reader may see who holds this workshop and may not change it, or null — a post they hold
+   * on the CHOSEN workshop. Since 2026-10-09 an admin may be appointed a workshop's inspector,
+   * Assistant Director or Regional Director, and the server then refuses them every write to its
+   * designer team — this PUT included — as it refuses them its content. Who holds designer access
+   * stays on screen; the picker and Save are held, and the sentence says why — held while that is
+   * still being asked, too (`writesHeld`). See `HeldPostNotice`.
+   */
+  const postRefusal = useHeldPostRefusal(workshopId || null);
+  /** The notice's live region, which Save names while a refusal is shown. */
+  const heldNoticeId = useId();
 
   const loadViewers = useCallback(async () => {
     if (!workshopId) {
@@ -462,9 +461,9 @@ export function DesignWorkshopViewersPanel({ refreshToken }: { refreshToken?: nu
       setBaseline([]);
       setSelected([]);
       setCreatorHasRow(false);
-      setLoadError(describeFailure(err, "Unable to load who can see this workshop"));
+      setLoadError(describeFailure(err, "Unable to load who can see this workshop", readerIsAdmin));
     }
-  }, [workshopId, creatorId]);
+  }, [workshopId, creatorId, readerIsAdmin]);
 
   useEffect(() => {
     let cancelled = false;
@@ -696,9 +695,21 @@ export function DesignWorkshopViewersPanel({ refreshToken }: { refreshToken?: nu
   const eligibleListIsComplete = !eligibleTruncated && !searchTerm;
 
   /**
+   * The server's answer minus the reader. Naming yourself on a workshop's designer team is the
+   * self-appointment the server refuses with a 409, and an admin already reads every workshop
+   * without a row — so the one account this list must never offer is the one choosing. Counts below
+   * are asked of THIS rather than of `eligible`.
+   */
+  const offerable = useMemo(
+    () => (eligible ?? []).filter((person) => person.id !== readerId),
+    [eligible, readerId]
+  );
+
+  /**
    * Everyone the picker offers: the accounts the server's current answer holds, plus anybody who
    * already HOLDS a row, plus anybody ticked from an earlier search. The creator is in none of them —
-   * their access is not on offer here.
+   * their access is not on offer here. The reader is not in the first group (see `offerable`) and
+   * is still drawn in the second if they hold a row, because an undrawn row is a removal.
    *
    * The second group is the load-bearing one. The PUT replaces the whole set, so an option that is
    * not rendered is a row the next Save silently deletes; a designer suspended on the roster last
@@ -716,14 +727,18 @@ export function DesignWorkshopViewersPanel({ refreshToken }: { refreshToken?: nu
       seen.add(id);
       options.push({ value: id, label });
     };
-    for (const person of eligible ?? []) {
+    for (const person of offerable) {
       offer(person.id, `${personLabel(person)} · ${roleLabel(person.role)}`);
     }
+    // The reader's own row (a grant somebody else made them) is never "no longer eligible" — they are
+    // absent from the list because nobody names themselves. See `absenceProvesIneligible`.
     for (const row of viewers ?? []) {
       offer(
         row.userId,
         `${personLabel(row)} · ${roleLabel(row.role)}${
-          eligibleListIsComplete ? " — has access, no longer eligible" : " — has access"
+          absenceProvesIneligible(eligibleListIsComplete, row.userId, readerId)
+            ? " — has access, no longer eligible"
+            : " — has access"
         }`
       );
     }
@@ -732,7 +747,7 @@ export function DesignWorkshopViewersPanel({ refreshToken }: { refreshToken?: nu
       if (person) offer(person.id, `${personLabel(person)} · ${roleLabel(person.role)}`);
     }
     return options;
-  }, [eligible, viewers, selected, known, creatorId, eligibleListIsComplete]);
+  }, [offerable, viewers, selected, known, creatorId, eligibleListIsComplete, readerId]);
 
   /* ── Unsaved state ──────────────────────────────────────────────────────── */
 
@@ -769,7 +784,7 @@ export function DesignWorkshopViewersPanel({ refreshToken }: { refreshToken?: nu
     ? "Searching…"
     : eligibleViewerNotice({
         truncated: eligibleTruncated,
-        offered: eligible?.length ?? 0,
+        offered: offerable.length,
         searched: Boolean(searchTerm)
       });
   const searchNoticeId = useId();
@@ -807,7 +822,7 @@ export function DesignWorkshopViewersPanel({ refreshToken }: { refreshToken?: nu
       : `${selected.length} designer${selected.length === 1 ? "" : "s"} can see this workshop, in addition to the designer who created it. Nothing unsaved.`;
 
   async function save() {
-    if (!workshopId) return;
+    if (!workshopId || writesHeld(postRefusal)) return;
     setSaving(true);
     setSaveError(null);
     try {
@@ -830,7 +845,7 @@ export function DesignWorkshopViewersPanel({ refreshToken }: { refreshToken?: nu
         tone: "success"
       });
     } catch (err) {
-      setSaveError(describeFailure(err, "Unable to save who can see this workshop"));
+      setSaveError(describeFailure(err, "Unable to save who can see this workshop", readerIsAdmin));
     } finally {
       setSaving(false);
     }
@@ -1029,13 +1044,18 @@ export function DesignWorkshopViewersPanel({ refreshToken }: { refreshToken?: nu
                 </p>
               </div>
 
+              <HeldPostNotice refusal={postRefusal} id={heldNoticeId} className="mt-4" sayPending />
+
               <div className="mt-4">
                 <FieldBlock
                   label="Designers who may see this workshop"
                   hint={
                     <p className="text-xs leading-5 text-ink-500">
                       Only accounts that could actually run a design workshop are offered — a designer whose roster row
-                      is suspended would be refused at the door. Unticking somebody removes their access when you save.
+                      is suspended would be refused at the door — and never you. Somebody who inspects this workshop,
+                      or is its Assistant Director or Regional Director, is refused when you save, with the reason:
+                      nobody may change work they inspect or supervise. Unticking somebody removes their access when
+                      you save.
                     </p>
                   }
                 >
@@ -1058,6 +1078,8 @@ export function DesignWorkshopViewersPanel({ refreshToken }: { refreshToken?: nu
                     <MultiSelectDropdown
                       ariaLabel="Designers who may see this workshop"
                       confirmLabel="Done"
+                      // Held for a reader who holds a post on this workshop — see `postRefusal`.
+                      disabled={writesHeld(postRefusal)}
                       // Pointed at the truncation line only while it is on screen: `aria-describedby`
                       // naming an id that is not in the document is worse than naming nothing.
                       describedBy={searchNotice ? searchNoticeId : undefined}
@@ -1135,7 +1157,13 @@ export function DesignWorkshopViewersPanel({ refreshToken }: { refreshToken?: nu
               ) : null}
 
               <div className="mt-3 flex flex-wrap items-center gap-2">
-                <button className="field-button" disabled={!dirty || saving} onClick={save} type="button">
+                <button
+                  className="field-button"
+                  disabled={!dirty || saving || writesHeld(postRefusal)}
+                  aria-describedby={postRefusal ? heldNoticeId : undefined}
+                  onClick={save}
+                  type="button"
+                >
                   <Save className="h-4 w-4" aria-hidden />
                   {saving ? "Saving…" : "Save who can see this"}
                 </button>

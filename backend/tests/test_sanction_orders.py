@@ -98,20 +98,24 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from conftest import needs_db
 
+from app.core.config import get_settings
 from app.core.db import db
 from app.core.security import create_access_token, hash_password
 from app.services import access_roster, credential_links
 from app.services.designers import DERIVED_EMPANELMENT_NOTE, canonical_email, normalise_email
 from app.services.sanction_orders import (
     SANCTION_ADMISSION_NOTE,
+    SANCTION_MASTER_MAILBOX,
     normalise_sanction_order_no,
 )
 from app.services.stage_schema import registry_version, stage, stage_completeness
@@ -144,6 +148,10 @@ INELIGIBLE_ROLES = (
 
 #: The two ways an administrator shows somebody the door. Both must survive a sanction order.
 BARRED_STATES = ("REJECTED", "SUSPENDED")
+
+#: The four orders naming the master admin's mailbox: as the lead in the configured spelling, dotless,
+#: with a ``+tag`` on the other Google domain, and as a co-designer beside an ordinary lead.
+MASTER_MAILBOX_BODIES = ("master_lead", "master_dotless", "master_tagged", "master_codesigner")
 
 
 def _body(**overrides: Any) -> dict[str, Any]:
@@ -393,6 +401,20 @@ def world():
             # The officer naming their own mailbox.
             bodies["own_mailbox"] = _body(designerEmail=officer.email)
 
+            # THE MASTER ADMIN'S MAILBOX WITH NO ACCOUNT ON IT YET — a handover, an unseeded box.
+            # ``MASTER_ADMIN_EMAIL`` points here only for the length of these posts (see ``act``);
+            # nothing is seeded, because "no row at the mailbox" is the precondition under test.
+            master = f"sanction.master.{stamp}@gmail.com"
+            facts["master_configured"] = master
+            bodies["master_lead"] = _body(designerEmail=master)
+            bodies["master_dotless"] = _body(designerEmail=canonical_email(master))
+            bodies["master_tagged"] = _body(designerEmail=f"Sanction.Master.{stamp}+x@googlemail.com")
+            bodies["master_codesigner"] = _body(
+                coDesigners=[
+                    {"name": "Co-designer", "email": f"sanctionmaster{stamp}+team@gmail.com"}
+                ]
+            )
+
             # The row an administrator already decided, left exactly as they would leave it.
             already = f"sanction-already-admitted-{stamp}@example.org"
             admins_note = (
@@ -426,6 +448,19 @@ def world():
             bodies["already_admitted"] = _body(
                 designerEmail=already, designerName="Sundaram R"
             )
+
+            # A LINK THAT BELONGS TO NOBODY ON ANY SANCTION ORDER — an administrator's reset link for
+            # the deciding admin above. The revoke route must refuse to touch it from an order's door.
+            foreign = await db.passwordresettoken.create(
+                data={
+                    "userId": deciding.id,
+                    "tokenHash": uuid.uuid4().hex,
+                    "purpose": "RESET",
+                    "expiresAt": datetime.now(UTC) + timedelta(hours=2),
+                }
+            )
+            facts["foreign_token_id"] = foreign.id
+            bodies["revoke"] = _body()
 
             # THE TABLE'S OWN REFUSAL, driven here rather than in the test because it is pure
             # database and touches no route at all. The outcome is RECORDED rather than asserted, so
@@ -496,6 +531,31 @@ def world():
             post(f"ineligible_{role}")
         post("own_mailbox")
         post("already_admitted")
+
+        settings = get_settings()
+        previous_master = settings.master_admin_email
+        settings.master_admin_email = facts["master_configured"]
+        try:
+            for key in MASTER_MAILBOX_BODIES:
+                post(key)
+        finally:
+            settings.master_admin_email = previous_master
+
+        # THE REVOKE DOOR, ASKED ABOUT THREE LINKS: one belonging to nobody on the order, one id that
+        # names no link at all, and the order's own designer's link — in that order, so the two
+        # refusals are made while the order's own link is still outstanding.
+        post("revoke")
+        order = _created_order(answers["revoke"])
+        own_link = (answers["revoke"].json().get("credentialLink") or {}) if order else {}
+        facts["own_token_id"] = own_link.get("id")
+        if order is not None:
+            path = f"/api/sanction-orders/{order['id']}/credential-link/revoke"
+            for key, token_id in (
+                ("revoke_foreign", facts["foreign_token_id"]),
+                ("revoke_unknown", "cmnosuchlinkatall00000000"),
+                ("revoke_own", facts["own_token_id"]),
+            ):
+                answers[key] = client.post(path, params={"tokenId": token_id}, headers=headers)
 
     # ---------------------------------------------------------------------------------
     # Phase 3 — observe. The client is shut down; the singleton is free again.
@@ -735,6 +795,54 @@ def world():
             rows["already_admitted"] = await db.accessroster.find_unique(
                 where={"email": canonical_email(facts["already_address"])}
             )
+
+            # The master's mailbox, under every spelling the posts used — and the co-designer
+            # order's LEAD, who must have been refused along with the rest of the team.
+            master = facts["master_configured"]
+            spellings = sorted(
+                {
+                    normalise_email(bodies[key]["designerEmail"])
+                    for key in ("master_lead", "master_dotless", "master_tagged")
+                }
+                | {canonical_email(master)}
+            )
+            team_lead = normalise_email(bodies["master_codesigner"]["designerEmail"])
+            rows["master_mailbox"] = {
+                "accounts": await access_roster.accounts_on_the_mailbox_for_sign_in(master),
+                "access": await db.accessroster.find_many(where={"email": {"in": spellings}}),
+                "roster": await db.designerroster.find_many(where={"email": {"in": spellings}}),
+                "orders": await db.sanctionorder.find_many(
+                    where={
+                        "sanctionOrderKey": {
+                            "in": [
+                                normalise_sanction_order_no(bodies[key]["sanctionOrderNo"])
+                                for key in MASTER_MAILBOX_BODIES
+                            ]
+                        }
+                    }
+                ),
+                "lead_accounts": await db.user.find_many(
+                    where={"email": {"equals": team_lead, "mode": "insensitive"}}
+                ),
+                "lead_access": await db.accessroster.find_unique(
+                    where={"email": canonical_email(team_lead)}
+                ),
+                "lead_roster": await db.designerroster.find_unique(
+                    where={"email": canonical_email(team_lead)}
+                ),
+            }
+
+            # The two links the revoke door was asked about, as the table now holds them.
+            rows["revoke"] = {
+                "foreign": await db.passwordresettoken.find_unique(
+                    where={"id": facts["foreign_token_id"]}
+                ),
+                "own": (
+                    await db.passwordresettoken.find_unique(where={"id": facts["own_token_id"]})
+                    if facts.get("own_token_id")
+                    else None
+                ),
+            }
         finally:
             await db.disconnect()
 
@@ -808,10 +916,12 @@ def test_five_fields_produce_seven_rows(world) -> None:
         no=body["sanctionOrderNo"], officer=world["officer"].name
     )
     assert roster.fullName == body["designerName"], "the allow-list name did not reach the roster"
-    # 3. the account
+    # 3. the account — with a random password nobody was ever shown, and so NOT flagged: there is no
+    #    shared secret to retire, and the flag would hold a designer who signs in with Google behind
+    #    a gate asking for a password they never had. The INVITE link is how they choose their own.
     assert account is not None
     assert str(getattr(account.role, "value", account.role)) == "DESIGNER"
-    assert account.mustChangePassword is True
+    assert account.mustChangePassword is False
     assert account.passwordSetAt is not None
     assert account.passwordHash, "a NULL hash makes the account unreachable if the link is lost"
     # 4. the profile
@@ -831,9 +941,10 @@ def test_five_fields_produce_seven_rows(world) -> None:
 def test_a_new_account_is_offered_a_seventy_two_hour_invite_link(world, client) -> None:
     """INVITE and not RESET, and the purpose is passed explicitly for a reason worth reading.
 
-    The account was just given a real (random, unguessable) password hash, so ``issue_link``'s own
-    default would infer RESET and its TWO-HOUR lifetime — far too short for a link an officer
-    forwards by hand to somebody who may be in a village. The creation path therefore names INVITE.
+    The account was just given a real (random, unguessable) password hash, and ``issue_link``'s
+    default used to infer RESET from any hash — a TWO-HOUR lifetime, far too short for a link an
+    officer forwards by hand to somebody who may be in a village. (The default reads a just-created,
+    never-used account as INVITE since 2026-10-09, but the creation path names INVITE regardless.)
     """
     answer = _post(world, _body())
     assert answer.status_code == 201, answer.text
@@ -842,6 +953,57 @@ def test_a_new_account_is_offered_a_seventy_two_hour_invite_link(world, client) 
     assert link["purpose"] == credential_links.INVITE
     assert link["deliveredBy"] == "COPY_LINK", "there is no mailer; the officer is the transport"
     assert answer.json()["credentialLinkProblem"] is None
+
+
+def test_a_designer_who_signs_in_with_google_first_is_not_held_and_the_link_still_works(
+    world, client, monkeypatch
+) -> None:
+    """The officer forwards the INVITE link; the designer presses "Sign in with Google" instead.
+
+    The account used to be created flagged, and since the server began enforcing the flag every
+    route but the change-password screen's own answered that designer 401 — a screen asking for a
+    current password nobody had, the link the only way out. Nobody knows the machine-minted password,
+    so the account is not flagged: the Google session reaches the workshops, and the link still
+    redeems afterwards — Google sign-in leaves the password alone, so its fingerprint still matches.
+    Redeeming it then ends the Google session, as any new password ends the sessions before it.
+    """
+    from app.api.routes import auth as auth_routes
+
+    body = _body()
+    created = _post(world, body)
+    assert created.status_code == 201, created.text
+    token = parse_qs(urlsplit(created.json()["credentialLink"]["link"]).query)["token"][0]
+
+    monkeypatch.setattr(
+        auth_routes,
+        "verify_google_token",
+        lambda _token: {
+            "email": body["designerEmail"],
+            "email_verified": True,
+            "name": body["designerName"],
+            "picture": None,
+        },
+    )
+    signed_in = client.post("/api/auth/login", json={"googleIdToken": "stand-in"})
+    assert signed_in.status_code == 200, signed_in.text
+    assert signed_in.json()["user"]["mustChangePassword"] is False
+    session = {"Authorization": f"Bearer {signed_in.json()['accessToken']}"}
+    workshops = client.get("/api/design-workshops", headers=session)
+    assert workshops.status_code == 200, workshops.text
+    assert "X-Password-Change-Required" not in workshops.headers
+
+    redeemed = client.post(
+        "/api/auth/set-password", json={"token": token, "password": "the-designers-own-choice"}
+    )
+    assert redeemed.status_code == 200, redeemed.text
+    assert client.get("/api/design-workshops", headers=session).status_code == 401
+
+    time.sleep(1.1)  # past the redemption's watermark
+    again = client.post(
+        "/api/auth/login",
+        json={"email": body["designerEmail"], "password": "the-designers-own-choice"},
+    )
+    assert again.status_code == 200, again.text
 
 
 # --------------------------------------------------------------------------------------
@@ -1223,12 +1385,15 @@ def test_a_throttled_link_does_not_roll_back_the_sanction_order(world, client) -
     assert fresh.json()["sanctionOrder"]["accountCreated"] is True
     order_id = fresh.json()["sanctionOrder"]["id"]
 
-    # The create spent one of the four; three re-issues spend the rest.
+    # The create spent one of the four; three re-issues spend the rest. Each is an INVITE: this
+    # register's account was made after ``firstLoginAt`` began to be written and nobody has signed
+    # in to it, which is the positive evidence ``credential_links.purpose_for`` asks for.
     for _ in range(credential_links.ISSUE_BUDGET - 1):
         spent = client.post(
             f"/api/sanction-orders/{order_id}/credential-link", headers=_headers(world)
         )
         assert spent.status_code == 200, spent.text
+        assert spent.json()["purpose"] == credential_links.INVITE
 
     again = client.post(
         f"/api/sanction-orders/{order_id}/credential-link", headers=_headers(world)
@@ -1247,7 +1412,8 @@ def test_the_reissue_arm_refuses_an_account_this_register_did_not_create(world, 
     it. Until 2026-09-16 the re-issue arm would then mint a RESET link for that account and hand the
     URL back in the response body, letting any Assistant Director set the password of a MASTER_ADMIN
     and sign the real holder out of every device. ``POST /api/auth/password-links`` is the honest
-    door for that and it is ``Depends(require_admin)``.
+    door for that and it is ``Depends(require_account_provisioner)`` plus a target check
+    (``account_provisioning.assert_may_reset_credentials``).
 
     The create path already refused: ``_issue_first_credential`` returns nothing at all when
     ``account_created`` is false. This asserts the same invariant on the other door, which is what
@@ -1265,6 +1431,34 @@ def test_the_reissue_arm_refuses_an_account_this_register_did_not_create(world, 
     detail = refused.json()["detail"]
     assert "did not create" in detail
     assert "users screen" in detail, "the officer is not told where the honest door is"
+
+
+def test_the_revoke_arm_withdraws_only_a_link_belonging_to_a_designer_on_the_order(world) -> None:
+    """THE THIRD DOOR ONTO SOMEBODY ELSE'S PASSWORD LINK, CLOSED — the revoke half of the one above.
+
+    Until 2026-10-09 the route checked that the sanction order existed and then withdrew ANY
+    ``PasswordResetToken`` by id, so any officer at rank 42 holding any order id could cancel an
+    administrator's reset or first-password link for an account no order names. A link that does
+    not belong to one of the order's designers is now the same 404 as a link that does not exist,
+    and — the half a status code cannot show — it is still outstanding afterwards.
+    """
+    answers, rows = world["answers"], world["rows"]
+    assert answers["revoke"].status_code == 201, answers["revoke"].text
+    assert world["own_token_id"], "the order's designer was offered no link to withdraw"
+
+    foreign = answers["revoke_foreign"]
+    assert foreign.status_code == 404, foreign.text
+    assert "belongs to a designer on this sanction order" in foreign.json()["detail"]
+    assert rows["revoke"]["foreign"] is not None
+    assert rows["revoke"]["foreign"].revokedAt is None, "a foreign link was withdrawn anyway"
+
+    assert answers["revoke_unknown"].status_code == 404, answers["revoke_unknown"].text
+
+    # The control: the order's own designer's link IS withdrawn, so the 404s above are the rule and
+    # not a route that withdraws nothing.
+    assert answers["revoke_own"].status_code == 200, answers["revoke_own"].text
+    assert rows["revoke"]["own"] is not None
+    assert rows["revoke"]["own"].revokedAt is not None
 
 
 def test_a_designer_may_not_record_a_sanction_order(world, client) -> None:
@@ -1442,3 +1636,24 @@ def test_a_sanction_order_does_not_overwrite_an_administrators_allow_list_decisi
     #    reads 2024, which is `admit`'s own rule and is asserted beside it so the two cannot drift.
     assert str(getattr(row.admitRole, "value", row.admitRole)) == "DESIGNER"
     assert row.joinedAt == world["already_joined"]
+
+
+def test_no_order_names_any_spelling_of_the_master_admins_mailbox(world) -> None:
+    """R4 (2026-10-09). With no account at ``MASTER_ADMIN_EMAIL`` yet, an order naming it CREATED
+    one — admitted, empanelled, a DESIGNER — and handed the officer its first-password link; the
+    master's first Google sign-in then promoted that account, the officer's password still on it, to
+    the one tier nobody can manage. Every spelling is refused now, as the lead and as a co-designer:
+    422, the sentence and nothing else in the answer — no ``credentialLink`` — and not one row written
+    for anybody on the order, the co-designer's ordinary lead included."""
+    for key in MASTER_MAILBOX_BODIES:
+        answer = world["answers"][key]
+        assert answer.status_code == 422, (key, answer.text)
+        assert answer.json() == {"detail": SANCTION_MASTER_MAILBOX}, key
+
+    seen = world["rows"]["master_mailbox"]
+    assert seen["accounts"] == [], "an account was created on the master admin's mailbox"
+    assert seen["access"] == [], "the master admin's mailbox was admitted to the allow-list"
+    assert seen["roster"] == [], "the master admin's mailbox was empanelled"
+    assert seen["orders"] == [], "a refused order was recorded anyway"
+    assert seen["lead_accounts"] == [], "the co-designer order's lead was given an account anyway"
+    assert seen["lead_access"] is None and seen["lead_roster"] is None

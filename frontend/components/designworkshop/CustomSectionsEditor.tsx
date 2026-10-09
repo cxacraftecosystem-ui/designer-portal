@@ -136,7 +136,23 @@ const TYPE_LABEL: Record<string, string> = {
 const OPTION_TYPES = new Set(["ENUM", "MULTI_ENUM"]);
 const BOUNDED_TYPES = new Set(["INT", "DECIMAL", "MONEY", "PERCENT"]);
 
-export function CustomSectionsEditor({ workshopId }: { workshopId: string }) {
+export function CustomSectionsEditor({
+  workshopId,
+  readOnlyReason = null,
+  describedBy
+}: {
+  workshopId: string;
+  /**
+   * Why this reader may read the definition and not change it, or null — today a post they hold on the
+   * workshop (`useHeldPostRefusal`), or the sentence that it is still being asked: a definition decides
+   * what a stage asks, so it is a write of the workshop the server refuses whoever inspects or
+   * supervises it. Every control below is held exactly as a save in flight holds it (`frozen`), and the
+   * page draws the sentence above the editor.
+   */
+  readOnlyReason?: string | null;
+  /** The id of the page's notice, which the Save button names while it explains why it is held. */
+  describedBy?: string;
+}) {
   const confirm = useConfirm();
   const router = useRouter();
 
@@ -160,6 +176,8 @@ export function CustomSectionsEditor({ workshopId }: { workshopId: string }) {
   const [answered, setAnswered] = useState<Record<string, Set<string>>>({});
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  /** Nothing on the editor moves while a save is in flight — or, for a post holder, at all. */
+  const frozen = busy || Boolean(readOnlyReason);
   /**
    * The server's own refusals, as a LIST rather than a sentence.
    *
@@ -491,7 +509,7 @@ export function CustomSectionsEditor({ workshopId }: { workshopId: string }) {
 
   const sectionDrag = useDragReorder({
     order: sectionDragIds,
-    locked: busy,
+    locked: frozen,
     labelFor: useCallback(
       (id: string) => {
         const index = Number(id.split(":").pop());
@@ -515,7 +533,7 @@ export function CustomSectionsEditor({ workshopId }: { workshopId: string }) {
 
   const questionDrag = useDragReorder({
     order: questionDragIds,
-    locked: busy,
+    locked: frozen,
     labelFor: useCallback(
       (id: string) => {
         const [sectionIndex, fieldIndex] = id.split(":").map(Number);
@@ -714,8 +732,9 @@ export function CustomSectionsEditor({ workshopId }: { workshopId: string }) {
     // The SERVER'S id, never the URL's — see {@link remoteId}. Null cannot be reached from the button
     // (the screen renders the local-only sentence instead of the boxes), and it is checked rather than
     // asserted because a PUT to `/design-workshops/local-…/custom-sections` is a 404 a designer can do
-    // nothing about.
-    if (!remoteId) return false;
+    // nothing about. A post holder's Save is disabled; this keeps the leave prompt's Save from
+    // reaching the server's 403 by the other door.
+    if (!remoteId || readOnlyReason) return false;
     setBusy(true);
     setRefusals([]);
     setNotice(null);
@@ -946,7 +965,7 @@ export function CustomSectionsEditor({ workshopId }: { workshopId: string }) {
                   type="button"
                   className="grid h-8 w-8 cursor-grab touch-none place-items-center rounded-md border border-line-200 text-ink-500 transition hover:bg-surface-50 active:cursor-grabbing disabled:opacity-40"
                   aria-label={`Reorder ${section.title?.trim() || "this section"} — drag, or use the arrow keys`}
-                  disabled={busy || sections.length < 2}
+                  disabled={frozen || sections.length < 2}
                   {...sectionDrag.handleProps(sectionDragId)}
                   onKeyDown={(event) => {
                     if (event.key === "ArrowUp") {
@@ -964,7 +983,7 @@ export function CustomSectionsEditor({ workshopId }: { workshopId: string }) {
                   type="button"
                   className={rowAction("neutral")}
                   onClick={() => moveSection(sectionIndex, -1)}
-                  disabled={busy || sectionIndex === 0}
+                  disabled={frozen || sectionIndex === 0}
                 >
                   <ArrowUp className="h-3 w-3" aria-hidden />
                   Up
@@ -973,7 +992,7 @@ export function CustomSectionsEditor({ workshopId }: { workshopId: string }) {
                   type="button"
                   className={rowAction("neutral")}
                   onClick={() => moveSection(sectionIndex, 1)}
-                  disabled={busy || sectionIndex === sections.length - 1}
+                  disabled={frozen || sectionIndex === sections.length - 1}
                 >
                   <ArrowDown className="h-3 w-3" aria-hidden />
                   Down
@@ -982,7 +1001,7 @@ export function CustomSectionsEditor({ workshopId }: { workshopId: string }) {
                   type="button"
                   className={rowAction("danger")}
                   onClick={() => void removeSection(sectionIndex)}
-                  disabled={busy}
+                  disabled={frozen}
                 >
                   {/* THE LABEL IS THE HONEST ONE, decided by whether anything here has been answered
                       rather than by what the button does to the array. Offering "Delete" on a section the
@@ -1010,7 +1029,7 @@ export function CustomSectionsEditor({ workshopId }: { workshopId: string }) {
                   className="field-input"
                   value={section.title}
                   maxLength={MAX_CUSTOM_TITLE_CHARS}
-                  disabled={busy}
+                  disabled={frozen}
                   onChange={(event) => patchSection(sectionIndex, { title: event.target.value })}
                 />
               </label>
@@ -1035,7 +1054,7 @@ export function CustomSectionsEditor({ workshopId }: { workshopId: string }) {
                   // block naming answers already recorded, and a heading above it reading "No answers
                   // recorded yet, so everything here is still freely editable". The save was blocked
                   // either way; what the designer could not do was find out which sentence was true.
-                  disabled={busy || sectionHolds}
+                  disabled={frozen || sectionHolds}
                   ariaLabel="The stage these questions are asked at"
                 />
                 <p className="text-xs leading-5 text-ink-500">
@@ -1050,7 +1069,7 @@ export function CustomSectionsEditor({ workshopId }: { workshopId: string }) {
                   className="field-input min-h-16"
                   value={section.description}
                   maxLength={MAX_CUSTOM_DESCRIPTION_CHARS}
-                  disabled={busy}
+                  disabled={frozen}
                   onChange={(event) => patchSection(sectionIndex, { description: event.target.value })}
                 />
               </label>
@@ -1096,7 +1115,7 @@ export function CustomSectionsEditor({ workshopId }: { workshopId: string }) {
                           className="field-input"
                           value={field.label}
                           maxLength={MAX_CUSTOM_LABEL_CHARS}
-                          disabled={busy}
+                          disabled={frozen}
                           onChange={(event) => {
                             const label = event.target.value;
                             // THE KEY IS SEEDED FROM THE LABEL ONCE AND NEVER FOLLOWS IT. A key that
@@ -1116,7 +1135,7 @@ export function CustomSectionsEditor({ workshopId }: { workshopId: string }) {
                         <input
                           className="field-input"
                           value={field.key}
-                          disabled={busy || locked}
+                          disabled={frozen || locked}
                           onChange={(event) => patchField(sectionIndex, fieldIndex, { key: event.target.value })}
                         />
                         <span className="text-xs leading-5 text-ink-500">
@@ -1143,7 +1162,7 @@ export function CustomSectionsEditor({ workshopId }: { workshopId: string }) {
                             })
                           }
                           options={V1_CUSTOM_TYPES.map((type) => ({ value: type, label: TYPE_LABEL[type] ?? type }))}
-                          disabled={busy}
+                          disabled={frozen}
                           ariaLabel="The kind of answer this question takes"
                         />
                       </div>
@@ -1167,7 +1186,7 @@ export function CustomSectionsEditor({ workshopId }: { workshopId: string }) {
                             })
                           }
                           options={TIERS.map((tier) => ({ value: tier, label: tier[0] + tier.slice(1).toLowerCase() }))}
-                          disabled={busy}
+                          disabled={frozen}
                           ariaLabel="Which capture tier this question belongs to"
                         />
                       </div>
@@ -1178,7 +1197,7 @@ export function CustomSectionsEditor({ workshopId }: { workshopId: string }) {
                           className="field-input"
                           value={field.help}
                           maxLength={MAX_CUSTOM_HELP_CHARS}
-                          disabled={busy}
+                          disabled={frozen}
                           onChange={(event) => patchField(sectionIndex, fieldIndex, { help: event.target.value })}
                         />
                       </label>
@@ -1190,7 +1209,7 @@ export function CustomSectionsEditor({ workshopId }: { workshopId: string }) {
                           value={field.unit}
                           maxLength={MAX_CUSTOM_UNIT_CHARS}
                           placeholder="metres, kg, days…"
-                          disabled={busy}
+                          disabled={frozen}
                           onChange={(event) => patchField(sectionIndex, fieldIndex, { unit: event.target.value })}
                         />
                         <span className="text-xs leading-5 text-ink-500">
@@ -1219,7 +1238,7 @@ export function CustomSectionsEditor({ workshopId }: { workshopId: string }) {
                                   : option.value
                               )
                               .join("\n")}
-                            disabled={busy}
+                            disabled={frozen}
                             onChange={(event) =>
                               patchField(sectionIndex, fieldIndex, {
                                 options: event.target.value
@@ -1250,7 +1269,7 @@ export function CustomSectionsEditor({ workshopId }: { workshopId: string }) {
                               className="field-input"
                               type="number"
                               value={field.minValue ?? ""}
-                              disabled={busy}
+                              disabled={frozen}
                               onChange={(event) =>
                                 patchField(sectionIndex, fieldIndex, {
                                   minValue: event.target.value === "" ? null : Number(event.target.value)
@@ -1264,7 +1283,7 @@ export function CustomSectionsEditor({ workshopId }: { workshopId: string }) {
                               className="field-input"
                               type="number"
                               value={field.maxValue ?? ""}
-                              disabled={busy}
+                              disabled={frozen}
                               onChange={(event) =>
                                 patchField(sectionIndex, fieldIndex, {
                                   maxValue: event.target.value === "" ? null : Number(event.target.value)
@@ -1281,7 +1300,7 @@ export function CustomSectionsEditor({ workshopId }: { workshopId: string }) {
                         <button
                           type="button"
                           className={rowAction("neutral")}
-                          disabled={busy}
+                          disabled={frozen}
                           onClick={() =>
                             patchField(sectionIndex, fieldIndex, {
                               required: !field.required,
@@ -1325,7 +1344,7 @@ export function CustomSectionsEditor({ workshopId }: { workshopId: string }) {
                           type="button"
                           className="grid h-8 w-8 cursor-grab touch-none place-items-center rounded-md border border-line-200 text-ink-500 transition hover:bg-surface-50 active:cursor-grabbing disabled:opacity-40"
                           aria-label={`Reorder ${field.label?.trim() || "this question"} — drag, or use the arrow keys`}
-                          disabled={busy || fields.length < 2}
+                          disabled={frozen || fields.length < 2}
                           {...questionDrag.handleProps(questionDragId)}
                           onKeyDown={(event) => {
                             if (event.key === "ArrowUp") {
@@ -1343,7 +1362,7 @@ export function CustomSectionsEditor({ workshopId }: { workshopId: string }) {
                           type="button"
                           className={rowAction("neutral")}
                           onClick={() => moveField(sectionIndex, fieldIndex, -1)}
-                          disabled={busy || fieldIndex === 0}
+                          disabled={frozen || fieldIndex === 0}
                         >
                           <ArrowUp className="h-3 w-3" aria-hidden />
                           Up
@@ -1352,7 +1371,7 @@ export function CustomSectionsEditor({ workshopId }: { workshopId: string }) {
                           type="button"
                           className={rowAction("neutral")}
                           onClick={() => moveField(sectionIndex, fieldIndex, 1)}
-                          disabled={busy || fieldIndex === fields.length - 1}
+                          disabled={frozen || fieldIndex === fields.length - 1}
                         >
                           <ArrowDown className="h-3 w-3" aria-hidden />
                           Down
@@ -1361,7 +1380,7 @@ export function CustomSectionsEditor({ workshopId }: { workshopId: string }) {
                           type="button"
                           className={rowAction("danger")}
                           onClick={() => void removeField(sectionIndex, fieldIndex)}
-                          disabled={busy}
+                          disabled={frozen}
                         >
                           {answeredField ? (
                             <>
@@ -1418,7 +1437,7 @@ export function CustomSectionsEditor({ workshopId }: { workshopId: string }) {
               <button
                 type="button"
                 className="field-button-secondary"
-                disabled={busy || fields.length >= MAX_CUSTOM_FIELDS_PER_SECTION}
+                disabled={frozen || fields.length >= MAX_CUSTOM_FIELDS_PER_SECTION}
                 onClick={() =>
                   patchSection(sectionIndex, { fields: [...fields, blankCustomField({ sortOrder: fields.length })] })
                 }
@@ -1495,7 +1514,7 @@ export function CustomSectionsEditor({ workshopId }: { workshopId: string }) {
         <button
           type="button"
           className="field-button-secondary"
-          disabled={busy || sections.length >= MAX_CUSTOM_SECTIONS}
+          disabled={frozen || sections.length >= MAX_CUSTOM_SECTIONS}
           onClick={() => setSections((current) => [...current, blankCustomSection({ sortOrder: current.length })])}
         >
           <Plus className="h-4 w-4" aria-hidden />
@@ -1642,7 +1661,8 @@ export function CustomSectionsEditor({ workshopId }: { workshopId: string }) {
             className="field-button"
             // `dirty` AND NOT `nothingToDo` — see the note on `dirty`. The diff describes what a save
             // CONVERTS; whether there is anything to save at all is a question about the body.
-            disabled={busy || problems.length > 0 || diff.movedSections.length > 0 || !dirty}
+            disabled={frozen || problems.length > 0 || diff.movedSections.length > 0 || !dirty}
+            aria-describedby={describedBy}
             onClick={() => void save()}
           >
             {busy ? "Saving…" : "Save these questions"}
@@ -1650,7 +1670,7 @@ export function CustomSectionsEditor({ workshopId }: { workshopId: string }) {
           <button
             type="button"
             className="field-button-secondary"
-            disabled={busy || !dirty}
+            disabled={frozen || !dirty}
             // Back to the EDITABLE projection of what the server holds, never to `stored` itself:
             // putting the whole payload back would return every retired section and retired field to
             // the boxes, which is the state this screen exists not to be in.

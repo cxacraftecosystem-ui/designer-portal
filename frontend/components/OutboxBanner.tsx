@@ -99,7 +99,7 @@ function fileCount(entry: OutboxEntry): number {
  * rather than allowed to lose to the count.
  */
 export function outboxOutcome(result: SyncResult): {
-  kind: "sent" | "expired" | "refused" | "offline" | "busy" | "unreadable" | "idle";
+  kind: "sent" | "expired" | "refused" | "offline" | "busy" | "unreadable" | "password" | "idle";
   tone: ToastTone;
   title: string;
   description?: string;
@@ -124,7 +124,11 @@ export function outboxOutcome(result: SyncResult): {
         ? `Your sign-in expired part way through, so the rest did not go — ${result.remaining} ${
             result.remaining === 1 ? "entry is" : "entries are"
           } still on this device and nothing has been thrown away. Sign in again, then use Sync now.`
-        : unfiled.length
+        : result.passwordChangeRequired
+          ? `The rest are waiting for you to choose a new password — ${result.remaining} ${
+              result.remaining === 1 ? "entry is" : "entries are"
+            } still on this device and nothing has been thrown away.`
+          : unfiled.length
           ? unfiled.join(" ")
           : result.remaining
             ? `${result.remaining} still waiting.`
@@ -171,6 +175,24 @@ export function outboxOutcome(result: SyncResult): {
       title: "This device could not be read",
       description:
         "The app cannot say what is still waiting here, so do not assume it is empty. Reload the page, and do not clear this browser's data."
+    };
+  }
+  /*
+    THE ACCOUNT OWES A NEW PASSWORD, AND THE SERVER WILL TAKE NOTHING UNTIL IT IS CHOSEN.
+
+    Not "Your sign-in has expired": the token is good and signing in again would only lead back to
+    the same demand. Below the unreadable store, which is the worse fact about this device; above
+    "Nothing to send", which would be an all-clear over a queue that is merely waiting. Reached only
+    by a pass somebody started before the gate went up — this banner is not drawn behind the gate,
+    and its mount drain is what sends the queue once the password is chosen.
+  */
+  if (result.passwordChangeRequired) {
+    return {
+      kind: "password",
+      tone: "info",
+      title: "Choose a new password first",
+      description:
+        "Nothing has been sent and nothing has been thrown away. Everything queued is still on this device and sends itself once your new password is set."
     };
   }
   /*

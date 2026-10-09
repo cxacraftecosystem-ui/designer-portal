@@ -9,7 +9,10 @@ from app.schemas.records import ProductCreate, ProductUpdate
 from app.services.access import guard_record_edit
 from app.services.concurrency import gather_reads
 from app.services.pagination import normalize_pagination, page_payload
-from app.services.record_design_workshop import assert_payload_workshop
+from app.services.record_design_workshop import (
+    assert_may_write_a_record_filed_under,
+    assert_payload_workshop,
+)
 from app.services.records import (
     RECORD_STATUSES,
     Relation,
@@ -355,7 +358,6 @@ async def create_product(
     if replayed is not None:
         return public_encode(replayed, current_user)
     data = decimal_to_string(clean_data(payload.model_dump()))
-    data = await attach_location(data)
     # Workshop entries: enforce assignment, then flag + pin a late submission for admin approval.
     check = await enforce_workshop_submission(current_user, data.get("workshopId"))
     # THE DESIGN & PROTOTYPE WORKSHOP is a DIFFERENT SCOPE with different machinery, so it needs
@@ -366,7 +368,13 @@ async def create_product(
     # puts it inside that workshop's scoped lists and totals, which is a change to somebody
     # else's record. Ungated, any client could post a stranger's workshop id and file into it,
     # which is the hole `_require_attachable_workshop` was written to close one door over.
-    await assert_payload_workshop(data, current_user)
+    # `filed_under=None`: a row that does not exist yet is filed nowhere.
+    #
+    # BOTH GATES COME BEFORE ``attach_location``, which WRITES — the replay banner above says so —
+    # so a create refused after it left a ``Location`` row behind that nothing references, on every
+    # refused save (2026-10-09).
+    await assert_payload_workshop(data, current_user, filed_under=None)
+    data = await attach_location(data)
     stamp_workshop_submission(data, check=check)
     data["createdById"] = current_user.id
     merge_field_provenance(data, current_user, previous=None)
@@ -427,17 +435,19 @@ async def update_product(
     # everything between this line and the write reads the dict, and a stray key would become an
     # audit entry, a provenance stamp, or a 500 naming a column this table does not have.
     expected_updated_at = take_expected_updated_at(data)
-    data = await attach_location(data)
     # Moving a record into (or to a different) workshop is a workshop submission too — re-check
     # assignment + window, so the create-time guard can't be bypassed by PATCHing the workshop in later.
     check = None
     if "workshopId" in data and data.get("workshopId") != product.workshopId:
         check = await enforce_workshop_submission(current_user, data.get("workshopId"))
     # Same gate on the PATCH, so the create-time check cannot be bypassed by filing the record
-    # afterwards. Keyed on PRESENCE, so an edit that does not mention the workshop is not
-    # re-validated — a record filed under a workshop the designer was later removed from must
-    # still be editable by them.
-    await assert_payload_workshop(data, current_user)
+    # afterwards. The destination is keyed on PRESENCE, so an edit that does not mention the
+    # workshop is not re-validated — a record filed under a workshop the designer was later removed
+    # from must still be editable by them. `filed_under` is the workshop the stored row names, whose
+    # inspector and two directors may not change this record at all, an unfile and a move out
+    # included (2026-10-09). Above ``attach_location``, which writes, for the create route's reason.
+    await assert_payload_workshop(data, current_user, filed_under=product.designWorkshopId)
+    data = await attach_location(data)
     # ONE TRANSACTION FOR THE AUDIT ROW AND THE ROW IT DESCRIBES (2026-09-03). ``guard_record_edit``
     # ends in ``record_revision``, which used to COMMIT on its own a handful of statements before the
     # update below — so a request that died in the gap (P2024 on a cross-region pool, a dropped
@@ -482,5 +492,8 @@ async def update_product(
 @router.delete("/{product_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_product(product_id: str, current_user: Any = Depends(get_current_user)) -> None:
     assert_can_delete(current_user)
-    await require_record(db.productdocumentation, product_id)
+    product = await require_record(db.productdocumentation, product_id)
+    # Not by the inspector or a director of the workshop it is filed under, admins included: its
+    # records are its content (``services/record_design_workshop``, 2026-10-09).
+    await assert_may_write_a_record_filed_under(product.designWorkshopId, current_user)
     await db.productdocumentation.delete(where={"id": product_id})

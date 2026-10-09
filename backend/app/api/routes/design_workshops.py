@@ -59,9 +59,10 @@ because one of them is not a rank threshold:
   dictation), the AI layers and the five AI verbs all call ``_require_designer`` — eighteen routes,
   counted out in that function's own docstring. NOT the report: generating one is open to anyone who
   can READ the workshop, as the clause four bullets down says, and this sentence claimed the
-  opposite of it for as long as the two have sat here. ``can_run_design_workshops``, a SET,
-  ``{DESIGNER, ADMIN, MASTER_ADMIN}``, not a floor, so a PROFESSOR outranks a designer everywhere
-  else in this codebase and still cannot touch a workshop. A designer opens a workshop an admin
+  opposite of it for as long as the two have sat here. ``can_run_design_workshops``, a SET —
+  ``deps.DESIGN_WORKSHOP_ROLES``, the designer, the three directorate posts and the two admin
+  tiers — not a floor, so a PROFESSOR outranks a designer everywhere else in this codebase and
+  still cannot touch a workshop. A designer opens a workshop an admin
   created (or granted them), fills all 22 stages, creates records inside it and submits the
   report. ``tests/test_design_workshop_gate.py`` asserts that explicitly, because a permission
   change that quietly cost a designer their stage edits would be far worse than this rule is worth.
@@ -166,7 +167,15 @@ from app.schemas.design_workshops import (
     ReportGenerateIn,
     StageSaveIn,
 )
-from app.services import ai, ai_layers, ai_verb_cap, ai_verbs, dictation_cap, dictation_consent
+from app.services import (
+    ai,
+    ai_layers,
+    ai_verb_cap,
+    ai_verbs,
+    design_workshop_posts,
+    dictation_cap,
+    dictation_consent,
+)
 from app.services.ai import transcribe_audio_bytes
 from app.services.concurrency import gather_reads
 from app.services.cost_integrity import analyse_cost_integrity, cost_findings_payload
@@ -232,6 +241,7 @@ from app.services.pagination import normalize_pagination, page_payload
 from app.services.records import (
     contains,
     enum_filter_or_422,
+    jsonify_metadata,
     owned_or_granted_where,
     plain,
     with_id_tiebreak,
@@ -1101,10 +1111,14 @@ async def decide_identity_photograph(
 
     ── WHO MAY ──────────────────────────────────────────────────────────────────────────────────
 
-    ``_require_designer`` (the SET {Designer, Admin, Master Admin}) exactly as the read route above,
+    ``_require_designer`` (the set ``deps.DESIGN_WORKSHOP_ROLES``) exactly as the read route above,
     plus uploader-or-admin on the row itself, which is ``media.delete_media``'s rule. Both, not
     either: the designer set is who is offered the card reader at all, and the uploader check is
     what stops one designer deleting another's attachment off a shared workshop.
+
+    And neither arm for whoever inspects or supervises a workshop the photograph belongs to
+    (2026-10-09), the media doors' rule: DISCARD deletes that workshop's content, and STORE stamps a
+    decision onto it that belongs to the people who write the workshop, not to those who read it.
     """
     _require_designer(current_user)
     choice = parse_retention(decision)
@@ -1125,6 +1139,7 @@ async def decide_identity_photograph(
                 "whether it is kept. Ask them, or ask an admin to remove it."
             ),
         )
+    await design_workshop_posts.refuse_a_holders_media_write(media, current_user)
     # An identity decision is a decision about a PICTURE. Refusing anything else is not pedantry:
     # this is the one route in the file that hard-deletes, and a client bug that sent an audio id
     # would destroy an interview recording with no soft-delete to recover it from.
@@ -1139,9 +1154,15 @@ async def decide_identity_photograph(
 
     if choice == RETENTION_STORE:
         stamp = retention_stamp(choice, user=current_user, at=datetime.now(UTC))
+        # WRAPPED, because the column is Json and prisma-client-py refuses a bare dict for one — this
+        # arm answered 500 against Postgres, found 2026-10-09 by the first test of it that ran over a
+        # real database rather than an in-memory store. ``jsonify_metadata`` is the wrap every record
+        # route already applies to the same column.
         await db.mediafile.update(
             where={"id": mediaId},
-            data={"extraMetadata": with_retention(getattr(media, "extraMetadata", None), stamp)},
+            data=jsonify_metadata(
+                {"extraMetadata": with_retention(getattr(media, "extraMetadata", None), stamp)}
+            ),
         )
         return {
             "mediaId": mediaId,
@@ -1975,7 +1996,7 @@ async def create_design_workshop(
     #
     # WHAT IT USED TO BE. `assert_can_create_records` (Researcher and above — the repository-wide
     # rule for making any record) followed by the designer gate every other write route in this
-    # module still calls (`can_run_design_workshops`, the set {DESIGNER, ADMIN, MASTER_ADMIN}). The
+    # module still calls (`can_run_design_workshops`, the set `deps.DESIGN_WORKSHOP_ROLES`). The
     # first of those was already implied by the second and both are implied by the line below, so
     # nothing that could get in through them can be refused by it — dropping them loses no check,
     # and keeping a predicate that can never fire is how a rule comes back: it reads as
@@ -2414,8 +2435,8 @@ async def update_design_workshop(
 
     ── 3. TWO GATES, IN THIS ORDER, AND THE ORDER IS THE RULE ───────────────────────────────────
 
-    ``_require_designer`` first — the SET ``{DESIGNER, ADMIN, MASTER_ADMIN}``, not a rank floor —
-    and ``load_workshop_or_404(..., for_edit=True)`` second. Neither is new and neither may move.
+    ``_require_designer`` first — the SET ``deps.DESIGN_WORKSHOP_ROLES``, not a rank floor — and
+    ``load_workshop_or_404(..., for_edit=True)`` second. Neither is new and neither may move.
 
     **THE TWO GATES NOW OVERLAP, AND BOTH STILL STAND — CORRECTED 2026-09-03.** This paragraph used
     to say that ``load_workshop_or_404`` "performs NO role check at all: it admits the creator, an
@@ -4832,8 +4853,15 @@ async def record_device_export(
     The bytes are not uploaded — only the fact, the checksum and the size. A designer on a
     metered field connection should not be charged for a thirty-megabyte report merely to prove
     one was made; the checksum is enough to match the file later.
+
+    ``barred_to_post_holders=False``: whoever holds this workshop's inspection or one of its director
+    posts may still record a report they generated (owner's ruling, 2026-10-09). The ledger row says
+    a file was made; it changes nothing the workshop says, and ``POST /{id}/report`` with
+    ``record=true`` already writes the same row for them on the server-rendered path.
     """
-    await load_workshop_or_404(workshop_id, current_user, for_edit=True)
+    await load_workshop_or_404(
+        workshop_id, current_user, for_edit=True, barred_to_post_holders=False
+    )
     fmt = payload.format.upper()
     if fmt not in _MIME:
         raise HTTPException(
@@ -5105,7 +5133,9 @@ async def _transcripts_payload(entries: list[Any], viewer: Any) -> dict[str, Any
 
 
 def _require_designer(user: Any) -> None:
-    """The designer set — ``{DESIGNER, ADMIN, MASTER_ADMIN}`` — in front of sixteen of this
+    """The designer set — ``deps.DESIGN_WORKSHOP_ROLES``: the designer, the Assistant Director,
+    Regional Director and Ministry Admin posts, the admin and the master admin (it named only the
+    first and the last two until 2026-10-09; the set is the authority) — in front of sixteen of this
     router's twenty-two non-GET routes. **This is not a gate on "the two capture aids", which is
     what this docstring said while fourteen call sites in this file were reading it.**
 
@@ -5147,8 +5177,10 @@ def _require_designer(user: Any) -> None:
 
     **The sixth is ``POST /{workshop_id}/exports`` and it is not argued anywhere.** It writes a
     ``DwReportExport`` ledger row behind ``load_workshop_or_404(for_edit=True)`` alone, and
-    ``for_edit`` carries no role check of its own — all it changes is that a soft-deleted workshop
-    answers 409 rather than 404.
+    ``for_edit`` carries no role check of its own — on this route all it changes is that a
+    soft-deleted workshop answers 409 rather than 404 and the sanctioning officer of the workshop is
+    refused; the post-holder refusal ``for_edit`` brings everywhere else is switched off here, because
+    a report and its ledger row are what an inspector or supervisor keeps (2026-10-09).
 
     **THE EDGE IS NARROWER THAN THIS PARAGRAPH USED TO CLAIM — CORRECTED 2026-09-03.** It said "a
     RESEARCHER or a PROFESSOR holding a viewer grant can append to the export ledger of a workshop

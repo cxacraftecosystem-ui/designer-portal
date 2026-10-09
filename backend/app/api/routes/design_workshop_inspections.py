@@ -46,8 +46,10 @@ prefix boundary is a guard rail, not a filing decision.
 THE TWO DOORS
 =======================================================================================
 
-* :func:`require_inspector` — the inspector's own read surface. **403 for admins too**, naming the
-  route they actually want; ``assert_inspection_surface`` argues why.
+* :func:`require_inspector` — the read surface of whoever may HOLD an inspection: the INSPECTOR
+  tier and, since 2026-10-09, the three administrator tiers, who may be appointed inspector of a
+  workshop. Each sees exactly the workshops their rows name — possibly none;
+  ``assert_inspection_surface`` argues why that is no longer a broken-looking empty page.
 * :func:`require_workshop_assigner` — the administration of who inspects what. THE INSPECTED MUST
   NOT CHOOSE THE INSPECTOR, so there is no route here through which a designer can add, remove or
   even suggest one, and the workshop's creator gets no say at all.
@@ -61,14 +63,14 @@ THE TWO DOORS
   its two supervising officers, so the four appointments are made by one set of people on one
   screen.
 
-  **AND THE TIER'S OWN RULE IS UNCHANGED BY IT, WHICH IS THE POINT.** "The inspected must not choose
-  the inspector" is a statement about ``INSPECTION_ROLES``, not about ``require_admin``:
-  MINISTRY_ADMIN is not in ``INSPECTION_ROLES`` (a frozenset of one, ``{INSPECTOR}``), is not in
-  ``DESIGN_WORKSHOP_ROLES``' designer arm for this purpose, and ``_assert_every_id_may_inspect``'s
-  fourth refusal still turns away anybody already on the workshop as its creator or a viewer. A
-  ministry administrator therefore cannot appoint themselves, cannot appoint the designers, and
-  cannot appoint anybody who worked on it. What they gained is the ability to appoint an
-  INSPECTOR — which is the one thing the tier exists for and the one thing nobody could do.
+  **WHO MAY BE APPOINTED WIDENED ON 2026-10-09, AND THE INSPECTION STAYED INDEPENDENT.** A
+  MINISTRY_ADMIN, an ADMIN and the MASTER_ADMIN may now be appointed inspector of a workshop
+  (``INSPECTION_HOLDER_ROLES``); ``INSPECTION_ROLES`` stays ``{INSPECTOR}``, the tier. What keeps
+  the review independent is per workshop, in ``services/design_workshop_posts``, and every one of
+  these answers 409 with the rule named: nobody appoints themselves, nobody inspects a workshop they
+  authored (a viewer row or written stages — never merely having created it), and nobody both
+  supervises a workshop and inspects it. While they hold the row they read the workshop here and
+  cannot write it anywhere, the admin arm of ``load_workshop_or_404`` included.
 
   **A REGIONAL DIRECTOR IS STILL REFUSED**, as they are on every other assignment on the ministry
   surface: ``OVERSIGHT_ASSIGNER_ROLES`` excludes them because the supervised must not choose the
@@ -149,7 +151,7 @@ router = APIRouter(prefix="/design-workshop-inspections", tags=["design-workshop
 
 
 async def require_inspector(current_user: Any = Depends(get_current_user)) -> Any:
-    """The inspector's own read surface: the INSPECTOR tier and nobody else.
+    """The inspector's own read surface: every role that may hold an inspection, scoped by its rows.
 
     A dependency rather than a call inside each handler, so that a route added to this file without
     one is visible as a missing ``Depends`` rather than as a missing line in a body.
@@ -194,21 +196,21 @@ async def _workshop_or_404(workshop_id: str) -> Any:
 @router.get("/eligible-inspectors")
 async def list_eligible_inspectors(
     search: str | None = Query(None, max_length=120),
-    _: Any = Depends(require_workshop_assigner),
+    current_user: Any = Depends(require_workshop_assigner),
 ) -> dict[str, Any]:
     """The accounts that may be assigned an inspection at all.
 
     Not the user directory narrowed by the client. The eligible set is a SET of roles and not a rank
-    threshold, and it further excludes anyone the platform allow-list has rejected or suspended —
-    accounts that cannot sign in, for whom an inspection row would mean this screen saying somebody
-    is inspecting while they are shown a refusal at the door. All of it is a rule the client cannot
-    see and would drift from within one release.
+    threshold — the Inspector / Reviewer tier and the three administrator tiers — and it further
+    excludes anyone the platform allow-list has rejected or suspended, accounts that cannot sign in,
+    and the caller themselves, because nobody appoints themselves. All of it is a rule the client
+    cannot see and would drift from within one release.
 
     ``truncated`` in the answer says the list was cut. Both clients must say so when it is true and
     say nothing when it is false; that is the whole contract, and an empty list with no explanation
     is this repository's most repeated bug class.
     """
-    return await eligible_inspectors(search=search)
+    return await eligible_inspectors(search=search, exclude_user_id=current_user.id)
 
 
 @router.get("/{workshop_id}/inspectors")
@@ -239,10 +241,10 @@ async def set_inspectors(
     There is deliberately no "suggest an inspector" route either, because a suggestion an assigner
     rubber-stamps is the same thing wearing a queue.
 
-    (It was ``{ADMIN, MASTER_ADMIN}`` until 0.0.12. The module docstring carries the ruling and the
-    invariant it leaves standing: MINISTRY_ADMIN is outside ``INSPECTION_ROLES``, so the account
-    that appoints an inspector still cannot BE one, and ``_assert_every_id_may_inspect`` still
-    refuses anybody already on the workshop as its creator or a co-designer.)
+    (It was ``{ADMIN, MASTER_ADMIN}`` until 0.0.12. Since 2026-10-09 an administrator may also BE
+    appointed an inspector — by somebody else, never by themselves — and
+    ``_assert_every_id_may_inspect`` refuses, with a 409, anybody who authored the workshop or
+    supervises it. The module docstring carries both rulings.)
 
     REPLACES. There is no add route and no remove route: taking somebody off is sending the list
     without them. So a client that posts only what it just ticked has silently ended everybody

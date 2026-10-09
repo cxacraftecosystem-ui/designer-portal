@@ -305,7 +305,8 @@ test("ProcessForm marks the write committed the moment it lands, and will not se
   // the footer button (the other control still on screen after a partial failure) is disabled.
   const submit = bodyOf(code, "async function submit(): Promise<void>");
   expect(submit, "submit must refuse to run once the write has landed").toContain("if (committed) return;");
-  expect(code).toContain("disabled={saving || committed}");
+  // Further holds may follow `committed` (a post held on the record's workshop does), never replace it.
+  expect(code).toMatch(/disabled=\{saving \|\| committed(?: \|\| [^}]+)?\}/);
 
   // The guard itself still reads one flag, and that flag is still the one the Cancel button and the
   // beforeunload effect read — see the test above.

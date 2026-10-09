@@ -159,6 +159,7 @@ _APP = _build_app()
 class _Queue:
     def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
         self.artisan = _Delegate()
+        self.mediafile = _Delegate()
         self.reviewlog = _Delegate()
         self.recordrevision = _Delegate()
         fake_db = _Client(
@@ -168,7 +169,7 @@ class _Queue:
             tooldocumentation=_Delegate(),
             process=_Delegate(),
             questionnaireinterview=_Delegate(),
-            mediafile=_Delegate(),
+            mediafile=self.mediafile,
             reviewlog=self.reviewlog,
             recordrevision=self.recordrevision,
             user=_Delegate(),
@@ -296,3 +297,118 @@ def test_a_review_edit_will_not_write_a_masked_identity_number(queue: _Queue) ->
     assert "aadhaarNumber" not in written
     assert "pehchanCardNumber" not in written
     assert written["notes"] == "Seen."
+
+
+# --------------------------------------------------------------------------------------
+# A design workshop's holders, from the review queue (2026-10-09)
+# --------------------------------------------------------------------------------------
+
+
+def _serving(monkeypatch: pytest.MonkeyPatch, on: dict[str, set[str]]) -> list[str]:
+    """``supervisory_posts_among`` answering ``{workshop id: the reviewer's posts there}``; returns
+    the workshops it was asked about, so a test can prove a role was answered from memory."""
+    from app.services import design_workshop_posts as posts
+
+    asked: list[str] = []
+
+    async def _held(workshop_id: str, user_ids: Any) -> dict[str, frozenset[str]]:
+        asked.append(workshop_id)
+        held = on.get(workshop_id)
+        return {"reviewer": frozenset(held)} if held and "reviewer" in set(user_ids) else {}
+
+    monkeypatch.setattr(posts, "supervisory_posts_among", _held)
+    return asked
+
+
+def _nothing_written(queue: _Queue) -> bool:
+    return not (queue.artisan.updates or queue.recordrevision.creates or queue.reviewlog.creates)
+
+
+def test_the_workshops_inspector_rewrites_none_of_its_records_from_the_queue(
+    queue: _Queue, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A record filed under a design workshop is that workshop's content, and its inspector — an
+    ADMIN here, whom the rank gate admits over a researcher's record — reads it and does not write
+    it. The record forms refuse them; so does this door, with the same sentence, before the
+    revision, the row or the log is written. The same reviewer edits a record filed elsewhere."""
+    from app.services import design_workshop_posts as posts
+
+    _serving(monkeypatch, {"w-held": {"INSPECTOR"}})
+    caller = queue.holding("RESEARCHER").as_("ADMIN")
+    queue.artisan.row.designWorkshopId = "w-held"
+
+    refused = caller.post("/artisan/a1/edit", EDIT_BODY)
+    assert refused.status_code == 403, refused.text
+    assert refused.json()["detail"] == posts.write_refusal({"INSPECTOR"})
+    assert _nothing_written(queue), "a refused review edit wrote something"
+
+    queue.artisan.row.designWorkshopId = "w-elsewhere"
+    assert caller.post("/artisan/a1/edit", EDIT_BODY).status_code == 200
+
+
+def test_a_role_that_holds_no_post_is_answered_without_asking(
+    queue: _Queue, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A professor can hold no inspection or director post, so the gate answers from the role and
+    the staffing tables are never read — the review queue's ordinary edit pays nothing for it."""
+    asked = _serving(monkeypatch, {"w-held": {"INSPECTOR"}})
+    caller = queue.holding("RESEARCHER").as_("PROFESSOR")
+    queue.artisan.row.designWorkshopId = "w-held"
+
+    assert caller.post("/artisan/a1/edit", EDIT_BODY).status_code == 200
+    assert asked == [], "a role that can hold no post was asked who serves on the workshop"
+
+
+def test_a_review_edit_files_no_record_under_any_workshop(
+    queue: _Queue, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``designWorkshopId`` rode in on each record's own ``*Update`` schema and was written with no
+    filing gate at all. It is refused by name now — for everybody, the master admin included —
+    because filing belongs on the record's own PATCH, behind its own gate."""
+    _serving(monkeypatch, {})
+    for workshop_id in ("w-somebody-elses", None):
+        response = (
+            queue.holding("RESEARCHER")
+            .as_("MASTER_ADMIN")
+            .post("/artisan/a1/edit", {"fields": {"designWorkshopId": workshop_id}})
+        )
+        assert response.status_code == 422, response.text
+        assert "designWorkshopId" in response.json()["detail"]
+        assert _nothing_written(queue)
+
+
+def test_a_file_of_the_workshop_is_not_its_holders_to_caption_from_the_queue(
+    queue: _Queue, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A file's caption and transcript are the workshop's content when the file is — however the
+    file belongs to it, which ``design_workshop_posts.media_design_workshop_ids`` answers and is
+    replaced here. Its Regional Director is refused; an admin serving on nothing there is not."""
+    from types import SimpleNamespace
+
+    from app.services import design_workshop_posts as posts
+
+    async def _workshops_of(media: Any) -> set[str]:
+        return {"w-held"} if media.id == "m1" else set()
+
+    monkeypatch.setattr(posts, "media_design_workshop_ids", _workshops_of)
+    _serving(monkeypatch, {"w-held": {"REGIONAL_DIRECTOR"}})
+    queue.mediafile.row = SimpleNamespace(
+        id="m1",
+        caption="Stage photograph",
+        status="PENDING",
+        extraMetadata={},
+        uploadedById="author",
+        uploadedBy=_user("RESEARCHER", user_id="author"),
+        workshopId=None,
+    )
+    body = {"fields": {"caption": "Recaptioned by its director."}}
+
+    refused = queue.as_("MINISTRY_ADMIN").post("/media/m1/edit", body)
+    assert refused.status_code == 403, refused.text
+    assert refused.json()["detail"] == posts.write_refusal({"REGIONAL_DIRECTOR"})
+    assert queue.mediafile.updates == [] and queue.recordrevision.creates == []
+
+    _serving(monkeypatch, {})
+    allowed = queue.as_("ADMIN").post("/media/m1/edit", body)
+    assert allowed.status_code == 200, allowed.text
+    assert queue.mediafile.updates[0]["caption"] == "Recaptioned by its director."

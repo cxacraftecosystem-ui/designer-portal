@@ -781,8 +781,17 @@ function WorkshopsPageBody() {
           description="Attach workshop images, videos, audio notes, attendance references, and documents."
         />
         <UploadProgress progress={uploadProgress} sectionId={MEDIA_SECTION} label={MEDIA_SECTION_LABEL} />
-        {/* Editing an existing workshop: everything already attached to it, with per-file delete. */}
-        {editing ? <ExistingMedia linkedRecordType="workshop" linkedRecordId={editing.id} title="Previously uploaded workshop media" /> : null}
+        {/* Editing an existing workshop: everything already attached to it, with per-file delete.
+            `recordHold={null}`: a crafts workshop is never filed under a design workshop, so only a
+            file's own workshop columns can hold it — which the panel reads for itself. */}
+        {editing ? (
+          <ExistingMedia
+            linkedRecordType="workshop"
+            linkedRecordId={editing.id}
+            recordHold={null}
+            title="Previously uploaded workshop media"
+          />
+        ) : null}
         {/*
           One form serves create AND edit here (the `key` above remounts it), so the stored location
           has to be handed over on the edit pass. Without it the card reads `initial === undefined`,

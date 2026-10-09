@@ -1,6 +1,7 @@
 import asyncio
 import math
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import Any
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
@@ -24,7 +25,7 @@ from app.schemas.media import (
     TranscriptRefineRequest,
     TranscriptUpdateRequest,
 )
-from app.services import dictation_consent
+from app.services import design_workshop_posts, dictation_consent
 from app.services.ai import (
     UnknownDimension,
     analyze_measurement_image_bytes,
@@ -942,6 +943,24 @@ async def _assert_stored_object_within_ceiling(object_key: str, settings: Any) -
     )
 
 
+def _upload_as_filed(payload: MediaCompleteRequest) -> SimpleNamespace:
+    """The row ``/complete`` is about to create, in the shape ``design_workshop_posts`` reads a
+    file's workshops from: the workshop a designer FILED it under, and the link tag naming the
+    workshop or the record it was captured against (``link_filing`` follows the tag to a filed
+    record, a process step through its process, and a parent file one hop). The typed parent columns
+    are left off — they are derived from the same tag, so they would name the same record twice.
+
+    ``id`` IS EMPTY because the row does not exist yet: no stage entry can hold it and no AI layer
+    can have been made from it, and both of those reads answer nothing without a query.
+    """
+    return SimpleNamespace(
+        id="",
+        designWorkshopId=payload.designWorkshopId,
+        linkedRecordType=payload.linkedRecordType,
+        linkedRecordId=payload.linkedRecordId,
+    )
+
+
 def _assert_enqueueable(processing_requests: list[str] | None) -> None:
     """Refuse a processing request this route will not queue. See ENQUEUEABLE_PROCESSING_REQUESTS."""
     unsupported = sorted(
@@ -994,6 +1013,14 @@ async def complete_media_upload(
     ``MediaCompleteRequest`` are accepted and dropped before the create — see
     ``SERVER_WRITTEN_TRANSCRIPT_FIELDS`` — so this route creates no transcript, and the columns it
     leaves NULL are filled only by the writers the gate sits in front of.
+
+    **NOT A NEW FILE INTO A WORKSHOP BY ITS INSPECTOR OR ITS TWO DIRECTORS (2026-10-09).** An upload
+    tagged to a design workshop, filed under one, or attached to a record filed under one is that
+    workshop's content, which whoever inspects or supervises it reads and does not write
+    (``design_workshop_posts``, rule 5). The doors that change or remove such a file already refuse
+    them; this is the door that ADDS one, and it refuses them the same way, 403 naming the post,
+    before anything is written. A replayed ``/complete`` for a row that already exists is the
+    uploader's own earlier upload, finished — it is answered as before.
     """
     settings = get_settings()
     processing_requests = payload.processingRequests
@@ -1048,6 +1075,14 @@ async def complete_media_upload(
     # New row: the staged object must live under the caller's own media/<user_id>/ prefix, so a user
     # cannot register a media row over another user's staged object.
     _assert_owns_object(payload.objectKey, current_user)
+
+    # NOT INTO A WORKSHOP THE CALLER INSPECTS OR SUPERVISES — see the docstring. Asked of the row
+    # this call is about to create (:func:`_upload_as_filed`), and before anything is written: the
+    # storage HEAD below, the ``Location`` row ``attach_location`` inserts, the row itself. A role
+    # that can hold no post is answered from memory, so a designer's upload pays nothing for it.
+    await design_workshop_posts.refuse_a_holders_media_write(
+        _upload_as_filed(payload), current_user
+    )
 
     # AND THE OBJECT'S REAL LENGTH, WHICH IS THE ONLY NUMBER HERE THAT IS A FACT.
     #
@@ -1496,7 +1531,12 @@ async def relink_media(
 ) -> dict[str, Any]:
     """Re-attach an orphaned (or mis-linked) media file to an existing record. Validates the target
     record exists, then sets both the string tag columns and the typed foreign key so it reappears
-    under that record everywhere."""
+    under that record everywhere.
+
+    NOT BY A HOLDER, AT EITHER END (2026-10-09). Moving a file off a workshop's stage, tag or filed
+    record takes it out of that workshop's content, and moving it onto a record filed under one puts
+    it in; the inspector and the two directors of either workshop do neither. Asked once the target
+    is known to exist, so an unknown id is still the 400 or 404 it always was."""
     media = await require_record(db.mediafile, media_id)
     rec_type = payload.linkedRecordType.lower()
     delegate = _relink_delegate(rec_type)
@@ -1507,6 +1547,9 @@ async def relink_media(
     target = await delegate.find_unique(where={"id": payload.linkedRecordId})
     if target is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Target record not found")
+    await design_workshop_posts.refuse_a_holders_media_write(
+        media, current_user, relinked_to=(rec_type, payload.linkedRecordId)
+    )
     data: dict[str, Any] = {
         "linkedRecordType": rec_type,
         "linkedRecordId": payload.linkedRecordId,
@@ -1557,6 +1600,9 @@ async def refine_media_transcript(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You can only refine the transcript of media you uploaded",
         )
+    # Before the consent read and the provider call: refining is the first half of replacing a
+    # workshop's transcript, which its inspector and its two directors do not do (2026-10-09).
+    await design_workshop_posts.refuse_a_holders_media_write(media, current_user)
     # ``resolve_from_stages`` because the tag alone is not how a recording is known to be workshop
     # material — a clip a stage NAMES but whose upload carried no tag was measured leaving here for
     # OpenAI with HTTP 200, on a workshop whose answer on record is REFUSED, at DESIGNER rank rather
@@ -1579,8 +1625,12 @@ async def transcribe_media_now_route(
     the settings page, and store the result — bypassing the queue and the off-peak window. Returns the
     updated media row (its ``transcriptStatus``/``transcriptText`` reflect the outcome, including a
     FAILED/UNAVAILABLE status when the AI key is missing or the call failed). Declared before
-    ``GET /{media_id}`` so the two-segment path resolves here."""
+    ``GET /{media_id}`` so the two-segment path resolves here.
+
+    Not for an admin who inspects or supervises a workshop the recording belongs to: the result
+    overwrites a transcript that workshop's report prints (2026-10-09)."""
     media = await require_record(db.mediafile, media_id)
+    await design_workshop_posts.refuse_a_holders_media_write(media, current_user)
     if str(getattr(media, "mediaType", "") or "").upper() != "AUDIO":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -1645,6 +1695,12 @@ async def set_media_transcript(
     two clients resolve that collision the other way round, in the place where the person can be asked:
     a refined transcript is OFFERED against an edited box and never imposed on it. See
     ``frontend/app/(protected)/questionnaire/page.tsx``.
+
+    **UPLOADER OR ADMIN IS NOT THE WHOLE RULE (2026-10-09).** A transcript is a workshop's content
+    when the recording is — its report prints it in the annexure — and whoever inspects or supervises
+    that workshop reads it and does not rewrite it, an admin and the recording's own uploader
+    included. ``design_workshop_posts.media_design_workshop_ids`` says which workshops a file is
+    content of.
     """
     media = await require_record(db.mediafile, media_id)
     if not is_admin(current_user) and getattr(media, "uploadedById", None) != current_user.id:
@@ -1652,6 +1708,7 @@ async def set_media_transcript(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You can only edit the transcript of media you uploaded",
         )
+    await design_workshop_posts.refuse_a_holders_media_write(media, current_user)
     updated = await db.mediafile.update(
         where={"id": media.id},
         data={
@@ -1774,7 +1831,7 @@ RETRYABLE_JOB_STATUSES = ("FAILED", "CANCELLED")
 @router.post("/jobs/{job_id}/retry")
 async def retry_media_processing_job(
     job_id: str,
-    _: Any = Depends(require_admin),
+    current_user: Any = Depends(require_admin),
 ) -> dict[str, Any]:
     """Requeue a failed or cancelled processing job. 409 for a job in any other state.
 
@@ -1787,8 +1844,21 @@ async def retry_media_processing_job(
     than the row, which is why the row is read back afterwards.
 
     See ``RETRYABLE_JOB_STATUSES`` for why PROCESSING and COMPLETED are not in the set.
+
+    **NOT BY AN ADMIN WHO INSPECTS OR SUPERVISES A WORKSHOP THE JOB'S FILE BELONGS TO**
+    (2026-10-09). A requeued transcription is written back onto the file later, as the provider's
+    text — the write ``transcribe-now`` makes, only deferred to the queue — and a workshop's
+    recordings and their transcripts are its content, which those three posts read and do not write
+    (``design_workshop_posts``, rule 5). Asked before the compare-and-set, so a refusal requeues
+    nothing; any other administrator retries exactly as before.
     """
     job = await require_record(db.mediaprocessingjob, job_id)
+    # The job's file, read for the question above and nothing else. ``mediaFileId`` is required and
+    # cascades, so a job without its file cannot exist; a file deleted in the instant between the
+    # two reads takes the job with it, and the compare-and-set below answers that with its own 409.
+    media = await db.mediafile.find_unique(where={"id": job.mediaFileId})
+    if media is not None:
+        await design_workshop_posts.refuse_a_holders_media_write(media, current_user)
     requeued = await db.mediaprocessingjob.update_many(
         where={"id": job.id, "status": {"in": list(RETRYABLE_JOB_STATUSES)}},
         data={
@@ -1859,6 +1929,10 @@ async def delete_media(media_id: str, current_user: Any = Depends(get_current_us
     Admins may delete any media; everyone else may delete only media they uploaded — so a
     contributor can prune attachments on their own records straight from the edit screen without
     holding full delete rights on the parent record.
+
+    Except a file that is a design workshop's content, to that workshop's inspector and its two
+    directors, whoever uploaded it (2026-10-09): they read the workshop and do not change it, and a
+    stage photograph deleted here is gone from its report with no soft delete to restore it from.
     """
     media = await require_record(db.mediafile, media_id)
     if not is_admin(current_user) and getattr(media, "uploadedById", None) != current_user.id:
@@ -1866,6 +1940,7 @@ async def delete_media(media_id: str, current_user: Any = Depends(get_current_us
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You can only delete media you uploaded",
         )
+    await design_workshop_posts.refuse_a_holders_media_write(media, current_user)
     object_key = getattr(media, "objectKey", None)
     await db.mediafile.delete(where={"id": media_id})
     # Drop the underlying object too, but only once no other MediaFile still references it, and never

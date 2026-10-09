@@ -186,7 +186,8 @@ UNGATED_WRITES = {
     ("POST", "/{workshop_id}/restore"),    # require_admin
     ("POST", "/{workshop_id}/report"),     # open to anyone who may READ the workshop
     ("POST", "/dictate"),                  # retired: answers 410 to everyone
-    ("POST", "/{workshop_id}/exports"),    # load_workshop_or_404(for_edit=True) and nothing else
+    # load_workshop_or_404(for_edit=True, barred_to_post_holders=False) and nothing else
+    ("POST", "/{workshop_id}/exports"),
 }
 
 
@@ -295,16 +296,31 @@ def test_the_two_surfaces_declare_the_same_set():
     out before filling 22 stages rather than at sync — and a web copy that admitted DESIGNER would
     hand a designer a create form the API refuses.
     """
+    import re
     from pathlib import Path
 
     web = Path(__file__).resolve().parents[2] / "frontend/lib/permissions.ts"
     if not web.is_file():
         pytest.skip("the frontend is not present in this checkout")
     text = web.read_text(encoding="utf-8")
-    for role in DESIGN_WORKSHOP_ROLES:
-        assert f'"{role}"' in text, f"{role} is in the server's set but not the web's"
-    assert '"PROFESSOR"' not in text.split("DESIGN_WORKSHOP_ROLES")[1][:200], (
-        "the web admits PROFESSOR where the server does not"
+
+    # THE RUNNING SET, READ OFF ITS DECLARATION AND COMPARED AS A SET. This used to search the whole
+    # FILE for each role's quoted name — which every role passes, because every role is quoted
+    # somewhere in that file — and to look for PROFESSOR in the 200 characters after the first
+    # mention of the name, which is a comment as often as it is the array. So a web copy missing a
+    # directorate tier, or carrying PROFESSOR one line further down, stayed green. The array literal
+    # is what decides the web's answer, so it is what is read; ``//`` comments inside it are dropped
+    # first because they quote roles in prose (``"INSPECTOR IS DELIBERATELY ABSENT"`` reads as a
+    # member to a naive token match).
+    running = re.search(r"DESIGN_WORKSHOP_ROLES\s*:[^=]*=\s*\[([^\]]*)\]", text)
+    assert running, (
+        "frontend/lib/permissions.ts has no `DESIGN_WORKSHOP_ROLES = [...]` declaration, so there is "
+        "nothing to compare the server's running set against"
+    )
+    members = set(re.findall(r'"([A-Z_]+)"', re.sub(r"//[^\n]*", "", running.group(1))))
+    assert members == set(DESIGN_WORKSHOP_ROLES), (
+        f"the web runs a design workshop for {sorted(members)} and the server for "
+        f"{sorted(DESIGN_WORKSHOP_ROLES)} — one of them offers what the other refuses"
     )
 
     assert "DESIGN_WORKSHOP_CREATOR_ROLES" in text, (
@@ -316,8 +332,6 @@ def test_the_two_surfaces_declare_the_same_set():
     # assertion failed against a perfectly correct file and would have "passed" again the moment
     # somebody reordered the module. The array literal is what has to be read, so it is what is
     # matched.
-    import re
-
     declaration = re.search(
         r"DESIGN_WORKSHOP_CREATOR_ROLES\s*:[^=]*=\s*\[([^\]]*)\]", text
     )

@@ -110,6 +110,7 @@ from app.services.questionnaire_xlsx import (
     parse_questionnaire_workbook,
     question_set_filename,
 )
+from app.services.record_design_workshop import assert_may_write_a_record_filed_under
 from app.services.records import (
     clean_data,
     contains,
@@ -209,6 +210,11 @@ _SECTION_CLEARABLE_COLUMNS: tuple[str, ...] = ()
 # an interview into somebody else's ministry submission — so if a third door ever appears (a route
 # that writes anything a workshop's report prints), it asks the same question through the same
 # helper rather than growing a fourth rule here.
+#
+# ONE MORE QUESTION SINCE 2026-10-09, AND IT IS NOT A RIGHTS RULE: whoever inspects or supervises the
+# workshop a form is attached to changes nothing on it (``_refuse_its_workshops_holder``). Owning the
+# form or being an admin does not answer it, so every owner-gated edit and the sitting PATCH ask it
+# beside their own check; the two doors above reach it through the loader, which asks it for them.
 
 
 def _require_designer(user: Any) -> None:
@@ -218,18 +224,24 @@ def _require_designer(user: Any) -> None:
 
     It used to read *"Building a questionnaire requires Designer access or above."* and that was
     false in the one case where anybody reads a 403: ``can_run_design_workshops`` is the SET
-    ``{DESIGNER, ADMIN, MASTER_ADMIN}`` and not a floor over ``ROLE_RANK``, so a PROFESSOR — rank
-    40, ABOVE Designer's 35 — is refused by it and was then told they lacked a rank they exceed.
+    ``deps.DESIGN_WORKSHOP_ROLES`` and not a floor over ``ROLE_RANK``, so a PROFESSOR — rank 40,
+    ABOVE Designer's 35 — is refused by it and was then told they lacked a rank they exceed.
     Measured on this build, 2026-08-30: ``POST /api/questionnaires`` as a PROFESSOR answered
     ``403 {"detail":"Building a questionnaire requires Designer access or above."}``. A professor
     reading that has no move available: they cannot be promoted to a tier they already outrank, and
     nothing on any screen says the gate is a set.
 
-    So the refusal now NAMES THE THREE ROLES and NAMES WHO TO ASK. Naming the roles is what makes
-    the non-monotonic rule legible — a reader can see their own role is simply not on the list,
-    rather than concluding the app is broken — and naming the administrator is what turns the
-    sentence into something actionable, because an admin is exactly who can widen it (by role, or
-    by putting the account on a workshop with a ``DesignWorkshopViewer`` grant).
+    So the refusal NAMES THE ROLES and NAMES WHO TO ASK. Naming the roles is what makes the
+    non-monotonic rule legible — a reader can see their own role is simply not on the list, rather
+    than concluding the app is broken — and naming the administrator is what turns the sentence into
+    something actionable, because a role change is exactly what an admin can make.
+
+    **IT NAMED THREE ROLES UNTIL 2026-10-09, AND THE SET HAD HELD SIX SINCE 2026-09-14** — the
+    Assistant Director, Regional Director and Ministry Admin posts joined it — so every account it
+    refused was told a smaller set than the one that admits. It also offered a second remedy, "add
+    you to the design workshop this questionnaire belongs to", which cannot work for anybody this
+    refusal reaches: the role is asked before any workshop is, and the viewers write refuses a row to
+    a role outside the set. The sentence now names the six labels and the one remedy that exists.
 
     IT DOES NOT APOLOGISE AND IT DOES NOT EXPLAIN THE LADDER. UI copy in this repository is terse by
     house rule; the whole argument for why a professor is outside the set lives in
@@ -239,10 +251,10 @@ def _require_designer(user: Any) -> None:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=(
-                "Questionnaires are for Designer, Admin and Master Admin accounts. This is a set of "
-                "roles rather than a seniority level, so other roles are outside it whatever their "
-                "rank. Ask an administrator to change your role or to add you to the design "
-                "workshop this questionnaire belongs to."
+                "Questionnaires are for Designer, Assistant Director, Regional Director, Ministry "
+                "Admin, Admin and Master Admin accounts. This is a set of roles rather than a "
+                "seniority level, so other roles are outside it whatever their rank. Ask an "
+                "administrator if your role should change."
             ),
         )
 
@@ -322,6 +334,22 @@ def _require_owner(record: Any, user: Any) -> None:
         )
 
 
+async def _refuse_its_workshops_holder(record: Any, user: Any) -> None:
+    """403 naming the post for the inspector or a director of the workshop this form is attached to.
+
+    THE SECOND QUESTION EVERY EDIT OF A FORM ASKS, after ``_require_owner`` (2026-10-09). An attached
+    form's sittings print in the workshop's report annexure, so the form is that workshop's content
+    as surely as a record filed under it is, and whoever inspects or supervises the workshop changes
+    none of it — not as its owner, not as an admin: no rename, no deactivation, no detach or move, no
+    re-upload, no section or question, no sitting's own fields. The record forms ask the same thing
+    in the same words (``services/record_design_workshop``). A form attached to nothing asks nothing.
+
+    Kept separate from ``_require_owner`` rather than folded into it: that one is a pure check on the
+    row in hand, and this one reads who serves on the workshop.
+    """
+    await assert_may_write_a_record_filed_under(getattr(record, "designWorkshopId", None), user)
+
+
 async def _require_attachable_workshop(workshop_id: str, user: Any) -> None:
     """The workshop a questionnaire is about to be pointed at — or a 404, as if it did not exist.
 
@@ -365,7 +393,10 @@ async def _require_attachable_workshop(workshop_id: str, user: Any) -> None:
     DETACHING NEEDS NO CHECK, and none of the three callers makes one. Sending
     ``designWorkshopId: null`` only ever removes a pointer; demanding rights over the workshop in
     order to let go of it would strand a questionnaire on a workshop whose grant was withdrawn, with
-    its owner unable to take their own form back.
+    its owner unable to take their own form back. The one exception is not a rights check and does
+    not live here: every edit of an attached form, a detach or a move off it included, refuses the
+    workshop's inspector and its two directors (``_refuse_its_workshops_holder``, 2026-10-09),
+    asking about their post and nothing else — so that owner still takes their form back.
     """
     await load_workshop_or_404(workshop_id, user, for_edit=True)
 
@@ -403,9 +434,9 @@ async def _require_recordable_questionnaire(record: Any, user: Any) -> None:
 
     NO OWNER BYPASS, for ``_require_attachable_workshop``'s reason: owning the FORM has never said
     anything about the workshop it points at. An owner who has lost their grant is not stranded —
-    detaching needs no check at all (see that helper's last paragraph), so they can take their own
-    questionnaire back and keep recording. Adding ``record.ownerId == user.id`` here would reopen
-    the hole for precisely the account the revocation was about.
+    detaching asks nothing about their rights over the workshop (that helper's last paragraph), so
+    they can take their own questionnaire back and keep recording. Adding the owner test here
+    (``record.ownerId == user.id``) would reopen the hole for precisely the revoked account.
 
     404/409 rather than 403, inherited from the helper: a 403 would confirm the workshop id exists
     to the caller being turned away, and a soft-deleted workshop gets the one sentence that names
@@ -688,6 +719,9 @@ async def reupload_questionnaire(
     """
     record = await _require_questionnaire(questionnaire_id, current_user)
     _require_owner(record, current_user)
+    # Before the workbook is read, so a holder of the workshop the form is attached to is not made
+    # to pay for an upload that was always going to be refused.
+    await _refuse_its_workshops_holder(record, current_user)
     # ``request`` is filled by FastAPI from the connection and is not part of this route's contract
     # — see ``upload_questionnaire``. It buys the Content-Length refusal before the read.
     content = await _read_upload(file, request)
@@ -1161,9 +1195,16 @@ async def update_questionnaire(
     """Rename, re-describe, attach to a workshop, or deactivate.
 
     ``isActive: false`` is what this API has INSTEAD of a delete — see the module docstring.
+
+    Nothing at all for the inspector or a director of the workshop the form is attached to, whatever
+    the body carries — a rename, a deactivation, a detach or a move alike
+    (``_refuse_its_workshops_holder``, 2026-10-09).
     """
     record = await _require_questionnaire(questionnaire_id, current_user)
     _require_owner(record, current_user)
+    # BEFORE THE ATTACH CHECK, so a holder moving the form is told about their post rather than
+    # about the destination.
+    await _refuse_its_workshops_holder(record, current_user)
     # ``Questionnaire``'s own nullable scalars; the list and the reasoning for what is left out of it
     # are at ``_QUESTIONNAIRE_CLEARABLE_COLUMNS`` above. ``designWorkshopId`` used to be the only one
     # named here, and it was named by hand — put back into ``data`` after ``clean_data`` had dropped it —
@@ -1224,6 +1265,7 @@ async def create_section(
 ) -> dict[str, Any]:
     record = await _require_questionnaire(questionnaire_id, current_user)
     _require_owner(record, current_user)
+    await _refuse_its_workshops_holder(record, current_user)
     existing = await db.questionnaireformsection.find_many(
         where={"questionnaireId": questionnaire_id}
     )
@@ -1266,6 +1308,7 @@ async def update_section(
     """
     record = await _require_questionnaire(questionnaire_id, current_user)
     _require_owner(record, current_user)
+    await _refuse_its_workshops_holder(record, current_user)
     section = await require_record(db.questionnaireformsection, section_id)
     if section.questionnaireId != questionnaire_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Record not found")
@@ -1301,6 +1344,7 @@ async def create_question(
 ) -> dict[str, Any]:
     record = await _require_questionnaire(questionnaire_id, current_user)
     _require_owner(record, current_user)
+    await _refuse_its_workshops_holder(record, current_user)
     section = await require_record(db.questionnaireformsection, section_id)
     if section.questionnaireId != questionnaire_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Record not found")
@@ -1334,6 +1378,7 @@ async def update_question(
     """
     record = await _require_questionnaire(questionnaire_id, current_user)
     _require_owner(record, current_user)
+    await _refuse_its_workshops_holder(record, current_user)
     question = await _question_in(questionnaire_id, question_id)
 
     action = await guard_question_edit(question, new_prompt=payload.prompt, deleting=False)
@@ -1407,6 +1452,7 @@ async def remove_question(
     """
     record = await _require_questionnaire(questionnaire_id, current_user)
     _require_owner(record, current_user)
+    await _refuse_its_workshops_holder(record, current_user)
     question = await _question_in(questionnaire_id, question_id)
 
     action = await guard_question_edit(question, new_prompt=None, deleting=True)
@@ -1528,6 +1574,10 @@ async def update_entry(
     entry = await _entry_in(
         questionnaire_id, entry_id, user=current_user, questionnaire=record, rewriting=True
     )
+    # The sitting prints in the annexure of the workshop its form is attached to, so its own fields
+    # are that workshop's content: not for its inspector or its two directors (2026-10-09). Starting a
+    # sitting and recording answers already ask, through ``_require_recordable_questionnaire``.
+    await _refuse_its_workshops_holder(record, current_user)
     # ``QuestionnaireFormEntry``'s own nullable scalars — the list is at
     # ``_ENTRY_CLEARABLE_COLUMNS`` above — and on this route the PII case is the whole point:
     # ``respondentName`` is the name of the person interviewed and ``notes`` is what was written down

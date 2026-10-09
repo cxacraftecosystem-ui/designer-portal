@@ -48,6 +48,7 @@ from fastapi import HTTPException
 
 import app.services.design_workshop_access as access
 import app.services.design_workshop_grants as grants
+import app.services.design_workshop_posts as posts
 import app.services.design_workshop_viewers as viewers
 
 WORKSHOP_ID = "cmgrantcard0000000000000w"
@@ -250,17 +251,26 @@ class _Eligibility:
     empanelment refused an unrelated person's induction — a 422 in a courtyard about somebody else's
     roster row, which is a refusal the person holding the card cannot act on.
 
-    ``refuse`` reproduces the 422 the real function raises, which is what ``INELIGIBLE`` is for.
+    ``refuse`` reproduces what the real function raises, which is what ``INELIGIBLE`` is for: the 422
+    an ACCOUNT gets by default, or — ``status=409`` — the separation-of-duties answer a workshop's own
+    inspector or director gets, which the real function raises for an administrator who holds a post
+    there (``design_workshop_posts.raise_refusals``).
     """
 
-    def __init__(self, *, refuse: str | None = None) -> None:
+    def __init__(self, *, refuse: str | None = None, status: int = 422) -> None:
         self.refuse = refuse
+        self.status = status
         self.calls: list[set[str]] = []
+        # The workshop each question was asked about. Since 2026-10-09 the rule refuses a
+        # workshop's own inspector or supervisor a viewer row on it, so a redemption must say WHICH
+        # workshop it is asking for.
+        self.workshops: list[str | None] = []
 
-    async def __call__(self, user_ids: set[str]) -> None:
+    async def __call__(self, user_ids: set[str], **context: Any) -> None:
         self.calls.append(set(user_ids))
+        self.workshops.append(context.get("workshop_id"))
         if self.refuse is not None:
-            raise HTTPException(status_code=422, detail=self.refuse)
+            raise HTTPException(status_code=self.status, detail=self.refuse)
 
 
 @pytest.fixture
@@ -306,6 +316,15 @@ def world(monkeypatch: pytest.MonkeyPatch):
     # `grants` does `from ... import _assert_every_id_may_be_granted`, so patching the source module
     # would leave the service holding its own reference to the real one.
     monkeypatch.setattr(grants, "_assert_every_id_may_be_granted", eligibility)
+
+    # NOBODY HERE SERVES ON THE WORKSHOP. Since 2026-10-09 printing a card first asks whether the
+    # issuer holds its inspection or one of its director posts, which reads two tables this file does
+    # not fake; that refusal is ``tests/test_admin_serve_as.py``'s to prove, and here every issuer
+    # holds none.
+    async def _holds_no_post(workshop_id: str, user_ids: Any) -> dict[str, frozenset[str]]:
+        return {}
+
+    monkeypatch.setattr(posts, "supervisory_posts_among", _holds_no_post)
     return SimpleNamespace(
         db=db,
         secret=secret,
@@ -551,6 +570,27 @@ def test_an_expired_card_never_becomes_a_full_grant(world):
     # And they are in the queue an admin already works from, PENDING, so requirement 6's upgrade is
     # one click rather than a support conversation.
     assert [row.status for row in world.designworkshopaccessrequest.rows] == ["PENDING"]
+    # The card was never spent, so the answer must not say it was (2026-10-09) — and a redelivery of
+    # the same scan is answered with the same sentence.
+    assert result["detail"] == EXPIRED_DETAIL
+    assert "already been used" not in result["detail"]
+    replay = _redeem(_user(ALICE_ID), world.code)
+    assert (replay["outcome"], replay["reason"], replay["detail"]) == (
+        "PROVISIONAL",
+        "EXPIRED",
+        EXPIRED_DETAIL,
+    )
+
+
+#: The within-grace ``EXPIRED`` answer, WRITTEN OUT for the same reason as ``INELIGIBLE_DETAIL``
+#: further down: a test that imported the module's constant would agree with any rewording.
+EXPIRED_DETAIL = (
+    "That card's date had passed by the time your scan reached us, so you are not on the workshop "
+    "yet — but nothing you record is lost, and the card was not used up. You can keep capturing "
+    "your own work here and an administrator can see that you scanned the card; once they confirm "
+    "you, everything you have recorded is already in place. Until then you will not see anybody "
+    "else's stages."
+)
 
 
 def test_an_expired_card_beyond_the_sync_grace_is_refused_outright(world):
@@ -607,6 +647,9 @@ def test_a_single_use_card_admits_exactly_one_person_and_does_not_refuse_the_sec
 
     assert bob["outcome"] == "FULL" and bob["reason"] == "OK"
     assert alice["outcome"] == "PROVISIONAL" and alice["reason"] == "ALREADY_SPENT"
+    # The late-comer is told the truth about the card — it WAS used — which is the one outcome the
+    # provisional sentence's first clause was written for.
+    assert alice["detail"].startswith("That card had already been used"), alice["detail"]
 
     # ONE SEAT, ONE VIEWER ROW. The CHECK constraint in the migration is the database-level backstop
     # for the same statement; this is the service-level one.
@@ -702,6 +745,9 @@ def test_a_provisional_holder_redelivering_the_same_card_gets_the_first_answer_b
     # account is barred cannot be granted access by pressing Grant either.
     assert len(world.eligibility.calls) == 1
     assert world.eligibility.calls == [{ALICE_ID}]
+    # ASKED ABOUT THE CARD'S OWN WORKSHOP, so the rule can refuse that workshop's inspector or
+    # supervisor a viewer row on it (2026-10-09) — a card is not a way round the post.
+    assert world.eligibility.workshops == [WORKSHOP_ID]
 
 
 def test_a_member_scanning_the_card_at_the_wall_does_not_burn_the_invitation(world):
@@ -852,9 +898,11 @@ def test_a_card_scanned_by_an_ineligible_account_never_spends_its_seat(world, mo
     the card looks spent. The earlier shape checked eligibility inside the grant — as a side effect of
     handing the whole viewer set to ``replace_viewers`` — and had to hand the seat back afterwards.
 
-    ⚠ AND THE SENTENCE IS NOT RETURNED TO THE SCANNER. It names another screen and, for the role arm,
-    the account's own role; the redeemer gets the ordinary provisional detail, because a redemption
-    answer that varied with the reason would be a second, quieter refusal.
+    ⚠ AND THE REFUSAL'S SENTENCE IS NOT RETURNED TO THE SCANNER. It names another screen and, for
+    the role arm, the account's own role; an answer that said why would be a second, quieter
+    refusal. The scanner gets the foothold's promise instead — in a sentence of its own since
+    2026-10-09, because the one every other provisional scan gets opens "That card had already been
+    used", and this card was not.
     """
     monkeypatch.setattr(
         grants,
@@ -871,6 +919,78 @@ def test_a_card_scanned_by_an_ineligible_account_never_spends_its_seat(world, mo
     assert world.designworkshopviewer.rows == []
     assert [row.userId for row in world.designworkshopprovisionalmember.rows] == [ALICE_ID]
     assert "roster" not in result["detail"], "the refusal's own words must not reach the scanner"
+    _assert_the_ineligible_answer(result["detail"])
+
+    # A redelivery of the same scan is answered with the same sentence, not the spent card's.
+    replay = _redeem(_user(ALICE_ID), world.code)
+    assert (replay["outcome"], replay["reason"]) == ("PROVISIONAL", "INELIGIBLE")
+    assert replay["detail"] == result["detail"]
+
+
+#: The ``INELIGIBLE`` answer, WRITTEN OUT rather than read back from the module: the scanner reads
+#: this sentence as given on both clients, and a test that imported it would agree with any
+#: rewording — including the one that put "That card had already been used" back.
+INELIGIBLE_DETAIL = (
+    "That card cannot put your account on this workshop by itself, so you are not on it yet — but "
+    "nothing you record is lost, and the card was not used up. You can keep capturing your own "
+    "work here and an administrator can see that you scanned the card; if they add you, everything "
+    "you have recorded is already in place. Until then you will not see anybody else's stages."
+)
+
+
+def _assert_the_ineligible_answer(detail: str) -> None:
+    """The ``INELIGIBLE`` foothold's own sentence (2026-10-09): the card was NOT used, so it must
+    not say it was, and it names no reason — no roster, no role, no post."""
+    assert detail == INELIGIBLE_DETAIL
+    assert "already been used" not in detail, "the card was never spent; the answer must not say so"
+
+
+def test_a_post_holder_scanning_the_card_lands_ineligible_and_keeps_the_seat(world, monkeypatch):
+    """The 409 arm (2026-10-09). The workshop's own inspector may not hold a viewer row on it, and
+    the viewers rule says so with the separation-of-duties 409 rather than an account's 422 — so a
+    holder who scans the workshop's card lands exactly as an ineligible account does: a foothold,
+    one redemption row, no viewer row and the card's seat unspent. Narrow the caught statuses back
+    to 422 alone and this scan would hand the scanner a 409 instead."""
+    eligibility = _Eligibility(
+        refuse=(
+            "ALICE (alice@example.test) is this workshop's inspector, so they cannot also be given "
+            "designer access to it: whoever inspects or supervises a workshop does not write it."
+        ),
+        status=409,
+    )
+    monkeypatch.setattr(grants, "_assert_every_id_may_be_granted", eligibility)
+    token = world.recordaccesstoken.rows[0]
+
+    result = _redeem(_user(ALICE_ID), world.code)
+
+    assert (result["outcome"], result["reason"]) == ("PROVISIONAL", "INELIGIBLE")
+    assert token.usesConsumed == 0, "a post holder's scan spent the card's only seat"
+    assert world.designworkshopviewer.rows == [], "a post holder was given designer access"
+    assert [row.userId for row in world.recordaccesstokenredemption.rows] == [ALICE_ID]
+    assert eligibility.workshops == [WORKSHOP_ID], "the rule was not asked about THIS workshop"
+    assert "inspector" not in result["detail"], "the refusal's own words must not reach the scanner"
+    _assert_the_ineligible_answer(result["detail"])
+
+
+def test_a_fault_in_the_eligibility_read_is_not_read_as_ineligible(world, monkeypatch):
+    """The other side of the same tuple: only the two refusals the viewers rule gives — 422 and 409
+    — mean INELIGIBLE. A 500 is the database failing, and turning it into a foothold would tell the
+    scanner their account is the problem; it propagates, and nothing is written or spent."""
+    monkeypatch.setattr(
+        grants,
+        "_assert_every_id_may_be_granted",
+        _Eligibility(refuse="the database went away", status=500),
+    )
+    token = world.recordaccesstoken.rows[0]
+
+    with pytest.raises(HTTPException) as raised:
+        _redeem(_user(ALICE_ID), world.code)
+
+    assert raised.value.status_code == 500
+    assert token.usesConsumed == 0
+    assert world.designworkshopviewer.rows == []
+    assert world.recordaccesstokenredemption.rows == []
+    assert world.designworkshopprovisionalmember.rows == []
 
 
 def test_a_card_supersedes_an_administrators_earlier_refusal_and_says_so(world, caplog):

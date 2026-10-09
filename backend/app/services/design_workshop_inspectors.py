@@ -12,10 +12,10 @@ THE TRAP THIS MODULE EXISTS TO WALK AROUND
 =======================================================================================
 
 **EVERY DESIGN-WORKSHOP GATE IN THIS PRODUCT IS SET MEMBERSHIP, NOT A RANK FLOOR.** That is why
-PROFESSOR, at rank 40, cannot open a design workshop today: ``deps.DESIGN_WORKSHOP_ROLES`` is
-``frozenset({"DESIGNER", "ADMIN", "MASTER_ADMIN"})``, ``_require_designer`` stands in front of
-eighteen routes, and ``load_ratable_workshop_or_404`` 404s anybody outside the set before it looks
-at anything.
+PROFESSOR, at rank 40, cannot open a design workshop today: ``deps.DESIGN_WORKSHOP_ROLES`` is the
+designer, the three directorate tiers and the two admin tiers — a set PROFESSOR and INSPECTOR are
+both outside — ``_require_designer`` stands in front of eighteen routes, and
+``load_ratable_workshop_or_404`` 404s anybody outside the set before it looks at anything.
 
 So inserting a rank between 35 and 40 buys the new tier **zero** workshop authority — exactly
 PROFESSOR's position — and no test fails to say so. The rank is the easy half. This module is the
@@ -39,13 +39,18 @@ predicate added to it is a WRITE grant whatever it is named.
 or ANY viewer grantee passes", AND THAT HALF IS NOW WRONG (corrected 2026-09-03).** It role-gates its
 GRANT arm: a viewer row is honoured only for an account inside ``DESIGN_WORKSHOP_ROLES``. That change
 does not weaken one word of the argument above — it strengthens it in one direction and leaves the
-hazard exactly where it was. ``INSPECTION_ROLES`` is disjoint from that set BY THE IMPORT-TIME
-INVARIANT at the foot of this file, so today an inspector holding a viewer row would be refused by
-the loader's own role clause as well as by this module's structure. That is a second line, not the
-structure: it holds only for as long as the two sets stay disjoint, and the whole reason this scope
-is a separate table is that a rule which depends on somebody remembering a set membership is the
-rule that lapses. ``for_edit=True`` still carries no role check of its own, so widening the set is
-still a write grant.
+hazard exactly where it was.
+
+**AND SINCE 2026-10-09 THE SEPARATION IS PER WORKSHOP, NOT PER ROLE SET.** An import-time check used
+to refuse to boot if ``INSPECTION_ROLES`` ever overlapped ``DESIGN_WORKSHOP_ROLES``, which made "an
+inspector is never a designer" true by keeping the two populations apart. The owner's ruling that
+MINISTRY_ADMIN, ADMIN and MASTER_ADMIN may be APPOINTED inspector of a workshop ends that: those three
+are designers by role and inspectors by appointment. The property survives as rules about ONE
+workshop, written once in ``services/design_workshop_posts``: nobody inspects a workshop they
+authored, nobody both supervises and inspects one, a viewer row is refused to anybody inspecting it,
+and ``load_workshop_or_404(for_edit=True)`` refuses every write by somebody holding an inspection row
+on that workshop — through the admin arm too. ``for_edit=True`` still grants writes to whoever it
+admits, which is exactly why that refusal sits inside it.
 
 FOURTEEN, AND NOT THE EIGHTEEN THIS SENTENCE FIRST SAID. Eighteen is a true count of a DIFFERENT
 set — every route ``_require_designer`` guards, which is what the paragraph above uses it for —
@@ -61,12 +66,13 @@ gate); ``tests/test_design_workshop_gate.py`` pins those three numbers, so eight
 been a count of writes. The two gated writes that are NOT in the fourteen are ``POST /ocr/identity``
 and ``POST /ocr/identity/retention``, which have no workshop to load.
 
-So this scope's predicate is **never** added to it. An inspector reads through
+So this scope's predicate is **never** added to it as a way IN. An inspector reads through
 :func:`load_inspectable_workshop_or_404` in this module, which is called from
 ``api/routes/design_workshop_inspections.py`` and nowhere else, and which returns a workshop for
 READ. **It has no ``for_edit`` parameter, and adding one is the single change this file refuses.**
-There is no code path on which an inspection row and a write meet, so there is no check anybody can
-forget to write.
+The one place an inspection row meets a write is as a way OUT: :func:`inspection_holders_among`
+tells ``load_workshop_or_404(for_edit=True)`` to REFUSE an inspector who could otherwise write (an
+administrator serving as one), and that function answers who is inspecting and grants nothing.
 
 The precedent is ``DesignWorkshopProvisionalMember``, whose schema comment makes the mirror-image
 argument: a separate table that nothing existing consults, so its holder is a stranger to every
@@ -120,13 +126,15 @@ the tier:
 ⚠ **THE GATE WAS ``Depends(require_admin)`` UNTIL 0.0.12 AND THIS MODULE WENT ON SAYING SO IN FOUR
 PLACES.** The three administration routes moved to ``require_workshop_assigner`` on the owner's
 ruling; the argument for the move is written out in full at
-``api/routes/design_workshop_inspections.py`` under "THE TWO DOORS" and is not restated here. What
-matters to a reader of THIS module is that the widening did not touch the invariant above.
-MINISTRY_ADMIN is outside ``INSPECTION_ROLES`` (a frozenset of one, ``{INSPECTOR}``), so a ministry
-administrator may appoint an inspector and can never be one; refusal 2 below still turns away
-anybody already on the workshop; and a REGIONAL_DIRECTOR is still refused outright, because
-``OVERSIGHT_ASSIGNER_ROLES`` excludes them for the same reason one rung up — the supervised must not
-choose the supervisor.
+``api/routes/design_workshop_inspections.py`` under "THE TWO DOORS" and is not restated here. A
+REGIONAL_DIRECTOR is still refused outright, because ``OVERSIGHT_ASSIGNER_ROLES`` excludes them for
+the same reason one rung up — the supervised must not choose the supervisor.
+
+**WHO MAY BE APPOINTED WIDENED ON 2026-10-09, AND WHO MAY APPOINT DID NOT.** The INSPECTOR tier still
+holds inspections, and now so may a MINISTRY_ADMIN, an ADMIN and the MASTER_ADMIN, by appointment to
+one workshop at a time (:data:`INSPECTION_HOLDER_ROLES`). An appointer is never their own appointee —
+naming yourself is refused — and the rules that keep an inspection independent are about the
+workshop rather than the role: see ``services/design_workshop_posts``.
 
 The stale sentences were worth correcting rather than leaving as a nit, because this is the module
 somebody opens to AUDIT that gate. Read as written, an auditor either signs off on a widening they
@@ -137,13 +145,11 @@ Two refusals follow from it, and both are enforced rather than documented:
 
 1. An account outside ``OVERSIGHT_ASSIGNER_ROLES`` calling the administration routes gets a 403 from
    ``require_workshop_assigner``.
-2. **An account that is on the workshop cannot inspect it.** The creator, and anybody holding a
-   ``DesignWorkshopViewer`` row for the same workshop, is refused by name — see
-   :func:`_assert_every_id_may_inspect`. Today the role sets make that nearly unreachable
-   (``INSPECTION_ROLES`` and ``DESIGN_WORKSHOP_ROLES`` are disjoint, asserted below and in the
-   tests), but "nearly" is doing real work: a DESIGNER holding a viewer row who is later PROMOTED
-   to INSPECTOR would otherwise become eligible to inspect the very workshop they worked on. Role
-   changes are not hypothetical and nothing else in the codebase would notice.
+2. **An account that authored the workshop cannot inspect it.** Anybody holding a
+   ``DesignWorkshopViewer`` row for the same workshop, or who has written its stages, is refused by
+   name with a 409 — see :func:`_assert_every_id_may_inspect`. **The creator is NOT refused for being
+   the creator** (until 2026-10-09 they were): administrators and sanctioning officers open
+   workshops as an administrative act, so ``createdById`` says nothing about who did the work.
 
 =======================================================================================
 WHAT WAS BORROWED FROM ``design_workshop_viewers``, AND WHAT DELIBERATELY WAS NOT
@@ -168,9 +174,9 @@ NOT BORROWED:
   own written instruction "so the day that widens again the audio widens with it". Following THIS
   clause there would hand an inspector the artisan's recorded voice.
 * **The creator being silently dropped from the set.** ``_deduplicate`` there removes the creator as
-  a harmless no-op, because they already hold the access being granted. That silence is right there
-  and wrong here: naming the creator asks for a designer to inspect their own work, which is a
-  MISTAKE an admin needs to be told about rather than a no-op.
+  a harmless no-op, because they already hold the access being granted. Here the creator is an
+  ordinary candidate: opening a workshop is administration, so an administrator who opened one and
+  wrote none of it may inspect it, and one who did write it is refused by name for THAT.
 
 Current as of 2026-08-27. Re-check the claims about the write path with::
 
@@ -180,41 +186,50 @@ Current as of 2026-08-27. Re-check the claims about the write path with::
 
 import logging
 import re
+from collections.abc import Iterable
 from typing import Any
 
 from fastapi import HTTPException, status
 
 from app.core.config import get_settings
 from app.core.db import db
-from app.core.deps import DESIGN_WORKSHOP_ROLES, is_break_glass_master, role_value
-from app.services import access_roster
+from app.core.deps import is_break_glass_master, role_value
+from app.services import access_roster, design_workshop_posts as posts
+from app.services.concurrency import gather_reads
 from app.services.records import contains
 
 logger = logging.getLogger(__name__)
 
 
-#: The roles that may hold a ``DesignWorkshopInspector`` row. A SET, not a rank floor.
+#: THE TIER WHOSE JOB IS INSPECTING. A SET, not a rank floor.
 #:
 #: A frozenset of ONE, and that is the shape rather than an oversight. Every design-workshop gate in
 #: this product is set membership — ``DESIGN_WORKSHOP_ROLES``, ``can_run_design_workshops`` — and a
 #: rank floor written here would mean "INSPECTOR and everything above it", which is PROFESSOR, ADMIN
-#: and MASTER_ADMIN. Two of those already see every workshop by a shorter route and the third
-#: deliberately sees none; a floor would silently answer a product question nobody asked.
+#: and MASTER_ADMIN. A floor would silently answer a product question nobody asked.
 #:
-#: **ADMINS ARE NOT IN IT**, and that is the interesting exclusion. An admin reads every workshop
-#: through ``/api/design-workshops`` already, so an inspection row for one would be a second,
-#: strictly weaker source of access to the same thing — the "two places to look when somebody has
-#: access they should not" that ``services/design_workshop_access`` refuses in its header.
+#: **IT IS NOT WHO MAY HOLD AN INSPECTION ANY MORE** — that is :data:`INSPECTION_HOLDER_ROLES`, below,
+#: since 2026-10-09. This set stays the tier: the role an inspection is the whole job of, and the one
+#: the web and Android clients mirror for that tier's own screens.
 #:
-#: **PROFESSOR IS NOT IN IT EITHER.** A professor cannot open a design workshop today, and giving
-#: them a door through this table would be a new product decision wearing an implementation detail.
-#: If the owner wants one, it is one entry here plus a sentence in the refusal below — never a
-#: silent widening.
+#: **PROFESSOR IS IN NEITHER SET.** A professor cannot open a design workshop today, and giving them a
+#: door through this table would be a new product decision wearing an implementation detail.
 #:
-#: DISJOINT FROM ``DESIGN_WORKSHOP_ROLES`` BY CONSTRUCTION, which is what makes "an inspector can
-#: never also be a viewer of the same workshop" true rather than hoped for. Checked at import time
-#: at the foot of this module, and asserted again in ``tests/test_dw_inspector_scope_gate.py``.
+#: STILL DISJOINT FROM ``DESIGN_WORKSHOP_ROLES`` — the inspector tier writes no workshop by role —
+#: but that is no longer what keeps an inspector from writing what they inspect. That is per
+#: workshop now, in ``services/design_workshop_posts``, because the holder set below overlaps the
+#: designer set on purpose.
 INSPECTION_ROLES = frozenset({"INSPECTOR"})
+
+#: WHO MAY HOLD A ``DesignWorkshopInspector`` ROW: the tier above, plus the three administrator tiers
+#: by appointment (owner's decision, 2026-10-09).
+#:
+#: An administrator holds an inspection the way an inspector does — a row on ONE workshop, made by
+#: somebody else — and while they hold it they read that workshop through this module's loader and
+#: cannot write it by any route, the admin arm of ``load_workshop_or_404`` included. The rules that
+#: keep the inspection independent (nobody inspects what they authored, or what they also supervise,
+#: or by naming themselves) are in ``services/design_workshop_posts``.
+INSPECTION_HOLDER_ROLES = INSPECTION_ROLES | posts.SERVING_ADMIN_ROLES
 
 #: How many inspectors one workshop may be given in a single call.
 #:
@@ -241,14 +256,26 @@ def _role(user: Any) -> str:
 
 
 def is_inspector(user: Any) -> bool:
-    """Is this account the inspector tier?
+    """Is this account the inspector TIER?
 
     SET MEMBERSHIP, deliberately, for the reason the module docstring gives at length. Written
     against the string rather than against ``ROLE_RANK`` so that this module is correct on a
     deployment where the tier has not been added to the ladder yet: it simply answers False for
     everybody, which is the fail-closed direction.
+
+    Not the question the surface asks any more — that is :func:`may_hold_an_inspection`.
     """
     return _role(user) in INSPECTION_ROLES
+
+
+def may_hold_an_inspection(user: Any) -> bool:
+    """May this account's role hold an inspection row — the tier, or an administrator serving as one?
+
+    THE ROLE FIRST, THE ROW SECOND, everywhere this scope is read: a row whose holder's role has since
+    moved outside :data:`INSPECTION_HOLDER_ROLES` is honoured nowhere, the same fail-closed rule
+    ``load_workshop_or_404`` applies to a viewer row.
+    """
+    return _role(user) in INSPECTION_HOLDER_ROLES
 
 
 # --------------------------------------------------------------------------------------
@@ -327,9 +354,11 @@ async def load_inspectable_workshop_or_404(workshop_id: str, user: Any) -> Any:
 
     THE ROLE IS RE-CHECKED HERE even though the routes already stand behind ``require_inspector``.
     Belt and braces on purpose: this is the function a future caller will reach for, and a loader
-    that trusts its caller's gate is how a scope leaks onto a surface nobody re-read.
+    that trusts its caller's gate is how a scope leaks onto a surface nobody re-read. Since
+    2026-10-09 the role is any of :data:`INSPECTION_HOLDER_ROLES`, and the ROW is what decides which
+    workshops: an administrator reads here exactly the workshops they were appointed to inspect.
     """
-    if not is_inspector(user):
+    if not may_hold_an_inspection(user):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Record not found")
     record = await db.designworkshop.find_unique(where={"id": workshop_id})
     if record is None or record.deletedAt is not None:
@@ -380,13 +409,24 @@ async def inspector_rows(workshop_id: str) -> list[dict[str, Any]]:
     return [inspector_payload(row) for row in rows]
 
 
-async def eligible_inspectors(search: str | None = None) -> dict[str, Any]:
+async def eligible_inspectors(
+    search: str | None = None, *, exclude_user_id: str | None = None
+) -> dict[str, Any]:
     """The accounts that may be assigned an inspection at all.
 
-    ONE ROLE AND ONE ROSTER, which is the whole difference from ``eligible_viewers``. That function
-    reads two rosters folded in opposite directions because it offers DESIGNERs, whose empanelment
-    gates their sign-in. An inspector is not empanelled to run anything, so ``DesignerRoster`` is
-    not consulted — requiring a row there would refuse every inspector there will ever be.
+    ONE ROLE SET AND ONE ROSTER, which is the whole difference from ``eligible_viewers``. That
+    function reads two rosters folded in opposite directions because it offers DESIGNERs, whose
+    empanelment gates their sign-in. An inspector is not empanelled to run anything, so
+    ``DesignerRoster`` is not consulted — requiring a row there would refuse every inspector there
+    will ever be.
+
+    THE ROLE SET IS :data:`INSPECTION_HOLDER_ROLES` since 2026-10-09: the inspector tier and the three
+    administrator tiers, offered side by side because the write accepts them side by side. A picker
+    that offered fewer than the write takes is the defect ``eligible_viewers`` was fixed for.
+
+    ``exclude_user_id`` IS THE PERSON DOING THE APPOINTING, left out because the write refuses anybody
+    naming themselves — a picker offering a row the save will refuse teaches people to distrust it.
+    The ministry dashboard's directory read passes nothing: nobody is appointing there.
 
     THE PLATFORM ALLOW-LIST STILL APPLIES, because it gates every role: an account the allow-list
     has REJECTED or SUSPENDED cannot sign in, so offering it here would mean an admin assigning an
@@ -406,7 +446,9 @@ async def eligible_inspectors(search: str | None = None) -> dict[str, Any]:
     """
     barred = await access_roster.barred_emails()
 
-    clauses: list[dict[str, Any]] = [{"role": {"in": sorted(INSPECTION_ROLES)}}]
+    clauses: list[dict[str, Any]] = [{"role": {"in": sorted(INSPECTION_HOLDER_ROLES)}}]
+    if exclude_user_id:
+        clauses.append({"id": {"not": exclude_user_id}})
     if barred:
         # THE BREAK-GLASS, SPELLED HERE BECAUSE A ``WHERE`` CANNOT CALL A PYTHON FUNCTION. Kept in
         # step with ``deps.is_break_glass_master`` BY HAND, and with BOTH of its arms: the role, and
@@ -417,9 +459,8 @@ async def eligible_inspectors(search: str | None = None) -> dict[str, Any]:
         # Only when the setting is actually set. An empty configured address compared against a
         # ``User.email`` that some row holds empty would exempt an account nobody chose.
         #
-        # The master admin is not in ``INSPECTION_ROLES`` today, so this arm is unreachable through
-        # the clause above. It is written anyway: an exemption that is missing on the day the role
-        # set changes is worse than one that is inert.
+        # REACHABLE since 2026-10-09: the master admin may hold an inspection, so a suspended
+        # allow-list row must not take the break-glass account off this picker.
         #
         # ``mode: "insensitive"`` because ``barred`` is lower-cased and ``User.email`` is not, so a
         # case-sensitive NOT-IN would quietly fail to exclude an account stored shouting — the one
@@ -490,15 +531,33 @@ async def replace_inspectors(
     and for the sharper version of its reason: this row carries no decision to audit, because nobody
     ever asked for it and nobody was ever refused. A tombstone would record only that an admin
     changed their mind about who should examine a piece of work.
+
+    THE PRESENT SET IS READ BEFORE VALIDATING, so that naming yourself is refused only as an ACT:
+    an administrator another administrator appointed may re-save the panel with themselves still on
+    it, and may not add themselves to it.
+
+    **NOR TAKE THEMSELVES OFF IT (2026-10-09).** A save that would delete the caller's own row is
+    refused whole, 409 (``posts.self_release_refusal``), before anything is validated or written:
+    an inspector who could release themselves could then write the workshop their post forbids them
+    to, and the deleted row would be the only record they ever held it. Another assigner removing
+    them is the ordinary save, and works.
     """
     wanted = _deduplicate(user_ids)
-    await _assert_every_id_may_inspect(workshop_id, wanted)
 
     existing = await db.designworkshopinspector.find_many(where={"designWorkshopId": workshop_id})
     held = {row.userId for row in existing}
-
     removed = sorted(held - wanted)
     added = sorted(wanted - held)
+    if assigned_by_id in removed:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=posts.self_release_refusal({posts.INSPECTOR}),
+        )
+    await _assert_every_id_may_inspect(
+        workshop_id,
+        wanted,
+        appointing=assigned_by_id if assigned_by_id not in held else None,
+    )
 
     if removed:
         # DELETED, not revoked — see the docstring. There is no decision here to audit.
@@ -524,9 +583,8 @@ def _deduplicate(user_ids: list[str]) -> set[str]:
 
     Deliberately narrower than ``design_workshop_viewers._deduplicate``, which also removes the
     workshop's creator so that a screen rendering the creator alongside the viewers can post the lot
-    back harmlessly. That silence is right there and wrong here: naming the creator as an inspector
-    asks for a designer to inspect their own work, which is a MISTAKE an admin needs to be told
-    about rather than a no-op. It is refused by name in :func:`_assert_every_id_may_inspect`.
+    back harmlessly. Here the creator is a candidate like anybody else and goes through
+    :func:`_assert_every_id_may_inspect`, which refuses them only if they AUTHORED the workshop.
     """
     return {uid.strip() for uid in user_ids if uid and uid.strip()}
 
@@ -556,25 +614,29 @@ def _displayable(user_id: str) -> str:
     return _UNSTORABLE_IN_AN_ID.sub("", user_id)
 
 
-async def _assert_every_id_may_inspect(workshop_id: str, user_ids: set[str]) -> None:
-    """422 naming the offending account, never a silent skip.
+async def _assert_every_id_may_inspect(
+    workshop_id: str, user_ids: set[str], *, appointing: str | None = None
+) -> None:
+    """Refuse the whole set, naming every offending account, never a silent skip.
 
-    FOUR REFUSALS, and the last one is this module's own rather than the sibling's:
+    FOUR REFUSALS:
 
-    1. **No such account.** Asked before anything else, and ids holding unstorable characters are
-       held back from the query rather than crashing it — they cannot appear in ``by_id``, so they
-       fall into this same refusal through one message and one code path.
-    2. **Wrong role.** Not in :data:`INSPECTION_ROLES`. The sentence names what the account IS,
-       whose only remedy is picking somebody else, so nothing stacks after it.
-    3. **Barred by the platform allow-list.** An account that cannot sign in at all. Asked of
+    1. **No such account.** 422, asked before anything else, and ids holding unstorable characters
+       are held back from the query rather than crashing it — they cannot appear in ``by_id``, so
+       they fall into this same refusal through one message and one code path.
+    2. **Wrong role.** 422. Not in :data:`INSPECTION_HOLDER_ROLES`. The sentence names what the
+       account IS, whose only remedy is picking somebody else, so nothing stacks after it.
+    3. **Barred by the platform allow-list.** 422. An account that cannot sign in at all. Asked of
        EXACTLY the addresses named here rather than of the capped ``barred_emails`` read, because a
        refusal has to be able to promise it is complete and that one has a ceiling.
-    4. **ALREADY ON THIS WORKSHOP** — the creator, or the holder of a ``DesignWorkshopViewer`` row.
-       **This refusal exists nowhere else in the codebase and it is the point of the tier.** An
-       independent review by somebody who worked on the thing is not a review. Today the two role
-       sets are disjoint so this is nearly unreachable, but "nearly" is doing real work: a DESIGNER
-       holding a viewer row who is later promoted to INSPECTOR becomes eligible for exactly this,
-       and nothing else in the codebase would notice.
+    4. **THE WORKSHOP'S OWN SEPARATION OF DUTIES**, 409, from ``services/design_workshop_posts``:
+       somebody who AUTHORED this workshop (holds a viewer row on it or wrote its stages — never
+       merely created it), who is its Assistant or Regional Director, or who is ``appointing``
+       themselves. An independent review by somebody who worked on the thing, or who supervises it,
+       is not a review.
+
+    ``appointing`` is the account making the request, passed only when it is not already on the
+    panel: naming yourself is refused as an act, not as a state somebody else put you in.
 
     Branches 3 and 4 STACK — an independent ``if`` each, never an ``elif`` — because they name
     different remedies on different screens, and an admin told only about the first will fix it,
@@ -603,25 +665,29 @@ async def _assert_every_id_may_inspect(workshop_id: str, user_ids: set[str]) -> 
             ),
         )
 
-    barred = await access_roster.barred_among([u.email for u in users])
-    on_the_workshop = await _accounts_already_on_the_workshop(workshop_id, set(by_id))
+    barred, authored, held = await gather_reads(
+        access_roster.barred_among([u.email for u in users]),
+        posts.authorship_among(workshop_id, by_id),
+        posts.supervisory_posts_among(workshop_id, by_id),
+    )
 
     refusals: list[str] = []
+    separation: list[str] = []
     for uid in sorted(user_ids):
         user = by_id[uid]
         role = _role(user)
-        if role not in INSPECTION_ROLES:
+        if role not in INSPECTION_HOLDER_ROLES:
             refusals.append(
-                f"{user.name} ({user.email}) is a {role}, and only the Inspector / Reviewer tier "
-                f"can be assigned an inspection. An inspection is READ-ONLY by construction, so a "
-                f"row here would give this account nothing that its own role does not already "
-                f"decide."
+                f"{user.name} ({user.email}) is a {role}, and only the Inspector / Reviewer tier, "
+                f"a Ministry Admin, an admin or the master admin can be assigned an inspection. An "
+                f"inspection is READ-ONLY by construction, so a row here would give this account "
+                f"nothing that its own role does not already decide."
             )
-            # AND NOTHING FURTHER ABOUT THIS ACCOUNT, unlike the two branches below, which stack.
-            # Those name a state an administrator can change, so an admin deserves the whole list
-            # before they walk to another screen. This one names what the account IS; appending "and
-            # they are also suspended" to a designer who can never hold an inspection is a second
-            # errand attached to the one refusal whose only remedy is picking somebody else.
+            # AND NOTHING FURTHER ABOUT THIS ACCOUNT, unlike the branches below, which stack. Those
+            # name a state an administrator can change, so an admin deserves the whole list before
+            # they walk to another screen. This one names what the account IS; appending "and they
+            # are also suspended" to a designer who can never hold an inspection is a second errand
+            # attached to the one refusal whose only remedy is picking somebody else.
             continue
         if not is_break_glass_master(user) and _normalised(user.email) in barred:
             refusals.append(
@@ -630,19 +696,18 @@ async def _assert_every_id_may_inspect(workshop_id: str, user_ids: set[str]) -> 
                 f"own would leave this screen saying they are inspecting while they are shown a "
                 f"refusal at the door."
             )
-        if uid in on_the_workshop:
-            refusals.append(
-                f"{user.name} ({user.email}) is already on this workshop as its creator or a "
-                f"co-designer, so they cannot be its inspector — an independent review by somebody "
-                f"who worked on it is not a review. Take them off the workshop's viewers first if "
-                f"they have genuinely moved from running it to inspecting it."
+        separation.extend(
+            posts.separation_refusals(
+                person=f"{user.name} ({user.email})",
+                post=posts.INSPECTOR,
+                standing=posts.Standing(
+                    posts=held.get(uid, frozenset()), authored=authored.get(uid, frozenset())
+                ),
+                self_appointed=uid == appointing,
             )
-
-    if refusals:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=" ".join(refusals) + " Nothing was changed.",
         )
+
+    posts.raise_refusals(refusals, separation)
 
 
 def _normalised(email: Any) -> str:
@@ -656,24 +721,39 @@ def _normalised(email: Any) -> str:
     return str(email or "").strip().lower()
 
 
-async def _accounts_already_on_the_workshop(workshop_id: str, candidates: set[str]) -> set[str]:
-    """Which of ``candidates`` already hold this workshop as its creator or as a viewer.
+async def inspection_holders_among(workshop_id: str, user_ids: Iterable[str]) -> set[str]:
+    """Which of these accounts hold an inspection row on this workshop. One indexed read.
 
-    ONE QUERY EACH, and only over the handful of ids actually named in the PUT — never a scan of
-    either table. The creator is read off the workshop row; the viewers are asked for by id, so the
-    answer is exact rather than capped, which is what lets the refusal above promise it is complete.
-
-    Returns a SET so the caller can stack this refusal with the allow-list one. An empty set is the
-    ordinary answer and costs two indexed lookups.
+    ⚠ **A REFUSAL INPUT AND NEVER A GRANT.** It is what ``services/design_workshop_posts`` asks when
+    it has to know who is inspecting a workshop in order to say NO — to a write
+    (``load_workshop_or_404(for_edit=True)``), to a viewer row, or to a second post on the same
+    workshop. It answers about the accounts it is handed and decides nothing. The module header's
+    rule stands beside it unchanged: nothing outside this feature reads this table to let anybody IN,
+    and the sweep in ``tests/test_dw_inspector_scope_gate.py`` is why the table is read here and not
+    there.
     """
-    if not candidates:
+    ids = sorted({uid for uid in user_ids if uid and not _UNSTORABLE_IN_AN_ID.search(uid)})
+    if not workshop_id or not ids:
         return set()
-    record = await db.designworkshop.find_unique(where={"id": workshop_id})
-    creator = {getattr(record, "createdById", None)} & candidates if record else set()
-    viewers = await db.designworkshopviewer.find_many(
-        where={"designWorkshopId": workshop_id, "userId": {"in": sorted(candidates)}}
+    rows = await db.designworkshopinspector.find_many(
+        where={"designWorkshopId": workshop_id, "userId": {"in": ids}}
     )
-    return {uid for uid in creator if uid} | {row.userId for row in viewers}
+    return {row.userId for row in rows}
+
+
+async def inspected_workshop_ids(user_id: str) -> set[str]:
+    """Every workshop this account holds an inspection row on. One indexed read (``userId``).
+
+    ⚠ **A REFUSAL INPUT AND NEVER A GRANT**, exactly as :func:`inspection_holders_among` beside it.
+    ``design_workshop_posts.supervisory_workshops_of`` asks it so that a write over the rows of many
+    workshops at once — the unfiled records' bulk map — can leave out the rows of the workshops this
+    account inspects and so may not write. It answers about the account it is handed and decides
+    nothing; nothing reads it to let anybody IN.
+    """
+    if not user_id or _UNSTORABLE_IN_AN_ID.search(user_id):
+        return set()
+    rows = await db.designworkshopinspector.find_many(where={"userId": user_id})
+    return {row.designWorkshopId for row in rows}
 
 
 # --------------------------------------------------------------------------------------
@@ -681,51 +761,40 @@ async def _accounts_already_on_the_workshop(workshop_id: str, candidates: set[st
 # --------------------------------------------------------------------------------------
 
 
-#: What an account is told when it reaches the inspector's read surface without the tier.
+#: What an account is told when it reaches the inspector's read surface with a role that can hold no
+#: inspection.
 #:
 #: A SENTENCE THAT NAMES THE OTHER DOOR, which is the whole reason this is a constant rather than an
-#: inline string: an ADMIN hits this refusal too, and an admin told only "forbidden" on a READ
-#: surface will reasonably conclude the deployment is broken. It is not — they read every workshop
-#: through ``/api/design-workshops`` already, and this surface is scoped by inspection rows they do
-#: not and should not hold. Naming the door they want costs one clause and saves a support call.
+#: inline string: a designer told only "forbidden" on a READ surface will reasonably conclude the
+#: deployment is broken. Naming the door they want costs one clause and saves a support call.
 NOT_AN_INSPECTOR_DETAIL = (
-    "The inspection surface belongs to the Inspector / Reviewer tier. Designers and admins read "
-    "design & prototype workshops through /api/design-workshops instead; an admin can see who is "
-    "inspecting a workshop at /api/design-workshop-inspections/{id}/inspectors."
+    "The inspection surface belongs to the accounts that may be appointed to inspect a workshop: "
+    "the Inspector / Reviewer tier, Ministry Admins, admins and the master admin. Designers read "
+    "design & prototype workshops through /api/design-workshops instead; who inspects a workshop "
+    "is chosen at /api/design-workshop-inspections/{id}/inspectors."
 )
 
 
 def assert_inspection_surface(user: Any) -> None:
-    """403 for anybody who is not an inspector, INCLUDING ADMINS, and that is deliberate.
+    """403 for anybody whose role can hold no inspection; everybody else is scoped by their ROWS.
 
-    Admitting admins here would mean one of two things and both are worse than a refusal. Scoped by
-    THEIR OWN inspection rows, an admin sees an empty list and reads it as a broken feature. Scoped
-    by "everything, because they are an admin", this surface silently becomes a second full read of
-    every workshop in the repository — a second place to look when somebody has access they should
-    not, which is precisely what ``services/design_workshop_access``'s header refuses.
-
-    So the answer is a 403 that names the door they want. Nothing here branches on ``is_admin``, and
-    nothing here should: the refusal is identical for an admin, a designer and a volunteer, which is
-    what makes it one sentence to reason about rather than three.
+    ADMINS WERE REFUSED HERE UNTIL 2026-10-09, on the argument that an admin scoped by their own
+    inspection rows would see an empty list and read it as a broken feature. The owner's ruling
+    answered that argument: an administrator may now HOLD inspection rows, by appointment, so their
+    list is the workshops they were appointed to inspect — empty until somebody appoints them, which
+    is the truth rather than a defect. What this surface still must never become is a second full
+    read of every workshop "because they are an admin", and it does not: nothing here or in
+    :func:`load_inspectable_workshop_or_404` branches on ``is_admin``. The row decides, for an admin
+    exactly as for an inspector.
     """
-    if is_inspector(user):
+    if may_hold_an_inspection(user):
         return
     raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=NOT_AN_INSPECTOR_DETAIL)
 
 
-# THE INVARIANT, CHECKED AT IMPORT RATHER THAN HOPED FOR. If these two sets ever overlap, one
-# account becomes eligible to hold BOTH a viewer row (which carries stage WRITES: the loader admits
-# a grantee and ``for_edit=True`` adds no role check of its own — and note that since 2026-09-03 the
-# loader honours that grant only for an account inside DESIGN_WORKSHOP_ROLES, which is to say only
-# for exactly the accounts this line is keeping out of INSPECTION_ROLES) and an inspection row
-# (read-only) on the same workshop — the contradiction this whole module is built to prevent. That
-# role clause is a SECOND line and not a replacement for this one: it is true only while these two
-# sets are disjoint, which is the thing being asserted here. Failing at import
-# is the right blast radius: the API does not boot, rather than booting with a scope that means two
-# things. ``tests/test_dw_inspector_scope_gate.py`` asserts it again where a reader will find it.
-_OVERLAP = INSPECTION_ROLES & DESIGN_WORKSHOP_ROLES
-if _OVERLAP:  # pragma: no cover - a configuration error, not a runtime state
-    raise RuntimeError(
-        "INSPECTION_ROLES and deps.DESIGN_WORKSHOP_ROLES must stay disjoint; they overlap on "
-        f"{sorted(_OVERLAP)}. See the header of app/services/design_workshop_inspectors.py."
-    )
+# THE IMPORT-TIME DISJOINTNESS CHECK THAT STOOD HERE IS GONE (2026-10-09), and deliberately. It
+# refused to boot if ``INSPECTION_ROLES`` ever overlapped ``deps.DESIGN_WORKSHOP_ROLES``, which kept
+# "an inspector never writes what they inspect" true by keeping the two POPULATIONS apart. The owner's
+# ruling puts the three administrator tiers in both on purpose — designers by role, inspectors by
+# appointment — so the property is now enforced per WORKSHOP, where it was always meant: see
+# ``services/design_workshop_posts`` for the rules and the 403 inside ``load_workshop_or_404``.

@@ -319,10 +319,17 @@ def test_no_rank_buys_design_workshop_authority_because_every_one_of_those_gates
 
     THE POINT THE OLD NAME WAS MAKING SURVIVES AND IS SHARPER. Each of these gates is its own SET,
     so joining one buys nothing in the others — these three now RUN a workshop and still cannot OPEN
-    a bare one and still cannot INSPECT one. Under a rank ladder all three would have moved
+    a bare one, and none of them INSPECTS by role. Under a rank ladder all three would have moved
     together, which is the drift a set exists to prevent. PROFESSOR (40) and INSPECTOR (37) are
     outranked by all three and still write nothing.
+
+    WHAT THE RULING OF 2026-10-09 ADDED IS BY APPOINTMENT, NOT BY ROLE, and it is pinned below so it
+    reads as a decision: a MINISTRY_ADMIN may be appointed to inspect a workshop or to fill either of
+    its two oversight slots, one workshop at a time and never by themselves; an Assistant Director
+    and a Regional Director may fill only their own slot and may never be appointed to inspect.
     """
+    from app.services import design_workshop_oversight as oversight
+
     user = _user(tier)
     assert deps.can_run_design_workshops(user) is True
     assert tier in deps.DESIGN_WORKSHOP_ROLES
@@ -332,6 +339,14 @@ def test_no_rank_buys_design_workshop_authority_because_every_one_of_those_gates
     for below in ("PROFESSOR", "INSPECTOR"):
         assert deps.can_run_design_workshops(_user(below)) is False
     assert design_workshop_inspectors.is_inspector(user) is False
+
+    may_inspect = tier == "MINISTRY_ADMIN"
+    assert design_workshop_inspectors.may_hold_an_inspection(user) is may_inspect
+    expected_slots = (
+        ["ASSISTANT_DIRECTOR", "REGIONAL_DIRECTOR"] if tier == "MINISTRY_ADMIN" else [tier]
+    )
+    assert oversight.capacities_for(tier) == expected_slots
+    assert oversight.may_hold_oversight(user) is True
 
 
 # ────────────────────────────────────────────────────────────────────────────────────────────────
@@ -535,3 +550,45 @@ async def test_a_directorate_tier_resolves_every_uploaders_media_and_both_call_s
         )
     below = await records.media_url_owners(_user("INSPECTOR", user_id=None))
     assert below is not records.ALL_MEDIA_URLS, "the Professor floor on media URLs has gone"
+
+
+# ────────────────────────────────────────────────────────────────────────────────────────────────
+# 19. ACCOUNT PROVISIONING — the one admin-band power MINISTRY_ADMIN was given, as a set of its own
+# ────────────────────────────────────────────────────────────────────────────────────────────────
+
+#: Who provisions password accounts, written out as the decision of 2026-10-09 rather than derived
+#: from the frozenset — deriving it would assert the set against itself.
+PROVISIONERS = frozenset({"MINISTRY_ADMIN", "ADMIN", "MASTER_ADMIN"})
+
+
+@pytest.mark.parametrize("tier", sorted(deps.ROLE_RANK, key=deps.ROLE_RANK.__getitem__))
+def test_exactly_three_tiers_provision_accounts(tier: str) -> None:
+    """MINISTRY_ADMIN, ADMIN and MASTER_ADMIN create password accounts and look after their
+    passwords; the two directorate tiers below them, PROFESSOR and everybody lower do not.
+
+    Asserted for every tier on the ladder, so a tier inserted later is a failure that asks the
+    question rather than a default nobody chose.
+    """
+    assert deps.can_provision_accounts(_user(tier)) is (tier in PROVISIONERS), (
+        f"{tier} {'gained' if tier not in PROVISIONERS else 'lost'} account provisioning"
+    )
+
+
+@pytest.mark.parametrize("tier", DIRECTORATE)
+def test_provisioning_did_not_make_any_directorate_tier_an_admin(tier: str) -> None:
+    """THE SHAPE OF THE DECISION: a set BESIDE ``is_admin``, never a widening of it. A ministry admin
+    provisions accounts and is still refused deletes, grants, the access roster and the /admin tree,
+    because every one of those is still ``is_admin`` — which is still false for all three tiers."""
+    user = _user(tier)
+    assert deps.is_admin(user) is False
+    assert deps.can_manage_access_roster(user) is False
+    assert deps.can_provision_accounts(user) is (tier == "MINISTRY_ADMIN")
+
+
+def test_the_provisioner_set_is_what_its_predicate_reads() -> None:
+    """The frozenset and the predicate must answer the same — the trap
+    ``test_the_documentation_frozensets_still_agree_with_the_predicates_that_ignore_them`` names
+    for two other sets, where the web reads its own copy as the implementation."""
+    every_role = list(deps.ROLE_RANK)
+    admitted = {role for role in every_role if deps.can_provision_accounts(_user(role))}
+    assert set(deps.ACCOUNT_PROVISIONER_ROLES) == admitted == PROVISIONERS

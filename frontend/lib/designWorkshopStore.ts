@@ -84,7 +84,7 @@
  * a load-edit-save-later sequence would.
  */
 
-import { ApiError } from "@/lib/api";
+import { ApiError, sessionOwesPasswordChange } from "@/lib/api";
 import {
   adoptStageRegistry,
   createDesignWorkshop,
@@ -144,6 +144,8 @@ import { deviceLooksOffline } from "@/lib/workshopOptions";
 // `isUnreachable`, NOT `isTransient`: the latter answers "is it worth retrying" and says yes to
 // every 5xx, which is how a stage the server had permanently refused was reported as a lost signal.
 import {
+  isCredentialExpiry,
+  isPasswordChangeRefusal,
   isSchemaRefusal,
   isUnreachable,
   schemaRefusalError,
@@ -4248,6 +4250,24 @@ export type DwSyncResult = {
   pending: number;
   /** True when the pass stopped because nothing is reaching the network. Nothing was lost. */
   stoppedOffline: boolean;
+  /**
+   * True when the pass did not start, or stopped at the first refusal, because the account owes a
+   * new password and the server refuses everything until it is chosen. Nothing was sent, nothing was
+   * marked and nothing was lost. Kept apart from `stoppedOffline` because "Still no connection" would
+   * send a designer looking for a signal they already have.
+   *
+   * OPTIONAL so a caller building a result by hand need not state it. Absent means false.
+   */
+  passwordChangeRequired?: boolean;
+  /**
+   * True when the pass stopped at a PLAIN 401: the sign-in itself is finished. Nothing was marked,
+   * and everything stays queued for the pass that runs after the next sign-in — `apiFetch` has
+   * already sent the tab to /login. The records outbox's `SyncResult.credentialExpired`, the same
+   * row of `lib/failureTriage.ts` read the same way.
+   *
+   * OPTIONAL, for the reason `passwordChangeRequired` is. Absent means false.
+   */
+  credentialExpired?: boolean;
 };
 
 let syncing: Promise<DwSyncResult> | null = null;
@@ -4531,12 +4551,22 @@ export function createMustBeDeclined(
  * Does an error thrown by a stage PUT describe the WHOLE WORKSHOP rather than that one stage?
  *
  * Rethrown to the pass-level catch when it does. The set is: anything the server did not answer at
- * all (a dropped connection), 408 and 429 (the request never completed / the server asking for
- * time), and 409/404 — both of which mean the workshop itself is no longer writable by this account.
- * See the call site for why 404 had to join a list that named only 409, and what stamping
- * twenty-two innocent stages with "correct the answer that caused it" cost.
+ * all (a dropped connection), every 401 (the session, not the stage), 408 and 429 (the request never
+ * completed / the server asking for time), and 409/404 — both of which mean the workshop itself is
+ * no longer writable by this account. See the call site for why 404 had to join a list that named
+ * only 409, and what stamping twenty-two innocent stages with "correct the answer that caused it"
+ * cost.
  */
 export function stageRefusalIsPassLevel(error: unknown): boolean {
+  // A 401 is wider still than the workshop — it is about the SESSION, and every stage behind this one
+  // would meet it — so it goes to the pass-level catch, which stops without marking anything. Both
+  // readings of the row: the password gate's 401 (the token is good; the account owes a new
+  // password) and a PLAIN one (the token is finished — seven days is shorter than a fortnight in the
+  // field, and a second tab signing out ends it too). Recorded against the stage, either sits there
+  // as a permanent refusal of an answer nobody got wrong, and `blocksRetry` holds it shut long after
+  // the password was chosen or the designer signed in again. The plain 401 did exactly that until
+  // 2026-10-09, while the records outbox had kept its work on one since long before.
+  if (isCredentialExpiry(error)) return true;
   // Two facts about the failure, from the one classifier, rather than a second reading of the status
   // codes: "did anything reach the server" is `lib/failureTriage.ts`'s question and 408 is already
   // inside its answer. Only 409 and 404 are named here, because only those two are about SCOPE —
@@ -4622,6 +4652,15 @@ async function runSync(): Promise<DwSyncResult> {
   // nothing was sent, nothing was lost, and the banner's next pass will carry it.
   if (draftSessionUnknown()) {
     result.stoppedOffline = true;
+    return result;
+  }
+
+  // NOR WHILE THE ACCOUNT OWES A NEW PASSWORD: the server refuses every request this pass could make
+  // until it is chosen, so none is spent. Nothing is marked. The banner remounts when the gate gives
+  // way to the app, and its mount drain carries everything that is waiting.
+  if (sessionOwesPasswordChange()) {
+    result.passwordChangeRequired = true;
+    result.pending = (await pendingWork()).length;
     return result;
   }
 
@@ -5024,7 +5063,9 @@ async function runSync(): Promise<DwSyncResult> {
             caption: media.caption ?? undefined
           }));
         } catch (error) {
-          if (isUnreachable(error)) throw error;
+          // A 401 is about the session, not this photograph — the gate's and a plain expiry alike, see
+          // `stageRefusalIsPassLevel` — so the pass-level catch stops on it and the file stays queued.
+          if (isUnreachable(error) || isCredentialExpiry(error)) throw error;
           await noteMediaFailure(media.id, error);
           if (media.stageKey) blocked.add(media.stageKey);
           if (mediaRefusal(media.name, error, 0).permanent) noteRefused(media.stageKey, media.name);
@@ -5341,9 +5382,20 @@ async function runSync(): Promise<DwSyncResult> {
                   "step, and no edit to the stage will clear it. Your work is safe on this device, and it will be sent by " +
                   "itself the next time you open the app after either has been updated; you do not have to do anything. " +
                   "Tell whoever runs the repository if it keeps happening."
-                : `The repository refused stage “${stageKey}”: ${said} It is still on this device and nothing has been ` +
-                  "thrown away, but it will keep being refused until the answer that caused it is corrected — this is not a " +
-                  "connection problem. Open the stage, then use Try again.",
+                : error.status === 403
+                  ? /*
+                      A 403 IS ABOUT WHO MAY WRITE THIS WORKSHOP, NEVER ABOUT AN ANSWER, so the sentence
+                      below it — "until the answer that caused it is corrected" — would send a designer
+                      to audit answers nothing objected to. Since 2026-10-09 the ordinary way to meet it
+                      is holding a post on the workshop (`design_workshop_posts.write_refusal`, which
+                      names the post and the remedy); the server's own sentence is quoted whole.
+                    */
+                    `The repository refused stage “${stageKey}”: ${said} It is still on this device and nothing has been ` +
+                    "thrown away. This is about who may write this workshop, not about any answer in the stage, so no " +
+                    "edit to the stage will clear it."
+                  : `The repository refused stage “${stageKey}”: ${said} It is still on this device and nothing has been ` +
+                    "thrown away, but it will keep being refused until the answer that caused it is corrected — this is not a " +
+                    "connection problem. Open the stage, then use Try again.",
               true,
               (stage.failure?.attempts ?? 0) + 1,
               schemaRefusal ? APP_RUN_ID : null
@@ -5450,6 +5502,23 @@ async function runSync(): Promise<DwSyncResult> {
         carried to the drain. 408 and 429 stay on the offline side: the first means the request
         never completed, the second is the server explicitly asking for time.
       */
+      // ASKED FIRST: the account owes a new password and the server will refuse everything until it
+      // is chosen. Stop, mark nothing — the arm below would write "the server refused this workshop"
+      // onto a fortnight of fieldwork nobody got wrong.
+      if (isPasswordChangeRefusal(error)) {
+        result.passwordChangeRequired = true;
+        break;
+      }
+      // THEN THE PLAIN 401: the sign-in is finished, and every request behind this one would meet the
+      // same answer. Same stop, same nothing-marked — the work waits for the pass after the next
+      // sign-in, which `apiFetch` has already sent the tab to — under its own flag, because "choose a
+      // new password" would be false and "still no connection" sends a designer looking for signal.
+      // Falling through to the arm below wrote the bare 401 sentence onto the whole workshop as a
+      // permanent refusal, which `blocksRetry` then held shut after the designer had signed back in.
+      if (isCredentialExpiry(error)) {
+        result.credentialExpired = true;
+        break;
+      }
       if (isUnreachable(error) || serverAskedForTime(error)) {
         // Still offline, or the API is down. Stop the pass; everything behind this stays exactly
         // where it is. Nothing is lost and nothing is marked failed — a connection that dropped is

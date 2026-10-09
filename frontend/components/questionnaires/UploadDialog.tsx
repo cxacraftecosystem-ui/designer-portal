@@ -18,11 +18,17 @@
  * title and nothing else — attaching an existing questionnaire to a workshop is a PATCH, and it
  * lives on the detail page. Offering the picker here would build a control whose value the request
  * cannot carry.
+ *
+ * AND ON THAT PATH, A WORKSHOP THE READER INSPECTS OR SUPERVISES HOLDS THE UPLOAD (2026-10-09): the
+ * create door refuses a post holder a questionnaire attached to it, with the 403 naming the post. The
+ * picker stays live — choosing another workshop, or none, is the way forward — and the reason is said
+ * above the footer. The re-upload's own hold is the detail page's, which does not offer it to them.
  */
 
-import { useRef, useState } from "react";
+import { useId, useRef, useState } from "react";
 import { FileSpreadsheet, Upload } from "lucide-react";
 
+import { attachHold, HeldPostNotice, useHeldPostRefusal, writesHeld } from "@/components/designworkshop/HeldPostNotice";
 import { FieldDialog } from "@/components/dialogs";
 import { Field, TextInput } from "@/components/FormControls";
 import { FieldBlock } from "@/components/tasks/TaskPrimitives";
@@ -91,6 +97,10 @@ export function UploadDialog({
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const editing = Boolean(questionnaireId);
+  /** The chosen workshop's hold, three states — none on the re-upload path, which chooses none. */
+  const workshopHold = useHeldPostRefusal(editing ? null : designWorkshopId || null);
+  const hold = attachHold(workshopHold, "this questionnaire");
+  const holdNoticeId = useId();
 
   function reset() {
     setFile(null);
@@ -110,7 +120,8 @@ export function UploadDialog({
   }
 
   async function submit() {
-    if (!file) return;
+    // A held Upload is disabled; this keeps the rule for any other way in.
+    if (!file || writesHeld(hold)) return;
     setBusy(true);
     setError(null);
     try {
@@ -151,7 +162,13 @@ export function UploadDialog({
           <button type="button" className="field-button-secondary" onClick={close} disabled={busy}>
             Cancel
           </button>
-          <button type="button" className="field-button" onClick={submit} disabled={!file || busy}>
+          <button
+            type="button"
+            className="field-button"
+            onClick={submit}
+            disabled={!file || busy || writesHeld(hold)}
+            aria-describedby={typeof hold === "string" ? holdNoticeId : undefined}
+          >
             {busy ? "Reading the workbook…" : editing ? "Upload and apply" : "Upload questionnaire"}
           </button>
         </>
@@ -324,6 +341,9 @@ export function UploadDialog({
             />
           </FieldBlock>
         )}
+        {/* Why Upload is held — the last thing above the footer that holds it, and mounted on both
+            paths so the answer that arrives after a workshop is picked is announced. */}
+        <HeldPostNotice refusal={hold} id={holdNoticeId} className="" sayPending />
       </div>
     </FieldDialog>
   );

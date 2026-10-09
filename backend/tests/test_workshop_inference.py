@@ -18,14 +18,19 @@ live in ``run_ladder`` and the decisions live here.
 from datetime import UTC, datetime, timedelta
 
 from app.services.workshop_inference import (
+    BUCKET_KEYS,
     REASON_AMBIGUOUS,
     REASON_NO_EVIDENCE,
     RUNG_ARTISANS,
     RUNG_PARENT,
     RUNG_WINDOW,
+    BucketPlan,
+    LadderRun,
     build_windows,
     decide,
     distinct,
+    held_back_detail,
+    payload_for,
     stamp_of,
     title_of,
     windows_containing,
@@ -256,3 +261,43 @@ def test_a_record_captured_after_the_workshop_ended_stays_unmapped():
     )
     assert plan.workshopId is None
     assert plan.reason == REASON_NO_EVIDENCE
+
+
+# --- What a holder's bulk map left alone (2026-10-09) ---------------------------------------------
+
+
+def _run_with(resolved_media: int) -> LadderRun:
+    plans = {bucket: BucketPlan(bucket=bucket) for bucket in BUCKET_KEYS}
+    plans["media"].rows = [
+        decide(f"m{n}", f"clip-{n}.m4a", [(RUNG_PARENT, ["w-live"])]) for n in range(resolved_media)
+    ]
+    plans["media"].unassigned = resolved_media
+    return LadderRun(plans=plans, workshopTitles={"w-live": LIVE.title}, windows=[])
+
+
+def test_the_preview_says_nothing_was_held_back_because_nothing_was_asked():
+    """``heldBack`` is a count only where something was written: the preview carries None in every
+    bucket and in the totals, so a client can tell "not asked" from "none"."""
+    payload = payload_for(_run_with(2))
+    assert {bucket["heldBack"] for bucket in payload["buckets"]} == {None}
+    assert payload["totals"]["heldBack"] is None
+    assert payload["heldBackDetail"] is None
+
+
+def test_a_holders_run_reports_what_it_left_alone_per_bucket_and_in_one_sentence():
+    """The bulk map leaves alone the rows of a design workshop its caller inspects or supervises,
+    and says so: a count per bucket (zero where nothing was), the total, and the sentence — singular
+    and plural both read as English."""
+    payload = payload_for(_run_with(3), {"media": 1}, {"media": 2})
+    by_bucket = {bucket["bucket"]: bucket for bucket in payload["buckets"]}
+    assert (by_bucket["media"]["applied"], by_bucket["media"]["heldBack"]) == (1, 2)
+    assert {by_bucket[key]["heldBack"] for key in BUCKET_KEYS if key != "media"} == {0}
+    assert payload["totals"]["heldBack"] == 2
+    assert payload["heldBackDetail"] == held_back_detail(2)
+    assert payload["heldBackDetail"].startswith("2 records belong to a design workshop")
+    assert held_back_detail(1).startswith("1 record belongs to a design workshop")
+    assert held_back_detail(0) is None
+    # Nothing held back on a run that wrote: zero everywhere, and no sentence.
+    quiet = payload_for(_run_with(1), {"media": 1})
+    assert quiet["totals"]["heldBack"] == 0
+    assert quiet["heldBackDetail"] is None

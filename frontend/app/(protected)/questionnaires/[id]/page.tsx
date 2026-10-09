@@ -32,6 +32,7 @@ import { useParams, useRouter } from "next/navigation";
 import { ClipboardList, CopyPlus, Download, FileSpreadsheet, Lock, Plus, Share2, Upload } from "lucide-react";
 
 import { useAuth } from "@/components/AuthProvider";
+import { HeldPostNotice, useHeldPostRefusal } from "@/components/designworkshop/HeldPostNotice";
 import { deleteConfirm, useConfirm } from "@/components/dialogs/ConfirmDialog";
 import { EmptyState } from "@/components/EmptyState";
 import { Field, TextArea, TextInput } from "@/components/FormControls";
@@ -269,7 +270,17 @@ export default function QuestionnaireDetailPage() {
 
   // Mirrors `_require_owner` on every mutating route: the owner, or an admin. Not a rank test —
   // a second designer of equal standing may answer this form and may not reword it.
-  const mayEdit = canEditOwnOrAdmin(user, form?.ownerId);
+  const owns = canEditOwnOrAdmin(user, form?.ownerId);
+  /*
+    AND NOBODY CHANGES A QUESTIONNAIRE ATTACHED TO A WORKSHOP THEY INSPECT OR SUPERVISE — its owner and
+    an admin included (2026-10-09): every edit to such a form is refused with a 403 whose sentence names
+    the post. So the page draws it the way it draws a colleague's form — read it, answer it, download
+    it, no edit controls — with that sentence where "belongs to another designer" would be. Held while
+    the answer is still out as well, so the controls never appear and then withdraw. Moving a form
+    INTO such a workshop saves on select, and its 403 reaches the banner word for word.
+  */
+  const attachedHold = useHeldPostRefusal(form?.designWorkshopId ?? null);
+  const mayEdit = owns && attachedHold === null;
 
   async function run<T>(work: () => Promise<T>, failure: string): Promise<T | null> {
     setBusy(true);
@@ -528,9 +539,10 @@ export default function QuestionnaireDetailPage() {
               endpoint used to be open to any designer and is now owner-scoped to match, so leaving
               this button up for everyone would offer a download that answers 403 — the classic
               half-fixed permission, where the UI and the API disagree about who may do this.
-              `mayEdit` is owner-or-admin, which is exactly the endpoint's own rule.
+              `owns` is owner-or-admin, which is exactly the endpoint's own rule — and not `mayEdit`:
+              a download is a read, which a post on the attached workshop does not take away.
             */}
-            {mayEdit ? (
+            {owns ? (
               <button type="button" className="field-button-secondary" onClick={download} disabled={busy}>
                 <Download className="h-4 w-4" aria-hidden />
                 Download .xlsx
@@ -588,7 +600,19 @@ export default function QuestionnaireDetailPage() {
           whoever published it.
         </div>
       ) : null}
-      {!mayEdit ? (
+      {/* The post's refusal, for an owner or admin who holds one on the attached workshop — mounted
+          for everybody, so its arrival a round trip after the page is announced. See `attachedHold`. */}
+      <HeldPostNotice
+        refusal={
+          !owns
+            ? null
+            : typeof attachedHold === "string"
+              ? `This questionnaire is attached to a design workshop you hold a post on, so it cannot be changed here. ${attachedHold}`
+              : attachedHold
+        }
+        sayPending
+      />
+      {!owns ? (
         /*
           ══ THE REFUSAL, AND THE WAY FORWARD BESIDE IT ══════════════════════════════════════════
 

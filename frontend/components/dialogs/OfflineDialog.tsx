@@ -19,6 +19,7 @@
 import { CloudOff } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { useAuth } from "@/components/AuthProvider";
 import { FieldDialog } from "@/components/dialogs/FieldDialog";
 import { useToast } from "@/components/ui/Toast";
 
@@ -55,12 +56,29 @@ export function OfflineDialog({ open, onDismiss }: { open: boolean; onDismiss: (
   );
 }
 
-/** Raises {@link OfflineDialog} on disconnect and confirms recovery with a toast. Mounted once. */
+/**
+ * Raises {@link OfflineDialog} on disconnect and confirms recovery with a toast. Mounted once.
+ *
+ * SILENT WHILE THE ACCOUNT OWES A NEW PASSWORD. It makes no request of its own, so it cannot bounce a
+ * gated tab or park anything — but it sits beside `AppShell` rather than inside it, so it would go on
+ * drawing over the password form, and both of its sentences are about the app the form has replaced:
+ * "saving still works … held on this device" and "Saving and uploading work again" are false of a
+ * screen whose one button is a password change no outbox can carry. The gate says for itself when
+ * the server cannot be reached. The state is still tracked, so the dialog is there if the connection
+ * is still down when the gate gives way to the app.
+ */
 export function OfflineWatcher() {
   const [open, setOpen] = useState(false);
   const { toast } = useToast();
+  const { passwordChangeRequired } = useAuth();
   // Only announce "back online" to someone who was told they went offline in the first place.
   const wasOffline = useRef(false);
+  // Read through a ref by the `online` handler, so a change of gate does not re-run the listener
+  // effect below — whose mount half would re-raise the dialog over a connection already known.
+  const gated = useRef(passwordChangeRequired);
+  useEffect(() => {
+    gated.current = passwordChangeRequired;
+  }, [passwordChangeRequired]);
 
   const goOffline = useCallback(() => {
     wasOffline.current = true;
@@ -71,6 +89,7 @@ export function OfflineWatcher() {
     setOpen(false);
     if (!wasOffline.current) return;
     wasOffline.current = false;
+    if (gated.current) return;
     toast({ id: "connection", title: "Back online", description: "Saving and uploading work again.", tone: "success" });
   }, [toast]);
 
@@ -86,5 +105,5 @@ export function OfflineWatcher() {
     };
   }, [goOffline, goOnline]);
 
-  return <OfflineDialog open={open} onDismiss={() => setOpen(false)} />;
+  return <OfflineDialog open={open && !passwordChangeRequired} onDismiss={() => setOpen(false)} />;
 }

@@ -1,5 +1,6 @@
 import asyncio
 import os
+from datetime import UTC, datetime
 
 from app.core.config import get_settings
 from app.core.db import connect_db, db, disconnect_db
@@ -21,17 +22,51 @@ async def upsert_admin(email: str, name: str, password: str, role: str) -> None:
 
     The master admin is exempt from the gate in code and would work without this; the row is written
     for it anyway so the admin screen shows the whole institution rather than everyone-but-one.
+
+    ── EVERY PASSWORD THIS WRITES IS TEMPORARY, AND IT WRITES ONLY TWO KINDS (2026-10-09) ────────
+
+    ``ADMIN_PASSWORD`` sits in a ``.env`` file on a box several people can open, and the same value
+    is written to both accounts, so it is a shared secret in exactly the sense an administrator's
+    typed password is. So every password written here stamps ``passwordSetAt`` (without it the
+    account reads as "has never had a password") and ``mustChangePassword`` — the first sign-in sends
+    the person to choose their own, and the API refuses everything else until they do (the master
+    admin is exempt from that server refusal as the break-glass, and is still asked by the screens).
+    Rewriting an EXISTING account's password also stamps ``sessionsValidFrom``: a reset ends the
+    sessions the old password opened, as a link redemption and a provisioner's reset do.
+
+    AND IT REFUSES TO TOUCH AN EXISTING ACCOUNT THAT IS NOT THE MASTER ADMIN. Re-running this script
+    used to overwrite the ``ADMIN_EMAIL`` account's password AND ROLE with whatever the ``.env`` said
+    — on a production box that is a live colleague's credentials replaced, and their tier reset, as a
+    side effect of somebody repairing the break-glass. The master admin is the one account this
+    script exists to recover, so it alone is reset; any other existing account is left exactly as it
+    is and the operator is pointed at the doors that reset a password with a record of who did it.
     """
     is_master_admin = role == "MASTER_ADMIN"
     existing = await db.user.find_unique(where={"email": email})
+    if existing and not is_master_admin:
+        print(
+            f"Left existing {role.lower()} user alone: {email}. This script resets only the master "
+            "admin; reset anybody else from the users screen, with a password link, or with "
+            "scripts/provision_account.py."
+        )
+        return
+    password_hash = hash_password(password)
+    # AFTER bcrypt, immediately before the write: a stamp taken first falls in an earlier wall second
+    # than a sign-in still racing the reset with the old password, whose token would then post-date
+    # it. (A new password also retires every token minted with the old one, by its fingerprint —
+    # ``deps._user_from_bearer``.)
+    now = datetime.now(UTC)
     if existing:
         await db.user.update(
             where={"email": email},
             data={
                 "name": name,
-                "passwordHash": hash_password(password),
+                "passwordHash": password_hash,
+                "passwordSetAt": now,
+                "mustChangePassword": True,
+                "sessionsValidFrom": now,
                 "role": role,
-                "canManageQuestionnaire": True if is_master_admin else existing.canManageQuestionnaire,
+                "canManageQuestionnaire": True,
             },
         )
         # This script normally runs as its own process, where the invalidation is a no-op and the
@@ -45,7 +80,9 @@ async def upsert_admin(email: str, name: str, password: str, role: str) -> None:
             data={
                 "email": email,
                 "name": name,
-                "passwordHash": hash_password(password),
+                "passwordHash": password_hash,
+                "passwordSetAt": now,
+                "mustChangePassword": True,
                 "role": role,
                 "authProvider": "LOCAL",
                 "canManageQuestionnaire": is_master_admin,

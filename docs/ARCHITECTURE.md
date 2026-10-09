@@ -260,7 +260,7 @@ sequenceDiagram
   C->>API: POST /api/auth/login { email, password } or { googleIdToken }
   API->>DB: find user by email
   API->>API: verify bcrypt hash, or verify the Google ID token's audience + signature
-  API->>API: sign JWT (HS256, exp = JWT_EXPIRES_MINUTES, default 7 days)
+  API->>API: sign JWT (HS256, exp = JWT_EXPIRES_MINUTES, default 7 days, cred = password fingerprint)
   API-->>C: { accessToken, user }
 
   C->>API: any request, Authorization: Bearer …
@@ -272,14 +272,17 @@ sequenceDiagram
     Cache->>DB: find_unique — ONE query however many requests wait
     DB-->>Cache: user row
   end
+  API->>API: refuse if minted before the row's sessionsValidFrom, or cred no longer matches its password
   API->>API: rank and capability checks read THIS row, never the token's claims
   API-->>C: response
 ```
 
 The step that matters for security is the last one. The token carries `email` and `role`, and
 **neither is trusted for authorisation**. The database row is re-read because that read *is* the
-revocation check: tokens live seven days and are never revoked, so a role claim minted before a
-demotion would otherwise stay valid for a week.
+revocation check: tokens live seven days, and what ends one early is read off that row — a deleted
+account, the revocation watermark and, since 2026-10-09, a change of the password the token was
+opened with ([SECURITY.md](SECURITY.md) §3.2 and §3.6) — so a role claim minted before a demotion
+would otherwise stay valid for a week.
 
 The identity cache shortens that revocation window rather than removing it — five seconds by default,
 sized to collapse the burst of parallel requests one page load makes and nothing more, with explicit

@@ -40,18 +40,22 @@ import java.util.Locale
  *    cannot tell the two apart offers a Save button the API answers 404 to. [dwInspectionIsReadOnly]
  *    is where that is honoured, and it fails CLOSED — see its own note.
  *
- * ── THE GATE IS A ONE-MEMBER SET, AND ADMINS ARE REFUSED. THIS IS THE SURPRISING ROW ─────────────
+ * ── THE HANDSET'S GATE IS A ONE-MEMBER SET, AND IT IS NARROWER THAN THE SERVER'S ────────────────
  *
- * `INSPECTION_ROLES = frozenset({"INSPECTOR"})` and `assert_inspection_surface` answers **403 to an
- * ADMIN and to a MASTER ADMIN by name**, with its own docstring arguing why: an admin scoped by their
- * own inspection rows sees an empty page and reads it as a broken feature, and an admin scoped by
- * "everything" turns this prefix into a second full read of the archive. So [canInspectDesignWorkshops]
- * is set membership on INSPECTOR alone, and it is the ONLY route rule on this handset whose refusal
- * is **not monotonic in rank**: a MASTER_ADMIN is refused where an INSPECTOR is admitted. Reading the
- * ladder for this row gives the wrong answer every single time — which is why the predicate is a set
- * and why `InspectionGateTest` walks all eleven tiers rather than sampling.
+ * Until 2026-10-09 `assert_inspection_surface` answered 403 to an admin and to the master admin BY
+ * NAME, and this file mirrored it. The owner's ruling of that date lets a Ministry Admin, an admin and
+ * the master admin be APPOINTED to inspect a workshop, so the server now admits those three tiers
+ * beside the inspector's (`INSPECTION_HOLDER_ROLES`) and scopes every one of them by the rows it
+ * holds. The handset was not taught that ruling — ministry and admin surfaces are web-only
+ * (`docs/DECISION-ministry-surfaces-web-only.md`) — so [canInspectDesignWorkshops] is still set
+ * membership on INSPECTOR alone: a deliberate narrowing, in the fail-closed direction, and an admin
+ * appointed to inspect reads that workshop on the web or through Design workshops. It is still the
+ * ONLY route rule on this handset whose refusal is **not monotonic in rank**: a MASTER_ADMIN is
+ * refused where an INSPECTOR is admitted. Reading the ladder for this row gives the wrong answer every
+ * single time — which is why the predicate is a set and why `InspectionGateTest` walks all eleven
+ * tiers rather than sampling.
  *
- * What an admin gets INSTEAD is the appointment screen, and the refusal copy names it.
+ * What an admin gets on the handset INSTEAD is the appointment screen, and the refusal copy names it.
  *
  * ── OFFLINE: AN INSPECTION IS NOT CACHED, AND THAT IS A DECISION ─────────────────────────────────
  *
@@ -89,10 +93,12 @@ import java.util.Locale
  *
  *  * **THE CREATOR CARD, AND THE CREATOR BEING SILENTLY DROPPED FROM THE PAYLOAD.** The viewers'
  *    `_deduplicate` removes the creator as a harmless no-op because they already hold what is being
- *    granted. Here the creator is REFUSED BY NAME with a 422 — "an independent review by somebody
- *    who worked on it is not a review" — so there is no creator to hold out of the picker, no card
- *    saying they always have access, and no `creatorHasRow` to re-attach. [DwInspectorSelection] is
- *    the viewers' type with that whole arm deleted.
+ *    granted. Nothing an inspection grants is held by the creator, and nobody is dropped from this
+ *    payload in silence: whoever AUTHORED the workshop is refused BY NAME — "nobody inspects or
+ *    supervises work they authored", a 409 since 2026-10-09, when merely creating a workshop stopped
+ *    counting as authoring it — so there is no creator to hold out of the picker, no card saying
+ *    they always have access, and no `creatorHasRow` to re-attach. [DwInspectorSelection] is the
+ *    viewers' type with that whole arm deleted.
  *  * **THE FOURTH OFFER NOTICE.** `eligible_viewers` folds in the DesignerRoster, so its `truncated`
  *    covers a cut no search can reach. `eligible_inspectors` reads no roster at all, so a cut here
  *    is always a ceiling and a ceiling is always reachable by typing. See [dwInspectorOfferNotice].
@@ -110,22 +116,29 @@ import java.util.Locale
 // --------------------------------------------------------------------------------------
 
 /**
- * The roles that may hold a `DesignWorkshopInspector` row — `INSPECTION_ROLES`, byte for byte.
+ * The Inspector / Reviewer TIER — the server's `INSPECTION_ROLES`, byte for byte.
+ *
+ * Since 2026-10-09 that is no longer the whole set of roles that may HOLD a `DesignWorkshopInspector`
+ * row: the server's `INSPECTION_HOLDER_ROLES` adds the three administering tiers, by appointment. It
+ * is the tier whose entire surface this is, and the one this handset opens it to — see the file
+ * header for why the handset stops there.
  *
  * A SET OF ONE, and that is the shape rather than an oversight. Every design-workshop gate in this
  * product is set membership; a rank floor written here would read "INSPECTOR and everything above
- * it", which is PROFESSOR, ADMIN and MASTER_ADMIN — two of whom already see every workshop by a
- * shorter route and the third of whom deliberately sees none.
+ * it", which takes in the professor and the directorate posts — none of whom may hold an inspection
+ * at all.
  */
 private val INSPECTION_ROLES = setOf("INSPECTOR")
 
 /**
  * May this account reach the inspector's own read surface at all?
  *
- * **MIRRORS `assert_inspection_surface`, WHICH 403s AN ADMIN BY NAME.** Not a rank comparison, not
- * `>= RANK_INSPECTOR`, and not `isAdmin(user) || …`. Written against the string rather than against
- * the rank ladder so that this file is still correct on a build whose ladder has not been updated:
- * it simply answers false for everybody, which is the fail-closed direction.
+ * **NARROWER THAN `assert_inspection_surface`, ON PURPOSE.** The server also admits a Ministry Admin,
+ * an admin and the master admin, scoped by the inspections each holds; on this handset those tiers
+ * are refused here, because ministry and admin surfaces are web-only (see the file header). Not a
+ * rank comparison, not `>= RANK_INSPECTOR`, and not `isAdmin(user) || …`. Written against the string
+ * rather than against the rank ladder so that this file is still correct on a build whose ladder has
+ * not been updated: it simply answers false for everybody, which is the fail-closed direction.
  *
  * IN THE DATA LAYER AND NOT IN `FieldPermissions`, matching [canCreateDesignWorkshops]: the rule has
  * to be askable from a place that must not import a UI type. The typed front door for screens is
@@ -242,19 +255,24 @@ data class DwEligibleInspectors(
  * hit `ELIGIBLE_INSPECTOR_LIMIT`, and a ceiling is always reachable by typing. Copying the fourth
  * sentence across would print advice about a cut that cannot happen on this endpoint.
  *
- * The three sentences that ARE here are shared verbatim with
- * `frontend/components/settings/DesignWorkshopInspectorsPanel.tsx`, which carries the same three in
- * the same order — an admin moves between the two apps, and one shared vocabulary is why the server
- * sends one flag instead of each client inventing its own wording. The first two are also word for
- * word the viewers' own, deliberately: it is the same cut with the same remedy, and two spellings of
- * one sentence is how an admin comes to believe they are two different problems.
+ * The three sentences that ARE here are shared verbatim with `eligibleInspectorNotice` in
+ * `frontend/lib/designWorkshopInspections.ts`, which carries the same three in the same order — an
+ * admin moves between the two apps, and one shared vocabulary is why the server sends one flag
+ * instead of each client inventing its own wording. The first two are also word for word the
+ * viewers' own, deliberately: it is the same cut with the same remedy, and two spellings of one
+ * sentence is how an admin comes to believe they are two different problems.
+ *
+ * THE THIRD SAYS "AN ACCOUNT THAT MAY INSPECT", NOT "AN INSPECTOR / REVIEWER ACCOUNT", since
+ * 2026-10-09: the server offers Ministry Admin, admin and master admin accounts beside the tier — to
+ * this handset too, whatever its own menu shows — and a sentence naming only the tier tells an admin
+ * searching for a colleague by name that admins are not offered.
  */
 fun dwInspectorOfferNotice(offer: DwEligibleInspectors): String? = when {
     offer.truncated && offer.search == null ->
         "Too many accounts to show them all — search a name or email to reach the rest."
     offer.truncated -> "Too many matches to show them all — narrow the search."
     offer.search != null && offer.users.isEmpty() ->
-        "No Inspector / Reviewer account matches that search."
+        "No account that may inspect matches that search."
     else -> null
 }
 
@@ -313,7 +331,7 @@ const val DW_INSPECTOR_LIMIT = 25
  *   THE WHOLE ELIGIBLE SET, did not offer it — an inspector barred or suspended by the platform
  *   access list since the assignment. Rendered, ticked, and marked; see [dwInspectorChoices] for why
  *   leaving it out would be a silent revocation, and why it goes unmarked when the list was searched
- *   or cut instead of complete.
+ *   or cut instead of complete — or when the row is the reader's own.
  */
 data class DwInspectorChoice(
     val userId: String,
@@ -341,13 +359,23 @@ data class DwInspectorChoice(
  *    noticing before they saved.
  *
  * **THERE IS NO `creatorId` PARAMETER, UNLIKE [dwViewerChoices], AND ITS ABSENCE IS THE FEATURE.**
- * The workshop's creator is not held quietly out of this list — they are REFUSED BY NAME, with a 422
- * reading "an independent review by somebody who worked on it is not a review", and so is any
- * co-designer holding a `DesignWorkshopViewer` row. Filtering them out here would hide a MISTAKE an
- * admin needs to be told about behind a silent no-op. The two role sets are disjoint today, so the
- * case is reachable only through a promotion — a DESIGNER holding a viewer row who is later made an
- * INSPECTOR — and that is exactly the case nothing else in the codebase would notice.
+ * Nobody is held quietly out of this list for what they did to the workshop. Since 2026-10-09 the
+ * creator is not refused for being the creator — administrators open workshops as an administrative
+ * act — while anybody who AUTHORED it (a designer row on it, or a stage they wrote) or supervises it
+ * is refused when the admin saves, BY NAME, with a 409 whose sentence names the rule. Filtering them
+ * out here would hide a MISTAKE an admin needs to be told about behind a silent no-op.
  *
+ * **THE READER IS THE ONE ACCOUNT LEFT OUT, AND ONLY AS A NEW CHOICE.** Nobody appoints themselves:
+ * the server leaves the caller out of its answer and refuses a save that names them, so [readerId]
+ * is skipped among the eligible and retained accounts in case a server offers them anyway. A row the
+ * reader already HOLDS — another admin appointed them — is still offered, because the whole-set PUT
+ * would delete it otherwise; and it is never marked "assigned, no longer eligible", because the
+ * reader is absent from the eligible answer for being the reader, which says nothing about the
+ * platform access list.
+ *
+ * @param readerId the account reading this screen, or null when it is not known. **NO DEFAULT,
+ *   DELIBERATELY**, for [eligibleListComplete]'s reason: it decides a mark, and leaving it out marks
+ *   the reader's own inspection as barred on any complete list.
  * @param eligibleListComplete this answer is the WHOLE eligible set — not a search result, not cut
  *   at the ceiling. **NO DEFAULT, DELIBERATELY**, because it decides whether an assigned account
  *   absent from [eligible] is marked "assigned, no longer eligible", and that mark is a claim about
@@ -360,13 +388,15 @@ data class DwInspectorChoice(
 fun dwInspectorChoices(
     eligible: List<DwEligibleInspectorDto>,
     inspectors: List<DwInspectorDto>,
+    readerId: String?,
     eligibleListComplete: Boolean,
     retained: List<DwEligibleInspectorDto> = emptyList(),
 ): List<DwInspectorChoice> {
+    val reader = readerId?.takeIf { it.isNotBlank() }
     val choices = ArrayList<DwInspectorChoice>(eligible.size + retained.size + inspectors.size)
     val seen = HashSet<String>()
     (eligible + retained).forEach { person ->
-        if (person.id.isBlank() || !seen.add(person.id)) return@forEach
+        if (person.id.isBlank() || person.id == reader || !seen.add(person.id)) return@forEach
         choices += DwInspectorChoice(
             userId = person.id,
             name = person.name,
@@ -382,8 +412,9 @@ fun dwInspectorChoices(
             email = row.email,
             role = row.role,
             // OFFERED EITHER WAY — that is what stops the revocation — but only MARKED when the
-            // absence proves something. Over a search result or a cut list it proves nothing.
-            assignedButIneligible = eligibleListComplete,
+            // absence proves something. Over a search result or a cut list it proves nothing, and
+            // for the reader's own row it proves only that the server leaves the reader out.
+            assignedButIneligible = eligibleListComplete && row.userId != reader,
         )
     }
     return choices
@@ -403,8 +434,9 @@ fun dwInspectorChoices(
  * SIMPLER THAN [DwViewerSelection] BY ONE WHOLE CONCEPT, and the difference is not tidying. That
  * type carries `creatorId` and `creatorHasRow` because the viewers PUT silently drops the creator
  * from any payload naming them, so the screen has to hold their row out of the diff on both sides
- * and re-attach it on the way out. There is no such row here: the creator cannot be an inspector at
- * all, and naming them is a 422 rather than a no-op. So [payload] is exactly what is ticked.
+ * and re-attach it on the way out. There is no such row here: the inspection PUT drops nobody
+ * silently — whoever may not inspect this workshop is refused by name, and nothing is written. So
+ * [payload] is exactly what is ticked.
  */
 data class DwInspectorSelection(
     val baseline: Set<String> = emptySet(),
@@ -487,11 +519,13 @@ enum class DwInspectionAttempt { READ, SAVE }
  *
  * **THE 403 ARM IS THE ONE THAT DIFFERS FROM THE VIEWERS', AND IT DIFFERS BECAUSE THE RULE DOES.**
  * There, a 403 means "you are not an admin" and the remedy is to ask one. Here a 403 can mean either
- * of two opposite things depending on which door was knocked on — an admin refused the inspector's
- * READ surface, or a non-admin refused the appointment routes — and the server's own
- * `NOT_AN_INSPECTOR_DETAIL` is written to name the other door for exactly that reason. It is passed
- * through first and the clause after it says what this client knows: that the two doors are
- * different, and that neither is a fault.
+ * of two things depending on which door was knocked on — a role that may hold no inspection refused
+ * the inspector's READ surface, or an account that may not appoint refused the appointment routes —
+ * and the server's own `NOT_AN_INSPECTOR_DETAIL` is written to name the other door for exactly that
+ * reason. It is passed through first and the clause after it says what this client knows: that the
+ * two doors are different, who each one is for, and that neither is a fault. The clause names NO
+ * TIER for the read: until 2026-10-09 it said only an Inspector / Reviewer could read a workshop
+ * under inspection, and the owner's ruling of that date made an admin appointable too.
  *
  * **NO ARM CLAIMS "NOTHING WAS CHANGED" UNLESS IT IS TRUE.** For a 4xx it is: `replace_inspectors`
  * validates every id to completion before it touches a row. For a dropped connection or a 5xx on a
@@ -533,8 +567,9 @@ fun dwInspectionFailureMessage(
         status == 403 ->
             said.asInspectionSentence() +
                 "The inspection surface and the screen that appoints inspectors are two different " +
-                "doors: only an Inspector / Reviewer can read a workshop under inspection, and only " +
-                "an admin decides who inspects what. Neither is a fault. Nothing was changed."
+                "doors: a workshop under inspection is read by the accounts appointed to inspect it, " +
+                "and a Ministry Admin, an admin or the master admin decides who inspects what. " +
+                "Neither is a fault. Nothing was changed."
 
         status == 404 ->
             said.asInspectionSentence() +

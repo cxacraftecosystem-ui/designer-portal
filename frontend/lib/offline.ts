@@ -112,10 +112,17 @@
  * pass passes false on both legs. The signed-out case (another tab called `logout`, clearing the
  * token both tabs share) is closed separately, by refusing to start a pass with no token at all.
  *
+ * AN ACCOUNT THAT OWES A NEW PASSWORD SENDS NOTHING, AND IS NOT TOLD ITS SIGN-IN EXPIRED. The server
+ * refuses every request of such an account with a 401 carrying `X-Password-Change-Required` until
+ * the password is chosen. That 401 is still a 401 — the pass stops and marks nothing, exactly as for
+ * an expiry — but the token is good (`apiFetch` keeps it) and "sign in again" would be false, so the
+ * pass says `passwordChangeRequired` instead, and does not start at all while the session is known to
+ * be gated. The banner's own mount drain sends the queue once the gate gives way to the app.
+ *
  * A STORE THAT CANNOT BE READ IS NOT AN EMPTY STORE. See {@link OutboxStoreHealth}.
  */
 
-import { ApiError, apiFetch, getToken } from "@/lib/api";
+import { ApiError, apiFetch, getToken, sessionOwesPasswordChange } from "@/lib/api";
 // `underlyingIsTransient` AND NOT `isTransient` FOR THE DRAIN. They are two readings of one table
 // and differ only in whether a wrapper is opened first; the drain needs the opened one, because
 // every media failure it meets arrives inside a `MediaBatchError` and a false here MARKS the item
@@ -123,6 +130,7 @@ import { ApiError, apiFetch, getToken } from "@/lib/api";
 // callers, where a false throws captured bytes away — argued at length in `lib/failureTriage.ts`.
 import {
   isCredentialExpiry,
+  isPasswordChangeRefusal,
   isTransient,
   isUnreachable,
   schemaRefusalError,
@@ -1818,6 +1826,15 @@ export type SyncResult = {
   declined: boolean;
   /** The pass stopped because the sign-in is finished. Nothing was marked. See {@link isCredentialExpiry}. */
   credentialExpired: boolean;
+  /**
+   * The account owes a new password, so the server refuses everything until it is chosen: the pass
+   * did not start, or stopped at the first refusal. Nothing was marked and nothing was lost, and the
+   * sign-in is NOT expired — which is why this is not `credentialExpired`, whose sentence asks for a
+   * sign-in the person does not need.
+   *
+   * OPTIONAL, for the reason `sentUnfiled` is: a hand-built result need not state it. Absent is false.
+   */
+  passwordChangeRequired?: boolean;
   /** This device could not be read during the pass, so `remaining` is not to be believed. */
   storeUnreadable: boolean;
   /**
@@ -1919,6 +1936,7 @@ async function runSync(): Promise<SyncResult> {
   let failed = 0;
   let stoppedOffline = false;
   let credentialExpired = false;
+  let passwordChangeRequired = false;
   // Sentences, not a count. Each names the entry and which control was empty, and the banner toasts
   // them individually: a number would be the fact without the record it is about.
   const sentUnfiled: string[] = [];
@@ -1948,6 +1966,23 @@ async function runSync(): Promise<SyncResult> {
       stoppedOffline: false,
       declined: false,
       credentialExpired: true,
+      storeUnreadable: health.readFailedAt !== null,
+      sentUnfiled: []
+    };
+  }
+
+  // THE ACCOUNT OWES A NEW PASSWORD, so every request this pass could make is one the server will
+  // refuse — answered without spending them, for the same reason as the line above. Nothing is
+  // marked; the banner remounts when the gate gives way to the app, and its mount drain sends it all.
+  if (sessionOwesPasswordChange()) {
+    return {
+      synced: 0,
+      failed: 0,
+      remaining: entries.length,
+      stoppedOffline: false,
+      declined: false,
+      credentialExpired: false,
+      passwordChangeRequired: true,
       storeUnreadable: health.readFailedAt !== null,
       sentUnfiled: []
     };
@@ -2254,6 +2289,14 @@ async function runSync(): Promise<SyncResult> {
       // kept because the sentence it produces is the point, not because a wrapper could slip past.
       // Nothing is marked and nothing is lost; the banner asks for a sign-in and `retryOutboxEntry`
       // is not even needed, because no failure was written.
+      //
+      // THE PASSWORD GATE'S 401 IS ASKED BEFORE IT, because it is the same stop with a different
+      // reason: the token is good and the account owes a new password, so "sign in again" would be
+      // false. A gate raised part way through a pass lands here on the first refused request.
+      if (isPasswordChangeRefusal(error)) {
+        passwordChangeRequired = true;
+        break;
+      }
       if (isCredentialExpiry(error)) {
         credentialExpired = true;
         break;
@@ -2336,6 +2379,7 @@ async function runSync(): Promise<SyncResult> {
     stoppedOffline,
     declined: false,
     credentialExpired,
+    passwordChangeRequired,
     storeUnreadable: health.readFailedAt !== null,
     sentUnfiled,
     otherAccount

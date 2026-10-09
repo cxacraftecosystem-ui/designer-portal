@@ -58,6 +58,25 @@ module are it — ONE named row each, decided by a human looking at the record, 
 row that is no longer unfiled. They obey every rule above: the assign carries the same
 ``workshopId: None`` guard the bulk writes carry, and neither of them re-runs the ladder or touches a
 second row. The discard is a real delete, with the reasoning on the function.
+
+A ROW A DESIGN WORKSHOP CLAIMS IS NOT UNFILED (2026-10-09)
+---------------------------------------------------------
+``workshopId`` is the CRAFTS workshop. A record filed under a DESIGN workshop (``designWorkshopId``)
+and a file that belongs to one — a stage photograph tagged to it, a recording filed under it — carry
+NULL there too, and this report used to list them as having "nothing that points at a workshop" and
+offer to delete them permanently: a workshop's stage evidence, its roster artisans, the records
+filed under it, gone by a door no other rule watched. So:
+
+* the ladder's candidate reads leave out every record whose ``designWorkshopId`` is set and every
+  file filed under a design workshop or tagged to one (:data:`_UNFILED_RECORD`,
+  :data:`_UNFILED_MEDIA`). A file that belongs to one only through a stage entry, an AI layer or the
+  record it hangs off is still read — finding those costs a query a row — and is answered below;
+* the discard refuses (409) any row a design workshop claims by any of those ways, for every
+  administrator, and sends them to the record's or file's own screen;
+* the single-row file refuses (403, ``design_workshop_posts.write_refusal``) an administrator who
+  inspects or supervises a workshop that claims the row — the record forms' and media doors' rule —
+  and the bulk map leaves such rows alone for that caller and reports them, rather than refusing a
+  run that is otherwise the server's own derivation.
 """
 
 from __future__ import annotations
@@ -71,7 +90,9 @@ from typing import Any
 from fastapi import HTTPException, status
 
 from app.core.db import db
+from app.services import design_workshop_posts
 from app.services.concurrency import gather_reads
+from app.services.dictation_consent import MEDIA_TAG as DESIGN_WORKSHOP_TAG
 from app.services.s3 import delete_object
 
 # The rung names, as they travel to the client. Constants because both platforms render them, and a
@@ -172,6 +193,23 @@ _MAX_ROWS_PER_BUCKET = 40
 # through a pooled connection and 566 ids is already a 20 KB parameter list; chunking keeps every
 # statement small enough to log and to retry.
 _WRITE_CHUNK = 200
+
+# WHAT "UNFILED" MEANS IN THE LADDER'S READS: no crafts workshop AND no design workshop. See the module
+# header's last section. A record names its design workshop in one column.
+_UNFILED_RECORD: dict[str, Any] = {"workshopId": None, "designWorkshopId": None}
+
+# A file names one in a column or in its link tag, the tag in either spelling — and the exclusion is
+# written as an OR WITH ``linkedRecordType IS NULL`` because a bare NOT drops the NULL rows too:
+# ``NOT (tag ILIKE 'designWorkshop')`` is NULL for a file with no tag, and NULL is not true. Most
+# files that genuinely need a person carry no tag at all, so that would have emptied the report.
+_UNFILED_MEDIA: dict[str, Any] = {
+    "workshopId": None,
+    "designWorkshopId": None,
+    "OR": [
+        {"linkedRecordType": None},
+        {"NOT": {"linkedRecordType": {"equals": DESIGN_WORKSHOP_TAG, "mode": "insensitive"}}},
+    ],
+}
 
 
 @dataclass(frozen=True)
@@ -400,15 +438,16 @@ async def run_ladder() -> LadderRun:
         loose_artisans,
     ) = await gather_reads(
         db.workshop.find_many(),
+        # NOTHING A DESIGN WORKSHOP CLAIMS IS A CANDIDATE (2026-10-09) — see the module header.
         db.questionnaireinterview.find_many(
-            where={"workshopId": None}, include={"artisans": True}, order={"createdAt": "asc"}
+            where=_UNFILED_RECORD, include={"artisans": True}, order={"createdAt": "asc"}
         ),
-        db.mediafile.find_many(where={"workshopId": None}, order={"createdAt": "asc"}),
-        db.productdocumentation.find_many(where={"workshopId": None}, order={"createdAt": "asc"}),
-        db.tooldocumentation.find_many(where={"workshopId": None}, order={"createdAt": "asc"}),
-        db.process.find_many(where={"workshopId": None}, order={"createdAt": "asc"}),
+        db.mediafile.find_many(where=_UNFILED_MEDIA, order={"createdAt": "asc"}),
+        db.productdocumentation.find_many(where=_UNFILED_RECORD, order={"createdAt": "asc"}),
+        db.tooldocumentation.find_many(where=_UNFILED_RECORD, order={"createdAt": "asc"}),
+        db.process.find_many(where=_UNFILED_RECORD, order={"createdAt": "asc"}),
         db.artisan.find_many(
-            where={"workshopId": None}, include={"workshops": True}, order={"createdAt": "asc"}
+            where=_UNFILED_RECORD, include={"workshops": True}, order={"createdAt": "asc"}
         ),
     )
 
@@ -693,9 +732,44 @@ async def run_ladder() -> LadderRun:
     return LadderRun(plans=plans, workshopTitles=workshop_titles, windows=windows)
 
 
-def payload_for(run: LadderRun, applied: dict[str, int] | None = None) -> dict[str, Any]:
-    """The plan as the wire shape both clients render, optionally with what was actually written."""
+#: What the bulk map says when it left rows alone because the caller holds a post on the design
+#: workshop they belong to (:func:`apply_workshop_mapping`): one sentence for one record, and
+#: :data:`HELD_BACK_DETAIL` with ``{count}`` for several.
+HELD_BACK_ONE_DETAIL = (
+    "1 record belongs to a design workshop you inspect or supervise, so it was left as it was: "
+    "whoever inspects or supervises a workshop does not write it. It stays on this report for an "
+    "administrator who holds no post on that workshop."
+)
+HELD_BACK_DETAIL = (
+    "{count} records belong to a design workshop you inspect or supervise, so they were left as "
+    "they were: whoever inspects or supervises a workshop does not write it. They stay on this "
+    "report for an administrator who holds no post on that workshop."
+)
+
+
+def held_back_detail(count: int) -> str | None:
+    """The sentence for ``count`` rows left alone, or None when nothing was held back."""
+    if count <= 0:
+        return None
+    if count == 1:
+        return HELD_BACK_ONE_DETAIL
+    return HELD_BACK_DETAIL.format(count=count)
+
+
+def payload_for(
+    run: LadderRun,
+    applied: dict[str, int] | None = None,
+    held_back: dict[str, int] | None = None,
+) -> dict[str, Any]:
+    """The plan as the wire shape both clients render, optionally with what was actually written.
+
+    ``held_back`` travels only with ``applied`` — the rows a holder's bulk map left alone, per bucket
+    (:func:`apply_workshop_mapping`). Every count key is ``None`` on the preview, which wrote
+    nothing, so a client can tell "not asked" from "none".
+    """
     titles = run.workshopTitles
+    if applied is not None and held_back is None:
+        held_back = {}
     buckets: list[dict[str, Any]] = []
     total_unassigned = 0
     total_resolved = 0
@@ -767,6 +841,7 @@ def payload_for(run: LadderRun, applied: dict[str, int] | None = None) -> dict[s
                 ],
                 "rowsTruncated": len(plan.rows) > _MAX_ROWS_PER_BUCKET,
                 "applied": (applied or {}).get(bucket) if applied is not None else None,
+                "heldBack": held_back.get(bucket, 0) if held_back is not None else None,
             }
         )
 
@@ -800,7 +875,10 @@ def payload_for(run: LadderRun, applied: dict[str, int] | None = None) -> dict[s
             "resolved": total_resolved,
             "unresolved": total_unassigned - total_resolved,
             "applied": sum((applied or {}).values()) if applied is not None else None,
+            "heldBack": sum(held_back.values()) if held_back is not None else None,
         },
+        # One sentence for the screen when a holder's run left rows alone; None otherwise.
+        "heldBackDetail": held_back_detail(sum(held_back.values())) if held_back else None,
     }
 
 
@@ -813,7 +891,40 @@ def _chunks(values: list[str], size: int) -> list[list[str]]:
     return [values[index : index + size] for index in range(0, len(values), size)]
 
 
-async def apply_workshop_mapping() -> dict[str, Any]:
+async def _rows_held_from(run: LadderRun, user: Any) -> dict[str, set[str]]:
+    """``{bucket: ids}`` of the RESOLVED rows that belong to a design workshop ``user`` holds an
+    inspection or oversight post on — the rows the bulk map leaves alone when THEY press it.
+
+    Two reads and nothing per row for a caller who holds no post anywhere, which is almost every
+    administrator (``design_workshop_posts.supervisory_workshops_of``). For a holder: a record is
+    held when it is filed under one of their workshops — one read per bucket — and a file when it
+    belongs to one by any of the five ways (``design_workshop_posts.media_held_among``, a fixed
+    number of reads however many files). The ladder already leaves out what a design workshop's
+    column or tag claims; this is asked of the rows themselves anyway, so it does not depend on that.
+    """
+    held_workshops = await design_workshop_posts.supervisory_workshops_of(user)
+    if not held_workshops:
+        return {}
+    workshops = sorted(held_workshops)
+    held: dict[str, set[str]] = {}
+    for bucket, delegate_name, _singular, _plural in BUCKETS:
+        ids = [row.id for row in run.plans[bucket].resolved]
+        found: set[str] = set()
+        for chunk in _chunks(ids, _WRITE_CHUNK):
+            if bucket == "media":
+                rows = await db.mediafile.find_many(where={"id": {"in": chunk}})
+                found |= await design_workshop_posts.media_held_among(rows, workshops)
+            else:
+                rows = await getattr(db, delegate_name).find_many(
+                    where={"id": {"in": chunk}, "designWorkshopId": {"in": workshops}}
+                )
+                found |= {row.id for row in rows}
+        if found:
+            held[bucket] = found
+    return held
+
+
+async def apply_workshop_mapping(*, user: Any) -> dict[str, Any]:
     """Stamp every row the ladder resolved, and return the plan that was applied.
 
     RE-DERIVES the plan rather than accepting one from the client. A client-supplied plan is a
@@ -829,13 +940,24 @@ async def apply_workshop_mapping() -> dict[str, Any]:
 
     The writes are driven off the UN-TRUNCATED plan, never off the ``rows`` list in the payload — that
     list is capped for the wire, and driving writes from it would silently stop at forty rows a bucket.
+
+    **A ROW OF A WORKSHOP THE CALLER INSPECTS OR SUPERVISES IS LEFT ALONE, AND COUNTED (2026-10-09).**
+    The stamp is a write to that row, and its workshop's holders write none of its content by any
+    door (``design_workshop_posts`` rule 5). The run is the server's own derivation rather than the
+    holder's choice, so it is not refused whole: the held rows are skipped, reported per bucket as
+    ``heldBack`` with one sentence for the screen (:data:`HELD_BACK_DETAIL`), and stay on the report
+    for an administrator who holds no post there. ``user`` is required so no caller can leave it out.
     """
     run = await run_ladder()
+    held = await _rows_held_from(run, user)
     applied: dict[str, int] = {}
     for bucket, delegate_name, _singular, _plural in BUCKETS:
         delegate = getattr(db, delegate_name)
+        left_alone = held.get(bucket, set())
         grouped: dict[str, list[str]] = {}
         for row in run.plans[bucket].resolved:
+            if row.id in left_alone:
+                continue
             grouped.setdefault(str(row.workshopId), []).append(row.id)
         changed = 0
         for workshop_id, ids in grouped.items():
@@ -846,7 +968,7 @@ async def apply_workshop_mapping() -> dict[str, Any]:
                 )
                 changed += int(result or 0)
         applied[bucket] = changed
-    return payload_for(run, applied)
+    return payload_for(run, applied, {bucket: len(ids) for bucket, ids in held.items()})
 
 
 # ---------------------------------------------------------------------------------------------
@@ -950,7 +1072,50 @@ async def _media_kept_by(bucket: str, record_id: str) -> int:
     return await db.mediafile.count(where={"linkedRecordId": record_id})
 
 
-async def file_one_unmapped(bucket: str, record_id: str, workshop_id: str) -> dict[str, Any]:
+async def _design_workshops_claiming(bucket: str, row: Any) -> set[str]:
+    """Every DESIGN workshop that claims this row: the one a record is filed under, or every one a
+    file belongs to by any of the five ways ``design_workshop_posts.media_design_workshop_ids``
+    reads — its column, its tag, a stage entry holding it, an AI layer made from it, the record it
+    hangs off. The ladder's reads leave out the first two; this is the answer for all five."""
+    if bucket == "media":
+        return await design_workshop_posts.media_design_workshop_ids(row)
+    workshop_id = str(getattr(row, "designWorkshopId", None) or "")
+    return {workshop_id} if workshop_id else set()
+
+
+async def _refuse_a_holder(claimed: set[str], user: Any) -> None:
+    """403 naming the post when ``user`` inspects or supervises a design workshop that claims the row.
+
+    The rule every other write to that record or file obeys — ``record_design_workshop`` for the
+    record forms, ``refuse_a_holders_media_write`` for the media doors — asked through the one
+    implementation both of those use, over the workshops :func:`_design_workshops_claiming` found.
+    A role that can hold no post is answered from memory.
+    """
+    for workshop_id in sorted(claimed):
+        await design_workshop_posts.refuse_a_holders_write(workshop_id, user)
+
+
+async def _claimed_detail(noun: str, title: str, claimed: set[str]) -> str:
+    """The 409 for a discard of a row a design workshop claims, naming the workshop or workshops."""
+    found = await db.designworkshop.find_many(where={"id": {"in": sorted(claimed)}})
+    names = sorted(
+        f"“{getattr(workshop, 'title', '') or 'Untitled workshop'}”" for workshop in found
+    )
+    if not names:
+        where = "a design workshop"
+    elif len(names) == 1:
+        where = f"the design workshop {names[0]}"
+    else:
+        where = "the design workshops " + ", ".join(names[:-1]) + " and " + names[-1]
+    return (
+        f"“{title}” belongs to {where}, so it is not one of the unfiled records and is not deleted "
+        f"from here. Open the {noun} itself to change or delete it."
+    )
+
+
+async def file_one_unmapped(
+    bucket: str, record_id: str, workshop_id: str, *, user: Any
+) -> dict[str, Any]:
     """File ONE named record under ONE named workshop, chosen by a person.
 
     This is the rung the ladder does not have and cannot have: somebody who knows where they were.
@@ -964,8 +1129,15 @@ async def file_one_unmapped(bucket: str, record_id: str, workshop_id: str) -> di
     The workshop is looked up rather than trusted: a stale picker (a workshop deleted while the
     report was on screen) would otherwise fail on the foreign key with a 500 and no sentence anybody
     can act on.
+
+    **NOT FOR THE INSPECTOR OR A DIRECTOR OF A DESIGN WORKSHOP THAT CLAIMS THE ROW (2026-10-09).** A
+    ``PATCH`` of a record filed under a workshop is refused to its holders whatever it carries, and
+    so is every write to a file it holds; this door wrote ``workshopId`` onto both, with no revision,
+    so it asks the same question (403, ``design_workshop_posts.write_refusal``) before the workshop
+    lookup and the write. ``user`` is required so no caller can leave it out.
     """
-    delegate, _row, noun, title = await _require_unfiled(bucket, record_id)
+    delegate, row, noun, title = await _require_unfiled(bucket, record_id)
+    await _refuse_a_holder(await _design_workshops_claiming(bucket, row), user)
     workshop = await db.workshop.find_unique(where={"id": workshop_id})
     if workshop is None:
         raise HTTPException(
@@ -996,7 +1168,7 @@ async def file_one_unmapped(bucket: str, record_id: str, workshop_id: str) -> di
     }
 
 
-async def discard_one_unmapped(bucket: str, record_id: str) -> dict[str, Any]:
+async def discard_one_unmapped(bucket: str, record_id: str, *, user: Any) -> dict[str, Any]:
     """Delete ONE named record permanently. There is no undo and nothing here pretends otherwise.
 
     WHY A HARD DELETE. The other half of "this record needs a person" is that some of these records
@@ -1018,11 +1190,31 @@ async def discard_one_unmapped(bucket: str, record_id: str) -> dict[str, Any]:
     ``media.delete_media``, so the two paths to deleting a media file cannot leave the bucket in two
     different states. A storage failure does not fail the request: the row (the user-visible record)
     is gone, and the alternative is a request that reports failure after succeeding.
+
+    **NEVER A ROW A DESIGN WORKSHOP CLAIMS (2026-10-09), FOR ANY ADMINISTRATOR.** Its crafts column
+    is NULL, so it reached this report, but it is not unfiled: a stage photograph, a roster artisan,
+    a record filed under the workshop. Deleting it here took it out of the workshop's report with
+    nothing to say so, by a door none of the workshop's own rules watched. So the workshop's
+    inspector or director is refused first with the post named (403, the rule every write to that
+    workshop's content obeys), and everybody else with a 409 naming the workshop and sending them to
+    the record's or file's own screen — whose delete asks what the record forms and media doors ask.
+    Both before anything is counted, deleted or removed from storage.
     """
     delegate, row, noun, title = await _require_unfiled(bucket, record_id)
+    claimed = await _design_workshops_claiming(bucket, row)
+    await _refuse_a_holder(claimed, user)
+    if claimed:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=await _claimed_detail(noun, title, claimed),
+        )
     kept = await _media_kept_by(bucket, record_id)
     object_key = getattr(row, "objectKey", None) if bucket == "media" else None
-    changed = await delegate.delete_many(where={"id": record_id, "workshopId": None})
+    # The ladder's own definition of unfiled in the delete's ``where``, design-workshop columns
+    # included, so a row a designer files under a design workshop between the check above and this
+    # statement is not deleted either.
+    unfiled = _UNFILED_MEDIA if bucket == "media" else _UNFILED_RECORD
+    changed = await delegate.delete_many(where={**unfiled, "id": record_id})
     if not int(changed or 0):
         # Same race, same treatment as the assign: re-run the guard so a row filed in between is
         # refused by name instead of reported as deleted when it is still there.

@@ -3,6 +3,8 @@ package com.designprototype.workshop.ui
 import com.designprototype.workshop.data.SignInHint
 import com.designprototype.workshop.data.UserDto
 import com.designprototype.workshop.data.signInHint
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.runBlocking
 import okhttp3.Headers
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.ResponseBody.Companion.toResponseBody
@@ -11,6 +13,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Test
 import retrofit2.HttpException
 import retrofit2.Response
@@ -43,6 +46,16 @@ import java.io.IOException
  *    feature's privacy argument rests on". A client that started parsing the body would make that
  *    server-side rule impossible to keep.
  *
+ * Four more arrived with the server-side gate on 2026-10-09 (sections 7 to 10): the gate's words
+ * blame nobody and are the server's own; a password is refused as its own replacement; the carried
+ * one becomes a box once the server has refused it; and a set-password link is offered by "has a
+ * password", never by "is not Google".
+ *
+ * And one more with the sessions bound to their password (section 11): an ended sign-in says which
+ * password to type, and a change whose answer was lost is never reported as "nothing has changed"
+ * on the strength of the missing answer alone. The probe paths themselves, over the app's own
+ * Retrofit, are in `ChangePasswordSessionTest`.
+ *
  * ── AND ONE RULE ABOUT WORDS THAT MUST MATCH ACROSS TWO CLIENTS ──────────────────────────────────
  *
  * A designer who cannot get into the phone opens the website next. `signInHintHeading` here and
@@ -60,6 +73,15 @@ class PasswordSetupCopyTest {
         name = "A Designer",
         role = "DESIGNER",
         mustChangePassword = mustChange
+    )
+
+    private fun account(provider: String?, passwordSetAt: String?): UserDto = UserDto(
+        id = "u2",
+        email = "someone@example.org",
+        name = "Someone",
+        role = "DESIGNER",
+        authProvider = provider,
+        passwordSetAt = passwordSetAt
     )
 
     private fun refusal(code: Int, hint: String?): HttpException {
@@ -273,11 +295,20 @@ class PasswordSetupCopyTest {
     fun `the second clause is the caller's and the first is not`() {
         // The gate must not tell somebody about a link they are not holding, and the redeem screen
         // must say that its link works once. So the suffix varies and the floor does not.
-        val gate = passwordRuleLine("Other devices stay signed in.")
+        val gate = passwordRuleLine(PASSWORD_CHANGE_SESSIONS)
         val redeem = passwordRuleLine("This link works once.")
         assertTrue(gate.startsWith(passwordRuleLine()))
         assertTrue(redeem.startsWith(passwordRuleLine()))
         assertFalse("the gate never mentions a link", gate.lowercase().contains("link"))
+    }
+
+    @Test
+    fun `the gate says the change signs every other device out, as the web's forms do`() {
+        // Since 2026-10-09 a change ends every session of the account but the fresh one its answer
+        // carries. "Other devices stay signed in." — what this line said until then — is now the one
+        // thing it must not say, about the tablet in the next room and about whoever else signed in
+        // with a temporary password. The web's `PASSWORD_CHANGE_SESSIONS`, word for word.
+        assertEquals("You stay signed in here, and are signed out everywhere else.", PASSWORD_CHANGE_SESSIONS)
     }
 
     // ── 6. The purpose line beside an issued link ────────────────────────────────────────────────
@@ -295,5 +326,263 @@ class PasswordSetupCopyTest {
     fun `a purpose this build does not know still says what the link is`() {
         assertTrue(passwordLinkPurposeLine(null).isNotBlank())
         assertTrue(passwordLinkPurposeLine("SOMETHING_NEW").isNotBlank())
+    }
+
+    // ── 7. The gate's words ──────────────────────────────────────────────────────────────────────
+
+    @Test
+    fun `the gate's sentence is the server's own, word for word`() {
+        // The detail a session held at the gate is refused with, and the web gate's sentence. A
+        // person who meets the gate in three places must read one thing.
+        assertEquals("Choose a new password to continue.", PASSWORD_GATE_SENTENCE)
+    }
+
+    @Test
+    fun `the gate does not say an administrator chose the password`() {
+        // It is no longer true of everybody it is shown to: an administrator can require a change of
+        // a password the person chose themselves, and "an administrator set your password" then
+        // reads as somebody having been into the account.
+        listOf(PASSWORD_GATE_HEADING, PASSWORD_GATE_SENTENCE).forEach { words ->
+            assertTrue(words.isNotBlank())
+            assertFalse(words, words.lowercase().contains("administrator"))
+            assertFalse(words, words.lowercase().contains("your own"))
+        }
+        assertFalse("a heading that repeats the sentence says nothing", PASSWORD_GATE_HEADING == PASSWORD_GATE_SENTENCE)
+    }
+
+    // ── 8. What the screens refuse before spending a request ─────────────────────────────────────
+
+    @Test
+    fun `a new password that matches its repeat and is not the current one may be sent`() {
+        assertNull(newPasswordRefusal(next = "brand-new-1", confirm = "brand-new-1", current = "temporary-1"))
+    }
+
+    @Test
+    fun `a mismatched repeat is caught here, because the server never sees it`() {
+        assertEquals(
+            "The two passwords do not match.",
+            newPasswordRefusal(next = "brand-new-1", confirm = "brand-new-2", current = "temporary-1")
+        )
+    }
+
+    @Test
+    fun `the password being replaced is refused as its own replacement`() {
+        // THE LOAD-BEARING ONE. Re-entering the temporary password used to satisfy the gate and leave
+        // the shared secret as the live password, with every screen treating it as self-chosen.
+        val same = newPasswordRefusal(next = "temporary-1", confirm = "temporary-1", current = "temporary-1")
+        assertNotNull(same)
+        assertFalse(
+            "it must not be mistaken for a typo in the repeat box",
+            same == newPasswordRefusal(next = "a-1234567", confirm = "b-1234567")
+        )
+    }
+
+    @Test
+    fun `with no current password to compare, nothing is compared`() {
+        // The redeem screen holds no current password, and the gate holds none until one is typed:
+        // an empty one must never match anything and refuse a perfectly good choice.
+        assertNull(newPasswordRefusal(next = "brand-new-1", confirm = "brand-new-1"))
+        assertNull(newPasswordRefusal(next = "brand-new-1", confirm = "brand-new-1", current = ""))
+    }
+
+    @Test
+    fun `passwords are compared exactly, never trimmed`() {
+        // A space is part of a password. Trimming here would refuse a different password as "the
+        // same", or let the same one through as different on a server that does not trim either.
+        assertNull(newPasswordRefusal(next = " temporary-1", confirm = " temporary-1", current = "temporary-1"))
+        assertNull(newPasswordRefusal(next = "Temporary-1", confirm = "Temporary-1", current = "temporary-1"))
+    }
+
+    @Test
+    fun `the floor and the ceiling are the server's`() {
+        assertEquals(200, MAX_PASSWORD_LENGTH)
+        val floor = "a".repeat(MIN_PASSWORD_LENGTH)
+        val ceiling = "a".repeat(MAX_PASSWORD_LENGTH)
+        val over = "a".repeat(MAX_PASSWORD_LENGTH + 1)
+        val under = "a".repeat(MIN_PASSWORD_LENGTH - 1)
+        assertNull(newPasswordRefusal(next = floor, confirm = floor))
+        assertNull(newPasswordRefusal(next = ceiling, confirm = ceiling))
+        assertEquals(passwordRuleLine(), newPasswordRefusal(next = under, confirm = under))
+        val tooLong = newPasswordRefusal(next = over, confirm = over)
+        assertNotNull(tooLong)
+        assertTrue("the sentence names the ceiling", tooLong!!.contains(MAX_PASSWORD_LENGTH.toString()))
+    }
+
+    @Test
+    fun `the ceiling counts characters, as the server does, not UTF-16 units`() {
+        // An emoji is one character to the server and two `Char`s to Kotlin. Counting units would
+        // refuse a password the server accepts.
+        val face = "😀"
+        val atCeiling = face.repeat(MAX_PASSWORD_LENGTH)
+        val overCeiling = face.repeat(MAX_PASSWORD_LENGTH + 1)
+        assertNull(newPasswordRefusal(next = atCeiling, confirm = atCeiling))
+        assertNotNull(newPasswordRefusal(next = overCeiling, confirm = overCeiling))
+    }
+
+    // ── 9. When the carried password becomes a box ───────────────────────────────────────────────
+
+    @Test
+    fun `a 400 puts the current-password box on screen`() {
+        // A wrong current password is a 400 since 2026-10-09. Without the box, the hidden carried
+        // password could not be corrected and "Sign out instead" was the only control that worked.
+        assertTrue(passwordGateAsksForCurrentAfter(400))
+    }
+
+    @Test
+    fun `nothing else does`() {
+        // 401 is the session, not the password; 429 is the guessing budget; 422 is the new password's
+        // shape; null is no answer at all. None of them says the carried password was wrong.
+        listOf(401, 403, 422, 429, 500, null).forEach { status ->
+            assertFalse("HTTP $status", passwordGateAsksForCurrentAfter(status))
+        }
+    }
+
+    // ── 10. Who an administrator may send a password link to ─────────────────────────────────────
+
+    @Test
+    fun `an account with a password is offered a link whatever its provider says`() {
+        // THE CASE THAT WAS WRONG. A Google sign-in used to rewrite the provider to GOOGLE and keep
+        // the password; the button then vanished for an account that most needed a reset.
+        assertTrue(passwordLinkOffered(account(provider = "GOOGLE", passwordSetAt = "2026-10-01T09:00:00Z")))
+        assertTrue(passwordLinkOffered(account(provider = "LOCAL", passwordSetAt = "2026-10-01T09:00:00Z")))
+    }
+
+    @Test
+    fun `an account that has never had a password is not offered one, whatever its provider`() {
+        // A link would give a password to an account that never had one without anybody deciding
+        // to; that is a decision for the web's users page. The web keys its button identically.
+        assertFalse(passwordLinkOffered(account(provider = "GOOGLE", passwordSetAt = null)))
+        assertFalse(passwordLinkOffered(account(provider = "LOCAL", passwordSetAt = null)))
+        assertFalse(passwordLinkOffered(account(provider = null, passwordSetAt = null)))
+        assertFalse(passwordLinkOffered(account(provider = "GOOGLE", passwordSetAt = "")))
+    }
+
+    // ── 11. When a session has ended, and when a change's answer is lost ─────────────────────────
+
+    /** An answer from `POST /auth/change-password`, with the headers given as name, value, …. */
+    private fun answered(code: Int, vararg headers: String): HttpException = HttpException(
+        Response.error<Any>(
+            "{\"detail\":\"whatever the server wrote\"}".toResponseBody("application/json".toMediaTypeOrNull()),
+            okhttp3.Response.Builder()
+                .code(code)
+                .message("refused")
+                .protocol(okhttp3.Protocol.HTTP_1_1)
+                .headers(Headers.headersOf(*headers))
+                .request(okhttp3.Request.Builder().url("http://localhost/api/auth/change-password").build())
+                .build()
+        )
+    )
+
+    @Test
+    fun `a sign-in that has ended says why, and which password to type`() {
+        // "Your session expired" gave no reason, and since 2026-10-09 the usual one is a password
+        // changed somewhere else — so the person must be told to use the NEW one.
+        assertEquals(
+            "This sign-in has ended. If your password was changed on another device or by an " +
+                "administrator, sign in with the new one.",
+            SESSION_ENDED_SENTENCE
+        )
+    }
+
+    @Test
+    fun `a change that may have landed names both passwords, new first`() {
+        assertEquals(
+            "Your new password may already be in effect. Sign in with it; if it is refused, use the one " +
+                "you were given.",
+            PASSWORD_MAY_ALREADY_BE_IN_EFFECT
+        )
+    }
+
+    @Test
+    fun `a change nobody could confirm never says nothing has changed`() {
+        // THE CLAIM THAT LOCKED PEOPLE OUT. Told nothing had changed, they typed the temporary password
+        // at the door, were refused, and concluded they were locked out of an account whose new
+        // password worked all along.
+        listOf(PASSWORD_MAY_ALREADY_BE_IN_EFFECT, PASSWORD_CHANGE_UNCONFIRMED).forEach { words ->
+            assertFalse(words, words.contains("nothing has changed"))
+            assertTrue(words, words.contains("use the one you were given"))
+        }
+        assertTrue(PASSWORD_CHANGE_UNCONFIRMED.contains("Try again"))
+    }
+
+    @Test
+    fun `the gate's usual words are the ones it always showed`() {
+        assertEquals(
+            "Your new password did not reach the server, so nothing has changed. Try again.",
+            PASSWORD_CHANGE_NOT_SENT
+        )
+        assertEquals(
+            "This phone has no connection, so nothing has changed. Try again where there is a signal.",
+            PASSWORD_CHANGE_NOT_SENT_OFFLINE
+        )
+    }
+
+    @Test
+    fun `an answer from the route settles the change`() {
+        // Refused before the write, with a sentence that says why.
+        listOf(400, 403, 404, 422, 429).forEach { status ->
+            assertTrue("HTTP $status", changePasswordOutcomeKnown(answered(status)))
+        }
+        // The gate's own 401 is a live session still owing a password: nothing was written.
+        assertTrue(changePasswordOutcomeKnown(answered(401, "X-Password-Change-Required", "1")))
+    }
+
+    @Test
+    fun `no answer, a 5xx or a plain 401 settles nothing`() {
+        // The server commits before it answers and retires the token the change was sent with, so a
+        // failure that may have come after the send says nothing about the password.
+        assertFalse(changePasswordOutcomeKnown(IOException("timeout")))
+        assertFalse(changePasswordOutcomeKnown(IOException()))
+        listOf(500, 502, 503, 504).forEach { status ->
+            assertFalse("HTTP $status", changePasswordOutcomeKnown(answered(status)))
+        }
+        assertFalse("a plain 401", changePasswordOutcomeKnown(answered(401)))
+    }
+
+    @Test
+    fun `a refusal the route answered is shown at once, and nothing is asked`() {
+        var probed = false
+        val verdict = runBlocking {
+            passwordGateAfterFailure(answered(400), online = true) {
+                probed = true
+                user(mustChange = true)
+            }
+        }
+        assertEquals(PasswordGateAfterFailure.Stay("whatever the server wrote"), verdict)
+        assertFalse("a settled refusal must not be followed by a probe", probed)
+    }
+
+    @Test
+    fun `a probe that confirms the flag shows the usual words, online or not`() {
+        // A failure with no words of its own, then `GET /me` says the account still owes a password:
+        // nothing landed, so "nothing has changed" is now true.
+        val flagged = user(mustChange = true)
+        assertEquals(
+            PasswordGateAfterFailure.Stay(PASSWORD_CHANGE_NOT_SENT),
+            runBlocking { passwordGateAfterFailure(IOException(), online = true) { flagged } }
+        )
+        assertEquals(
+            PasswordGateAfterFailure.Stay(PASSWORD_CHANGE_NOT_SENT_OFFLINE),
+            runBlocking { passwordGateAfterFailure(IOException(), online = false) { flagged } }
+        )
+    }
+
+    @Test
+    fun `a screen that has left decides nothing`() {
+        // `runCatching` in the gate catches a cancellation along with everything else; it must come
+        // straight back out rather than be read as a failed change and probed.
+        var probed = false
+        try {
+            runBlocking {
+                passwordGateAfterFailure(CancellationException("left"), online = true) {
+                    probed = true
+                    user(mustChange = true)
+                }
+            }
+            fail("a cancellation was swallowed")
+        } catch (expected: CancellationException) {
+            assertEquals("left", expected.message)
+        }
+        assertFalse("a cancelled screen must not probe", probed)
     }
 }

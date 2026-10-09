@@ -84,6 +84,7 @@ import {
   inspectionFieldReading,
   inspectionIsReadOnly,
   inspectionMayOpen,
+  inspectionRefusalMeansNoPosts,
   type DwInspectionDetail
 } from "@/lib/designWorkshopInspections";
 import {
@@ -110,6 +111,7 @@ import {
 import { formatDate } from "@/lib/format";
 import { isUnreachable } from "@/lib/offline";
 import { canInspectDesignWorkshops, roleLabel } from "@/lib/permissions";
+import type { User } from "@/lib/types";
 
 /**
  * The failures this page can suffer, told apart in words.
@@ -121,15 +123,20 @@ import { canInspectDesignWorkshops, roleLabel } from "@/lib/permissions";
  * probe which workshop ids exist. So this sentence must not guess either. It names the two states
  * the reader can actually do something about and attributes neither.
  */
-function describeFailure(error: unknown): string {
+function describeFailure(error: unknown, user: User | null | undefined): string {
   if (!(error instanceof ApiError) || isUnreachable(error)) {
     return "This device cannot reach the repository, so this workshop could not be read. Nothing is missing from the record — nothing was read at all.";
+  }
+  if (inspectionRefusalMeansNoPosts(error, user)) {
+    // An administering tier the server will not yet show this surface to holds no inspection posts
+    // anywhere — so none here either. Said as that, not as the server's door-shaped sentence.
+    return "This workshop is not open to you to inspect: you do not hold any inspection posts. A Ministry Admin, an admin or the master admin appoints inspectors on Workshop oversight.";
   }
   if (error.status === 403) {
     return error.message;
   }
   if (error.status === 404) {
-    return "This workshop is not open to you. Either it is not assigned to you to inspect, or it has been deleted since your list was loaded. An admin assigns inspections on Manage workshop access.";
+    return "This workshop is not open to you. Either you have not been appointed to inspect it, or it has been deleted since your list was loaded. A Ministry Admin, an admin or the master admin appoints inspectors on Workshop oversight.";
   }
   return error.message || "This workshop could not be read.";
 }
@@ -602,7 +609,7 @@ export default function WorkshopUnderInspectionPage({ params }: { params: Promis
       })
       .catch((err) => {
         if (cancelled) return;
-        setError(describeFailure(err));
+        setError(describeFailure(err, user));
       });
     return () => {
       cancelled = true;
@@ -640,8 +647,9 @@ export default function WorkshopUnderInspectionPage({ params }: { params: Promis
   const overall = useMemo(() => overallPercent(detail?.completeness), [detail]);
 
   /*
-    THE SERVER'S OWN PREDICATE, MIRRORED. `assert_inspection_surface` refuses everybody outside
-    `INSPECTION_ROLES` — admins and the master admin included — so this is not a narrowing.
+    THE SERVER'S OWN PREDICATE, MIRRORED. `assert_inspection_surface` refuses everybody who may not
+    be appointed to inspect — since 2026-10-09 the three administering tiers may be, and a designer, a
+    professor and the two directorate posts may not — so this is not a narrowing.
   */
   if (!loading && !canInspectDesignWorkshops(user)) {
     return (
@@ -655,8 +663,9 @@ export default function WorkshopUnderInspectionPage({ params }: { params: Promis
             Inspector / Reviewer access required
           </h1>
           <p className="mx-auto mt-3 max-w-lg text-sm leading-6 text-ink-500">
-            The inspection surface belongs to the Inspector / Reviewer tier. Designers and admins read design &amp;
-            prototype workshops on Design workshops instead.
+            A workshop under inspection is read by whoever was appointed to inspect it — the Inspector / Reviewer
+            tier, a Ministry Admin, an admin or the master admin. Designers read design &amp; prototype workshops on
+            Design workshops instead.
           </p>
           <p className="mt-3 text-xs text-ink-500">
             You are signed in as <span className="font-medium text-ink-700">{roleLabel(user?.role)}</span>.

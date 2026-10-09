@@ -7,8 +7,11 @@ import android.database.Cursor
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.Uri
+import androidx.annotation.VisibleForTesting
+import com.designprototype.workshop.data.TokenStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import java.util.concurrent.atomic.AtomicBoolean
@@ -88,6 +91,32 @@ object DwInductionFlusher {
     private val watching = AtomicBoolean(false)
 
     /**
+     * The password gate held a pass back, or was up while one went out and came back gated;
+     * [resumeAfterPasswordGate] runs one when it clears. Without this those rows would wait for the
+     * next network change or process start, because those are the only things that call [flushNow] —
+     * and the cold start that met the gate has already happened.
+     */
+    @VisibleForTesting
+    internal val heldForPassword = AtomicBoolean(false)
+
+    /**
+     * The pass itself. A seam ONLY so `DwInductionFlusherTest` can count passes with no queue file
+     * and no server — the hold-and-resume contract is "exactly one pass", and a count is the one
+     * thing that can say so. Nothing in the app assigns it.
+     */
+    @VisibleForTesting
+    internal var flushPass: suspend (Context) -> Unit = { DwInductionQueue.flush(it) }
+
+    /**
+     * The pass [flushNow] launched most recently, so a test can wait for it rather than for a clock,
+     * and can tell "no pass was launched" from "one has not finished yet". Read by nothing else.
+     */
+    @VisibleForTesting
+    @Volatile
+    internal var lastPass: Job? = null
+        private set
+
+    /**
      * Start watching for connectivity, and drain whatever is already waiting.
      *
      * THE IMMEDIATE FLUSH IS THE HALF THAT MATTERS MOST, and it is why this is called from a provider
@@ -133,9 +162,18 @@ object DwInductionFlusher {
     fun flushNow(context: Context) {
         val app = context.applicationContext
         if (!running.compareAndSet(false, true)) return
-        scope.launch {
+        lastPass = scope.launch {
             try {
-                DwInductionQueue.flush(app)
+                // NOT WHILE THE SIGNED-IN ACCOUNT OWES A NEW PASSWORD. The server answers both routes
+                // with a gated 401 until it has one; the rows would survive that (a 401 is queued, not
+                // refused), but each pass would spend a request and an attempt on every row for an
+                // answer already known. Read here, on IO, and not in `watch`, which runs on the
+                // provider's thread at process start and must touch no file.
+                if (mustChangePasswordBlocks(TokenStore(app).getUser())) {
+                    heldForPassword.set(true)
+                    return@launch
+                }
+                flushPass(app)
             } catch (error: Exception) {
                 if (error is kotlinx.coroutines.CancellationException) throw error
                 // SWALLOWED ON PURPOSE, AND THE QUEUE IS WHY IT IS SAFE. Every row whose send did not
@@ -146,6 +184,25 @@ object DwInductionFlusher {
                 running.set(false)
             }
         }
+    }
+
+    /**
+     * The gate is on screen. Called by `RepositoryApp` while it is, so the pass after it clears runs
+     * even where no pass was skipped: a profile cached before the flag was raised lets one pass go out
+     * at process start, and its rows come back gated — kept, since a 401 is queued — with nothing else
+     * due to send them again.
+     */
+    fun holdForPasswordGate() {
+        heldForPassword.set(true)
+    }
+
+    /**
+     * Run the pass the password gate held back, now that the account may send again — and nothing at
+     * all when no pass was held, so a sign-in does not become a new moment at which queued scans go
+     * out. Called by `RepositoryApp` when its own sync loop starts.
+     */
+    fun resumeAfterPasswordGate(context: Context) {
+        if (heldForPassword.compareAndSet(true, false)) flushNow(context)
     }
 }
 

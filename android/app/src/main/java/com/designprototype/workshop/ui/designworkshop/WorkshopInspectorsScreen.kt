@@ -83,15 +83,20 @@ private const val SEARCH_DEBOUNCE_MS = 350L
  * role check at all. This screen decides who may EXAMINE it. An inspection row admits its holder to
  * a single read-only route and to nothing else — no stage write, no report, no dictation consent, no
  * AI-layer acceptance, no delete, no re-granting, no media and no questionnaire responses. The two
- * are separate tables on purpose, and the server refuses at import time to let their role sets
- * overlap, so that one account can never hold both on one workshop.
+ * are separate tables on purpose, and the server never lets one account hold both on one workshop:
+ * an author of a workshop is refused its inspection, and its inspector is refused every write to it.
+ * (Until 2026-10-09 that was an import-time check that the two role SETS never overlapped; the
+ * owner's ruling of that date lets the administering tiers hold either kind of post, so the rule
+ * moved to the workshop, where it was always meant.)
  *
  * ── THE PERMISSION, READ OFF THE ROUTES AND NOT GUESSED ──────────────────────────────────────────
  *
- * `Depends(require_admin)` on both administration routes — `deps.is_admin`, so {ADMIN, MASTER_ADMIN}
- * and nobody else. **AND THE ARGUMENT IS STRONGER HERE THAN ON THE VIEWERS SCREEN.** That one is
- * admin-only for a handover reason: an owner who chooses their own readers freezes their workshop's
- * access the day they leave. This one is admin-only because it is the point of the tier —
+ * `Depends(require_workshop_assigner)` on all three administration routes — a Ministry Admin, an
+ * admin or the master admin, and nobody else. On this handset it is the two admin tiers only, because
+ * ministry surfaces are web-only; see [mayAdministerInspections]. **AND THE ARGUMENT IS STRONGER HERE
+ * THAN ON THE VIEWERS SCREEN.** That one is closed to designers for a handover reason: an owner who
+ * chooses their own readers freezes their workshop's access the day they leave. This one is closed
+ * to them because it is the point of the tier —
  *
  *     THE INSPECTED MUST NOT CHOOSE THE INSPECTOR.
  *
@@ -106,14 +111,14 @@ private const val SEARCH_DEBOUNCE_MS = 350L
  *
  * ── THE REFUSALS THE SERVER MAKES THAT THIS SCREEN DOES NOT PRE-EMPT ─────────────────────────────
  *
- * `_assert_every_id_may_inspect` refuses the workshop's CREATOR and any co-designer holding a viewer
- * row, BY NAME, with "an independent review by somebody who worked on it is not a review". This
- * screen deliberately does not filter those accounts out of the picker: filtering would hide a
- * MISTAKE an admin needs to be told about behind a silent no-op, and the two role sets are disjoint
- * today so the case is only reachable through a promotion — a DESIGNER holding a viewer row later
- * made an INSPECTOR — which is exactly the case nothing else in the codebase would notice. The 422
- * is passed through verbatim, because that sentence knows which account it is about and this client
- * does not.
+ * `_assert_every_id_may_inspect` refuses, BY NAME and with a 409, anybody who AUTHORED the workshop
+ * (a designer row on it, or a stage they wrote) or is its Assistant or Regional Director: "nobody
+ * inspects or supervises work they authored". Merely creating it stopped counting on 2026-10-09 —
+ * administrators open workshops as an administrative act. This screen deliberately does not filter
+ * those accounts out of the picker: filtering would hide a MISTAKE an admin needs to be told about
+ * behind a silent no-op. The refusal is passed through verbatim, because that sentence knows which
+ * account it is about and this client does not. The one account the picker does leave out is the
+ * admin holding the phone — nobody appoints themselves; see `dwInspectorChoices`.
  *
  * ── AND IT NEEDS A CONNECTION, WHICH THIS APP HAS TO SAY OUT LOUD ────────────────────────────────
  *
@@ -215,8 +220,9 @@ fun WorkshopInspectorsScreen(
 
         // The workshop's TITLE, for the heading — and nothing else is read off this call. The
         // viewers screen needs `createdById` from it because the creator is held out of its picker;
-        // here the creator is refused by the SERVER by name rather than hidden by the client, so
-        // there is no id to fetch and no state for it to be stale in.
+        // here nobody is held out for what they did to the workshop — the SERVER refuses an author by
+        // name rather than the client hiding them — so there is no id to fetch and no state for it
+        // to be stale in.
         runCatching { repository.designWorkshop(remoteId) }
             .onSuccess { title = it.title }
             .onFailure { error ->
@@ -387,10 +393,15 @@ fun WorkshopInspectorsScreen(
             color = MaterialTheme.field.muted,
             fontSize = 12.sp
         )
+        // THE WEB PANEL'S SENTENCE, WORD FOR WORD, and no longer "an Inspector / Reviewer assigned
+        // here": since 2026-10-09 the server offers this screen admin accounts as well (see the hint
+        // under the picker), so a sentence naming only the tier was false on the screen it described.
         Text(
-            "An inspection is READ-ONLY: an Inspector / Reviewer assigned here can open every stage " +
-                "of this workshop and change none of it. Only an admin decides who inspects what — " +
-                "the designers who run a workshop have no say in who examines it, and cannot be its " +
+            "An inspection is READ-ONLY: whoever is assigned here can open every stage of this " +
+                "workshop and change none of it — an admin appointed to inspect it loses their own " +
+                "write access to it for as long as they hold the post. A Ministry Admin, an admin " +
+                "or the master admin decides who inspects what, and never appoints themselves; the " +
+                "designers who run a workshop have no say in who examines it, and cannot be its " +
                 "inspector themselves.",
             color = MaterialTheme.field.muted,
             fontSize = 12.sp
@@ -460,10 +471,13 @@ fun WorkshopInspectorsScreen(
             val answered = offer.users.mapTo(HashSet()) { it.id }
             seenEligible.values.filter { it.id !in answered && it.id in selection.selected }
         }
-        val choices = remember(offer, retained, served) {
+        val choices = remember(offer, retained, served, viewer?.id) {
             dwInspectorChoices(
                 eligible = offer.users,
                 inspectors = served,
+                // Never offered as a new choice, and their own row never marked ineligible — the
+                // server leaves the person appointing out of its answer, which says nothing else.
+                readerId = viewer?.id,
                 // The one claim a searched or cut list cannot support.
                 eligibleListComplete = offer.complete,
                 retained = retained,
@@ -528,23 +542,29 @@ fun WorkshopInspectorsScreen(
             options = choices.map { it.asOption() },
             selected = selection.selected,
             placeholder = "Select one or more inspectors",
-            // TWO MESSAGES, because they are two different facts: "nobody holds the tier" is a
-            // statement about the repository, "nothing matched" is a statement about the term just
+            // TWO MESSAGES, because they are two different facts: "nobody else may be appointed" is
+            // a statement about the repository, "nothing matched" is a statement about the term just
             // typed, and the whole defect this pattern was fixed for is those two looking identical.
+            // The web panel's two, word for word. "Else", because the reader is never offered.
             emptyMessage = if (offer.search != null) {
-                "No Inspector / Reviewer account matches that search."
+                "No account that may inspect matches that search."
             } else {
-                "No account holds the Inspector / Reviewer tier yet"
+                "Nobody else may be appointed to inspect yet"
             },
             enabled = !saving,
             onSelectedChange = { picked -> selection = selection.withSelection(picked) }
         )
+        // WHO IS OFFERED, as the server decides it for every client — this handset included, although
+        // its own menus keep ministry and admin work web-only. The list it describes arrives here
+        // unfiltered, so the sentence follows the list (the web panel's hint, word for word).
         Text(
-            "Only accounts holding the Inspector / Reviewer tier are offered, and only those the " +
-                "platform access list still admits — assigning somebody who cannot sign in would " +
-                "leave this screen saying they are inspecting while they are shown a refusal at the " +
-                "door. Unticking somebody ends their inspection when you save. At most " +
-                "$DW_INSPECTOR_LIMIT accounts.",
+            "Inspector / Reviewer accounts are offered, and so are Ministry Admin, admin and master " +
+                "admin accounts — never you — and only those the platform access list still admits: " +
+                "assigning somebody who cannot sign in would leave this screen saying they are " +
+                "inspecting while they are shown a refusal at the door. Somebody who worked on this " +
+                "workshop, or who is its Assistant Director or Regional Director, is refused when " +
+                "you save, with the reason. Unticking somebody ends their inspection when you save. " +
+                "At most $DW_INSPECTOR_LIMIT accounts.",
             color = MaterialTheme.field.muted,
             fontSize = 11.sp
         )
@@ -631,7 +651,12 @@ fun WorkshopInspectorsScreen(
 // --------------------------------------------------------------------------------------
 
 /**
- * `require_admin` — `deps.is_admin`, so ADMIN and MASTER_ADMIN and nobody else.
+ * `deps.is_admin` — ADMIN and MASTER_ADMIN, and nobody else.
+ *
+ * NARROWER THAN THE SERVER, ON PURPOSE. The routes are `require_workshop_assigner`, which has also
+ * admitted a Ministry Admin since 0.0.12; ministry surfaces are web-only
+ * (`docs/DECISION-ministry-surfaces-web-only.md`), so on this handset the screen stays with the two
+ * admin tiers.
  *
  * A FUNCTION rather than a remembered Boolean, so the screen's chrome and the write's own guard are
  * provably the same rule instead of two readings of it that can drift by one clause.
@@ -643,9 +668,9 @@ fun WorkshopInspectorsScreen(
  * `canManageDesignerRoster` and `canManageAccessRoster` apart.
  *
  * DELIBERATELY NOT [FieldPermissions.canInspectDesignWorkshops], which is the predicate for the
- * OTHER door and would be exactly wrong here: it admits an INSPECTOR and refuses an admin, so using
- * it would hand the appointment screen to the people being appointed and take it from the only tier
- * allowed to appoint them.
+ * OTHER door and would be exactly wrong here: on this handset it admits an INSPECTOR and refuses an
+ * admin, so using it would hand the appointment screen to the people being appointed and take it
+ * from the tiers allowed to appoint them.
  */
 internal fun mayAdministerInspections(user: UserDto?): Boolean =
     user != null && FieldPermissions.isAdmin(user)

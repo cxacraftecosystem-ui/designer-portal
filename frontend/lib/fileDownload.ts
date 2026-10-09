@@ -148,13 +148,17 @@ export async function fetchFile(path: string, fallbackName: string): Promise<Fet
       typeof payload === "object" && payload && "detail" in payload
         ? (payload as { detail: unknown }).detail
         : undefined;
+    // The HEADERS too, as `apiFetch` hands them: they are what tells a password-gate 401 apart from an
+    // expired sign-in (`ApiError.passwordChangeRequired`), and without them this download's refusal
+    // read as the second to every classifier that asked.
     throw new ApiError(
       response.status,
       describeApiDetail(
         detail,
         response.statusText || `The server refused the request (HTTP ${response.status}).`
       ),
-      payload
+      payload,
+      response.headers
     );
   }
 

@@ -51,6 +51,9 @@ class DesignWorkshopInspectionsTest {
     private fun assigned(id: String, name: String = id, role: String = "INSPECTOR") =
         DwInspectorDto(userId = id, name = name, email = "$id@example.org", role = role)
 
+    /** The admin holding the phone — somebody none of the cases below is about, unless it says so. */
+    private val reader = "u-reader"
+
     /** Configured exactly as `ApiClient` configures the converter Retrofit actually uses. */
     private val json = Json {
         ignoreUnknownKeys = true
@@ -71,6 +74,7 @@ class DesignWorkshopInspectionsTest {
         val choices = dwInspectorChoices(
             eligible = listOf(eligible("u-active")),
             inspectors = listOf(assigned("u-barred")),
+            readerId = reader,
             eligibleListComplete = true,
         )
 
@@ -91,6 +95,7 @@ class DesignWorkshopInspectionsTest {
         val choices = dwInspectorChoices(
             eligible = listOf(eligible("u-match")),
             inspectors = listOf(assigned("u-elsewhere")),
+            readerId = reader,
             eligibleListComplete = false,
         )
         assertTrue(choices.none { it.assignedButIneligible })
@@ -103,6 +108,7 @@ class DesignWorkshopInspectionsTest {
         val choices = dwInspectorChoices(
             eligible = listOf(eligible("u-second")),
             inspectors = emptyList(),
+            readerId = reader,
             eligibleListComplete = false,
             retained = listOf(eligible("u-first")),
         )
@@ -114,14 +120,17 @@ class DesignWorkshopInspectionsTest {
     fun `the workshop's creator is NOT filtered out, unlike the viewers picker`() {
         // THE DELIBERATE DIVERGENCE FROM `dwViewerChoices`, and it is the point of the tier rather
         // than an oversight. There the creator is dropped because `_deduplicate` drops them anyway
-        // and a control that cannot do what it appears to reads as broken. Here they are refused BY
-        // NAME with a 422 — "an independent review by somebody who worked on it is not a review" —
-        // so hiding them would bury a MISTAKE an admin needs to be told about behind a silent no-op.
+        // and a control that cannot do what it appears to reads as broken. Here nobody is dropped for
+        // what they did to the workshop: since 2026-10-09 creating one is not authoring it (an
+        // administrator opens workshops as an administrative act), and an AUTHOR is refused BY NAME
+        // with a 409 when the admin saves — so hiding anybody here would bury a MISTAKE an admin needs
+        // to be told about behind a silent no-op.
         //
         // The signature is the evidence: there is no `creatorId` parameter to pass.
         val choices = dwInspectorChoices(
-            eligible = listOf(eligible("u-creator", role = "DESIGNER"), eligible("u-b")),
+            eligible = listOf(eligible("u-creator", role = "ADMIN"), eligible("u-b")),
             inspectors = emptyList(),
+            readerId = reader,
             eligibleListComplete = true,
         )
         assertEquals(listOf("u-creator", "u-b"), choices.map { it.userId })
@@ -132,6 +141,7 @@ class DesignWorkshopInspectionsTest {
         val choices = dwInspectorChoices(
             eligible = listOf(eligible(""), eligible("u-a")),
             inspectors = listOf(assigned("u-a"), assigned("")),
+            readerId = reader,
             eligibleListComplete = true,
         )
         assertEquals(listOf("u-a"), choices.map { it.userId })
@@ -139,6 +149,49 @@ class DesignWorkshopInspectionsTest {
             "an account in BOTH lists is an ordinary eligible option, not a marked one",
             choices.single().assignedButIneligible
         )
+    }
+
+    @Test
+    fun `the reader's own inspection is kept, and never called barred`() {
+        // Since 2026-10-09 an admin may be appointed to inspect — by ANOTHER admin — and the server
+        // leaves the person appointing out of `eligible-inspectors`. So on a COMPLETE list the
+        // reader's own row is absent from the eligible answer for being the reader, and marking it
+        // "assigned, no longer eligible" would tell an admin they had been barred by the platform
+        // access list while they sit signed in. Dropping the row instead would be worse: the
+        // whole-set PUT would end their inspection on the next save.
+        val choices = dwInspectorChoices(
+            eligible = listOf(eligible("u-a")),
+            inspectors = listOf(assigned(reader, role = "ADMIN"), assigned("u-barred")),
+            readerId = reader,
+            eligibleListComplete = true,
+        )
+
+        assertEquals(listOf("u-a", reader, "u-barred"), choices.map { it.userId })
+        assertFalse(
+            "the reader is missing from the eligible list for being the reader, which says nothing " +
+                "about the access list",
+            choices.first { it.userId == reader }.assignedButIneligible
+        )
+        assertTrue(
+            "the rule still marks everybody else it can prove",
+            choices.first { it.userId == "u-barred" }.assignedButIneligible
+        )
+    }
+
+    @Test
+    fun `the reader is never offered as a new choice, from any answer`() {
+        // Nobody appoints themselves, and the save names a reader who does with a 409. The server
+        // already leaves the caller out; this is the line that holds if a server ever does not, and
+        // for an account an earlier answer named and a search has since narrowed out.
+        val choices = dwInspectorChoices(
+            eligible = listOf(eligible(reader, role = "ADMIN"), eligible("u-a")),
+            inspectors = emptyList(),
+            readerId = reader,
+            eligibleListComplete = false,
+            retained = listOf(eligible(reader, role = "ADMIN")),
+        )
+
+        assertEquals(listOf("u-a"), choices.map { it.userId })
     }
 
     // ── The pending set ──────────────────────────────────────────────────────────────────────────
@@ -200,8 +253,11 @@ class DesignWorkshopInspectionsTest {
             "Too many matches to show them all — narrow the search.",
             dwInspectorOfferNotice(DwEligibleInspectors(truncated = true, search = "sharma"))
         )
+        // NOT "No Inspector / Reviewer account …" since 2026-10-09: the server offers admin accounts
+        // beside the tier, so naming only the tier would tell an admin searching for a colleague by
+        // name that admins are not offered. The web's `eligibleInspectorNotice` says the same words.
         assertEquals(
-            "No Inspector / Reviewer account matches that search.",
+            "No account that may inspect matches that search.",
             dwInspectorOfferNotice(DwEligibleInspectors(search = "sharma"))
         )
     }
@@ -285,17 +341,22 @@ class DesignWorkshopInspectionsTest {
 
     @Test
     fun `the 403 names both doors, because either one of them may be the refusal`() {
-        // A 403 here can mean two opposite things — an admin refused the inspector's READ surface, or
-        // a non-admin refused the appointment routes — which is why the server's own
-        // NOT_AN_INSPECTOR_DETAIL is written to name the other door and is passed through FIRST.
-        val said = dwInspectionFailureMessage(
-            403,
-            "The inspection surface belongs to the Inspector / Reviewer tier.",
-            DwInspectionAttempt.READ
-        )
-        assertTrue(said.startsWith("The inspection surface belongs to the Inspector / Reviewer tier. "))
+        // A 403 here can mean two different things — a role that may hold no inspection refused the
+        // inspector's READ surface, or an account that may not appoint refused the appointment routes
+        // — which is why the server's own NOT_AN_INSPECTOR_DETAIL is written to name the other door
+        // and is passed through FIRST. That sentence, as the server words it since 2026-10-09:
+        val notAnInspector = "The inspection surface belongs to the accounts that may be appointed " +
+            "to inspect a workshop: the Inspector / Reviewer tier, Ministry Admins, admins and the " +
+            "master admin."
+        val said = dwInspectionFailureMessage(403, notAnInspector, DwInspectionAttempt.READ)
+        assertTrue(said.startsWith("$notAnInspector "))
         assertTrue(said.contains("two different"))
         assertTrue("a rule is not a fault, and the sentence has to say so", said.contains("Neither is a fault."))
+        // AND THE CLAUSE AFTER IT NO LONGER CONTRADICTS IT. Until that date it said "only an Inspector
+        // / Reviewer can read a workshop under inspection", which the ruling made false — directly
+        // after a server sentence listing the admin tiers.
+        assertFalse(said.contains("only an Inspector / Reviewer"))
+        assertTrue(said.contains("read by the accounts appointed to inspect it"))
     }
 
     @Test
@@ -303,8 +364,10 @@ class DesignWorkshopInspectionsTest {
         // `_assert_every_id_may_inspect` already names the offending account and already ends with
         // "Nothing was changed." — and its refusals STACK, so it may name several people. Repeating
         // either half would be this client talking over the one message written for this moment.
-        val detail = "Meena Iyer (meena@example.org) is already on this workshop as its creator or " +
-            "a co-designer, so they cannot be its inspector. Nothing was changed."
+        val detail = "Meena Iyer (meena@example.org) is barred by the platform access list, so they " +
+            "cannot sign in at all. Clear that on the access screen first; an inspection row on its " +
+            "own would leave this screen saying they are inspecting while they are shown a refusal " +
+            "at the door. Nothing was changed."
         val said = dwInspectionFailureMessage(422, detail, DwInspectionAttempt.SAVE)
         assertTrue(said.contains(detail))
         assertEquals(

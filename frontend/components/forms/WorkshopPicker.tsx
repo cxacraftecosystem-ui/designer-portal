@@ -599,13 +599,21 @@ export function useWorkshopPicker({
 export function WorkshopPicker({
   state,
   onDirty,
-  saving
+  saving,
+  disabled = false
 }: {
   state: WorkshopPickerState;
   onDirty?: () => void;
   saving?: boolean;
+  /**
+   * Hold both boxes for a reason other than a save in flight — today, a record filed under a design
+   * workshop the reader holds a post on, which they may not move out (`useRecordFilingHold`). The form
+   * says why beside its Save; the boxes only stop moving.
+   */
+  disabled?: boolean;
 }) {
   const { typeKey, routesToDesignWorkshop, view } = state;
+  const held = Boolean(saving) || disabled;
   // Named so the paragraph explaining what the box IS reaches the control itself. A hint a reader
   // only meets by looking underneath the field is a hint a screen-reader user never meets at all.
   const baseId = useId();
@@ -646,7 +654,7 @@ export function WorkshopPicker({
           */
           emptyLabel="No types of workshop are set up. An administrator can add them."
           ariaLabel="Type of workshop"
-          disabled={saving}
+          disabled={held}
           describedBy={hintId}
           /*
             NO FOCUS ADVANCE. `advanceOnSelect` exists for a box you fill in and move past; this one
@@ -690,10 +698,10 @@ export function WorkshopPicker({
           label="Workshop"
           noneLabel={NO_FIELD_WORKSHOP}
           onDirty={onDirty}
-          saving={saving}
+          saving={held}
         />
       ) : (
-        <WorkshopSelect state={view.field} label="Workshop" onDirty={onDirty} saving={saving} />
+        <WorkshopSelect state={view.field} label="Workshop" onDirty={onDirty} saving={held} />
       )}
     </div>
   );

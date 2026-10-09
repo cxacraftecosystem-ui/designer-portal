@@ -30,8 +30,23 @@ const DONE = new Set(["COMPLETED", "DONE", "EMPTY"]);
  *
  * `POST /media/{id}/transcribe-now` is `require_admin` AND 400s anything that is not AUDIO, so the
  * button renders only when both hold — never a control that exists to be refused.
+ *
+ * AND IT IS HELD, NOT HIDDEN, FOR AN ADMIN WHO HOLDS A POST ON THE FILE'S WORKSHOP (2026-10-09): the
+ * server refuses a post holder every write to that workshop's content, a re-run transcript included
+ * (`design_workshop_posts.refuse_a_holders_media_write`). `readOnlyReason` — the caller's, from
+ * `mediaHeldReason` — disables the button and says why where "Runs immediately…" would be, as the
+ * other held screens print theirs; the server's 403 still prints verbatim if one arrives anyway.
  */
-export function TranscriptBlock({ media, onUpdated }: { media: MediaFile; onUpdated?: (updated: MediaFile) => void }) {
+export function TranscriptBlock({
+  media,
+  onUpdated,
+  readOnlyReason = null
+}: {
+  media: MediaFile;
+  onUpdated?: (updated: MediaFile) => void;
+  /** Why the re-run is held, or null when it is not. See the header. */
+  readOnlyReason?: string | null;
+}) {
   const { user } = useAuth();
   // The transcript is hoisted into local state (Android: `remember(media.id)`) so a fresh run
   // replaces what is on screen immediately, instead of waiting for the parent's next list fetch.
@@ -54,6 +69,7 @@ export function TranscriptBlock({ media, onUpdated }: { media: MediaFile; onUpda
   const player = isAudio && current.url ? <AudioPlayer src={current.url} className="mt-2" /> : null;
 
   async function transcribeNow() {
+    if (readOnlyReason) return;
     setRunning(true);
     setFailure(null);
     try {
@@ -81,11 +97,22 @@ export function TranscriptBlock({ media, onUpdated }: { media: MediaFile; onUpda
   const control =
     isAdmin(user) && current.mediaType === "AUDIO" ? (
       <div className="mt-2 flex flex-wrap items-center gap-2">
-        <button type="button" className="field-button-secondary" onClick={transcribeNow} disabled={running}>
+        <button
+          type="button"
+          className="field-button-secondary"
+          onClick={transcribeNow}
+          disabled={running || Boolean(readOnlyReason)}
+        >
           {running ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <AudioLines className="h-4 w-4" aria-hidden />}
           {running ? "Transcribing…" : hasText ? "Re-transcribe now" : "Transcribe now"}
         </button>
-        <span className="text-xs text-ink-500">Runs immediately, bypassing the queue and the off-peak window.</span>
+        {/* The amber pair and not amber ink alone: this sits on a themed card that inverts, and
+            `amber-800` on the dark ground is unreadable. Worded, never the greyed button alone. */}
+        {readOnlyReason ? (
+          <span className="rounded-md bg-amber-100 px-2 py-0.5 text-xs text-amber-800">{readOnlyReason}</span>
+        ) : (
+          <span className="text-xs text-ink-500">Runs immediately, bypassing the queue and the off-peak window.</span>
+        )}
       </div>
     ) : null;
 

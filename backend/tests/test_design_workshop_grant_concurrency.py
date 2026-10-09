@@ -244,7 +244,7 @@ def world(monkeypatch: pytest.MonkeyPatch):
     for module in (grants, access, viewers):
         monkeypatch.setattr(module, "db", db)
 
-    async def _every_id_is_fine(_user_ids: set[str]) -> None:
+    async def _every_id_is_fine(_user_ids: set[str], **_workshop_context: Any) -> None:
         return None
 
     monkeypatch.setattr(grants, "_assert_every_id_may_be_granted", _every_id_is_fine)

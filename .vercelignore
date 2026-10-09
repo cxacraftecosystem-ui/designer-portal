@@ -15,8 +15,13 @@
 # top-level directory, so if a deploy starts failing on the 10 MB limit again, the fix is to name the
 # new directory here, not to reach for the negation form a second time.
 #
-# NOTE: the presence of this file means the CLI stops consulting .gitignore, so build and dev output
-# has to be named again below even though git already ignores it.
+# NOTE: THE CLI NEVER READS .gitignore, WITH OR WITHOUT THIS FILE. Until 2026-10-09 this note said
+# the file's presence "stops" the CLI consulting it, which implied that deleting the file would bring
+# .gitignore back; it would not. Vercel CLI 59.5.0 builds its upload ignore set from a built-in list
+# plus this file (or a `.nowignore`) and nothing else, so build and dev output has to be named below
+# even though git ignores it. Without this file only the built-in list applies (`.git`, `.vercel`,
+# `.next`, `node_modules`, `.env.local`, `.env.*.local` and a few more): not `.env`, `.env.vercel`,
+# `.env.e2e` or `*.p12`, and none of the directories below.
 #
 # Verified 2026-08-23: `next build` under Root Directory `frontend` reads nothing outside frontend/ —
 # frontend/vercel.json is the config Vercel picks up, and neither next.config.ts, tsconfig.json nor
@@ -62,3 +67,26 @@
 /.env
 .env.local
 .env.*.local
+
+# 2026-10-09: what the three lines above let through. They stopped at `/.env`, and the root of a
+# working checkout holds more than that: `.env.vercel` (a Vercel token), `.env.e2e` (an end-to-end
+# login and password) and `designrepo-release.p12`, the Android release keystore. All three are
+# gitignored, but the CLI never reads .gitignore (see the NOTE at the top), so a manual non-prebuilt
+# `vercel deploy` from the root would upload them as source files of a deployment that everybody in
+# the team can read for as long as it exists.
+#
+# `/.env.*` IS ANCHORED, which is the whole lesson of the paragraph above. It matches root files
+# only, so `frontend/.env.example` and `frontend/.env.local.example` still travel. Checked against
+# the source of Vercel CLI 59.5.0 and its bundled @vercel/next 6.0.0 on 2026-10-09: the Next.js
+# builder attaches every `.env` and `.env.*` file in the ROOT DIRECTORY (frontend/) to every
+# function, which is how a file nobody reads ended up in a function's `filePathMap`. On a `--prebuilt`
+# deploy, a map entry this file matches is not uploaded, and Vercel then fails on the missing file.
+# It reads no other directory for them, so nothing a function references lives at the repository
+# root. The key-material patterns are unanchored on purpose: a keystore or a private key is never a
+# build input, wherever it sits. None of them matches a file under frontend/ outside node_modules/,
+# and a map entry under node_modules/ is uploaded whatever this file says.
+/.env.*
+*.p12
+*.jks
+*.keystore
+*.pem

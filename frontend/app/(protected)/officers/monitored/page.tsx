@@ -19,12 +19,17 @@
  * empties the list. The correct empty state and a silent failure look identical, and the person
  * reading this has no other surface to cross-check against.
  *
- * ── AN ADMIN IS REFUSED HERE, AND THE REFUSAL NAMES THE OTHER DOOR ───────────────────────────
+ * ── SINCE 2026-10-09 THE PAGE IS AN ADMIN'S TOO, AND "NONE" HAS ONE SENTENCE ─────────────────
  *
- * `assert_oversight_surface` answers an ADMIN and a MASTER ADMIN a 403 by name, so this page mirrors
- * the server rather than narrowing it. An admin told only "forbidden" on a READ surface, in a
- * product where admins read everything, will reasonably conclude the deployment is broken — so the
- * panel names Workshop oversight, which is the half of this feature they DO hold.
+ * Until the owner's ruling D3, `assert_oversight_surface` answered an ADMIN and a MASTER ADMIN a 403
+ * by name — they could hold no oversight row, so their page could only ever be empty — and a
+ * Ministry Admin was admitted to a page that was always empty for the same reason. The ruling lets
+ * all three be named Assistant Director or Regional Director on a workshop, so this page is theirs
+ * and lists exactly the workshops they were named on. The empty state names the posts THIS reader
+ * may hold ({@link oversightEmptyState}), and a 403 met by an admin means "no posts held" — a server
+ * that admits them only once they hold a row, or one older than the ruling — so it is drawn as that
+ * empty state rather than as a banner ({@link oversightRefusalMeansNoPosts}). A directorate tier
+ * refused here has met a fault and still gets the banner.
  */
 
 import Link from "next/link";
@@ -43,7 +48,12 @@ import { formatDate } from "@/lib/format";
 import { isUnreachable } from "@/lib/offline";
 import { canReadWorkshopOversight, roleLabel } from "@/lib/permissions";
 import type { PageResult } from "@/lib/types";
-import { listOverseenWorkshops, OVERSIGHT_SEARCH_MAX } from "../oversight";
+import {
+  listOverseenWorkshops,
+  OVERSIGHT_SEARCH_MAX,
+  oversightEmptyState,
+  oversightRefusalMeansNoPosts
+} from "../oversight";
 
 const PAGE_SIZE = 20;
 
@@ -98,6 +108,13 @@ export default function WorkshopsIMonitorPage() {
       })
       .catch((err) => {
         if (generation.current !== current) return;
+        if (oversightRefusalMeansNoPosts(err, user)) {
+          // NOT A FAILURE: an admin the server will not yet show this list to holds no posts, and
+          // that is exactly what the empty state says. See the header.
+          setData({ items: [], total: 0, page: 1, pageSize: PAGE_SIZE, pages: 0 });
+          setError(null);
+          return;
+        }
         // The list is NOT emptied. An empty table under an error banner reads as "nothing is
         // assigned to me", which is the one thing this screen must never say by accident.
         setError(describeFailure(err));
@@ -114,7 +131,7 @@ export default function WorkshopsIMonitorPage() {
             /officers/monitored is a ministry surface and `AppShell` stamps `data-surface="ministry"`
             on it, so its panels, borders and header chip took the ministry ramp in 0.0.12. This
             padlock did not, because a refusal is shown to somebody who is NOT a ministry account —
-            a designer, a professor, an admin — and putting the ministry's own colour around the
+            a designer, a professor, an inspector — and putting the ministry's own colour around the
             notice that they are not of the ministry would be a lie told in colour.
           */}
           <div className="mx-auto mb-4 grid h-12 w-12 place-items-center rounded-full bg-purple-50 text-purple-700">
@@ -124,10 +141,11 @@ export default function WorkshopsIMonitorPage() {
             Officer access required
           </h1>
           <p className="mx-auto mt-3 max-w-lg text-sm leading-6 text-ink-500">
-            Workshops I monitor lists the design &amp; prototype workshops a Ministry Admin has
-            assigned to this account as its Assistant Director or Regional Director. Designers and
-            admins read design &amp; prototype workshops on Design workshops instead; a Ministry
-            Admin chooses who monitors a workshop on Workshop oversight.
+            Workshops I monitor lists the design &amp; prototype workshops an account has been named
+            on as Assistant Director or Regional Director, so it opens for whoever may be named: the
+            Assistant Director and Regional Director posts, a Ministry Admin, an admin and the master
+            admin. Designers read design &amp; prototype workshops on Design workshops instead; who
+            monitors a workshop is chosen on Workshop oversight.
           </p>
           <p className="mt-3 text-xs text-ink-500">
             You are signed in as <span className="font-medium text-ink-700">{roleLabel(user?.role)}</span>.
@@ -151,7 +169,7 @@ export default function WorkshopsIMonitorPage() {
     <div>
       <PageHeader
         title="Workshops I monitor"
-        description="The design & prototype workshops a Ministry Admin has assigned you to supervise. You can read every stage of one and change none of it."
+        description="The design & prototype workshops you have been named on as Assistant Director or Regional Director. You can read every stage of one and change none of it."
         icon={<Binoculars className="h-5 w-5" aria-hidden />}
       />
 
@@ -179,18 +197,7 @@ export default function WorkshopsIMonitorPage() {
           <div className="p-4 text-sm text-ink-700">Loading…</div>
         ) : rows.length === 0 ? (
           <div className="p-4">
-            <EmptyState
-              title={
-                applied
-                  ? "No workshop you monitor matches that search"
-                  : "No workshop is assigned to you"
-              }
-              body={
-                applied
-                  ? "This searches only the workshops assigned to you, which is the whole of what you can read here. Clear the search to see them all."
-                  : "A Ministry Admin assigns an Assistant Director and a Regional Director one workshop at a time, on Workshop oversight. Until they have, there is nothing here to read — this page is not hiding anything from you, and nothing failed to load."
-              }
-            />
+            <EmptyState {...oversightEmptyState(Boolean(applied), user)} />
           </div>
         ) : (
           <ul className="divide-y divide-line-200">

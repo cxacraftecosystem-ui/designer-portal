@@ -115,7 +115,11 @@ class ArtisanCreate(APIModel):
     #
     # GATED ON WRITE by ``record_design_workshop.assert_payload_workshop`` — the caller must be the
     # workshop's creator, an admin, or hold a viewer grant, exactly as ``load_workshop_or_404``
-    # requires. Without that check any client could file a record into a stranger's workshop.
+    # requires. Without that check any client could file a record into a stranger's workshop. And
+    # since 2026-10-09 neither filing into a workshop, nor taking a record out of one, nor any other
+    # write to a record filed there is open to that workshop's inspector or its two directors (403,
+    # naming the post). A review edit cannot carry this key at all
+    # (``review._NOT_REVIEW_EDITABLE``): filing belongs on the record's own PATCH, behind this gate.
     designWorkshopId: str | None = None
     status: str = "PENDING"
     recordedAt: datetime | None = None

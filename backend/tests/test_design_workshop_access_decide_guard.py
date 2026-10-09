@@ -35,11 +35,25 @@ import pytest
 from fastapi import HTTPException
 
 import app.services.design_workshop_access as access
+import app.services.design_workshop_posts as posts
 
 WORKSHOP_ID = "cmdecideguard00000000000a"
 REQUEST_ID = "cmdecideguard00000000000r"
 REQUESTER_ID = "cmdecideguard00000000000u"
 ADMIN_ID = "cmdecideguard00000000000d"
+
+
+@pytest.fixture(autouse=True)
+def _the_deciding_admin_serves_on_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Since 2026-10-09 a decision first asks whether the admin holds the workshop's inspection or
+    one of its director posts — two reads this module does not fake, and a refusal
+    ``tests/test_admin_serve_as.py`` proves. Every admin here holds none, so the guard under test is
+    the one reached."""
+
+    async def _holds_no_post(workshop_id: str, user_ids: Any) -> dict[str, frozenset[str]]:
+        return {}
+
+    monkeypatch.setattr(posts, "supervisory_posts_among", _holds_no_post)
 
 
 class _Requests:

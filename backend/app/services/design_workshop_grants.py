@@ -243,7 +243,8 @@ from typing import Any
 from fastapi import HTTPException, status
 
 from app.core.db import db
-from app.core.deps import is_admin
+from app.core.deps import can_run_design_workshops, is_admin
+from app.services import design_workshop_posts as posts
 from app.services.design_workshop_access import ScannedCodeRefused, add_one_viewer, code_check
 from app.services.design_workshop_viewers import (
     _assert_every_id_may_be_granted,
@@ -642,7 +643,14 @@ async def _workshop_for_issuer_or_404(workshop_id: str, issuer: Any) -> Any:
     away — and it is bounded three ways: single-use only, a cap on outstanding cards
     (:data:`VIEWER_OUTSTANDING_GRANT_LIMIT`), and every card visible with its issuer and revocable on
     the admin's screen. A PROVISIONAL foothold is deliberately NOT enough: somebody whose own
-    standing has not been adjudicated must not be able to admit anybody.
+    standing has not been adjudicated must not be able to admit anybody. And since 2026-10-09 none
+    of the three PRINTS while they hold the workshop's inspection or one of its director posts —
+    :func:`mint_grant` asks that after this; listing and revoking, which this decides alone, do not.
+
+    **THE VIEWER ARM ASKS THE ROLE FIRST, AS ``load_workshop_or_404`` DOES.** A viewer row is
+    honoured only while its holder can still run a workshop; a designer moved to RESEARCHER keeps the
+    row and can no longer open the workshop, and until this clause could still print, list and revoke
+    cards that let other people in. One rule for both doors, and the same 404 a stranger gets.
     """
     wanted = plain(workshop_id).strip().lower()
     not_found = HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Record not found")
@@ -663,7 +671,7 @@ async def _workshop_for_issuer_or_404(workshop_id: str, issuer: Any) -> Any:
         raise not_found
     if is_admin(issuer) or workshop.createdById == issuer_id:
         return workshop
-    if await has_viewer_grant(wanted, issuer_id):
+    if can_run_design_workshops(issuer) and await has_viewer_grant(wanted, issuer_id):
         return workshop
     raise not_found
 
@@ -752,7 +760,14 @@ async def mint_grant(
 
     # THE RECORD IS READ AND THE ISSUER CHECKED BEFORE ANYTHING IS WRITTEN, and the order matters
     # only in that a refusal must not leave a card behind.
-    await _workshop_for_issuer_or_404(record_id, issuer)
+    workshop = await _workshop_for_issuer_or_404(record_id, issuer)
+    # AND NOT BY SOMEBODY WHO SERVES ON THIS WORKSHOP (2026-10-09). A card is the designer team by
+    # proxy — scanning one is "equivalent to an admin adding somebody" — and the workshop's inspector
+    # and its two directors read that team and do not add to it. The 403 every such write gives
+    # them (``design_workshop_posts.refuse_a_holders_write``), AFTER the issuer check so a caller who
+    # may not print cards here still gets the ordinary 404. Listing and revoking cards stay theirs:
+    # one reads, the other only stops a card admitting anybody further.
+    await posts.refuse_a_holders_write(workshop.id, issuer)
     issuer_id = getattr(issuer, "id", "")
 
     wanted_days = DEFAULT_GRANT_DAYS if days_valid is None else days_valid
@@ -1083,8 +1098,13 @@ async def _try_to_give_the_seat_back(token_id: str, *, seats_taken: int) -> None
         )
 
 
-async def _why_the_redeemer_cannot_be_a_viewer(user_id: str) -> str | None:
+async def _why_the_redeemer_cannot_be_a_viewer(user_id: str, workshop_id: str) -> str | None:
     """The sentence ``design_workshop_viewers`` would refuse this account with, or ``None``.
+
+    ASKED ABOUT THIS WORKSHOP, since 2026-10-09: the workshop's own inspector or Assistant or Regional
+    Director may not hold a viewer row on it (``services/design_workshop_posts``), so a card scanned by
+    one of them lands as a foothold rather than as the designer access their post forbids — the same
+    INELIGIBLE outcome as any other account the grant rule refuses.
 
     **THE RULE IS IMPORTED AND NEVER COPIED.** ``_assert_every_id_may_be_granted`` is the same
     function the admin viewers screen validates with: it reads the designer roster AND the platform
@@ -1104,14 +1124,18 @@ async def _why_the_redeemer_cannot_be_a_viewer(user_id: str) -> str | None:
     ASKED BEFORE THE SEAT IS TAKEN, so an account that cannot hold a viewer row never spends one —
     which is why there is no seat to give back on this path.
 
-    422 ONLY. Any other status is a fault rather than an eligibility answer and is left to propagate:
-    turning a 500 into ``INELIGIBLE`` would tell somebody their empanelment had lapsed when the
-    database was simply unreachable.
+    422 AND 409 ONLY — the account-level refusals and the workshop's separation of duties. Any other
+    status is a fault rather than an eligibility answer and is left to propagate: turning a 500 into
+    ``INELIGIBLE`` would tell somebody their empanelment had lapsed when the database was simply
+    unreachable.
     """
     try:
-        await _assert_every_id_may_be_granted({user_id})
+        await _assert_every_id_may_be_granted({user_id}, workshop_id=workshop_id)
     except HTTPException as refusal:
-        if refusal.status_code != status.HTTP_422_UNPROCESSABLE_ENTITY:
+        if refusal.status_code not in (
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status.HTTP_409_CONFLICT,
+        ):
             raise
         return str(refusal.detail)
     return None
@@ -1376,11 +1400,12 @@ async def redeem(
         # returned and `usesConsumed` is untouched — without this, one person spends a multi-use card
         # once per device they own.
         outcome = str(getattr(prior.outcome, "value", prior.outcome))
+        prior_reason = str(getattr(prior.reason, "value", prior.reason))
         return {
             "outcome": outcome,
-            "reason": str(getattr(prior.reason, "value", prior.reason)),
+            "reason": prior_reason,
             "workshopId": token.recordId,
-            "detail": (_FULL_DETAIL if outcome == "FULL" else _PROVISIONAL_DETAIL),
+            "detail": (_FULL_DETAIL if outcome == "FULL" else _provisional_detail(prior_reason)),
         }
 
     # READ BEFORE ANYTHING IS WRITTEN, so the log line on the grant path can say whether a card has
@@ -1423,7 +1448,9 @@ async def redeem(
         # authority that decides order, so a device clock cannot buy an extension. But it is not
         # thrown away either — the fieldwork behind it is real.
         reason = "EXPIRED"
-    elif (ineligible := await _why_the_redeemer_cannot_be_a_viewer(user_id)) is not None:
+    elif (
+        ineligible := await _why_the_redeemer_cannot_be_a_viewer(user_id, token.recordId)
+    ) is not None:
         # THIS ACCOUNT CANNOT HOLD A VIEWER ROW — off the designer roster, barred by the platform
         # allow-list, or a role that cannot run a workshop at all. **ASKED BEFORE THE SEAT, so the
         # card is not spent** and can still admit somebody once the roster is fixed. Requirement 6
@@ -1432,9 +1459,12 @@ async def redeem(
         # becomes a foothold and a queue row an admin can see.
         #
         # THE SENTENCE IS LOGGED AND NOT RETURNED. It names another screen and, for the role arm, the
-        # account's own role; the redeemer gets `_PROVISIONAL_DETAIL` like every other provisional
-        # outcome, because a redemption answer that varied with the reason would be a second, quieter
-        # refusal — and requirement 6 forbids refusing anybody.
+        # account's own role — and for the workshop's own inspector or director, their post — so the
+        # redeemer gets `_INELIGIBLE_DETAIL` instead, which is a foothold's promise like every other
+        # provisional answer and says nothing of why: an answer that named the reason would be a
+        # second, quieter refusal, and requirement 6 forbids refusing anybody. It is a sentence of
+        # its own (2026-10-09) only because `_PROVISIONAL_DETAIL` opens "That card had already been
+        # used", which is false here — this card was never spent.
         logger.warning(
             "join card could not grant a viewer row because the redeemer's own account is not "
             "eligible (token=%s workshop=%s user=%s): %s",
@@ -1629,7 +1659,7 @@ async def redeem(
         "outcome": "PROVISIONAL",
         "reason": reason,
         "workshopId": token.recordId,
-        "detail": _PROVISIONAL_DETAIL,
+        "detail": _provisional_detail(reason),
     }
 
 
@@ -1660,3 +1690,49 @@ _PROVISIONAL_DETAIL = (
     "scanned the card; once they confirm you, everything you have recorded is already in place. "
     "Until then you will not see anybody else's stages."
 )
+
+#: What an ``INELIGIBLE`` foothold says (2026-10-09): the scanner's own account could not be given a
+#: viewer row — off the designer roster, barred by the allow-list, a role that cannot run a
+#: workshop, or the workshop's own inspector or director — and the card's seat was never taken.
+#:
+#: ITS OWN SENTENCE ONLY BECAUSE :data:`_PROVISIONAL_DETAIL`'S FIRST CLAUSE IS FALSE HERE. The rest
+#: is that sentence's promise, kept: not on the workshop, nothing lost, an administrator can see the
+#: scan, nobody else's stages. And it names NO reason — no roster, no role, no post — for the
+#: argument at the INELIGIBLE arm of :func:`redeem`: a redemption answer that said why would be a
+#: refusal by another name. "If they add you" and not "once they confirm you", because for some of
+#: these accounts no administrator can — and the sentence must not promise what may not happen.
+_INELIGIBLE_DETAIL = (
+    "That card cannot put your account on this workshop by itself, so you are not on it yet — but "
+    "nothing you record is lost, and the card was not used up. You can keep capturing your own "
+    "work here and an administrator can see that you scanned the card; if they add you, "
+    "everything you have recorded is already in place. Until then you will not see anybody else's "
+    "stages."
+)
+
+
+#: What a within-grace ``EXPIRED`` foothold says (2026-10-09). The card's date had passed by the
+#: time the scan reached the server — which is the authority on expiry, so a scan made in time on a
+#: handset with no signal lands here — and, like ``INELIGIBLE``, its seat was never taken. The
+#: header's enumeration rule is why it may say "date" at all: only a genuine card reaches this arm.
+#: "Once they confirm you" rather than "if they add you", because the scan is a PENDING request in
+#: the queue an administrator already works from, and confirming it is the one click it is for.
+_EXPIRED_DETAIL = (
+    "That card's date had passed by the time your scan reached us, so you are not on the workshop "
+    "yet — but nothing you record is lost, and the card was not used up. You can keep capturing "
+    "your own work here and an administrator can see that you scanned the card; once they confirm "
+    "you, everything you have recorded is already in place. Until then you will not see anybody "
+    "else's stages."
+)
+
+
+def _provisional_detail(reason: str) -> str:
+    """The sentence a PROVISIONAL outcome answers with, by its reason: :data:`_INELIGIBLE_DETAIL`
+    for ``INELIGIBLE``, :data:`_EXPIRED_DETAIL` for a within-grace ``EXPIRED``, and
+    :data:`_PROVISIONAL_DETAIL` — whose first clause is true only of a spent card — for
+    ``ALREADY_SPENT``. One place, so the first answer and a replay of it (:func:`redeem`, step 5)
+    cannot say two things about one scan."""
+    if reason == "INELIGIBLE":
+        return _INELIGIBLE_DETAIL
+    if reason == "EXPIRED":
+        return _EXPIRED_DETAIL
+    return _PROVISIONAL_DETAIL

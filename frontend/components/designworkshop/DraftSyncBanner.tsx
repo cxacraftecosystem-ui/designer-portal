@@ -61,10 +61,23 @@ export function syncOutcome(result: {
   failed: number;
   pending: number;
   stoppedOffline: boolean;
-}): { kind: "sent" | "refused" | "offline" | "idle"; tone: "success" | "error" | "info"; title: string } {
+  passwordChangeRequired?: boolean;
+  credentialExpired?: boolean;
+}): {
+  kind: "sent" | "refused" | "expired" | "password" | "offline" | "idle";
+  tone: "success" | "error" | "info";
+  title: string;
+} {
   const sent = result.workshopsCreated + result.stagesSent + result.mediaUploaded;
   if (sent) {
-    return { kind: "sent", tone: "success", title: `${sent} saved ${sent === 1 ? "change" : "changes"} sent` };
+    // Not "success" when the pass ended on an expired sign-in — something was sent AND something needs
+    // doing, and the tone is the part of a toast a person takes in without reading it. The records
+    // outbox's `outboxOutcome` makes the same call for the same pass.
+    return {
+      kind: "sent",
+      tone: result.credentialExpired ? "error" : "success",
+      title: `${sent} saved ${sent === 1 ? "change" : "changes"} sent`
+    };
   }
   // Refusals first: "still no connection" is a fact about the wifi and "nothing to send" is a fact
   // about an empty queue, while a refusal is the only one of the three a person can act on.
@@ -75,6 +88,13 @@ export function syncOutcome(result: {
       title: `${result.failed} ${result.failed === 1 ? "item was" : "items were"} refused`
     };
   }
+  // The sign-in is finished: nothing more goes until somebody signs in again, and one sign-in sends
+  // all of it. The outbox banner's title, word for word, because it is the same fact about the same
+  // session.
+  if (result.credentialExpired) return { kind: "expired", tone: "error", title: "Your sign-in has expired" };
+  // The account owes a new password and the server takes nothing until it is chosen. Neither "no
+  // connection" (the wifi is fine) nor "nothing to send" (the queue is merely waiting) is true.
+  if (result.passwordChangeRequired) return { kind: "password", tone: "info", title: "Choose a new password first" };
   if (result.stoppedOffline) return { kind: "offline", tone: "error", title: "Still no connection" };
   return { kind: "idle", tone: "info", title: "Nothing to send" };
 }
@@ -214,7 +234,12 @@ export function DesignWorkshopDraftBanner() {
             id: "dw-draft-sync",
             tone: outcome.tone,
             title: outcome.title,
-            description: result.pending ? `${result.pending} workshop(s) still waiting.` : "Everything on this device has been sent."
+            description: result.credentialExpired
+              ? `Your sign-in expired part way through, so the rest did not go — ${result.pending} workshop(s) still ` +
+                "waiting on this device, and nothing has been thrown away. Sign in again and they send themselves."
+              : result.pending
+                ? `${result.pending} workshop(s) still waiting.`
+                : "Everything on this device has been sent."
           });
         } else if (trigger === "manual") {
           // Only a click deserves an answer when nothing moved; an automatic pass stays quiet.
@@ -240,7 +265,11 @@ export function DesignWorkshopDraftBanner() {
                 ? "Nothing has been thrown away. Each one is listed below with what it needs."
                 : outcome.kind === "offline"
                   ? "Everything stays queued on this device. Try again once you have signal."
-                  : undefined
+                  : outcome.kind === "expired"
+                    ? "Nothing has been sent and nothing has been thrown away — everything is still on this device. Sign in again and it sends itself."
+                    : outcome.kind === "password"
+                      ? "Nothing has been sent and nothing has been thrown away. It sends itself once your new password is set."
+                      : undefined
           });
         }
       } finally {

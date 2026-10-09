@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, Suspense, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ArrowDown, ArrowUp, ClipboardCheck, ClipboardList, GripVertical, ListFilter, Lock, Mic, Pencil, Plus, QrCode, Save, Square, Trash2, Wrench } from "lucide-react";
@@ -15,6 +15,7 @@ import { LocationFields } from "@/components/forms/LocationFields";
 import { MediaCaptureField } from "@/components/forms/MediaCaptureField";
 import { QuestionnaireCaptureControls, useCapturePrefs } from "@/components/forms/QuestionnaireCaptureControls";
 import { useWorkshopPicker, WorkshopPicker } from "@/components/forms/WorkshopPicker";
+import { HeldPostNotice, useRecordFilingHold } from "@/components/designworkshop/HeldPostNotice";
 import { appendDictatedPhrase } from "@/components/richtext/dictatedValue";
 import { DictatedTextArea } from "@/components/richtext/DictatedTextArea";
 import { EditedFlag, MarkdownDocument } from "@/components/richtext/MarkdownDocument";
@@ -888,6 +889,14 @@ function QuestionnairePageBody() {
         }
       : {}
   );
+  /*
+    AN INTERVIEW FILED UNDER A WORKSHOP THE READER INSPECTS OR SUPERVISES IS READ-ONLY TO THEM, and none
+    may be filed into one (2026-10-09; `useRecordFilingHold`): its edit, its deletion and a merge with
+    either side in that workshop are all refused, with a 403 whose sentence reaches the banners word for
+    word. This holds Save — and the picker, for the sitting being edited — and says why beside Save.
+  */
+  const filing = useRecordFilingHold(editingInterview?.designWorkshopId, workshop.designWorkshopId, "interview");
+  const filingNoticeId = useId();
 
   /**
    * THE WORKSHOP THIS INTERVIEW IS FILED UNDER, as the one thing the artisan roster is scoped by.
@@ -1705,6 +1714,8 @@ function QuestionnairePageBody() {
     // React nulls event.currentTarget after the first await — capture it before any async work.
     const formElement = event.currentTarget;
     const form = new FormData(formElement);
+    // Held, and said beside Save — see `filing`.
+    if (filing.saveHeld) return;
     // A workshop that has already ended makes this a late submission needing admin approval — say so
     // before anything is written. Resolves true immediately when there is nothing to warn about.
     if (!(await workshop.confirmSubmission())) return;
@@ -2524,7 +2535,7 @@ function QuestionnairePageBody() {
             NO `onDirty`, and that is not an omission — see the note on the Language box above: this
             form has no dirty tracking to raise. The grep there covers this control too.
           */}
-          <WorkshopPicker state={workshop} saving={saving} />
+          <WorkshopPicker state={workshop} saving={saving} disabled={filing.recordHeld} />
           <Field label="Status">
             {canPickStatus ? (
               <Select name="status" defaultValue="APPROVED">
@@ -3042,8 +3053,14 @@ function QuestionnairePageBody() {
         */}
         <SavedClips heading="Other saved recordings & media" items={savedClips.other} onOpenPreview={setActivePreview} />
         <MultiNoteField name="notes" label="Interview notes" />
+        {/* Why Save is held, beside it — see `filing`. */}
+        <HeldPostNotice refusal={filing.notice} id={filingNoticeId} className="" sayPending />
         <div>
-          <button className="field-button" disabled={saving}>
+          <button
+            className="field-button"
+            disabled={saving || filing.saveHeld}
+            aria-describedby={filing.notice ? filingNoticeId : undefined}
+          >
             <Plus className="h-4 w-4" aria-hidden />
             {saving
               ? "Saving..."

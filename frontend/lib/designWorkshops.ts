@@ -3320,11 +3320,13 @@ export async function downloadDesignWorkshopReport(id: string, body: DwReportBod
     const detail =
       typeof payload === "object" && payload && "detail" in payload ? (payload as { detail: unknown }).detail : undefined;
     // `statusText` is empty over HTTP/2 — which every deployed request is — so it can never be the
-    // last resort on its own, or a body-less failure reaches the screen as a blank error box.
+    // last resort on its own, or a body-less failure reaches the screen as a blank error box. The
+    // headers go along so a password-gate 401 is told apart from an expired sign-in, as in `fetchFile`.
     throw new ApiError(
       response.status,
       describeApiDetail(detail, response.statusText || `The server refused the request (HTTP ${response.status}).`),
-      payload
+      payload,
+      response.headers
     );
   }
 

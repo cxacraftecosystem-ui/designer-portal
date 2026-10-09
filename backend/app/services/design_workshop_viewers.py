@@ -50,12 +50,14 @@ outgoing designer kept a viewer row, kept every stage write it confers, and ther
 the product the officer could reach that would take it away.
 
 **ELIGIBILITY IS A SET, NOT A RANK, AND SOMEBODY WHO CANNOT SIGN IN IS THE TRAP.**
-``DESIGN_WORKSHOP_ROLES`` is Designer/Admin/Master Admin — a PROFESSOR cannot run a workshop despite
+``DESIGN_WORKSHOP_ROLES`` is the designer, the three directorate tiers (Assistant Director, Regional
+Director, Ministry Admin) and the two admin tiers — a PROFESSOR cannot run a workshop despite
 outranking a designer — and on top of that TWO SEPARATE TABLES can stop an otherwise eligible
 account signing in, so both are consulted here:
 
 * ``DesignerRoster`` — the empanelment. A DESIGNER whose row is missing or inactive cannot sign in
-  (``services/designers.roster_allows``). Gates designers only; admins are deliberately outside it.
+  (``services/designers.roster_allows``). Gates designers only; every other role in the set is
+  deliberately outside it (``designers.roster_exempt_workshop_roles``).
 * ``AccessRoster`` — the platform allow-list, ``services/access_roster``. Gates EVERY role, so a
   suspended ADMIN is caught by this one and by nothing else. Only the master admin is exempt, the
   same break-glass the sign-in gate carries (``deps.is_break_glass_master``) — BOTH of its arms,
@@ -72,6 +74,18 @@ THE ALLOW-LIST IS READ AS A CUT LIST, NEVER AS A GUEST LIST. It excludes the REJ
 SUSPENDED; it does not require an ACTIVE row. The two tables have no relation between them and the
 sign-in path self-heals a missing or PENDING row for an empanelled designer, so requiring admission
 would hide the very designers the product is about to let in. See ``access_roster.barred_emails``.
+
+**AND A GRANT IS ABOUT ONE WORKSHOP, SO ONE MORE RULE IS ASKED OF IT (2026-10-09).** Somebody who
+inspects or supervises a workshop is refused a viewer row on it, and nobody may grant one to
+themselves — both 409, both from ``services/design_workshop_posts``, which is where the separation of
+duties between a workshop's designers, its two directors and its inspectors is written down. Every
+writer of this table asks it through :func:`_assert_every_id_may_be_granted` with the workshop in
+hand; only the create doors pass none, because a workshop being created has no posts yet.
+
+The same module refuses the other end of that relationship: whoever holds one of those posts on a
+workshop does not CHANGE its designer team at all — the viewers PUT, the oversight screen's designer
+doors, an access-request approval and a join card answer them 403 — because the team is part of the
+workshop they read and do not write (``design_workshop_posts.refuse_a_holders_write``).
 """
 
 import logging
@@ -83,9 +97,9 @@ from fastapi import HTTPException, status
 from app.core.config import get_settings
 from app.core.db import db
 from app.core.deps import DESIGN_WORKSHOP_ROLES, is_break_glass_master
-from app.services import access_roster
+from app.services import access_roster, design_workshop_posts as posts
 from app.services.concurrency import gather_reads
-from app.services.designers import normalise_email
+from app.services.designers import normalise_email, roster_exempt_workshop_roles
 from app.services.records import contains
 
 logger = logging.getLogger(__name__)
@@ -136,6 +150,22 @@ def _role(user: Any) -> str:
 # --------------------------------------------------------------------------------------
 # Reading: the two questions the enforcement asks
 # --------------------------------------------------------------------------------------
+
+
+async def viewer_ids_among(workshop_id: str, user_ids: Any) -> set[str]:
+    """Which of these accounts hold a viewer row on this workshop. One indexed read.
+
+    The plural of :func:`has_viewer_grant`, for the separation-of-duties rules in
+    ``services/design_workshop_posts``: a viewer row is designer access, and designer access to a
+    workshop is authorship of it, which bars its holder from inspecting or supervising it.
+    """
+    ids = sorted({uid for uid in user_ids if uid and not _UNSTORABLE_IN_AN_ID.search(uid)})
+    if not workshop_id or not ids:
+        return set()
+    rows = await db.designworkshopviewer.find_many(
+        where={"designWorkshopId": workshop_id, "userId": {"in": ids}}
+    )
+    return {row.userId for row in rows}
 
 
 async def has_viewer_grant(workshop_id: str, user_id: str) -> bool:
@@ -209,7 +239,9 @@ async def viewer_rows(workshop_id: str) -> list[dict[str, Any]]:
     return [viewer_payload(row) for row in rows]
 
 
-async def eligible_viewers(search: str | None = None) -> dict[str, Any]:
+async def eligible_viewers(
+    search: str | None = None, *, exclude_user_id: str | None = None
+) -> dict[str, Any]:
     """The accounts that may be given a viewer row at all — see the module docstring.
 
     Four fields and no more. The caller is choosing a reader and has no business receiving the
@@ -257,6 +289,11 @@ async def eligible_viewers(search: str | None = None) -> dict[str, Any]:
     ``False`` honestly instead of crying truncation, and no second ``COUNT`` is paid — the same
     trick, for the same reason, as the reference picker in ``services/design_workshops``, whose
     ``truncated`` this deliberately matches in name so both clients already know the word.
+
+    ``exclude_user_id`` leaves the caller out, in the ``WHERE`` for the cap's sake, when the list
+    feeds the viewers PUT of a workshop that exists — where granting yourself designer access is a
+    409. The create form reads the same list and passes nothing, because a creator naming
+    themselves there is allowed (see ``routes/design_workshop_viewers.list_eligible_viewers``).
     """
     # Two independent reads, gathered: the database is in another region and a sequential pair
     # costs a second round trip on a screen an admin opens to pick one colleague.
@@ -267,10 +304,13 @@ async def eligible_viewers(search: str | None = None) -> dict[str, Any]:
     clauses: list[dict[str, Any]] = [
         {
             "OR": [
-                # Admins are not roster-gated at all — deliberately, and for the same reason
-                # ``roster_allows`` is not consulted for them at sign-in: an admin empanelled years
-                # ago and later suspended must not lose the ability to administer anything.
-                {"role": {"in": ["ADMIN", "MASTER_ADMIN"]}},
+                # EVERY ROLE IN THE SET BUT DESIGNER, offered without asking the empanelment roster —
+                # the same rule ``roster_allows`` applies at sign-in, which gates DESIGNER alone. This
+                # arm read ``["ADMIN", "MASTER_ADMIN"]`` until 2026-10-09 and so hid the three
+                # directorate tiers that the write below has accepted since 2026-09-14: the picker
+                # offered fewer accounts than the PUT takes, which is this module's own defect class.
+                # Derived from ``DESIGN_WORKSHOP_ROLES`` so the two cannot part again.
+                {"role": {"in": roster_exempt_workshop_roles()}},
                 # ``mode: "insensitive"`` because ``admitted`` is lower-cased and ``User.email`` is
                 # NOT — see :func:`active_roster_emails`. Without it this comparison hides an
                 # eligible designer whose address happens to be stored shouting, while
@@ -323,6 +363,8 @@ async def eligible_viewers(search: str | None = None) -> dict[str, Any]:
         if configured:
             exemptions.append({"email": {"equals": configured, "mode": "insensitive"}})
         clauses.append({"OR": [*exemptions, {"email": {"not_in": barred, "mode": "insensitive"}}]})
+    if exclude_user_id:
+        clauses.append({"id": {"not": exclude_user_id}})
     term = (search or "").strip()
     if term:
         clauses.append({"OR": [{"name": contains(term)}, {"email": contains(term)}]})
@@ -420,6 +462,13 @@ async def active_roster_emails() -> tuple[list[str], bool]:
     return sorted({normalise_email(row.email) for row in rows}), truncated
 
 
+async def _posts_held_on(workshop_id: str | None, user_ids: Any) -> dict[str, frozenset[str]]:
+    """The supervisory posts these accounts hold on this workshop, or ``{}`` when there is none."""
+    if not workshop_id:
+        return {}
+    return await posts.supervisory_posts_among(workshop_id, user_ids)
+
+
 async def _designers_the_roster_still_admits(users: list[Any]) -> set[str]:
     """The lower-cased emails of the DESIGNERs among ``users`` whose EMPANELMENT is still active.
 
@@ -465,12 +514,20 @@ async def replace_viewers(
     Idempotent by construction. Only the difference is written, so re-saving an unchanged screen
     touches no rows and does not restamp ``createdAt`` — which matters because ``grantedAt`` is the
     only answer anybody has to "how long has this person been on this workshop".
+
+    THE PRESENT SET IS READ BEFORE VALIDATING, so that granting yourself access is refused as an ACT
+    and not as a state: an admin another admin put on the list may re-save it with themselves still
+    on it, and may not add themselves to it.
     """
     wanted = _deduplicate(user_ids, creator_id)
-    await _assert_every_id_may_be_granted(wanted)
 
     existing = await db.designworkshopviewer.find_many(where={"designWorkshopId": workshop_id})
     held = {row.userId for row in existing}
+    await _assert_every_id_may_be_granted(
+        wanted,
+        workshop_id=workshop_id,
+        appointing=granted_by_id if granted_by_id not in held else None,
+    )
 
     removed = sorted(held - wanted)
     added = sorted(wanted - held)
@@ -575,8 +632,21 @@ def _displayable(user_id: str) -> str:
     return _UNSTORABLE_IN_AN_ID.sub("", user_id)
 
 
-async def _assert_every_id_may_be_granted(user_ids: set[str]) -> None:
-    """422 naming the offending account, never a silent skip. See the module docstring."""
+async def _assert_every_id_may_be_granted(
+    user_ids: set[str], *, workshop_id: str | None = None, appointing: str | None = None
+) -> None:
+    """Refuse the whole set, naming every offending account, never a silent skip.
+
+    422 for what is wrong with an ACCOUNT — no such account, a role that cannot run a workshop, an
+    empanelment that lapsed, an address the allow-list bars. See the module docstring.
+
+    409 for what is wrong with granting it ON THIS WORKSHOP (``services/design_workshop_posts``):
+    somebody who inspects it or is its Assistant or Regional Director, and ``appointing`` — the account
+    making the grant — naming itself. Both are asked only when ``workshop_id`` is given; the create
+    doors pass none, because a workshop that does not exist yet has no posts and nobody is granting
+    themselves anything on it. When both kinds arise the 422 carries every sentence, so the admin
+    still makes one trip.
+    """
     if not user_ids:
         return
 
@@ -600,14 +670,17 @@ async def _assert_every_id_may_be_granted(user_ids: set[str]) -> None:
             ),
         )
 
-    allowed, barred = await gather_reads(
+    allowed, barred, held = await gather_reads(
         _designers_the_roster_still_admits(users),
         # EXACTLY THESE ADDRESSES, not the capped list the picker filters on. A refusal has to be
         # able to promise it is complete, and ``barred_emails`` cannot — it has a ceiling. Asking
         # about the handful of accounts actually named here has none.
         access_roster.barred_among([u.email for u in users]),
+        # The posts these accounts hold on THIS workshop — not asked at all without one.
+        _posts_held_on(workshop_id, by_id),
     )
     refusals: list[str] = []
+    separation: list[str] = []
     for uid in sorted(user_ids):
         user = by_id[uid]
         role = _role(user)
@@ -658,8 +731,12 @@ async def _assert_every_id_may_be_granted(user_ids: set[str]) -> None:
                 f"access screen first; a viewer row on its own would leave this screen saying they "
                 f"have access while they are shown a refusal."
             )
-    if refusals:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=" ".join([*refusals, "Nothing was changed."]),
+        separation.extend(
+            posts.separation_refusals(
+                person=f"{user.name} ({user.email})",
+                post=posts.DESIGNER,
+                standing=posts.Standing(posts=held.get(uid, frozenset())),
+                self_appointed=uid == appointing,
+            )
         )
+    posts.raise_refusals(refusals, separation)

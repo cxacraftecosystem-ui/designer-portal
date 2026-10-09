@@ -50,8 +50,20 @@ THE TWO DOORS
 * :func:`require_workshop_assigner` — naming the designer, the AD and the RD, and uploading the
   artisan list. ``{MINISTRY_ADMIN, ADMIN, MASTER_ADMIN}``. **A REGIONAL DIRECTOR IS REFUSED** even
   though they outrank an Assistant Director: the supervised must not choose the supervisor.
-* :func:`require_officer` — the officer's own read surface. **403 for admins too**, naming the route
-  they actually want.
+* :func:`require_officer` — the read surface of whoever may HOLD an oversight post: the two
+  directorate posts and, since 2026-10-09, the three administrator tiers, who may be named to a slot
+  by appointment. Each sees exactly the workshops their rows name — possibly none.
+
+**WHO MAY HOLD WHICH POST, AND THE PER-WORKSHOP SEPARATION OF DUTIES**, are in
+``services/design_workshop_posts``. Every appointment on this prefix answers 409 with a sentence when
+it would break one of those rules: naming yourself, one person in both slots, a supervisor who also
+inspects the workshop, or one who authored it.
+
+**AND AN ASSIGNER WHO HOLDS A POST ON A WORKSHOP DOES NOT WRITE IT FROM HERE EITHER** (2026-10-09).
+The two designer doors and the artisan list's import and unlink write the workshop's designer team
+or its content, so each answers its inspector, Assistant Director or Regional Director with the 403
+``design_workshop_posts.refuse_a_holders_write`` gives every such write. Appointing OTHER people to
+the AD and RD slots stays theirs, under the 409 rules above, and so does every read here.
 """
 
 from typing import Any
@@ -82,7 +94,7 @@ from app.schemas.design_workshop_oversight import (
     DesignWorkshopOversightCreateIn,
     DesignWorkshopOversightIn,
 )
-from app.services import design_workshop_oversight as oversight
+from app.services import design_workshop_oversight as oversight, design_workshop_posts as posts
 from app.services.artisan_import import import_artisans
 from app.services.artisan_xlsx import (
     ArtisanDefaults,
@@ -134,14 +146,17 @@ async def require_workshop_assigner(current_user: Any = Depends(get_current_user
 
 
 async def require_officer(current_user: Any = Depends(get_current_user)) -> Any:
-    """The officer's own READ surface: the three ministry posts and nobody else.
+    """The officer's own READ surface: every role that may hold an oversight post.
 
     A dependency rather than a call inside each handler, so that a route added to this file without
     one is visible as a missing ``Depends`` rather than as a missing line in a body — and so the
     read-only sweep in ``tests/test_workshop_oversight_unit.py`` can walk the dependency tree and
     assert that every route behind THIS door is a GET.
 
-    **ADMINS ARE REFUSED HERE**, and the same ⚠ placement note above applies to this function too.
+    **ADMINS WERE REFUSED HERE UNTIL 2026-10-09.** They may now be named a workshop's Assistant or
+    Regional Director, so they are admitted, and what they see is scoped by their rows exactly as an
+    officer's is — never "everything, because they are an admin". The same ⚠ placement note above
+    applies to this function too.
     """
     oversight.assert_oversight_surface(current_user)
     return current_user
@@ -236,28 +251,32 @@ async def _workshop_for_assignment_or_404(workshop_id: str) -> Any:
 @router.get("/officers")
 async def list_officers(
     search: str | None = Query(None, max_length=120),
-    _: Any = Depends(require_workshop_assigner),
+    current_user: Any = Depends(require_workshop_assigner),
 ) -> dict[str, Any]:
-    """The accounts that hold one of the three ministry posts.
+    """The accounts that may be named a workshop's Assistant Director or Regional Director.
 
     Not the user directory narrowed by the client. The eligible set is a SET of roles and not a rank
-    threshold, and it further excludes anyone the platform allow-list has rejected or suspended —
-    accounts that cannot sign in, for whom an oversight row would mean this screen saying somebody
-    is monitoring while they are shown a refusal at the door. All of it is a rule the client cannot
-    see and would drift from within one release.
+    threshold — the two directorate posts and the three administrator tiers — and it further
+    excludes anyone the platform allow-list has rejected or suspended, and the caller themselves:
+    nobody appoints themselves, so the picker does not offer them. All of it is a rule the client
+    cannot see and would drift from within one release.
 
-    ``capacities`` ON EACH ROW is what lets the picker grey out a MINISTRY_ADMIN in a capacity slot
-    rather than letting the PUT 422 them, and ``truncated`` says the list was cut. Both clients must
+    ``capacities`` ON EACH ROW is what lets the picker grey an account out of a slot rather than
+    letting the PUT 422 them — an Assistant Director fits the AD slot only, a Regional Director the
+    RD slot only, an administrator both — and ``truncated`` says the list was cut. Both clients must
     say so when it is true and say nothing when it is false; an empty list with no explanation is
     this repository's most repeated bug class.
     """
-    return await oversight.officer_directory(search=search)
+    return await oversight.officer_directory(search=search, exclude_user_id=current_user.id)
 
 
 @router.get("/designers")
 async def list_assignable_designers(
     search: str | None = Query(None, max_length=120),
-    _: Any = Depends(require_workshop_assigner),
+    # THE WORKSHOP THESE ACCOUNTS WOULD BE NAMED ON, WHEN IT ALREADY EXISTS. See the docstring's
+    # last paragraph: it is what tells this one list which of its two kinds of door it is feeding.
+    workshopId: str | None = Query(None, max_length=64),
+    current_user: Any = Depends(require_workshop_assigner),
 ) -> dict[str, Any]:
     """The accounts a workshop can be handed to.
 
@@ -274,10 +293,25 @@ async def list_assignable_designers(
 
     ``truncated`` MIRRORS THE OFFICER PICKER'S, so one screen reads two lists the same way. The cap
     lives on the service beside the query it bounds.
+
+    **THE CALLER IS LEFT OUT WHEN ``workshopId`` IS SENT, AND ONLY THEN (2026-10-09)**, because this
+    one list feeds two kinds of door that disagree about the reader. On a workshop that EXISTS —
+    ``PUT /{id}/designer`` and ``PUT /{id}/designers`` — naming yourself is refused with a 409
+    (``services/design_workshop_posts``, rule 1), so a picker offering the reader offers a refusal;
+    ``/officers`` and ``/eligible-inspectors`` already leave the caller out for the same reason. On
+    a CREATE — ``POST /workshops`` here and the annual-plan promotion — the creator may name
+    themselves: they are subtracted before the eligibility rule, no viewer row is written for them
+    (their access is ``createdById``), and naming themselves the lead copies their own profile into
+    stage 1, so leaving them out there would take away a legitimate answer. The id is not looked
+    up: it says which door the list feeds, and this is a filter, never a lookup.
     """
     from app.services.designers import DIRECTORY_TAKE
 
-    users = await workshop_capable_accounts(search=search, include_suspended=False)
+    users = await workshop_capable_accounts(
+        search=search,
+        include_suspended=False,
+        exclude_user_id=current_user.id if (workshopId or "").strip() else None,
+    )
     return {
         "users": assignable_designers_payload(users),
         # The service's ``take`` is the cap, so a full page IS the cut. Reported rather than
@@ -664,6 +698,11 @@ async def set_workshop_oversight(
     applying the good half: somebody who named two officers and is shown one has been told nothing
     about which failed or why, and a partially applied assignment looks like it worked.
 
+    THE WHOLE REQUEST IS VALIDATED, UNASSIGNS INCLUDED, because the separation of duties is judged
+    on the workshop as this save would leave it (``services/design_workshop_posts``): one person in
+    both slots, a supervisor who also inspects the workshop or who authored it, or the caller naming
+    themselves, answers 409 with the rule in the sentence.
+
     THE ANSWER IS THE SET AS THE SERVER NOW HOLDS IT, never an echo of what was sent.
     """
     await _workshop_for_assignment_or_404(workshop_id)
@@ -674,7 +713,7 @@ async def set_workshop_oversight(
     if "regionalDirectorId" in sent:
         wanted["REGIONAL_DIRECTOR"] = payload.regionalDirectorId
 
-    await oversight.assert_may_hold(workshop_id, {c: uid for c, uid in wanted.items() if uid})
+    await oversight.assert_may_hold(workshop_id, wanted, appointing=current_user.id)
     rows = await oversight.apply_oversight(
         workshop_id, wanted=wanted, assigned_by_id=current_user.id
     )
@@ -694,8 +733,13 @@ async def set_workshop_designer(
     the profile prefill, and a stage save. See ``design_workshop_oversight.reassign_designer``,
     which sets out why each is where it is — in particular why the prefill is
     ``prefill_from_profile(user_id)`` and never ``user_id or actor.id``.
+
+    NOT BY SOMEBODY WHO SERVES ON THIS WORKSHOP (2026-10-09): naming its designer writes its designer
+    team and copies a profile into stage 1, which its inspector and its two directors do not do — the
+    403 every such write gives them, asked once the workshop is found and before its team is read.
     """
     record = await _workshop_for_assignment_or_404(workshop_id)
+    await posts.refuse_a_holders_write(workshop_id, current_user)
     return await oversight.reassign_designer(record, payload.designerId, actor=current_user)
 
 
@@ -745,8 +789,13 @@ async def set_workshop_designers(
     The answer carries ``designers`` (the set as the server now holds it, re-read rather than
     echoed), ``removedDesigners`` (who lost access, named — a silent stale grant was the whole
     defect here once already), ``designerName`` and ``stagesWritten``.
+
+    Refused (403) to the workshop's inspector, Assistant Director or Regional Director once the
+    workshop is found and before its team is read, as :func:`set_workshop_designer` is and for its
+    reason: the team is part of the workshop they read and do not write, removals included.
     """
     record = await _workshop_for_assignment_or_404(workshop_id)
+    await posts.refuse_a_holders_write(workshop_id, current_user)
     return await oversight.set_named_designers(
         record,
         user_ids=list(payload.userIds),
@@ -769,6 +818,14 @@ async def upload_artisan_list(
     **no ``Form()`` scalars**: the workshop is in the path and everything else is in the workbook.
 
     ── THE ORDER OF WORK, AND WHY EACH STEP IS WHERE IT IS ───────────────────────────────────────
+
+    **0. NOT BY SOMEBODY WHO SERVES ON THIS WORKSHOP (2026-10-09).** The import files stage-3
+    participant rows, which is writing the workshop, and an administrator who holds its inspection
+    or one of its two director posts reads it and does not write it — the 403 every other stage
+    write gives them, from the same ``design_workshop_posts.refuse_a_holders_write``. This door has
+    its own loader rather than ``load_workshop_or_404``, so without this line it would be a write a
+    post holder still had — as the unlink below would be without its own. Asked before the workbook
+    is read, so the reason costs no upload.
 
     **1. The workshop, then THE VENUE-COORDINATE PRE-CHECK, both BEFORE the file is parsed.** A
     workshop with no stage-1 ``venueLocation`` is refused outright, and refusing early costs the
@@ -799,6 +856,7 @@ async def upload_artisan_list(
     import asyncio
 
     workshop = await _workshop_for_assignment_or_404(workshop_id)
+    await posts.refuse_a_holders_write(workshop_id, current_user)
 
     venue_fix = await _venue_fix(workshop_id)
     if venue_fix is None:
@@ -876,17 +934,17 @@ async def list_workshop_artisans(
 
 @router.delete("/{workshop_id}/artisans/{artisan_id}")
 async def unlink_workshop_artisan(
-    workshop_id: str, artisan_id: str, _: Any = Depends(require_workshop_assigner)
+    workshop_id: str, artisan_id: str, current_user: Any = Depends(require_workshop_assigner)
 ) -> dict[str, Any]:
     """Take one artisan off this workshop's roster. **UNFILES; NEVER DELETES.**
 
     The artisan's record, its photographs, its products, its tools and its interviews are all
     untouched — ``Artisan.designWorkshopId`` is a nullable FK and this clears it, which is the same
-    act ``schemas/records.assert_payload_workshop`` already permits from the artisan form (*"an
-    explicit ``None`` unfiles the record and is always allowed"*), reached from the screen that
-    actually holds the roster. ``Artisan.createdBy`` is ``Restrict`` and is never touched: an
-    officer did not author these records and a roster correction must not be a way to destroy a
-    regulated person-record.
+    act ``services/record_design_workshop.assert_payload_workshop`` permits from the artisan form
+    (*"an explicit ``None`` unfiles the record"*), reached from the screen that actually holds the
+    roster — and refused, on that form as here, to the workshop's inspector and its two directors.
+    ``Artisan.createdBy`` is ``Restrict`` and is never touched: an officer did not author these
+    records and a roster correction must not be a way to destroy a regulated person-record.
 
     ⚠ **THE STAGE-3 PARTICIPANT ROW IS LEFT STANDING, AND THE SCREEN SAYS SO IN WORDS.**
     ``services/artisan_import`` writes one ``DwStageEntry`` per imported artisan under
@@ -902,8 +960,15 @@ async def unlink_workshop_artisan(
     rather than shown an error over. An artisan id belonging to a DIFFERENT workshop lands in the
     same arm, because the service's ``update_many`` predicate carries the workshop — a stale screen
     can never unfile a record from somewhere it was not looking at.
+
+    **NOT BY SOMEBODY WHO SERVES ON THIS WORKSHOP (2026-10-09)**, for the import's reason: who is on
+    the roster is the workshop's content, and its inspector and its two directors read that and do
+    not change it. The same 403 as the upload, asked before the artisan is touched — so a holder is
+    refused even an artisan already off the roster, which is the answer about them rather than about
+    the row.
     """
     await _workshop_for_assignment_or_404(workshop_id)
+    await posts.refuse_a_holders_write(workshop_id, current_user)
     unlinked = await oversight.unlink_artisan_from_workshop(workshop_id, artisan_id)
     return {"unlinked": unlinked}
 

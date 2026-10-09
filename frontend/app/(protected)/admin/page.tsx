@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import {
   Activity,
   AudioLines,
@@ -25,6 +25,15 @@ import {
 } from "lucide-react";
 
 import { DeletedWorkshopsCard } from "@/components/admin/DeletedWorkshopsCard";
+import {
+  HELD_POST_PENDING_FILES,
+  HeldPostNotice,
+  MEDIA_HELD_LABEL,
+  mediaListNotice,
+  mediaWorkshopIds,
+  useHeldPostRefusals,
+  writesHeld
+} from "@/components/designworkshop/HeldPostNotice";
 import { EmptyState } from "@/components/EmptyState";
 import { PageHeader } from "@/components/PageHeader";
 import { Pagination } from "@/components/Pagination";
@@ -91,6 +100,17 @@ export default function AdminHubPage() {
    * Its failure is silent: a missing badge is a nicety lost, not a screen broken.
    */
   const pendingAccess = usePendingAccessCount(permitted && canManageAccessRoster(user));
+
+  /**
+   * A RECOVERED FILE OF A WORKSHOP THE READER INSPECTS OR SUPERVISES IS READ-ONLY TO THEM, a relink
+   * included: the server refuses a post holder a relink out of that workshop or into it
+   * (2026-10-09). So a row whose own columns name such a workshop (`mediaWorkshopIds`) has its relink
+   * control held, with a word on the row and the server's sentence once above the table. Every reader
+   * of this hub may appoint, so the answer is asked of everyone who sees it; a relink refused anyway
+   * prints the server's sentence where it was attempted.
+   */
+  const heldFor = useHeldPostRefusals((orphans ?? []).flatMap(mediaWorkshopIds));
+  const heldNoticeId = useId();
 
   useEffect(() => {
     if (authLoading || !permitted) return;
@@ -357,6 +377,13 @@ export default function AdminHubPage() {
             Media still tagged to a deleted record. The files are intact in object storage — relink them to a live record from
             the Media page.
           </p>
+          <HeldPostNotice
+            refusal={mediaListNotice(visibleOrphans.map((item) => heldFor(mediaWorkshopIds(item))), "relinked")}
+            id={heldNoticeId}
+            className="mt-2"
+            sayPending
+            pendingSentence={HELD_POST_PENDING_FILES}
+          />
         </div>
         {!orphans ? (
           <div className="p-4 text-sm text-ink-500">{error ? "Could not load the list." : "Loading…"}</div>
@@ -378,30 +405,51 @@ export default function AdminHubPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-line-200">
-                {visibleOrphans.map((item) => (
-                  <tr key={item.id}>
-                    <td className="px-4 py-3">
-                      <div className="font-medium text-ink-900">{item.originalFilename}</div>
-                      {item.caption ? <div className="max-w-xs truncate text-xs text-ink-500">{item.caption}</div> : null}
-                    </td>
-                    <td className="px-4 py-3 text-ink-700">{item.mediaType}</td>
-                    <td className="px-4 py-3 text-ink-700">{bytes(item.sizeBytes)}</td>
-                    <td className="px-4 py-3 capitalize text-ink-700">{item.linkedRecordType ?? "-"}</td>
-                    <td className="px-4 py-3 text-ink-700">{formatDateTime(item.createdAt)}</td>
-                    <td className="px-4 py-3 text-right">
-                      <RowActions>
-                        {item.url ? (
-                          <a href={item.url} target="_blank" rel="noreferrer" className={rowAction("neutral")}>
-                            Open
-                          </a>
-                        ) : null}
-                        <Link href="/media" className={rowAction("edit")}>
-                          Relink in Media
-                        </Link>
-                      </RowActions>
-                    </td>
-                  </tr>
-                ))}
+                {visibleOrphans.map((item) => {
+                  const hold = heldFor(mediaWorkshopIds(item));
+                  return (
+                    <tr key={item.id}>
+                      <td className="px-4 py-3">
+                        <div className="font-medium text-ink-900">{item.originalFilename}</div>
+                        {item.caption ? <div className="max-w-xs truncate text-xs text-ink-500">{item.caption}</div> : null}
+                      </td>
+                      <td className="px-4 py-3 text-ink-700">{item.mediaType}</td>
+                      <td className="px-4 py-3 text-ink-700">{bytes(item.sizeBytes)}</td>
+                      <td className="px-4 py-3 capitalize text-ink-700">{item.linkedRecordType ?? "-"}</td>
+                      <td className="px-4 py-3 text-ink-700">{formatDateTime(item.createdAt)}</td>
+                      <td className="px-4 py-3 text-right">
+                        <RowActions>
+                          {item.url ? (
+                            <a href={item.url} target="_blank" rel="noreferrer" className={rowAction("neutral")}>
+                              Open
+                            </a>
+                          ) : null}
+                          {/* Held, not hidden: the file can be relinked — by somebody who holds no post
+                              on its workshop. Opening it is a read and stays live. */}
+                          {writesHeld(hold) ? (
+                            <button
+                              type="button"
+                              className={rowAction("edit")}
+                              disabled
+                              aria-describedby={typeof hold === "string" ? heldNoticeId : undefined}
+                            >
+                              Relink in Media
+                            </button>
+                          ) : (
+                            <Link href="/media" className={rowAction("edit")}>
+                              Relink in Media
+                            </Link>
+                          )}
+                          {typeof hold === "string" ? (
+                            <span className="self-center rounded-md bg-amber-100 px-2 py-1 text-xs font-medium text-amber-800">
+                              {MEDIA_HELD_LABEL}
+                            </span>
+                          ) : null}
+                        </RowActions>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

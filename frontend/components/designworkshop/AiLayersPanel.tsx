@@ -165,7 +165,19 @@ import { listDesignWorkshopTranscripts, type DwTranscriptItem, type DwTranscript
  */
 type DecisionLog = Record<string, DwAiDecisionRecord[]>;
 
-export function AiLayersPanel({ workshopId }: { workshopId: string }) {
+export function AiLayersPanel({
+  workshopId,
+  readOnlyReason = null
+}: {
+  workshopId: string;
+  /**
+   * Why this reader may read the layers and not act on them, or null — today a post they hold on the
+   * workshop (`useHeldPostRefusal`). Registering, accepting, withdrawing, declining and every verb are
+   * writes of the workshop the server refuses whoever inspects or supervises it, so all of them are
+   * held as a write in flight holds them (`locked`), and the verbs carry this as their reason.
+   */
+  readOnlyReason?: string | null;
+}) {
   const { user } = useAuth();
   const confirm = useConfirm();
 
@@ -307,6 +319,8 @@ export function AiLayersPanel({ workshopId }: { workshopId: string }) {
    * refusal to proceed with nothing to say — see {@link verbWorkshopRefusal}.
    */
   const verbsBlocked =
+    // A post held on the workshop comes first: it is the one refusal no consent or allowance changes.
+    readOnlyReason ??
     verbWorkshopRefusal({ ready: consent.ready, serverId: consent.serverId, decision: consent.decision }) ??
     verbAllowanceRefusal(verbAllowance);
 
@@ -359,6 +373,8 @@ export function AiLayersPanel({ workshopId }: { workshopId: string }) {
    * designer accepting a transcript is reading it first.
    */
   const anyBusy = busyLayerId !== null || registering !== null;
+  /** What every row and the register panel are held by: a write in flight, or a post held here. */
+  const locked = anyBusy || Boolean(readOnlyReason);
 
   async function accept(layer: DwAiLayer) {
     /*
@@ -711,7 +727,7 @@ export function AiLayersPanel({ workshopId }: { workshopId: string }) {
                   withText={withText}
                   userId={user?.id ?? null}
                   busyLayerId={busyLayerId}
-                  anyBusy={anyBusy}
+                  anyBusy={locked}
                   decisions={decisions}
                   withdrawing={withdrawing}
                   onAccept={accept}
@@ -757,7 +773,7 @@ export function AiLayersPanel({ workshopId }: { workshopId: string }) {
                 withText={withText}
                 userId={user?.id ?? null}
                 busyLayerId={busyLayerId}
-                anyBusy={anyBusy}
+                anyBusy={locked}
                 decisions={decisions}
                 withdrawing={withdrawing}
                 onAccept={accept}
@@ -811,7 +827,7 @@ export function AiLayersPanel({ workshopId }: { workshopId: string }) {
                     withText={withText}
                     userId={user?.id ?? null}
                     busyLayerId={busyLayerId}
-                    anyBusy={anyBusy}
+                    anyBusy={locked}
                     decisions={decisions}
                     withdrawing={withdrawing}
                     onAccept={accept}
@@ -856,7 +872,7 @@ export function AiLayersPanel({ workshopId }: { workshopId: string }) {
         // it is missing instead.
         layersKnown={list !== null}
         busyMediaId={registering}
-        anyBusy={anyBusy}
+        anyBusy={locked}
         onRegister={register}
       />
 

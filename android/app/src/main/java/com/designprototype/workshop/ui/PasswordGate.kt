@@ -48,6 +48,7 @@ import com.designprototype.workshop.data.UserDto
 import com.designprototype.workshop.data.WorkshopRepository
 import com.designprototype.workshop.data.apiErrorMessage
 import kotlinx.coroutines.launch
+import retrofit2.HttpException
 
 /**
  * THE PASSWORD SCREENS THIS HANDSET DID NOT HAVE.
@@ -82,6 +83,30 @@ import kotlinx.coroutines.launch
  * use with a different account without letting anybody INTO the product.
  *
  * ══════════════════════════════════════════════════════════════════════════════════════════════
+ * SINCE 2026-10-09 THE SERVER REFUSES BEHIND THE GATE, AND THIS APP WAITS RATHER THAN FIGHTS IT
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * While the flag is set, every route outside a short allow-list answers 401 with
+ * `X-Password-Change-Required` — `data/PasswordChangeRequired.kt` has the list, and why it is a 401.
+ * On this side that means three things:
+ *
+ *  * **The session is kept.** A gated 401 is a live session owing a password, not a dead one, so
+ *    nothing signs out on it; a gated answer to ANY request re-reads the profile and puts the gate
+ *    up, which is how a flag this handset had not heard about still reaches the screen.
+ *  * **The background sends wait.** The outbox loop, the design-workshop pass and the join-card
+ *    flusher hold back while the flag is set and start again the moment it clears. Nothing queued is
+ *    touched: a 401 is "try again later" to every queue in this app.
+ *  * **Builds 0.0.2 to 0.0.5 have no gate screen,** so their users change the password on the web
+ *    first. That cost was accepted when the server started refusing.
+ *
+ * And one thing the same day changed about the change itself: it retires the session it was sent
+ * with. So a change whose ANSWER is lost may well have landed, and a retry of it meets "This session
+ * is no longer valid". The gate therefore asks before it speaks — `GET /me` with the session it
+ * holds — and never says "nothing has changed" on the strength of a missing answer alone; see
+ * [passwordGateAfterFailure]. The change is also sent once and only once: `ApiClient` marks its body
+ * one-shot, so OkHttp cannot quietly send a second copy after the first one landed.
+ *
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
  * THE LINK IS SHOWN ONCE. THIS FILE MUST NOT MAKE IT TWICE.
  * ══════════════════════════════════════════════════════════════════════════════════════════════
  *
@@ -99,16 +124,18 @@ import kotlinx.coroutines.launch
  * ══════════════════════════════════════════════════════════════════════════════════════════════ */
 
 /**
- * BETWEEN SIGN-IN AND THE PRODUCT, while this account still holds a password somebody else chose.
+ * BETWEEN SIGN-IN AND THE PRODUCT, while this account owes a new password.
  *
  * ── THE CURRENT PASSWORD IS CARRIED FORWARD, NOT ASKED FOR TWICE ─────────────────────────────────
  *
  * `POST /auth/change-password` requires it even for an account carrying the flag, and the server is
- * right to insist: the flag means "the password you hold was typed for you", not "anybody holding
+ * right to insist: the flag means "the password you hold must be replaced", not "anybody holding
  * this handset may replace it". On the ordinary path the person typed it into the sign-in card
- * seconds ago, so [doorPassword] hands it over and the box never appears. It IS asked for in the two
- * cases where this app is not holding one — a Google sign-in, and a session that was already open
- * when the app was launched — because the alternative is a gate whose only button cannot succeed.
+ * seconds ago, so [doorPassword] hands it over and the box never appears. It IS asked for where this
+ * app is not holding one — a Google sign-in, a session that was already open when the app was
+ * launched or when the gate arrived — because the alternative is a gate whose only button cannot
+ * succeed; and it appears after the server has refused the carried one, for the same reason (see
+ * [passwordGateAsksForCurrentAfter]).
  *
  * ── AND IT NEVER READS THE PASSWORD BACK OUT OF ANYWHERE ─────────────────────────────────────────
  *
@@ -124,6 +151,12 @@ fun PasswordGateScreen(
     doorPassword: String,
     onSatisfied: (UserDto) -> Unit,
     onSignOut: () -> Unit,
+    /**
+     * The held session has been refused after a change whose outcome was not known: sign out, and put
+     * the sentence handed over — that the new password may already be the one to use — on the sign-in
+     * card. Separate from [onSignOut], which is the person's own choice and says nothing.
+     */
+    onSessionEnded: (String) -> Unit,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -139,9 +172,13 @@ fun PasswordGateScreen(
     var reveal by remember { mutableStateOf(false) }
     var saving by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
-    // Computed from the ARGUMENT and not from `current`, which the person is about to type into:
-    // reading the state would make the box vanish under the caret on the first keystroke.
-    val askCurrent = doorPassword.isBlank()
+    // Set once the server has refused a change sent with the carried password: from then on that
+    // password is suspect and the person must be able to see and correct it. See
+    // `passwordGateAsksForCurrentAfter`. Never unset — a box that came and went would be worse.
+    var carriedRefused by remember { mutableStateOf(false) }
+    // Computed from the ARGUMENT and the refusal, and not from `current`, which the person is about
+    // to type into: reading the state would make the box vanish under the caret on the first keystroke.
+    val askCurrent = doorPassword.isBlank() || carriedRefused
 
     Column(
         modifier = Modifier
@@ -151,15 +188,16 @@ fun PasswordGateScreen(
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Text(
-            "Set your own password",
+            PASSWORD_GATE_HEADING,
             display = true,
             fontSize = 24.sp,
             color = MaterialTheme.colorScheme.onBackground
         )
-        // TERSE. The whole explanation is that somebody else chose the password they just used, and
-        // the owner's instruction of 2026-08-30 is that reasoning belongs in comments, not on screen.
+        // TERSE, and neutral about WHY: see `PASSWORD_GATE_SENTENCE` for the reasons this no longer
+        // says an administrator chose the password. The owner's instruction of 2026-08-30 is that
+        // reasoning belongs in comments, not on screen.
         Text(
-            "An administrator set your password. Choose your own to continue.",
+            PASSWORD_GATE_SENTENCE,
             color = MaterialTheme.field.muted,
             fontSize = 13.sp,
             lineHeight = 19.sp
@@ -213,10 +251,10 @@ fun PasswordGateScreen(
                 )
                 Text(
                     // The link clause is deliberately absent: nobody on this screen is holding one.
-                    // `POST /auth/change-password` also does NOT revoke sessions, unlike a link
-                    // redemption, so saying otherwise here would be a false promise about the tablet
-                    // in the next room.
-                    passwordRuleLine("Other devices stay signed in."),
+                    // The second clause is the change's own consequence, said before it happens — see
+                    // `PASSWORD_CHANGE_SESSIONS`. Until 2026-10-09 it promised the opposite, which was
+                    // true of the server then.
+                    passwordRuleLine(PASSWORD_CHANGE_SESSIONS),
                     color = MaterialTheme.field.muted,
                     fontSize = 12.sp
                 )
@@ -233,12 +271,13 @@ fun PasswordGateScreen(
                     enabled = !saving && next.length >= MIN_PASSWORD_LENGTH && confirm.isNotBlank() &&
                         (!askCurrent || current.isNotBlank()),
                     onClick = {
-                        // CHECKED HERE AND NOT ONLY BY THE SERVER. The confirmation box exists so a
-                        // typo is caught before it becomes the password, and the server never sees
-                        // the second box at all — it takes one `newPassword`, so a mismatch it
-                        // cannot possibly detect would otherwise be filed as the person's choice.
-                        if (next != confirm) {
-                            error = "The two passwords do not match."
+                        // CHECKED HERE AND NOT ONLY BY THE SERVER: the pair, which the server never
+                        // sees, and a new password equal to the one being replaced, which this
+                        // screen can see before spending a request on it. See `newPasswordRefusal`.
+                        val localRefusal =
+                            newPasswordRefusal(next = next, confirm = confirm, current = current)
+                        if (localRefusal != null) {
+                            error = localRefusal
                             return@Button
                         }
                         scope.launch {
@@ -254,13 +293,17 @@ fun PasswordGateScreen(
                                       `changeOwnPassword` refreshes the cached profile as part of
                                       the call, best-effort. If that `/me` failed (a dropped
                                       connection between two requests, which on this fleet is an
-                                      ordinary event) the cache still holds the PRE-CHANGE row, with
-                                      the flag still set — so handing it straight to `onSatisfied`
-                                      would put the person back on this screen and ask them for a
-                                      password they had just set, using a "current password" that no
-                                      longer works. The write has landed by this point; the flag is
-                                      the only thing that has not caught up, and clearing it locally
-                                      is the honest reading of "the server accepted this".
+                                      ordinary event) the profile is the PRE-CHANGE row, with the flag
+                                      still set — so handing it straight to `onSatisfied` would put
+                                      the person back on this screen and ask them for a password they
+                                      had just set, using a "current password" that no longer works.
+                                      The write has landed by this point; the flag is the only thing
+                                      that has not caught up, and clearing it is the honest reading of
+                                      "the server accepted this". The repository now clears it in the
+                                      STORE as well, so a cold start agrees; this copy is what still
+                                      answers if the store was emptied in between. (The session is
+                                      not this screen's to carry over: the repository has already
+                                      adopted the fresh token the answer brought.)
                                     */
                                     val refreshed = repository.cachedUser()
                                     onSatisfied(
@@ -269,22 +312,38 @@ fun PasswordGateScreen(
                                     )
                                 }
                                 .onFailure { failure ->
+                                    // The STATUS first: reading the sentence below consumes the
+                                    // buffered body, and the status decides whether the carried
+                                    // password is now suspect enough to put its box on screen.
+                                    val status = (failure as? HttpException)?.code()
+                                    if (!askCurrent && passwordGateAsksForCurrentAfter(status)) {
+                                        carriedRefused = true
+                                        // Emptied, not shown: if it is the wrong password, a box
+                                        // holding it as dots is one more thing to clear by hand.
+                                        current = ""
+                                    }
                                     // THE SERVER'S OWN SENTENCE WHERE THERE IS ONE. It is the only
-                                    // text that knows which of three things happened — the current
-                                    // password was wrong, this account has no password to change at
-                                    // all (a Google account, which is told to ask for a link
-                                    // instead), or the new one was refused — and those are three
+                                    // text that knows which of four things happened — the current
+                                    // password was wrong, the new one is the same as it, this account
+                                    // has no password to change at all (told to ask for a link
+                                    // instead), or the new one was refused — and those are four
                                     // different next moves behind one family of status codes.
-                                    // `apiErrorMessage` reads the buffered body ONCE.
-                                    error = failure.apiErrorMessage(
-                                        if (online) {
-                                            "Your new password did not reach the server, so nothing " +
-                                                "has changed. Try again."
-                                        } else {
-                                            "This phone has no connection, so nothing has changed. " +
-                                                "Try again where there is a signal."
-                                        }
-                                    )
+                                    //
+                                    // AND WHERE THE FAILURE SETTLES NOTHING — no answer, a 5xx, a
+                                    // plain 401 — `GET /me` is asked first, with the session this
+                                    // screen still holds, because the change may have landed and
+                                    // retired it. `saving` stays up while it is asked, so the button
+                                    // cannot send a second change into the same question. The whole
+                                    // decision is `passwordGateAfterFailure`, pinned by
+                                    // `ChangePasswordSessionTest`; this only applies it.
+                                    val outcome = passwordGateAfterFailure(failure, online) {
+                                        repository.refreshUser()
+                                    }
+                                    when (outcome) {
+                                        is PasswordGateAfterFailure.Stay -> error = outcome.message
+                                        is PasswordGateAfterFailure.SignOut -> onSessionEnded(outcome.message)
+                                        is PasswordGateAfterFailure.Satisfied -> onSatisfied(outcome.profile)
+                                    }
                                 }
                             saving = false
                         }
@@ -523,8 +582,10 @@ fun SetPasswordLinkScreen(
                     Button(
                         enabled = !saving && next.length >= MIN_PASSWORD_LENGTH && confirm.isNotBlank(),
                         onClick = {
-                            if (next != confirm) {
-                                error = "The two passwords do not match."
+                            // The gate's own check, with no current password to compare against.
+                            val localRefusal = newPasswordRefusal(next = next, confirm = confirm)
+                            if (localRefusal != null) {
+                                error = localRefusal
                                 return@Button
                             }
                             scope.launch {

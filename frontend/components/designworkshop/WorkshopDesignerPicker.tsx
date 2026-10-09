@@ -181,7 +181,8 @@ export function WorkshopDesignerPicker({
   onLeadChange,
   disabled,
   offline,
-  fetchEligible
+  fetchEligible,
+  excludeUserIds
 }: {
   /**
    * The chosen account ids, in the order they were ticked. Empty is "not decided yet" — a real and
@@ -232,6 +233,18 @@ export function WorkshopDesignerPicker({
    * designers, so the control stands down and says why instead of offering an empty list.
    */
   offline?: boolean;
+  /**
+   * Accounts this control never OFFERS — in practice the reader, on a screen where they are
+   * appointing other people to a workshop that exists: nobody appoints themselves (owner's ruling
+   * of 2026-10-09), and the server answers it with a 409. Omitted, nothing is left out, which keeps
+   * every existing caller exactly as it was — and a CREATE form must omit it, because the create
+   * doors subtract the creator from the named set and accept a creator who ticks themselves.
+   *
+   * NOT A SECOND ELIGIBILITY RULE, AND NOT A HIDING PLACE. Somebody listed here who is ALREADY among
+   * `values` is still drawn, because the callers that pass this save a whole set and a row the
+   * control does not draw is a row the next save removes. Only the offer is withheld.
+   */
+  excludeUserIds?: readonly string[];
 }) {
   const [search, setSearch] = useState("");
   const [eligible, setEligible] = useState<DwEligibleViewer[] | null>(null);
@@ -341,10 +354,22 @@ export function WorkshopDesignerPicker({
     return () => window.clearTimeout(timer);
   }, [search, offline]);
 
+  /**
+   * The ids to leave out, as a string KEY so the memos below re-run when the set changes rather
+   * than whenever a caller passes a fresh `[user.id]` array — which is every render.
+   */
+  const excludedKey = (excludeUserIds ?? []).join("\u0000");
+
+  /** The server's current answer minus the excluded — what this control actually offers. */
+  const offerable = useMemo(() => {
+    const excluded = new Set(excludedKey ? excludedKey.split("\u0000") : []);
+    return (eligible ?? []).filter((person) => !excluded.has(person.id));
+  }, [eligible, excludedKey]);
+
   const options = useMemo<DropdownOption[]>(() => {
     const rows: DropdownOption[] = [];
     const offered = new Set<string>();
-    for (const person of eligible ?? []) {
+    for (const person of offerable) {
       rows.push(rowFor(person));
       offered.add(person.id);
     }
@@ -387,7 +412,7 @@ export function WorkshopDesignerPicker({
       );
     }
     return rows;
-  }, [eligible, seen, values]);
+  }, [offerable, seen, values]);
 
   const searchTerm = search.trim();
 
@@ -430,7 +455,7 @@ export function WorkshopDesignerPicker({
       ? { kind: "failed" }
       : eligible === null
         ? { kind: "loading" }
-        : { kind: "ok", rows: eligible, total: eligible.length };
+        : { kind: "ok", rows: offerable, total: offerable.length };
   const eligibleVoice: WorkshopListVoice = {
     table: "field",
     noun: "designers",
@@ -464,15 +489,16 @@ export function WorkshopDesignerPicker({
               exactly the silent-emptiness state rule 10 of the frontend contract forbids. Android
               says it as a live notice line for the same reason.
 
-              Asked of `eligible` and not of `options`, because `options` also carries the ticks
+              Asked of `offerable` and not of `options`, because `options` also carries the ticks
               rescued from earlier searches: with a pick already made, a repository that has since
-              emptied would have a non-empty `options` and nothing to say about it.
+              emptied would have a non-empty `options` and nothing to say about it. And not of
+              `eligible`, which may hold only the excluded reader — an empty offer all the same.
             */
-            !searchTerm && !truncated && eligible?.length === 0
+            !searchTerm && !truncated && eligible !== null && offerable.length === 0
             ? "No account on this repository may be named as this workshop's designer yet. A designer has to be empanelled on the roster before a workshop can be opened for them; this one can still be started, and stage 1 will carry whoever creates it."
             : eligibleViewerNotice({
                 truncated,
-                offered: eligible?.length ?? 0,
+                offered: offerable.length,
                 searched: Boolean(searchTerm)
               });
 

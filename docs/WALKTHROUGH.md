@@ -728,16 +728,20 @@ and the designer being inspected can never be reading two different accounts of 
 
 **Watch out for:**
 
-- **This is its own tier, not a rank.** Inspector / Reviewer is the only role this screen opens for.
-  An admin and the master admin are refused it exactly as a professor is, and they read design &
-  prototype workshops on *Design workshops* instead. If you are a designer, this step is here so you
-  know what a colleague is looking at when they read your workshop back — not because you can open it.
-- An admin chooses who inspects a workshop, one workshop at a time, on *Manage workshop access*.
-- An empty page is a real answer and the screen says which kind it is: nothing assigned reads "No
-  workshop is assigned to you", while a list that could not be loaded says so instead.
-- There is no Save, no stage form, no submit and no report button, and none of them is missing —
-  there is no route behind this page that would accept one. Nothing an inspector does can change a
-  workshop.
+- **It is a set, not a rank.** This screen opens for the Inspector / Reviewer tier, and for a
+  Ministry Admin, an admin or the master admin, because any of them may be appointed to inspect a
+  workshop by somebody else — and each reads only the workshops they were appointed to. A professor
+  is refused it, and so is a designer: if you are a designer, this step is here so you know what a
+  colleague is looking at when they read your workshop back — not because you can open it.
+- A Ministry Admin, an admin or the master admin chooses who inspects a workshop, one workshop at a
+  time, on *Workshop oversight*.
+- An empty page is a real answer and the screen says which kind it is: nothing assigned reads "You
+  do not hold any inspection posts", while a list that could not be loaded says so instead.
+- There is no Save and no stage form, and neither is missing: the loader behind this page has no
+  edit path at all. What an inspector *can* write is a correction suggestion — a note about one stage
+  or about the report as a whole — and the second of its two buttons sends the report back, which
+  moves it to *Needs revision*. That changes the report's standing and never a workshop's contents:
+  not a stage value, not a photograph, not the completeness figure, not a record.
 - Photographs, recordings and attachments are **counted rather than shown**. An empty gallery would
   look like a file that failed to load, which is not what happened.
 
@@ -761,7 +765,7 @@ and the designer being inspected can never be reading two different accounts of 
 | **Design review** (`/design-review`) | The pool round: rank a colleague's finished pieces. |
 | **Scan a code** (`/scan`) | Open the record an artisan card or a prototype tag names — see *[11. Scan a code](#11-scan-a-code--open)* above. |
 | **My questionnaires** (`/questionnaires`) | Your own research instrument, built in a spreadsheet and attached to a design workshop. Not the shared artisan questionnaire in step 7. |
-| **Workshops to inspect** (`/design-workshop-inspections`) | Inspector / Reviewer only: a finished workshop read back, with authorship under every field. |
+| **Workshops to inspect** (`/design-workshop-inspections`) | Whoever has been appointed to inspect a workshop — the Inspector / Reviewer tier, or a Ministry Admin, an admin or the master admin: a finished workshop read back, with authorship under every field. |
 | **Give app feedback** (`/feedback`) | Tell us what slowed you down. |
 
 For installing the app, getting an account, working offline and getting the data back out, see
@@ -807,6 +811,7 @@ omits, fix `steps.ts` — do not delete the sentence here.**
 | The route in each **Screen:** heading | The `(protected)` route tree. `docs/tools/check-docs.mjs` does not check these (they are app routes, not files), so they are the most likely thing here to be stale after a page moves. |
 | The twenty-two-step order | `frontend/components/guide/steps.ts`, which is what `frontend/app/(protected)/guide/page.tsx` renders — the in-app Walkthrough. **These two must not diverge**, because a researcher may read either. Eleven record steps then eleven workshop steps, matching Steps A–K below one for one. **Asserted** by `frontend/e2e/guide-walkthrough-unit.spec.ts`, which compares the arc as an exact tail of the deck and holds one printed-guide route per arc id. It has diverged twice — 2026-08-19 to 2026-08-26 at nine steps, and 2026-08-29 to 2026-08-31 when `scan`, `design-workshop-questionnaires` and `design-workshop-inspection` were added to the app and not here. The second time the spec was green throughout, because it filtered the deck down to the ids it already knew before comparing; that is fixed. Renaming or adding a step is an edit to both files in one commit. |
 | The design & prototype workshop steps | The `(protected)/design-workshops/` route tree for the routes, [DESIGN_WORKSHOP.md](DESIGN_WORKSHOP.md) §3 for the tier rule, and each page's own file header for what the screen is for — those headers are unusually full and are the source this section was written from. **The one claim here that is not a screen description is the reference rule** ("choosing a record copies its values; the report prints the copy"); its authority is `REFERENCE_HYDRATION` in `backend/app/services/stage_schema.py` and [REPORT-DATA-WIRING.md](REPORT-DATA-WIRING.md). Do not soften it into "the report shows the linked record" — that is the opposite of what the system does, and the difference is a document already handed to an officer changing under him. |
+| Step K's watch-outs | The `design-workshop-inspection` card in `frontend/components/guide/steps.ts`, restated in prose, and who opens the screen is `canInspectDesignWorkshops` over `INSPECTION_HOLDER_ROLES` in `frontend/lib/permissions.ts` ([PERMISSIONS.md](PERMISSIONS.md) §4.5, §4.8). **Nothing reads this file's copy**: the tripwire in `frontend/e2e/guide-tracks-unit.spec.ts` that bans the old claim that an inspector changes nothing at all reads only the in-app decks, and `frontend/e2e/guide-walkthrough-unit.spec.ts` compares only routes. This copy said the screen opened for the Inspector / Reviewer tier alone, and kept the banned claim, until it was brought back into line with the card on 2026-10-09 — re-read the card when it changes. |
 | Who may open Steps A–K | `ROUTE_GUARDS` in `frontend/lib/permissions.ts` and [PERMISSIONS.md](PERMISSIONS.md) §5. All four designer paths sit on `can_run_design_workshops`, and the Walkthrough itself is deliberately ungated — so this section describes screens most of its readers cannot open. Say so, as the fourth rule at the top of the section does; do not quietly drop the arc, which is the deliverable the fortnight exists for. |
 | **What the app does not do** | One claim was checked and deliberately left out, and it is the one most likely to be "restored" by a reader who remembers a brief rather than the code. **There is no 3D viewer**: `frontend/components/sketches/upload/PrototypeModelField.tsx` states that no dependency in `frontend/package.json` can render a model, that the file is stored and downloadable, and that it prints as "1 document attached". A guide asserting a feature that does not exist is worse than one that omits it. **The converse is worse still, and this row shipped it.** A second entry here asserted there is no plate straightening, on the evidence that `frontend/lib/trace/imageEdit.ts` is a crop and an unsharp mask with no deskew anywhere under `frontend/lib/trace/`. That evidence was accurate and the conclusion was not: `lib/trace/` is the *tracing* panel, and the straightening ships in `frontend/lib/sketchRectify.ts` for a different registry field (see Step F, which now describes it). So: absence proved inside one directory is not absence from the product, and a "does not do" row is the one kind of claim that tells the next reader not to look. Prove a negative over the whole tree or do not write it. |
 | Statuses in step 9 | `RecordStatus` in `backend/prisma/schema.prisma`; the authority on who may set which is [PERMISSIONS.md](PERMISSIONS.md). |

@@ -548,6 +548,14 @@ Predicates (`lib/permissions.ts`): `canCreateRecords` RESEARCHER+(30) · `canMan
 `canManageWorkshops` / `canManageUsers` PROFESSOR+(40) · `canDownloadDataset` PROFESSOR+ or the flag ·
 `canReview` FIELD_CONTRIBUTOR+(20) or the flag · `isAdmin` ADMIN(50)|MASTER_ADMIN(60).
 
+Beside `canManageUsers`, and NOT a rank: `canProvisionAccounts` is the SET `ACCOUNT_PROVISIONER_ROLES`
+= {MINISTRY_ADMIN, ADMIN, MASTER_ADMIN} (owner's ruling, 2026-10-09; the server's
+`require_account_provisioner`). It is what creates password accounts on `/users`, requires or sets a
+temporary password, issues password links and corrects a name or address — on accounts the actor
+manages, never their own. **Deleting an account and granting capability flags stay `isAdmin`**, and
+`isAdmin` is still exactly {ADMIN, MASTER_ADMIN}: a Ministry Admin provisions and is not an admin.
+`provisionableRoles(user)` is the role picker's list ([] for a non-provisioner).
+
 ### 7.6 Scroll lock and the scrollbar gutter
 
 On open: measure `window.innerWidth - document.documentElement.clientWidth`, record `window.scrollY`,
@@ -1745,8 +1753,45 @@ The single HTTP entry point. `buildQuery` + `listResource` + `PageResult` on top
   probes `/me` on public pages too, so a six-week-old token threw a visitor off the landing page, and
   `assign` pushed a history entry so Back bounced her onto it again. `AuthProvider.refreshMe` passes
   `redirectOn401: false` and handles its own 401. `apiFetch` never clears the token on 403;
-  `AuthProvider.refreshMe` clears on 401 **and** 403 but deliberately keeps it on a network failure
-  or 5xx. `frontend/e2e/public-page-401-unit.spec.ts` drives the real function and pins both.
+  `AuthProvider.refreshMe` clears token and account on 401 **and** 403 but deliberately keeps BOTH on
+  a network failure or 5xx (it dropped the account while keeping the token until 2026-10-09, which
+  sent a person with a valid token to the sign-in form over a dropped connection).
+  `frontend/e2e/public-page-401-unit.spec.ts` drives the real function and pins both.
+- ⚠ **A 401 CARRYING `X-Password-Change-Required: 1` IS NOT A DEAD SESSION** (server enforcement
+  of `mustChangePassword`, 2026-10-09: every route outside a short allow-list answers it until the
+  account chooses a password). `apiFetch` **keeps the token and never navigates**, whatever
+  `redirectOn401` says; raises the module flag `sessionOwesPasswordChange()` BEFORE the caller sees
+  the rejection; tells `AuthProvider` through `onPasswordChangeRequired`, which re-reads `/me` (one
+  re-read at a time) so `AppShell` draws the gate in place; and throws an `ApiError` whose
+  `passwordChangeRequired` is true. `AuthProvider.markPasswordChanged()` is the ONE latch both gate
+  hosts read — no screen keeps its own. A helper that calls `fetch` itself must pass
+  `response.headers` as `new ApiError(...)`'s fourth argument, or the gate's 401 reads as an expired
+  sign-in (`fetchFile`, the subtitle download and the report download all do). Background work asks
+  `sessionOwesPasswordChange()` before it starts; a drain that meets the refusal mid-pass stops and
+  marks nothing (`isPasswordChangeRefusal`, the narrower reading of `failureTriage`'s
+  credential-expired row) — and a PLAIN 401 stops it the same way (`isCredentialExpiry`): neither is
+  ever recorded against a stage, a photograph or an outbox entry.
+  `e2e/password-change-enforcement-unit.spec.ts`, `e2e/gated-session-watchers-unit.spec.ts` and
+  `e2e/draft-drain-credential-expiry-unit.spec.ts` pin it.
+- ⚠ **A CHANGED PASSWORD RETIRES THE TOKEN THAT CHANGED IT** (2026-10-09). Every session token now
+  carries the fingerprint of the password it was opened with, and the server refuses one whose
+  password has since changed — any change: the forced one, a Settings change, a provisioner's
+  temporary password, a link redemption. So `POST /auth/change-password` mints a fresh token after
+  the write and sends it in the **`X-Session-Token` RESPONSE HEADER** (`SESSION_TOKEN_HEADER` in
+  `lib/signIn.ts`), never in the body: the body stays exactly `{"ok": true}`, because Android
+  0.0.6–0.0.15 decode it as `Map<String, Boolean>` and a string beside `ok` breaks them — on screen,
+  token and all. `changeOwnPassword` reads the header through `apiFetchWithHeaders` (`apiFetch` with
+  the headers kept — same refusals, same 401 branch) and RETURNS it; null means no header (an older
+  server, which retired nothing, or a header the browser was not allowed to read — the API must list
+  it in CORS `expose_headers` beside `X-Password-Change-Required`, or every web change costs one
+  sign-in). **Never read a token out of that body.** Both callers — `FirstPasswordGate` and the
+  Settings `ChangePasswordCard` — `setToken(fresh)` **BEFORE** anything re-reads `/me`
+  (`onDone` → `markPasswordChanged`, or `refreshMe`); the other order is a re-read refused with the
+  token just retired, and a person signed out by their own success. A request that left with the old
+  token and comes back 401 AFTER the fresh one was adopted is about a session already let go of:
+  `apiFetch` and `refreshMe` ask `sessionReplacedSince(sentToken)` and neither clear nor navigate
+  for it. Both forms say under their boxes that a change signs you out everywhere else
+  (`PASSWORD_CHANGE_SESSIONS`, the handset's word for word) — "Other devices stay signed in" is retired.
 - ⚠ **`cache: "no-store"` on every request is deliberate and there is exactly ONE opt-out.**
   `ApiFetchOptions.revalidateFromHttpCache` switches that call to `cache: "no-cache"` so the browser
   stores the response and revalidates it with `If-None-Match`; `fetchStageRegistry` in
@@ -1793,10 +1838,13 @@ word cannot be both a rank and a relation here. Two frontend consequences: (1) i
 it refuses a professor — this sentence continued **"and no new `ROUTE_GUARDS` row is needed"**, which
 was true of the *existing* routes and was read as a claim about the tier, and it is now wrong: the
 tier's own surface landed on 2026-08-27 at `/design-workshop-inspections`, and it has a row, gated on
-`canInspectDesignWorkshops`. **That predicate is a set with ONE member and it REFUSES AN ADMIN** —
-`assert_inspection_surface` 403s an ADMIN and a MASTER ADMIN by name — so it is the only route rule
-in this client whose refusal is not monotonic in rank, and §2's ladder gives the wrong answer for it
-every time. `docs/PERMISSIONS.md` §5 carries the row; (2) `AccessLadder.tsx`'s
+`canInspectDesignWorkshops`. **That predicate is a SET, not a rank, and since 2026-10-09 it is not
+the tier either**: the owner ruled that a Ministry Admin, an admin and the master admin may be
+APPOINTED to a post on one workshop by somebody else, so it reads `INSPECTION_HOLDER_ROLES` =
+{INSPECTOR, MINISTRY_ADMIN, ADMIN, MASTER_ADMIN} (it was {INSPECTOR} alone, and refused an admin by
+name, until then) while a professor and the two directorate posts are still refused — non-monotonic
+both ways, and §2's ladder gives the wrong answer for it every time. `docs/PERMISSIONS.md` §5 carries
+the row; (2) `AccessLadder.tsx`'s
 `TIER_COPY` and `lib/permissions.ts`' `ROLE_RANK`/`ROLE_LABELS` are `Record<UserRole, …>`, so `tsc`
 fails until the tier has a label and a line of copy — that is deliberate, and `lib/types.ts` is the
 one place the compiler cannot help you, because `UserRole` is the hand-typed union everything else is
@@ -1815,6 +1863,107 @@ entry only removes the link — `/users`, `/review`, `/data` and the create form
   read, because a verdict is not a credential.
 - `ROUTE_REDIRECTS` is declared but **not enforced by `AppShell`** — only `/workshop-access/manage`
   performs it, locally. Declaring a redirect nobody performs would read as enforcement that is not there.
+- ⚠ **HOLDER SETS AND TIER SETS ARE TWO QUESTIONS — ask the one you mean** (2026-10-09). Who may HOLD
+  a post on one workshop: `INSPECTION_HOLDER_ROLES`, `ASSISTANT_DIRECTOR_HOLDER_ROLES`,
+  `REGIONAL_DIRECTOR_HOLDER_ROLES` (each = the tier + MINISTRY_ADMIN, ADMIN, MASTER_ADMIN, the server's
+  sets by name, held equal by `backend/tests/test_role_ladder_parity.py`), `oversightPostsUserMayHold`,
+  and the two SURFACE predicates built on them — `canInspectDesignWorkshops` and
+  `canReadWorkshopOversight`, which therefore open `/design-workshop-inspections` and
+  `/officers/monitored` to the administering tiers, scoped by the rows they hold (an admin with none
+  is shown "You do not hold any … posts", never an error). Whose JOB it is: `isInspectorTier`
+  (`INSPECTION_ROLES` = {INSPECTOR}) and `isDirectorateTier` (`OFFICER_ROLES`, the three ministry
+  posts) — the tier sets, whose literals did not move. `guideTrackFor` (which walkthrough deck opens)
+  borrowed the surface predicates and put admins on the inspector's deck the day they widened; it
+  reads the tier predicates now. A role is never an appointment: whether somebody holds a post on
+  THIS workshop is `workshopPostsHeldBy` over the staffing rows (`readHeldWorkshopPosts`).
+- ⚠ **A POST HOLDER'S WORKSHOP IS READ-ONLY TO THEM, ADMIN OR NOT** (D6, 2026-10-09). Whoever
+  inspects a workshop or is its Assistant or Regional Director is refused by the server — any tier,
+  admin routes included — every write to its CONTENT (stage saves, the workshop's edit and delete,
+  its status, consent, custom sections, AI layers, photo import, report settings, artisan-list
+  upload and unfile) and to its DESIGNER TEAM (the viewers PUT, naming designers): a 403 whose
+  sentence is `design_workshop_posts.write_refusal`. They KEEP every read, appointing OTHER people to
+  posts, restore, and generating the report. The web mirrors it on every screen that writes a
+  workshop: `useHeldPostRefusal(workshopId)` + `<HeldPostNotice>`
+  (`components/designworkshop/HeldPostNotice.tsx`) draw `heldPostEditRefusal`'s sentence — the
+  server's own words, pinned by `e2e/admin-serve-as-unit.spec.ts` — above the controls, which are
+  held exactly as a save in flight holds them (or hidden where a whole form would be pointless), and
+  any 403 that still arrives is shown verbatim. The answer is asked only for an account that may
+  appoint; "none known" is never "none", so the server's 403 stays the last word. Nobody appoints
+  themselves either: every picker on a workshop that EXISTS leaves the reader out, while the CREATE
+  forms' designer pickers offer them, because the create doors subtract the creator and accept it.
+  - **THE HOOK HAS THREE STATES** (`HeldPostRefusal`): `undefined` = STILL ASKING (only for an
+    appointer with a workshop to ask about), `null` = none known, a string = the refusal. Hold writes
+    on `writesHeld(refusal)` (`!== null`), NEVER on `Boolean(refusal)` — that was the defect: an admin
+    holding a post could type into a stage while the staffing reads were out, banked into a draft the
+    repository refuses for ever, then watch the box disable under the caret. A component whose
+    `readOnlyReason` prop defaults to `null` must be handed `heldPostReason(refusal)` (pending becomes
+    `HELD_POST_PENDING`, a sentence): a default parameter turns an explicit `undefined` into that
+    `null`, i.e. "nothing held".
+  - **`<HeldPostNotice>` IS AN ALWAYS-MOUNTED `role="status"` REGION** (`sr-only` while empty, never
+    `hidden`), because the refusal lands a round trip after the page and a region created with its
+    sentence announces nothing. Give it an `id` and point the Save buttons it explains at it with
+    `aria-describedby` while a refusal is shown. `sayPending` prints the pending sentence BELOW the
+    region (never inside it — no "checking" announced on every screen) where no held control says it
+    in place.
+  - **A RECORD FILED UNDER A HELD WORKSHOP IS ITS CONTENT TOO.** The five record forms (artisan,
+    product, process, tool, interview) use `useRecordFilingHold(stored, chosen, noun)`: the STORED
+    workshop holds Save, Delete and the picker (`WorkshopPicker disabled`), a CHOSEN one holds Save
+    only — the picker must stay live or the form traps them. The questionnaire page draws a form
+    attached to a held workshop as a colleague's (`mayEdit = owns && attachedHold === null`; the
+    workbook download, a read, stays on `owns`). List-row deletes are not pre-warned (a staffing read
+    per row); their 403 prints verbatim.
+  - **SO IS EVERY FILE OF IT.** The server refuses a holder a file's delete, the transcript's
+    edit/refine/transcribe-now, the identity photograph's keep or discard, and a relink into or out
+    of the workshop, finding the file's workshops five ways (`media_design_workshop_ids`). The web
+    reads the two that are ON THE ROW — `mediaWorkshopIds` (`designWorkshopId`, and the
+    `designWorkshop` link tag) — and is handed one more where the screen knows it, the RECORD the
+    file hangs off: a record form passes `filing.stored` as `ExistingMedia`/`SavedMediaList`'s
+    **required** `recordHold` (no default: `undefined` is "still asking", and a default `null` would
+    release it). A stage entry or an AI layer naming the file is not read on a list (a read per row);
+    its 403 prints verbatim. Lists ask through
+    `useHeldPostRefusals(ids)` — one staffing read per DISTINCT workshop, a reader per row back —
+    combine with `mediaWriteHold` (refused if ANY is held), draw the control held (`removeHeld` on
+    `MediaPreviewTile`, `readOnlyReason` on `TranscriptBlock`), put a word on the row
+    (`MEDIA_HELD_LABEL`) and say the server's sentence ONCE above the list (`mediaListNotice`).
+    Covered: `/media`'s Delete and Transcribe now, the record forms' attached files, a process's and
+    its steps', and the recovered-recordings relink on `/admin`. The identity decision rides the
+    stage form's own lock. Transcript edit and refine have no web control; a new one owes the hold.
+  - **AND SO IS EVERY DOOR THAT ADDS TO IT, OR EDITS IT FROM ELSEWHERE.** Each is held on what it
+    would write INTO, with a pure sentence builder in `HeldPostNotice.tsx` and the pickers left live —
+    choosing another is the way forward, so only the commit button holds (plus a guard in its
+    handler): **`/media` Upload** (`mediaUploadHold` — the design workshop chosen, then what the files
+    hang off: the chosen entry's filing from `EntryOptions.filings`; `/media/complete` refuses only
+    AFTER every byte is PUT, so this is the difference between asking and three refusals);
+    **MediaJobsPanel Retry** (`MediaProcessingJob.mediaFile` now picks the file's two workshop links;
+    the list treatment — word on the row, sentence once); **questionnaire create, upload and reuse**
+    (`attachHold` on the workshop chosen, in the list page's form, `UploadDialog`'s create path and
+    `ReuseDialog`'s target); **the review queue's edit** (`ReviewEditPanel`: `reviewRecordWorkshopIds`
+    off the record it already GETs, `reviewEditHold` — its boxes and both Saves; Approve, Reject and
+    Send for revision are moderation and stay live). **The unfiled-records report** no longer lists a
+    record or file a design workshop claims (the server's ladder skips it); a discard of one that
+    slips through is a 409 for every admin, a holder's filing a 403, and what the bulk filing left
+    alone for the reader's post is the answer's own `heldBackDetail` (`heldBackSentence` in
+    `components/settings/unfiledRecords.ts`; `heldBackOf` + `heldBackNotice` only as the fallback for
+    a server that sent a count and no sentence, and an absent count is never printed as zero) — every
+    sentence verbatim. The second register in
+    `e2e/workshop-post-holder-readonly-unit.spec.ts` (§6) lists every caller of `uploadMediaBatch(`,
+    `uploadMediaFile(`, `retryMediaProcessingJob(`, the review edit, the `/workshops/unmapped/` writes
+    and the questionnaire attach calls, each with the hold that covers it or why it needs none — a new
+    one fails there until somebody decides.
+  - **A READER'S OWN ROW IS NEVER "NO LONGER ELIGIBLE".** They are missing from every eligible list
+    because nobody appoints themselves, not because of a bar — `absenceProvesIneligible` in
+    `lib/designWorkshopViewers.ts`, used by the viewers and the inspectors panels.
+  - **NOR CAN THE READER TAKE THEMSELVES OFF IT** (the same day's ruling, made precise): the server
+    refuses a staffing save that removes or replaces the caller with a 409, and another assigner
+    removing them still works. So the reader's own row in `DesignWorkshopInspectorsPanel` is drawn
+    TICKED AND `disabled` (a disabled option is skipped by the toggle and by "Select all"/"Clear all",
+    which is what keeps the tick the whole-set PUT carries), and their own Assistant or Regional
+    Director slot on `/officers` is switched off whole — "Nobody is assigned" is the primitive's row
+    and cannot be disabled alone. Both say `selfReleaseRefusal(post)` (`lib/permissions.ts` — the
+    server's `self_release_refusal`, pinned off disk, less its "Nothing was changed.") under the
+    control, `officerOptionsForPost` marks the holder row with `OWN_POST_HINT`, and both saves guard
+    it with the whole 409 sentence (`selfReleaseRefused`). The register in the same spec pins the two
+    staffing writes (`putDesignWorkshopInspectors(`, `putWorkshopOversight(`) to those two screens.
 
 ### 14.3 The offline outbox
 

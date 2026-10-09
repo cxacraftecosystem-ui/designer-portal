@@ -33,17 +33,20 @@ The obvious-looking home for "this officer is attached to this workshop, read-on
 ``design_workshop_inspectors`` already owns. It is the wrong home, six times over, and each of
 these is sufficient on its own.
 
-**1. THE IMPORT-TIME GUARD WOULD NOT CATCH THE CHANGE, WHICH IS WHY IT MUST NOT BE LEANED ON.**
-``design_workshop_inspectors`` raises ``RuntimeError`` at import when ``INSPECTION_ROLES`` and
-``deps.DESIGN_WORKSHOP_ROLES`` overlap. ASSISTANT_DIRECTOR and REGIONAL_DIRECTOR are in NEITHER
-set, so adding them to ``INSPECTION_ROLES`` leaves that assert green and the API boots. What it
-would break is invisible: every AD and RD would silently acquire the whole inspector read surface,
-and ``tests/test_dw_inspector_scope_gate.py``'s "everybody else, including admins, 403" would
-either go red or, worse, be "fixed".
+**1. NOTHING WOULD HAVE CAUGHT THE CHANGE — THE IMPORT-TIME GUARD THIS REASON ONCE LEANED ON INCLUDED.**
+Until 2026-10-09 ``design_workshop_inspectors`` raised ``RuntimeError`` at import when its role set
+and ``deps.DESIGN_WORKSHOP_ROLES`` overlapped, and even then that guard would not have noticed the
+Assistant and Regional Directors being folded into the inspection table: it watched one overlap,
+not who reaches the inspector's read surface. It is gone now — the owner's ruling lets the three
+administrator tiers, members of the designer set, hold an inspection, so the separation is kept per
+workshop in ``services/design_workshop_posts`` — and the argument stands without it. Widening the
+inspection table's holder set to the two directorate posts would hand every AD and RD that read
+surface and make them appointable inspectors, with no assertion anywhere going red by itself.
 
-**2. THAT SET'S OWN DOCSTRING FORBIDS IT IN WRITING.** It argues that the frozenset-of-one is "the
-shape rather than an oversight", names admins and professors as deliberate exclusions, and says
-adding a member "is one entry here plus a sentence in the refusal below — never a silent widening."
+**2. THAT TABLE'S ROLE SETS ARE ARGUED FOR AS THEY ARE.** ``INSPECTION_ROLES`` is a frozenset of
+one — "the shape rather than an oversight" — and ``INSPECTION_HOLDER_ROLES`` adds exactly the three
+tiers the ruling named. Its docstrings leave the professor out on purpose, and the directorate posts
+by omission; growing either set to fit a different relationship is a product decision, not a reuse.
 
 **3. ITS PRIMARY KEY IS ITS IDENTITY AND CANNOT CARRY A CAPACITY.** ``@@id([designWorkshopId,
 userId])`` is documented as "The pair IS the identity — one inspection per person per workshop", and
@@ -62,12 +65,14 @@ that feature's door. An officer who may record nothing is not a supervisor; an o
 would put a non-GET on that prefix, and that test hard-fails on it BY DESIGN.
 
 **6. ITS "ALREADY ON THIS WORKSHOP" REFUSAL IS WRITTEN FOR A DIFFERENT RELATIONSHIP.** That branch
-refuses anybody who is the workshop's creator or holds a viewer row, because "an independent review
-by somebody who worked on it is not a review". An Assistant Director is LINE MANAGEMENT, not an
-independent examiner. The refusal is reused here (see :func:`assert_may_hold`) because its first
-half — you cannot supervise work you did yourself — is right for both, but importing the whole
-rule, including that feature's picker query, would start offering Regional Directors in an admin's
-*inspector* picker.
+refuses anybody who AUTHORED the workshop — a viewer row on it, or stages they wrote; since
+2026-10-09 never merely its creator, because opening a workshop is an administrative act (see
+``design_workshops.stage_writers``) — because "an independent review by somebody who worked on it is
+not a review". An Assistant Director is LINE MANAGEMENT, not an independent examiner. The rule's
+first half — you cannot supervise work you did yourself — is right for both, and both now take it
+from ``services/design_workshop_posts`` (see :func:`assert_may_hold`); importing the inspection
+feature's whole rule, its picker query included, would start offering Regional Directors in an
+admin's *inspector* picker.
 
 =======================================================================================
 READ-ONLY IS STRUCTURAL HERE, EXACTLY AS IT IS ONE SCOPE OVER
@@ -92,8 +97,11 @@ through ``design_workshops.attach_the_named_designer`` and
 ``design_workshop_viewers.remove_one_viewer``, both validate the ADDED ids through
 ``assert_every_designer_may_be_named`` — the viewers screen's own rule, imported and never copied —
 and ``tests/test_workshop_oversight_unit.py`` runs an AST sweep over the three files of this feature
-forbidding ``db.designworkshopviewer.*`` outright. **An officer must never appear in that table**,
-and ``OVERSIGHT_CAPACITY_ROLES`` plus the empanelment rule are what keep the two sets apart.
+forbidding ``db.designworkshopviewer.*`` outright. **An officer must never appear in that table for
+a workshop they supervise.** Until 2026-10-09 the role sets kept the two apart; since the owner's
+ruling that administrators may be appointed to either, it is the per-workshop rules in
+``services/design_workshop_posts`` — a viewer row is refused to the workshop's Assistant or Regional
+Director, and its supervisor is refused every write to it.
 
 =======================================================================================
 WHO MAY ASSIGN, AND WHY IT IS NOT "THE MOST SENIOR OFFICER"
@@ -173,7 +181,13 @@ from app.core.config import get_settings
 from app.core.db import db
 from app.core.deps import is_break_glass_master, role_value
 from app.schemas import design_workshop_review_loop
-from app.services import access_roster, design_workshop_viewers, design_workshops
+from app.services import (
+    access_roster,
+    design_workshop_posts as posts,
+    design_workshop_viewers,
+    design_workshops,
+)
+from app.services.concurrency import gather_reads
 from app.services.records import contains
 
 logger = logging.getLogger(__name__)
@@ -191,33 +205,47 @@ logger = logging.getLogger(__name__)
 # --------------------------------------------------------------------------------------
 
 
-#: The roles that hold a supervisory POST over design workshops, for the directory that lists them.
+#: The three ministry POSTS as tiers of the ladder — the roles whose job is the scheme.
 #:
 #: A SET, NOT A RANK FLOOR, and the reason is the same one ``DESIGN_WORKSHOP_ROLES`` gives at
 #: length: 42/45/48 sit above PROFESSOR (40), so a floor written as "ASSISTANT_DIRECTOR and above"
-#: would silently admit ADMIN and MASTER_ADMIN into a picker of ministry posts — and an admin is an
-#: operator of this application, not an officer of the scheme. Two different things, two lists.
-#:
-#: MINISTRY_ADMIN IS IN THE DIRECTORY AND IS NOT ASSIGNABLE TO A WORKSHOP. It is listed because the
-#: directory answers "who are the officers"; it is refused by :data:`OVERSIGHT_CAPACITY_ROLES`
-#: below because the requirement names exactly two posts per workshop — an Assistant Director and a
-#: Regional Director — and a ministry administrator supervises the scheme rather than one workshop.
+#: would silently admit ADMIN and MASTER_ADMIN. **IT IS NOT WHO MAY HOLD AN OVERSIGHT ROW ANY MORE**
+#: — that is :data:`OVERSIGHT_HOLDER_ROLES`, since 2026-10-09 — and the clients mirror it for the
+#: tiers' own screens.
 OFFICER_ROLES = frozenset({"ASSISTANT_DIRECTOR", "REGIONAL_DIRECTOR", "MINISTRY_ADMIN"})
 
-#: Which role may be named in which capacity on one workshop. ONE ROLE PER CAPACITY, deliberately.
+#: Who may be named the Assistant Director of one workshop: the Assistant Director tier, and the three
+#: administrator tiers by appointment (owner's decision, 2026-10-09).
+ASSISTANT_DIRECTOR_HOLDER_ROLES = frozenset({"ASSISTANT_DIRECTOR"}) | posts.SERVING_ADMIN_ROLES
+
+#: Who may be named the Regional Director of one workshop, on the same ruling.
+REGIONAL_DIRECTOR_HOLDER_ROLES = frozenset({"REGIONAL_DIRECTOR"}) | posts.SERVING_ADMIN_ROLES
+
+#: Which role may be named in which capacity on one workshop.
 #:
 #: A MAP rather than one flat set, because "an AD slot may hold an AD" and "an RD slot may hold an
-#: RD" are two rules, and one set would let an officer be filed in the other's slot — which prints
-#: the wrong post beside the right name on a document going to a ministry. The refusal in
-#: :func:`assert_may_hold` names the capacity AND the role it found, so the remedy is obvious.
+#: RD" are two rules, and one set would let an Assistant Director be filed in the Regional
+#: Director's slot — which prints the wrong post beside the right name on a document going to a
+#: ministry. The three administrator tiers fit both slots by ruling, and what stops one of them
+#: holding BOTH on one workshop is the per-workshop rule in ``services/design_workshop_posts``, not
+#: this map. The refusal in :func:`assert_may_hold` names the capacity AND the role it found.
 #:
 #: ITS KEYS ARE THE ENUM'S MEMBERS AND THAT IS CHECKED AT IMPORT, at the foot of this module. A
 #: third capacity is an ``ALTER TYPE … ADD VALUE`` in its own migration file plus an entry here;
 #: adding one without the other is a capacity the API can store and cannot validate.
 OVERSIGHT_CAPACITY_ROLES: dict[str, frozenset[str]] = {
-    "ASSISTANT_DIRECTOR": frozenset({"ASSISTANT_DIRECTOR"}),
-    "REGIONAL_DIRECTOR": frozenset({"REGIONAL_DIRECTOR"}),
+    "ASSISTANT_DIRECTOR": ASSISTANT_DIRECTOR_HOLDER_ROLES,
+    "REGIONAL_DIRECTOR": REGIONAL_DIRECTOR_HOLDER_ROLES,
 }
+
+#: Every role that may hold an oversight row in some capacity — the door of the officer's own read
+#: surface, which is then scoped by the rows themselves.
+OVERSIGHT_HOLDER_ROLES = frozenset().union(*OVERSIGHT_CAPACITY_ROLES.values())
+
+#: The two tiers whose JOB is one of the slots, as against the administrators who may be appointed to
+#: one. The ministry dashboard lists these with a measured zero when nobody has posted them anywhere;
+#: an administrator appears there only where a row names them.
+DIRECTORATE_POST_ROLES = OFFICER_ROLES - posts.SERVING_ADMIN_ROLES
 
 #: The two capacities, in the order a screen and a report print them. Derived from the map above so
 #: the two cannot disagree about how many there are.
@@ -241,14 +269,24 @@ ELIGIBLE_OFFICER_LIMIT = 2000
 
 
 def is_officer(user: Any) -> bool:
-    """Is this account one of the three ministry posts?
+    """Is this account one of the three ministry posts — the TIER?
 
     SET MEMBERSHIP, written against the string rather than against ``ROLE_RANK`` so this module is
     correct on a deployment where the three tiers have not been added to the ladder yet: it answers
     False for everybody, which is the fail-closed direction. Same construction, same reason, as
-    ``design_workshop_inspectors.is_inspector``.
+    ``design_workshop_inspectors.is_inspector``. Not the question the read surface asks any more —
+    that is :func:`may_hold_oversight`.
     """
     return role_value(user) in OFFICER_ROLES if user is not None else False
+
+
+def may_hold_oversight(user: Any) -> bool:
+    """May this account's role hold an oversight row in some capacity?
+
+    THE ROLE FIRST, THE ROW SECOND, everywhere this scope is read: a row whose holder's role has since
+    moved outside :data:`OVERSIGHT_HOLDER_ROLES` is honoured nowhere.
+    """
+    return role_value(user) in OVERSIGHT_HOLDER_ROLES if user is not None else False
 
 
 def can_assign_workshop_oversight(user: Any) -> bool:
@@ -256,16 +294,17 @@ def can_assign_workshop_oversight(user: Any) -> bool:
     return role_value(user) in OVERSIGHT_ASSIGNER_ROLES if user is not None else False
 
 
-#: What an account is told when it reaches the officer's read surface without one of the posts.
+#: What an account is told when it reaches the officer's read surface with a role that can hold no
+#: oversight post.
 #:
 #: A SENTENCE THAT NAMES THE OTHER DOOR, which is the whole reason this is a constant rather than an
-#: inline string: an ADMIN hits this refusal too, and an admin told only "forbidden" on a READ
-#: surface will reasonably conclude the deployment is broken.
+#: inline string: a designer told only "forbidden" on a READ surface will reasonably conclude the
+#: deployment is broken.
 NOT_AN_OFFICER_DETAIL = (
-    "Workshops I monitor belongs to the Assistant Director, Regional Director and Ministry Admin "
-    "posts. Designers and admins read design & prototype workshops through /api/design-workshops "
-    "instead; a Ministry Admin chooses who monitors a workshop at "
-    "/api/design-workshop-oversight/{id}."
+    "Workshops I monitor belongs to the accounts that may be named a workshop's Assistant Director "
+    "or Regional Director: those two posts, Ministry Admins, admins and the master admin. Designers "
+    "read design & prototype workshops through /api/design-workshops instead; who monitors a "
+    "workshop is chosen at /api/design-workshop-oversight/{id}."
 )
 
 #: What everybody else is told when they try to CHANGE who supervises a workshop.
@@ -277,20 +316,18 @@ OVERSIGHT_ASSIGNER_REFUSAL = (
 
 
 def assert_oversight_surface(user: Any) -> None:
-    """403 for anybody who is not an officer, INCLUDING ADMINS, and that is deliberate.
+    """403 for anybody whose role can hold no oversight post; everybody else is scoped by their ROWS.
 
-    Admitting admins here would mean one of two things and both are worse than a refusal. Scoped by
-    THEIR OWN oversight rows, an admin sees an empty list and reads it as a broken feature. Scoped
-    by "everything, because they are an admin", this surface silently becomes a second full read of
-    every workshop in the repository — a second place to look when somebody has access they should
-    not, which is precisely what ``services/design_workshop_access``'s header refuses.
-
-    So the answer is a 403 that names the door they want. Nothing here branches on ``is_admin``, and
-    nothing here should: the refusal is identical for an admin, a designer and a volunteer, which is
-    what makes it one sentence to reason about rather than three. An admin's half of this feature is
-    the ASSIGNMENT screen, which :func:`assert_may_assign_oversight` admits them to.
+    ADMINS WERE REFUSED HERE UNTIL 2026-10-09, on the argument that an admin scoped by their own
+    oversight rows would see an empty list and read it as a broken feature — and a MINISTRY_ADMIN was
+    admitted to a list that could never contain anything, because no slot would take them. The
+    owner's ruling made both of them holders: an administrator may be NAMED a workshop's Assistant or
+    Regional Director, so "Workshops I monitor" is the workshops they were named on — empty until
+    somebody names them, which is the truth. What this surface must never become is a second full
+    read of every workshop "because they are an admin", and it does not: nothing here or in
+    :func:`load_overseen_workshop_or_404` branches on ``is_admin``. The row decides.
     """
-    if is_officer(user):
+    if may_hold_oversight(user):
         return
     raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=NOT_AN_OFFICER_DETAIL)
 
@@ -356,9 +393,10 @@ async def load_overseen_workshop_or_404(workshop_id: str, user: Any) -> Any:
     **This one has no ``for_edit`` parameter and must never grow one.** That absence is the whole
     enforcement.
 
-    It would also simply not work: since 2026-09-03 that loader honours a viewer grant only for an
-    account inside ``DESIGN_WORKSHOP_ROLES``, which an officer is outside, so calling it here would
-    404 every officer on every workshop they supervise.
+    It would also simply not work: that loader admits a creator, an admin or a viewer-row holder,
+    and the supervisor of a workshop holds no viewer row on it — ``services/design_workshop_posts``
+    refuses them one — so calling it here would 404 an Assistant Director on every workshop they
+    supervise, and would hand an administrator serving as one the write access their post denies.
 
     404 AND NOT 403 for a workshop out of scope, matching every other loader in this family: a 403
     would confirm the id exists to exactly the people this is turning away.
@@ -371,7 +409,7 @@ async def load_overseen_workshop_or_404(workshop_id: str, user: Any) -> Any:
     and braces on purpose: this is the function a future caller will reach for, and a loader that
     trusts its caller's gate is how a scope leaks onto a surface nobody re-read.
     """
-    if not is_officer(user):
+    if not may_hold_oversight(user):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Record not found")
     record = await db.designworkshop.find_unique(where={"id": workshop_id})
     if record is None or record.deletedAt is not None:
@@ -430,13 +468,20 @@ async def oversight_rows(workshop_id: str) -> list[dict[str, Any]]:
     return [oversight_payload(by_capacity[c]) for c in CAPACITIES if c in by_capacity]
 
 
-async def officer_directory(search: str | None = None) -> dict[str, Any]:
-    """The accounts that hold one of the three ministry posts.
+async def officer_directory(
+    search: str | None = None, *, exclude_user_id: str | None = None
+) -> dict[str, Any]:
+    """The accounts that may be named a workshop's Assistant Director or Regional Director.
 
     MODELLED ON ``design_workshop_inspectors.eligible_inspectors`` AND NOT ON
     ``designers.designer_directory``, which is the choice that matters: the designer directory
     carries empanelment standing off ``DesignerRoster``, and an officer has no empanelment — see
     the module header. One role clause, one cut list, no roster.
+
+    THE ROLE CLAUSE IS :data:`OVERSIGHT_HOLDER_ROLES` since 2026-10-09: the two directorate posts and
+    the three administrator tiers, because the write accepts all five. ``exclude_user_id`` is the
+    person doing the appointing — the write refuses anybody naming themselves, so the picker does not
+    offer them. The ministry dashboard's directory read passes nothing: nobody is appointing there.
 
     THE PLATFORM ALLOW-LIST STILL APPLIES, because it gates every role: an account the allow-list
     has REJECTED or SUSPENDED cannot sign in, so offering it here would mean naming an officer whose
@@ -447,13 +492,16 @@ async def officer_directory(search: str | None = None) -> dict[str, Any]:
     the search clause both want ``where["OR"]``, and the later assignment silently wins; if that is
     the search, the ROLE clause is gone and this picker offers every account in the repository.
 
-    ``capacities`` ON EACH ROW IS WHAT LETS THE PICKER GREY A MINISTRY_ADMIN OUT rather than letting
-    the PUT 422 them. A directory that offers a choice the write refuses is a directory that teaches
-    people to distrust it.
+    ``capacities`` ON EACH ROW IS WHAT LETS THE PICKER GREY AN ACCOUNT OUT OF A SLOT rather than
+    letting the PUT 422 them: an Assistant Director fits only the AD slot, a Regional Director only
+    the RD slot, an administrator either. A directory that offers a choice the write refuses is a
+    directory that teaches people to distrust it.
     """
     barred = await access_roster.barred_emails()
 
-    clauses: list[dict[str, Any]] = [{"role": {"in": sorted(OFFICER_ROLES)}}]
+    clauses: list[dict[str, Any]] = [{"role": {"in": sorted(OVERSIGHT_HOLDER_ROLES)}}]
+    if exclude_user_id:
+        clauses.append({"id": {"not": exclude_user_id}})
     if barred:
         # THE BREAK-GLASS, SPELLED HERE BECAUSE A ``WHERE`` CANNOT CALL A PYTHON FUNCTION. Kept in
         # step with ``deps.is_break_glass_master`` BY HAND, and with BOTH of its arms: the role, and
@@ -461,9 +509,8 @@ async def officer_directory(search: str | None = None) -> dict[str, Any]:
         # has not been seeded or somebody has demoted it. Spelling only the role half is exactly how
         # the viewer picker's copy came to be silently narrowed.
         #
-        # The master admin is not in ``OFFICER_ROLES``, so this arm is unreachable through the
-        # clause above. It is written anyway: an exemption that is missing on the day the role set
-        # changes is worse than one that is inert.
+        # REACHABLE since 2026-10-09: the master admin may be named to a slot, so a suspended
+        # allow-list row must not take the break-glass account off this picker.
         #
         # ``mode: "insensitive"`` because ``barred`` is lower-cased and ``User.email`` is not, so a
         # case-sensitive NOT-IN would quietly fail to exclude an account stored shouting — the one
@@ -515,7 +562,7 @@ async def officer_directory(search: str | None = None) -> dict[str, Any]:
 
 
 def capacities_for(role: str) -> list[str]:
-    """Which slots this role may be filed in. Empty for a MINISTRY_ADMIN, which is the point."""
+    """Which slots this role may be filed in: its own for a directorate post, both for an admin tier."""
     return [c for c, roles in OVERSIGHT_CAPACITY_ROLES.items() if role in roles]
 
 
@@ -524,48 +571,39 @@ def capacities_for(role: str) -> list[str]:
 # --------------------------------------------------------------------------------------
 
 
-async def assert_may_hold(workshop_id: str, wanted: dict[str, str]) -> None:
-    """422 naming the offending account and the capacity, never a silent skip.
+async def assert_may_hold(
+    workshop_id: str, wanted: dict[str, str | None], *, appointing: str | None = None
+) -> None:
+    """Refuse the whole request, naming every offending account and capacity, never a silent skip.
 
-    ``wanted`` is ``{capacity: userId}`` for the capacities this request is SETTING (an unassign
-    carries no id and has nothing to validate).
+    ``wanted`` is the request as the route read it — ``{capacity: userId}`` for a capacity being
+    SET, ``{capacity: None}`` for one being unassigned, and no key for one left alone. The ``None``
+    entries are validated as nothing; they matter because the separation rules are judged on the
+    workshop AS THIS REQUEST WOULD LEAVE IT, so moving one person from the RD slot to the AD slot
+    while unassigning RD is not "holding both". ``appointing`` is the account making the request.
 
     FOUR REFUSALS, in this order:
 
-    1. **No such account.** Asked before anything else.
-    2. **Wrong role for the capacity.** The sentence names what the account IS *and* which slot it
-       was offered for, because those are two different mistakes with one remedy. **IT DOES NOT
+    1. **No such account.** 422, asked before anything else.
+    2. **Wrong role for the capacity.** 422. The sentence names what the account IS *and* which slot
+       it was offered for, because those are two different mistakes with one remedy. **IT DOES NOT
        STACK** — its only remedy is picking somebody else, and appending "and they are also
        suspended" to a designer who can never hold this post is a second errand attached to a
        refusal that already ends the matter.
-    3. **Barred by the platform allow-list.** Asked of EXACTLY the addresses named here rather than
-       of the capped ``barred_emails`` read, because a refusal has to be able to promise it is
+    3. **Barred by the platform allow-list.** 422. Asked of EXACTLY the addresses named here rather
+       than of the capped ``barred_emails`` read, because a refusal has to be able to promise it is
        complete and that one has a ceiling. STACKS.
-    4. **Already on this workshop as its creator or a co-designer.** STACKS. An officer who ran the
-       workshop cannot be the officer who supervises it — the same rule the inspection tier states
-       one rung down, and the reason ``_accounts_already_on_the_workshop`` is IMPORTED rather than
-       restated: it is a two-query membership question with an exact answer, and a second copy here
-       would be free to forget the creator arm.
-
-       **WHAT IT DOES NOT COVER, STATED SO IT IS A KNOWN GAP AND NOT AN OVERSIGHT.** That helper
-       reads the creator and the viewers and nothing else, so one person may today be a workshop's
-       Regional Director AND its inspector, and nothing refuses it. Both roles are read-only, so
-       nothing is corrupted; what is lost is the independence the inspector tier exists to
-       guarantee. Closing it means a new exported predicate inside ``design_workshop_inspectors``
-       — the only module permitted to read that table — and it is an owner call.
+    4. **THE WORKSHOP'S OWN SEPARATION OF DUTIES**, 409, from ``services/design_workshop_posts``.
+       STACKS. Somebody who AUTHORED this workshop (a viewer row, or written stages — never merely
+       having created it), somebody who would hold BOTH slots, somebody who inspects it, and the
+       ``appointing`` account naming itself into a slot it does not already hold. This closes the
+       gap this docstring used to record — one person as a workshop's Regional Director AND its
+       inspector — which needed only the inspection feature's own reader to close.
 
     VALIDATION RUNS TO COMPLETION BEFORE ANY WRITE. One bad id refuses the whole call rather than
     applying the good half: somebody who named two officers and is shown one has been told nothing
     about which failed or why, and a partially applied assignment looks like it worked.
     """
-    # IMPORTED INSIDE THE FUNCTION so this module's import graph does not depend on the fifth
-    # scope's at load time. The helper is a private name in another access module, which is a
-    # coupling worth stating out loud rather than quietly living with — the same trade
-    # ``design_workshop_grants`` makes for ``_assert_every_id_may_be_granted`` and
-    # ``design_workshop_inspections`` makes for ``_stages_payload``. A second copy of a two-query
-    # membership question is how the creator arm comes to be forgotten in one of them.
-    from app.services.design_workshop_inspectors import _accounts_already_on_the_workshop
-
     ids = {uid for uid in wanted.values() if uid}
     if not ids:
         return
@@ -585,10 +623,22 @@ async def assert_may_hold(workshop_id: str, wanted: dict[str, str]) -> None:
             ),
         )
 
-    barred = await access_roster.barred_among([u.email for u in users])
-    on_the_workshop = await _accounts_already_on_the_workshop(workshop_id, set(by_id))
+    present, barred, authored, held = await gather_reads(
+        db.designworkshopoversight.find_many(where={"designWorkshopId": workshop_id}),
+        access_roster.barred_among([u.email for u in users]),
+        posts.authorship_among(workshop_id, by_id),
+        posts.supervisory_posts_among(workshop_id, by_id),
+    )
+    current = {str(getattr(row.capacity, "value", row.capacity)): row.userId for row in present}
+    # THE WORKSHOP AS THIS REQUEST WOULD LEAVE IT: what is held now, overwritten by what was sent.
+    after = {
+        capacity: holder
+        for capacity, holder in {**current, **wanted}.items()
+        if holder and capacity in OVERSIGHT_CAPACITY_ROLES
+    }
 
     refusals: list[str] = []
+    separation: list[str] = []
     for capacity in CAPACITIES:
         uid = wanted.get(capacity)
         if not uid:
@@ -598,9 +648,8 @@ async def assert_may_hold(workshop_id: str, wanted: dict[str, str]) -> None:
         if role not in OVERSIGHT_CAPACITY_ROLES[capacity]:
             refusals.append(
                 f"{user.name} ({user.email}) is a {role}, and the {_label(capacity)} of a design & "
-                f"prototype workshop must be {_article(capacity)} {_label(capacity)}. A Ministry "
-                f"Admin supervises the scheme rather than one workshop and cannot be named in "
-                f"either slot."
+                f"prototype workshop must be {_article(capacity)} {_label(capacity)}, a Ministry "
+                f"Admin, an admin or the master admin."
             )
             # AND NOTHING FURTHER ABOUT THIS ACCOUNT — see the docstring.
             continue
@@ -611,19 +660,24 @@ async def assert_may_hold(workshop_id: str, wanted: dict[str, str]) -> None:
                 f"own would leave this screen saying they are monitoring while they are shown a "
                 f"refusal at the door."
             )
-        if uid in on_the_workshop:
-            refusals.append(
-                f"{user.name} ({user.email}) is already on this workshop as its creator or a "
-                f"co-designer, so they cannot also supervise it — nobody supervises their own "
-                f"work. Take them off the workshop's viewers first if they have genuinely moved "
-                f"from running it to monitoring it."
-            )
-
-    if refusals:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=" ".join(refusals) + " Nothing was changed.",
+        # Their posts AFTER the change: both slots as this request leaves them, plus an inspection
+        # if they hold one. Read from ``after`` rather than from ``held`` for the oversight half, so
+        # a swap between the two slots in one request is judged on where it lands.
+        standing = posts.Standing(
+            posts=frozenset({c for c, holder in after.items() if holder == uid})
+            | (held.get(uid, frozenset()) & {posts.INSPECTOR}),
+            authored=authored.get(uid, frozenset()),
         )
+        separation.extend(
+            posts.separation_refusals(
+                person=f"{user.name} ({user.email})",
+                post=capacity,
+                standing=standing,
+                self_appointed=uid == appointing and current.get(capacity) != uid,
+            )
+        )
+
+    posts.raise_refusals(refusals, separation)
 
 
 _CAPACITY_LABELS = {
@@ -720,9 +774,30 @@ async def apply_oversight(
     ``skip_duplicates``. The upsert asks the database, which is the only reader that cannot be
     stale. ``createdAt`` is untouched on the update branch, so "since when has THIS PERSON been its
     AD" stays answerable exactly as before.
+
+    ── NOBODY TAKES THEMSELVES OFF A POST (2026-10-09) ────────────────────────────────────────────
+
+    A request that would unassign the caller from a slot they hold, or put somebody else in it, is
+    refused whole with a 409 (``posts.self_release_refusal``) before anything is written. The
+    validation above cannot see it — an unassign names nobody, and ``assert_may_hold`` returns
+    before reading anything when every value is ``None`` — so it is asked here, against the rows as
+    they stand. A director who could release themselves could then write the workshop their post
+    forbids them to, and the deleted row would be the only record they ever held it. Another
+    assigner unassigning or replacing them is the ordinary request, and works.
     """
     existing = await db.designworkshopoversight.find_many(where={"designWorkshopId": workshop_id})
     held = {str(getattr(r.capacity, "value", r.capacity)): r for r in existing}
+    released = sorted(
+        capacity
+        for capacity, user_id in wanted.items()
+        if held.get(capacity) is not None
+        and held[capacity].userId == assigned_by_id
+        and user_id != assigned_by_id
+    )
+    if released:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=posts.self_release_refusal(released)
+        )
 
     async with db.tx() as tx:
         for capacity, user_id in wanted.items():
@@ -900,7 +975,12 @@ async def reassign_designer(workshop: Any, user_id: str, *, actor: Any) -> dict[
     """
     assert_the_report_is_not_filed(workshop)
 
-    await design_workshops.assert_every_designer_may_be_named({user_id})
+    # THE WORKSHOP AND THE ACTOR TRAVEL WITH THE IDS (2026-10-09): naming the workshop's own
+    # inspector or supervisor as its designer, or naming yourself, is refused with a 409 by the same
+    # rule the viewers screen applies — see ``services/design_workshop_posts``.
+    await design_workshops.assert_every_designer_may_be_named(
+        {user_id}, workshop_id=workshop.id, appointing=getattr(actor, "id", None)
+    )
 
     # READ BEFORE THE WRITE, so the outgoing lead is resolved against the viewer set as it stood
     # BEFORE the incoming designer was added to it. Read after, the new row is in the set and the
@@ -1117,7 +1197,9 @@ async def set_named_designers(
         )
 
     if added:
-        await design_workshops.assert_every_designer_may_be_named(set(added))
+        await design_workshops.assert_every_designer_may_be_named(
+            set(added), workshop_id=workshop_id, appointing=getattr(actor, "id", None)
+        )
 
     for user_id in added:
         await design_workshops.attach_the_named_designer(
@@ -1645,9 +1727,10 @@ async def unlink_artisan_from_workshop(workshop_id: str, artisan_id: str) -> boo
     and its interviews exactly as they were. That is the whole of what an officer is entitled to
     change here: they did not author the record, ``Artisan.createdBy`` is ``Restrict`` and is
     untouched, and a roster correction must never be a way to destroy a regulated person-record.
-    ``schemas/records.assert_payload_workshop`` already documents the same clearing on the artisan
-    form — *"an explicit ``None`` unfiles the record and is always allowed"* — so this is that rule
-    reached from the screen that actually holds the roster.
+    ``services/record_design_workshop.assert_payload_workshop`` already documents the same clearing
+    on the artisan form — *"an explicit ``None`` unfiles the record"* — so this is that rule reached
+    from the screen that actually holds the roster, and like that rule it is refused to the
+    workshop's inspector and its two directors (the route asks, before it calls this).
 
     ⚠ **THE STAGE-3 PARTICIPANT ROW IS DELIBERATELY LEFT STANDING, AND THE SCREEN SAYS SO.**
     ``services/artisan_import`` writes a second thing per imported artisan: a ``DwStageEntry`` row

@@ -72,6 +72,7 @@ from typing import Any
 import pytest
 
 from app.api.routes import auth as auth_routes
+from app.core.config import get_settings
 from app.core.db import db
 from app.core.security import create_access_token, hash_password
 from app.services import access_roster
@@ -153,7 +154,15 @@ ACCOUNTS: tuple[tuple[str, str], ...] = (
     # the END because the parametrisation above takes ``ACCOUNTS[:7]``, which is the seven-rung
     # ladder and must stay exactly those seven.
     ("designerUnempanelled", "DESIGNER"),
+    # SECTION 10: an ADMIN, admitted, whose password an administrator chose (``mustChangePassword``),
+    # and a MASTER admin in the same state — refused as a deputy, exempt once ``MASTER_ADMIN_EMAIL``
+    # names it. The flag is set by :data:`FLAGGED` below.
+    ("adminFlagged", "ADMIN"),
+    ("masterFlagged", "MASTER_ADMIN"),
 )
+
+#: The accounts the fixture marks ``mustChangePassword`` after the grandfathering — section 10.
+FLAGGED: tuple[str, ...] = ("adminFlagged", "masterFlagged")
 
 #: The accounts whose access row is moved out of ACTIVE after the grandfathering, and to what.
 REFUSED: tuple[tuple[str, str], ...] = (
@@ -246,6 +255,10 @@ async def world():
         await db.designerroster.update_many(
             where={"email": address("designerSuspended")}, data={"isActive": False}
         )
+        for slug in FLAGGED:
+            await db.user.update(
+                where={"id": people[slug].id}, data={"mustChangePassword": True}
+            )
         # Empanelled, no account, no allow-list row — created last so the grandfathering cannot
         # have picked it up.
         await db.designerroster.create(data={"email": address("empanelled"), "isActive": True})
@@ -1197,3 +1210,56 @@ async def test_signing_in_at_any_other_role_puts_nobody_on_the_designer_roster(w
             "statement that somebody is a practising designer, it is what the workshop pickers "
             "offer, and nothing downstream ever removes a row that should not have been written"
         )
+
+
+# --------------------------------------------------------------------------------------
+# 10. The dataset token and a password somebody else chose (2026-10-09)
+# --------------------------------------------------------------------------------------
+#
+# ``POST /api/datasets/token`` turns an email and a password into a THIRTY-DAY read credential over
+# the whole repository, and it never looked at ``mustChangePassword``: a temporary password an
+# administrator typed for somebody — one that person had been told to replace — was enough to take
+# one. These two pin the refusal and the one account exempt from it.
+
+
+async def test_an_admin_holding_a_temporary_password_cannot_mint_a_dataset_token(world, client):
+    """403 with the remedy in the sentence, no credential in the body — and the SIGN-IN still works,
+    because the only way to replace the password is from inside a session."""
+    email = world["address"]("adminFlagged")
+
+    minted = _mint(client, email)
+    assert minted.status_code == 403, minted.text
+    assert "accessToken" not in minted.json(), "a refusal must not carry the credential"
+    assert "choose its own password" in minted.json()["detail"], minted.json()
+
+    signed_in = _login(client, email)
+    assert signed_in.status_code == 200, signed_in.text
+    assert signed_in.json()["user"]["mustChangePassword"] is True
+
+
+async def test_only_the_configured_master_admin_mints_with_a_temporary_password(world, client):
+    """The exemption is the session gate's, ``deps.is_configured_master_admin``: the account at
+    ``MASTER_ADMIN_EMAIL`` is the deployment's recovery path and must not be shut out of a copy of
+    the data by a flag. A SECOND master admin holding a temporary password is refused like anybody
+    else — the owner's decision names the configured account, not the role — although the allow-list
+    still exempts it (``is_break_glass_master``), which is why it reaches this refusal at all.
+
+    ``MASTER_ADMIN_EMAIL`` is pointed at this run's own stamped account for one request, rather than
+    the real master admin's row being flagged on a shared development database.
+    """
+    email = world["address"]("masterFlagged")
+
+    deputy = _mint(client, email)
+    assert deputy.status_code == 403, deputy.text
+    assert "accessToken" not in deputy.json(), "a refusal must not carry the credential"
+    assert "choose its own password" in deputy.json()["detail"], deputy.json()
+
+    settings = get_settings()
+    previous = settings.master_admin_email
+    settings.master_admin_email = email
+    try:
+        minted = _mint(client, email)
+    finally:
+        settings.master_admin_email = previous
+    assert minted.status_code == 200, minted.text
+    assert minted.json()["accessToken"]

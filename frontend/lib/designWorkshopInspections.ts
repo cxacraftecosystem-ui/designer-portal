@@ -5,16 +5,26 @@
  * wire; what follows is the part a caller on this side has to hold in their head, because every one
  * of these facts is a place a reasonable instinct gives the wrong answer.
  *
- * ── 1. THE TIER IS A SET, NOT A RANK FLOOR, AND THE SET HAS ONE MEMBER ─────────────────────────
+ * ── 1. WHO MAY INSPECT IS A SET, NOT A RANK FLOOR — AND SINCE 2026-10-09 IT HAS FOUR MEMBERS ──
  *
- * `INSPECTION_ROLES` is `frozenset({"INSPECTOR"})`, and `assert_inspection_surface` answers **403
- * to an admin as well** — deliberately, in its own words: scoped by their own inspection rows an
- * admin sees an empty list and reads it as a broken feature, and scoped by "everything, because
- * they are an admin" this surface silently becomes a second full read of every workshop in the
- * repository. So the mirror of that door is {@link canInspectDesignWorkshops} in `lib/permissions`,
- * which is set membership on INSPECTOR alone. **It is not "INSPECTOR and above".** A rank floor
- * would offer the menu entry and the URL to every admin and master admin in the repository and land
- * all of them on a 403.
+ * The owner's ruling D3 lets a Ministry Admin, an admin and the master admin be APPOINTED to inspect
+ * a workshop, beside the Inspector / Reviewer tier, so the door to this surface is
+ * `INSPECTION_HOLDER_ROLES` on the server and {@link canInspectDesignWorkshops} here. It is still
+ * not "INSPECTOR and above": a professor, an Assistant Director and a Regional Director outrank an
+ * inspector and are refused. `INSPECTION_ROLES` stays the one-member TIER, which now decides only
+ * whose daily work this is — see `isInspectorTier`.
+ *
+ * AN ADMIN WAS REFUSED HERE BY NAME BEFORE THE RULING, on the argument that an admin scoped by their
+ * own inspection rows sees an empty list and reads it as a broken feature. The rows are an admin's
+ * to hold now, so the list is theirs; an empty one is answered with a sentence
+ * ({@link inspectionEmptyState}), and a 403 met by an admin means the same thing
+ * ({@link inspectionRefusalMeansNoPosts}). The list is still scoped to the reader's own rows, never
+ * to "everything, because they are an admin" — that half is the server's to keep.
+ *
+ * WHICH workshop an account may inspect is decided per workshop, on the server, and answered with a
+ * sentence: nobody appoints themselves, nobody inspects what they authored, nobody inspects a
+ * workshop they also supervise, and an inspector's writes to the workshop they inspect are refused
+ * (a 403 naming the post) — through the admin routes as well.
  *
  * ── 2. AN INSPECTOR IS OUTSIDE `DESIGN_WORKSHOP_ROLES`, SO NO OTHER ROUTE ANSWERS THEM ─────────
  *
@@ -32,6 +42,12 @@
  *   * `GET /design-workshops/schema` is the exception and takes `get_current_user` with no role
  *     dependency, so the 496-field registry — which is what names the stages and their fields — is
  *     readable by an inspector like anybody else.
+ *
+ * AN ADMINISTERING TIER APPOINTED TO INSPECT IS INSIDE `DESIGN_WORKSHOP_ROLES`, and is the one
+ * reader of this surface for whom the workshop tree does open — read-only on the workshop they
+ * inspect, whose writes answer a 403 naming the post. This surface still offers none of those
+ * pages: it is the inspection's read, and {@link inspectionMayOpen} answers for the payload, not
+ * for the reader.
  *
  * ── 3. `readOnly: true` IS ON THE WIRE ON PURPOSE ─────────────────────────────────────────────
  *
@@ -66,11 +82,14 @@
  *   * **There is no creator held quietly off to one side.** Nobody holds an inspection by any route
  *     other than a row in this table, so an empty answer means NOBODY IS INSPECTING THIS WORKSHOP —
  *     the literal truth, and a screen may print it as such.
- *   * **The workshop's own people are refused BY NAME.** The creator and any co-designer holding a
- *     `DesignWorkshopViewer` row are refused with a 422 saying an independent review by somebody who
- *     worked on it is not a review. That refusal exists nowhere else in this codebase and it is the
- *     point of the tier; surface the server's sentence rather than pre-empting it, because the two
- *     role sets are disjoint today and the case is reachable only through a promotion.
+ *   * **The workshop's own people are refused BY NAME.** Anybody who worked on it — a co-designer
+ *     holding a `DesignWorkshopViewer` row, somebody who wrote its stages — is refused, because an
+ *     independent review by somebody who worked on it is not a review. So are the person saving
+ *     (nobody appoints themselves) and the workshop's Assistant Director or Regional Director. Since
+ *     the owner's ruling of 2026-10-09 these refusals are reachable every day rather than only
+ *     through a promotion — the administering tiers both appoint and may be appointed — and the
+ *     server answers each with a 409 whose sentence names the rule broken. Surface that sentence;
+ *     do not pre-empt it with a client-side copy of a per-workshop rule this side can only guess at.
  */
 
 import { ApiError, apiFetch, buildQuery } from "@/lib/api";
@@ -89,8 +108,10 @@ import {
   type DwSummary,
   type DwValue
 } from "@/lib/designWorkshops";
+import { isUnreachable } from "@/lib/offline";
+import { canInspectDesignWorkshops, isInspectorTier } from "@/lib/permissions";
 import { richSummary } from "@/lib/richText";
-import type { PageResult, UserRole } from "@/lib/types";
+import type { PageResult, User, UserRole } from "@/lib/types";
 
 /* ────────────────────────────────────────────────────────────────────────────
  * The admin's two lists
@@ -128,10 +149,11 @@ export type DwInspectorList = { inspectors: DwInspector[] };
  * and nothing else, because the caller is choosing an examiner and has no business receiving the
  * capability flags or the auth provider.
  *
- * In practice `role` is always "INSPECTOR" — the eligible clause is `{"role": {"in":
- * sorted(INSPECTION_ROLES)}}` and that set has one member — but it is typed and rendered as a role
- * rather than assumed, because the day the owner adds a second member to that frozenset this picker
- * must show which of the two an account is without anybody remembering to come back here.
+ * `role` IS RENDERED, AND SINCE 2026-10-09 IT IS ONE OF FOUR. It used to be the Inspector / Reviewer
+ * tier on every row, and this type said it would be typed as a role anyway "because the day the
+ * owner adds a second member to that frozenset this picker must show which of the two an account
+ * is". That day came: the eligible clause is the holder set — the tier plus a Ministry Admin, an
+ * admin and the master admin — and the picker names each row's role with no change here.
  */
 export type DwEligibleInspector = {
   id: string;
@@ -182,7 +204,10 @@ export const ELIGIBLE_INSPECTOR_SEARCH_MAX = 120;
  */
 export const MAX_DESIGN_WORKSHOP_INSPECTORS = 25;
 
-/** Everyone assigned to inspect this workshop. Admin and master admin only, server-side. */
+/**
+ * Everyone assigned to inspect this workshop. A Ministry Admin, an admin or the master admin,
+ * server-side (`require_workshop_assigner`).
+ */
 export function listDesignWorkshopInspectors(workshopId: string) {
   return apiFetch<DwInspectorList>(`/design-workshop-inspections/${workshopId}/inspectors`);
 }
@@ -207,13 +232,18 @@ export function putDesignWorkshopInspectors(workshopId: string, userIds: string[
 }
 
 /**
- * The accounts that may be assigned an inspection at all. Admin and master admin only, server-side.
+ * The accounts that may be assigned an inspection at all — the holder set, minus the account asking
+ * (nobody appoints themselves). A Ministry Admin, an admin or the master admin, server-side.
  *
- * ONE ROLE AND ONE ROSTER, which is the whole difference from `eligible-viewers`: that endpoint reads
- * two rosters because it offers DESIGNERs, whose empanelment gates their sign-in, and an inspector is
- * empanelled to run nothing. The platform allow-list still applies — an account it has rejected or
- * suspended cannot sign in, so offering it here would mean an admin assigning an inspection that the
- * next sign-in refuses with nothing on screen saying why.
+ * ONE ROLE SET AND ONE ROSTER, which is the whole difference from `eligible-viewers`: that endpoint
+ * reads two rosters because it offers DESIGNERs, whose empanelment gates their sign-in, while an
+ * inspection is held by role and by appointment with no empanelment behind it. The platform
+ * allow-list still applies — an account it has rejected or suspended cannot sign in, so offering it
+ * here would mean an admin assigning an inspection that the next sign-in refuses with nothing on
+ * screen saying why.
+ *
+ * NOT FILTERED AGAIN HERE BY ROLE. Who may inspect THIS workshop is a per-workshop question the
+ * server answers on save, with a sentence; this list is who may inspect at all.
  *
  * **THE SEARCH IS THE SERVER'S**, folded into the same `WHERE` as the eligibility rule, so it reaches
  * accounts past the ceiling. Narrowing the array this function returns would not, because that array
@@ -397,6 +427,93 @@ export function inspectionAdministrationMissing(error: unknown): boolean {
 }
 
 /**
+ * What a failed or refused request on the inspectors panel says, told apart in words. It lives here
+ * rather than in `DesignWorkshopInspectorsPanel` so the decision can be exercised without a renderer.
+ *
+ * `isUnreachable` and not `isTransient`: the latter answers "is it worth retrying" and counts every
+ * 5xx as yes, so a repository that ANSWERED and then failed would be reported as a connection
+ * problem — which sends an admin to look at their signal and leaves a real fault wearing an offline
+ * message.
+ *
+ * THE 422 AND THE 409 ARE PASSED THROUGH ALMOST BARE, and that is the important arm rather than a
+ * fallback. The server's refusals on these routes name the account, say what is wrong with it and
+ * say where the remedy is — "clear that on the access screen first", "take them off the workshop's
+ * viewers first" — and a separation-of-duties refusal (the reader naming themselves, somebody who
+ * authored or supervises the workshop) is a 409 whose sentence names the rule broken. Paraphrasing
+ * any of that would replace a sentence an admin can act on with one they cannot.
+ *
+ * THE 403'S ROLE CLAUSE IS ONLY FOR A READER THE ROLE COULD BE REFUSING. An account that may assign
+ * and is refused anyway has met a rule about THIS workshop — a post it holds there, say — which the
+ * server's sentence names; telling it that choosing inspectors "is administration" would point it at
+ * a door it already holds.
+ */
+export function inspectorAdministrationFailure(
+  error: unknown,
+  fallback: string,
+  readerMayAssign: boolean
+): string {
+  if (!(error instanceof ApiError) || isUnreachable(error)) {
+    return "This device cannot reach the repository, so nothing was sent and nothing has changed. Check the connection and try again.";
+  }
+  if (error.status === 403) {
+    return readerMayAssign
+      ? `The repository refused this. ${error.message}`
+      : `The repository refused this. ${error.message} Choosing who inspects a workshop is administration, so it is open to a Ministry Admin, an admin and the master admin.`;
+  }
+  if (error.status === 409 || error.status === 422) {
+    return `The repository would not accept this. ${error.message}`;
+  }
+  if (error.status === 404) {
+    return `${error.message} This workshop may have been deleted since the list was loaded — reload the page to see the current list.`;
+  }
+  return error.message || fallback;
+}
+
+/**
+ * DOES THIS REFUSAL OF THE INSPECTOR'S LIST MEAN "YOU HOLD NO INSPECTION POSTS"?
+ *
+ * True only for a 403 met by an account that may be appointed to inspect WITHOUT being of the
+ * Inspector / Reviewer tier — one of the three administering tiers. Every server that can answer
+ * them so says the same true thing: a server that admits them only once they hold a row, and a
+ * server older than the owner's ruling of 2026-10-09, which refused them by name because they could
+ * hold none. So the page draws the empty state ({@link inspectionEmptyState}) rather than a red
+ * banner, which on a screen whose only content is the reader's own rows reads as a broken
+ * deployment.
+ *
+ * AN INSPECTOR / REVIEWER REFUSED IS A FAULT, AND KEEPS THE BANNER. The surface is that tier's by
+ * role, so a 403 there means something changed under the session — a role moved, say — and saying
+ * "you hold no posts" would hide it.
+ */
+export function inspectionRefusalMeansNoPosts(error: unknown, user: User | null | undefined): boolean {
+  return (
+    error instanceof ApiError &&
+    error.status === 403 &&
+    canInspectDesignWorkshops(user) &&
+    !isInspectorTier(user)
+  );
+}
+
+/**
+ * What the inspector's list says when it holds nothing — an answer, never a failure.
+ *
+ * "You do not hold any inspection posts" for everybody, the tier included: since admins may be
+ * appointed too, "No workshop is assigned to you" stopped being the sentence that fits every reader,
+ * and one sentence for one state is what lets a reader trust it. It names who appoints and where, so
+ * an empty page is a next move rather than a dead end.
+ */
+export function inspectionEmptyState(searched: boolean): { title: string; body: string } {
+  return searched
+    ? {
+        title: "No workshop you inspect matches that search",
+        body: "This searches only the workshops you have been appointed to inspect, which is the whole of what you can read here. Clear the search to see them all."
+      }
+    : {
+        title: "You do not hold any inspection posts",
+        body: "A Ministry Admin, an admin or the master admin appoints a workshop's inspectors one workshop at a time, on Workshop oversight. Until somebody appoints you there is nothing here to read — this page is not hiding anything from you, and nothing failed to load."
+      };
+}
+
+/**
  * THE ONE SENTENCE UNDER THE ADMIN'S SEARCH BOX, or "" when the screen must say nothing.
  *
  * Silence is the common answer and the correct one: a complete list has nothing to explain, and a
@@ -430,7 +547,13 @@ export function eligibleInspectorNotice({
     return "Too many accounts to show them all — search a name or email to reach the rest.";
   }
   if (truncated) return "Too many matches to show them all — narrow the search.";
-  if (searched && offered === 0) return "No Inspector / Reviewer account matches that search.";
+  // "AN ACCOUNT THAT MAY INSPECT" AND NO LONGER "AN INSPECTOR / REVIEWER ACCOUNT": since 2026-10-09
+  // the list also holds the Ministry Admin, admin and master admin accounts, and a sentence naming
+  // only the tier would tell somebody searching for an admin by name that admins are not offered.
+  // The handset says the same sentence (`dwInspectorOfferNotice` in Android's
+  // `data/DesignWorkshopInspections.kt`, all three of these word for word): the server sends the
+  // widened list to its admin-only inspectors screen too, so the tier-only wording was false there.
+  if (searched && offered === 0) return "No account that may inspect matches that search.";
   return "";
 }
 

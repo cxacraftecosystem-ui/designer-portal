@@ -279,10 +279,32 @@ async def revoke_credential_link(
 
     An officer pressing this twice has not made a mistake, and answering the second press with an
     error would suggest they had — the rule ``credential_links.revoke_link`` already states.
+
+    ⚠ **THIS ORDER'S DESIGNERS' LINKS ONLY.** The token is loaded and must belong to one of the
+    accounts the order names — the lead or any of the team; anything else is the same 404 as a token
+    that does not exist. Without it this route withdrew ANY password link by id: an Assistant
+    Director holding any sanction id could cancel an administrator's first-password link for a
+    newly provisioned account, which is a door no officer was ever meant to have and the same shape
+    of escalation ``reissue_credential_link`` closes for issuing.
     """
     from app.services import credential_links
 
-    await _load(sanction_id)
+    row = await _load(sanction_id)
+    # An id holding a control byte or half a surrogate cannot reach Postgres without a 500, and no
+    # id this repository issues holds one — so it is simply a link that does not exist.
+    token = (
+        await db.passwordresettoken.find_unique(where={"id": token_id})
+        if token_id.isprintable()
+        else None
+    )
+    named = {row.designerUserId} | {
+        member.designerUserId for member in (getattr(row, "designers", None) or [])
+    }
+    if token is None or token.userId not in named:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No sign-in link with that id belongs to a designer on this sanction order.",
+        )
     await credential_links.revoke_link(token_id)
     return {"ok": True}
 

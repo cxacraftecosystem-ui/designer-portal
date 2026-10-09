@@ -97,8 +97,11 @@ const TIER_COPY: Record<UserRole, string> = {
     "Everything a professor can do, and review or correct a professor's records as well as an inspector's and a designer's.",
   REGIONAL_DIRECTOR:
     "The same reach, one tier wider: an assistant director's work comes under review too. Reads design-workshop data on screen.",
+  // "No account creation" stopped being true on 2026-10-09, when the owner made this tier an account
+  // provisioner (`ACCOUNT_PROVISIONER_ROLES`): it creates password accounts at or below its own tier
+  // and looks after their passwords. What it still lacks is what makes somebody an admin.
   MINISTRY_ADMIN:
-    "The widest review and correction authority short of admin. Not an admin: no account creation, no deletes, no access grants.",
+    "The widest review and correction authority short of admin, and creates password accounts and resets their passwords. Not an admin: no deletes, no capability grants.",
   ADMIN: "Settings hub, task assignment, workshop access grants, accounts.",
   MASTER_ADMIN: "Everything, plus managed API keys and global app settings."
 };
@@ -193,25 +196,34 @@ export default function AccessLadder() {
             of admission when signing in was open to anyone who could authenticate. It is now the
             second half of a two-step: the allow-list decides whether an address may sign in at all,
             and only then does the ladder decide what it may do. A reader who knows only the ladder
-            reads a refusal at the door as a bug. */}
+            reads a refusal at the door as a bug.
+            THE GRANTABLE CAPABILITIES ARE THE ONES THE SERVER STILL READS, and only an admin grants
+            them. "Craft and workshop creation" stood in that list until 2026-10-09, long after the
+            server stopped consulting `canManageCrafts` and `canManageWorkshops` (both are rank
+            alone, Professor and above — see `can_manage_crafts` in `deps.py`), so a visitor was
+            promised two grants that change nothing. */}
         <motion.p variants={item} className="mt-4 max-w-2xl text-base leading-relaxed text-ink-500">
           An administrator admits your address to the platform first; the ladder then decides what
           the account may do. Newly admitted accounts start at the bottom unless the admitting
           administrator chose otherwise, and are raised by an admin from there. Individual
-          capabilities — dataset download, review, craft and workshop creation, the questionnaire
-          builder — can also be granted one at a time, without moving anyone up the ladder.
+          capabilities — dataset download, review, the questionnaire builder — can also be granted
+          one at a time by an admin, without moving anyone up the ladder.
         </motion.p>
         {/* THE ONE PLACE THE LADDER IS NOT A LADDER, said here because the heading above promises
             that every tier inherits the last. Running a design & prototype workshop is decided by a
-            SET — designer, admin, master admin — and not by rank, so a professor outranks a designer
-            and still cannot run one. A visitor who reads only the inheritance rule concludes their
-            professor account covers it, and finds out at a refusal. `canRunDesignWorkshops` in
-            lib/permissions.ts carries the same set, mirroring `can_run_design_workshops`. */}
+            SET and not by rank, so a professor and an inspector both outrank a designer and still
+            cannot run one. A visitor who reads only the inheritance rule concludes their professor
+            account covers it, and finds out at a refusal. `canRunDesignWorkshops` in
+            lib/permissions.ts carries the set, mirroring `can_run_design_workshops`. THIS SENTENCE
+            NAMED ONLY DESIGNERS, ADMINS AND THE MASTER ADMIN until 2026-10-09, three weeks after the
+            three directorate posts joined the set (2026-09-14); its wording now follows the route
+            guard's own sentence for /design-workshops in that file. */}
         <motion.p variants={item} className="mt-3 max-w-2xl text-base leading-relaxed text-ink-500">
-          One power is an exception. Running a design &amp; prototype workshop belongs to designers,
-          admins and the master admin specifically — not to everyone above a rank — because a
-          workshop is a fortnight of a named designer&apos;s work ending in a report submitted under
-          their name, and outranking a designer is not the same as being one.
+          One power is an exception. Running a design &amp; prototype workshop belongs to designers, the
+          Assistant Director, Regional Director and Ministry Admin posts, admins and the master admin —
+          a named set, not everyone above a rank: a professor outranks a designer and still cannot run
+          one, because a workshop is a fortnight of a named designer&apos;s work ending in a report
+          submitted under their name, and outranking a designer is not the same as being one.
         </motion.p>
 
         <ol className="mt-12 space-y-2.5">

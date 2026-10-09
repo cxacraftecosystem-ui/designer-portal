@@ -47,6 +47,7 @@ import Link from "next/link";
 import { DraftingCompass, RefreshCw } from "lucide-react";
 
 import { DesignWorkshopHeaderForm } from "@/components/designworkshop/DesignWorkshopHeaderForm";
+import { HeldPostNotice, useHeldPostRefusal } from "@/components/designworkshop/HeldPostNotice";
 import { PageHeader } from "@/components/PageHeader";
 import { ApiError } from "@/lib/api";
 import { getDesignWorkshop, type DwSummary } from "@/lib/designWorkshops";
@@ -132,6 +133,17 @@ export default function EditDesignWorkshopPage({ params }: { params: Promise<{ i
   }, [id, attempt]);
 
   const recordHref = `/design-workshops/${id}`;
+  /*
+    A POST HOLDER IS SHOWN WHY, AND NO FORM. Since 2026-10-09 whoever inspects or supervises a
+    workshop may not write it — this PATCH included, through the admin arm too — so ten boxes whose
+    Save can only fetch a 403 would be the form-that-cannot-work this page's other panels already
+    refuse to draw. Asked of the record the server answered with, so it is the server's own id.
+
+    AND NO FORM WHILE THAT IS BEING ASKED (`undefined`, for an account that may appoint): a form drawn
+    first and replaced when the answer lands is ten boxes taken away from under somebody typing. The
+    notice's live region is mounted with the record, before the answer, so the refusal is announced.
+  */
+  const postRefusal = useHeldPostRefusal(state?.kind === "loaded" ? state.record.id : null);
 
   return (
     <>
@@ -152,7 +164,20 @@ export default function EditDesignWorkshopPage({ params }: { params: Promise<{ i
 
       {state === null ? <div className="text-sm text-ink-700">Loading...</div> : null}
 
-      {state?.kind === "loaded" ? <DesignWorkshopHeaderForm initial={state.record} /> : null}
+      {state?.kind === "loaded" ? (
+        <>
+          <HeldPostNotice refusal={postRefusal} sayPending />
+          {postRefusal === null ? (
+            <DesignWorkshopHeaderForm initial={state.record} />
+          ) : postRefusal ? (
+            <div className="flex flex-wrap gap-2">
+              <Link href={recordHref} className="field-button-secondary">
+                Back to the workshop
+              </Link>
+            </div>
+          ) : null}
+        </>
+      ) : null}
 
       {state?.kind === "offline" ? (
         /*

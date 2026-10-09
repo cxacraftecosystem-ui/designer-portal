@@ -422,8 +422,8 @@ one p99 object (97 MiB) among them doubles it.
    (`:334`) is the companion this document's follow-up note asked for: it reads `ContentLength` and
    no bytes, so an object that understates its size in the `MediaFile.sizeBytes` column is now
    refused *before* the fetch instead of after it. Sites 1, 2, 4, 5 (transcription) and 6
-   (subtitles) all moved to it. `get_object_bytes` survives for the two callers that genuinely need
-   every byte at once, both of which now have a size gate in front: MEASUREMENT (`media_queue.py`
+   (subtitles) all moved to it. `get_object_bytes` survives for the callers that genuinely need
+   every byte at once, each of which now has a size gate in front: MEASUREMENT (`media_queue.py`
    `:883`) and CAPTION (`design_workshops.py:3002`) send base64 of a whole image inside a JSON body,
    and there is no half of a base64.
    > **The "hand the provider an open file handle, which `requests` streams rather than buffers"

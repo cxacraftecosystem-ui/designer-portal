@@ -5,13 +5,20 @@
  * wire. What follows is the part a caller on this side has to hold in their head, because each of
  * these is a place a reasonable instinct gives the wrong answer.
  *
- * ── 1. TWO DOORS, DISJOINT AUDIENCES, AND NEITHER IS THE OTHER'S SUPERSET ─────────────────────
+ * ── 1. TWO DOORS, OVERLAPPING AUDIENCES, AND NEITHER IS THE OTHER'S SUPERSET ──────────────────
  *
- * `canAssignWorkshopOversight` is `{MINISTRY_ADMIN, ADMIN, MASTER_ADMIN}` and
- * `canReadWorkshopOversight` is `{ASSISTANT_DIRECTOR, REGIONAL_DIRECTOR, MINISTRY_ADMIN}`. An ADMIN
- * may assign and may not be assigned; an ASSISTANT DIRECTOR the reverse; a MINISTRY_ADMIN is in
- * both. **A REGIONAL DIRECTOR IS REFUSED THE ASSIGNMENT SCREEN EVEN THOUGH THEY OUTRANK AN
+ * `canAssignWorkshopOversight` is `{MINISTRY_ADMIN, ADMIN, MASTER_ADMIN}`. `canReadWorkshopOversight`
+ * is everybody who may be NAMED in either post — the Assistant Director and Regional Director tiers
+ * plus, since the owner's ruling of 2026-10-09, those same three administering tiers. So an
+ * administering tier both assigns and may be assigned (never by itself: nobody appoints
+ * themselves, and the server answers that with a 409), while an ASSISTANT DIRECTOR may only be
+ * assigned. **A REGIONAL DIRECTOR IS STILL REFUSED THE ASSIGNMENT SCREEN EVEN THOUGH THEY OUTRANK AN
  * ASSISTANT DIRECTOR** — the supervised do not choose the supervisor.
+ *
+ * A POST IS READ-ONLY ON ITS WORKSHOP. Whoever holds the Assistant Director, Regional Director or an
+ * inspection on a workshop loses its writes for as long as they hold it, through the admin routes
+ * as well; {@link readWorkshopStaffing} and `workshopPostsHeldBy` in `lib/permissions` are how a
+ * screen says so before anybody types into a form the server will refuse.
  *
  * ── 2. WHY THESE PAGES EXIST AT ALL — AND THE REASON CHANGED ON 2026-09-14 ────────────────
  *
@@ -80,7 +87,16 @@ import { ApiError, apiFetch, buildQuery } from "@/lib/api";
 import { fetchFile } from "@/lib/fileDownload";
 import { designerCreateFields } from "@/lib/designWorkshops";
 import type { DwStageCompleteness, DwStageData, DwSummary } from "@/lib/designWorkshops";
-import type { PageResult } from "@/lib/types";
+import { listDesignWorkshopInspectors, type DwInspector } from "@/lib/designWorkshopInspections";
+import {
+  canAssignWorkshopOversight,
+  canReadWorkshopOversight,
+  isDirectorateTier,
+  oversightPostsUserMayHold,
+  workshopPostsHeldBy,
+  type WorkshopPost
+} from "@/lib/permissions";
+import type { PageResult, User } from "@/lib/types";
 
 /** How long a search box on either picker may get. Mirrors the routes' `Query(max_length=120)`. */
 export const OVERSIGHT_SEARCH_MAX = 120;
@@ -159,9 +175,12 @@ export type DwOfficer = {
   email: string;
   role: string;
   /**
-   * Which slots this account may be filed in — **empty for a MINISTRY_ADMIN**, which is the point.
-   * The picker greys such a row out with the reason rather than letting the PUT 422 it: a directory
-   * that offers a choice the write refuses teaches people to distrust it.
+   * Which slots this account may be filed in — the SERVER'S answer, never re-derived here. Both for a
+   * Ministry Admin, an admin or the master admin since the owner's ruling of 2026-10-09 (until then
+   * a Ministry Admin was listed with none, and so could never be chosen); one for an Assistant
+   * Director or a Regional Director. A row that cannot fill the slot being chosen is drawn greyed out
+   * with the reason rather than offered and 422'd: a directory that offers a choice the write
+   * refuses teaches people to distrust it.
    */
   capacities: DwOversightCapacity[];
 };
@@ -378,6 +397,61 @@ export function putWorkshopOversight(
   );
 }
 
+// --- Who holds what on one workshop ---------------------------------------------------------
+
+/** One workshop's people in every capacity at once: its designers, its two officers, its inspectors. */
+export type DwWorkshopStaffing = {
+  /** Absent from an API that predates the key — see {@link DwWorkshopOversight.designers}. */
+  designers?: DwNamedDesigner[];
+  oversight: DwOversightAssignment[];
+  inspectors: DwInspector[];
+};
+
+/**
+ * Read one workshop's staffing — the two reads Workshop oversight's panels already make, together.
+ *
+ * BOTH ROUTES ARE `require_workshop_assigner`, so this is for a Ministry Admin, an admin or the
+ * master admin and answers anybody else a 403. That is not a limit in practice: under the
+ * separation-of-duties rules, every account that could hold a post on a workshop AND still reach a
+ * write on it is in that set — an Assistant Director or Regional Director holding a post may hold no
+ * designer row on the same workshop, and an Inspector / Reviewer writes no workshop at all.
+ *
+ * Either read failing rejects the whole thing: half a staffing answer would say "you hold no post"
+ * about a list that was never read.
+ */
+export async function readWorkshopStaffing(workshopId: string): Promise<DwWorkshopStaffing> {
+  const [detail, inspection] = await Promise.all([
+    getWorkshopOversight(workshopId),
+    listDesignWorkshopInspectors(workshopId)
+  ]);
+  return {
+    designers: detail.designers,
+    oversight: detail.oversight ?? [],
+    inspectors: inspection.inspectors ?? []
+  };
+}
+
+/**
+ * Which posts this account holds on one workshop, asked of the server — for a screen OTHER than
+ * Workshop oversight (which already holds both lists) that is about to draw that workshop's write
+ * controls. Pair it with `heldPostEditRefusal` in `lib/permissions` for the sentence.
+ *
+ * AN EMPTY ANSWER MEANS "NONE KNOWN", and it is what anybody outside the assigner set gets without a
+ * request being made, and what a failed read gets: in every one of those cases the server's own 403
+ * on save, which names the post, stays the last word rather than this client inventing one.
+ */
+export async function readHeldWorkshopPosts(
+  workshopId: string,
+  user: User | null | undefined
+): Promise<WorkshopPost[]> {
+  if (!user || !canAssignWorkshopOversight(user)) return [];
+  try {
+    return workshopPostsHeldBy(user, await readWorkshopStaffing(workshopId));
+  } catch {
+    return [];
+  }
+}
+
 /**
  * One viewer row named in an answer — who lost access, or who still has it.
  *
@@ -576,6 +650,50 @@ export function oversightIsReadOnly(
   detail: { readOnly?: boolean } | null | undefined
 ): boolean {
   return detail?.readOnly !== false;
+}
+
+/**
+ * DOES THIS REFUSAL OF WORKSHOPS I MONITOR MEAN "YOU HOLD NO POSTS"?
+ *
+ * True only for a 403 met by an account that may be named in a post WITHOUT being one of the three
+ * directorate tiers — an admin or the master admin. Every server that can answer them so says the
+ * same true thing: one that admits them only once they hold a row, and one older than the owner's
+ * ruling of 2026-10-09, which refused them by name because they could hold none. So the page draws
+ * the empty state ({@link oversightEmptyState}) rather than a red banner that reads as a broken
+ * deployment. A directorate tier refused is a FAULT and keeps the banner: the surface is theirs by
+ * role, so a 403 means something changed under the session.
+ */
+export function oversightRefusalMeansNoPosts(error: unknown, user: User | null | undefined): boolean {
+  return (
+    error instanceof ApiError &&
+    error.status === 403 &&
+    canReadWorkshopOversight(user) &&
+    !isDirectorateTier(user)
+  );
+}
+
+/**
+ * What Workshops I monitor says when it holds nothing — an answer, never a failure.
+ *
+ * THE TITLE NAMES ONLY THE POSTS THIS READER MAY HOLD, read off the holder sets: an Assistant
+ * Director is told about Assistant Director posts, an admin about both. A sentence naming a post the
+ * reader can never hold would read as an instruction to go and get it.
+ */
+export function oversightEmptyState(
+  searched: boolean,
+  user: User | null | undefined
+): { title: string; body: string } {
+  if (searched) {
+    return {
+      title: "No workshop you monitor matches that search",
+      body: "This searches only the workshops you have been named on, which is the whole of what you can read here. Clear the search to see them all."
+    };
+  }
+  const posts = oversightPostsUserMayHold(user).map((post) => CAPACITY_LABELS[post]);
+  return {
+    title: `You do not hold any ${posts.length ? posts.join(" or ") : "Assistant Director or Regional Director"} posts`,
+    body: "A Ministry Admin, an admin or the master admin names a workshop's Assistant Director and Regional Director one workshop at a time, on Workshop oversight. Until somebody names you there is nothing here to read — this page is not hiding anything from you, and nothing failed to load."
+  };
 }
 
 // --- The artisan pro-forma ------------------------------------------------------------------

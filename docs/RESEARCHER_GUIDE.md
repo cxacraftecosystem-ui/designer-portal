@@ -42,20 +42,58 @@ phone appears on the laptop and vice versa. Nothing has to run on your own machi
 
 ## 2. Getting an account
 
-Two routes in, and which one you get depends on how your project is set up.
+Two routes in, and which one you get depends on how your project is set up. Either way **an
+administrator lets your address in first**: the platform keeps a list of who may sign in, and nobody
+is on it by default.
 
-**Google sign-in** — tap *Continue with Google*. This works immediately and creates your account on
-first use, but it creates it at the **lowest tier**, Crowdsource Volunteer. Somebody with admin
-rights then raises you to Field Contributor, Researcher or Professor. Until they do, you can upload
-media, answer questions in interviews somebody else opened, and comment — but you cannot start a new
-artisan record. If your first hour with the app consists of "where is the New Artisan button", this
-is why: ask to be promoted.
+**Google sign-in** — tap *Continue with Google*. If your address has been admitted, your account is
+created the first time you do this, at the role the administrator chose for you — or, if they chose
+none, at the **lowest tier**, Crowdsource Volunteer, and somebody with admin rights then raises you to
+Field Contributor, Researcher or Professor. If your address has not been admitted yet, the app says
+your request is waiting for an administrator, and that is all that happens. As a Crowdsource
+Volunteer you can upload media, answer questions in interviews somebody else opened, and comment —
+but you cannot start a new artisan record. If your first hour with the app consists of "where is the
+New Artisan button", this is why: ask to be promoted.
 
-**Email and password** — an admin creates the account on the Users screen and gives you the
-credentials. There is no public sign-up for email accounts.
+**Email and password** — a **Ministry Admin, an Admin or the Master Admin** creates the account on the
+Users screen. There is no public sign-up for email accounts. They will do one of two things:
 
-If the Google button is missing, or Google returns a 403, the project's Google Cloud configuration is
-incomplete — see §11.3. Email and password always works regardless.
+- **Give you a temporary password.** The first time you sign in with it you are asked to **set a new
+  password**, and nothing else in the app works until you do — the server itself refuses everything
+  else meanwhile, so this is not a screen you can skip. The new password must be different from the
+  temporary one, and the screen may ask for the temporary one again to prove it is you.
+- **Send you a set-password link**, so you choose your own from the start. A link for a new account
+  works for **72 hours**; a link to reset the password of an account you already use works for
+  **2 hours**. Each works once, and a new password set any other way cancels it.
+
+An administrator can also ask you to choose a new password at your next sign-in, or set a temporary
+one for you if you have lost yours. Either signs you out on every device, so "next sign-in" really
+means the next one. **Choosing a new password yourself** — on that screen, or from *Settings* on the
+web — keeps you signed in where you chose it and signs you out everywhere else, so anybody who knew
+the old password is out too (since 2026-10-09). **On an Android build from 0.0.2 to 0.0.5** there is
+no screen for choosing the new password: do it in the web app first, then sign in on the phone. **On
+builds 0.0.6 to 0.0.15** the change goes through and the phone lets you on, but the phone's own
+session ended with the old password: when it asks you to sign in again, use the password you have
+just chosen. The next build after 0.0.15 keeps you signed in on the phone where you made the change.
+
+**When a phone has been signed out from somewhere else** — you changed your password on the web, or
+an administrator set you a new one — a phone on **build 0.0.15 or older** does not notice until the app
+is next opened from scratch: until then its uploads wait and nothing is sent, though nothing you
+recorded is lost. Close the app fully and reopen it, then sign in with the new password. The next build
+notices at its next attempt to reach the server and says *"This sign-in has ended. If your password was
+changed on another device or by an administrator, sign in with the new one."* If the answer to a
+password you are choosing on that build is lost on a bad connection, the phone checks with the server
+before it says anything; if it signs you out with *"Your new password may already be in effect. Sign in
+with it; if it is refused, use the one you were given."*, do exactly that.
+
+**If your account has a password and you also sign in with Google** on the same Gmail mailbox —
+however the address is spelt, with or without dots — Google opens that same account and your password
+keeps working. A temporary password still has to be replaced; signing in with Google does not skip
+that step.
+
+If the Google button is missing, or Google returns a 403 that does not mention waiting for approval,
+the project's Google Cloud configuration is incomplete — see §11.3. Email and password always works
+regardless.
 
 ---
 
@@ -99,12 +137,12 @@ Professor.)
 | **Field Contributor** | The same, plus you can review a volunteer's submissions. **Still cannot create records** — this surprises people, and it is deliberate. |
 | **Researcher** | The working tier. Create artisans, products, tools, processes and interviews; edit your own; fill in gaps on other people's. This is the tier most field staff should hold. |
 | **Designer** | Everything a researcher does, plus the one thing this portal exists for: running a design & prototype workshop end to end — its stages, its custom sections, its AI layers — and signing the report that goes out under your name. A designer account can only sign in while the designer roster still lists it. |
-| **Inspector / Reviewer** | For somebody who **examines a designer's work without running workshops themselves** — an examiner, an external assessor, a funder's reviewer. Everything a researcher does, plus you can review, reject and send back a **designer's** records, plus **read-only** sight of the stage data of any design workshop an admin has put you on. You **cannot** run a workshop, change a single stage of one, generate its report, or sign anything — outranking a designer does not get you that (see the first rule below). Nor does being put on a workshop hand you its recordings, photographs or transcripts: that was left as a decision for the owners to make rather than something the tier quietly came with. |
+| **Inspector / Reviewer** | For somebody who **examines a designer's work without running workshops themselves** — an examiner, an external assessor, a funder's reviewer. Everything a researcher does, plus you can review, reject and send back a **designer's** records, plus **read-only** sight of the stage data of any design workshop a Ministry Admin, an admin or the master admin has put you on. You **cannot** run a workshop, change a single stage of one, generate its report, or sign anything — outranking a designer does not get you that (see the first rule below). Nor does being put on a workshop hand you its recordings, photographs or transcripts: that was left as a decision for the owners to make rather than something the tier quietly came with. |
 | **Professor** | Everything a researcher does, plus: manage the craft and workshop vocabularies, edit the questionnaire itself, download the full dataset, review anyone below you, and edit records created by anyone below you. |
-| **Assistant Director** | Everything a professor does, plus one thing no tier below has: you can **correct a professor's records**, not only send them back. Craft and workshop vocabularies, the questionnaire, the full dataset, the user table. You **cannot** run a design & prototype workshop — that belongs to designers, admins and the master admin, and no amount of seniority reaches it. |
-| **Regional Director** | The same, one rung wider: an assistant director's work comes under your review and correction too. |
-| **Ministry Admin** | The widest review and correction authority below Admin. **Despite the name, this is not an admin account.** You cannot create or delete a user, delete a record, grant workshop access, appoint an inspector, or open the Settings hub — every one of those is reserved to Admin and Master Admin by name rather than by rank. What you do hold is everything a professor holds, over everyone below you. |
-| **Admin** | Plus: create and delete user accounts, **delete records**, grant workshop access, assign tasks, and approve late submissions. |
+| **Assistant Director** | Everything a professor does, plus one thing no tier below has: you can **correct a professor's records**, not only send them back. Craft and workshop vocabularies, the questionnaire, the full dataset, the user table (to change someone's role, not to create accounts). You can also **work in a design & prototype workshop** you have been given — save its stages — though you do not start one, and you can be named a workshop's Assistant Director, which lets you read it on **Workshops I monitor**. |
+| **Regional Director** | The same, one rung wider: an assistant director's work comes under your review and correction too, and you can be named a workshop's Regional Director. |
+| **Ministry Admin** | The widest review and correction authority below Admin — everything a professor holds, over everyone below you — plus three jobs given to this role by name. You **create email-and-password accounts** for people at your tier or below, and look after the accounts below yours: temporary passwords, set-password links, asking for a new password, correcting a name or an address. You name a workshop's designers, its Assistant and Regional Directors and its inspectors, on **Workshop oversight**. And you can yourself be **appointed** to any of those posts on a workshop, by somebody else. **Despite the name, this is not an admin account:** you cannot delete a user or a record, grant capabilities such as dataset download, let back in an address an administrator refused or suspended, decide who may sign in, or open the Settings hub. |
+| **Admin** | Plus: **delete** user accounts and **records**, grant capabilities, decide who may sign in, grant workshop access, assign tasks, and approve late submissions. Creating accounts and looking after passwords you share with Ministry Admins, and like them you can be appointed to a post on a workshop by somebody else. |
 | **Master Admin** | Plus: provider API keys, repository settings, publishing app updates. One account. |
 
 Everyone at Professor and above — which now includes the three directorate roles — sees an artisan's
@@ -114,11 +152,12 @@ archive rather than only their own rows when they download it. If that is not wh
 intends for a role, say so before somebody is promoted into it — it follows from the rank and not
 from a setting anybody can turn off per person.
 
-Four rules that catch people out:
+The rules that catch people out:
 
 - **Being senior to a designer does not make you one.** Running a design & prototype workshop is
-  the only power on this list that is not inherited upwards: it belongs to designers, admins and
-  the master admin specifically. A professor outranks a designer and is still refused, on purpose
+  the only power on this list that is not inherited upwards: it belongs to designers, the three
+  directorate roles, admins and the master admin specifically. A professor outranks a designer and
+  is still refused, on purpose
   — a workshop is a fortnight of a named person's work ending in a report submitted under their
   name, and that is a job somebody was empanelled for rather than a privilege seniority earns.
   **An Inspector / Reviewer outranks a designer and is refused for the identical reason**, which is
@@ -136,8 +175,35 @@ Four rules that catch people out:
 - **"Ministry Admin" is not an administrator here.** It is the one role name in this product whose
   everyday English meaning and its meaning in the software point in different directions. The three
   directorate tiers are senior to a professor for **reviewing and correcting work**; they are not
-  administrators of the system. If somebody in a directorate role needs to create accounts or delete
-  records, they need an Admin account, and that is a separate decision somebody makes deliberately.
+  administrators of the system. A Ministry Admin does create accounts and reset passwords — that job
+  was given to the role by name — but deleting accounts or records, granting capabilities and deciding
+  who may sign in still need an Admin account, and that is a separate decision somebody makes
+  deliberately.
+- **Whoever inspects or supervises a workshop does not edit it.** A Ministry Admin, an Admin or the
+  Master Admin can be appointed — always by somebody else, never by themselves — as a workshop's
+  designer, Assistant Director, Regional Director or inspector. While you inspect or supervise a
+  workshop you can read every stage of it but not change any, even with admin rights — nor edit or
+  delete the workshop, change its artisan list, file a record into it, edit, delete or merge a record
+  filed under it (from the review queue too), upload a photograph or recording into it, delete or
+  re-link one of its photographs or recordings, change or re-run a transcript, file or delete one of
+  its records or files from the Workshops page's *Records not filed under a workshop* report, or
+  choose who its designers are. For a
+  Ministry Admin, an Admin or the Master Admin the web switches those controls off and says why: the
+  workshop's own screens, the record forms, the media controls, **Upload** on Miscellaneous Media
+  (for the workshop chosen there, and for a record filed under it, before anything is sent),
+  **Retry** on a failed transcription, creating, uploading or reusing a questionnaire for it, and
+  **Save** and **Save and approve** in the review queue — where **Approve**, **Reject** and **Send for
+  revision** stay yours. An Assistant or Regional Director learns it from the save itself. Anything
+  refused anyway — deleting one of its records from a list, say — comes back with a sentence naming the
+  post. You can still appoint other people to its posts or take them off, restore it, generate its
+  report, and approve, reject or send back the records filed under it as your role already allows.
+  **You cannot take yourself off the post**: another administrator has to, and on the web your own
+  row on the inspectors panel, or your own slot on Workshop oversight, stays ticked and switched off.
+  (That report does not list a record or file filed under a design workshop at all, and will not
+  delete one for anybody: that is done from the record's or file's own screen.) Nobody
+  inspects or supervises a workshop they worked on — holding designer access to it, or having written
+  its stages — and one person is never both its Assistant and its Regional Director, nor a director and
+  its inspector. Opening a workshop does not count as working on it.
 
 The complete matrix, if you need to settle an argument, is [PERMISSIONS.md](PERMISSIONS.md).
 
@@ -341,7 +407,9 @@ record is never quietly rewritten.
 |---|---|
 | No **New Artisan** button anywhere | You are a Crowdsource Volunteer or Field Contributor. Ask to be promoted to Researcher. |
 | **View Data** shows a padlock | You do not hold dataset-download. Use Search, or ask for the grant. |
-| Suddenly signed out | The token lasts 7 days and then expires. Sign in again; nothing is lost. |
+| Suddenly signed out | The token lasts 7 days and then expires — or an administrator set a new password for you, asked you to choose one, or barred your address, which signs you out on every device at once. Changing your own password, on another device or in another browser, signs this one out too. Sign in again; nothing queued on the device is lost. |
+| Every screen says *"Choose a new password to continue."* | Your account still has a password somebody else chose. Set your own on the screen in front of you; nothing else works until you do. On Android 0.0.2 to 0.0.5, do it in the web app. |
+| A set-password link says it has expired or was used | Ask for another. A link for a new account lasts 72 hours, a reset link 2 hours, and each works once. |
 | A colleague cannot see your records | Cross-researcher access is per-owner. Grant it on **Sharing**. |
 
 ### 11.3 Google sign-in (a project-owner task, once)
@@ -398,7 +466,7 @@ it, not by running it.
 
 | Section | Checked against |
 |---|---|
-| §2 accounts, §4 roles | `DEFAULT_SIGNUP_ROLE` in `backend/app/core/config.py`, and the role table in [PERMISSIONS.md](PERMISSIONS.md) — which *is* mechanically checked (`docs/tools/check-docs.mjs` fails if the backend and web ladders disagree). |
+| §2 accounts, §4 roles | `DEFAULT_SIGNUP_ROLE` in `backend/app/core/config.py`, and the role table in [PERMISSIONS.md](PERMISSIONS.md) — which *is* mechanically checked (`docs/tools/check-docs.mjs` fails if the backend and web ladders disagree). §2's password rules are [PERMISSIONS.md](PERMISSIONS.md) §1.2: who creates accounts is `ACCOUNT_PROVISIONER_ROLES` in `backend/app/core/deps.py`, the 72-hour and 2-hour link lifetimes are `INVITE_TTL_HOURS` and `RESET_TTL_HOURS` in `backend/app/services/credential_links.py`, and "nothing else works until you do" is `PASSWORD_CHANGE_ALLOWED_ROUTES` in `deps.py`. "Signs you out everywhere else" is the password binding in [SECURITY.md](SECURITY.md) §3.6, and what a 0.0.6 to 0.0.15 handset does after a change is read off that tag's `WorkshopRepositoryApi.kt` and `PasswordGate.kt` (`git show v0.0.15:android/app/src/main/java/com/designprototype/workshop/data/WorkshopRepositoryApi.kt`): it decodes the answer, which stays `{"ok": true}`, and never reads the `X-Session-Token` header the fresh session comes back in — remove the sentence once no handset in the field is older than the build that reads that header. That such a build reads a session's end only at launch is the same tag's `MainActivity.kt` (`git show v0.0.15:android/app/src/main/java/com/designprototype/workshop/MainActivity.kt`, where the launch effect's `refreshUser` is the only place a 401 signs anybody out, with "Your session expired. Please sign in again."); the next build's two sentences in §2 are `SESSION_ENDED_SENTENCE` and `PASSWORD_MAY_ALREADY_BE_IN_EFFECT` in `android/app/src/main/java/com/designprototype/workshop/ui/PasswordSetupCopy.kt`, written out by `PasswordSetupCopyTest.kt`. The rule about inspecting or supervising a workshop is [PERMISSIONS.md](PERMISSIONS.md) §4.8, and the web controls §4 names as switched off are the ones `frontend/e2e/workshop-post-holder-readonly-unit.spec.ts` holds. |
 | §3 install | `minSdk` / `applicationId` in `android/app/build.gradle.kts`; the OTA flow in `backend/app/api/routes/app_release.py`. |
 | §5 workshops | `backend/app/services/workshop_access.py`. |
 | §6 offline | `frontend/lib/offline.ts` and `android/app/src/main/java/com/designprototype/workshop/data/Offline.kt`; the tactic matrix in [MEDIA_PIPELINE.md](MEDIA_PIPELINE.md) §4. |
@@ -412,8 +480,9 @@ behave as written is either a documentation bug or a product bug, and both are w
 researcher does, 300 km from a signal.
 
 **Review triggers:** a change to `DEFAULT_SIGNUP_ROLE`, to any `require_*` dependency in
-`backend/app/core/deps.py`, to the offline outbox on either client, or to the Data Browser's export
-surface.
+`backend/app/core/deps.py`, to `backend/app/services/account_provisioning.py` or
+`backend/app/services/credential_links.py`, to the offline outbox on either client, or to the Data
+Browser's export surface.
 
 **Known unverified in this document:** §3's OTA update flow and §11.3's Google Cloud console state
 are both operational facts about a deployment, not properties of this repository. Neither can be

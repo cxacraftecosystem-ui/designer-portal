@@ -28,6 +28,16 @@
  *      unread correction is how the correction goes unread.
  *   5. **The two clients say the same two headings.** A designer refused on the phone opens the
  *      website next, and a different explanation there is how somebody concludes one is broken.
+ *   6. **The gate is handed the last SUCCESSFUL sign-in's password, never the live box**, and shows
+ *      its own box — emptied — the moment the server refuses what it was handed. The live box held a
+ *      refused password through a following Google sign-in, and the gate hid itself behind it.
+ *   7. **One latch, in `AuthProvider`.** `/login` and `AppShell` each kept their own, so a person
+ *      who chose a password at the door was asked again on the dashboard.
+ *   8. **The temporary password cannot be "replaced" with itself**, and every box stops at the
+ *      server's one ceiling.
+ *   9. **What a change does to the other sessions is said in one sentence on both clients** — and
+ *      the gate adopts the fresh session the change answers with (in its `X-Session-Token` header)
+ *      before anything re-reads the account.
  *
  * Everything here is a source assertion or a pure function, for this repository's usual reason:
  * there is no React renderer in devDependencies, so a judgement inside JSX is only ever exercised by
@@ -43,7 +53,15 @@ import { join } from "node:path";
 
 import { expect, test } from "@playwright/test";
 
+import { ApiError } from "@/lib/api";
 import {
+  PASSWORD_CHANGE_PROMPT,
+  PASSWORD_CHANGE_SESSIONS,
+  currentPasswordRefused,
+  newPasswordProblem
+} from "@/lib/passwordChange";
+import {
+  MAX_PASSWORD_LENGTH,
   MIN_PASSWORD_LENGTH,
   mustChangePassword,
   passwordRuleLine,
@@ -73,6 +91,24 @@ const LOGIN = read("app", "login", "page.tsx");
 const GATE = read("components", "FirstPasswordGate.tsx");
 const SET_PASSWORD = read("app", "set-password", "page.tsx");
 const SIGN_IN = read("lib", "signIn.ts");
+const AUTH = read("components", "AuthProvider.tsx");
+const APP_SHELL = read("components", "AppShell.tsx");
+
+/** `/login`'s password submit, from its declaration to the next function on the page. */
+const SUBMIT = (() => {
+  const from = LOGIN.indexOf("async function submit(");
+  return from < 0 ? "" : LOGIN.slice(from, LOGIN.indexOf("function comingSoon(", from));
+})();
+/** The Google Identity Services callback, from its opening line to the GIS button render. */
+const GIS_CALLBACK = (() => {
+  const from = LOGIN.indexOf("callback: async (response) => {");
+  return from < 0 ? "" : LOGIN.slice(from, LOGIN.indexOf("renderGoogleButton();", from));
+})();
+/** The gate's own submit handler. */
+const GATE_SUBMIT = (() => {
+  const from = GATE.indexOf("async function submit(");
+  return from < 0 ? "" : GATE.slice(from, GATE.indexOf("return (", from));
+})();
 const KT_COPY = readAndroid("ui", "PasswordSetupCopy.kt");
 const KT_HINT = readAndroid("ui", "AccessRefusalCopy.kt");
 const KT_MAIN = readAndroid("MainActivity.kt");
@@ -121,14 +157,29 @@ test("the set-password screen no longer declares its own copy of it", () => {
 });
 
 test("both screens print the same first clause and a different second", () => {
-  const gate = passwordRuleLine("Other devices stay signed in.");
+  const gate = passwordRuleLine(PASSWORD_CHANGE_SESSIONS);
   const redeem = passwordRuleLine("This link works once.");
   expect(gate.startsWith(passwordRuleLine())).toBe(true);
   expect(redeem.startsWith(passwordRuleLine())).toBe(true);
   expect(passwordRuleLine()).toContain(String(MIN_PASSWORD_LENGTH));
-  // The gate involves no link, so it must not mention one — and it must not promise session
-  // revocation either, because `POST /auth/change-password` deliberately does not revoke.
+  // The gate involves no link, so it must not mention one. And it no longer promises that other
+  // devices stay signed in: since 2026-10-09 the server binds every session to the password it was
+  // opened with, so the change ends every session but the fresh one it answers with.
   expect(gate.toLowerCase()).not.toContain("link");
+  expect(gate).toMatch(/signed out everywhere else/);
+  expect(GATE).toContain("passwordRuleLine(PASSWORD_CHANGE_SESSIONS)");
+});
+
+test("the gate adopts the session its change answers with before the host re-reads the account", () => {
+  // `onDone` is the hosts' `markPasswordChanged`, whose re-read of `/me` must go out with the FRESH
+  // token: the change retired the one this form was sent with. An older server answers with none
+  // and retired none — nothing is adopted and `onDone` runs exactly as before.
+  const succeeded = GATE_SUBMIT.slice(GATE_SUBMIT.indexOf("const fresh = await changeOwnPassword(current, next);"));
+  expect(succeeded, "the success path was located").toContain("if (fresh) setToken(fresh);");
+  expect(succeeded.indexOf("if (fresh) setToken(fresh);"), "adopted before the host is told").toBeLessThan(
+    succeeded.indexOf("onDone();")
+  );
+  expect(GATE).toMatch(/import \{ setToken \} from "@\/lib\/api";/);
 });
 
 test("the Android handset carries the same floor and the same first clause", () => {
@@ -157,15 +208,38 @@ test("the redirect effect refuses to navigate while either gate stands", () => {
 
 test("the gate is derived from the live account, so an already-open session meets it too", () => {
   // Not a copy of the flag taken at sign-in: a session that was open when this page loaded carries
-  // the same obligation, and a stored copy is a copy that goes stale after the change lands.
-  expect(LOGIN).toMatch(/const passwordGate = !passwordSet && mustChangePassword\(user\) \? user : null;/);
+  // the same obligation, and a stored copy is a copy that goes stale after the change lands. And no
+  // page-local latch beside it any more — see the next test for where the latch went.
+  expect(LOGIN).toMatch(/const passwordGate = mustChangePassword\(user\) \? user : null;/);
 });
 
-test("a completed change closes the gate even if the /me that would prove it never lands", () => {
-  // The latch. `changeOwnPassword` has succeeded server-side by this point; a failed best-effort
-  // re-read must not ask somebody a second time for a password they have just set.
-  expect(LOGIN).toContain("setPasswordSet(true)");
-  expect(LOGIN).toMatch(/refreshMe\(\)\.catch\(\(\) => undefined\)/);
+test("a completed change closes the gate through the ONE latch, shared with the protected tree", () => {
+  // `changeOwnPassword` has succeeded server-side by this point; a failed best-effort re-read must
+  // not ask somebody a second time for a password they have just set. This page used to keep its own
+  // latch, and the dashboard it navigated to started a FRESH one reading false over a still-stale
+  // account — the person was asked twice. `markPasswordChanged` clears the flag on the account in
+  // `AuthProvider`, which both hosts read.
+  expect(LOGIN, "no page-local latch is left").not.toMatch(/setPasswordSet|const \[passwordSet,/);
+  const onDone = /onDone=\{\(\) => \{[\s\S]*?\}\}/.exec(LOGIN)?.[0] ?? "";
+  expect(onDone, "the gate's completion was located").toContain("markPasswordChanged()");
+  expect(onDone.indexOf("markPasswordChanged()"), "cleared BEFORE the navigation, so the dashboard reads it").toBeLessThan(
+    onDone.indexOf('router.replace("/dashboard")')
+  );
+  // The latch itself: the account is patched where both hosts read it, and the module flag the
+  // background drains read goes down with it.
+  const latch = AUTH.slice(AUTH.indexOf("const markPasswordChanged = useCallback("));
+  const body = latch.slice(0, latch.indexOf("}, [refreshMe]);"));
+  expect(body).toMatch(/setUser\(\(current\) => \(current \? \{ \.\.\.current, mustChangePassword: false \} : current\)\)/);
+  expect(body).toContain("setSessionOwesPasswordChange(false)");
+});
+
+test("a re-read sent before the change cannot put the flag back; one sent after it can", () => {
+  // The race the latch exists for, made explicit: the `/me` a refused request starts is typically
+  // still in flight while the new password is being typed. Its `true` is stale; a later `/me` is the
+  // server's word and an administrator who raises the flag again is obeyed.
+  expect(AUTH).toMatch(/const probe = \+\+probes\.current;/);
+  expect(AUTH).toMatch(/changedAtProbe\.current = probes\.current;/);
+  expect(AUTH).toMatch(/adopt\(probe <= changedAtProbe\.current \? \{ \.\.\.me, mustChangePassword: false \} : me\);/);
 });
 
 /* ────────────────────────────────────────────────────────────────────────────
@@ -196,11 +270,65 @@ test("the gate has a way out that is not a way in", () => {
   expect(escape, "and it does not navigate into the app").not.toContain("/dashboard");
 });
 
-test("the current password is carried from the door and asked for only when absent", () => {
+test("the gate is handed the password of the last SUCCESSFUL sign-in, never the live box", () => {
   // `POST /auth/change-password` requires it even for an account carrying the flag. On the ordinary
   // path the person typed it ten seconds ago; re-asking would be asking for a secret the page holds.
-  expect(LOGIN, "the door hands over what was typed").toContain("currentPassword={password}");
-  expect(GATE).toMatch(/const askCurrent = currentPassword\.length === 0;/);
+  // BUT NOT THE LIVE BOX: after a refused attempt it still held the wrong password, and a following
+  // "Continue with Google" met a gate that hid its own "Current password" box behind that leftover
+  // and sent it on every try. Android's `doorPassword` is the model, and is pinned below.
+  expect(LOGIN, "the live box is never handed over").not.toContain("currentPassword={password}");
+  expect(LOGIN, "the door password is").toContain("currentPassword={doorPassword}");
+  // State, not a ref: the gate reads it while rendering, and `react-hooks/refs` refuses that.
+  expect(LOGIN).toMatch(/const \[doorPassword, setDoorPassword\] = useState\(""\);/);
+});
+
+test("the door password is written at four moments and no others", () => {
+  // Set as an attempt goes out — BEFORE the request, so the render that draws the gate already holds
+  // it — and taken back when that attempt is refused.
+  expect(SUBMIT, "the submit was located").toContain("await login(email, password)");
+  expect(SUBMIT.indexOf("setDoorPassword(password);"), "set before the request").toBeGreaterThan(-1);
+  expect(SUBMIT.indexOf("setDoorPassword(password);")).toBeLessThan(SUBMIT.indexOf("await login(email, password)"));
+  const failed = /catch \(err\) \{[\s\S]*?\}/.exec(SUBMIT)?.[0] ?? "";
+  expect(failed, "and emptied when the attempt is refused").toContain('setDoorPassword("")');
+  // At the TOP of the Google callback — before the consent check can return — because whatever an
+  // earlier password attempt left behind is not this sign-in's password.
+  expect(GIS_CALLBACK, "the GIS callback was located").toContain("loginWithGoogle(");
+  expect(GIS_CALLBACK.indexOf('setDoorPassword("")'), "emptied first").toBeGreaterThan(-1);
+  expect(GIS_CALLBACK.indexOf('setDoorPassword("")')).toBeLessThan(GIS_CALLBACK.indexOf("if (gateNow.current.blocked)"));
+  // And on both ways out of the gate.
+  const escape = /onSignOut=\{\(\) => \{[\s\S]*?\}\}/.exec(LOGIN)?.[0] ?? "";
+  const onDone = /onDone=\{\(\) => \{[\s\S]*?\}\}/.exec(LOGIN)?.[0] ?? "";
+  expect(escape).toContain('setDoorPassword("")');
+  expect(onDone).toContain('setDoorPassword("")');
+  // Nothing else writes it: four empties and one set.
+  expect((LOGIN.match(/setDoorPassword\(/g) ?? []).length).toBe(5);
+});
+
+test("the box is asked for when the host has none, and again after any refusal", () => {
+  // A hidden box holding a wrong password is a form whose only button can never succeed.
+  expect(GATE).toMatch(/const askCurrent = currentPassword\.length === 0 \|\| currentRefusals > 0;/);
+});
+
+test("a refused current password reveals the box, empties it and puts the caret in it", () => {
+  // The server answers a wrong current password with a 400 — not a 401, which `apiFetch` would have
+  // read as a dead session, costing the person their sign-in for one typo.
+  expect(currentPasswordRefused(new ApiError(400, "Current password is incorrect", { detail: "Current password is incorrect" }))).toBe(
+    true
+  );
+  // A length rule and the guessing budget say nothing against the current password; neither does a
+  // session that is genuinely over.
+  expect(currentPasswordRefused(new ApiError(422, "newPassword: too long", null))).toBe(false);
+  expect(currentPasswordRefused(new ApiError(429, "Too many attempts", null))).toBe(false);
+  expect(currentPasswordRefused(new ApiError(401, "This session is no longer valid. Sign in again.", null))).toBe(false);
+  expect(currentPasswordRefused(new TypeError("Failed to fetch"))).toBe(false);
+
+  const refused = /if \(currentPasswordRefused\(err\)\) \{[\s\S]*?\}/.exec(GATE_SUBMIT)?.[0] ?? "";
+  expect(refused, "the gate acts on it").toContain('setCurrent("")');
+  expect(refused).toContain("setCurrentRefusals(");
+  expect(GATE, "and moves focus to the box it has just drawn").toMatch(
+    /if \(currentRefusals > 0\) currentBox\.current\?\.focus\(\);/
+  );
+  expect(GATE).toContain("ref={currentBox}");
 });
 
 test("the confirmation is a real second box, checked before anything is sent", () => {
@@ -208,7 +336,40 @@ test("the confirmation is a real second box, checked before anything is sent", (
   // one `newPassword` and cannot see the second box, so a mismatch it could never detect would
   // otherwise be filed as the person's choice.
   expect(GATE).toContain('id="gate-confirm-password"');
-  expect(GATE).toMatch(/if \(next !== confirm\) \{[\s\S]{0,200}?do not match/);
+  expect(newPasswordProblem({ current: "temporary-1", next: "my-own-pass", confirm: "my-own-pazz" })).toMatch(/do not match/);
+  expect(GATE_SUBMIT.indexOf("newPasswordProblem("), "checked in the submit").toBeGreaterThan(-1);
+  expect(GATE_SUBMIT.indexOf("newPasswordProblem("), "before anything is sent").toBeLessThan(
+    GATE_SUBMIT.indexOf("changeOwnPassword(")
+  );
+});
+
+test("the gate refuses the very password it exists to retire, before sending it", () => {
+  // The gate retires a secret somebody else knows. Typing that same secret into "New password" used
+  // to satisfy it: the server compared nothing, cleared the flag and kept the password.
+  expect(newPasswordProblem({ current: "temporary-1", next: "temporary-1", confirm: "temporary-1" })).toMatch(
+    /different from your current one/
+  );
+  expect(newPasswordProblem({ current: "temporary-1", next: "my-own-pass", confirm: "my-own-pass" })).toBeNull();
+  // Compared exactly, the way the server compares: a trailing space is a different password.
+  expect(newPasswordProblem({ current: "temporary-1", next: "temporary-1 ", confirm: "temporary-1 " })).toBeNull();
+});
+
+test("every box carries the one ceiling and says what it is for", () => {
+  // One maximum, the server's, on every box: a 210-character entry the next screen refuses with a 422
+  // is a password typed twice for nothing.
+  expect(MAX_PASSWORD_LENGTH).toBe(200);
+  expect((GATE.match(/maxLength=\{MAX_PASSWORD_LENGTH\}/g) ?? []).length, "current, new and repeat").toBe(3);
+  // A password manager fills the box it is told about: the current one, then the pair it should save.
+  expect((GATE.match(/autoComplete="current-password"/g) ?? []).length).toBe(1);
+  expect((GATE.match(/autoComplete="new-password"/g) ?? []).length).toBe(2);
+});
+
+test("the gate's sentence is neutral, and is the server's own", () => {
+  // "An administrator set your password" stopped being true the moment an administrator could require
+  // a change of a password its owner chose. The server refuses a gated request with this sentence.
+  expect(PASSWORD_CHANGE_PROMPT).toBe("Choose a new password to continue.");
+  expect(PASSWORD_CHANGE_PROMPT.toLowerCase()).not.toContain("administrator");
+  expect(GATE, "the status box draws it").toMatch(/role="status"[\s\S]{0,600}?\{PASSWORD_CHANGE_PROMPT\}/);
 });
 
 /* ────────────────────────────────────────────────────────────────────────────
@@ -228,6 +389,30 @@ test("the handset's gate is a when arm between sign-in and the dashboard, not a 
     routing.indexOf("usageConsentBlocks(user)"),
     "consent is asked first"
   ).toBeLessThan(routing.indexOf("mustChangePasswordBlocks(user)"));
+});
+
+test("the gate's heading, its sentence and its two refusals are the handset's, word for word", () => {
+  // A designer refused on the phone opens the website next. `AppShell` has always said its heading
+  // was Android's "word for word"; this is what makes that a fact rather than a comment.
+  const kotlinString = (name: string) => new RegExp(`const val ${name} = "([^"]+)"`).exec(KT_COPY)?.[1];
+  const heading = kotlinString("PASSWORD_GATE_HEADING");
+  expect(heading, "the handset's heading was located").toBeTruthy();
+  expect(APP_SHELL).toContain(`>${heading}</h1>`);
+  expect(kotlinString("PASSWORD_GATE_SENTENCE")).toBe(PASSWORD_CHANGE_PROMPT);
+  // The two refusals both clients make before sending — same words, so neither reads as a new rule.
+  const mismatch = newPasswordProblem({ current: "a-current-one", next: "first-try-1", confirm: "first-try-2" });
+  const same = newPasswordProblem({ current: "a-current-one", next: "a-current-one", confirm: "a-current-one" });
+  expect(KT_COPY).toContain(`"${mismatch}"`);
+  expect(KT_COPY).toContain(`"${same}"`);
+});
+
+test("what a change does to the other sessions is said in the handset's words too", () => {
+  // Both gates print it under their boxes, and since 2026-10-09 it is the opposite of what both used to
+  // say ("Other devices stay signed in"): a change ends every session but the one it hands back. A
+  // designer who changes the password on the phone and opens the website next must read one rule.
+  const kotlinString = (name: string) => new RegExp(`const val ${name} = "([^"]+)"`).exec(KT_COPY)?.[1];
+  expect(kotlinString("PASSWORD_CHANGE_SESSIONS"), "the handset's constant was located").toBeTruthy();
+  expect(kotlinString("PASSWORD_CHANGE_SESSIONS")).toBe(PASSWORD_CHANGE_SESSIONS);
 });
 
 test("the handset forgets the door password on every exit", () => {

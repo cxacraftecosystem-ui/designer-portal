@@ -114,6 +114,7 @@ import {
   addToAccessRoster,
   decideAccessRequest,
   listAccessRoster,
+  promotionHeldSentence,
   suspendAccessEntry,
   updateAccessEntry,
   type AccessRosterEntry,
@@ -122,6 +123,8 @@ import {
 import { formatDate, formatDateTime } from "@/lib/format";
 import { assignableRoles, canManageAccessRoster, roleLabel } from "@/lib/permissions";
 import type { UserRole } from "@/lib/types";
+// The other end of the pre-filled link to Manage users: one module spells the query string for both.
+import { passwordAccountHref } from "@/app/(protected)/users/accountAdmin";
 import {
   ACCESS_LIST_STALE_NOTE,
   ACCESS_LIST_UNREADABLE_BODY,
@@ -249,6 +252,25 @@ function PlatformAccessScreen() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  /**
+   * The pre-filled Manage users link offered under an "added" notice — and ONLY under that notice:
+   * it is drawn while `notice` is still the very sentence it was made with, so any later notice
+   * (an approval, a suspension, an edit) replaces it without every one of those paths having to
+   * remember to clear it.
+   */
+  const [passwordAccount, setPasswordAccount] = useState<{
+    notice: string;
+    href: string;
+    /** The tier the address was admitted at, or null for the platform default — which the link cannot carry. */
+    admitRole: UserRole | null;
+  } | null>(null);
+  /**
+   * The server's sentence when an approval left an existing account at its tier — it still holds a
+   * temporary password, and promoting it would carry that password above whoever typed it
+   * (`promotionHeldSentence`). It IS the notice, word for word, drawn amber while the notice is still
+   * that very sentence — `passwordAccount`'s rule, so a later notice replaces it with nothing to clear.
+   */
+  const [heldPromotion, setHeldPromotion] = useState<string | null>(null);
   const formRef = useRef<HTMLFormElement | null>(null);
 
   /**
@@ -401,9 +423,21 @@ function PlatformAccessScreen() {
         role: (role || null) as UserRole | null,
         notes: notes || null
       });
-      setNotice(
-        `${created.email} may sign in. They join as ${roleLabel(created.admitRole) || "the platform default tier"}, and the account is created the first time they sign in.`
-      );
+      /*
+        "MAY SIGN IN" WAS TRUE OF ONE CREDENTIAL ONLY, and said of both. Only Google sign-in creates
+        an account by itself; the password path needs an account that already has a password, and
+        answers "Invalid email or password" to an address that is merely admitted — so an admin who
+        read "may sign in" and told a colleague with a government mailbox to go ahead sent them to a
+        refusal neither screen explained. The sentence now names the credential, and the link under
+        it carries the address and the tier to the form that makes a password account.
+      */
+      const message = `${created.email} may sign in with Google. They join as ${roleLabel(created.admitRole) || "the platform default tier"}, and the account is created the first time they sign in with Google.`;
+      setNotice(message);
+      setPasswordAccount({
+        notice: message,
+        href: passwordAccountHref(created.email, created.admitRole, created.fullName),
+        admitRole: created.admitRole
+      });
       formElement.reset();
       await reloadAll();
     } catch (err) {
@@ -433,15 +467,21 @@ function PlatformAccessScreen() {
       body: role
         ? `They will be able to sign in immediately, as ${roleLabel(role)}.`
         : "They will be able to sign in immediately, at this platform's default joining tier — the lowest rung — and can be promoted afterwards on Manage users.",
+      // The middle clause became true on 2026-10-09: approving promotes an account that already
+      // exists, and one still holding a temporary password is not promoted — see `heldPromotion`.
       note:
-        "If they already have an account at a lower tier it is raised to match. An account that is already higher is never lowered by approving somebody.",
+        "If they already have an account at a lower tier it is raised to match — unless it still has to replace a temporary password somebody typed for it, in which case it keeps its tier and you are told how to finish the promotion. An account that is already higher is never lowered by approving somebody.",
       confirmLabel: "Approve",
       tone: "warning"
     });
     if (!ok) return;
     try {
       const updated = await decideAccessRequest(entry.id, { decision: "APPROVE", role: role || null });
-      setNotice(`${updated.email} may sign in from their next attempt.`);
+      // The server's own sentence when the account kept its tier: it already says the address is
+      // approved, and names what to do next — this screen's receipt would say less.
+      const held = promotionHeldSentence(updated);
+      setHeldPromotion(held);
+      setNotice(held ?? `${updated.email} may sign in from their next attempt.`);
       setError(null);
       await reloadAll();
     } catch (err) {
@@ -515,7 +555,10 @@ function PlatformAccessScreen() {
     if (!ok) return;
     try {
       const updated = await decideAccessRequest(entry.id, { decision: "APPROVE" });
-      setNotice(`${updated.email} can sign in again.`);
+      // A restore is an approval at the row's own tier, so it can meet the same held promotion.
+      const held = promotionHeldSentence(updated);
+      setHeldPromotion(held);
+      setNotice(held ?? `${updated.email} can sign in again.`);
       setError(null);
       await reloadAll();
     } catch (err) {
@@ -662,7 +705,32 @@ function PlatformAccessScreen() {
         </div>
       ) : null}
       {notice ? (
-        <div className="mb-4 rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-sm text-ink-700">{notice}</div>
+        <div
+          className={
+            // AMBER for a promotion that waits: nothing failed — the address is approved — but the
+            // tier still has to be finished on Manage users, and a neutral receipt reads as "done".
+            heldPromotion !== null && heldPromotion === notice
+              ? "mb-4 rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-sm text-amber-800"
+              : "mb-4 rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-sm text-ink-700"
+          }
+        >
+          {notice}
+          {passwordAccount && passwordAccount.notice === notice ? (
+            <>
+              {" "}Will they sign in with a password instead? Admission alone never makes that account —{" "}
+              <Link href={passwordAccount.href} className="font-medium text-purple-700 hover:underline">
+                create their password account on Manage users
+              </Link>
+              {/* Two sentences, because the link carries a tier only when one was chosen here. An
+                  address admitted at the platform default arrives with the tier EMPTY, and /users
+                  makes it a choice (`createFormRole`) — "already filled in" used to promise a tier
+                  that then arrived as Researcher. */}
+              {passwordAccount.admitRole
+                ? ", with this address and tier already filled in."
+                : ", with this address filled in — choose their tier there; Google sign-in would have started them at the lowest rung."}
+            </>
+          ) : null}
+        </div>
       ) : null}
 
       {/*
@@ -750,9 +818,20 @@ function PlatformAccessScreen() {
             {editing ? `Correct the entry for ${editing.email}` : "Let somebody in by address"}
           </h2>
           <p className="mt-1 text-sm leading-6 text-ink-muted">
-            {editing
-              ? "The name, tier and note are your own record of whom you admitted and why. Changing them here cannot change whether this person may sign in — use Approve, Refuse, Suspend or Restore for that."
-              : "No account has to exist yet: the address is admitted now and the account is created the first time that person signs in. Adding somebody here IS approving them, so they never appear in the queue above."}
+            {editing ? (
+              "The name, tier and note are your own record of whom you admitted and why. Changing them here cannot change whether this person may sign in — use Approve, Refuse, Suspend or Restore for that."
+            ) : (
+              <>
+                For somebody who signs in with Google, no account has to exist yet: the address is admitted now and the
+                account is created the first time that person signs in with Google. Somebody who will sign in with a
+                password needs an account made for them on{" "}
+                <Link href="/users" className="font-medium text-purple-700 hover:underline">
+                  Manage users
+                </Link>
+                , which admits the address as well. Adding somebody here IS approving them, so they never appear in the
+                queue above.
+              </>
+            )}
           </p>
         </div>
         <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">

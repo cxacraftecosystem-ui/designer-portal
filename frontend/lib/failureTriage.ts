@@ -684,6 +684,24 @@ export function isCredentialExpiry(error: unknown): boolean {
 }
 
 /**
+ * Was this refused because the ACCOUNT owes a new password, rather than because the session ended?
+ *
+ * A NARROWER READING OF {@link isCredentialExpiry}, NOT A NEW KIND. The gated 401 is a 401, so it
+ * keeps `credential-expired`'s whole row — stop the pass, mark nothing, keep everything — and every
+ * drain that already handles an expiry already does the safe thing with it. What differs is only the
+ * sentence and the remedy: "your sign-in has expired, sign in again" is false here (the token is
+ * good, and `apiFetch` kept it), and the thing that sends the queue is choosing a password, which the
+ * gate on screen is already asking for. So a drain asks this FIRST and says nothing alarming.
+ *
+ * Read off the server's header through `ApiError.passwordChangeRequired`, and through the one unwrap,
+ * so a refusal met inside a `MediaBatchError` on the media leg is recognised exactly as one met on the
+ * record request.
+ */
+export function isPasswordChangeRefusal(error: unknown): boolean {
+  return triageFailure(error).answered?.passwordChangeRequired === true;
+}
+
+/**
  * Did the server explicitly ask for time — 408 or 429 — rather than refuse?
  *
  * The fifth opinion, given a name. `lib/designWorkshopStore.ts` had this written out inline twice as

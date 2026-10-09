@@ -18,6 +18,7 @@ import {
   canAccessRoute,
   canInspectDesignWorkshops,
   canRunDesignWorkshops,
+  isInspectorTier,
   ROLE_LABELS,
   ROLE_RANK,
   routeGuardFor
@@ -34,11 +35,13 @@ import type { User, UserRole } from "@/lib/types";
  * covers the three parts of the client half that are decidable without a browser, and every one of
  * them is a place a reasonable instinct gives the wrong answer:
  *
- * 1. **THE GUARD IS NOT A RANK FLOOR AND IS NOT MONOTONIC.** `INSPECTION_ROLES` is
- *    `frozenset({"INSPECTOR"})` and `assert_inspection_surface` 403s an ADMIN by name. So this is
- *    the only route rule in the client where a rank-50 account is refused a page a rank-37 account
- *    may open, and §2's ladder gives the wrong answer for it every single time. Nothing else in
- *    `ROUTE_GUARDS` behaves that way, so nothing else would catch it drifting.
+ * 1. **THE GUARD IS NOT A RANK FLOOR AND IS NOT MONOTONIC.** Since the owner's ruling of
+ *    2026-10-09 it is everybody who may be APPOINTED to inspect — the Inspector / Reviewer tier at 37
+ *    and the three administering tiers at 48, 50 and 60 — so a professor (40), an Assistant Director
+ *    (42) and a Regional Director (45) are refused a page the tiers on either side of them may open.
+ *    Until that ruling the hole was the other way up: an ADMIN was refused by name and only rank 37
+ *    was admitted. Either way §2's ladder gives the wrong answer, and nothing else in `ROUTE_GUARDS`
+ *    behaves like this, so nothing else would catch it drifting.
  * 2. **THE LABEL IS TWO WORDS AND THE ENUM IS ONE.** The tier is stored `INSPECTOR` and labelled
  *    "Inspector / Reviewer", because `canReview` already means the RELATION "may review anyone
  *    strictly below me" and one word cannot be both a rank and a relation. Every refusal this
@@ -90,35 +93,45 @@ const ROLES: UserRole[] = [
 /** The role is the whole fixture: every predicate this file exercises reads nothing else. */
 const user = (role: UserRole): User => ({ id: "u1", email: "a@b.c", name: "A", role } as User);
 
+/**
+ * Who may be APPOINTED to inspect a workshop, written out here rather than imported, so the
+ * assertions below are a second statement of the rule and not the rule read back to itself. The
+ * owner's ruling of 2026-10-09 (D3): the tier, plus the three administering tiers by appointment.
+ */
+const MAY_BE_APPOINTED: UserRole[] = ["MASTER_ADMIN", "ADMIN", "MINISTRY_ADMIN", "INSPECTOR"];
+
 test.describe("who may open the inspection surface", () => {
-  test("the INSPECTOR tier may, and nobody else may — admins included", () => {
-    expect(canInspectDesignWorkshops(user("INSPECTOR"))).toBe(true);
-    for (const role of ROLES.filter((candidate) => candidate !== "INSPECTOR")) {
-      expect(canInspectDesignWorkshops(user(role)), `${role} must not hold the inspection surface`).toBe(false);
+  test("whoever may be appointed to inspect may, and nobody else may", () => {
+    for (const role of ROLES) {
+      expect(canInspectDesignWorkshops(user(role)), `${role} and the inspection surface`).toBe(
+        MAY_BE_APPOINTED.includes(role)
+      );
     }
     expect(canInspectDesignWorkshops(null)).toBe(false);
     expect(canInspectDesignWorkshops(undefined)).toBe(false);
   });
 
-  test("an ADMIN is refused, which is the assertion the rank ladder would talk you out of", () => {
-    // THE NON-MONOTONIC ROW. Rank 50 outranks rank 37 everywhere else in this client, and here it is
-    // refused: `assert_inspection_surface` answers an admin a 403 that names the route they actually
-    // want. Scoped by their own inspection rows an admin would see an empty page and read it as a
-    // broken feature; scoped by "everything, because they are an admin" this becomes a second full
-    // read of every workshop in the repository. Both are worse than a refusal.
-    expect(ROLE_RANK.ADMIN).toBeGreaterThan(ROLE_RANK.INSPECTOR);
-    expect(canAccessRoute(user("ADMIN"), PATH)).toBe(false);
-    expect(canAccessRoute(user("MASTER_ADMIN"), PATH)).toBe(false);
+  test("the tiers BETWEEN the inspector and the admins are refused, which the rank ladder would talk you out of", () => {
+    // THE NON-MONOTONIC ROWS. A professor, an Assistant Director and a Regional Director all outrank
+    // an inspector and are outranked by every admin, and all three are refused: none of them may be
+    // appointed to inspect. Until 2026-10-09 the hole was the other way up — an ADMIN was refused by
+    // name — and the assertion that it is a SET, not a floor, is the part that did not move.
+    for (const role of ["PROFESSOR", "ASSISTANT_DIRECTOR", "REGIONAL_DIRECTOR"] as const) {
+      expect(ROLE_RANK[role]).toBeGreaterThan(ROLE_RANK.INSPECTOR);
+      expect(ROLE_RANK[role]).toBeLessThan(ROLE_RANK.MINISTRY_ADMIN);
+      expect(canAccessRoute(user(role), PATH), role).toBe(false);
+    }
+    expect(canAccessRoute(user("ADMIN"), PATH)).toBe(true);
+    expect(canAccessRoute(user("MASTER_ADMIN"), PATH)).toBe(true);
   });
 
   test("the route guard refuses everyone the predicate refuses, and nested paths too", () => {
-    expect(canAccessRoute(user("INSPECTOR"), PATH)).toBe(true);
-    // The detail page lives under the same prefix and inherits the rule — `routeMatches` is
-    // segment-wise, so this is the nesting half rather than a second row.
-    expect(canAccessRoute(user("INSPECTOR"), `${PATH}/dw_1`)).toBe(true);
-    for (const role of ROLES.filter((candidate) => candidate !== "INSPECTOR")) {
-      expect(canAccessRoute(user(role), PATH), `${role} must not reach ${PATH}`).toBe(false);
-      expect(canAccessRoute(user(role), `${PATH}/dw_1`), `${role} must not reach a workshop under it`).toBe(false);
+    for (const role of ROLES) {
+      const admitted = MAY_BE_APPOINTED.includes(role);
+      expect(canAccessRoute(user(role), PATH), `${role} and ${PATH}`).toBe(admitted);
+      // The detail page lives under the same prefix and inherits the rule — `routeMatches` is
+      // segment-wise, so this is the nesting half rather than a second row.
+      expect(canAccessRoute(user(role), `${PATH}/dw_1`), `${role} and a workshop under it`).toBe(admitted);
     }
     expect(canAccessRoute(null, PATH)).toBe(false);
   });
@@ -137,9 +150,10 @@ test.describe("who may open the inspection surface", () => {
   });
 
   test("it is NOT gated on canRunDesignWorkshops, which an inspector deliberately fails", () => {
-    // The two predicates are opposite sets, not overlapping ones, and this is the assertion that
-    // catches somebody "tidying" this row into the design-workshop family: it would hide the only
-    // surface the tier exists for from the only tier that can use it.
+    // The assertion that catches somebody "tidying" this row into the design-workshop family: it
+    // would hide the only surface the tier exists for from the only tier that can use it. The two
+    // sets OVERLAP since 2026-10-09 — the three administering tiers are in both — and that overlap is
+    // exactly why a post on a workshop takes that workshop's writes away from its holder.
     expect(canRunDesignWorkshops(user("INSPECTOR"))).toBe(false);
     expect(canInspectDesignWorkshops(user("DESIGNER"))).toBe(false);
     expect(routeGuardFor(PATH)?.can).not.toBe(canRunDesignWorkshops);
@@ -237,14 +251,18 @@ test.describe("the caps and the search length mirror the server", () => {
     for (const declared of lengths) expect(ELIGIBLE_INSPECTOR_SEARCH_MAX).toBe(declared);
   });
 
-  test("the eligible set is one role, and this client's predicate holds the same one", () => {
-    // `INSPECTION_ROLES = frozenset({"INSPECTOR"})`. The day the owner adds a second member, this
-    // fails and points at `canInspectDesignWorkshops`, which is the file that then has to move.
+  test("the TIER is one role on both sides, and this client's tier predicate holds the same one", () => {
+    // `INSPECTION_ROLES = frozenset({"INSPECTOR"})` — the tier whose whole job inspecting is. It was
+    // also the surface's door until 2026-10-09; the door is now the holder set, which joins this tier
+    // to the three administering tiers and is held to the server in `admin-serve-as-unit.spec.ts`.
+    // What stays pinned HERE is the tier itself, which decides the walkthrough deck and how a refusal
+    // of the surface is read — so the day the owner adds a second member, this fails and points at
+    // `isInspectorTier`.
     const match = INSPECTORS_PY.match(/^INSPECTION_ROLES\s*=\s*frozenset\(\{([^}]*)\}\)/m);
     expect(match, "INSPECTION_ROLES not found in the service module").toBeTruthy();
     const declared = [...match![1].matchAll(/"([A-Z_]+)"/g)].map((m) => m[1]).sort();
     expect(declared).toEqual(["INSPECTOR"]);
-    expect(ROLES.filter((role) => canInspectDesignWorkshops(user(role))).sort()).toEqual(declared);
+    expect(ROLES.filter((role) => isInspectorTier(user(role))).sort()).toEqual(declared);
   });
 });
 
@@ -265,6 +283,42 @@ test.describe("the admin picker's one-line notice", () => {
     const searched = eligibleInspectorNotice({ truncated: false, offered: 0, searched: true });
     expect(searched).toContain("search");
     expect(searched).not.toBe("");
+  });
+
+  test("the handset's admin picker says the same three sentences, word for word", () => {
+    /*
+      The server sends the widened list — Ministry Admin, admin and master admin beside the tier — to
+      the handset's admin-only inspectors screen as well, so the tier-only wording it kept was false
+      there; it now says these. An admin moves between the two apps, and one cut with two spellings
+      reads as two different problems.
+    */
+    const handset = readFileSync(
+      join(
+        __dirname,
+        "..",
+        "..",
+        "android",
+        "app",
+        "src",
+        "main",
+        "java",
+        "com",
+        "designprototype",
+        "workshop",
+        "data",
+        "DesignWorkshopInspections.kt"
+      ),
+      "utf8"
+    );
+    const notice = handset.slice(handset.indexOf("fun dwInspectorOfferNotice("));
+    expect(notice.length, "the handset's notice was located").toBeGreaterThan(0);
+    for (const sentence of [
+      eligibleInspectorNotice({ truncated: true, offered: 2000, searched: false }),
+      eligibleInspectorNotice({ truncated: true, offered: 2000, searched: true }),
+      eligibleInspectorNotice({ truncated: false, offered: 0, searched: true })
+    ]) {
+      expect(notice.slice(0, notice.indexOf("else -> null")), sentence).toContain(`"${sentence}"`);
+    }
   });
 });
 

@@ -12,11 +12,13 @@ they type the address the same way, a second unmatchable row if they do not — 
 the designer's first sign-in silently derives the empanelment instead, producing a row that says it
 was derived when in fact an administrator granted it and whose ``addedById`` names nobody.
 
-``create_user`` now calls ``ensure_empanelled`` after it admits, on exactly the two conditions
+``create_user`` now empanels after it admits, on exactly the two conditions
 ``access._empanel_an_admitted_designer`` uses — the STORED row is ACTIVE and the STORED role is
-DESIGNER. The conditions are re-spelled in ``routes/users`` rather than imported because
-``routes/access`` imports ``assert_role`` from that module and calling back would close an import
-cycle; this module is what keeps the two copies answering the same.
+DESIGNER. Since 2026-10-09 that rule lives in ``services/account_provisioning.
+empanel_an_admitted_designer``, which the route and the operator script
+(``scripts/provision_account.py``) both call; it was re-spelled inline in ``routes/users`` until a
+third caller arrived, as the note there said it would have to be. This module is what keeps it
+answering the same as the access screen's copy.
 
 FOUR THINGS ARE PINNED, AND THE THIRD IS WHY THE OTHER THREE ARE SAFE:
 

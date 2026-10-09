@@ -468,10 +468,13 @@ def test_admin_credentials_mint_a_scoped_token_that_works(api) -> None:
     allow-list, so "an admin with the right password" is no longer the whole precondition — the
     account has to be one the product still lets in. The refusing half is two tests below.
     """
-    api.table("user", [_account("boss", "ADMIN", "correct-horse-battery")])
+    boss = _account("boss", "ADMIN", "correct-horse-battery")
+    api.table("user", [boss])
     for name in datasets.DATASETS:
         api.table(datasets.DATASETS[name].delegate, [])
-    api.users["boss"] = _row("boss", "ADMIN")
+    # The identity the token resolves to is the SAME account, password and all: since 2026-10-09 the
+    # token carries that password's fingerprint and is refused once the account holds another.
+    api.users["boss"] = _row("boss", "ADMIN", passwordHash=boss.passwordHash)
     api.admit("boss@example.com")
 
     minted = api.request(
@@ -487,6 +490,14 @@ def test_admin_credentials_mint_a_scoped_token_that_works(api) -> None:
     assert body["account"]["email"] == "boss@example.com"
     # And the thing it handed over actually opens the API it was minted for.
     assert api.get("/api/datasets", token=body["accessToken"]).status_code == 200
+
+    # Until the account's password changes, by any door: then it is retired — a plain 401, and the
+    # operator mints a new one with the new password. (The whole sequence, against a database, is
+    # ``tests/test_password_change_enforcement.py``.)
+    api.users["boss"].passwordHash = _hashed("a-password-chosen-later")
+    retired = api.get("/api/datasets", token=body["accessToken"])
+    assert retired.status_code == 401
+    assert retired.json()["detail"] == "This session is no longer valid. Sign in again."
 
 
 def test_a_non_admin_is_refused_at_issue_time_not_at_first_use(api) -> None:
@@ -624,7 +635,8 @@ def test_extra_claims_cannot_overwrite_the_subject_or_the_expiry(api) -> None:
     """Defence in depth on the minting helper itself. Nothing forwards client-influenced claims
     today; the guard is what keeps that from becoming a token-forgery primitive if something ever
     does — `decode_access_token` requires `sub` and `exp` to be PRESENT, not to be ours."""
-    for claim in ("sub", "iat", "exp"):
+    # ``cred`` too: the password binding has its own keyword, the one way in that is checked for.
+    for claim in ("sub", "iat", "exp", "cred"):
         with pytest.raises(ValueError, match="reserved"):
             create_access_token(subject="u1", extra_claims={claim: "hijacked"})
 

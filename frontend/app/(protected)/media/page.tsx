@@ -1,9 +1,20 @@
 "use client";
 
-import { Fragment, useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useId, useRef, useState } from "react";
 import { AudioLines, Images, Loader2, QrCode, Upload } from "lucide-react";
 
 import { CappedListNotice } from "@/components/data/CappedListNotice";
+import {
+  HELD_POST_PENDING_FILES,
+  HeldPostNotice,
+  MEDIA_HELD_LABEL,
+  mediaListNotice,
+  mediaUploadHold,
+  mediaWorkshopIds,
+  useHeldPostRefusals,
+  writesHeld,
+  type HeldPostRefusal
+} from "@/components/designworkshop/HeldPostNotice";
 import { DictatedTextArea } from "@/components/richtext/DictatedTextArea";
 import { DictatedTextInput } from "@/components/richtext/DictatedTextInput";
 import { DictationUnavailableNotice } from "@/components/richtext/DictationUnavailableNotice";
@@ -70,6 +81,8 @@ type ProcessListItem = {
   id: string;
   name: string;
   product?: { productName?: string | null } | null;
+  /** The design workshop the process is filed under — what a file attached to it would land in. */
+  designWorkshopId?: string | null;
   createdAt?: string;
 };
 
@@ -109,7 +122,23 @@ function sortRecent<T extends { createdAt?: string }>(items: T[]) {
  * other seven pass the same two keys they always did; the type simply stops throwing the extra ones
  * away at the door.
  */
-type EntryOptions = { options: DropdownOption[]; cut: ListCut | null };
+type EntryOptions = {
+  options: DropdownOption[];
+  cut: ListCut | null;
+  /**
+   * Each entry's id, to the design workshops a file attached to it would BELONG to — the server's
+   * `link_filing`, read off rows this loader already holds: a record's `designWorkshopId`, or for a
+   * parent file the two links on its own row, one hop and no further. Absent for the types that are
+   * never filed under a design workshop (a crafts workshop, a craft). It is what holds the upload for
+   * somebody who inspects or supervises that workshop — see `uploadHold` on the page.
+   */
+  filings?: ReadonlyMap<string, readonly string[]>;
+};
+
+/** Entry id → the design workshop each row is filed under, as `EntryOptions.filings` holds it. */
+function filedUnder(rows: ReadonlyArray<{ id: string; designWorkshopId?: string | null }>): Map<string, string[]> {
+  return new Map(rows.map((row) => [row.id, row.designWorkshopId?.trim() ? [row.designWorkshopId.trim()] : []]));
+}
 
 async function loadEntryOptions(type: string): Promise<EntryOptions> {
   const params = { pageSize: LIST_PAGE_CEILING };
@@ -118,7 +147,8 @@ async function loadEntryOptions(type: string): Promise<EntryOptions> {
       const page = await listResource<Artisan>("/artisans", params);
       return {
         options: sortRecent(page.items).map((x) => ({ value: x.id, label: `${x.name} · ${x.place}` })),
-        cut: listCut(page, "artisans")
+        cut: listCut(page, "artisans"),
+        filings: filedUnder(page.items)
       };
     }
     case "workshop": {
@@ -163,14 +193,16 @@ async function loadEntryOptions(type: string): Promise<EntryOptions> {
       const page = await listResource<ToolDocumentation>("/tools", params);
       return {
         options: sortRecent(page.items).map((x) => ({ value: x.id, label: `${x.toolkitName} · ${x.artisanName}` })),
-        cut: listCut(page, "tools")
+        cut: listCut(page, "tools"),
+        filings: filedUnder(page.items)
       };
     }
     case "product": {
       const page = await listResource<ProductDocumentation>("/products", params);
       return {
         options: sortRecent(page.items).map((x) => ({ value: x.id, label: `${x.productName} · ${x.artisanName}` })),
-        cut: listCut(page, "products")
+        cut: listCut(page, "products"),
+        filings: filedUnder(page.items)
       };
     }
     case "process": {
@@ -180,14 +212,16 @@ async function loadEntryOptions(type: string): Promise<EntryOptions> {
           value: x.id,
           label: x.product?.productName ? `${x.name} · ${x.product.productName}` : x.name
         })),
-        cut: listCut(page, "processes")
+        cut: listCut(page, "processes"),
+        filings: filedUnder(page.items)
       };
     }
     case "questionnaire": {
       const page = await listResource<QuestionnaireInterview>("/questionnaire/interviews", params);
       return {
         options: sortRecent(page.items).map((x) => ({ value: x.id, label: x.title?.trim() || "Untitled interview" })),
-        cut: listCut(page, "interviews")
+        cut: listCut(page, "interviews"),
+        filings: filedUnder(page.items)
       };
     }
     case "media": {
@@ -200,7 +234,9 @@ async function loadEntryOptions(type: string): Promise<EntryOptions> {
           const name = x.originalFilename?.trim() || "Media";
           return { value: x.id, label: [name, x.mediaType, tag].filter(Boolean).join(" · ") };
         }),
-        cut: listCut(page, "media files")
+        cut: listCut(page, "media files"),
+        // A parent FILE belongs to what its own row names — one hop, as the server reads it.
+        filings: new Map(page.items.map((x) => [x.id, mediaWorkshopIds(x)]))
       };
     }
     default:
@@ -320,6 +356,8 @@ function MediaPageBody() {
   const [entryOptions, setEntryOptions] = useState<DropdownOption[]>([]);
   /** How much of the chosen record type the entry dropdown holds — see `loadEntryOptions`. */
   const [entryCut, setEntryCut] = useState<ListCut | null>(null);
+  /** Which design workshop each of those entries is filed under — see `EntryOptions.filings`. */
+  const [entryFilings, setEntryFilings] = useState<ReadonlyMap<string, readonly string[]> | null>(null);
   const [loadingEntries, setLoadingEntries] = useState(false);
   /**
    * THE READ FOR THIS TYPE DID NOT ANSWER — which is not the same fact as "there are none of them".
@@ -396,6 +434,7 @@ function MediaPageBody() {
     setLinkedEntryId("");
     setEntryOptions([]);
     setEntryCut(null);
+    setEntryFilings(null);
     setEntriesFailed(false);
     if (!linkedType) return;
     let cancelled = false;
@@ -405,6 +444,7 @@ function MediaPageBody() {
         if (cancelled) return;
         setEntryOptions(loaded.options);
         setEntryCut(loaded.cut);
+        setEntryFilings(loaded.filings ?? null);
       })
       .catch((err) => {
         if (cancelled) return;
@@ -420,6 +460,47 @@ function MediaPageBody() {
       cancelled = true;
     };
   }, [linkedType]);
+
+  const canTranscribe = isAdmin(user);
+
+  /*
+    A FILE OF A WORKSHOP THE READER INSPECTS OR SUPERVISES IS READ-ONLY TO THEM (2026-10-09). The
+    server refuses a post holder — admin arm included — the delete and the re-run transcript of any
+    file that belongs to that workshop, so a row whose OWN columns name one (`mediaWorkshopIds`) has
+    both controls held, a word on the row, and the server's sentence once above the table. Only rows
+    that draw a write control are asked about, and only for an account that may appoint — which every
+    reader of these two controls is. A file that belongs to a workshop only through a stage that names
+    it, an AI layer or the record it hangs off is not pre-warned on this list (a read per row); its
+    403 prints as the server wrote it.
+
+    AND THE UPLOAD ADDS A FILE TO WHATEVER IT NAMES. `/media/complete` refuses a post holder a new
+    file filed under a workshop they hold a post on, tagged to it, or attached to a record filed under
+    it — and refuses it only AFTER every byte has been PUT. So Upload is held on the two things this
+    form names: the design workshop chosen in its own box (`uploadChosen`), and what the files hang
+    off (`uploadLinked` — the chosen entry's filing, read off the rows the entry picker already
+    holds, plus the workshop a `designWorkshop` link would name, which is the server's
+    `_upload_as_filed` exactly). Both pickers stay live: choosing another is the way forward.
+
+    ONE ASK PER DISTINCT WORKSHOP across the table's rows and the upload's two choices, so a workshop
+    named both ways costs one staffing read.
+  */
+  const writable = (item: MediaFile) => adminMode || (canTranscribe && item.mediaType === "AUDIO");
+  const uploadChosen = designWorkshop.workshopId ? [designWorkshop.workshopId] : [];
+  const uploadLinked = linkedType
+    ? [
+        ...mediaWorkshopIds({ linkedRecordType: linkedType, linkedRecordId: linkedEntryId || null }),
+        ...((linkedEntryId && entryFilings?.get(linkedEntryId)) || [])
+      ]
+    : [];
+  const heldFor = useHeldPostRefusals([
+    ...(data?.items ?? []).filter(writable).flatMap(mediaWorkshopIds),
+    ...uploadChosen,
+    ...uploadLinked
+  ]);
+  const holdOf = (item: MediaFile): HeldPostRefusal => (writable(item) ? heldFor(mediaWorkshopIds(item)) : null);
+  const heldNoticeId = useId();
+  const uploadHold = mediaUploadHold(heldFor(uploadChosen), heldFor(uploadLinked));
+  const uploadNoticeId = useId();
 
   /**
    * Android parity: every uploaded object is renamed to `PREFIX_Name_TYPE_index_timestamp.ext`.
@@ -437,6 +518,9 @@ function MediaPageBody() {
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    // A held Upload is disabled; this keeps the rule for any other way in — and asks it BEFORE a
+    // single byte goes up, which is the whole difference from the server's own refusal.
+    if (writesHeld(uploadHold)) return;
     if (selectedFiles.length === 0) {
       setError("Choose or record at least one file first");
       return;
@@ -504,7 +588,9 @@ function MediaPageBody() {
     }
   }
 
-  async function remove(id: string) {
+  async function remove(item: MediaFile) {
+    // A held Delete is disabled; this keeps the rule for any other way in. See `holdOf`.
+    if (writesHeld(holdOf(item))) return;
     const ok = await confirm({
       ...deleteConfirm(
         "Remove this media file?",
@@ -517,9 +603,10 @@ function MediaPageBody() {
     });
     if (!ok) return;
     try {
-      await apiFetch(`/media/${id}`, { method: "DELETE" });
+      await apiFetch(`/media/${item.id}`, { method: "DELETE" });
       await load(page, search);
     } catch (err) {
+      // The server's sentence, as written — a post holder's 403 names the post.
       setError(err instanceof Error ? err.message : "Unable to remove media file");
     }
   }
@@ -534,6 +621,7 @@ function MediaPageBody() {
    * not AUDIO, so the control below is offered on exactly that pair and nothing else.
    */
   async function transcribeNow(item: MediaFile) {
+    if (writesHeld(holdOf(item))) return;
     setTranscribingId(item.id);
     setError(null);
     try {
@@ -547,8 +635,6 @@ function MediaPageBody() {
       setTranscribingId(null);
     }
   }
-
-  const canTranscribe = isAdmin(user);
 
   const uploadLabel = uploading
     ? "Uploading batch..."
@@ -696,8 +782,15 @@ function MediaPageBody() {
         <DictationUnavailableNotice />
         <LocationFields />
         <UploadProgress progress={progress} sectionId={MEDIA_SECTION} label={MEDIA_SECTION_LABEL} />
+        {/* Why Upload is held, beside it — mounted from the first paint, so the answer that arrives a
+            round trip after a workshop is chosen is announced. See `uploadHold`. */}
+        <HeldPostNotice refusal={uploadHold} id={uploadNoticeId} className="" sayPending />
         <div>
-          <button className="field-button" disabled={uploading || selectedFiles.length === 0 || !linkedType}>
+          <button
+            className="field-button"
+            disabled={uploading || selectedFiles.length === 0 || !linkedType || writesHeld(uploadHold)}
+            aria-describedby={typeof uploadHold === "string" ? uploadNoticeId : undefined}
+          >
             <Upload className="h-4 w-4" aria-hidden />
             {uploadLabel}
           </button>
@@ -719,6 +812,14 @@ function MediaPageBody() {
               setPage(1);
             }}
             placeholder="Search media by filename, caption, or MIME type"
+          />
+          {/* Why some rows' Delete and Transcribe now are held — said once, the rows marked in words. */}
+          <HeldPostNotice
+            refusal={mediaListNotice((data?.items ?? []).map(holdOf), "deleted or re-transcribed")}
+            id={heldNoticeId}
+            className="mt-3"
+            sayPending
+            pendingSentence={HELD_POST_PENDING_FILES}
           />
         </div>
         {!data ? (
@@ -746,25 +847,16 @@ function MediaPageBody() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-line-200">
-                {data.items.map((item) => (
-                  <Fragment key={item.id}>
-                    <tr>
-                      <td className="px-4 py-3">
-                        {item.url ? (
-                          <div className="w-36">
-                            <MediaPreviewTile
-                              item={{
-                                key: item.id,
-                                id: item.id,
-                                name: item.originalFilename,
-                                mediaType: item.mediaType,
-                                mimeType: item.mimeType,
-                                sizeBytes: item.sizeBytes,
-                                url: item.url,
-                                caption: item.caption
-                              }}
-                              onOpen={() =>
-                                setActivePreview({
+                {data.items.map((item) => {
+                  const hold = holdOf(item);
+                  return (
+                    <Fragment key={item.id}>
+                      <tr>
+                        <td className="px-4 py-3">
+                          {item.url ? (
+                            <div className="w-36">
+                              <MediaPreviewTile
+                                item={{
                                   key: item.id,
                                   id: item.id,
                                   name: item.originalFilename,
@@ -772,122 +864,147 @@ function MediaPageBody() {
                                   mimeType: item.mimeType,
                                   sizeBytes: item.sizeBytes,
                                   url: item.url,
-                                  caption: item.caption,
-                                  transcriptStatus: item.transcriptStatus,
-                                  transcriptText: item.transcriptText,
-                                  transcriptError: item.transcriptError
-                                })
-                              }
-                            />
-                          </div>
-                        ) : (
-                          <span className="text-ink-500">No URL</span>
-                        )}
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="font-medium text-ink-900">{item.originalFilename}</div>
-                        {item.caption ? <div className="max-w-xs truncate text-xs text-ink-500">{item.caption}</div> : null}
-                      </td>
-                      <td className="px-4 py-3 text-ink-700">{item.mediaType}</td>
-                      <td className="px-4 py-3 text-ink-700">{bytes(item.sizeBytes)}</td>
-                      <td className="px-4 py-3 text-ink-700">
-                        {item.linkedRecordType ? LINK_TYPE_LABEL.get(item.linkedRecordType) ?? item.linkedRecordType : "-"}
-                      </td>
-                      <td className="px-4 py-3 text-ink-700">
-                        {item.transcriptText ? (
-                          <details>
-                            <summary className="cursor-pointer font-semibold text-field-700">View transcript</summary>
-                            <div className="mt-2 max-h-64 min-w-64 overflow-auto rounded-md bg-field-100 p-3">
-                              <Markdown text={item.transcriptText} />
+                                  caption: item.caption
+                                }}
+                                onOpen={() =>
+                                  setActivePreview({
+                                    key: item.id,
+                                    id: item.id,
+                                    name: item.originalFilename,
+                                    mediaType: item.mediaType,
+                                    mimeType: item.mimeType,
+                                    sizeBytes: item.sizeBytes,
+                                    url: item.url,
+                                    caption: item.caption,
+                                    transcriptStatus: item.transcriptStatus,
+                                    transcriptText: item.transcriptText,
+                                    transcriptError: item.transcriptError
+                                  })
+                                }
+                              />
                             </div>
-                          </details>
-                        ) : (
-                          <>
-                            <div>{item.transcriptStatus ?? "-"}</div>
-                            {/* The status alone was the whole of what this cell said, so a transcript
-                                that failed read as one word with no cause and no recourse. The reason
-                                is stored on the row; print it. */}
-                            {item.transcriptError ? (
-                              <div className="mt-1 max-w-xs text-xs text-red-700">{item.transcriptError}</div>
-                            ) : null}
-                          </>
-                        )}
-                      </td>
-                      <td className="px-4 py-3">
-                        <StatusBadge status={item.status} />
-                      </td>
-                      <td className="px-4 py-3 text-ink-700">{formatDateTime(item.createdAt)}</td>
-                      <td className="px-4 py-3 text-right">
-                        {/* THREE different gates, on purpose. Delete keeps the page's existing
-                            admin-VIEW gate; re-transcribing mirrors its route (`require_admin` +
-                            AUDIO) and is not ANDed with the toggle — it is a repair an admin needs
-                            whether or not admin chrome is switched on, and it destroys nothing. The
-                            code is gated on nothing at all: it shows an opaque reference to a row this
-                            person is already reading, and a designer who can see the file but not the
-                            tag that opens it is the exact gap the tag exists to close. The "Admin only"
-                            line this cell used to fall back to is gone with it — the cell is never
-                            empty now. */}
-                        <RowActions>
-                          <button
-                            className={rowAction("neutral", codeFor === item.id ? "bg-surface-50" : undefined)}
-                            onClick={() => setCodeFor(codeFor === item.id ? null : item.id)}
-                            aria-expanded={codeFor === item.id}
-                          >
-                            <QrCode className="h-3.5 w-3.5" aria-hidden />
-                            {codeFor === item.id ? "Hide code" : "Code"}
-                          </button>
-                          {canTranscribe && item.mediaType === "AUDIO" ? (
+                          ) : (
+                            <span className="text-ink-500">No URL</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="font-medium text-ink-900">{item.originalFilename}</div>
+                          {item.caption ? <div className="max-w-xs truncate text-xs text-ink-500">{item.caption}</div> : null}
+                        </td>
+                        <td className="px-4 py-3 text-ink-700">{item.mediaType}</td>
+                        <td className="px-4 py-3 text-ink-700">{bytes(item.sizeBytes)}</td>
+                        <td className="px-4 py-3 text-ink-700">
+                          {item.linkedRecordType ? LINK_TYPE_LABEL.get(item.linkedRecordType) ?? item.linkedRecordType : "-"}
+                        </td>
+                        <td className="px-4 py-3 text-ink-700">
+                          {item.transcriptText ? (
+                            <details>
+                              <summary className="cursor-pointer font-semibold text-field-700">View transcript</summary>
+                              <div className="mt-2 max-h-64 min-w-64 overflow-auto rounded-md bg-field-100 p-3">
+                                <Markdown text={item.transcriptText} />
+                              </div>
+                            </details>
+                          ) : (
+                            <>
+                              <div>{item.transcriptStatus ?? "-"}</div>
+                              {/* The status alone was the whole of what this cell said, so a transcript
+                                  that failed read as one word with no cause and no recourse. The reason
+                                  is stored on the row; print it. */}
+                              {item.transcriptError ? (
+                                <div className="mt-1 max-w-xs text-xs text-red-700">{item.transcriptError}</div>
+                              ) : null}
+                            </>
+                          )}
+                        </td>
+                        <td className="px-4 py-3">
+                          <StatusBadge status={item.status} />
+                        </td>
+                        <td className="px-4 py-3 text-ink-700">{formatDateTime(item.createdAt)}</td>
+                        <td className="px-4 py-3 text-right">
+                          {/* THREE different gates, on purpose. Delete keeps the page's existing
+                              admin-VIEW gate; re-transcribing mirrors its route (`require_admin` +
+                              AUDIO) and is not ANDed with the toggle — it is a repair an admin needs
+                              whether or not admin chrome is switched on, and it destroys nothing. The
+                              code is gated on nothing at all: it shows an opaque reference to a row this
+                              person is already reading, and a designer who can see the file but not the
+                              tag that opens it is the exact gap the tag exists to close. The "Admin only"
+                              line this cell used to fall back to is gone with it — the cell is never
+                              empty now. */}
+                          <RowActions>
                             <button
-                              className={rowAction("edit")}
-                              onClick={() => transcribeNow(item)}
-                              disabled={transcribingId === item.id}
-                              data-testid="media-transcribe-now"
+                              className={rowAction("neutral", codeFor === item.id ? "bg-surface-50" : undefined)}
+                              onClick={() => setCodeFor(codeFor === item.id ? null : item.id)}
+                              aria-expanded={codeFor === item.id}
                             >
-                              {transcribingId === item.id ? (
-                                <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
-                              ) : (
-                                <AudioLines className="h-3.5 w-3.5" aria-hidden />
-                              )}
-                              {transcribingId === item.id
-                                ? "Transcribing…"
-                                : item.transcriptText
-                                  ? "Re-transcribe now"
-                                  : "Transcribe now"}
+                              <QrCode className="h-3.5 w-3.5" aria-hidden />
+                              {codeFor === item.id ? "Hide code" : "Code"}
                             </button>
-                          ) : null}
-                          {adminMode ? (
-                            <button className={rowAction("danger")} onClick={() => remove(item.id)}>
-                              Delete
-                            </button>
-                          ) : null}
-                        </RowActions>
-                      </td>
-                    </tr>
-                    {codeFor === item.id ? (
-                      /* An expanded row and not a route, because a media file has no per-record page
-                         on the web — `lib/workshopCodeLookup.ts` says so in as many words and lands a
-                         scanned M code on the stored object or, when the caller is not entitled to the
-                         bytes, on this list. This row is the closest thing a designer opens for ONE
-                         file, so it is where the code for one file belongs. Android shows the same
-                         card on its own media detail (`RecordCodeSection(..., MEDIA, ...)` in
-                         MainActivity); until now the web showed none, and two clients disagreeing
-                         about which records have a code is a defect in itself.
-
-                         The title is the caption or, failing that, the filename — the SAME line
-                         `workshopCodeLookup` puts on a resolved media hit, so the card a designer
-                         prints and the row a scan reports name the file the same way. */
-                      <tr className="bg-surface-50">
-                        <td className="px-4 py-3" colSpan={9}>
-                          <RecordCodeCard
-                            recordType="media"
-                            id={item.id}
-                            title={item.caption?.trim() || item.originalFilename}
-                          />
+                            {canTranscribe && item.mediaType === "AUDIO" ? (
+                              <button
+                                className={rowAction("edit")}
+                                onClick={() => transcribeNow(item)}
+                                disabled={transcribingId === item.id || writesHeld(hold)}
+                                aria-describedby={typeof hold === "string" ? heldNoticeId : undefined}
+                                data-testid="media-transcribe-now"
+                              >
+                                {transcribingId === item.id ? (
+                                  <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+                                ) : (
+                                  <AudioLines className="h-3.5 w-3.5" aria-hidden />
+                                )}
+                                {transcribingId === item.id
+                                  ? "Transcribing…"
+                                  : item.transcriptText
+                                    ? "Re-transcribe now"
+                                    : "Transcribe now"}
+                              </button>
+                            ) : null}
+                            {adminMode ? (
+                              <button
+                                className={rowAction("danger")}
+                                onClick={() => remove(item)}
+                                disabled={writesHeld(hold)}
+                                aria-describedby={typeof hold === "string" ? heldNoticeId : undefined}
+                              >
+                                Delete
+                              </button>
+                            ) : null}
+                            {/* The word, so a held row is never told apart by greyed buttons alone. The
+                                amber pair, not amber ink: the table's ground inverts and the pair does not. */}
+                            {typeof hold === "string" ? (
+                              <span className="self-center rounded-md bg-amber-100 px-2 py-1 text-xs font-medium text-amber-800">
+                                {MEDIA_HELD_LABEL}
+                              </span>
+                            ) : null}
+                          </RowActions>
                         </td>
                       </tr>
-                    ) : null}
-                  </Fragment>
-                ))}
+                      {codeFor === item.id ? (
+                        /* An expanded row and not a route, because a media file has no per-record page
+                           on the web — `lib/workshopCodeLookup.ts` says so in as many words and lands a
+                           scanned M code on the stored object or, when the caller is not entitled to the
+                           bytes, on this list. This row is the closest thing a designer opens for ONE
+                           file, so it is where the code for one file belongs. Android shows the same
+                           card on its own media detail (`RecordCodeSection(..., MEDIA, ...)` in
+                           MainActivity); until now the web showed none, and two clients disagreeing
+                           about which records have a code is a defect in itself.
+
+                           The title is the caption or, failing that, the filename — the SAME line
+                           `workshopCodeLookup` puts on a resolved media hit, so the card a designer
+                           prints and the row a scan reports name the file the same way. */
+                        <tr className="bg-surface-50">
+                          <td className="px-4 py-3" colSpan={9}>
+                            <RecordCodeCard
+                              recordType="media"
+                              id={item.id}
+                              title={item.caption?.trim() || item.originalFilename}
+                            />
+                          </td>
+                        </tr>
+                      ) : null}
+                    </Fragment>
+                  );
+                })}
               </tbody>
             </table>
           </div>

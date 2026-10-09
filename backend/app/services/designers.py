@@ -696,6 +696,73 @@ async def suspend_empanelment(email: Any, *, because: str) -> int:
     return suspended
 
 
+async def carry_ended_empanelment(old_email: Any, new_email: Any, *, because: str) -> bool:
+    """When an ACCOUNT moves address, an empanelment an administrator ENDED moves with it.
+
+    Returns True when this call wrote anything. Called from exactly one place,
+    ``access_roster.follow_email_change`` — the step every change of an account's address takes —
+    which also carries the allow-list's bar; the argument for both is written there.
+
+    THE GAP IT CLOSES IS :func:`ensure_empanelled`'s RULE, SEEN FROM A NEW ADDRESS. That function
+    never revives a suspended row and only ever CREATES where the mailbox has none. So a designer
+    whose empanelment an administrator ended, moved to an address with no roster row, signed in there
+    and was empanelled afresh by their own sign-in — the revocation stranded on an address no account
+    holds, and nothing on either screen saying so. Now the new mailbox gets an ended row of its own
+    before any sign-in can look: with no row there, one is CREATED, already ended, carrying the
+    administrator's own name and institution for the person and dated when the empanelment was
+    ended; with an ACTIVE row there, that row is ended the way :func:`suspend_empanelment` ends one,
+    note appended. An ended row already there is left alone.
+
+    THE OLD ROW IS LEFT WHERE IT IS. An ended empanelment is a record about a mailbox as well as about
+    an account, and a revocation is never undone by a side effect — this module's rule, applied to
+    the address the account is leaving. A carried row names nobody as its ``addedById``: nobody added
+    it, which is what ``because`` says on the row.
+    """
+    old_keys = email_match_keys(old_email)
+    new_keys = email_match_keys(new_email)
+    if not old_keys or not new_keys:
+        return False
+    ended = [
+        row
+        for row in await db.designerroster.find_many(where={"email": {"in": old_keys}})
+        if not row.isActive
+    ]
+    if not ended:
+        return False
+    now = datetime.now(UTC)
+    destination = await db.designerroster.find_many(where={"email": {"in": new_keys}})
+    if not destination:
+        source = ended[0]
+        try:
+            await db.designerroster.create(
+                data={
+                    "email": canonical_email(new_email),
+                    "fullName": source.fullName,
+                    "institution": source.institution,
+                    "isActive": False,
+                    "revokedAt": source.revokedAt or now,
+                    "notes": because,
+                }
+            )
+        except UniqueViolationError:
+            # A sign-in or an administrator wrote a row there between the read and this create.
+            # Whatever it is, it is now the row to end, below.
+            destination = await db.designerroster.find_many(where={"email": {"in": new_keys}})
+        else:
+            return True
+    ended_here = 0
+    for row in destination:
+        ended_here += await db.designerroster.update_many(
+            where={"id": row.id, "isActive": True},
+            data={
+                "isActive": False,
+                "revokedAt": row.revokedAt or now,
+                "notes": note_recording_a_consequence(row.notes, because),
+            },
+        )
+    return ended_here > 0
+
+
 async def mark_roster_seen(email: Any) -> None:
     """Stamp ``firstSeenAt`` the first time an empanelled email actually signs in.
 
@@ -812,10 +879,33 @@ def workshop_capable_roles() -> list[str]:
     return sorted(DESIGN_WORKSHOP_ROLES)
 
 
-#: The two tiers this query admits WITHOUT asking the empanelment roster about them, named once
-#: because :func:`workshop_capable_accounts` now has to both include them and leave them out.
-#: Spelled as roles rather than derived from ``is_admin`` because it goes into a Prisma ``IN`` list.
+#: THE PRIVILEGED TIERS, named once — the two that are never roster-gated and that a disclosure
+#: boundary keeps off any list a rank-42 officer can read (``ministry_dashboard.WITHHELD_PERSON_ROLES``
+#: is defined from this). Spelled as roles rather than derived from ``is_admin`` because it goes into
+#: a Prisma ``IN`` list.
+#:
+#: **NO LONGER THE WHOLE OF WHO :func:`workshop_capable_accounts` ADMITS WITHOUT THE ROSTER** — that is
+#: :func:`roster_exempt_workshop_roles` since 2026-10-09, which adds the three directorate tiers. The
+#: two lists answer different questions and must not be merged: this one is "whom do we never name to
+#: an officer", that one is "whom does the empanelment not gate".
 NEVER_ROSTER_GATED_ROLES = ["ADMIN", "MASTER_ADMIN"]
+
+#: The one role the designer empanelment gates: ``roster_allows`` is consulted at sign-in for a
+#: DESIGNER and for nobody else.
+ROSTER_GATED_ROLE = "DESIGNER"
+
+
+def roster_exempt_workshop_roles() -> list[str]:
+    """Every role that may run a workshop WITHOUT an empanelment: ``DESIGN_WORKSHOP_ROLES`` less DESIGNER.
+
+    THE ARM BOTH DESIGNER PICKERS OFFER WITHOUT ASKING THE ROSTER, derived so that a picker cannot
+    offer fewer roles than the write accepts. Until 2026-10-09 both pickers spelled this arm
+    ``["ADMIN", "MASTER_ADMIN"]``, so the three directorate tiers the write has accepted since
+    2026-09-14 — a Ministry Admin, a Regional Director, an Assistant Director — could be granted
+    designer access by id and could not be found in either picker. Sorted for the same reason
+    :func:`workshop_capable_roles` is.
+    """
+    return [role for role in workshop_capable_roles() if role != ROSTER_GATED_ROLE]
 
 
 async def workshop_capable_accounts(
@@ -823,20 +913,26 @@ async def workshop_capable_accounts(
     search: str | None = None,
     include_suspended: bool = False,
     include_admins: bool = True,
+    exclude_user_id: str | None = None,
 ) -> list[Any]:
     """The accounts an admin may hand a workshop to. ONE QUERY, read by three doors.
 
-    ⚠ **``include_admins=False`` IS THE SANCTION REGISTER'S DOOR, AND IT IS A DISCLOSURE BOUNDARY
-    RATHER THAN A TASTE.** The admin arm below is UNCONDITIONAL, so the default answer is every
-    empanelled DESIGNER **plus every ADMIN and MASTER_ADMIN account in the installation**, each
-    labelled with its role by ``assignable_designers_payload``. That was safe while both callers
-    were admin-adjacent — ``GET /designers/directory`` is ``require_designer_roster_manager`` and
-    ``GET /design-workshop-oversight/designers`` is ``require_workshop_assigner``. The third door,
-    ``GET /sanction-orders/designers``, opened in 0.0.12 at ``require_sanction_recorder`` — a rank
-    floor at ASSISTANT_DIRECTOR — and would have handed the complete privileged-account directory of
-    the installation to a tier that is refused all of the other designer lists, one letter of search
-    at a time. A sanction order names a designer doing the work; the officer's picker therefore
-    offers exactly the empanelled DESIGNER roster and nothing else.
+    THE DEFAULT ANSWER IS EXACTLY WHAT THE VIEWER WRITE ACCEPTS: every role in
+    ``DESIGN_WORKSHOP_ROLES``, with the empanelment roster asked about DESIGNERs alone. The arm that
+    skips the roster is :func:`roster_exempt_workshop_roles` — the three directorate tiers and the
+    two admin tiers — and it read ``NEVER_ROSTER_GATED_ROLES`` until 2026-10-09, which left a Ministry
+    Admin, a Regional Director and an Assistant Director out of every designer picker although the
+    write took them.
+
+    ⚠ **``include_admins=False`` IS THE SANCTION REGISTER'S DOOR — A NAMED EXCEPTION, AND A
+    DISCLOSURE BOUNDARY RATHER THAN A TASTE.** It answers the empanelled DESIGNER roster and nothing
+    else. ``GET /sanction-orders/designers`` opened in 0.0.12 at ``require_sanction_recorder`` — a rank
+    floor at ASSISTANT_DIRECTOR — and the default arm would hand that tier the complete
+    privileged-account directory of the installation, one letter of search at a time, plus every
+    directorate officer. A sanction order names a designer doing the work, so its picker offers the
+    designers empanelled to do it. The flag keeps its old name because the ministry dashboard's roster
+    fold reads the same narrow set through it; what it leaves out is now every roster-exempt role,
+    not only the two admin tiers.
 
     It narrows BOTH halves rather than only dropping the OR arm, so the flag still means what it says
     if a future caller ever pairs it with ``include_suspended=True`` (which skips the OR entirely).
@@ -855,14 +951,19 @@ async def workshop_capable_accounts(
     :func:`workshop_capable_roles` describes: ``design_workshop_viewers`` imports
     ``designers.normalise_email`` at module level, so this module must not name it at module level
     in return.
+
+    ``exclude_user_id`` leaves one account out, IN the ``WHERE`` like every other filter here so the
+    cap stays honest: the person naming designers on a workshop that already exists, who would be
+    refused naming themselves there (``routes/design_workshop_oversight.list_assignable_designers``
+    says when it is passed and when it must not be).
     """
     from app.services.design_workshop_viewers import active_roster_emails
     from app.services.records import contains
 
-    roles = workshop_capable_roles()
-    if not include_admins:
-        roles = [role for role in roles if role not in NEVER_ROSTER_GATED_ROLES]
+    roles = workshop_capable_roles() if include_admins else [ROSTER_GATED_ROLE]
     clauses: list[dict[str, Any]] = [{"role": {"in": roles}}]
+    if exclude_user_id:
+        clauses.append({"id": {"not": exclude_user_id}})
     if not include_suspended:
         # The flag is discarded deliberately: the admin route answers a bare JSON array, so there is
         # nowhere on the wire to say the roster read itself was cut. ``active_roster_emails``
@@ -871,19 +972,20 @@ async def workshop_capable_accounts(
         admitted, _roster_read_was_cut = await active_roster_emails()
         arms: list[dict[str, Any]] = []
         if include_admins:
-            # Admins are not roster-gated at any point, the same rule ``roster_allows`` applies at
-            # sign-in: an admin empanelled years ago and later suspended must not lose the ability
-            # to administer anything. Dropped whole for the sanction register's door — see the
-            # docstring; leaving it in with the role list narrowed would have worked today and
-            # become wrong the moment somebody asked why the two halves disagreed.
-            arms.append({"role": {"in": NEVER_ROSTER_GATED_ROLES}})
+            # Every role but DESIGNER is offered without the roster, the same rule ``roster_allows``
+            # applies at sign-in: the empanelment gates a designer and nobody else, and an admin
+            # empanelled years ago and later suspended must not lose the ability to administer
+            # anything. Dropped whole for the sanction register's door — see the docstring; leaving
+            # it in with the role list narrowed would have worked today and become wrong the moment
+            # somebody asked why the two halves disagreed.
+            arms.append({"role": {"in": roster_exempt_workshop_roles()}})
         # ``mode: "insensitive"`` because ``admitted`` is lower-cased and ``User.email``
         # is not — an address stored shouting would otherwise match no roster row and the
         # designer would vanish from a directory the roster admits.
         arms.append(
             {
                 "AND": [
-                    {"role": "DESIGNER"},
+                    {"role": ROSTER_GATED_ROLE},
                     {"email": {"in": admitted, "mode": "insensitive"}},
                 ]
             }

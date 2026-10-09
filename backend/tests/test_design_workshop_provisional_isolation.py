@@ -51,6 +51,7 @@ from fastapi import HTTPException
 
 import app.services.design_workshop_access as access
 import app.services.design_workshop_grants as grants
+import app.services.design_workshop_posts as posts
 import app.services.design_workshop_viewers as viewers
 
 WORKSHOP_ID = "cmprovisional00000000000w"
@@ -222,6 +223,14 @@ def world(monkeypatch: pytest.MonkeyPatch):
     db = _Client(**tables)
     for module in (access, grants, viewers):
         monkeypatch.setattr(module, "db", db)
+
+    # THE DECIDING ADMIN SERVES ON NOTHING HERE. Since 2026-10-09 a decision first asks whether the
+    # admin holds the workshop's inspection or one of its director posts, which reads two tables this
+    # file does not fake; that refusal is ``tests/test_admin_serve_as.py``'s to prove.
+    async def _holds_no_post(workshop_id: str, user_ids: Any) -> dict[str, frozenset[str]]:
+        return {}
+
+    monkeypatch.setattr(posts, "supervisory_posts_among", _holds_no_post)
     return SimpleNamespace(db=db, **tables)
 
 
@@ -356,7 +365,7 @@ def test_granting_promotes_the_late_comer_and_clears_the_foothold(world, monkeyp
     """
     asked: list[set[str]] = []
 
-    async def _eligible(user_ids: set[str]) -> None:
+    async def _eligible(user_ids: set[str], **_workshop_context: Any) -> None:
         asked.append(set(user_ids))
 
     monkeypatch.setattr(access, "_assert_every_id_may_be_granted", _eligible)

@@ -547,7 +547,7 @@ async def unmapped_records(_: Any = Depends(require_admin)) -> dict[str, Any]:
 
 
 @router.post("/unmapped/map")
-async def map_unmapped_records(_: Any = Depends(require_admin)) -> dict[str, Any]:
+async def map_unmapped_records(current_user: Any = Depends(require_admin)) -> dict[str, Any]:
     """Stamp every unassigned record whose own evidence names exactly one workshop.
 
     Takes NO body. The plan is re-derived server-side rather than accepted from the caller: a
@@ -560,8 +560,12 @@ async def map_unmapped_records(_: Any = Depends(require_admin)) -> dict[str, Any
     response is the same shape as the preview, plus ``applied`` counts taken from what the database
     reported it changed — so a row that slipped out from under a write appears as a shortfall rather
     than being quietly absorbed.
+
+    THE CALLER IS BOUND (2026-10-09): a row belonging to a design workshop the caller inspects or
+    supervises is left alone and counted per bucket as ``heldBack``, with ``heldBackDetail`` the
+    sentence to show — see ``services/workshop_inference.apply_workshop_mapping``.
     """
-    return await apply_workshop_mapping()
+    return await apply_workshop_mapping(user=current_user)
 
 
 @router.post("/unmapped/{bucket}/{record_id}")
@@ -569,7 +573,7 @@ async def file_one_unmapped_record(
     bucket: str,
     record_id: str,
     workshopId: str = Body(..., embed=True),
-    _: Any = Depends(require_admin),
+    current_user: Any = Depends(require_admin),
 ) -> dict[str, Any]:
     """File ONE record the ladder could not settle, under the workshop an admin names.
 
@@ -593,16 +597,18 @@ async def file_one_unmapped_record(
     history. ``update_many`` could not write one per row in any case.
 
     ``require_admin``, exactly as the two routes above — a per-row account of records the caller may
-    not own, and a write into them.
+    not own, and a write into them. AND THE CALLER IS BOUND (2026-10-09): the inspector or a director
+    of a design workshop that claims the row is refused with the post named (403), as every other
+    write to that workshop's records and files refuses them.
     """
-    return await file_one_unmapped(bucket, record_id, workshopId)
+    return await file_one_unmapped(bucket, record_id, workshopId, user=current_user)
 
 
 @router.delete("/unmapped/{bucket}/{record_id}")
 async def discard_one_unmapped_record(
     bucket: str,
     record_id: str,
-    _: Any = Depends(require_admin),
+    current_user: Any = Depends(require_admin),
 ) -> dict[str, Any]:
     """Delete ONE unfiled record permanently. Admin and master admin only.
 
@@ -622,8 +628,13 @@ async def discard_one_unmapped_record(
     "deleted permanently" and "deleted permanently, and its nine photographs are still in the
     repository with nothing pointing at them". The client says that sentence out loud; it cannot if
     the server answers 204.
+
+    NEVER A ROW A DESIGN WORKSHOP CLAIMS (2026-10-09). Its crafts column is NULL, which is how it got
+    here, but it is that workshop's content: its inspector or director is refused with the post
+    named (403), and every other administrator with a 409 naming the workshop and sending them to
+    the record's or file's own screen. The caller is bound for the first of those.
     """
-    return await discard_one_unmapped(bucket, record_id)
+    return await discard_one_unmapped(bucket, record_id, user=current_user)
 
 
 # --------------------------------------------------------------------------- access requests

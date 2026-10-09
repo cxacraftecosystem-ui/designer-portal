@@ -18,6 +18,18 @@ import type { InlineRecordSurfaceProps } from "@/components/forms/inlineRecordHo
 import { MediaCaptureField } from "@/components/forms/MediaCaptureField";
 import { optionToProduct, productToOption, useRecordOffPage } from "@/components/forms/recordPickers";
 import { useWorkshopPicker, WorkshopPicker } from "@/components/forms/WorkshopPicker";
+import {
+  HELD_POST_PENDING_FILES,
+  HeldPostNotice,
+  MEDIA_HELD_LABEL,
+  mediaListNotice,
+  mediaWorkshopIds,
+  mediaWriteHold,
+  useHeldPostRefusals,
+  useRecordFilingHold,
+  writesHeld,
+  type HeldPostRefusal
+} from "@/components/designworkshop/HeldPostNotice";
 import { MediaLightbox, MediaPreviewTile, type PreviewMedia } from "@/components/media/MediaLightbox";
 import { StatusBadge } from "@/components/StatusBadge";
 import { Dropdown } from "@/components/ui/Dropdown";
@@ -140,20 +152,33 @@ export function hasUnsavedWork({
 
 function SavedMediaList({
   items,
+  recordHold,
   onRemoved,
   onError
 }: {
   items: MediaFile[];
+  /**
+   * The answer for the workshop the PROCESS is filed under (`filing.stored`): a step's photograph is
+   * the process's, and a process filed under a workshop its reader inspects or supervises is that
+   * workshop's content — so the server refuses its files' deletes too (`link_filing`). Required with
+   * no default, because `undefined` is "still asking" and holds every ✕ — see `ExistingMedia`.
+   */
+  recordHold: HeldPostRefusal;
   onRemoved: (id: string) => void;
   onError: (message: string) => void;
 }) {
   const [active, setActive] = useState<PreviewMedia | null>(null);
   const [removingId, setRemovingId] = useState<string | null>(null);
   const confirm = useConfirm();
+  const heldFor = useHeldPostRefusals(items.flatMap(mediaWorkshopIds));
+  const holdOf = (media: MediaFile): HeldPostRefusal => mediaWriteHold([recordHold, heldFor(mediaWorkshopIds(media))]);
+  const heldNoticeId = useId();
   // After the hooks: an empty list renders nothing at all (no "Already attached:" heading).
   if (!items.length) return null;
 
   async function remove(media: MediaFile) {
+    // The ✕ is disabled while held; this keeps the rule for any other way in.
+    if (writesHeld(holdOf(media))) return;
     const ok = await confirm({
       title: "Remove this file?",
       body: `"${media.caption || media.originalFilename}" will be removed from this step.`,
@@ -176,6 +201,14 @@ function SavedMediaList({
   return (
     <div className="grid gap-2">
       <p className="text-xs text-ink-500">Already attached:</p>
+      {/* Why a ✕ is held — one notice for the list, a word on each held tile (`HeldPostNotice`). */}
+      <HeldPostNotice
+        refusal={mediaListNotice(items.map(holdOf), "removed")}
+        id={heldNoticeId}
+        className=""
+        sayPending
+        pendingSentence={HELD_POST_PENDING_FILES}
+      />
       <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
         {items.map((media) => {
           const preview: PreviewMedia = {
@@ -191,6 +224,7 @@ function SavedMediaList({
             transcriptText: media.transcriptText,
             transcriptError: media.transcriptError
           };
+          const hold = holdOf(media);
           return (
             <MediaPreviewTile
               key={media.id}
@@ -198,6 +232,9 @@ function SavedMediaList({
               onOpen={() => setActive(preview)}
               onRemove={removingId === media.id ? undefined : () => remove(media)}
               removeLabel="Remove"
+              removeHeld={writesHeld(hold)}
+              removeDescribedBy={typeof hold === "string" ? heldNoticeId : undefined}
+              statusLabel={typeof hold === "string" ? MEDIA_HELD_LABEL : null}
             />
           );
         })}
@@ -406,6 +443,13 @@ export function ProcessForm({
     isEdit,
     resetKey: initial?.id ?? null
   });
+  /*
+    A PROCESS FILED UNDER A WORKSHOP THE READER INSPECTS OR SUPERVISES IS READ-ONLY TO THEM, and none
+    may be filed into one (2026-10-09; `useRecordFilingHold`). The server's 403 reaches the banner word
+    for word; this holds Save — and the picker, for a stored workshop — and says why beside Save.
+  */
+  const filing = useRecordFilingHold(initial?.designWorkshopId, workshop.designWorkshopId, "process");
+  const filingNoticeId = useId();
 
   const [name, setName] = useState(initial?.name ?? "");
   const [artisanId, setArtisanId] = useState(initial?.product?.artisanId ?? "");
@@ -892,6 +936,9 @@ export function ProcessForm({
     // anything: it would file a second process. Re-opening the saved record is the retry route, and
     // the error banner below says so.
     if (committed) return;
+    // Held, and said beside Save — see `filing`. The leave dialog's "Save" lands here past a disabled
+    // footer button, so the rule is kept here too.
+    if (filing.saveHeld) return;
     setError(null);
     setNameError(null);
     setArtisanError(null);
@@ -1264,7 +1311,7 @@ export function ProcessForm({
           unsaved-changes guard is a DIFF of a signature rather than an event, and both ids are in
           that signature below, gated on `workshop.touched` so a default the app applied does not
           read as work a researcher did. */}
-      <WorkshopPicker state={workshop} saving={saving} />
+      <WorkshopPicker state={workshop} saving={saving} disabled={filing.recordHeld} />
 
       <div>
         {/*
@@ -1499,6 +1546,7 @@ export function ProcessForm({
           <p className="text-xs text-ink-500">Attach the pre-process media (required).</p>
           <SavedMediaList
             items={existingPreMedia}
+            recordHold={filing.stored}
             onRemoved={(id) => setExistingPreMedia((current) => current.filter((media) => media.id !== id))}
             onError={setError}
           />
@@ -1612,6 +1660,7 @@ export function ProcessForm({
               </div>
               <SavedMediaList
                 items={step.existingMedia}
+                recordHold={filing.stored}
                 onRemoved={(id) => updateStep(step.key, { existingMedia: step.existingMedia.filter((media) => media.id !== id) })}
                 onError={setError}
               />
@@ -1704,6 +1753,9 @@ export function ProcessForm({
       */}
       {footerFields ? <div className="grid gap-3 border-t border-line-200 pt-4">{footerFields}</div> : null}
 
+      {/* Why Save is held, beside it — see `filing`. */}
+      <HeldPostNotice refusal={filing.notice} id={filingNoticeId} className="" sayPending />
+
       <div className="flex items-center justify-end gap-2">
         {uploadNote ? <span className="mr-auto text-xs text-ink-500">{uploadNote}</span> : null}
         <button type="button" className="field-button-secondary" onClick={requestCancel}>
@@ -1714,7 +1766,12 @@ export function ProcessForm({
             where the record IS saved and the error banner beside this button says to re-open it to
             retry the files. Leaving the button live there would offer a duplicate record dressed up
             as a retry — see `committed`. */}
-        <button className="field-button" disabled={saving || committed} type="submit">
+        <button
+          className="field-button"
+          disabled={saving || committed || filing.saveHeld}
+          aria-describedby={filing.notice ? filingNoticeId : undefined}
+          type="submit"
+        >
           {saving ? "Saving..." : committed ? "Saved" : isEdit ? "Update process" : "Save process"}
         </button>
       </div>

@@ -23,6 +23,7 @@ ten known-password accounts into a live repository would be handing out ten ways
 import asyncio
 import os
 import sys
+from datetime import UTC, datetime
 
 from app.core.db import connect_db, db, disconnect_db
 from app.core.deps import invalidate_cached_user
@@ -66,10 +67,13 @@ ACCOUNTS: tuple[tuple[str, str, str], ...] = (
     ("assistantdirector@example.org", "ASSISTANT_DIRECTOR", "Test Assistant Director"),
     ("regionaldirector@example.org", "REGIONAL_DIRECTOR", "Test Regional Director"),
     # The account whose NAME is the test. ``is_admin`` is set membership on MASTER_ADMIN and ADMIN,
-    # so this account must find the /admin tree, the user create/delete arms, the access roster, the
-    # key store and every design-workshop control CLOSED — while finding crafts, workshops, the
-    # questionnaire builder, the dataset and the review queue open. If any of the first list opens,
-    # somebody has widened ``is_admin``.
+    # and a Ministry Admin provisions accounts WITHOUT being an admin (``ACCOUNT_PROVISIONER_ROLES``,
+    # the owner's decision of 2026-10-09). So this account must find /users OPEN — creating accounts,
+    # temporary passwords, "require a new password", password links and name or address corrections,
+    # on tiers below its own — and the design-workshop controls open (``DESIGN_WORKSHOP_ROLES``), as
+    # are crafts, workshops, the questionnaire builder, the dataset and the review queue. It must find
+    # deleting an account, granting a capability, the access roster, the key store and the /admin tree
+    # CLOSED; if any of THOSE opens, somebody has widened ``is_admin``.
     ("ministryadmin@example.org", "MINISTRY_ADMIN", "Test Ministry Admin"),
     ("admin2@example.org", "ADMIN", "Test Admin"),
 )
@@ -94,7 +98,22 @@ async def main() -> None:
     await connect_db()
     try:
         for email, role, name in ACCOUNTS:
-            data = {"name": name, "role": role, "passwordHash": hash_password(PASSWORD)}
+            data = {
+                "name": name,
+                "role": role,
+                "passwordHash": hash_password(PASSWORD),
+                # THE PASSWORD IS FINAL, ON CREATE AND ON EVERY RESEED. Since 2026-10-09 the API
+                # refuses an account carrying ``mustChangePassword`` on every route but the
+                # change-password screen's own (``deps.refuse_while_password_change_pending``), so a
+                # seeded account left flagged — or one a dev database had flagged before this run —
+                # would sign in and then be refused the very pages it exists to test. Stamping
+                # ``passwordSetAt`` keeps "has a password" distinguishable from "signs in with
+                # Google", which is what that column is for. Every reseed writes a FRESH hash (bcrypt
+                # salts it), and since 2026-10-09 a new hash ends every session opened with the old
+                # one (``deps._user_from_bearer``): sign these accounts in again after a reseed.
+                "mustChangePassword": False,
+                "passwordSetAt": datetime.now(UTC),
+            }
             existing = await db.user.find_unique(where={"email": email})
             if existing:
                 row = await db.user.update(where={"email": email}, data=data)

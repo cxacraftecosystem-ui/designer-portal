@@ -167,9 +167,16 @@ type Props = {
   readsStageRows: boolean;
   /** Which piece is being reviewed. The pool round only ever ranks prototypes; see the page. */
   entityKey: RateableEntityKey;
+  /**
+   * Why this reader may rate here and not rearrange, or null — today a post they hold on the
+   * workshop (`useHeldPostRefusal`). The arrangement is written into the workshop's own stage rows,
+   * which the server refuses whoever inspects or supervises it; a RATING has its own door and is not
+   * refused, so only the arrangement is held, and this is the sentence under the list.
+   */
+  readOnlyReason?: string | null;
 };
 
-export function ReviewPanel({ workshopId, round, readsStageRows, entityKey }: Props) {
+export function ReviewPanel({ workshopId, round, readsStageRows, entityKey, readOnlyReason = null }: Props) {
   const { user } = useAuth();
   const generation = useRef(0);
   const draftId = useRef<string | null>(null);
@@ -318,7 +325,8 @@ export function ReviewPanel({ workshopId, round, readsStageRows, entityKey }: Pr
     return map;
   }, [rows]);
 
-  const canArrange = readsStageRows && items !== null && mayArrange(items) && stageKey !== null;
+  const canArrange =
+    readsStageRows && items !== null && mayArrange(items) && stageKey !== null && !readOnlyReason;
   const fixedBy = stamp;
 
   const persist = useCallback(
@@ -740,9 +748,13 @@ export function ReviewPanel({ workshopId, round, readsStageRows, entityKey }: Pr
               ? null
               : !readsStageRows
                 ? "The order here is the score order, and it is not yours to rearrange: the placed order is the makers' own stage row order, which only that workshop's designers and an admin can change. Your rating is what you contribute to the ranking on this page."
-                : items !== null && !mayArrange(items)
-                  ? "This list is not yours to rearrange: the placed order is the makers' own stage row order, and the repository sends it as a position only to that workshop's own designers and to an admin. Your rating is what you contribute to the ranking on this page."
-                  : "This arrangement cannot be changed from here: this browser has no local copy of the stage these pieces live in. Open this workshop's stage once with a connection and the arrows and the drag handle come back."
+                : readOnlyReason
+                  ? // A post on THIS workshop, after the round and before what this browser holds: it
+                    // is a permission, and the server's own sentence names it and the remedy.
+                    readOnlyReason
+                  : items !== null && !mayArrange(items)
+                    ? "This list is not yours to rearrange: the placed order is the makers' own stage row order, and the repository sends it as a position only to that workshop's own designers and to an admin. Your rating is what you contribute to the ranking on this page."
+                    : "This arrangement cannot be changed from here: this browser has no local copy of the stage these pieces live in. Open this workshop's stage once with a connection and the arrows and the drag handle come back."
           }
           renderItem={(id) => {
             const item = byId.get(id);

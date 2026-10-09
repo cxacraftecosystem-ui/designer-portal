@@ -61,15 +61,27 @@ may reject a professor's record *and* rewrite it, where an inspector at 37 may o
 designer's. They also pick up every Professor-floor capability at once: crafts, workshops, the
 questionnaire builder, dataset download, and the user table. **`MINISTRY_ADMIN` is not an admin.**
 `is_admin` is set membership on `{MASTER_ADMIN, ADMIN}`, so rank 48 opens no part of the admin
-surface — no deletes, no account creation, no access grants, no key store. See
+surface — no deletes, no capability grants, no decisions on the platform allow-list, no key store,
+no `/admin` tree. What the tier does hold beyond its rank it holds through **named sets beside
+`is_admin`**, each a separate decision: it names a workshop's designers, directors and inspectors
+(`OVERSIGHT_ASSIGNER_ROLES`, §4.6), it **provisions password accounts** (`ACCOUNT_PROVISIONER_ROLES`
+since 2026-10-09, §1.2 — this sentence said "no account creation" until then), and it may be
+**appointed to a post** on one workshop by somebody else (§4.8). See
 `backend/tests/test_directorate_tiers.py`.
 
 > **Rank is not the whole answer for a designer.** `can_run_design_workshops` is the one predicate in
-> `deps.py` that is a **SET** — `DESIGNER`, `ADMIN`, `MASTER_ADMIN` — and not a threshold, so a
-> **Professor cannot run a design & prototype workshop even though they outrank a designer.** A
-> design workshop is a fortnight of a named designer's work ending in a document submitted to a
-> ministry under their name, and being senior to a designer is not the same thing as being one.
-> Admins are in the set because somebody has to be able to administer the records.
+> `deps.py` that is a **SET** — `DESIGN_WORKSHOP_ROLES`: `DESIGNER`, the three directorate tiers
+> (since 2026-09-14, §2's ¹²), `ADMIN`, `MASTER_ADMIN` — and not a threshold, so a **Professor
+> cannot run a design & prototype workshop even though they outrank a designer.** A design workshop
+> is a fortnight of a named designer's work ending in a document submitted to a ministry under their
+> name, and being senior to a designer is not the same thing as being one. Admins are in the set
+> because somebody has to be able to administer the records. (This blockquote named only
+> `DESIGNER`, `ADMIN` and `MASTER_ADMIN` until 2026-10-09; the frozenset is the authority.)
+>
+> **And on one workshop the set is necessary, not sufficient.** Whoever holds a workshop's
+> inspection, or its Assistant or Regional Director post, may read it and may write neither its
+> content nor its designer team, through the admin routes too (§4.8). That is a fact about one
+> workshop, so no role can carry it.
 >
 > A non-monotonic rule is far easier to let drift than a threshold, which is why
 > `frontend/lib/permissions.ts` carries the identical set and must keep carrying it.
@@ -93,15 +105,17 @@ words so nobody has to learn the distinction to use the product; the **value** c
 has to unlearn it to maintain the product.
 
 > **AN INSPECTOR CANNOT RUN OR SIGN A DESIGN WORKSHOP, AND OUTRANKING A DESIGNER IS EXACTLY WHY THAT
-> HAD TO BE SAID OUT LOUD.** `INSPECTOR` is **not** in `can_run_design_workshops`' set — that stays
-> `{DESIGNER, ADMIN, MASTER_ADMIN}`, "the people who sign the report". So an inspector sits at 37,
+> HAD TO BE SAID OUT LOUD.** `INSPECTOR` is **not** in `can_run_design_workshops`' set — "the people
+> who sign the report", which reached the three directorate tiers on 2026-09-14 and has never reached
+> this one. So an inspector sits at 37,
 > above a designer at 35, and is refused every row the blockquote above refuses a professor: it may
 > not create, run, stage-write, submit or sign a workshop, may not open the design-workshop tree on
 > either client, and may not download the offline speech model. **Rank 37 confers nothing whatsoever
 > inside the design-workshop tree.** Everything an inspector may see there arrives through the
 > read-only, per-workshop scope in §4.5 — an **assignment**, not a rank, and not a grant either:
 > `DesignWorkshopInspector` carries `assignedById` rather than `grantedById`, because nothing was
-> granted to anybody. An admin assigned an examiner to a piece of work.
+> granted to anybody. An assigner — a Ministry Admin, an admin or the master admin — appointed an
+> examiner to a piece of work.
 >
 > **THE TRAP THIS TIER WALKED INTO, WRITTEN DOWN BECAUSE IT COSTS NOTHING TO WALK INTO IT AGAIN.**
 > An audit on 2026-08-26 established that *every* design-workshop gate in this product is **set
@@ -162,10 +176,16 @@ three are the designer-roster screen itself (`POST /api/designers/roster`), admi
 the platform allow-list (`routes/access`), and the sign-in path (`routes/auth`, for an address the
 allow-list already admits). The fourth was the gap: an admin creating an account at `DESIGNER`
 produced a user with no roster row, so the person did not appear on `/admin/designers` and nothing on
-the screen said why. It now empanels immediately, with `DesignerRoster.addedById` naming that admin,
-and **the row appears before the person has ever signed in**. Adding them again by hand answers 409.
-**It never revives a suspended empanelment** — `ensure_empanelled` only ever creates, which is the one
-rule shared by all four doors and the reason a readmission cannot be smuggled through any of them.
+the screen said why. It now empanels immediately, with `DesignerRoster.addedById` naming the
+provisioner who created it, and **the row appears before the person has ever signed in**. Adding them
+again by hand answers 409. Since 2026-10-09 that door is
+`account_provisioning.empanel_an_admitted_designer` — the one implementation `POST /api/users` and the
+operator's `scripts/provision_account.py` both call. **It never revives a suspended empanelment** —
+`ensure_empanelled` only ever creates, which is the one rule shared by every door and the reason a
+readmission cannot be smuggled through any of them. A provisioner who is not an admin is refused
+(409) before that point when it tries to create a `DESIGNER` whose empanelment an administrator ended,
+or to move a designer's account onto such an address, or to move an account of any role carrying an
+ended empanelment onto an address whose empanelment is active, which would end it (§1.2).
 
 **Barring somebody now ends their live sessions, and a role change deliberately does not (2026-09-03).**
 Pressing **Suspend** (`DELETE /api/access/roster/{id}`) or **Reject** (the REJECT arm of
@@ -184,6 +204,25 @@ A **role change signs nobody out** — neither the PATCH on a roster row nor `PA
 a decision, not an omission: losing a tier is not losing access, and ending every session somebody
 holds because an admin corrected their role would be a worse outcome than the correction. The identity
 cache is invalidated instead, so the new role takes effect on the very next request.
+
+**A password change made FOR somebody does sign them out (2026-10-09).** When a provisioner sets
+another account's password, or raises its `mustChangePassword`, at `PATCH /api/users/{id}`, the same
+`sessionsValidFrom` stamp ends every session that account holds: the server refuses each one from its
+next request. When a device NOTICES is the client's part. A browser tab drops its token at that
+request; the Android source since 2026-10-09 does too, signing out with "This sign-in has ended. If
+your password was changed on another device or by an administrator, sign in with the new one."; and
+builds up to 0.0.15 notice only at their next launch. Both clients keep their queued work on the 401,
+whichever build. Redeeming a password link has always done the same. The full list of the stamp's
+writers is in [SECURITY.md](SECURITY.md) §3.2, and when each client notices is §3.6 there.
+
+**And so does any change of the password, your own included (2026-10-09).** Every session is now
+bound to the password it was opened with, so a change by any door — the forced change, a voluntary
+one from Settings, a provisioner's temporary password, a link — ends every session opened with the
+old password. Changing your own at `POST /api/auth/change-password` hands the session that made the
+change a fresh token, in the answer's `X-Session-Token` header, so that one carries on, and signs you
+out everywhere else. Tokens minted
+before that release carry no binding, so a password change does not end them; only the watermark
+can, before they expire. [SECURITY.md](SECURITY.md) §3.6.
 
 Admin and above manage the allow-list (`can_manage_access_roster` → `require_access_manager`,
 `/api/access/roster`); read is gated with write, because the pending queue is a list of somebody's
@@ -222,8 +261,13 @@ create records. They did not, and do not.
 
 ### 1.1 Grantable capabilities
 
-A master admin can lift one specific power for a lower tier without promoting the account. Three of
-the six columns on `User` still do that; **two are deliberately no longer read.**
+An admin or the master admin can lift one specific power for a lower tier without promoting the
+account — on `POST /api/users` and `PATCH /api/users/{id}` alike, and **only** they: a Ministry Admin
+who provisions accounts (§1.2) is refused with a 403 the moment a request would CHANGE a flag, while
+a form echoing the values an account already holds is accepted and the echo dropped
+(`account_provisioning.assert_may_grant`). (This sentence said "a master admin" until 2026-10-09;
+the code has let any admin set every flag for longer than that.) The columns below still do that,
+except **two that are deliberately no longer read.**
 
 | Column | Read? | Effect |
 |---|---|---|
@@ -242,6 +286,232 @@ table can see who holds it. The columns stay (dropping them is neither safe nor 
 live account below Professor holds either), simply unread. Restoring the old behaviour is putting one
 clause back in each function.
 
+### 1.2 Account provisioning, and the forced password change
+
+**Who provisions a password account is a set beside `is_admin`, not a widening of it** (owner's
+decision, 2026-10-09). `deps.ACCOUNT_PROVISIONER_ROLES` is `{MINISTRY_ADMIN, ADMIN, MASTER_ADMIN}`,
+checked by `can_provision_accounts` and the `require_account_provisioner` dependency; `is_admin` is
+still exactly `{MASTER_ADMIN, ADMIN}`. Every rule below is written once, in
+`backend/app/services/account_provisioning.py`, and the routes and the operator's command line all
+call it — so the script cannot permit what the routes refuse.
+
+| Act | Route | Who | What else is true | On the handset |
+|---|---|---|---|---|
+| **Create** a password account | `POST /api/users` | a provisioner | Role at or below the provisioner's own tier — the ceiling is INCLUSIVE (`assert_role`: an admin creates an admin, a ministry admin a ministry admin), `MASTER_ADMIN` only by a master admin, and the `MASTER_ADMIN_EMAIL` address is always created `MASTER_ADMIN`; any other spelling of that Gmail mailbox (dots, a `+tag`, `googlemail.com`) is a 403 to everybody but a master admin. The password is 8 to 200 characters and stored as typed. `mustChangePassword` defaults to **true**. An address already held in any letter case is a 409, a concurrent double-submit included, and so, for every provisioner since later the same day, is any spelling of a Gmail mailbox another account uses — "Email already exists" either way (`email_in_use`; a 503 when every spelling could not be read). The account is admitted on the platform allow-list at its tier and a `DESIGNER` is empanelled, because creating somebody is approving them | **No screen** — web only |
+| **Require a new password** at the next sign-in, keeping the current one | `PATCH /api/users/{id}` `{mustChangePassword: true}` | a provisioner, on an account it manages | Raising the flag ends the account's sessions. 422 on an account with no password: nothing could ever satisfy the flag. The web's dialog for it offers to issue a link in the same step, for somebody who signs in with Google and may not know the present password | No screen. An owner flagged this way who signs in on 0.0.6 to 0.0.15 is told "An administrator set your password", which is untrue here; the web's dialog says so, and the source since 2026-10-09 uses the neutral sentence |
+| **Withdraw a required change** | `PATCH /api/users/{id}` `{mustChangePassword: false}` | a provisioner, on an account it manages | Makes the password the account holds final — the same power as setting one with the flag down — so it ends no session, and a session already opened with that password is released from the hold (owner's ruling, 2026-10-09) | No screen |
+| **Set a temporary password** | `PATCH /api/users/{id}` `{password, mustChangePassword?}` | a provisioner, on an account it manages | Temporary unless `mustChangePassword: false` is sent beside it. Ends the account's sessions | No screen |
+| **Issue** or **withdraw** a set-password link | `POST /api/auth/password-links` `{userId}` · `POST /api/auth/password-links/{id}/revoke` | a provisioner, on an account it manages | INVITE (72 hours) for an account with no password, or with one nobody has signed in with yet (`firstLoginAt` empty) on an account created on or after 2026-08-30 17:00 UTC; RESET (2 hours) otherwise — `credential_links.purpose_for`. 422 for an account that signs in with Google and has no password. Revoking a link that does not exist is a 404. A per-account issue throttle answers 429. **Redemption asks again** whether the issuer could still manage the account: a link whose account has outgrown its issuer — promoted past it, or the issuer demoted — reads as withdrawn | **Admins only**: "Issue a set-password link" on the users screen, for an account the admin manages that has a password (`passwordSetAt` set, the web's test too), and the link just issued can be withdrawn. **Not offered to a Ministry Admin** — the route admits one, the handset's screen does not |
+| **Correct** a name or an address | `PATCH /api/users/{id}` `{name?, email?}` | a provisioner, on an account it manages or on its own | An address another account holds, in any letter case, is a 409, a race lost to another request included — and, for every actor, so is any spelling of a Gmail mailbox another account uses ("Email already exists", or a 503 when every spelling could not be read). Any spelling of the master admin's mailbox is a 403 to everybody but a master admin. The allow-list row follows the new address (`access_roster.follow_email_change`) — and **a bar goes with it**: a non-admin moving an account onto or OFF an address an administrator barred, or a `DESIGNER` onto or off an ended empanelment, is a 409, and so is a non-admin's move of an account of any role from an address with an ended empanelment onto one with an active empanelment, which would end it; an admin's move carries the bar to the new address and leaves the old one barred (below) | No screen |
+| **Change a role** | `PATCH /api/users/{id}` `{role}` | Professor and above (`require_professor`) | Ceiling `assert_role`, target `assert_can_manage_target`. **A raise withdraws the account's outstanding password links** in the same request, and is a **409** while the account still holds a temporary password (the flag up and a password present) unless the same request sets a new one — below. The access screen's approve and re-admit, which lift an existing account, apply the same rule without the 409 (below) | The same rule, on the users screen; a raise refused for a temporary password cannot be finished there, because the handset sends no password — set one on the web, or promote once the owner has chosen their own |
+| **Grant** a capability flag | `POST` / `PATCH /api/users` | admins only | §1.1 | Admins only, on the users screen |
+| **Delete** an account | `DELETE /api/users/{id}` | admins only (`require_admin`) | Unchanged; a Ministry Admin's attempt is a 403 | No screen |
+| **Choose your own password** — when the account carries `mustChangePassword`, or any time from Settings | `POST /api/auth/change-password` | the account itself | Until a flagged account does, every route outside a short allow-list answers `401` with `X-Password-Change-Required: 1` — below. **Every other session of the account ends** ([SECURITY.md](SECURITY.md) §3.6), and the session that made the change carries on with a fresh token in the answer's `X-Session-Token` header, which CORS exposes; the body stays exactly `{"ok": true}` | A gate screen from build 0.0.6, and no Settings screen for it. Treating that `401` as a live session — token and queues kept, sends paused, resumed when the flag clears — and adopting the fresh token from the header are in the Android source since 2026-10-09 and reach handsets with the next published build. **On 0.0.6 to 0.0.15 the gate reports the change as made**, but those builds never read the header, so the session the handset holds ends with the old password; those builds notice that only at their next launch, and the person then signs in with the one they just chose. When the change's answer is LOST — no answer, a 5xx, a plain 401 — the source's gate asks `GET /me` before it says anything, and signs out saying "Your new password may already be in effect. Sign in with it; if it is refused, use the one you were given." when the session has gone; the change itself is sent once and never resent by the HTTP client. **Builds 0.0.2 to 0.0.5 have no gate**: change the password on the web first |
+
+**WHOM a provisioner may touch is `account_provisioning.assert_can_manage_target`**: strictly lower
+tiers, and master admins are peers who cannot manage each other — so a ministry admin looks after
+Regional Directors and below, an admin looks after Ministry Admins and below. A professor, an
+Assistant Director or a Regional Director who sends a name, an address, a password or the flag is
+refused with a 403 naming the tier that can; they change roles and nothing else.
+
+**NEVER YOUR OWN.** A password, the flag or a link for one's own account is a 403 pointing at
+**Change password** (`POST /api/auth/change-password`), which asks for the current password and
+spends the per-account guessing budget. It is asked before anything else, for every tier: a door that
+skipped both would turn a stolen session into a permanent takeover.
+
+**WHAT ONLY AN ADMIN DOES, AND HOW A MINISTRY ADMIN IS TOLD.** Deleting an account and changing a
+capability flag are refused with a 403. Overturning an administrator's BAR is refused with a 409 and a
+sentence naming who can lift it: creating an account on, or moving an account onto, an address whose
+allow-list row is REJECTED or SUSPENDED (Gmail spellings of one mailbox included), or putting a
+`DESIGNER` — by creating one, or by moving an account that is or is becoming one — on an address whose
+designer empanelment an administrator ended. Only the role the account will hold decides the second
+case, because an ended empanelment refuses a designer's sign-in and nobody else's. **Since 2026-10-09
+the address an account LEAVES is asked as well** (`account_provisioning.assert_not_escaping_a_bar`):
+moving an account off a REJECTED or SUSPENDED address, or a `DESIGNER` off an address whose empanelment
+was ended, is the same 409. Only the destination used to be asked, so a suspended person who planted
+a PENDING row at a second address — one refused Google sign-in does it — could be "corrected" onto it
+and walk back in, the bar stranded on an address no account held while the access screen went on
+showing it. Without these refusals "create an account" or "correct an address" would be a way round
+somebody else's decision, because `access_roster.admit` re-activates a barred row. An admin keeps the
+power to make every one of these moves, and the server's log line says what each address carried —
+but moving a barred account does not let it back in: **the bar goes with the account**
+(`access_roster.follow_email_change`). The destination's allow-list row takes the old status, with a
+note saying why — even an ACTIVE row there — and an ended empanelment is carried to the new mailbox,
+so the next sign-in there cannot empanel it afresh. **And the old address stays barred** (since later
+the same day): when the destination has no row, a barred row is CREATED there — the status, who
+barred the account and when, its tier and its name, and `BAR_CARRIED_BY_EMAIL_MOVE_NOTE` — and the old
+row is left where it is; a row a racing sign-in writes at the destination first takes the bar instead.
+The barred row used to MOVE, so the old mailbox was left with no row: a Google sign-in there was queued
+PENDING as a stranger's, with no trace of the suspension, and approving that request let the person
+back in under a new account. Letting the person back in is the access screen's act, or the designer
+roster's, on either address, where it is recorded as one. **Nor may a non-admin end an empanelment by
+moving an account** (also since later that day): the carry happens whatever the account's role, and
+carrying an ended empanelment onto an address with an ACTIVE one ends that one — an administrator's
+empanelment, possibly of somebody else — so a provisioner who is not an admin moving an account of any
+role from an address with an ended empanelment onto one with an active empanelment gets a 409
+(`ENDING_AN_EMPANELMENT_BY_MOVING_DETAIL`, asked through `account_provisioning.empanelment_active`). An
+admin's same move still ends it, and the audit line says so. **A change of role alone asks nothing
+about the address** (true as of 2026-10-09): the empanelment check runs only when an address is
+created or changed, so a
+`PATCH` carrying `role: DESIGNER` and no new address — open to a Professor and above — is not refused
+on an address whose empanelment was ended, and the account is then refused at its next sign-in until
+its role is changed back or an administrator restores the empanelment. That is an open entry in
+[OPEN_FINDINGS.md](OPEN_FINDINGS.md).
+
+**A PROMOTION DOES NOT CARRY A LOWER PROVISIONER'S CREDENTIAL UPWARD (2026-10-09).** A temporary
+password and a set-password link are credentials the provisioner who made them holds, so an account
+raised above that provisioner would be one it could never have managed — a ministry admin choosing an
+admin's password. A `PATCH /api/users/{id}` that raises the role therefore withdraws every outstanding
+link of the account in the same request (`credential_links.revoke_outstanding`), and is refused with a
+409 while the account still holds a temporary password unless the same request sets a new one; a
+demotion asks neither. Redeeming a link asks too: a link whose issuer could no longer manage the
+account reads as withdrawn (`account_provisioning.issuer_still_manages` — a master admin's link always
+passes, and so does one nobody issued or whose issuer's account was deleted). **One consequence on the
+users screen**: an account created with the flag on, as it is by default, cannot be promoted until its
+owner has chosen a password, unless the promotion sets a new temporary one — or create it at the tier
+it needs. **The access screen's approve and re-admit apply the same rule** (since later the same day;
+they asked neither question until then). They lift an existing account to the approved tier
+(`routes/access._lift_existing_account`), and a lift withdraws the account's outstanding links after
+its write. An account still holding a temporary password is not lifted: that screen has no password
+field, and refusing the approval would leave the person's access undecided over a question about their
+tier, so the approval of the address stands, the account keeps its tier, and the decision's answer
+carries `accountPromotionHeld` — the sentence saying so, naming the address, both tiers and the two
+ways on — which `/admin/access` shows word for word in place of its receipt, on Approve and on
+Restore alike. It is `null` on every other decision, REJECT included. The handset decodes the answer
+as the roster row and skips the key, so an approval made on a phone says nothing of it (true as of
+2026-10-09). Both doors ask one predicate, `account_provisioning.holds_a_temporary_password`. A
+Google sign-in on an empanelled address and the sanction register still lift an account without
+asking, and only to `DESIGNER`, which sits below every provisioner, so neither carries a credential
+past whoever issued it.
+
+**ONE ACCOUNT PER MAILBOX, FOR EVERY PROVISIONER (2026-10-09).** No account is created at, or moved
+onto, any spelling of a Gmail mailbox another account already uses — dots, a `+tag`, `googlemail.com`
+— on `/users` or from the operator script, and the answer is the 409 "Email already exists" an address
+taken in another letter case has always had (`account_provisioning.email_in_use`, which reads
+`access_roster.accounts_on_the_mailbox_for_sign_in`, the Gmail fold done by Postgres). An admin and the
+master admin are refused too. Every gate that
+reads the allow-list and both rosters reads such an inbox as ONE key, so a second account on it
+inherited the first one's admission and empanelment; a move onto it rewrote the first account's
+allow-list row and could end its empanelment; and a Google sign-in, which will not guess between two
+password accounts on one mailbox, then refused them both. A check that could not read every spelling
+answers 503 and writes nothing. Outside the Gmail domains a dot is an ordinary character and the
+literal comparison is the whole answer. An account may still be respelled within its own mailbox —
+unless another account already shares that mailbox, in which case the pair has to be merged or
+corrected first.
+
+**THE MASTER ADMIN'S MAILBOX IS A MASTER ADMIN'S TO ASSIGN, UNDER ANY SPELLING (2026-10-09).** Creating
+an account on, or moving one onto, any spelling of the `MASTER_ADMIN_EMAIL` Gmail mailbox is a 403 for
+everybody but a master admin (`account_provisioning.is_master_email`, canonical on both sides). It
+compared strings until then, and an account planted at another spelling could be found — and promoted
+to `MASTER_ADMIN`, the provisioner's password still on it — by the master's first Google sign-in
+([SECURITY.md](SECURITY.md) §3.3, which no longer folds for the master). What protects the master's
+own account — always `MASTER_ADMIN`, never deleted, changed only by a master admin — stays on the
+configured address itself (`is_master_address`), so an account at another spelling is an ordinary one.
+**The sanction register names that mailbox for nobody** (since later the same day): an order naming
+any spelling of it, as the lead or as a co-designer, is a **422** (`SANCTION_MASTER_MAILBOX`, asked by
+`sanction_orders.designer_standing_verdict` before it reads anything), whoever records it and whether
+or not the account exists; a spreadsheet import reports such a row as refused and never offers it for
+confirmation; and an older order cannot re-issue a first-password link for an account on it. Until
+then an order recorded before the master's own row existed created the account there and handed the
+recording officer its first link. **And the master's
+Google sign-in promotes only an account that is already a master admin or has no password**: any other
+account at the configured address is answered 409, unchanged, until the operator runs
+`scripts/seed_admin.py` ([SECURITY.md](SECURITY.md) §3.3, [DOCKER.md](DOCKER.md)).
+
+**WHERE IT IS DONE: THE WEB, AND A SHELL.** On `/users` — the create form, and per row **Edit**,
+**Password link**, **Require a new password** and **Set temporary password**, offered only on rows the
+reader manages, beside a Sign-in status column. The panel that confirms a new account offers its
+password link only when the creator may manage that account, and says why not for one created at the
+creator's own tier. `/admin/access` links to that form for an address that will sign in with a
+password rather than with Google, with the address filled in, and the tier when one was chosen there;
+for an address admitted at the platform default, `/users` requires the tier to be chosen — its tier
+picker opens empty and the form will not submit without one (`createFormRole` in
+`frontend/app/(protected)/users/accountAdmin.ts`), where it used to open on Researcher — two rungs
+above `DEFAULT_SIGNUP_ROLE`'s shipped value, Crowdsource Volunteer, at which a Google sign-in would
+have started the person. **The handset has no provisioning screen**, by
+[DECISION-ministry-surfaces-web-only.md](DECISION-ministry-surfaces-web-only.md); its
+"Issue a set-password link" button stays admin-only and is offered only to an account that has a
+password — the table's last column says what the handset does with each act. With no browser in
+reach, `backend/scripts/provision_account.py` (from `backend/`:
+`python -m scripts.provision_account`) provisions one account as the account `--actor-email` names and
+refuses exactly what the route would refuse it. It is a dry run until `--apply`, reads the password
+from `PROVISION_PASSWORD` and from nowhere else, and with `--google-only` writes an ACTIVE allow-list
+row instead of an account, so the person's first Google sign-in creates it at that tier — an
+Admin-only act, as it is on the access screen. `scripts/seed_admin.py` writes only temporary passwords,
+and resets the master admin and nobody else.
+
+#### The forced password change is enforced by the server
+
+`User.mustChangePassword` means the password this account holds was chosen by somebody else. It is
+raised by a provisioner creating the account (by default), setting somebody's password (by default)
+or asking for a new one, and by `scripts/seed_admin.py`; it is cleared when the owner sets their own,
+at `POST /api/auth/change-password` or by redeeming a link, and withdrawn by a provisioner who sends
+`{mustChangePassword: false}` on its own for an account it manages (the table above). The sanction
+register no longer raises it (2026-10-09): the account it mints holds a random password nobody was
+ever shown, and the INVITE link it issues is how the designer sets one — while a raised flag held a
+designer who signed in with Google first behind a gate asking for a password nobody had. **Until
+2026-10-09 it was reported and never refused**: both clients drew the change-password screen, and
+anybody holding the temporary password and a token could use the whole API from a script for the
+token's seven days. Now:
+
+- **Signing in still succeeds**, and answers `user.mustChangePassword: true` — change-password, the
+  route somebody holding a temporary password uses to replace it, needs a bearer token, so refusing
+  the sign-in would leave the account unable to comply without a link.
+- **Every other authenticated route answers `401`** with the header `X-Password-Change-Required: 1` and
+  the detail `Choose a new password to continue.`, except an allow-list, `deps.PASSWORD_CHANGE_ALLOWED_ROUTES`:
+  `GET /api/me`, `GET /api/auth/me`, `POST /api/auth/change-password`, `POST /api/auth/logout`, `GET`
+  and `POST /api/usage/consent`, and `GET /api/app/release/latest`. Matched on the exact method and
+  path.
+- **401 and never 403**, because both clients keep queued offline work on a 401 and treat a 403 as a
+  permanent refusal that parks or drops it. The header is what tells a client to keep the token,
+  re-read `/me` and draw the gate instead of signing out; CORS lists it in `expose_headers`, or a
+  browser could not read it.
+- **Exempt: the account at `MASTER_ADMIN_EMAIL`, and no other master admin** (`deps.is_configured_master_admin`).
+  A second `MASTER_ADMIN` made with a typed password is held until it chooses its own — which cannot
+  lock it out, because change-password is on the allow-list. **An account with no password is never
+  held**, since there is nothing for it to replace.
+- **Where it is checked**: inside `get_current_user`, so behind every `require_*` dependency, and in
+  `require_dataset_admin`. A `dataset:read` token minted before the flag went up is not held there but
+  ended, for good: raising the flag stamps the watermark, and the new password changes the fingerprint
+  the token carries, so it answers a plain 401 with no header — before and after the owner chooses a
+  password — and the operator mints a new one. Only a token minted while the flag was already up, which
+  the mint has refused since 2026-10-09, is held by the check. (This bullet said such an earlier token
+  "is held too" until it was corrected the same day.) `POST /api/datasets/token` refuses a flagged
+  account with a 403 and a sentence.
+- **Replacing the password ends every other session** (2026-10-09): the change-password answer hands
+  the session that made it a fresh token in its `X-Session-Token` header — its body stays exactly
+  `{"ok": true}`, the one every handset build decodes — and every session opened with the old
+  password — the provisioner's, or anybody's who read the message the temporary password travelled
+  in — is refused from its next request ([SECURITY.md](SECURITY.md) §3.6).
+- **On the clients**: the web keeps the session on a gated 401, re-reads `/me` and draws **Set a new
+  password** in place, pausing its offline drains until the flag clears, and adopts the fresh token
+  from the header when the change goes through. The handset draws the same gate screen from build
+  0.0.6; its handling of the gated 401 itself — keep the session, pause the outbox and the
+  design-workshop and join-card sends, resume when the flag clears — and its adoption of the fresh
+  token are in the Android source as of 2026-10-09 and reach handsets with the next published build. A
+  handset on 0.0.6 to 0.0.15 never reads the header: it reports the change as made, the session it
+  holds ends with the old password, and — since those builds read a session's end only at launch — the
+  person signs in again with the new one when the app next starts (the table above, last row). The
+  source also asks `GET /me` before it reports a change whose answer was lost, rather than saying
+  nothing changed over a password that may already be in force, and sends the change exactly once
+  ([SECURITY.md](SECURITY.md) §3.6). **Builds 0.0.2 to 0.0.5 have no gate screen at all**, so an
+  account flagged while its owner is on one of them has to choose its password on the web first. That
+  cost was accepted with the ruling.
+- **A session ended by somebody else's change is noticed at the next request** on the web and, since
+  2026-10-09, in the Android source: a plain 401 to a request carrying the token the handset still
+  holds raises `SessionEndedSignal`, the app re-reads `/me`, and a session that has really ended is
+  signed out with "This sign-in has ended. If your password was changed on another device or by an
+  administrator, sign in with the new one." Nothing queued is lost. Builds up to 0.0.15 notice only at
+  their next launch, and until then their queues retry with the dead token.
+- **The way out is guarded too.** A wrong current password at change-password is a `400` (not `401`,
+  which the web would read as a dead session) and is charged to the per-account budget; a new password
+  equal to the current one is a `400` and is not charged; and a link redeemed while the flag is up
+  refuses the temporary password itself. Every password somebody chooses — on create, update,
+  change-password and a link — shares one ceiling of 200 characters (`security.MAX_PASSWORD_LENGTH`);
+  the sign-in box stays unbounded, and an over-long value there is simply a wrong password.
+- **Google sign-in does not clear it.** An account that has a password keeps it, and keeps the flag,
+  when its owner signs in with Google — see [SECURITY.md](SECURITY.md) §3.3.
+
 ---
 
 ## 2. The capability matrix
@@ -250,19 +520,21 @@ Read across: ✅ allowed, ⬜ refused, and a note where the rule is conditional.
 gate list; each row names the function that decides it. **Most of those functions live in `deps.py`
 and a growing minority do not** — `require_workshop_assigner` and `assert_may_assign_oversight` are
 in the oversight service and its router, `require_sanction_recorder` and `require_annual_plan_manager`
-are in theirs, and §2's ⁸ lists five Professor floors that live in services and routes. Each is where
+are in theirs, the account-provisioning rules are `services/account_provisioning.py` and the
+per-workshop separation of duties is `services/design_workshop_posts.py`, and §2's ⁸ lists five
+Professor floors that live in services and routes. Each is where
 it is for a stated reason and each is a welcome candidate for consolidation; what matters for reading
 this table is that "grep `deps.py`" is no longer a complete way to check a row.
 
 | Capability | Gate | VOL 10 | FIELD 20 | RESEARCH 30 | DESIGN 35 | INSPECT 37 | PROF 40 | ASST 42 | REGIONAL 45 | MINISTRY 48 | ADMIN 50 | MASTER 60 |
 |---|---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
 | Sign in, read lists and search | `get_current_user` | ✅ | ✅ | ✅ | ✅³ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Upload media, answer an open interview, comment | `get_current_user` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Upload media¹⁷, answer an open interview, comment | `get_current_user` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | **Create** artisan / product / tool / process / interview | `require_record_creator` | ⬜ | ⬜ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Edit **own** record | ownership | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Fill an **empty** field on someone else's record | `assert_can_contribute_fields` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Change or clear a **populated** field on someone else's record | `assert_can_contribute_fields` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜¹ | ⬜¹ | ⬜¹ | ⬜¹ | ✅ | ✅ |
-| Edit a record created by someone **ranked below** | `can_edit_others_record` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Edit **own** record¹⁷ | ownership | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Fill an **empty** field on someone else's record¹⁷ | `assert_can_contribute_fields` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Change or clear a **populated** field on someone else's record¹⁷ | `assert_can_contribute_fields` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜¹ | ⬜¹ | ⬜¹ | ⬜¹ | ✅ | ✅ |
+| Edit a record created by someone **ranked below**¹⁷ | `can_edit_others_record` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Open the **review queue** | `require_reviewer` | grant | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Approve / reject / send back a **specific** record | `can_review_record` | ⬜ | vol only | below only | below only | below only⁴ | below only | below only⁶ | below only⁶ | below only⁶ | below only | ✅ everyone |
 | Approve a **late** (out-of-window) submission | `set_review_status` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ✅ | ✅ |
@@ -278,9 +550,10 @@ this table is that "grep `deps.py`" is no longer a complete way to check a row.
 | **Take every row out** in a download or export, not only your own | `records.owned_or_granted_where` | ⬜⁸ | ⬜⁸ | ⬜⁸ | ⬜⁸ | ⬜⁸ | ✅⁸ | ✅⁸ | ✅⁸ | ✅⁸ | ✅⁸ | ✅⁸ |
 | A record you create arrives **APPROVED** rather than PENDING | `records.apply_status_policy_create` | ⬜⁸ | ⬜⁸ | ⬜⁸ | ⬜⁸ | ⬜⁸ | ✅⁸ | ✅⁸ | ✅⁸ | ✅⁸ | ✅⁸ | ✅⁸ |
 | View the **user table**, promote / demote | `require_professor` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| **Create** or **delete** a user account | `require_admin` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜⁷ | ⬜⁷ | ⬜⁷ | ✅ | ✅ |
-| **Delete** any record | `assert_can_delete` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜⁷ | ⬜⁷ | ⬜⁷ | ✅ | ✅ |
-| Delete **media you uploaded** | route-local | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **Create** a password account; set a temporary password; require a new password; issue a password link; correct a name or an address (§1.2) | `require_account_provisioner`, then `assert_can_manage_target` on the account | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | **✅¹⁵** | ✅ | ✅ |
+| **Delete** a user account; **grant** a capability flag (§1.1) | `require_admin` · `assert_may_grant` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜⁷ | ⬜⁷ | ⬜⁷ | ✅ | ✅ |
+| **Delete** any record¹⁷ | `assert_can_delete` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜⁷ | ⬜⁷ | ⬜⁷ | ✅ | ✅ |
+| Delete **media you uploaded**¹⁷ | route-local | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Grant / decide **workshop access** | `require_admin` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜⁷ | ⬜⁷ | ⬜⁷ | ✅ | ✅ |
 | **Run a design & prototype workshop** | `can_run_design_workshops` | ⬜ | ⬜ | ⬜ | **✅** | **⬜²** | **⬜²** | **✅¹²** | **✅¹²** | **✅¹²** | ✅ | ✅ |
 | **Open** a NEW design & prototype workshop | three doors, three gates — see ¹³ | ⬜ | ⬜ | ⬜ | ⬜¹³ | ⬜ | ⬜ | ⬜¹³ | ⬜¹³ | **✅¹³** | ✅ | ✅ |
@@ -288,20 +561,29 @@ this table is that "grep `deps.py`" is no longer a complete way to check a row.
 | Decide a design workshop's **viewers** (§4.4) | two doors — see ¹⁴ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | **⬜⁹** | **⬜⁹** | **✅¹⁴** | ✅ | ✅ |
 | Decide a design workshop's **inspectors** (§4.5) | `require_workshop_assigner` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜⁵ | ⬜ | **⬜⁹** | **⬜⁹** | **✅⁵** | ✅ | ✅ |
 | Decide a design workshop's **AD and RD** (§4.6) | `assert_may_assign_oversight` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | **⬜⁹** | **⬜⁹** | **✅** | ✅ | ✅ |
-| **Read a workshop I monitor** (§4.6) | `assert_oversight_surface` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | **✅¹⁰** | **✅¹⁰** | **✅¹⁰** | **⬜¹⁰** | **⬜¹⁰** |
-| **File a correction suggestion / send a report back** (§4.5) | `require_inspector` + the row | ⬜ | ⬜ | ⬜ | ⬜ | **✅¹¹** | ⬜ | ⬜ | ⬜ | ⬜ | **⬜¹¹** | **⬜¹¹** |
-| **Upload a workshop's artisan list** | `assert_may_assign_oversight` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | **⬜⁹** | **⬜⁹** | **✅** | ✅ | ✅ |
+| **Be appointed** to a post on one workshop, by somebody else (§4.8) | the holder sets, then `design_workshop_posts`' rules | ⬜ | ⬜ | ⬜ | designer | inspector | ⬜ | designer, AD | designer, RD | **any¹⁶** | **any¹⁶** | **any¹⁶** |
+| **Read a workshop I monitor** (§4.6) | `assert_oversight_surface` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | **✅¹⁰** | **✅¹⁰** | **✅¹⁰** | **✅¹⁰** | **✅¹⁰** |
+| **Read a workshop I inspect** (§4.5) | `assert_inspection_surface` | ⬜ | ⬜ | ⬜ | ⬜ | ✅ | ⬜ | ⬜ | ⬜ | **✅¹¹** | **✅¹¹** | **✅¹¹** |
+| **File a correction suggestion / send a report back** (§4.5) | `require_inspector` + the row | ⬜ | ⬜ | ⬜ | ⬜ | **✅¹¹** | ⬜ | ⬜ | ⬜ | **✅¹¹** | **✅¹¹** | **✅¹¹** |
+| **Upload a workshop's artisan list**, or unlink an artisan from it | `assert_may_assign_oversight`, then `refuse_a_holders_write` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | **⬜⁹** | **⬜⁹** | **✅¹⁶** | ✅¹⁶ | ✅¹⁶ |
 | Assign **tasks** to other users | `require_admin` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜⁷ | ⬜⁷ | ⬜⁷ | ✅ | ✅ |
 | Rank the **transcription providers** | `require_admin` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜⁷ | ⬜⁷ | ⬜⁷ | ✅ | ✅ |
 | Read / set **API key values** | `require_master_admin` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ✅ |
 | Repository **app settings** | `require_master_admin` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ✅ |
 | Publish an **Android OTA release** | `require_master_admin` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ✅ |
 
-¹¹ **The inspector's only write, added 2026-09-13, and the two ⬜s on the right are not an
-oversight.** `require_inspector` is `INSPECTION_ROLES` membership — a set of one — so an ADMIN and
-the MASTER_ADMIN are refused this door exactly as a designer is, and are told which route they
-actually want. An admin decides WHO inspects (the row above but two); an inspector decides WHAT the
-report should say. The write is two routes on the inspection surface —
+¹¹ **The inspector's own surface and its only write — and since 2026-10-09 both follow the ROW, not
+the tier.** `require_inspector` is `assert_inspection_surface` over `INSPECTION_HOLDER_ROLES`: the
+`INSPECTOR` tier plus MINISTRY_ADMIN, ADMIN and MASTER_ADMIN, the three tiers that may now be
+appointed to inspect a workshop (§4.8). What any of them reads and writes is scoped by its own
+inspection rows, so an administrator files a suggestion or sends a report back exactly where somebody
+else appointed them to inspect, and an administrator appointed nowhere sees an empty list. Until that
+date this footnote read "the two ⬜s on the right are not an oversight", because the door was
+`INSPECTION_ROLES` — a set of one — and an admin was refused it by name; the ruling made admins
+holders, so the door widened to the holders and the scope stayed the rows. A professor and the two
+director tiers are still refused. An assigner decides WHO inspects (the inspectors row above); whoever
+holds the inspection decides WHAT the report should say. The write is two routes on the inspection
+surface —
 `POST /api/design-workshop-inspections/{id}/feedback`, which files a suggestion and moves nothing,
 and `POST /api/design-workshop-inspections/{id}/send-back`, which files one and moves the report to
 `NEEDS_REVISION` — and both are refused with a sentence unless the report is in `PRE_SUBMISSION` or
@@ -366,21 +648,28 @@ Regional Director, the artisan roster and the inspectors on one page for one aud
 Admin who may name four of those five and is 403'd on the fifth has a screen that stops working
 halfway down. Asking an admin to finish the job is the two-places-to-look this feature exists to end.
 
-**And "the inspected must not choose the inspector" still holds, in the only form that matters.**
-`INSPECTION_ROLES` is still `frozenset({"INSPECTOR"})` and MINISTRY_ADMIN is not in it, so the account
-that appoints an inspector still cannot BE one. The two properties are pinned separately and neither
-was loosened to make room for the ruling: `test_the_inspection_surface_offers_only_the_two_write_doors_it_is_allowed`
-walks the router's real dependency tree and now names **two** admissible gates — `require_inspector`
-and `require_workshop_assigner` — so a route hung on a THIRD one still fails, and its docstring
-records that the literal was UPDATED rather than widened to a set of three; and
-`test_the_two_role_sets_stay_disjoint` holds `INSPECTION_ROLES` disjoint from `DESIGN_WORKSHOP_ROLES`,
-which is the set an inspector must never join because it is the one that carries stage writes.
+**And "the inspected must not choose the inspector" still holds — since 2026-10-09 on the workshop,
+where until then it was kept by keeping two role sets apart.** This paragraph used to rest on
+`INSPECTION_ROLES` being `frozenset({"INSPECTOR"})` with MINISTRY_ADMIN outside it, "so the account
+that appoints an inspector still cannot BE one", and on an import-time check that refused to boot if
+the inspector set ever overlapped `DESIGN_WORKSHOP_ROLES`. The owner's ruling that MINISTRY_ADMIN,
+ADMIN and MASTER_ADMIN may be APPOINTED to inspect ends both halves: an appointer may now be an
+inspector — of a workshop somebody else appoints them to — and those three tiers sit in the designer
+set by role and in `INSPECTION_HOLDER_ROLES` by appointment. The import-time check is gone. What keeps
+an inspection independent now is a short list of rules about one workshop, written once in
+`services/design_workshop_posts.py` (§4.8): nobody appoints themselves; nobody inspects a workshop they
+authored (a viewer row on it, or stages they wrote — never merely having created it); nobody both
+supervises and inspects one; and whoever inspects a workshop writes neither its content nor its
+designer team, through the admin routes too.
+`test_the_inspection_surface_offers_only_the_two_write_doors_it_is_allowed` still walks the
+router's real dependency tree and names two admissible gates — `require_inspector` and
+`require_workshop_assigner` — so a route hung on a third still fails;
+`test_the_tier_stays_out_of_the_designer_set_and_the_holders_overlap_it_by_ruling` replaced the
+disjointness test; and `backend/tests/test_admin_serve_as.py` pins each per-workshop rule over
+Postgres.
 
-The three directorate tiers DID join `DESIGN_WORKSHOP_ROLES` on 2026-09-14 (¹²), so a Ministry Admin
-who holds a workshop can write in it — and that overlap is caught per workshop, at the moment of
-appointment, by `_assert_every_id_may_inspect`, whose refusals turn away anybody already on the
-workshop as its creator or as a viewer. A REGIONAL_DIRECTOR is still refused this row for the reason
-in ⁹: the supervised do not choose who examines them.
+A REGIONAL_DIRECTOR is still refused this row for the reason in ⁹: the supervised do not choose who
+examines them.
 
 ⁶ **"Below only" is wider here than anywhere else on the ladder, and it is the point of these three
 tiers.** `can_review_record` is "strictly below me", so an assistant director's "below" reaches
@@ -398,7 +687,11 @@ asserts both halves for all three, in both directions.
 fact in this document; it is stated in `deps.ROLE_RANK`'s comment, in the tier's migration header, on
 `README.md`'s row and here. Widening `is_admin` would grant every row carrying this footnote at once,
 which is the objection `can_read_usage`'s docstring makes in full. **Read it beside footnote ⁸**:
-"not an admin" is not the same sentence as "reads nothing sensitive".
+"not an admin" is not the same sentence as "reads nothing sensitive". **And beside ¹⁵ and ¹⁶**: some
+of what an admin does is no longer an `is_admin` row at all — creating accounts and looking after
+their passwords, naming a workshop's posts, being appointed to one — because each was handed to
+`MINISTRY_ADMIN` as a set of its own rather than by widening `is_admin`, which is the shape this
+footnote argues for.
 
 ⁸ **Five Professor floors live outside `deps.py`, and the three directorate tiers clear all five
 without a line of code naming any of them.** They are `artisans._may_read_full_aadhaar` (the
@@ -489,14 +782,21 @@ to name. THE SUPERVISED MUST NOT CHOOSE THE SUPERVISOR — the same rule §4.5 s
 "the inspected must not choose the inspector". An RD who should be able to assign is a MINISTRY_ADMIN,
 which is a role change an admin makes on `/users` and not a widening of this set.
 
-¹⁰ **An ADMIN and the MASTER ADMIN are refused this row, by name, on a READ surface.** The only other
-row in this table that does that is §4.5's, and the reason is identical: scoped by their own oversight
-rows an admin sees an empty page and reads it as a broken deployment, and scoped by "everything,
-because they are an admin" this becomes a second full read of every workshop in the archive — the
+¹⁰ **The surface opens for every role that may HOLD an oversight post, and the rows decide what is on
+it.** `assert_oversight_surface` admits `OVERSIGHT_HOLDER_ROLES` — the two director tiers plus
+MINISTRY_ADMIN, ADMIN and MASTER_ADMIN — and each account sees the workshops a row names it on, through
+`oversight_by_clause` and `load_overseen_workshop_or_404`. Nothing on the surface branches on
+`is_admin`, so it never becomes a second full read of the archive "because they are an admin" — the
 "two places to look when somebody has access they should not" that `services/design_workshop_access`
-refuses in its header. An admin's half of this feature is the ASSIGNMENT row above. A MINISTRY_ADMIN
-is the one account in both rows, which is not an accident: they choose who supervises a workshop AND
-may be assigned one.
+refuses in its header. An administrator nobody has named sees an empty list, and the page says so in
+words rather than with a padlock.
+
+**This footnote said the opposite until 2026-10-09: "an ADMIN and the MASTER ADMIN are refused this
+row, by name, on a READ surface."** That was right while an admin could hold no oversight row, and a
+MINISTRY_ADMIN was admitted to a list that could never contain anything, because neither slot took
+the tier. The owner's ruling made all three holders (§4.8), so the surface opened with it. The three
+administering tiers are now in BOTH halves of the scope — they assign, and they may be assigned, by
+somebody else and never by themselves.
 
 ¹² **THE THREE DIRECTORATE TIERS JOINED THE WRITE SET ON 2026-09-14, AND THESE TWO ROWS READ ⬜ FOR
 THEM UNTIL 2026-09-16.** `DESIGN_WORKSHOP_ROLES` is now `{DESIGNER, ASSISTANT_DIRECTOR,
@@ -518,10 +818,12 @@ went nowhere near red. **That is also the warning:** these two rows are the only
 that a change to one frozenset moves together, and a tier added to that set acquires the offline
 speech model silently.
 
-**What this does NOT do is make a directorate account eligible to be OFFERED as a workshop's designer.**
-Writing in a workshop and being nameable as one of its designers are two different predicates, they
-disagree today, and that is ruling OQ-4 — recorded in §4.4.5, which exists so the next reader meets
-the question rather than the surprise.
+**It did NOT, until 2026-10-09, make a directorate account eligible to be OFFERED as a workshop's
+designer.** Writing in a workshop and being nameable as one of its designers were two different
+predicates that disagreed — ruling OQ-4, recorded in §4.4.5. The owner's ruling of 2026-10-09 that
+the administering tiers may be appointed a workshop's designer through the same pickers as everyone
+else closed it: every default designer picker now offers exactly what the viewer write accepts. The
+sanction register's picker is the one named exception (§4.7).
 
 ¹³ **THREE DOORS OPEN A DESIGN WORKSHOP AND THEY HAVE THREE DIFFERENT GATES, WHICH IS WHY THIS ROW
 NAMES NO SINGLE PREDICATE.** The row's cells are the union — who can open one *somehow* — and the
@@ -558,10 +860,13 @@ state, district, craft and dates under a 200 reading "Stage saved".
 fourth, which is what makes "three doors" a checkable claim rather than a count in a table.
 
 ¹⁴ **A SECOND DOOR ONTO `DesignWorkshopViewer` OPENED ON 2026-09-16, AND THIS ROW SAID
-`require_admin` BEFORE IT.** The viewers router is unchanged and is still admin-only —
-`PUT /design-workshop-viewers/{id}` (replace) and its single-row delete both stand behind
-`require_admin`, which is §4.4.2's rule and its argument is untouched. What is new is that the
-officers screen writes the same table through two narrower doors of its own:
+`require_admin` BEFORE IT.** The viewers router is unchanged and is still admin-only — its one write,
+the whole-set replace `PUT /design-workshops/{workshop_id}/viewers`, stands behind `require_admin`,
+which is §4.4.2's rule and its argument is untouched. (Until 2026-10-09 this sentence named a
+`PUT /design-workshop-viewers/{id}` and a single-row delete beside it; no such routes exist, and the
+single-row removal, `design_workshop_viewers.remove_one_viewer`, is reached only through the oversight
+doors below.) What is new is that the officers screen writes the same table through two narrower
+doors of its own:
 
 | Door | Gate | What it can express |
 |---|---|---|
@@ -587,7 +892,52 @@ argument — that access outliving its granter is the whole point, so the creato
 own readers — is unchanged and applies to this door as much as the admin one. What changed is only
 WHICH administrators: the set went from `{ADMIN, MASTER_ADMIN}` to that set plus MINISTRY_ADMIN, for
 the same journey-shaped reason ⁵ gives about inspectors. Nobody gained the ability to grant themselves
-anything, and nothing here is reachable by the workshop's creator or its designers.
+anything, and nothing here is reachable by the workshop's creator or its designers. Since 2026-10-09
+every one of these doors says so out loud on an existing workshop: naming yourself, or naming the
+workshop's inspector, Assistant Director or Regional Director, is a 409 with the rule in it (§4.8).
+And whoever holds one of those posts on the workshop is refused all three doors there, whatever their
+tier, with §4.8 rule 5's 403 — and the two other ways onto the team with them: deciding a request for
+access to that workshop, granted or denied alike, and printing a join card for it. Who writes a
+workshop is part of what its inspector and directors stand apart from.
+
+¹⁵ **A Ministry Admin provisions accounts and is still not an admin (2026-10-09).** The gate is
+`ACCOUNT_PROVISIONER_ROLES`, a set beside `is_admin`, so a ministry admin creates password accounts at
+or below its own tier and looks after the passwords, names and addresses of the accounts strictly
+below it — and is told, with a 403 or a 409 that says who can, that it may not delete an account,
+change a capability flag, overturn an administrator's bar on an address, or end an administrator's
+empanelment by moving an account onto its address. The two director tiers
+below it are outside the set: on the user table they change roles and nothing else. Every rule is in
+§1.2; `backend/tests/test_account_provisioning.py` is where they are pinned.
+
+¹⁶ **Holding a post is an appointment, never a rank (2026-10-09).** A cell in the "be appointed" row
+says who MAY hold a post; nobody holds one until somebody else appoints them, on one workshop at a
+time, and an appointment that breaks a separation-of-duties rule is refused with a 409 (§4.8). While an
+account holds a workshop's inspection or one of its two director posts, that workshop's content and its
+designer team are closed to it — through the admin routes too, with one 403 naming the post
+(`design_workshop_posts.write_refusal`). **Refused**: its stages; editing or deleting it; its artisan
+list, import and unlink; filing a record into it, and every edit, delete or merge of a record filed
+under it, a designer's own questionnaire included (¹⁷); every change to a file it holds (¹⁷); the
+viewers `PUT`; the oversight screen's two designer doors
+(`PUT /api/design-workshop-oversight/{id}/designer` and `…/designers`); deciding a request for access
+to it, either way; and printing a join card for it. **Kept**: every read;
+appointing other people to the workshop's posts, and taking other people off them, under the same
+rules (appointing yourself is a 409, and so is taking yourself off); restoring it; and generating its
+report, with the export-ledger row
+`POST /api/design-workshops/{id}/exports` writes (§4.8 rule 5 has the final lists). So the ✅s in the
+"Run a design & prototype workshop", "Decide a design workshop's viewers" and "Upload a workshop's
+artisan list" rows are true per workshop, not everywhere.
+
+¹⁷ **Not on a record or a file of a workshop where you hold a post (2026-10-09).** While an account
+holds a workshop's inspection or one of its two director posts, it may not edit — any field, filled or
+empty, its workshop box included, and from the review queue as well as the record's own form — delete
+or merge a record FILED UNDER that workshop, change a tool's artisan links there, or edit a
+questionnaire form attached to it; nor add a file to the workshop or change one it holds: upload one
+tagged to it, attached to a record filed there or filed under it, delete it, set, refine or re-run its
+transcript, re-queue a failed transcription of it, change its caption or transcript from the review
+queue, decide an identity photograph either way, or relink it out of the workshop or into it; nor file
+such a record or file under a crafts workshop, or delete it, from the unfiled-records report, whose
+bulk filing leaves it alone for that account. Whatever these rows say for its tier, the answer is §4.8
+rule 5's 403 naming the post. Approving, rejecting and sending back such a record are not refused.
 
 ## 3. The review and approval state machine
 
@@ -803,8 +1153,19 @@ review actions, validates the payload against **the record type's own update sch
 bypass a rule the ordinary PATCH enforces, and refuses a fixed set of keys outright:
 
 `status` (an edit must not be a back-door approval), `extraMetadata` (holds the server-owned late
-stamp), `workshopId` (moving a record between workshops has its own checks), and the relation lists
-and `location` (separate writes, not column updates).
+stamp), `workshopId` (moving a record between workshops has its own checks), `designWorkshopId`
+(refused to everybody, the master admin included, since 2026-10-09: filing a record under a design
+workshop has its own gate, on the record's own form, and this route used to write the key past it),
+and the relation lists and `location` (separate writes, not column updates).
+
+**Not by whoever holds a post on the workshop the record is filed under** (2026-10-09). A record
+filed under a design workshop is that workshop's content, and so is a file it holds, caption and
+transcript included; its inspector and its two directors are refused this edit with §4.8 rule 5's
+403, asked about the stored row before anything is written
+(`record_design_workshop.assert_may_write_a_record_filed_under` for a record,
+`design_workshop_posts.refuse_a_holders_media_write` for a file). Approve, reject and send back stay
+open to them: they are review, not authorship. The web's edit panel holds its boxes, Save and "Save
+and approve" for such a reviewer, with the reason, and leaves the three decisions live (§4.8).
 
 `approve: true` runs the ordinary approval immediately afterwards as a **second, separately logged**
 action, so the audit trail shows the edit and the approval as two decisions and the approval still
@@ -816,18 +1177,19 @@ passes the admin gate.
 
 Rank says what *kind* of thing you may do. It does not say *whose* data, or *which workshop*.
 
-**There are five scope systems, and they are not variations on one idea** — each answers a different
-question, holds its own table, and is granted by a different person:
+**The scope systems are not variations on one idea** — each answers a different question, holds its
+own table, and is granted by a different person:
 
 | # | System | Scopes | Granted by | Section |
 |---|---|---|---|---|
 | 1 | `WorkshopAssignment` | a **workshop** (the ordinary field kind), read→write by level | an admin, or requested and decided | §4.1 |
 | 2 | `DataAccessGrant` | one **account's** records at large | the record **owner**, not an admin | §4.2 |
-| 3 | `DesignWorkshopViewer` | one **design workshop**, read + stage-writes | an admin only, including for the creator | §4.4 |
+| 3 | `DesignWorkshopViewer` | one **design workshop**, read + stage-writes | an admin, or a Ministry Admin through the oversight screen's designer doors (§2's ¹⁴) — never the creator, never the grantee themselves, and never to the workshop's inspector or directors (§4.8) | §4.4 |
 | 4 | `DesignWorkshopAccessRequest` | nothing on its own — it is the **asking** half of 3, a separate table with its own `DwAccessRequestStatus` and `DwAccessRequestSource` enums (`backend/prisma/schema.prisma`) | the requester raises it, an admin decides it | **not written up here** — §4.4.3 only says why the lifecycle is not on the grant table itself |
-| 5 | `DesignWorkshopInspector` | one **design workshop**, **read-only**, for an `INSPECTOR` — the stage data and nothing attached to it | an admin only, and never the workshop's own people | **§4.5** |
+| 5 | `DesignWorkshopInspector` | one **design workshop**, **read-only**, for the `INSPECTOR` tier or an administrator appointed to inspect it — the stage data and nothing attached to it | a Ministry Admin, an admin or the master admin — never the appointee themselves and never to anybody who authored the workshop | **§4.5** |
+| 6 | `DesignWorkshopOversight` | one **design workshop**, **read-only**, for its Assistant Director and its Regional Director — the two director tiers, or an administrator appointed to the post | the same three tiers, on the same terms | **§4.6** |
 
-§4.3 is not one of them: it is the audit trail that records what the five permitted. Row 4 is the one
+§4.3 is not one of them: it is the audit trail that records what they permitted. Row 4 is the one
 gap in this document rather than in the product — the table is real and shipped, and no section below
 describes it; that is recorded here rather than left for a reader to discover the way the five were
 counted (2026-08-27; re-check with `grep -n "model DesignWorkshopAccessRequest" -A 40
@@ -969,8 +1331,19 @@ again the moment the role does. Deleting it would make a temporary demotion into
 access that an admin would have to notice and repair by hand. A demoted grantee gets the same 404 as
 a stranger and a revoked grantee, which is the existing behaviour for anyone the load turns away.
 
-**Inspector scope is untouched by this**, and not by exemption: an inspector has never reached
+**Inspector scope is untouched by this**, and not by exemption: the `INSPECTOR` tier has never reached
 `load_workshop_or_404` at all (§4.5), so there was nothing here to narrow.
+
+**A post on the workshop outranks the grant, and the admin arm, for WRITES (2026-10-09).** An
+administrator appointed a workshop's inspector, Assistant Director or Regional Director does reach
+this loader — through its admin arm, or a viewer row written before the appointment — and
+`load_workshop_or_404(for_edit=True)` refuses every content write they attempt there with a 403 naming
+the post, while every read still answers; the doors that choose the workshop's designers — the viewers
+`PUT`, the oversight designer doors, an access-request decision either way, a join card — refuse them
+the same way, and so does every write to a record filed under the workshop or to a file it holds, and
+a new file uploaded into it, since 2026-10-09 (§2's ¹⁷). A viewer row is refused outright (409) to
+whoever holds one of those posts, and to an account granting itself one on an existing workshop. §4.8
+has the rules and rule 5 the full lists.
 
 > **AND THAT SENTENCE CAME TRUE — THREE TIMES, ON 2026-08-12.** The dictation-consent, AI-layers
 > and custom-sections rows were added that day, after an audit found this table describing a grant
@@ -1084,8 +1457,8 @@ the distinction this heading used to blur: it says *not the creator*, and "admin
 product had. **A MINISTRY_ADMIN now writes this table too**, through the two designer doors on the
 officers screen — §2's ¹⁴ has the route list, the gate and what each door can and cannot say. Every
 property this section relies on survives: the creator still chooses nobody, the designers on a
-workshop still choose nobody, nobody grants themselves anything, and the eligibility rule is the same
-one at every door.
+workshop still choose nobody, nobody grants themselves anything (on an existing workshop that is a 409
+since 2026-10-09, at every door), and the eligibility rule is the same one at every door.
 
 `/workshop-access/manage` stays admin-only for its other three panels, and a Ministry Admin turned
 away there reaches the designer half through `/officers` instead — the page says so rather than
@@ -1119,11 +1492,14 @@ their mind about a colleague.
 
 Four more properties worth knowing before changing anything near it:
 
-1. **Eligibility is a SET, not a rank.** `DESIGN_WORKSHOP_ROLES` is Designer / Admin / Master Admin —
-   **a Professor cannot run a design workshop despite outranking a designer.** This is the one
+1. **Eligibility is a SET, not a rank.** `DESIGN_WORKSHOP_ROLES` is the designer, the three
+   directorate tiers (since 2026-09-14), the admin and the master admin — **a Professor cannot run a
+   design workshop despite outranking a designer.** This is the one
    capability in `deps.py` that is not a rank threshold, and it is why `/design-workshops/eligible-viewers`
    exists as a server endpoint rather than as a client-side filter over the user directory: the two
    would drift, and the drift shows up as an admin granting access that the next sign-in refuses.
+   (This item named three members until 2026-10-09, and the picker it describes offered only the
+   admin tiers beside rostered designers until the same day — §4.4.5.)
 2. **A suspended designer is the trap.** A `DESIGNER` whose `DesignerRoster` row is missing or
    inactive cannot sign in at all (`services/designers.roster_allows`). Such accounts are excluded
    from the picker **and refused by the write**, because a picker is a suggestion and the write is
@@ -1186,66 +1562,46 @@ top-level `OR` would silently replace the search and widen the result set — th
 design-workshop list hit when grants were added there, which is why `visible_to_clause` carries the
 same warning in its own docstring.
 
-### 4.4.5 The write set and the offer set disagree — an open question, ruled INTENT (OQ-4)
+### 4.4.5 The write set and the offer set — they disagreed under ruling OQ-4, and agree since 2026-10-09
 
-**This section exists so that the next reader meets a QUESTION rather than a surprise.** Nothing here
-is a defect report and nothing here asks anybody to change code. It records a disagreement between two
-predicates that is easy to hit, hard to diagnose from either side alone, and was deliberately left
-standing on 2026-09-15.
+**CLOSED ON 2026-10-09, AND KEPT BECAUSE THE QUESTION WAS REAL.** From 2026-09-14 the three
+directorate tiers could WRITE in a design workshop and could never be OFFERED as one of its designers:
+`DESIGN_WORKSHOP_ROLES` held them (§2's ¹²), while the eligibility clause both designer pickers build
+read `{ADMIN, MASTER_ADMIN}` **OR** (`DESIGNER` **AND** on the empanelment roster). An officer could
+type a Ministry Admin's name into the designer picker on `/officers` and get nothing back, with no
+sentence saying why, while the same account saved stages all day in a workshop it held.
 
-**The disagreement, in one sentence.** The three directorate tiers may WRITE in a design workshop and
-can never be OFFERED as one of its designers.
+**It was ruled INTENT on 2026-09-15**, on an argument worth keeping: writing in a workshop is a
+capability, while being NAMEABLE as its designer is a claim about whose fortnight of fieldwork it is —
+the named designer's profile is copied into stage 1 and stage 3, their name reaches `dc:creator` on the
+report file, and the report goes to the ministry under that name. This section said the one sentence
+that would change it was *"an officer may be named as a workshop's designer"*, and that the change had
+to land in two functions at once or the picker and the write would disagree in the other direction.
 
-**Where each half lives.**
+**The owner's ruling of 2026-10-09 said that sentence** — the administering tiers may be appointed a
+workshop's designer through the same pickers as everybody else — **and the change landed in both
+functions at once:**
 
 | | The set | Reads |
 |---|---|---|
-| May write in a workshop | `DESIGN_WORKSHOP_ROLES` (§2's ¹²) | `{DESIGNER, ASSISTANT_DIRECTOR, REGIONAL_DIRECTOR, MINISTRY_ADMIN, ADMIN, MASTER_ADMIN}` since 2026-09-14 |
-| May be offered as a designer | the eligibility clause in `eligible_viewers` and in `workshop_capable_accounts` | `{ADMIN, MASTER_ADMIN}` **OR** (`DESIGNER` **AND** on the empanelment roster) |
+| May write in a workshop | `DESIGN_WORKSHOP_ROLES` (§2's ¹²) | DESIGNER, the three directorate tiers, ADMIN, MASTER_ADMIN |
+| May be offered as a designer | the eligibility clause in `eligible_viewers` and in `workshop_capable_accounts` | `designers.roster_exempt_workshop_roles()` — `DESIGN_WORKSHOP_ROLES` less DESIGNER, never asked about the empanelment roster — **OR** (`DESIGNER` **AND** on the roster) |
 
-Both pickers build that clause in the WHERE rather than filtering after the read, for the reason each
-function's docstring gives at length — a post-`take` filter applies the cap to the wrong set and
-reports a complete list that is missing people. The point here is not the shape of the query but its
-membership: a Regional Director is in the first column and in neither arm of the second.
+The arm is DERIVED from `DESIGN_WORKSHOP_ROLES` rather than spelled, so a picker cannot again offer
+fewer roles than the write accepts. **What was not the fix, and still is not:** making `roster_allows`
+gate accounts it has never gated (§2's ³), or dropping the roster clause, which would put suspended
+designers back in every picker. The empanelment still gates DESIGNER and nobody else.
 
-**What that produces on screen.** An officer opening the designer picker on `/officers`,
-`/annual-plan`'s promote dialog or `/sanction-orders` can type a Ministry Admin's name and surname and
-get nothing back, with no sentence saying why — the account is not absent, it is ineligible, and an
-empty result reads as "no such person". Meanwhile that same account, if it *holds* the workshop, saves
-stages in it all day.
+**What the 2026-09-15 concern became.** "An officer nameable as the designer of a workshop their own
+directorate supervises" is now a rule about the workshop instead of a hole in a picker: whoever holds a
+workshop's inspection or one of its director posts is refused designer access to it, and whoever has
+designer access to a workshop, or has written its stages, is refused its inspection and its director
+posts — each a 409 naming the rule (§4.8).
 
-**Ruled INTENT, 2026-09-15**, and the argument for leaving it is worth as much as the argument for
-closing it would be:
-
-* The three tiers joined the write set to close a dead-end — a Ministry Admin who promotes an
-  annual-plan row into a workshop must be able to save a stage in it. That is a **capability**, not a
-  statement about whose fortnight of fieldwork this is.
-* Being NAMEABLE as a workshop's designer is a different claim. The named designer's profile is copied
-  into stage 1 and stage 3, their name reaches `dc:creator` on the report file, and the report is the
-  document submitted to the ministry under that name. An officer nameable as the designer of a
-  workshop their own directorate supervises is a conflict the oversight rules spend two sections
-  refusing in other forms.
-* The empanelment roster is the second half of the same point: `DesignerRoster` is a fact about an
-  email address that outlives an account, and there is deliberately **no `OfficerRoster`** (§4.6). A
-  directorate account has nothing to be empanelled against, so admitting one to the picker means
-  either widening the arm to a bare role test or inventing a roster for people the product has
-  decided do not need one.
-
-**What would change the ruling, and what it would cost.** One sentence from the owner: *an officer
-may be named as a workshop's designer.* The change is then one clause in two functions — and it is
-two functions, not one, which is the trap: `eligible_viewers` serves the admin viewer picker and
-`workshop_capable_accounts` serves the other three doors (§4.7), so editing either alone produces a
-picker that offers an account the PUT refuses, or a PUT that accepts an account the picker never
-showed. That asymmetry is this module's own historic defect — *"the picker would refuse to offer an
-account the PUT would take"* — arriving from the other direction.
-
-**What is NOT the fix.** Adding the three tiers to the DESIGNER arm's roster test, which would make
-`roster_allows` gate accounts it has never gated (§2's ³), or dropping the roster clause, which would
-put suspended designers back in every picker in the product.
-
-**The honest smaller fix, if nobody wants to rule.** Neither picker says anything when a search returns
-nothing but the roster is why. A sentence on the empty state — naming eligibility rather than absence —
-costs one string per surface and would have made this section unnecessary.
+**The sanction register's picker stays narrow on purpose.** `GET /sanction-orders/designers` calls the
+shared query with `include_admins=False`, which answers the empanelled DESIGNER roster and nothing
+else, because its door is a rank floor at 42 and the default answer would hand that tier the
+installation's privileged-account directory (§4.7).
 
 ---
 
@@ -1277,9 +1633,10 @@ costs one string per surface and would have made this section unnecessary.
 > remains impossible. A suggestion is not an edit — `can_edit_others_record` is a Professor floor and
 > 37 is below it — so the inspector still cannot rewrite what it is commenting on; the write plan
 > refuses every table but `DwInspectionFeedback`, `DesignWorkshop` and `ReviewLog` by construction,
-> and `DwStageEntry` is not one of them. **And no directorate tier reaches this door either**: the
-> gate is `INSPECTION_ROLES` membership, which is a set of one, so ranks 42, 45 and 48 are refused it
-> exactly as an admin is.
+> and `DwStageEntry` is not one of them. **And no tier reaches this door by RANK.** The gate was
+> `INSPECTION_ROLES` membership — a set of one — until 2026-10-09, and is the holder set since
+> (§2's ¹¹): ranks 40, 42 and 45 are refused it, and a Ministry Admin, an admin or the master admin
+> reaches it only on a workshop somebody else appointed them to inspect, because the rows decide.
 >
 > **One thing the plan did not say and the shipped routes must.** Both are refused with a sentence —
 > not a 500 — unless the report is in `PRE_SUBMISSION` or `NEEDS_REVISION`. The inspection scope
@@ -1290,7 +1647,10 @@ costs one string per surface and would have made this section unnecessary.
 
 `INSPECTOR` (rank 37, §1) reaches a design workshop **through a row in `DesignWorkshopInspector` and
 never through its rank**. The sentence is meant literally: an inspector with no row sees exactly what
-rank 37 buys in the design-workshop tree, which is nothing at all.
+rank 37 buys in the design-workshop tree, which is nothing at all. **Since 2026-10-09 a Ministry Admin,
+an admin or the master admin may hold the same row**, by appointment to one workshop (§4.8), and on
+this surface they are scoped exactly as an inspector is: the workshops their rows name, and nothing
+"because they are an admin".
 
 `backend/app/services/design_workshop_inspectors.py` is the whole system. Its predicates are
 `has_inspection_scope`, `inspectable_by_clause` and `load_inspectable_workshop_or_404`, and those
@@ -1309,9 +1669,13 @@ write routes pair with `_require_designer` — nine in their own handlers plus t
 that inherit the pair from `_verb_gate`. (It said *eighteen*, which is the count of every route
 `_require_designer` guards, two of them GET allowance probes that write nothing and never reach this
 loader; `app/services/design_workshop_inspectors.py` names the fourteen.) A predicate added to it
-is a write grant whatever it is named. So the inspector predicate is never added to it. `load_inspectable_workshop_or_404` is a separate
-loader that **has no `for_edit` parameter**, and the module refuses to grow one. There is no code
-path on which an inspection row and a write meet, so there is no check anybody can forget.
+is a write grant whatever it is named. So the inspector predicate is never added to it as a way IN. `load_inspectable_workshop_or_404` is a separate
+loader that **has no `for_edit` parameter**, and the module refuses to grow one. **The one code path
+on which an inspection row meets a write points OUT** (2026-10-09):
+`design_workshop_posts.refuse_a_holders_write`, asked inside `load_workshop_or_404(for_edit=True)` and
+by every other door §4.8 rule 5 lists, reads `inspection_holders_among` to REFUSE a write by somebody
+inspecting that workshop — an administrator serving as its inspector, whom the admin arm would
+otherwise let in. It can take a write away and cannot grant one.
 
 **What a `DesignWorkshopInspector` row does and does not carry, against §4.4.1's grant.** The
 right-hand column is narrower than a reader expects, and the narrowness is the design:
@@ -1329,6 +1693,11 @@ right-hand column is narrower than a reader expects, and the narrowness is the d
 | **Questionnaire responses** | ✅ (§4.4.4) | ⬜ — `_visible_questionnaire_where` writes `viewers: {some: {userId}}` by hand |
 | Deleting the workshop, or re-granting it to anyone | ⬜ | ⬜ |
 
+**The right-hand column is what the ROW carries.** An administrator appointed to inspect keeps what
+its role gives it elsewhere — reading the workshop and generating its report through the admin arm of
+`load_workshop_or_404` — except writing this workshop's content or its designer team, which the post
+takes away for as long as it is held (§4.8).
+
 **The media row is the one to read twice.** The "recordings of a workshop I may open" arm of
 `records._design_workshop_media_branches` is keyed on `DesignWorkshopViewer` and `createdById`
 through the viewer module's `visible_to_clause` (§4.4.1 records why that arm exists). An inspector
@@ -1338,31 +1707,41 @@ workshop's photographs is an owner's decision that has not been made**, and it i
 rather than by accident: it is a product question, and the structure was built so that answering it
 has to be a deliberate edit.
 
-**ADMIN ONLY, and the reason is stronger than §4.4.2's.** That section's argument is handover — an
-owner who picks their own readers freezes access the day they leave. Here the argument is the point
+**THE ASSIGNERS ONLY, and the reason is stronger than §4.4.2's.** That section's argument is handover —
+an owner who picks their own readers freezes access the day they leave. Here the argument is the point
 of the tier: **the inspected must not choose the inspector.** If a designer could add or remove the
 person examining their own workshop, the inspection is worth nothing. So `replace_inspectors` is
-reached only through `require_admin`, the workshop's creator gets no say at all — not even a "suggest
-an inspector" route — and `_assert_every_id_may_inspect` refuses **by name** any account that is on
-the workshop, creator or viewer. `INSPECTION_ROLES` and `DESIGN_WORKSHOP_ROLES` are disjoint today
-(checked at import time), which makes that nearly unreachable — but "nearly" is doing real work: a
-designer holding a viewer row who is later **promoted** to inspector would otherwise become eligible
-to inspect the very workshop they worked on, and nothing else in the codebase would notice.
+reached only through `require_workshop_assigner` — a Ministry Admin, an admin or the master admin
+(`require_admin` until 2026-09-16, §2's ⁵) — the workshop's creator gets no say as its creator, not
+even a "suggest an inspector" route, and `_assert_every_id_may_inspect` refuses **by name**, with a
+409, any account that AUTHORED the workshop: one holding a viewer row on it, or one that has written
+its stages (`design_workshops.stage_writers`). **Nor does an inspector take themselves off** (since
+2026-10-09): a save that would delete the caller's own inspection row is refused whole with a 409
+before anything is validated (§4.8 rule 1), and another assigner removing them is the ordinary save.
+**The creator is no longer refused for being the
+creator** (until 2026-10-09 they were): administrators and sanctioning officers open workshops as an
+administrative act, so `createdById` says nothing about who did the work. The case this paragraph
+used to guard by keeping role sets apart — a designer holding a viewer row who is later **promoted**
+to inspector — is now refused by the row itself, whatever the role, and the import-time disjointness
+check that used to stand behind it is gone.
 
-**`INSPECTION_ROLES` is a frozenset of one — `{"INSPECTOR"}` — and both exclusions are decisions.**
-Admins are out because an admin already reads every workshop by a shorter route, so an inspection row
-would be a second and strictly weaker source of the same access — the "two places to look when
-somebody has access they should not" that `services/design_workshop_access` refuses in its header.
-Professors are out because a professor cannot open a design workshop today, and a door through this
-table would be a new product decision wearing an implementation detail. A rank *floor* here would
-have quietly included both.
+**`INSPECTION_ROLES` is still a frozenset of one — `{"INSPECTOR"}` — and it is the TIER now, not the
+door.** Who may hold an inspection is `INSPECTION_HOLDER_ROLES`: the tier, plus MINISTRY_ADMIN, ADMIN
+and MASTER_ADMIN by appointment (owner's ruling, 2026-10-09). This paragraph used to argue admins out —
+"an admin already reads every workshop by a shorter route, so an inspection row would be a second and
+strictly weaker source of the same access". The ruling answered it the other way: an appointed
+administrator's row is not a second source of access but a POST — it buys the inspector's surface and
+its two writes on that one workshop, and it takes that workshop's write away. Professors are still out,
+and so are the two director tiers: a door through this table would be a new product decision wearing
+an implementation detail, and a rank *floor* here would have quietly included all of them.
 
-**It does NOT join `deps.DESIGN_WORKSHOP_ROLES`.** That frozenset stays
-`{"DESIGNER", "ADMIN", "MASTER_ADMIN"}` — "the people who sign the report" — and `deps.py`'s own
-comment on rank 37 says in as many words: *do not "fix" that by adding INSPECTOR to the set.* Adding
-it would hand the tier eighteen `_require_designer` routes at once, sixteen of them writes and the
-other two GET allowance probes.
+**The `INSPECTOR` tier does NOT join `deps.DESIGN_WORKSHOP_ROLES`.** That frozenset — the designer,
+the three directorate tiers and the two admin tiers, "the people who sign the report" — still leaves
+the tier out, and `deps.py`'s own comment on rank 37 says in as many words: *do not "fix" that by
+adding INSPECTOR to the set.* Adding it would hand the tier every `_require_designer` route at once.
 **If a future change puts `INSPECTOR` in that set, this section is void and §1's blockquote with it.**
+The three administering tiers are in BOTH sets, which is exactly why holding an inspection has to take
+the workshop's write away from them.
 
 **The refusal is 404 and not 403**, matching every other loader in this family, and a soft-deleted
 workshop is a 404 here with no 409 arm — the sibling's 409 tells an editor holding unsent stages to
@@ -1401,6 +1780,12 @@ ask for a restore, and an inspector has nothing pending and no restore button.
 > the media path at all, where the next person widening that predicate would widen this surface
 > without noticing.
 >
+> **BOTH GATES IN THAT PARAGRAPH HAVE MOVED SINCE IT WAS DATED, AND IT IS KEPT AS DATED.** The
+> assignment screen moved from `require_admin` to `require_workshop_assigner` on 2026-09-16 (§2's ⁵);
+> the inspector's own surface opened to the holder set — the tier plus the three administering tiers,
+> scoped by their rows — on 2026-10-09 (§2's ¹¹), which is the day "nobody else, admins included"
+> stopped being true. The two write doors of 2026-09-13 are the blockquote at the head of this section.
+>
 > **THIS PARAGRAPH SAID THE OPPOSITE EARLIER ON THE SAME DAY, AND THAT IS THE ARGUMENT FOR DATING
 > IT.** It read *"THE TABLE AND THE SERVICE ARE IN, THE ROUTES ARE NOT"* — true when written, and
 > deliberate: the gate was built before the door, so the scope was enforceable and unreachable. The
@@ -1423,7 +1808,9 @@ ask for a restore, and an inspector has nothing pending and no restore button.
 > `/design-workshop-inspections` — a list — plus `/design-workshop-inspections/[id]` — one workshop,
 > every stage, read-only, with the per-field authorship this read resolves names for — is what an
 > inspector opens. The typed client is `frontend/lib/designWorkshopInspections.ts` and the client
-> mirror of the door is `canInspectDesignWorkshops`, with the §5 row above it.
+> mirror of the door is `canInspectDesignWorkshops`, with the §5 row above it. (The same panel is
+> also mounted on `/officers` since the assigners widened, and `canInspectDesignWorkshops` reads the
+> holder set since 2026-10-09.)
 >
 > **AND THE HANDSET NOW CALLS ALL FIVE TOO** (2026-08-27, hours after the sentence above it). This
 > paragraph read: *"**THE HANDSET DOES NOT** — `grep -rl "design-workshop-inspections" android/`
@@ -1480,12 +1867,22 @@ ask for a restore, and an inspector has nothing pending and no restore button.
 `DesignWorkshopOversight` says WHO IS ACCOUNTABLE for one design & prototype workshop: exactly one
 Assistant Director and exactly one Regional Director, named per workshop by a Ministry Admin or an
 admin. The primary key is `(designWorkshopId, capacity)` and the capacity is a Postgres enum
-`DwOversightCapacity` with two members.
+`DwOversightCapacity` with two members. **Who may be named** is a holder set per slot: the Assistant
+Director slot takes an Assistant Director, the Regional Director slot a Regional Director, and since
+2026-10-09 either slot takes a Ministry Admin, an admin or the master admin — appointed by somebody
+else, never by themselves, and never into both slots of one workshop (§4.8) — and a holder is taken
+out of a slot by somebody else too: a request that would empty the caller's own slot, or give it to
+somebody else, is a 409 (§4.8 rule 1). The officer picker
+(`officer_directory`) offers exactly those roles, leaves out the person appointing, and says on each
+row which slots it fits.
 
 **What a row confers, and it is the whole list.** The account may READ the workshop through
 `GET /api/design-workshop-oversight/assigned/{id}` — every stage, every entity, the completeness
 scores, and the per-field provenance names — and it appears in their own list at
-`GET /api/design-workshop-oversight/assigned`. That is all.
+`GET /api/design-workshop-oversight/assigned`. That is all. For a holder whose role could otherwise
+write the workshop — an administrator — the row also TAKES AWAY writing its content and its designer
+team while it is held (§4.8).
+There is no approval route for either post, and none is planned: the posts are view and monitor.
 
 **What it deliberately does not confer.** No stage write. No report generation. No dictation consent.
 No AI-layer verb. No delete and no restore. No re-granting — an officer cannot put another officer on
@@ -1504,26 +1901,28 @@ loader's signature, and that every route behind `require_officer` is a GET, walk
 dependency tree rather than read off the source.
 
 **WHY IT IS NOT A `capacity` COLUMN ON THE INSPECTOR TABLE.** Six reasons, written out in full in the
-header of `backend/app/services/design_workshop_oversight.py`. The decisive one for a reader of this
-document: `INSPECTION_ROLES` is a frozenset of ONE and the import-time guard that protects it compares
-that set against `DESIGN_WORKSHOP_ROLES` — which neither ASSISTANT_DIRECTOR nor REGIONAL_DIRECTOR is
-in. So adding them to it leaves the assert green and the API booting, while every officer silently
-acquires the whole inspector read surface. A passing assert that does not cover the change is worse
-than no assert at all, which is why the answer is a different table.
+header of `backend/app/services/design_workshop_oversight.py`. The one this paragraph used to call
+decisive — that an import-time guard comparing `INSPECTION_ROLES` with `DESIGN_WORKSHOP_ROLES` would
+stay green while every officer silently acquired the inspector surface — went with that guard on
+2026-10-09. The ones that remain are enough on their own: an inspection row is an ACCESS grant, deleted
+when it ends, while an oversight row is an ACCOUNTABILITY fact that must survive the officer's access;
+and the inspection table's primary key is the pair (workshop, person) and cannot carry a capacity
+without breaking the one lookup it exists for.
 
 **AND IT IS NOT A `DesignWorkshopViewer` ROW, WHICH IS THE ONE MISTAKE THAT WOULD BE SILENT.**
-`load_workshop_or_404(for_edit=True)` carries no role check of its own beyond the grant arm's role
-gate; a viewer row confers every stage save, the AI-layer accept/withdraw, the dictation consent and
-the export ledger. Everything would appear to work and the officer would simply hold more power than
-anyone intended. The one place the oversight service writes a viewer row is `reassign_designer`, and
-the account it names there is a DESIGNER.
+A viewer row confers every stage save, the AI-layer accept/withdraw, the dictation consent and the
+export ledger. Everything would appear to work and the officer would simply hold more power than anyone
+intended. The oversight service writes viewer rows in two places — `reassign_designer` and
+`set_named_designers`, both through the viewers module's own validation — and since 2026-10-09 that
+validation refuses (409) a viewer row to whoever is the workshop's inspector, Assistant Director or
+Regional Director. Until that date the role sets kept officers and viewers apart; now the workshop does.
 
 **WHICH WORKSHOPS AN OFFICER MAY READ IS DECIDED PER REQUEST, AND IS NOT A ROUTE GUARD.** §5's
 `/officers/monitored` row answers only "may this account open this SURFACE"; which workshops appear on
 it is `oversight_by_clause` on the list and `load_overseen_workshop_or_404` on the detail, and an
-officer with no row sees an empty page with a sentence saying so. A scope honoured by the list but not
-the detail route — or the reverse — tells its holder simultaneously that a workshop exists and that it
-does not.
+account with no row — an officer, or an administrator nobody has named — sees an empty page with a
+sentence saying so. A scope honoured by the list but not the detail route — or the reverse — tells its
+holder simultaneously that a workshop exists and that it does not.
 
 **WHO MAY ASSIGN, AND WHY IT IS NOT "THE MOST SENIOR OFFICER".** `OVERSIGHT_ASSIGNER_ROLES` is
 `{MINISTRY_ADMIN, ADMIN, MASTER_ADMIN}`. A REGIONAL DIRECTOR is deliberately outside it even though
@@ -1546,12 +1945,20 @@ can reach a GET. Three rules worth knowing here: an artisan already in the repos
 workshop and never duplicated or overwritten; every imported `Location` carries the workshop's own
 venue coordinate as PROVENANCE with a null subject pin, and the upload is refused outright when the
 workshop has none; and every Aadhaar the report mentions is masked before it leaves the parser.
+**And since 2026-10-09 it is refused (403, naming the post) to whoever holds that workshop's
+inspection or one of its director posts**, before the venue check and before the workbook is read:
+it files stage-3 participant rows through its own loader, so it was the one stage write a post holder
+still had. An import counts as authorship for the same reason (§4.8). Unlinking an artisan from the
+roster (`DELETE /api/design-workshop-oversight/{id}/artisans/{artisan_id}`) is refused to them the
+same way: it changes who the report is about.
 
 ### How this section is kept true
 
 Re-check the shape with `ls backend/app/services/design_workshop_oversight.py` and
 `grep -n "designworkshopoversight" backend/app/services/*.py backend/app/api/routes/*.py` — the
-table should be read from exactly one service. `backend/tests/test_dw_inspector_scope_gate.py`
+table is written by the oversight service alone, and read beside it only by
+`services/design_workshop_posts.py` (as a refusal input for the per-workshop rules) and
+`services/ministry_dashboard.py` (its officers register). `backend/tests/test_dw_inspector_scope_gate.py`
 asserts the two scopes cannot see each other in both directions, and its `THE_NAMES` sweep asserts
 that nothing outside the inspector feature names that feature's predicates. The route surface is
 `grep -c "@router" backend/app/api/routes/design_workshop_oversight.py`.
@@ -1601,21 +2008,39 @@ Both objections apply here and the second is new:
    `workshop_capable_accounts` folds the roster into the query's WHERE rather than filtering after
    the read.
 2. **`include_admins=False`, which is a DISCLOSURE BOUNDARY and not a tidy-up.** The shared query's
-   admin arm is unconditional — admins are never roster-gated, the same rule `roster_allows` applies
-   at sign-in — so the default answer is every empanelled designer **plus every ADMIN and
-   MASTER_ADMIN account in the installation**, each labelled with its role. That was safe while both
-   existing callers were admin-adjacent. This is the first time the list is reachable below rank 48,
-   and without the flag an Assistant Director typing one letter of search would have been handed the
-   complete privileged-account directory of the deployment. The flag narrows **both** halves of the
-   clause rather than only dropping the OR arm, so it still means what it says if a future caller
-   pairs it with `include_suspended=True`.
+   roster-exempt arm is unconditional — every role but DESIGNER is offered without asking the
+   empanelment roster, the same rule `roster_allows` applies at sign-in — so the default answer is
+   every empanelled designer **plus every account of the other roles in `DESIGN_WORKSHOP_ROLES`**:
+   the three directorate tiers, every ADMIN and every MASTER_ADMIN in the installation, each labelled
+   with its role. (Until 2026-10-09 that arm was the two admin tiers alone; it is now
+   `designers.roster_exempt_workshop_roles()`, derived from the write set — §4.4.5.) That is safe for
+   the admin-adjacent callers. This door is reachable below rank 48, and without the flag an
+   Assistant Director typing one letter of search would be handed the complete privileged-account
+   directory of the deployment, every directorate officer included. So the flag answers the
+   empanelled DESIGNER roster and nothing else, narrowing **both** halves of the clause rather than
+   only dropping the OR arm, so it still means what it says if a future caller pairs it with
+   `include_suspended=True`.
 
 **What it shares with the other two pickers is the SHAPE and nothing else**: `{users, truncated}`,
 four keys a row, `search` capped at 120 — because one control (`WorkshopDesignerPicker`'s
 `fetchEligible`) reads all three, and a fourth shape would have meant a fourth control. `truncated` is
 the server's own word for "this is not the whole set", and the client draws a notice from it; an empty
-list with no explanation is this repository's most repeated bug class, which is also the open end of
-§4.4.5 one section up.
+list with no explanation is this repository's most repeated bug class, which is also how §4.4.5's
+disagreement surfaced before it was closed.
+
+**THE DESIGNER PICKERS LEAVE OUT THE PERSON APPOINTING ONLY FOR A WORKSHOP THAT EXISTS; THE OFFICER
+AND INSPECTOR PICKERS ALWAYS DO.** Creating a workshop lets its creator name themselves (the creator is
+dropped from the grant as a no-op, §4.4.3), so a designer directory asked about no workshop answers
+everybody. Since 2026-10-09 `GET /api/design-workshops/eligible-viewers` and
+`GET /api/design-workshop-oversight/designers` take `workshopId`: when it is sent, the list feeds a
+viewers `PUT` or a designer door on an existing workshop, where naming yourself is a 409 (§4.8), so
+the caller is left out — inside the query's `WHERE`, so that `truncated` still means "there are
+more". A create form's picker sends none and gets the list unchanged, so the creator is still
+offered. The web sends no `workshopId` and drops the reader from its existing-workshop pickers
+on its own side (§4.8); the handset sends none either, by
+[DECISION-ministry-surfaces-web-only.md](DECISION-ministry-surfaces-web-only.md).
+`GET /design-workshop-oversight/officers` and `GET /design-workshop-inspections/eligible-inspectors`
+exclude the caller on the server always, because nobody may be appointed to those posts by themselves.
 
 ### How this section is kept true
 
@@ -1625,6 +2050,374 @@ gate and that the two sets which must NOT have grown did not: `is_admin` is stil
 `{ADMIN, MASTER_ADMIN}` and `OVERSIGHT_ASSIGNER_ROLES` still excludes both REGIONAL_DIRECTOR and
 ASSISTANT_DIRECTOR. It also pins `include_admins=False` at the call site, which is the assertion to
 distrust first if this section is ever read as describing something wider than it does.
+
+
+## 4.8 Serving on one workshop — appointments, and the separation of duties
+
+**This is not another access system.** It is the rule that lets the three administering tiers HOLD a
+row in the three tables above — owner's ruling, 2026-10-09 — and the rules that keep each workshop's
+posts independent of each other once they can. MASTER_ADMIN, ADMIN and MINISTRY_ADMIN may be
+APPOINTED, workshop by workshop, as its designer, its Assistant Director, its Regional Director or its
+inspector, through the same pickers and the same writes as everybody else. Nothing about their rank
+does it: an appointment is a row, and the row is the whole of the authority, exactly as it is for an
+inspector or an Assistant Director. `design_workshop_posts.SERVING_ADMIN_ROLES` names the three tiers,
+and `is_admin` is unchanged. **Web only**: the handset is unchanged for this, by
+[DECISION-ministry-surfaces-web-only.md](DECISION-ministry-surfaces-web-only.md).
+
+| Post | Row | Who may hold it | Set |
+|---|---|---|---|
+| Designer | `DesignWorkshopViewer` | every role in `DESIGN_WORKSHOP_ROLES`, a `DESIGNER` only while empanelled | `deps.DESIGN_WORKSHOP_ROLES` |
+| Assistant Director | `DesignWorkshopOversight`, AD slot | the Assistant Director tier, and the three administering tiers | `ASSISTANT_DIRECTOR_HOLDER_ROLES` |
+| Regional Director | `DesignWorkshopOversight`, RD slot | the Regional Director tier, and the three administering tiers | `REGIONAL_DIRECTOR_HOLDER_ROLES` |
+| Inspector | `DesignWorkshopInspector` | the Inspector / Reviewer tier, and the three administering tiers | `INSPECTION_HOLDER_ROLES` |
+
+Every holder must also be admitted on the platform allow-list. The web mirrors the three holder sets
+in `frontend/lib/permissions.ts`, and `backend/tests/test_role_ladder_parity.py` holds each to the
+server's.
+
+**THE RULES, PER WORKSHOP, WRITTEN ONCE.** `backend/app/services/design_workshop_posts.py` holds them,
+and every write that creates an appointment or a viewer row asks it: the oversight slots, the
+inspector panel, the viewers `PUT`, the oversight screen's designer doors, approving an access
+request, and redeeming a join card.
+
+1. **Nobody appoints themselves** to any of the four posts. It is refused as an ACT, not as a state:
+   an account somebody else put in a post may re-save the screen that lists them. **And nobody takes
+   themselves off an inspection or a director post** (since later the same day): an inspector panel
+   save that would delete the caller's own row (`replace_inspectors`), or an oversight request that
+   would empty the caller's own slot or give it to somebody else (`apply_oversight`), is refused whole
+   with a 409, `design_workshop_posts.self_release_refusal` — "…nobody takes themselves off a post:
+   another administrator has to take you off. Nothing was changed." — before anything is written (the
+   inspector panel asks it before it validates a single id). Rule 5's 403 tells a holder to ask whoever
+   made the appointment to take them off, and this
+   is what makes that true: a holder who could release themselves could write the workshop a second
+   later, and the deleted row would be the only record they held the post. Another assigner taking
+   them off works as it always did, and a holder still takes OTHER people off.
+2. **One person is never both the Assistant Director and the Regional Director** of one workshop —
+   judged on the workshop as the request would leave it, so moving somebody from one slot to the
+   other in one save is legal.
+3. **An inspector is never also that workshop's Assistant or Regional Director**, and the reverse.
+4. **Nobody inspects or supervises a workshop they AUTHORED.** Authorship is holding designer access
+   to it, or having written its stages (`design_workshops.stage_writers`: a designer-source field stamp
+   outside the workshop's cover and outside the fields a designer's profile is copied into, or a row
+   of a repeating entity they created — an artisan-list import counts). **It is NOT having created
+   the workshop.** Sanctioning officers and administrators open workshops as an administrative act,
+   and the opening's own prefill is stamped to whoever pressed create, which is exactly why those
+   stamps are not counted.
+5. **Whoever holds a workshop's inspection or one of its director posts writes neither its CONTENT
+   nor its DESIGNER TEAM** — at any tier, through a viewer row or the admin routes alike, with one
+   403 whose detail is `design_workshop_posts.write_refusal` (`refuse_a_holders_write`, which lists
+   every door that asks it). The final lists, as ruled on 2026-10-09:
+   - **Refused, as CONTENT**: the stage saves and every other route that loads the workshop for
+     editing through `load_workshop_or_404(for_edit=True)` — editing it (`PATCH`) and deleting it,
+     the custom sections, the AI layers and verbs, dictation; the oversight screen's artisan-list
+     import (`POST /api/design-workshop-oversight/{id}/artisans/upload`) and artisan unlink
+     (`DELETE …/{id}/artisans/{artisan_id}`); and filing a record INTO the workshop on a create or a
+     move, which meets the edit loader.
+   - **Refused, as CONTENT: the records filed under it** (2026-10-09). A record filed under a workshop
+     sits in its scoped lists, its totals and what its report is offered, so ANY write to one already
+     filed there is refused to a holder, asked about the workshop the stored row names: every `PATCH`
+     of an artisan, product, process, tool or questionnaire interview, whatever it carries — an
+     unfile (`designWorkshopId: null`) and a move out are only two of its shapes, the leave asked
+     before the filing; their `DELETE` routes (`DELETE /api/artisans|products|processes|tools/{id}`,
+     `DELETE /api/questionnaire/interviews/{id}`); an interview merge with either side filed there
+     (`POST /api/questionnaire/interviews/{id}/merge-into/{target}`, asked before the scope check); a
+     tool's artisan links (`POST /api/tools/{id}/artisans`, `DELETE /api/tools/{id}/artisans/{artisanId}`);
+     the review queue's in-place edit of one (`POST /api/review/{recordType}/{recordId}/edit`, asked
+     about the stored row before its transaction — and `designWorkshopId` is not review-editable at
+     all, a 422 for everybody, so the review queue files no record anywhere: §3.4); and every edit of
+     a questionnaire form attached to it — `PATCH /api/questionnaires/{id}` with
+     any body (a rename, a deactivation, a detach or a move), a re-upload of its workbook (refused
+     before the workbook is read), its sections and questions, and a sitting's own fields; starting a
+     sitting and recording answers already meet the edit loader. The gate is
+     `assert_may_write_a_record_filed_under` in `backend/app/services/record_design_workshop.py`
+     (named `assert_may_unfile_from` until it widened, the same day) and, for the forms,
+     `_refuse_its_workshops_holder` in `backend/app/api/routes/questionnaire_forms.py`. It asks
+     anybody who holds no post there nothing, so a designer can still take their own record back from a
+     workshop they were removed from. A record create, and the artisan, product, tool and interview
+     `PATCH`es, ask the workshop gates before the craft lookup and the location write, so a refused
+     create leaves no `Location` row and no craft behind.
+   - **Refused, as CONTENT: the files it holds** (2026-10-09). A photograph, a recording and its
+     transcript are the workshop's content as much as the stage that names them — the report embeds
+     the photographs and prints the transcripts in its annexure. Refused to a holder:
+     `POST /api/media/complete` for a NEW upload tagged to the workshop, attached to a record filed
+     under it, or filed under it by its `designWorkshopId` — asked about the row it is about to create
+     (`_upload_as_filed` in `backend/app/api/routes/media.py`), after the replay of the caller's own
+     earlier upload of the same object, which is answered as before, and before the storage check, the
+     `Location` row and the create; `DELETE /api/media/{id}`; `POST /api/media/{id}/transcript`,
+     `…/refine-transcript` (before the consent read and the provider call) and `…/transcribe-now`;
+     `POST /api/media/jobs/{jobId}/retry` for a job on one of its files, before the job is re-queued
+     (the queue would write the provider's text as its transcript);
+     `POST /api/design-workshops/ocr/identity/retention`, keeping and discarding alike;
+     `POST /api/media/{id}/relink`, asked about where the file is and about the record it would arrive
+     under; and the review queue's edit of a file's caption or transcript
+     (`POST /api/review/media/{id}/edit`). A file belongs to the workshop by any of five ways
+     (`design_workshop_posts.media_design_workshop_ids`): its `designWorkshopId`; its `designWorkshop`
+     tag, in either spelling; a live stage entry holding its id, in any media field or inside a rich-text
+     IMAGE block; a live AI layer made from it; or the record it hangs off being filed under the
+     workshop. The gate is `design_workshop_posts.refuse_a_holders_media_write`.
+   - **Refused, as CONTENT: the unfiled-records report's writes to them** (since later the same day,
+     `backend/app/services/workshop_inference.py`). The `/workshops` page's report lists records and
+     files with no CRAFTS workshop, and until then that was all "unfiled" meant, so a record filed under
+     a design workshop, a stage photograph tagged to one or an artisan on its roster was offered to any
+     administrator to delete permanently — a file together with its AI layers and its stored object —
+     or to file under a crafts workshop, by a door no post rule watched. Now a row a design workshop
+     claims is not unfiled: the report's reads leave out every record whose `designWorkshopId` is set
+     and every file filed under a design workshop or tagged to one, the tag compared in any letter
+     case (`_UNFILED_RECORD`, `_UNFILED_MEDIA`). A file that belongs to one only through a stage
+     entry, an AI layer or the record it hangs off is still listed, because finding those costs a query
+     a row, and the doors answer for it: `DELETE /api/workshops/unmapped/{bucket}/{id}` refuses a holder with the
+     403 and every other administrator with a **409** naming the workshop and sending them to the
+     record's or file's own screen (`_claimed_detail`), before anything is counted, deleted or removed
+     from storage, its `delete_many` carrying the same design-workshop conditions; the single-row
+     filing, `POST /api/workshops/unmapped/{bucket}/{id}`, refuses a holder with the 403 before the
+     write; and the bulk filing, `POST /api/workshops/unmapped/map`, leaves a holder's rows alone and
+     reports them — `heldBack` per bucket, `totals.heldBack`, and one sentence in `heldBackDetail` —
+     rather than refusing a run that is otherwise the server's own derivation. The three routes bind
+     the caller (`require_admin`, as before) and pass it down. An administrator who holds no post on
+     the workshop may still file a file the report still lists — one claimed only through a stage
+     entry, an AI layer or its record — under a crafts workshop, singly or in bulk, so the bulk
+     filing's `WINDOW` rung can still date-stamp one; only its crafts column moves, and only from
+     empty.
+   - **Refused, as its DESIGNER TEAM**: the viewers `PUT` (`PUT /api/design-workshops/{id}/viewers`);
+     the oversight screen's two designer doors, `PUT /api/design-workshop-oversight/{id}/designer`
+     and `PUT …/{id}/designers` (naming a designer also copies their profile into stage 1);
+     deciding a request for access to it, granted or denied alike; and printing a join card for it.
+   - **Kept**: every read, listing its join cards and revoking one included (a revocation stops a
+     card admitting anybody further and removes nobody); appointing OTHER people to its posts, and
+     taking other people off them, still under rules 1–4 and 6, so appointing yourself, or taking
+     yourself off, stays rule 1's 409; restoring it; and
+     generating its report, with the export-ledger row that records one —
+     `POST /api/design-workshops/{id}/exports` loads for edit and is the one caller that passes
+     `barred_to_post_holders=False`. Approving, rejecting and sending back a record filed under it
+     are not refused either (true as of 2026-10-09): they are review, not authorship.
+
+   A designer's own stage save pays no query for this: a role that can hold no such post is
+   answered from memory.
+6. **So designer access is refused** to whoever holds one of those posts on that workshop.
+
+The line rule 5 draws is between the work and the administration of people. Choosing who writes a
+workshop is the most direct way to steer what it says — which is why rule 4 counts designer access as
+authorship — and naming a designer writes stage 1 under somebody else's stamp, so the designer team
+sits with the content. Deciding a request for access shapes the team whichever way it goes — a grant
+adds a member, a refusal takes a capture-only foothold off it — and a join card adds whoever scans
+it, so neither is left as a way round the refused viewers `PUT`. An unlink takes an artisan off the
+roster the report is about, and a record filed under a workshop sits in its scoped lists, its totals
+and what its report is offered — an attached questionnaire's sittings print in its annexure — so
+editing, deleting or merging one, or taking it elsewhere, changes the content as much as an unlink
+does, and so does deleting one of its photographs or rewriting one of its transcripts. Appointing
+somebody else to inspect or supervise the workshop writes nothing the report says, and rules 1–4 and
+6 apply to that appointment as to any other.
+
+**HOW A REFUSAL READS.** An appointment that breaks only these rules is a **409**, naming every rule it
+breaks in one sentence each and ending "Nothing was changed." A problem with the ACCOUNT itself — no
+such account, a role that may not hold the post, an address the allow-list bars, a lapsed empanelment
+— stays a **422**, and when both kinds arise the 422 carries every sentence, so the administrator still
+makes one trip. A write refused by rule 5 is a **403** whose detail is
+`design_workshop_posts.write_refusal`: "You are this workshop's {posts}, so you can read it but not
+change it: …". The web holds a workshop's own write screens for a post holder — on the workshop's page
+the Edit details link and the status and consent buttons; the stage form; the Edit details page;
+custom sections; AI layers; photo import; report settings and the report colour; sketches upload and
+ranking order; the design-workshop visibility panel; and the Designers and artisan panels on Workshop
+oversight — giving that sentence as the reason (`frontend/components/designworkshop/HeldPostNotice.tsx`,
+an always-mounted status region the Save buttons point at), and those screens print the server's 403
+word for word if a write is refused anyway. **While the question is still being asked, the controls
+are held too**, so nothing can be typed into a draft the server will refuse. **The record forms ask as
+well** (2026-10-09): artisan, product, process, tool and interview hold Save, with the reason beside
+it, when the workshop the record is filed under or the one just chosen is held, and hold the workshop
+box itself only for the first, so a holder can still choose another; a questionnaire form attached
+to a held workshop is drawn read-only, its workbook download kept. The web learns of a post through
+the staffing reads only an appointer may make, so the warning in advance reaches the administering
+tiers — the holders who meet those controls through the admin arm; a director-tier holder who reaches
+a write as the workshop's creator, or through a designer row older than the ruling, is told by the 403
+itself. **The media controls ask as well** (later the same day): `/media`'s Delete and Transcribe now
+on each row; each attached file's remove control and re-run transcript on the artisan, product, tool
+and process forms; and the relink on `/admin`'s recovered recordings — each held with the reason, and
+"Read-only to you" on the row, for a file whose own row names a held workshop (its `designWorkshopId`
+or its `designWorkshop` tag) or, on a record form, whose record is filed under one
+(`useHeldPostRefusals` and `mediaWriteHold` in `HeldPostNotice.tsx`, one staffing read per distinct
+workshop). An identity photograph's keep and discard sit inside the stage form, whose own lock holds
+them, and the web has no control that edits or refines a transcript. **And so do the doors that ADD
+to a workshop, or edit it from elsewhere** (since later the same day): the review queue's edit panel
+holds its boxes, Save and "Save and approve" for a record filed under a held workshop or a file whose
+own row names one, while Approve, Reject and Send for revision stay live and the reason says so
+(`reviewRecordWorkshopIds`, `reviewEditHold`); `/media`'s Upload is held on the design workshop chosen
+and on the filing of the record the files would hang off, and asks before a single byte is sent
+(`mediaUploadHold`); the media jobs panel holds Retry on a job whose file names a held workshop, with
+"Read-only to you" on the row; and creating, uploading or reusing a questionnaire into a held workshop
+is held on the workshop chosen, the picker staying live so another can be chosen (`attachHold`). Rule
+1's refusal is held the same way: the reader's own row on the inspectors panel and their own Assistant
+or Regional Director slot on Workshop oversight stay ticked and switched off, with the server's
+`self_release_refusal` sentence as the reason, and a save the web stops itself shows the whole 409. The
+unfiled-records report prints the discard's 409, the filing's 403 and the bulk filing's
+`heldBackDetail` as the server wrote them, and says that a record or file filed under a design workshop
+is not listed. As of 2026-10-09 the server's answer is still the only warning in four places: the row
+Delete on the design-workshop list, the artisan, product, process and tool lists and the interview
+list; a file whose tie to a held workshop shows only indirectly — through a stage entry, an AI layer or
+the record it hangs off — on `/media`, among the recovered recordings, on the jobs panel or in the
+review queue's edit, since the web warns only by the workshop links a screen can see; moving an
+existing questionnaire into a held workshop from its own page, which saves on select and prints the 403
+in the page's banner; and the unfiled-records report's single-row filing and discard, which ask nothing
+before the click. The two designer-team doors no web screen reaches — an access-request decision and a join
+card — are refused the same way on the server. A join card redeemed by a post holder is not refused:
+it lands as the usual provisional foothold, marked ineligible, without spending the seat, and the
+scanner is told so in a sentence of its own — that the card was not used up, with no reason named
+(`_INELIGIBLE_DETAIL` in `backend/app/services/design_workshop_grants.py`, since later that day; it
+used to get a spent card's sentence, which opens "That card had already been used").
+
+**WHAT A POST LEAVES ITS HOLDER.** The two director posts are view and monitor: no approval route
+exists for either, and none is to be built. No read is ever refused by these rules, and neither is
+appointing somebody else to the workshop's posts or taking somebody else off them (appointing
+yourself, or taking yourself off, is rule 1's 409, whatever post you hold), restoring it, generating
+its report, recording that report's export at
+`POST /api/design-workshops/{id}/exports`, or approving, rejecting or sending back a record filed
+under it.
+
+**WHERE A HOLDER READS.** `/design-workshop-inspections` and `/officers/monitored` open to every role
+that may hold the post and list only the workshops a row names — an administrator appointed nowhere
+sees two empty lists that say so (§2's ¹⁰ and ¹¹). The officer and inspector pickers offer the holder
+sets and always leave out the person appointing. The two designer directories,
+`GET /api/design-workshops/eligible-viewers` and `GET /api/design-workshop-oversight/designers`, offer
+every role the viewer write accepts and take an optional `workshopId` query parameter (since
+2026-10-09): when it is sent the caller is left out, inside the query's `WHERE`, because naming
+yourself on a workshop that exists is rule 1's 409; when it is absent the list is what it always was.
+A create form's picker sends none and still offers the creator, because the create doors let a
+creator name themselves (§4.4.5, §4.7). The web sends no `workshopId` at all: it drops the reader from
+its existing-workshop designer pickers itself — the design-workshop visibility panel and the Designers
+panel on Workshop oversight — which comes to the same list, still shows a reader who already holds a
+row there, and works against a server older than the parameter.
+
+**KNOWN LIMITS, RECORDED RATHER THAN CLOSED (2026-10-09)** — each is an entry under `## Open` in
+[OPEN_FINDINGS.md](OPEN_FINDINGS.md):
+
+- Validation and write are not one transaction, the read-then-write pattern these validators already
+  had: two administrators saving different screens for the same person on the same workshop at the
+  same instant could both pass. Rule 5 still holds against whoever ends up holding a post.
+- Rows written before the ruling that break a rule are not cleaned up — an Assistant Director who is
+  also a viewer of the workshop they supervise, say. Production held none when checked on 2026-10-09,
+  and rule 5 applies to any such person at once. Find them by joining `DesignWorkshopOversight` or
+  `DesignWorkshopInspector` to `DesignWorkshopViewer` on workshop and account.
+- ADMIN and MASTER_ADMIN holders stay withheld by name on the ministry dashboard's officer and
+  inspector registers — its disclosure boundary — and are only counted; a MINISTRY_ADMIN holder is
+  listed where a row names them.
+- On the web, an Assistant or Regional Director holding a post who reaches a write anyway — as the
+  workshop's creator, or through a designer row older than the ruling — is warned only by the
+  server's 403 at the save. The staffing reads the advance warning rests on belong to the accounts
+  that may appoint, so the web cannot ask on that holder's behalf.
+- On the web, the row Delete on the design-workshop list and the record lists does not warn even an
+  administrator holding a post before the click; nor do `/media`, the recovered recordings, the jobs
+  panel and the review queue's edit for a file tied to a held workshop only through a stage entry, an
+  AI layer or the record it hangs off; nor does moving an existing questionnaire into a held workshop
+  from its own page, or the unfiled-records report's single-row filing and discard (see *How a refusal
+  reads* above). The server's answer, printed word for word, is the warning there.
+- The handset is unchanged: an administrator holding a post who saves a stage from a phone is
+  answered with rule 5's 403, which the phone records against the stage and holds — nothing is lost
+  and nothing is sent, but nothing on the phone warned before the typing. The handset's viewers
+  screen and its join-card printing meet the same 403 for such an administrator, unwarned as well,
+  and so, since 2026-10-09, do a record edit or delete, a review-queue edit, a media delete or
+  transcript edit, an upload into that workshop, a transcription retry on one of its files, and the
+  unfiled-records screen's filing and discard of a row the workshop claims (the discard's 409 for any
+  administrator too), each printed as the server wrote it. Its bulk filing reports only the count it
+  filed — it reads no `heldBack` — so a holder's held rows simply stay on the re-read report. An
+  administrator who unticks their own row on the handset's inspectors screen is answered with rule 1's
+  409, printed as written; the phone does not keep the row ticked as the web does.
+
+The three doors that did not ask rule 5 when it landed — `POST /api/media/complete` for a new upload,
+`POST /api/media/jobs/{jobId}/retry` and the review queue's edit — and the join-card scan that told a
+post holder the card "had already been used" were closed later the same day (the refused lists and
+*How a refusal reads* above), and so were the unfiled-records report's three doors, a holder taking
+themselves off their own post, and the web doors that add to a workshop or edit it from elsewhere;
+[OPEN_FINDINGS.md](OPEN_FINDINGS.md) records each under *Closed on 2026-10-09*.
+
+### How this section is kept true
+
+`backend/tests/test_admin_serve_as.py` pins every rule twice — as pure functions, and over Postgres for
+each administering tier in each post — together with the 422-versus-409 choice and the pickers (the
+designer directories' `workshopId` included). It pins rule 5 in both directions: the 403 on every
+door the rule names — the stage, `PATCH` and `DELETE`, the artisan import and unlink, the
+designer-team and viewer writes, an access-request decision either way, a join card, every record
+form filing a record into a held workshop or taking one out
+(`test_a_post_holder_files_no_record_into_the_workshop_and_takes_none_out`, for each of the six
+record kinds), any edit or delete of a record filed there and every edit of an attached form
+(`test_a_post_holder_edits_and_deletes_no_record_filed_under_their_workshop`), an interview merge on
+either side (`test_a_post_holder_merges_no_sitting_on_either_side_of_their_workshop`), a tool's
+artisan links (`test_a_post_holder_changes_no_artisan_link_of_a_tool_filed_under_their_workshop`),
+every media door for each way a file belongs to a workshop, with the file and its transcript
+surviving (`test_a_post_holder_changes_no_file_their_workshop_holds_by_any_door`), a refused
+create minting no `Location` and no craft (`test_a_refused_create_mints_no_location_and_no_craft`),
+and the three doors that asked later the same day: the review queue's edit, for every reviewable
+kind and a file, with the 422 on `designWorkshopId`
+(`test_a_post_holder_rewrites_nothing_of_their_workshop_from_the_review_queue`), a new upload tagged
+to the workshop or attached to a record filed there, refused twice with nothing created
+(`test_a_post_holder_uploads_no_new_file_into_their_workshop`), and a transcription job left as it was
+(`test_a_post_holder_requeues_no_transcription_of_their_workshops_recording`) — with their order held
+on the source by `test_the_upload_the_job_retry_and_the_review_edit_ask_before_they_write` and the
+would-be row by `test_an_upload_is_read_as_the_row_it_would_become` — and the unfiled-records
+report's three doors, later still: the report listing no row a design workshop's column or tag claims
+(`test_the_unfiled_report_lists_no_row_a_design_workshop_claims`, with the bulk filing's batched
+holder question held to the file-by-file one by
+`test_the_batched_holder_question_answers_exactly_what_the_file_by_file_one_does`), the discard
+refusing a holder with the 403 and every other administrator with the 409 while the row and its
+stored object survive and an unclaimed row is still deleted
+(`test_nobody_discards_from_the_unfiled_report_a_row_a_design_workshop_claims`), the filing refusing
+a holder (`test_a_post_holder_files_no_row_of_their_workshop_from_the_unfiled_report`), and a
+holder's bulk filing leaving their rows alone and reporting them
+(`test_a_holders_bulk_map_leaves_their_workshops_rows_alone_and_says_so`) — with the reads' shape and
+the doors' order held without a database by `test_the_ladder_reads_no_row_a_design_workshop_claims`
+and `test_the_unfiled_doors_ask_about_the_design_workshop_before_they_write`, and the payload's
+`heldBack` keys by `test_the_preview_says_nothing_was_held_back_because_nothing_was_asked` and
+`test_a_holders_run_reports_what_it_left_alone_per_bucket_and_in_one_sentence` in
+`backend/tests/test_workshop_inference.py`. Rule 1's release is
+`test_nobody_takes_themselves_off_an_inspection_or_oversight_post` — the inspector panel, the
+Assistant Director slot and the Regional Director slot, each emptied and each handed to somebody else,
+refused with nothing changed, and another assigner then taking the holder off — with its sentence
+held without a database by `test_nobody_takes_themselves_off_a_post_and_the_sentence_says_who_can`.
+And the same module pins, in
+`test_a_post_holder_keeps_reading_appointing_others_restoring_and_reporting` and
+`test_the_doors_a_holder_keeps_do_not_ask_the_write_gate`, that the acts a holder keeps never meet
+it. `backend/tests/test_review_edit_authority.py` holds the review edit's gates without a database: an
+inspector refused before anything is written, a role that can hold no post answered without a
+staffing read, `designWorkshopId` a 422 even for the master admin, and the workshop's Regional
+Director — a Ministry Admin — refused a file's caption. A holder's join-card scan landing
+provisional, the seat unspent and the card said to be not used up, is
+`test_a_post_holder_who_scans_their_workshops_join_card_lands_provisional_and_spends_nothing` there
+and `test_a_post_holder_scanning_the_card_lands_ineligible_and_keeps_the_seat` in
+`backend/tests/test_design_workshop_grant_tokens.py`, which writes the `INELIGIBLE` sentence out
+rather than importing it and holds a replay to it as well
+(`test_a_card_scanned_by_an_ineligible_account_never_spends_its_seat`). Two web specs hold the client
+to that.
+`frontend/e2e/admin-serve-as-unit.spec.ts` reads the server's holder sets and its `write_refusal`
+sentence off disk and holds the web to them. `frontend/e2e/workshop-post-holder-readonly-unit.spec.ts`
+(2026-10-09) drives the read that tells the web which posts the reader holds, with `fetch` stubbed;
+checks on the source that each workshop write screen asks it, holds its controls while the answer is
+still coming, and points its Save buttons at an always-mounted notice, while Workshop oversight's
+appointment panels stay live; holds the five record forms' Save and, for a stored workshop, the
+workshop box, the questionnaire page's read-only drawing of an attached held form, and every record
+screen's printing of the 403 word for word (its section 4, the record forms); holds a held file's
+write controls on every web screen that changes a stored file — `/media`, a record's attached files,
+the process form's, the recovered recordings' relink — and the identity decision under the stage
+form's lock, finds no transcript edit or refine control anywhere in the web, and sweeps the web calls
+that delete a file, re-run its transcript, decide an identity photograph or relink a file, so that a
+new, unheld one fails (its section 5, the files); holds every door that adds to a workshop or edits it
+from elsewhere — the review queue's edit panel, its three decisions left live, `/media`'s Upload, the
+jobs panel's Retry and the questionnaire create, upload and reuse — prints the unfiled-records
+report's 409 and 403 and its bulk filing's `heldBackDetail` as the server wrote them, keeps the
+reader's own inspector row and director slot ticked and switched off with the server's
+`self_release_refusal` sentence read off disk, and registers off the tree every caller of
+`uploadMediaBatch(`, `uploadMediaFile(`, `retryMediaProcessingJob(`, the review edit, the
+unfiled-records report's writes, the questionnaire attach calls and the two staffing writes, so that a
+new caller fails until it is held or the reason it needs no hold is written down (its section 6); and
+ties the designer-picker rule to the server's create code — a create form offers the reader, and an
+existing workshop's picker leaves the reader out on the web's own side, since the web sends no
+`workshopId`.
+Rule 5's door list is the docstring of `refuse_a_holders_write` in
+`backend/app/services/design_workshop_posts.py`, and the one exemption is the single caller passing
+`barred_to_post_holders=False`. The tells that this section has rotted are a write path that creates
+a viewer, oversight or inspection row without passing through `design_workshop_posts`, and a door that
+writes a workshop's content, a record filed under it, one of its files or its designer team without
+asking `refuse_a_holders_write` — directly, through the edit loader, through the record gate or
+through the media gate — and a staffing write that deletes a post row without asking whether the
+caller is releasing themselves; re-check all three with
+`grep -rn "separation_refusals\|refuse_a_holders_write(\|refuse_a_holders_media_write(\|assert_may_write_a_record_filed_under(\|_refuse_its_workshops_holder(\|_upload_as_filed(\|self_release_refusal(\|barred_to_post_holders" backend/app`.
 
 
 ## 5. Route guards on the web client
@@ -1664,7 +2457,7 @@ are one-liners spread with `RECORD_CREATOR_GUARD` and that pattern does not see 
 
 | Route | Client gate | Backend dependency it mirrors |
 |---|---|---|
-| `/users` | `canManageUsers` | `require_professor` |
+| `/users` | `canManageUsers` — Professor and above open the page and change roles. Within it, `canProvisionAccounts` (the set `ACCOUNT_PROVISIONER_ROLES`) offers the create form and the password and identity controls, and `isAdmin` offers delete and the capability boxes (§1.2) | `require_professor`; the create form and the password-link routes are `require_account_provisioner`, delete is `require_admin` |
 | `/admin` | `isAdmin` | `require_admin` |
 | `/admin/analytics` | `isAdmin` — a **designer is refused**, because this aggregates clusters and workshops beyond their own | `require_admin` |
 | `/admin/designers` | `canManageDesignerRoster` | `require_designer_roster_manager` |
@@ -1679,9 +2472,9 @@ are one-liners spread with `RECORD_CREATOR_GUARD` and that pattern does not see 
 | `/data` | `canDownloadDataset` | `require_dataset_downloader` |
 | `/design-review` | `canRunDesignWorkshops` — the same **set**, so a **professor is refused**. A sibling of the workshop tree and not a child, because the pool round reaches ACROSS workshops: a designer ranks work from rounds they were never added to. No prefix rule covered it, so until this row existed the URL was open to every signed-in account | `can_run_design_workshops` (`load_ratable_workshop_or_404`) |
 | `/sketches-and-prototypes` | `canRunDesignWorkshops` — the same **set**, so a **professor is refused**. A sibling of the workshop tree and not a child because the page is CHOSEN-WORKSHOP-FIRST: the designer arrives from the menu with nothing chosen and picks the workshop on the page, so there is no id to nest the path under. Nothing covered it — `routeMatches` compares whole segments — so until this row existed the URL was open to every signed-in account | `can_run_design_workshops` (`load_workshop_or_404` once a workshop is chosen; the picker's own list is `get_current_user` filtered by `visible_to_clause`) |
-| `/design-workshop-inspections` | `canInspectDesignWorkshops` — a **set with ONE member**, so an **ADMIN is refused** as well as a professor and a designer. A sibling of the workshop tree and not a child, mirroring the API's own separate prefix: every caller of every route on it is somebody `load_workshop_or_404` turns away, and a shared prefix invites widening that loader, which grants stage WRITES | `assert_inspection_surface` (`INSPECTION_ROLES` in `services/design_workshop_inspectors.py`) |
+| `/design-workshop-inspections` | `canInspectDesignWorkshops` — the **holder set** `INSPECTION_HOLDER_ROLES`: the Inspector / Reviewer tier and, since 2026-10-09, the three administering tiers, because they may be appointed to inspect (§4.8). Each sees only the workshops its rows name, so an administrator appointed nowhere gets an empty list that says so. A professor, the two director tiers and a designer are refused. (It was a set of ONE until that date, and an ADMIN was refused by name.) A sibling of the workshop tree and not a child, mirroring the API's own separate prefix: a shared prefix invites widening `load_workshop_or_404`, which grants stage WRITES | `assert_inspection_surface` (`INSPECTION_HOLDER_ROLES` in `services/design_workshop_inspectors.py`) |
 | `/officers` | `canAssignWorkshopOversight` — a **set**, `{MINISTRY_ADMIN, ADMIN, MASTER_ADMIN}`, and the second rule in this table whose refusal is **not monotonic in rank**: a **REGIONAL DIRECTOR (45) is refused** although an Assistant Director (42) they may be asked to name is not. The supervised do not choose the supervisor — the same rule the row above states one rung down. A designer is refused for the same reason one rung the other way. A sibling of the workshop tree and not a child, mirroring the API's own separate prefix | `assert_may_assign_oversight` (`OVERSIGHT_ASSIGNER_ROLES` in `services/design_workshop_oversight.py`) |
-| `/officers/monitored` | `canReadWorkshopOversight` — a **set with three members**, so an **ADMIN is refused** and so is a master admin: `assert_oversight_surface` answers them a 403 by name, because an admin scoped by their own oversight rows sees an empty page and reads it as a broken deployment. Declared AFTER `/officers` and the order does not matter — `routeGuardFor` picks the LONGEST matching path, and the two gate disjoint audiences | `assert_oversight_surface` (`OFFICER_ROLES` in `services/design_workshop_oversight.py`) |
+| `/officers/monitored` | `canReadWorkshopOversight` — whoever may be NAMED in either post: the Assistant Director and Regional Director tiers and, since 2026-10-09, the three administering tiers (§4.8), each scoped to the workshops its rows name. An ADMIN and the master admin were refused by name until that date; an empty list now says "You do not hold any … posts" instead. Declared AFTER `/officers` and the order does not matter — `routeGuardFor` picks the LONGEST matching path, and the two gate different, overlapping audiences: the administering tiers reach both | `assert_oversight_surface` (`OVERSIGHT_HOLDER_ROLES` in `services/design_workshop_oversight.py`) |
 | `/sanction-orders` | `canRecordSanctionOrders` — a **rank floor at 42**, and the only one in this table: Assistant Director, Regional Director, Ministry Admin, Admin, Master Admin. A **designer is refused**, and so is a professor (40) and an inspector (37) — the person who does the work does not authorise their own budget. A sibling of the workshop tree and deliberately NOT a child of `/admin`, whose `isAdmin` set is NARROWER than this rule: a wider rule nested under a narrower prefix would win the longest match and leave a ministry officer a page the hub itself refuses to link to | `require_sanction_recorder` (`can_record_sanction_orders` in `app/services/sanction_orders.py`) |
 | `/design-workshops` | `canRunDesignWorkshops` — a **set**, not a rank threshold: Designer, the three directorate tiers (since 2026-09-14, §2's ¹²), Admin, Master Admin — so a **professor is refused** and an **inspector is refused**, while three tiers ABOVE the professor are admitted. This row read "Designer, Admin, Master Admin" until 2026-09-16 | `can_run_design_workshops` |
 | `/questionnaires` (**plural** — see below) | `canRunDesignWorkshops` — the same set, so a **professor is refused** | `can_run_design_workshops` (`_require_designer`) |
@@ -1727,20 +2520,24 @@ guard and cannot become one**: WHICH workshops an inspector may read is decided 
 only whether the account may reach the surface at all.
 
 `/sanction-orders` is the second row in this table that §2's ladder cannot be reasoned down to, and
-it is the OPPOSITE SHAPE to the one below it. `/design-workshop-inspections` refuses an admin a page
-a rank-37 account may open; `/sanction-orders` admits three tiers **below** admin and refuses a
-professor. §2's ladder gives the right answer for this one, because unlike every other
+it is the OPPOSITE SHAPE to the one below it. `/design-workshop-inspections` refuses a professor and
+two director tiers a page a rank-37 account may open (until 2026-10-09 it refused an admin too);
+`/sanction-orders` admits three tiers **below** admin and refuses a professor. §2's ladder gives the
+right answer for this one, because unlike every other
 design-workshop-family rule it **is** a rank comparison rather than set membership — which is exactly
 why it must be read as such and not "tidied" into a set alongside its neighbours. The reasoning is at
 `can_record_sanction_orders`, and the three surfaces that say its refusal are held byte-for-byte equal
 by `backend/tests/test_sanction_order_gate.py`.
 
-Note that the inspections row is the first row in the table whose refusal is **not** monotonic in rank — an admin is
-refused a page a rank-37 account may open. Nothing else here behaves that way, and `§2`'s ladder will
-give the wrong answer for it every time; the reasoning is at `canInspectDesignWorkshops` and in
-`assert_inspection_surface`, and `frontend/e2e/design-workshop-inspections-unit.spec.ts` pins it.
-True as of 2026-08-27; re-check by grepping `canRunDesignWorkshops`, `canInspectDesignWorkshops` and
-`canReview` in `frontend/lib/permissions.ts`.
+Note that the inspections row is the first row in the table whose refusal is **not** monotonic in
+rank. Until 2026-10-09 an admin was refused a page a rank-37 account may open; since the owner's
+ruling the page opens for 37, 48, 50 and 60 and stays shut to 40, 42 and 45 — a professor and both
+director tiers outrank an inspector and are refused, because none of them may be appointed to
+inspect. `§2`'s ladder gives the wrong answer for it every time; the reasoning is at
+`canInspectDesignWorkshops` and in `assert_inspection_surface`, and
+`frontend/e2e/design-workshop-inspections-unit.spec.ts` pins it. True as of 2026-10-09; re-check by
+grepping `canRunDesignWorkshops`, `canInspectDesignWorkshops` and `canReview` in
+`frontend/lib/permissions.ts`.
 
 `/questionnaires` is the plural, and the plural is the whole point: `/questionnaire` (singular) is the
 one global artisan questionnaire, it is open to every signed-in user, and `routeMatches` compares
@@ -1768,7 +2565,7 @@ path that arrived already wearing backticks would arrive already red.
 Anything unlisted is open to any signed-in user, which is the correct default for read surfaces —
 **but that sentence is only true if this table is complete**, and for a long time it was not. Five
 rules were missing, three of them the design-workshop family, and those three are exactly the ones a
-reader cannot re-derive: they are a SET (Designer, Admin, Master Admin), not a threshold, so no
+reader cannot re-derive: they are a SET (`DESIGN_WORKSHOP_ROLES`), not a threshold, so no
 amount of reasoning down the rank ladder in §2 produces them. A maintainer adding a page beside the
 design-workshop tree read this table, found nothing, believed the closing sentence and shipped
 without a guard entry — which is the bug `frontend/lib/permissions.ts` records having already shipped
@@ -1819,13 +2616,16 @@ mechanical standing behind it.
 | Role names and ranks | Generated into [REPO_FACTS.md](REPO_FACTS.md), and `docs/tools/check-docs.mjs` **fails** if `ROLE_RANK` in `backend/app/core/deps.py` and `frontend/lib/permissions.ts` ever disagree. That check compares the KEYS and the NUMBERS of **two** copies and nothing else; `frontend/e2e/role-ladder-parity-unit.spec.ts` adds the other two properties the web mirror's header claims — the LABELS and the declaration ORDER — by reading both files off disk rather than hard-coding an expectation, which is why “Inspector / Reviewer” cannot drift on the client that renders it; and `backend/tests/test_role_ladder_parity.py` covers every remaining copy — see the Android row below. True as of 2026-09-13. |
 | Every hand-kept COPY of the ladder, in all three trees | `backend/tests/test_role_ladder_parity.py`, added 2026-08-27. It holds a registry of **thirty-two** mirrors — thirteen in `frontend/` (`lib/types.ts`, two in `lib/permissions.ts`, `components/hero/AccessLadder.tsx` and nine role tuples across eight `e2e/` specs), **eight Kotlin literals across five Android source files** (`MainActivity.kt` ranks and labels, `ui/AppNavigation.kt`'s `FieldPermissions.RANKS` and `LABELS`, `ui/TaskAdminScreen.kt`'s display order and labels, `ui/RosterFilters.kt`'s `ROSTER_ROLE_LADDER`, `ui/AccessRosterScreen.kt`'s deliberately partial grant list), ten role tuples across ten Android test files, and **README.md's own Tier / Rank / Powers table** — each held to `ROLE_RANK` by reading it as text (counts true as of 2026-09-13; re-check with `grep -c "    Mirror(" backend/tests/test_role_ladder_parity.py`), and sweeps both client trees for any file naming five or more tiers that the registry has never heard of. Its own header states which mirrors were already self-enforcing and which were not, and one assertion re-derives that claim from the source so it cannot become a comment that used to be true. **When one of these fails, the expectation is `deps.py`** — find the mirror that lagged. |
 | The `INSPECTOR` tier (§1, §2's ⁴) | The rank and the label ride on the two rows above. The **review** half — that an inspector may reject a designer's record and may not rewrite it, that a professor reviews an inspector, that an inspector does not review a peer — is `backend/tests/test_inspector_tier.py`, and `can_review_record`'s docstring is where the decision itself is written down. |
-| The three directorate tiers (§1, §2's ⁶ and ⁷) | The ranks and the labels ride on the two rows above. What each tier may and may not do — that all three review AND rewrite everyone strictly below them including a professor, that none of them is an `is_admin`, that none reaches any design-workshop set except the read-on-screen one (the 2026-09-13 ruling), and that `users.assert_role` bounds what each may mint — is `backend/tests/test_directorate_tiers.py`, and `deps.ROLE_RANK`'s per-tier comments are where the decisions themselves are written down. Added 2026-09-13. |
+| The three directorate tiers (§1, §2's ⁶ and ⁷) | The ranks and the labels ride on the two rows above. What each tier may and may not do — that all three review AND rewrite everyone strictly below them including a professor, that none of them is an `is_admin`, that all three run a design workshop since the 2026-09-14 ruling (this row said "none reaches any design-workshop set except the read-on-screen one" until 2026-10-09), that `MINISTRY_ADMIN` alone of the three provisions accounts and may be appointed to a post, and that `account_provisioning.assert_role` bounds what each may mint — is `backend/tests/test_directorate_tiers.py`, and `deps.ROLE_RANK`'s per-tier comments are where the decisions themselves are written down. Added 2026-09-13. |
+| Account provisioning and the forced password change (§1.2, §2's ¹⁵) | `backend/tests/test_account_provisioning.py` (creation by tier and its ceiling, the flag and its withdrawal, grants, bars in both directions of a move and the bar travelling with an admin's move while the old address stays barred (`test_an_admins_correction_bars_the_new_mailbox_and_leaves_the_old_one_barred`), one account per mailbox on a create and on a move (`test_no_account_is_created_on_a_mailbox_another_account_uses`, `test_no_account_is_moved_onto_another_accounts_mailbox_and_its_owner_keeps_everything`), a non-admin refused the move that would end an active empanelment and an admin's same move carrying the ending (`test_a_ministry_admin_cannot_end_an_empanelment_by_moving_an_account_onto_it`, `test_an_admins_same_move_carries_the_ending_onto_the_active_empanelment`), the double-submit on a create and on a correction, empanelment, the per-field `PATCH` policy, a promotion withdrawing links and waiting for a temporary password — at `PATCH /api/users/{id}` and at the access screen's approval, whose answer carries `accountPromotionHeld` (`test_an_approval_that_lifts_an_account_withdraws_its_links`, `test_an_approval_leaves_an_account_holding_a_temporary_password_at_its_tier`) — the master admin's mailbox, links, Google sign-in on a password account, a Ministry Admin's refused delete, and both modes of the operator script) and `backend/tests/test_password_change_enforcement.py` (the allow-list, the 401 and its header, CORS, the configured-master exemption, the dataset door, the password binding that ends the sessions a changed password opened, and the change's answer: a body of exactly `{"ok": true}` and the fresh token in `X-Session-Token`, which CORS exposes). `frontend/e2e/users-provisioning-unit.spec.ts` holds `/admin/access` to showing the `accountPromotionHeld` sentence word for word, and `/users` to an empty, required tier for an address that arrives without one. `test_auth_identity_and_password_links.py`, `test_change_password_budget.py` and `test_platform_access_gate.py` hold the link purposes, the change-password answers and the dataset-token refusal; the first of them also holds, without a database, the master's Google sign-in promoting no account somebody else holds a password to, the barred row created at a fresh mailbox or carried onto a racing one, the per-mailbox duplicate and its 503, and the ended-onto-active move for a ministry admin and an admin. The sanction register's refusal of the master admin's mailbox is `test_no_order_names_any_spelling_of_the_master_admins_mailbox` in `backend/tests/test_sanction_orders.py`, `test_the_master_admins_mailbox_is_refused_by_the_real_verdict_and_never_confirmed` in `backend/tests/test_sanction_import.py` and `test_no_link_is_reissued_for_an_account_on_the_master_admins_mailbox` in `backend/tests/test_sanction_order_designer_eligibility.py`. The web set `ACCOUNT_PROVISIONER_ROLES` is held to the server's by `backend/tests/test_role_ladder_parity.py`. **The tell that this has rotted is a writer of `passwordHash` this section does not name** — today they are account creation (`account_provisioning.write_account`), a provisioner's `PATCH`, the owner's change-password, a link redemption and the sanction register's first credential; re-check with `grep -rn '"passwordHash"' backend/app`. Added 2026-10-09. |
+| §1.2's "On the handset" column (added 2026-10-09) | **Hand-kept, and nothing compares it with the web.** Read it off the Android source: `UserManagementForm` in `android/app/src/main/java/com/designprototype/workshop/MainActivity.kt` (the link button's `actorIsAdmin && canManageTarget && passwordLinkOffered(appUser)`, and the withdraw on the issued-link panel), `UserUpdateRequest` in `android/app/src/main/java/com/designprototype/workshop/data/ApiModels.kt` (a role and the six flags — so no name, address, password or flag change can leave the handset), and the gated-401 handling in `android/app/src/main/java/com/designprototype/workshop/data/PasswordChangeRequired.kt`, pinned by `android/app/src/test/java/com/designprototype/workshop/data/PasswordChangeRequiredTest.kt`; the fresh token a password change hands back in its `X-Session-Token` header is read by `WorkshopRepository.changeOwnPassword` (`SESSION_TOKEN_HEADER` beside `ChangePasswordResponse` in `ApiModels.kt`) and pinned by `android/app/src/test/java/com/designprototype/workshop/data/ChangePasswordSessionTest.kt`, which also decodes the body the way the shipped builds do, and what a shipped build does with that answer is read off its tag (`git show v0.0.15:android/app/src/main/java/com/designprototype/workshop/data/WorkshopRepositoryApi.kt`, a `Map<String, Boolean>`). A session ended elsewhere is noticed through `SessionEndedSignal` (`isSessionEnded` beside the gate's own signal in `PasswordChangeRequired.kt`, raised by `ApiClient.sessionInterceptor`), pinned by `android/app/src/test/java/com/designprototype/workshop/data/SessionEndedSignalTest.kt`, which also shows the credential writes leaving the phone one-shot; the gate's question after a lost answer is `passwordGateAfterFailure` in `android/app/src/main/java/com/designprototype/workshop/ui/PasswordSetupCopy.kt`, pinned by `ChangePasswordSessionTest.kt` and by `android/app/src/test/java/com/designprototype/workshop/ui/PasswordSetupCopyTest.kt`, which writes its sentences out. Re-read the column whenever `UserManagementForm`, `UserUpdateRequest` or the version in `android/app/build.gradle.kts` moves. |
+| Serving on one workshop (§4.8, §2's ¹⁶) | §4.8's own maintenance paragraph: `backend/tests/test_admin_serve_as.py`, `backend/tests/test_workshop_inference.py` for the unfiled-records report's `heldBack`, `frontend/e2e/admin-serve-as-unit.spec.ts` and `frontend/e2e/workshop-post-holder-readonly-unit.spec.ts`, plus `backend/tests/test_role_ladder_parity.py` for the three web holder sets. Added 2026-10-09. |
 | The five Professor floors OUTSIDE `deps.py` (§2's ⁸) | `backend/tests/test_directorate_tiers.py`'s last four tests, which call `artisans._may_read_full_aadhaar`, `records.apply_status_policy_create`, `records.owned_or_granted_where` and `records.media_url_owners` directly. Nothing else watches them: `test_role_ladder_parity`'s sweep stops at `frontend/` and `android/`, and no route test parametrises a directorate tier over an artisan detail read. **The tell that this row has rotted is `grep -rn 'has_rank(' backend/app --include=*.py \| grep -v core/deps.py` returning a site that is not in §2's ⁸.** Added 2026-09-13. |
-| The inspector scope (§4.5) | **Two modules, split along what needs a database, and §4.5's status note says why.** `backend/tests/test_dw_inspector_scope_gate.py` (632 lines) replaces `db` with a tripwire and asserts what is true of the SOURCE — which doors exist, that everybody outside the tier including an admin is refused the read surface, that only an admin reads or writes the roster, that the literal `/eligible-inspectors` path is not swallowed by the `/{workshop_id}` route, that every stage-write door refuses an inspector **before** the database, that the read-only loader has no `for_edit` parameter, that a viewer row and an inspection row cannot satisfy each other's predicate, that `INSPECTION_ROLES` and `DESIGN_WORKSHOP_ROLES` stay disjoint, and that no module outside the feature names its predicates. `backend/tests/test_dw_inspector_scope.py` (928 lines) asserts what only a database can show — the zero state against a deliberately non-empty database, the 404 on the detail route that must agree with it, the three write doors that call `load_workshop_or_404` before they gate, the absent `transcripts`, the two rows' mutual invisibility, and the roster refusals (the creator, a co-designer, a designer, a barred account, an unknown id). **This row read “the service header, and nothing else yet” for part of 2026-08-27**, then named the zero state as the one unasserted property; both were overtaken within the day — see §4.5's status note, which keeps the superseded sentences as the worked example. The single thing to re-check before trusting §4.5 is that `load_inspectable_workshop_or_404` still has **no `for_edit` parameter**: `grep -n "for_edit" backend/app/services/design_workshop_inspectors.py` should find it only in prose. The day it is a parameter, §4.5 is describing a write grant. The RANK half (§2's ⁴) is `backend/tests/test_inspector_tier.py`, including `test_an_inspector_has_no_design_workshop_authority`. |
-| The §2 capability matrix | `backend/tests/test_permission_matrix.py`. Run `python -m pytest -q backend/tests/test_permission_matrix.py`. Every ⬜/✅ should correspond to a case there; a row with no test is a row to distrust. |
+| The inspector scope (§4.5) | **Two modules, split along what needs a database, and §4.5's status note says why.** `backend/tests/test_dw_inspector_scope_gate.py` replaces `db` with a tripwire and asserts what is true of the SOURCE — which doors exist, that every role outside the holder set is refused the read surface while an administrator reaches it and the rows decide what they see, that only an assigner reads or writes the roster, that the literal `/eligible-inspectors` path is not swallowed by the `/{workshop_id}` route, that every stage-write door refuses an inspector **before** the database, that the read-only loader has no `for_edit` parameter, that a viewer row and an inspection row cannot satisfy each other's predicate, that the tier stays out of the designer set while the holders overlap it by ruling, and that no module outside the feature names its predicates. `backend/tests/test_dw_inspector_scope.py` asserts what only a database can show — the zero state against a deliberately non-empty database, the 404 on the detail route that must agree with it, the three write doors that call `load_workshop_or_404` before they gate, the absent `transcripts`, the two rows' mutual invisibility, and the roster refusals (a co-designer, a designer, a barred account, an unknown id — and, since 2026-10-09, NOT the creator who wrote nothing). **This row read “the service header, and nothing else yet” for part of 2026-08-27**, then named the zero state as the one unasserted property; both were overtaken within the day — see §4.5's status note, which keeps the superseded sentences as the worked example. The single thing to re-check before trusting §4.5 is that `load_inspectable_workshop_or_404` still has **no `for_edit` parameter**: `grep -n "for_edit" backend/app/services/design_workshop_inspectors.py` should find it only in prose. The day it is a parameter, §4.5 is describing a write grant. The RANK half (§2's ⁴) is `backend/tests/test_inspector_tier.py`, including `test_an_inspector_has_no_design_workshop_authority`. |
+| The §2 capability matrix | `backend/tests/test_permission_matrix.py`. Run `python -m pytest -rf tests/test_permission_matrix.py` from `backend/` — never with `-q`, which hides the `database:` header that says whether the database-backed cases ran. Every ⬜/✅ should correspond to a case there; a row with no test is a row to distrust. |
 | The two `can_run_design_workshops` rows and §2's ² (added 2026-09-16) | **One frozenset moves both rows and nothing in this document will go red when it does.** `deps.DESIGN_WORKSHOP_ROLES`, mirrored in `frontend/lib/permissions.ts`; `backend/tests/test_design_workshop_gate.py` reads the web file to hold the two copies identical, and `backend/tests/test_asr_model_download.py` derives its parameter lists by subtracting that set from `ROLE_RANK`, so the speech-model row follows the set without an edit. Neither test has any opinion about this table. **The tell is a tier appearing in that frozenset with a ⬜ still beside it here** — which is what §5's corrected paragraph records having happened for two days. |
-| §4.4.5's disagreement (OQ-4) | Nothing pins it and nothing should — it is an open question, not an invariant. Re-derive it by reading the eligibility clause in `eligible_viewers` (`backend/app/services/design_workshop_viewers.py`) and in `workshop_capable_accounts` (`backend/app/services/designers.py`) against `deps.DESIGN_WORKSHOP_ROLES`. **The day those two clauses stop agreeing with each other, §4.7's five doors start giving five answers**, which is the failure that section's shared-query design exists to prevent. |
-| §4.7's five designer directories (OQ-1) | `grep -rn "workshop_capable_accounts\|assignable_designers_payload" backend/app` finds every door. `backend/tests/test_sanction_order_gate.py` pins the fifth one's gate, its `include_admins=False` narrowing, and — in the other direction — that `is_admin` and `OVERSIGHT_ASSIGNER_ROLES` did NOT grow to accommodate it. |
+| §4.4.5's closed disagreement (OQ-4) | Closed on 2026-10-09, and now an invariant rather than an open question: both eligibility clauses — in `eligible_viewers` (`backend/app/services/design_workshop_viewers.py`) and in `workshop_capable_accounts` (`backend/app/services/designers.py`) — read `designers.roster_exempt_workshop_roles()`, which is derived from `deps.DESIGN_WORKSHOP_ROLES`. `backend/tests/test_viewer_grant_role_gate.py` holds the pickers to the write. **The day those two clauses stop agreeing with each other, §4.7's doors start giving different answers**, which is the failure that section's shared-query design exists to prevent. |
+| §4.7's five designer directories (OQ-1) | `grep -rn "workshop_capable_accounts\|assignable_designers_payload" backend/app` finds every door. `backend/tests/test_sanction_order_gate.py` pins the fifth one's gate, its `include_admins=False` narrowing, and — in the other direction — that `is_admin` and `OVERSIGHT_ASSIGNER_ROLES` did NOT grow to accommodate it. The optional `workshopId` on `/design-workshops/eligible-viewers` and `/design-workshop-oversight/designers` (2026-10-09) is pinned in `backend/tests/test_admin_serve_as.py`: without a database by `test_the_designer_directories_leave_the_caller_out_only_for_a_workshop_that_exists` and `test_the_directory_queries_leave_the_caller_out_inside_the_where`, and over Postgres by `test_the_designer_pickers_leave_the_reader_out_only_for_a_workshop_that_exists`. |
 | The gate named in each matrix row | Re-derive with §6's step 1 across `backend/app/api/routes/*.py`. A route whose dependency changed but whose row did not is the failure mode this column exists to catch. |
 | The state machine (§3) | `RecordStatus` in `backend/prisma/schema.prisma` for the states; `set_review_status`, `apply_status_policy_update` and `resubmit_status` for the transitions. |
 | The late-submission gate (§3.3) | `backend/app/services/workshop_access.py` — `enforce_workshop_submission`, `stamp_workshop_submission`, `pin_pending_if_late`. The four numbered properties are each a docstring paragraph there. |
@@ -1849,6 +2649,12 @@ these decide the media half of §4.4.1, and are not reachable from any of the ga
 `backend/app/services/annual_plan.py` and `backend/app/api/routes/annual_plan.py` (the annual-plan
 gate lives in those two rather than in `deps.py` — see the row above, so `deps.py` changing is NOT
 the trigger for it),
+`backend/app/services/account_provisioning.py`, `backend/app/api/routes/users.py`,
+`backend/app/api/routes/auth.py` and `backend/app/api/routes/access.py` (§1.2 — who provisions whom,
+the password doors, and the approval's lift), `backend/app/api/routes/media.py` (§4.8 — the file
+doors),
+`backend/app/services/design_workshop_posts.py` and `backend/app/services/design_workshop_inspectors.py`
+(§4.5 and §4.8 — the holder sets and the per-workshop rules),
 `frontend/lib/permissions.ts`, or the `UserRole` / `RecordStatus` / `DataAccessTier` enums.
 
 **A row that has already gone stale once, as a warning about the failure mode.** `DESIGNER` was
@@ -1903,4 +2709,4 @@ compare *predicates*: `FieldPermissions` in `ui/AppNavigation.kt` and the `canVi
 Danger-zone rules in `MainActivity.kt` are still hand-written Kotlin re-statements of §2's matrix,
 and a Kotlin predicate that disagrees with `deps.py` about *what a tier may do* fails nothing. Treat
 the ladder as proven and the Android **capability** column as believed. Re-check with
-`python -m pytest -q backend/tests/test_role_ladder_parity.py` (true as of 2026-08-27).
+`python -m pytest -rf tests/test_role_ladder_parity.py` from `backend/` (true as of 2026-08-27).

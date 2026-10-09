@@ -7,6 +7,7 @@ import { PageHeader } from "@/components/PageHeader";
 import { adminChromeVisible, useAdminView } from "@/components/AdminViewProvider";
 import { useAuth } from "@/components/AuthProvider";
 import { AppSettingsPanel } from "@/components/settings/AppSettingsPanel";
+import { ChangePasswordCard } from "@/components/settings/ChangePasswordCard";
 import { GetTheAppPanel } from "@/components/settings/GetTheAppPanel";
 import { GrievanceRedressalCard } from "@/components/settings/GrievanceRedressalCard";
 import { PublishAppUpdatePanel } from "@/components/settings/PublishAppUpdatePanel";
@@ -26,6 +27,7 @@ import type { User } from "@/lib/types";
  * into a narrow rail. Now:
  *
  *  - Appearance and Accessibility sit side by side at full width for everybody (stacked on a phone);
+ *  - "Change password" is there for every account that has a password of its own, and for no other;
  *  - the "Request workshop access" panel is open to everyone, because asking is not an admin act;
  *  - admin destinations are HIDDEN, not disabled, and only rendered for accounts the API would
  *    actually let through — a non-admin sees no trace that these pages exist.
@@ -168,6 +170,19 @@ export default function SettingsPage() {
           something has gone wrong, and the app download is a door they open once.
         */}
         <GrievanceRedressalCard />
+
+        {/*
+          NO ROLE GATE EITHER, AND IT DRAWS ITSELF ONLY FOR AN ACCOUNT WITH A PASSWORD OF ITS OWN.
+
+          `POST /auth/change-password` is the signed-in account acting on itself, so it belongs with
+          the other things this account owns. Until this card the only caller of that route was the
+          first-password gate, so a password could be rotated only by asking an administrator for a
+          link. A Google-only account gets nothing here, rather than a form the server would refuse.
+
+          Below the grievance card, which says it must sit DIRECTLY under the consent card, and above
+          the app download, which every account opens once.
+        */}
+        <ChangePasswordCard />
 
         {/* Everyone sees this: the two apps are one product and each is better at half the job. */}
         <GetTheAppPanel />

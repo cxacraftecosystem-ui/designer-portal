@@ -175,7 +175,7 @@ docs, comments, READMEs — should say PostgreSQL and stop there.**
 | Asserted by | `docs/tools/check-docs.mjs` §8c, which reads that same host substring and nothing else, and fails this run if the sentence above stops matching it. |
 | The endpoint, and the two settings that ride on it | The DSN names the provider's IPv4 **session-mode pooler** (`:5432`), with `DATABASE_USE_TRANSACTION_POOLER=false` and an explicit `DATABASE_CONNECTION_LIMIT=5`. Chosen, not defaulted: `prisma migrate deploy` reads the same one URL raw and needs session mode, and the EC2 box has no IPv6 route to the provider's direct endpoint. The budget is two processes × 5 ≤ the session pool's 15 slots, with `deploy-backend.yml`'s stop-app-then-migrate dance covering deploy-time contention. |
 | Data API | The provider also serves schema `public` over HTTP by default. These tables carry no RLS (the app connects only through Prisma), so on 2026-09-02 the web-facing roles were revoked outright — schema usage, all table/sequence/function privileges, and the default privileges that would re-grant them to future tables. A table created by any role other than `postgres` must repeat that revocation. |
-| Previously | Neon, from 2026-08-22 until 2026-09-02 — frozen read-only at the move as a fallback snapshot, to be decommissioned once the new deployment has soaked. Before that, a different project at today's provider: `backend/.env.supabase.bak` is that era's leftover and is why historical notes throughout these docs name it — see [RESEARCH_NOTES.md](RESEARCH_NOTES.md) and [QA_AUDIT.md](QA_AUDIT.md), where the incidents that shaped today's connection settings were measured. |
+| Previously | Neon, from 2026-08-22 until 2026-09-02 — frozen read-only at the move as a fallback snapshot, to be decommissioned once the new deployment has soaked. A Vercel Storage store from the same provider (`neon-aero-drum`) was found still connected to the web app's Vercel project on 2026-10-09, injecting database variables nothing reads; disconnecting it from that project is recorded in [DEPLOYMENT_VERCEL.md](DEPLOYMENT_VERCEL.md) §2.3. Whether that store is this fallback was not established, so deleting it waits for that answer and a `pg_dump`. Before that, a different project at today's provider: `backend/.env.supabase.bak` is that era's leftover and is why historical notes throughout these docs name it — see [RESEARCH_NOTES.md](RESEARCH_NOTES.md) and [QA_AUDIT.md](QA_AUDIT.md), where the incidents that shaped today's connection settings were measured. |
 
 **The one place a provider name legitimately appears is the row above.** Everywhere else, if a
 sentence names a provider, it is either (a) describing a past incident, in which case it must carry
@@ -301,8 +301,8 @@ Emitted by `app.main.SecurityHeadersMiddleware`. Defaults are correct for local 
 
 | Variable | Required | Default | Secret | Notes |
 |---|---|---|---|---|
-| `NEXT_PUBLIC_APP_URL` | No | `http://localhost:3000` | No | Public origin of the web app. Same name as the frontend variable so one `.env` can feed both. |
-| `BACKEND_CORS_ORIGINS` | No | `http://localhost:3000` | No | **Comma-separated exact origins** allowed to call the API from a browser. No trailing slash, no path, no wildcard. Every Vercel production/preview/custom domain must be listed or the browser blocks the preflight. |
+| `NEXT_PUBLIC_APP_URL` | **Yes** in production (2026-10-09; this row said "No" until then) | `http://localhost:3000` | No | Public origin of the web app, and **the base of every set-password, invite and sanction link** the API issues (`link_for` in `backend/app/services/credential_links.py`). The default is right only on a laptop: in production a missing or wrong value issues links that open on `localhost` or on an origin `BACKEND_CORS_ORIGINS` refuses, and nothing else fails. Production is `https://designer-repository.vercel.app`, pinned by `.github/workflows/deploy-backend.yml` on every deploy beside the CORS origins, whatever `BACKEND_ENV` says. It must be an origin that list allows. Same name as the frontend variable so one `.env` can feed both, but only this backend copy is read by anything. |
+| `BACKEND_CORS_ORIGINS` | No | `http://localhost:3000` | No | **Comma-separated exact origins** allowed to call the API from a browser. No trailing slash, no path, no wildcard. Every Vercel production/preview/custom domain must be listed or the browser blocks the preflight. Production's value is pinned by `.github/workflows/deploy-backend.yml` (`https://designer-repository.vercel.app,http://localhost:3000`) and overrides `BACKEND_ENV`, so a change goes in that workflow. |
 
 ### Identity and roles
 
@@ -310,7 +310,7 @@ Emitted by `app.main.SecurityHeadersMiddleware`. Defaults are correct for local 
 |---|---|---|---|---|
 | `GOOGLE_CLIENT_ID` | No | unset | No | Google **web** OAuth client ID; ID tokens from web and Android are verified against it. Same value as the frontend's `NEXT_PUBLIC_GOOGLE_CLIENT_ID`. Unset ⇒ Google login rejected. |
 | `GOOGLE_ANDROID_CLIENT_ID` | No | unset | No | Extra accepted audience if Android tokens arrive with the Android client ID. |
-| `MASTER_ADMIN_EMAIL` | **Yes** | — | No | Google account permanently at `MASTER_ADMIN` (rank 60). The app will not start without it. |
+| `MASTER_ADMIN_EMAIL` | **Yes** | — | No | Google account permanently at `MASTER_ADMIN` (rank 60). The app will not start without it. It is also the break-glass for the forced password change: the one account the API never holds while it carries `mustChangePassword` (`deps.is_configured_master_admin`, since 2026-10-09) — any other `MASTER_ADMIN` is held like everybody else. **Pointing it at an address that already holds a password account needs `scripts/seed_admin.py` first** (since 2026-10-09): the master's Google sign-in makes an existing account the master's only when it already is one or has no password, and answers anything else with a 409 that names the script ([DOCKER.md](DOCKER.md), [SECURITY.md](SECURITY.md) §3.3). |
 | `MASTER_ADMIN_NAME` | No | `Ankit Kumar` | No | Display name for that account. |
 | `DEFAULT_SIGNUP_ROLE` | No | `CROWDSOURCE_VOLUNTEER` | No | Tier given to brand-new self-registered Google accounts on the eleven-tier ladder. Set `RESEARCHER` to restore the old open-signup behaviour. |
 
@@ -396,9 +396,10 @@ The names, so this file remains a complete index of what `config.py` reads:
 
 | Variable | Read by | Required | Default | Secret | Notes |
 |---|---|---|---|---|---|
-| `ADMIN_EMAIL` | `backend/scripts/seed_admin.py` | No | `admin@example.com` | No | First email/password admin, so you can log in before Google OAuth exists. |
+| `ADMIN_EMAIL` | `backend/scripts/seed_admin.py` | No | `admin@example.com` | No | First email/password admin, so you can log in before Google OAuth exists. **Created with a temporary password** (since 2026-10-09): the account carries `mustChangePassword`, and the API answers it `401` with `X-Password-Change-Required: 1` outside the change-password allow-list until it has chosen its own. Re-running the script never touches an existing `ADMIN_EMAIL` account — it resets only the master admin, the `MASTER_ADMIN_EMAIL` account, which is exempt from that refusal. |
 | `ADMIN_NAME` | same | No | `Repository Admin` | No | |
-| `ADMIN_PASSWORD` | same | No (script skips without it) | — | **Yes** | Change it before any real data is entered. |
+| `ADMIN_PASSWORD` | same | Only for the script, which refuses to run without it | — | **Yes** | A shared secret, so it is written as a TEMPORARY password to both seeded accounts and each first sign-in replaces it. Running the script again with a new value resets the master admin's password and ends its sessions; no other account changes. |
+| `PROVISION_PASSWORD` | `backend/scripts/provision_account.py` | Only for that script's password mode | — | **Yes** | The password of the one account the operator script creates (from `backend/`: `python -m scripts.provision_account`; a dry run until `--apply`). Read from the environment and from nowhere else — the script takes no flag for it, since a command line lands in shell history — and never printed. The account is created with `mustChangePassword` unless `--no-must-change` is given. Leave it unset for `--google-only`, which refuses to run while it is set: that mode creates no account, only an ACTIVE allow-list row at `--role`, and the person's first Google sign-in creates the account at that tier. Set it for one run and unset it after. [PERMISSIONS.md](PERMISSIONS.md) §1.2. |
 | `SUPABASE_REST_URL` | nothing today | No | — | No | **Unused, and staying that way.** Left from the pre-2026-08-22 deployment at today's provider. Nothing in this repository reads any of these three: the application consumes exactly one thing from its database host — the PostgreSQL DSN — and none of the provider's HTTP APIs (whose web-facing roles were revoked outright; see "The database" above). They cost nothing to leave and would cost a reader a search to explain if deleted silently; delete them the next time `backend/.env.example` is revised. |
 | `SUPABASE_PUBLISHABLE_KEY` | nothing today | No | — | No | Same. Anon/publishable key. |
 | `SUPABASE_SECRET_KEY` | nothing today | No | — | **Yes** | Same. Service-role key; a value from the pre-2026-08-22 project sitting in an old `.env` is that dead project's, not today's — rotate at the provider and remove it wherever found. |
@@ -429,9 +430,12 @@ bundled.
 | `NEXT_PUBLIC_GOOGLE_CLIENT_ID` | No | none | blank | Google web client ID | No | Blank hides the Google button and leaves email/password login. Must equal the backend's `GOOGLE_CLIENT_ID`, and the origin must be an "Authorized JavaScript origin" on that client or GSI returns 403. |
 | `NEXT_PUBLIC_MAPTILER_API_KEY` | No | none | blank | MapTiler key | No (restrict by domain) | Blank ⇒ the map coordinate picker degrades to manual latitude/longitude entry. Never blocks data entry. |
 
-On Vercel these three exist as **Encrypted** variables on Production, Preview and Development;
-`NEXT_PUBLIC_APP_URL` is deliberately not set there at all, because nothing in the bundle would use
-it. Never re-create any of them as **Sensitive** — see rule 3 above. That mistake does not surface
+On Vercel these three must exist as **Encrypted** variables on Production, Preview and Development,
+and `NEXT_PUBLIC_APP_URL` need not exist there at all, because nothing in the bundle would use it.
+~~They do; it is not set.~~ Measured 2026-10-09, the Preview copies of the three were Sensitive and
+`NEXT_PUBLIC_APP_URL` was present (Sensitive on Production and Preview). Production was unaffected,
+and the inventory and the agreed clean-up are in [DEPLOYMENT_VERCEL.md](DEPLOYMENT_VERCEL.md) §2.
+Never re-create any of them as **Sensitive** — see rule 3 above. That mistake does not surface
 as a failed build or a failed deploy; it surfaces as a live site that cannot authenticate, days
 later, with every error message pointing at Google or the backend instead.
 
@@ -621,7 +625,9 @@ grep -oP 'alias="\K[A-Z_0-9]+' backend/app/core/config.py | sort
 | Vercel variables | The Vercel dashboard — **UNVERIFIED from this repository**. `vercel env ls production` is the check, and rule 3 (Encrypted, never Sensitive) is the thing it exists to catch. |
 
 **Review triggers:** `backend/app/core/config.py`, `backend/.env.example`, any new `process.env.`
-reference under `frontend/`, or a new workflow secret.
+reference under `frontend/`, a new workflow secret, or a script under `backend/scripts/` that reads a
+variable of its own — the "Not read by `config.py`" table is the only index of those, and
+`grep -n "getenv\|environ\|_ENV = " backend/scripts/*.py` is its set difference.
 
 **Known unverified:** every value stated as a *production* value — the bucket name, the region, the
 CloudFront hostname, the Vercel org and project ids — is recorded from a deployment, not read from

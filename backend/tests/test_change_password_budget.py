@@ -64,11 +64,21 @@ THROTTLED_DETAIL = (
 )
 
 #: slug -> whether the account has a password at all. The Google-provisioned account is the control
-#: for the 400 arm: there is nothing to guess at, so nothing may be charged.
+#: for the 400 arm: there is nothing to guess at, so nothing may be charged. ``flagged`` holds a
+#: password an administrator chose (``mustChangePassword``) — the account the same-password refusal
+#: is for.
 ACCOUNTS: tuple[tuple[str, bool], ...] = (
     ("owner", True),
     ("sharer", True),
     ("googler", False),
+    ("flagged", True),
+)
+
+#: The refusal for "new password = current password", asserted verbatim for the reason
+#: THROTTLED_DETAIL is: a sentence imported from the module under test agrees with any rewording.
+SAME_PASSWORD_DETAIL = (
+    "Choose a password different from the one you have now. A password somebody else gave you has "
+    "to be replaced, not typed again."
 )
 
 
@@ -101,6 +111,7 @@ async def world():
                     # NULL for the Google account, which is the state ``passwordSetAt`` exists to
                     # keep distinguishable from "has never had one".
                     "passwordHash": hash_password(PASSWORD) if has_password else None,
+                    "mustChangePassword": slug == "flagged",
                 }
             )
             # Admitted, so that a sign-in used as evidence in the shared-bucket test below is
@@ -148,17 +159,23 @@ def _login(client: Any, email: str, password: str) -> Any:
 async def test_a_stolen_session_cannot_guess_the_current_password_forever(world, client):
     """**THE FINDING.** Unlimited guesses at the current password, from inside a session.
 
-    The first refusal is asserted to be a plain 401 rather than merely "not a 429": a budget that
+    The first refusal is asserted to be a plain 400 rather than merely "not a 429": a budget that
     closed on the very first attempt would pass a bare "there is a 429 somewhere in here" test while
     making the route unusable for anybody who mistypes once. The last is asserted to be the 429, and
     the sentence with it, because a limit whose body says nothing actionable is a limit that gets
     raised until it stops limiting.
+
+    **400 AND NOT 401 SINCE 2026-10-09**, and still charged. The web client signs the whole session
+    out on any 401 it gets back with a token, so a mistyped current password used to throw the person
+    out of the change-password screen the forced change holds them on. The budget is what defends
+    against the guessing; the status code never was.
     """
     statuses = [
         _change(client, world, "owner", WRONG, "a-brand-new-password").status_code
         for _ in range(_ACCOUNT_FAILURES + 2)
     ]
-    assert statuses[0] == 401, f"the very first wrong current password was not simply refused: {statuses}"
+    assert statuses[0] == 400, f"the very first wrong current password was not simply refused: {statuses}"
+    assert 401 not in statuses, f"a wrong current password still answers 401: {statuses}"
     assert statuses[-1] == 429, (
         f"{_ACCOUNT_FAILURES + 2} wrong guesses in a row never closed this route, so a stolen "
         f"session is still an unlimited oracle against this account's password: {statuses}"
@@ -211,6 +228,13 @@ async def test_an_account_with_no_password_is_told_so_and_charged_nothing(world,
         "an account with no password to change was charged a guessing budget for saying so: "
         f"{statuses}"
     )
+    # This account was seeded with the default provider, LOCAL, so a set-password link is a remedy
+    # the link route will issue; a GOOGLE account is told something else
+    # (``tests/test_account_provisioning.py``).
+    told = _change(client, world, "googler", WRONG, "a-brand-new-password")
+    assert told.json()["detail"] == (
+        "This account has no password to change. Ask an administrator for a set-password link."
+    )
 
 
 async def test_the_budget_here_is_the_same_one_the_sign_in_door_spends(world, client):
@@ -233,3 +257,43 @@ async def test_the_budget_here_is_the_same_one_the_sign_in_door_spends(world, cl
         "the sign-in door was still open after this route's budget was spent, so the two doors hold "
         f"separate allowances and an attacker refused at one simply walks to the other: {signed_in.text}"
     )
+
+
+async def test_the_temporary_password_cannot_be_chosen_again(world, client):
+    """**THE FORCED CHANGE HAS TO RETIRE THE SECRET, NOT RE-TYPE IT** (2026-10-09).
+
+    ``flagged`` holds a password an administrator chose. Before this, sending it as both the current
+    and the new password answered 200 and CLEARED the flag — the gate satisfied, the shared secret
+    still live. It is a 400 now, with a sentence that says why, and the flag is still set afterwards.
+
+    NOT CHARGED, and asserted past the budget: it is the right password, not a guess, so a person
+    who misunderstands the screen a dozen times must not be locked out of the account for it.
+    """
+    statuses = [
+        _change(client, world, "flagged", PASSWORD, PASSWORD).status_code
+        for _ in range(_ACCOUNT_FAILURES + 2)
+    ]
+    assert statuses == [400] * (_ACCOUNT_FAILURES + 2), (
+        f"re-typing the current password was not refused, or it was charged as a guess: {statuses}"
+    )
+    refused = _change(client, world, "flagged", PASSWORD, PASSWORD)
+    assert refused.json()["detail"] == SAME_PASSWORD_DETAIL
+
+    me = client.get("/api/me", headers=_headers(world, "flagged"))
+    assert me.status_code == 200, me.text
+    assert me.json()["mustChangePassword"] is True, (
+        "the refused change cleared the flag anyway, so the administrator's password stays in use"
+    )
+
+    # And a real change still works and does clear it, and the person is not signed out of the
+    # session they made it from: the answer carries a token minted after the write, in its
+    # ``X-Session-Token`` header beside a body that is exactly ``{"ok": true}`` (every session
+    # opened with the old password ends — ``tests/test_password_change_enforcement.py``).
+    changed = _change(client, world, "flagged", PASSWORD, OTHER_PASSWORD)
+    assert changed.status_code == 200, changed.text
+    assert changed.json() == {"ok": True}
+    after = client.get(
+        "/api/me", headers={"Authorization": f"Bearer {changed.headers['X-Session-Token']}"}
+    )
+    assert after.status_code == 200, after.text
+    assert after.json()["mustChangePassword"] is False

@@ -599,8 +599,9 @@ PEOPLE_SCAN_ORDER: list[dict[str, str]] = [
 #: opened one workshop would otherwise appear here by name, address and role.
 #:
 #: Named off ``designers.NEVER_ROSTER_GATED_ROLES`` so there is ONE list of "the privileged tiers"
-#: rather than two that can disagree — that constant is exactly what ``workshop_capable_accounts``
-#: folds out when its caller passes ``include_admins=False``.
+#: rather than two that can disagree. ``workshop_capable_accounts(include_admins=False)`` folds out
+#: those two and, since 2026-10-09, every other role the empanelment does not gate as well — it
+#: lists DESIGNER alone — so this constant names the part of that fold which is a disclosure rule.
 #:
 #: **WHAT IS WITHHELD IS COUNTED AND REPORTED** (``withheldAccounts`` on every people payload). A
 #: person dropped from a list without a word is the truncation bug wearing a permissions hat: the
@@ -1017,23 +1018,35 @@ def may_read_account_directories(user: Any) -> bool:
 
 
 async def officer_accounts() -> dict[str, Any]:
-    """Every account holding a ministry post, through ``oversight.officer_directory``.
+    """Every account that may be NAMED a workshop's Assistant or Regional Director, through
+    ``oversight.officer_directory``.
 
     THE EXISTING SERVICE AND NOT A SECOND QUERY. That function already folds in the platform
     allow-list as a CUT LIST, already carries its own ``truncated`` flag at
     ``ELIGIBLE_OFFICER_LIMIT``, and already attaches ``capacities`` per role. A second read here
-    would be a second answer to "who is an officer", and only one of the two would move the day the
+    would be a second answer to "who may supervise", and only one of the two would move the day the
     allow-list changes shape.
+
+    **SINCE 2026-10-09 THAT IS MORE THAN THE DIRECTORATE.** The directory answers
+    ``OVERSIGHT_HOLDER_ROLES`` — the two director tiers AND the three administrator tiers, each of
+    the latter with capacities ``[ASSISTANT_DIRECTOR, REGIONAL_DIRECTOR]`` — because an administrator
+    may be appointed to either slot. What this register folds in as UNPOSTED is narrower, and the
+    route decides it: only ``oversight.DIRECTORATE_POST_ROLES``, the tiers whose job the post is, are
+    listed with a measured zero; an administrator appears only where an oversight row names them.
+    Nothing is passed as the caller to leave out — nobody is appointing on this screen.
     """
     return await officer_service.officer_directory()
 
 
 async def inspector_accounts() -> dict[str, Any]:
-    """Every account that may be assigned an inspection, through ``eligible_inspectors``.
+    """Every account that may be APPOINTED to inspect a workshop, through ``eligible_inspectors``.
 
     The sibling of :func:`officer_accounts`, for its reason and behind the same rule in
-    :func:`may_read_account_directories`. ``INSPECTION_ROLES`` is ``{INSPECTOR}`` and that set is
-    that module's to own rather than this one's to restate.
+    :func:`may_read_account_directories`. Since 2026-10-09 that directory answers
+    ``INSPECTION_HOLDER_ROLES`` — the Inspector / Reviewer tier and the three administrator tiers —
+    and the route folds in as unposted only ``INSPECTION_ROLES``, the tier itself, for the reason
+    :func:`officer_accounts` gives. Both sets are that module's to own rather than this one's to
+    restate.
     """
     return await inspector_service.eligible_inspectors()
 
@@ -1067,11 +1080,18 @@ async def roster_representation() -> dict[str, Any]:
 
     ── EVERY FIGURE IS DERIVED, NONE IS WRITTEN DOWN ─────────────────────────────────────────────
 
-    The eligible role set is recomputed from ``workshop_capable_roles()`` minus the never-roster-gated
-    tiers — the SAME expression :func:`empanelled_designer_accounts` passes ``include_admins=False``
-    to produce — rather than spelled as a literal. A hardcoded "DESIGNER" here would be a second
-    opinion about who this register lists, and it would stop agreeing with the fold the day a second
-    workshop-capable role is added.
+    The listed role set is ``designers.ROSTER_GATED_ROLE`` — the one role the empanelment gates, and
+    exactly the role clause ``workshop_capable_accounts(include_admins=False)`` puts in front of the
+    roster fold :func:`empanelled_designer_accounts` reads — named through that constant rather than
+    spelled as a literal, so the gap and the fold cannot hold two opinions about who this register
+    lists.
+
+    **IT WAS ``workshop_capable_roles()`` LESS THE TWO ADMIN TIERS UNTIL 2026-10-09, AND THAT HAD
+    STOPPED BEING THE SAME EXPRESSION.** The fold names DESIGNER alone; the old derivation also
+    counted the Assistant Director, Regional Director and Ministry Admin posts as listed. An
+    empanelled address holding an account at one of those tiers was therefore in neither figure — not
+    on screen, not in ``rosterOtherRole`` — and the gap understated itself, the one failure this
+    caveat must not have.
 
     ⚠ **COUNTS ONLY ON THE WIRE, NEVER THE ADDRESSES.** The whole point of ``include_admins=False``
     is that this router never names a privileged account; an "empanelled but absent" list would hand
@@ -1085,9 +1105,7 @@ async def roster_representation() -> dict[str, Any]:
     from app.services.design_workshop_viewers import active_roster_emails
 
     admitted, roster_cut = await active_roster_emails()
-    eligible_roles = [
-        role for role in designers.workshop_capable_roles() if role not in designers.NEVER_ROSTER_GATED_ROLES
-    ]
+    eligible_roles = [designers.ROSTER_GATED_ROLE]
     if not admitted:
         return {
             "rosterAdmitted": 0,
@@ -1106,7 +1124,7 @@ async def roster_representation() -> dict[str, Any]:
     )
     matched = {str(getattr(user, "email", "") or "").strip().lower() for user in accounts}
     matched.discard("")
-    other_role = sum(1 for user in accounts if getattr(user, "role", None) not in eligible_roles)
+    other_role = sum(1 for user in accounts if role_value(user) not in eligible_roles)
 
     return {
         "rosterAdmitted": len(admitted),

@@ -1,8 +1,18 @@
 "use client";
 
-import { Fragment, useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useId, useState } from "react";
 import { AlertTriangle, Ban, CheckCircle2, Clock, ListChecks, Loader2, Play, RotateCcw } from "lucide-react";
 
+import {
+  HELD_POST_PENDING_FILES,
+  HeldPostNotice,
+  MEDIA_HELD_LABEL,
+  mediaListNotice,
+  mediaWorkshopIds,
+  useHeldPostRefusals,
+  writesHeld,
+  type HeldPostRefusal
+} from "@/components/designworkshop/HeldPostNotice";
 import { EmptyState } from "@/components/EmptyState";
 import { Pagination } from "@/components/Pagination";
 import { RowActions, rowAction } from "@/components/RowActions";
@@ -36,6 +46,14 @@ import type { PageResult } from "@/lib/types";
  * Admin VIEW is deliberately not ANDed into those two. This is not admin chrome — /media is an open
  * route and the list is owner-scoped — and an admin who turned the toggle off still needs to be able
  * to re-run a failed transcription, which is a repair, not a privileged surface.
+ *
+ * RETRY IS HELD FOR A POST HOLDER (2026-10-09). A re-queued transcription is written back onto the
+ * file later — the write "Transcribe now" makes, deferred to the queue — so the server refuses the
+ * retry to an admin who inspects or supervises a workshop the job's file belongs to. A row whose file
+ * names such a workshop on its own row (`mediaWorkshopIds`) draws Retry disabled, with the word on the
+ * row and the server's sentence once above the table — the media list's own treatment, so the two
+ * tables on /media say one thing one way. A workshop the file belongs to some other way is left to the
+ * server's 403, which prints in the red strip as written.
  */
 
 /** Statuses that mean the queue still has work in hand, so the list should keep refreshing itself. */
@@ -161,7 +179,23 @@ export function MediaJobsPanel() {
     return () => window.clearInterval(timer);
   }, [anyInFlight]);
 
+  /*
+    WHICH ROWS' RETRY A POST HOLDER MAY NOT PRESS. Only rows that draw Retry are asked about, and only
+    for an account that may appoint — which every admin, the only reader Retry is drawn for, is. One
+    staffing read per distinct workshop however many jobs name it; the 15-second poll asks nothing new.
+  */
+  const offersRetry = (job: MediaProcessingJob) => {
+    const status = String(job.status).toUpperCase();
+    return canOperateQueue && (status === "FAILED" || status === "CANCELLED");
+  };
+  const jobWorkshops = (job: MediaProcessingJob) => (job.mediaFile ? mediaWorkshopIds(job.mediaFile) : []);
+  const heldFor = useHeldPostRefusals((items ?? []).filter(offersRetry).flatMap(jobWorkshops));
+  const holdOf = (job: MediaProcessingJob): HeldPostRefusal => (offersRetry(job) ? heldFor(jobWorkshops(job)) : null);
+  const heldNoticeId = useId();
+
   async function retry(job: MediaProcessingJob) {
+    // A held Retry is disabled; this keeps the rule for any other way in.
+    if (writesHeld(holdOf(job))) return;
     setBusyJobId(job.id);
     setError(null);
     setNotice(null);
@@ -254,6 +288,15 @@ export function MediaJobsPanel() {
 
       {error ? <div className="border-b border-line-200 bg-red-50 px-4 py-2 text-sm text-red-700">{error}</div> : null}
       {notice ? <div className="border-b border-line-200 bg-field-50 px-4 py-2 text-sm text-ink-700">{notice}</div> : null}
+      {/* Why some rows' Retry is held — said once, each row marked in words. The region is mounted from
+          the first paint (`sr-only` while empty); the padding is the panel's own rows'. */}
+      <HeldPostNotice
+        refusal={mediaListNotice((items ?? []).map(holdOf), "re-processed")}
+        id={heldNoticeId}
+        className="mx-4 my-3"
+        sayPending
+        pendingSentence={HELD_POST_PENDING_FILES}
+      />
 
       {items === null && error ? (
         // A FIRST LOAD THAT FAILED IS NOT A LOAD STILL IN PROGRESS, and this panel spent its whole
@@ -301,6 +344,7 @@ export function MediaJobsPanel() {
               // "already trying again" — two states that otherwise look identical from here.
               const reason = job.error?.trim();
               const retryable = status === "FAILED" || status === "CANCELLED";
+              const hold = holdOf(job);
               return (
                 <tbody key={job.id} className="border-b border-line-200 align-top">
                   <tr>
@@ -325,12 +369,20 @@ export function MediaJobsPanel() {
                           <button
                             className={rowAction("edit")}
                             onClick={() => retry(job)}
-                            disabled={busyJobId === job.id}
+                            disabled={busyJobId === job.id || writesHeld(hold)}
+                            aria-describedby={typeof hold === "string" ? heldNoticeId : undefined}
                             data-testid="media-job-retry"
                           >
                             <RotateCcw className="h-3.5 w-3.5" aria-hidden />
                             {busyJobId === job.id ? "Re-queuing…" : "Retry"}
                           </button>
+                          {/* The word, so a held row is never told apart by a greyed button alone. The
+                              amber pair, not amber ink: the table's ground inverts and the pair does not. */}
+                          {typeof hold === "string" ? (
+                            <span className="self-center rounded-md bg-amber-100 px-2 py-1 text-xs font-medium text-amber-800">
+                              {MEDIA_HELD_LABEL}
+                            </span>
+                          ) : null}
                         </RowActions>
                       ) : retryable ? (
                         // Never a button that would 403: retry is require_admin while this list is

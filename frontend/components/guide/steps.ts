@@ -1120,11 +1120,12 @@ export const GUIDE_STEPS: GuideStep[] = [
       // wrong in BOTH directions at once by the time anybody read it back. There are ten cards below
       // this one, not eight (`design-workshop-questionnaires` and `design-workshop-inspection` were
       // inserted after the eight was typed), and the tenth is the one card in this arc for which the
-      // claim is FALSE: `design-workshop-inspection` is gated on `INSPECTION_ROLES`, a frozen set of
-      // exactly one member, which refuses an admin and the master admin exactly as it refuses a
-      // designer. So a count written to reassure a reader had quietly grown to assert the opposite of
-      // the warning this file gives four paragraphs from the top — that copying this wording onto the
-      // inspection card "would be a REGRESSION DRESSED AS CONSISTENCY". Counting reached it anyway.
+      // claim is FALSE: `design-workshop-inspection` is gated on who may be appointed to inspect —
+      // `INSPECTION_ROLES`, one member, until 2026-10-09, and `INSPECTION_HOLDER_ROLES` since — which
+      // refuses a designer whichever set it is. So a count written to reassure a reader had quietly
+      // grown to assert the opposite of the warning this file gives four paragraphs from the top —
+      // that copying this wording onto the inspection card "would be a REGRESSION DRESSED AS
+      // CONSISTENCY". Counting reached it anyway.
       //
       // THE FIX IS TO STOP DESCRIBING OTHER CARDS FROM THIS ONE. The sentence is now the same string
       // `design-workshop-questionnaires`, `design-workshop-sketches` and `design-review` already
@@ -1203,10 +1204,11 @@ export const GUIDE_STEPS: GuideStep[] = [
       "Every stage saves on its own, into a draft on this device, as you go. That is what makes a fortnight of fieldwork survivable: you resume exactly where you left off, and nothing is waiting on one long save at the end.",
       // ⚠ "THIS SCREEN AND THE ONES BELOW IT" REACHED ONE CARD TOO FAR, and the card it reached is
       // the single one in this arc the claim is false for. Everything under this one answers to
-      // `canRunDesignWorkshops` — except `design-workshop-inspection`, which answers to
-      // `INSPECTION_ROLES` and refuses designers, admins and the master admin alike. "The ones below
-      // it" is a position, and positions absorb whatever is appended: the inspection card was
-      // appended, and this sentence started making a promise about it without a character changing.
+      // `canRunDesignWorkshops` — except `design-workshop-inspection`, which answers to who may be
+      // appointed to inspect and refuses every designer (it refused admins and the master admin too,
+      // until they became appointable on 2026-10-09). "The ones below it" is a position, and
+      // positions absorb whatever is appended: the inspection card was appended, and this sentence
+      // started making a promise about it without a character changing.
       //
       // IT STILL HAS TO COVER FIVE CARDS, WHICH IS WHY IT IS NOT SIMPLY SHORTENED TO "this screen".
       // Cards & tags, Stages, Readiness, Report and Report history each carry `/design-workshops` as
@@ -1528,11 +1530,15 @@ export const GUIDE_STEPS: GuideStep[] = [
     // ⚠ AND IT IS THE ONE CARD IN THIS ARC THE READER PROBABLY CANNOT OPEN, WHICH IS A DIFFERENT
     // REFUSAL FROM THE OTHER FIVE AND MUST NOT BORROW THEIR SENTENCE. The other gated cards say
     // "designers, admins and the master admin", because `canRunDesignWorkshops` is that set. This
-    // one is `INSPECTION_ROLES` (`lib/permissions.ts`), which is a frozen set of exactly ONE member:
-    // INSPECTOR. An admin is refused it, the master admin is refused it, and a professor is refused
-    // it — so writing "and above", or anything that reads as a rank threshold, would be wrong in
-    // both directions at once. INSPECTOR sits at rank 37, between DESIGNER and PROFESSOR, which is
-    // precisely the arrangement that misleads every threshold instinct a reader has.
+    // one is `canInspectDesignWorkshops` (`lib/permissions.ts`): the Inspector / Reviewer tier, plus
+    // — since the owner's ruling of 2026-10-09 — a Ministry Admin, an admin and the master admin,
+    // because any of those three may be APPOINTED to inspect a workshop by somebody else, and each
+    // then reads only the workshops they were appointed to. A designer, a professor and the two
+    // directorate posts are refused it — so writing "and above", or anything that reads as a rank
+    // threshold, would be wrong in both directions at once. INSPECTOR sits at rank 37, between
+    // DESIGNER and PROFESSOR, which is precisely the arrangement that misleads every threshold
+    // instinct a reader has. (Until that ruling the set had exactly one member and an admin was
+    // refused it by name; this comment and the card's first `watch` said so.)
     id: "design-workshop-inspection",
     label: "Workshops to inspect",
     action: "Read a finished workshop",
@@ -1549,9 +1555,9 @@ export const GUIDE_STEPS: GuideStep[] = [
       "How complete the workshop is"
     ],
     watch: [
-      "IT IS ITS OWN TIER AND NOT A RANK. Inspector / Reviewer is the only role this surface opens for: an admin and the master admin are refused it exactly as a professor is, and they read design & prototype workshops on Design workshops instead. If you are a designer, this step is here so you know what a colleague is looking at when they read your workshop back — not because you can open it.",
-      "An admin chooses who inspects a workshop, one workshop at a time, on Manage workshop access.",
-      "An empty page is a real answer and the screen says which kind it is. Nothing assigned reads “No workshop is assigned to you”; a list that could not be loaded says so instead — because the correct empty state and a silent failure look identical, and there is no other surface to cross-check against.",
+      "IT IS A SET AND NOT A RANK. This surface opens for the Inspector / Reviewer tier, and for a Ministry Admin, an admin or the master admin because any of them may be appointed to inspect a workshop by somebody else — each reading only the workshops they were appointed to. A professor is refused it, and so is a designer: if you are a designer, this step is here so you know what a colleague is looking at when they read your workshop back — not because you can open it.",
+      "A Ministry Admin, an admin or the master admin chooses who inspects a workshop, one workshop at a time, on Workshop oversight.",
+      "An empty page is a real answer and the screen says which kind it is. Nothing assigned reads “You do not hold any inspection posts”; a list that could not be loaded says so instead — because the correct empty state and a silent failure look identical, and there is no other surface to cross-check against.",
       // ⚠ THIS ROW ENDED "Nothing an inspector does can change a workshop" UNTIL 2026-09-15, AND
       // THAT SENTENCE WAS TRUE WHEN IT WAS WRITTEN AND STOPPED BEING TRUE WITHOUT ANYTHING SAYING
       // SO. The inspection surface grew two write routes —

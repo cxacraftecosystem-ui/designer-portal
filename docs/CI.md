@@ -25,7 +25,12 @@ every secret it needs. Sister documents:
 >
 > **This portal's own infrastructure**, read out of
 > `infra/terraform/terraform.tfstate.d/designrepo/terraform.tfstate` (the `designrepo` Terraform
-> workspace) and `frontend/.vercel/project.json`:
+> workspace) and `frontend/.vercel/project.json`. That link file has since gone from every checkout;
+> a workstation now links through the gitignored root `.env.vercel` (`VERCEL_ORG_ID`,
+> `VERCEL_PROJECT_ID`), and CI through the repository secrets. The two Vercel rows were re-checked
+> on 2026-10-09 against the live record instead: the deployment `designer-repository.vercel.app`
+> serves names `designer-portal` as its repository and carries a run id from this repository's
+> pipeline.
 >
 > | | This portal (`designer-portal`) | The field repository — **never put these here** |
 > |---|---|---|
@@ -124,7 +129,7 @@ Three properties of that wait are worth knowing before you rely on it:
 | # | Workflow | File | Trigger | What it does |
 |---|---|---|---|---|
 | 1 | Deploy backend to EC2 | `.github/workflows/deploy-backend.yml` | `push` to `main` | `wait-for-checks` (§1.1) → rsync into `releases/<sha>-<run_id>.<attempt>` (per deploy ATTEMPT, so a re-run never writes into the tree that is serving) → write that release's `.env` → build or reuse a venv from `requirements.lock` → `prisma migrate deploy` → **flip the `current` symlink** → restart `fieldrepo` + `fieldrepo-queue` → poll `/health`. See §1.2 for the release layout and the rollback command. |
-| 2 | Deploy frontend to Vercel | `.github/workflows/deploy-frontend.yml` | `workflow_run` on **1** completing | gate → `wait-for-checks` (§1.1, and it runs exactly where **1**'s copy could not) → `vercel pull` → **assert the pulled env carries what the app needs** → `vercel build --prod` → **assert those values actually reached the bundle** → `vercel deploy --prebuilt --prod` → smoke-check the alias → **assert the bundle the CDN serves is the one that was verified** |
+| 2 | Deploy frontend to Vercel | `.github/workflows/deploy-frontend.yml` | `workflow_run` on **1** completing | gate → `wait-for-checks` (§1.1, and it runs exactly where **1**'s copy could not) → `vercel pull` → **assert the pulled env carries what the app needs** (and, since 2026-10-09, *warn* when the project's Node.js Version differs from the build's major or the pulled env holds a database credential) → `vercel build --prod` → **assert those values actually reached the bundle** → `vercel deploy --prebuilt --prod` → `vercel alias set` onto the production alias → smoke-check the alias → **assert the bundle the CDN serves is the one that was verified** |
 | 3 | Android build | `.github/workflows/android-build.yml` | `workflow_run` on **2** completing, plus `pull_request` | JDK 17 → `compileDebugKotlin` → `testDebugUnitTest` → `lintDebug` (advisory) → `assembleDebug` → upload APK |
 | — | Checks | `.github/workflows/checks.yml` | **every** `pull_request`, `push` to `main`, `workflow_dispatch` — **no `paths:` filter, deliberately** | Four independent jobs plus a packaging job. The three that gate: `Backend tests` (whole pytest suite, DSN `ci.invalid` so the database-backed modules skip — and, despite the job's name, a last step that runs `ruff check .` over `backend/` and can fail the build on its own; the dated baseline in `backend/pyproject.toml` is what keeps it green), `Web typecheck, lint and unit specs` (`tsc --noEmit`, `eslint . --max-warnings=0`, `npm run test:unit`), `Docs check` (`node docs/tools/check-docs.mjs`). **`Backend integration tests` is the fourth and is deliberately advisory** — a `postgres:16` service container, `prisma migrate deploy`, then the *whole* suite with a loopback DSN so the database-backed modules that skip in job 1 actually run. Its last step asserts that `conftest` reported a local database, because a job that silently ran the same DB-less suite would prove nothing while looking green. It is not in `GATING_JOBS` and must not be added to branch protection until somebody has watched a few runs and knows what it costs. |
 
@@ -294,9 +299,12 @@ sitting still.
 It polls `repos/<owner>/<repo>/actions/workflows/checks.yml/runs?head_sha=<sha>` — **the workflow by
 FILENAME, never by its display name**, because renaming `name:` at the top of `checks.yml` would
 otherwise return an empty list, and an empty list is indistinguishable from "has not started yet". It
-prefers the `push` run for that SHA and falls back to any run for it, so a re-run or a dispatch of
-Checks against the same commit is just as good an answer. Sixty attempts twenty seconds apart is a
-**twenty-minute budget**, roughly double the measured wall clock of the three gating jobs; the job's
+prefers a run for that SHA that was **not cancelled**, the `push` run first among those, and falls
+back to any run for it, so a re-run or a dispatch of Checks against the same commit is just as good an
+answer. (Until 2026-10-09 it preferred the `push` run outright, and a dispatch of Checks on `main`
+cancels a push run still in flight, so it graded the cancelled run and ignored the green one.) Sixty
+attempts twenty seconds apart is a **twenty-minute budget**, roughly double the measured wall clock
+of the three gating jobs; the job's
 own `timeout-minutes: 25` sits a hair above it so the loop's error message — which names what it was
 still waiting for — is what a reader sees rather than a bare cancellation. The workflow needs
 `permissions: actions: read` for this; without it the poll gets a 404 that looks exactly like "not
@@ -311,9 +319,23 @@ the frontend's gate never sets `should_deploy`. The frontend copy runs exactly w
 could not: a push whose backend deploy correctly did nothing and therefore correctly waited for
 nothing.
 
+**A cancelled Checks run is not a failed one — since 2026-10-09.** `checks.yml` cancels a run in
+progress when a newer push to `main` starts its own, and the poll used to file that under "Checks
+failed": two merges a few minutes apart turned the earlier commit's deploy red with a diagnosis that
+was not true. A gating job that concluded `cancelled` now gets its own verdict. If `main` has moved
+past the SHA, the newer commit's own run ships both, so the wait ends **green** with a *Superseded by
+a newer commit* notice and the output `superseded=true`, and nothing is shipped from that run. If the
+SHA is still `main`'s tip, nothing newer will ship it, so the wait keeps polling for a re-run or a
+dispatch of Checks until the twenty-minute budget runs out, then fails saying *cancelled, not failed*.
+A real failure in any gating job still wins over a cancelled one. All four copies (one in each deploy
+workflow, here and in `documentation-portal`) carry the same selection, verdict and superseded
+branch, byte for byte.
+
 **Both `deploy` jobs name the skip case explicitly** — `success` *or* `skipped` proceeds; `failure`
-or `cancelled` does not. A `needs:` on a job that skipped would otherwise skip the deploy with it,
-which would turn the emergency override into "nothing deploys ever".
+or `cancelled` does not, and neither does a wait that reported `superseded=true`. A `needs:` on a job
+that skipped would otherwise skip the deploy with it, which would turn the emergency override into
+"nothing deploys ever". A superseded backend run skips its `deploy` job, so stage 1's `changes` job
+never counts it as the commit last deployed.
 
 ### 1.2 The release layout on the box, and how to roll back
 
@@ -350,6 +372,30 @@ sudo systemctl restart fieldrepo fieldrepo-queue
 Seconds, no build, no network fetch. **The one thing a flip cannot undo is an applied migration.** If
 the release you are rolling back to predates a migration that has run, the old code meets a schema it
 was not written for, and the symlink will not save you — that is a restore, not a rollback.
+
+**Rolling back the web app is a different command, and the obvious one does not work.** Measured
+2026-10-09, `designer-repository.vercel.app` was an alias set by hand rather than one of the Vercel
+project's domains, and Instant Rollback, `vercel rollback` and `vercel promote` move only the
+project's domains. So they left the address users visit on the broken build, and stage 2's own
+failure message told the reader to use them until that date. What moves it:
+
+```bash
+vercel ls designer-repository --prod                  # the last deployment known to work
+vercel alias set <that-deployment-url> designer-repository.vercel.app
+```
+
+Then make the next push to `main` the fix or a revert: stage 2's gate compares `main` with what the
+alias serves, so any other push publishes the same frontend again.
+[DEPLOYMENT_VERCEL.md](DEPLOYMENT_VERCEL.md) §3.1 has the full picture, including the agreed
+dashboard change that makes the alias a project domain.
+
+**After any rollback, `--prod` stops moving project domains until a deployment is promoted, which is
+why stage 2's `vercel alias set` step must stay** even once that dashboard change is made. An Instant
+Rollback, from the dashboard or as `vercel rollback`, turns off auto-assignment of production
+domains, so every later `vercel deploy --prod` is staged and the project's domains stay on the
+rolled-back build until `vercel promote <url>` or **Undo Rollback** turns it back on. The alias-set
+step moves the alias explicitly on every publish, so the site keeps updating through that state; it
+is not a no-op once the alias is a project domain (corrected 2026-10-09).
 
 Which is exactly why **a failed `prisma migrate deploy` deliberately does not flip.** The box stays
 on the release it was already running, which is code that matches the schema the database actually
@@ -583,9 +629,9 @@ PR (§1.3). `pip` also ignores **ruff** (minor and major) and **bcrypt** (entire
 | `EC2_HOST` | backend | Elastic IP of **this portal's** API box: `13.206.216.18` (instance `i-0e091ca8e6b417b52`, tagged `designrepo-api`). From the repository: `cd infra/terraform && terraform workspace show` — it must print `designrepo` — then `terraform output api_public_ip`. In the EC2 console pick the instance tagged **`designrepo-api`**, never `fieldrepo-api`: both exist in the same account and region. `15.207.145.174` is the field repository and must never appear here. |
 | `EC2_SSH_KEY` | backend | The **entire** private key file for that instance's key pair `designrepo-deploy`, `-----BEGIN…` through `-----END…` inclusive, with the trailing newline: `infra/terraform/designrepo-deploy.pem`. Paste the file contents, not the path. `*.pem` is gitignored — never commit it. The sibling `infra/terraform/fieldrepo-deploy.pem` opens the *other* product's box; pasting it together with the IP above is the pair that deploys successfully onto the wrong machine. |
 | `BACKEND_ENV` | backend | The full contents of the production `backend/.env`: `DATABASE_URL`, `JWT_SECRET`, `AWS_*`, `OPENAI_API_KEY`, `GEMINI_API_KEYS`, `ELEVENLABS_*`, `DEEPGRAM_*`, `BACKEND_CORS_ORIGINS`, … Every key and its meaning is in [ENVIRONMENT.md](ENVIRONMENT.md). Easiest source of truth, over an SSM session on the box: `cat /home/ubuntu/app/current/backend/.env` — `current` is the symlink to the live release (§1.2), and each release carries the `.env` it was deployed with, so reading the path without `current/` reads whichever release happens to be there. The workflow pipes the value over the SSH tunnel; it is never on a command line. |
-| `VERCEL_TOKEN` | frontend | <https://vercel.com/account/tokens> → **Create Token**. Scope it to the **team that owns `designer-repository`**, not "Personal Account", or the CLI 403s. Set an expiry you will actually remember — the deploy starts failing with `Error: Not authorized` the day it lapses. This is the only genuinely sensitive value of the three Vercel ones. |
+| `VERCEL_TOKEN` | frontend | <https://vercel.com/account/tokens> → **Create Token**. Scope it to the **team that owns `designer-repository`**, not "Personal Account", or the CLI 403s. Set an expiry you will actually remember — the deploy starts failing with `Error: Not authorized` the day it lapses. This is the only genuinely sensitive value of the three Vercel ones. **Measured 2026-10-09 (token metadata, never the value):** the token this repository uses had USER scope and NO expiry, so a leak would give permanent control of every project on the account. Replacing it with a team-scoped, expiring one, then revoking the old one, is an open owner decision; record the expiry date here when it is made. |
 | `VERCEL_ORG_ID` | frontend | `team_pcTf4Alb2DCIwq2IZcdu00dS`. Also at Vercel → Team Settings → General → **Team ID**, or in the `.vercel/project.json` that a local `vercel link` writes inside `frontend/` (`orgId`). An identifier, not a credential. Both products live in this one team, so it is the one Vercel value that is the same either way — and therefore the one that cannot warn you. |
-| `VERCEL_PROJECT_ID` | frontend | `prj_uRYcc64FRwcrkvMDZg9Gp7ZEtCoc` — Vercel → Project **`designer-repository`** → Settings → General → **Project ID**. CORRECTED 2026-08-23: this row said `designer-repository`, and the owner has confirmed the production target is **`designer-repository`** — measured, `designer-repository.vercel.app/login` answers 200 and `designer-repository.vercel.app/login` answers 404. A root-path probe returns 200 for both and proves nothing. WHETHER THE ID BELOW IS STILL THE RIGHT ONE IS UNVERIFIED: it was written by `vercel link`, whose `.vercel/project.json` records `projectName: designer-repository`. Read it off the `designer-repository` project before trusting it, or the same `.vercel/project.json` (`projectId`), which is what `vercel link` wrote in this checkout. An identifier, not a credential, but it is the **deploy target**: `prj_EzXN8hhGKpMciFBrZRdxpcgUUzN0` is the field repository's project, and publishing there succeeds — it replaces another product's live site with this one's build. `deploy-backend.yml` pins `BACKEND_CORS_ORIGINS` to `designer-repository.vercel.app`, so the correct target is also the only one the API will answer. |
+| `VERCEL_PROJECT_ID` | frontend | `prj_uRYcc64FRwcrkvMDZg9Gp7ZEtCoc` — Vercel → Project **`designer-repository`** → Settings → General → **Project ID**. CORRECTED 2026-08-23: this row said `design-repository`, and the owner has confirmed the production target is **`designer-repository`** — measured, `designer-repository.vercel.app/login` answers 200 and `design-repository.vercel.app/login` answers 404. A root-path probe returns 200 for both and proves nothing. (Until 2026-10-09 this sentence named `designer-repository` on both sides, which made the evidence a tautology; `deploy-backend.yml`'s CORS comment keeps the original measurement.) The id was written by `vercel link`, whose `.vercel/project.json` recorded `projectName: designer-repository`; that file is gone from every checkout. **Corroborated 2026-10-09 against the live record instead:** the deployment the alias serves carries `githubRepo` `designer-portal` and a `deployedRunId` that is one of this repository's runs, which only a correct `VERCEL_PROJECT_ID` can produce. An identifier, not a credential, but it is the **deploy target**: `prj_EzXN8hhGKpMciFBrZRdxpcgUUzN0` is the field repository's project, and publishing there succeeds — it replaces another product's live site with this one's build. `deploy-backend.yml` pins `BACKEND_CORS_ORIGINS` to `designer-repository.vercel.app`, so the correct target is also the only one the API will answer. |
 | `SUPABASE_DATABASE_URL` *or* `DATABASE_URL` | keep-alive cron — **live again since 2026-09-02** (dormant 2026-08-22 → 2026-09-02) | A PostgreSQL connection string for the keep-alive ping. `SUPABASE_DATABASE_URL` is **set** (2026-09-02): the provider hosting production today pauses idle free-tier projects, which is the case the cron exists for. The secret holds the session DSN; the script rewrites `:5432 → :6543` itself for a `.pooler.supabase.com` host so the nightly ping lands on the transaction pooler and never occupies a session slot. Unrelated to deploys either way. |
 
 > `.vercel/` is gitignored and is created by `vercel link`, so it is absent from a fresh clone —
@@ -626,11 +672,13 @@ at all — verified by deploying successfully immediately after unlinking. The c
 requests no longer get automatic preview deployments; if those are ever wanted back, re-link in the
 dashboard and rely on `ignoreCommand` to keep Git builds off `main`.
 
-**Until the three Vercel secrets exist, stage 2 skips instead of failing.** Its gate job checks for
-`VERCEL_TOKEN` and, when it is absent, writes the table above into the run summary and reports
-`should_deploy=false`. The run stays green, stage 3 still fires, and the backend deploy's tick keeps
-meaning "the backend deployed". This is deliberate: a red X that everyone knows to ignore is worse
-than no X at all.
+~~**Until the three Vercel secrets exist, stage 2 skips instead of failing.**~~ **Stage 2 FAILS when
+`VERCEL_TOKEN` is missing, and has since 2026-08-23.** Its gate job checks for the secret and, when it
+is absent, writes the table above into the run summary, reports `should_deploy=false` and exits 1.
+The paragraph that stood here defended the old green skip ("a red X that everyone knows to ignore is
+worse than no X at all"). Run 32632590460 is why it went: it published nothing, concluded `success`,
+and the owner went looking for UI changes the site had never received. Stage 3 still fires either
+way, because `android-build.yml` chains on completion, not success.
 
 > **UNVERIFIED:** which secrets the repository currently holds cannot be read from a checkout. An
 > earlier version of this document asserted the set was `BACKEND_ENV`, `DATABASE_URL`, `EC2_HOST` and
@@ -662,10 +710,12 @@ same value in two places. Change one there and re-run this workflow (or push) to
    there is no Git integration left to race the pipeline. See the "deliberately NOT linked"
    paragraph in §2 for why cancelling builds was not enough.
 
-   The belt-and-braces layers behind that are still in place and should stay: `ignoreCommand:
-   "exit 0"` in `frontend/vercel.json`, and `gitProviderOptions.createDeployments` disabled at the
-   project level. If the link is ever restored for PR previews, those two are what keep Git builds
-   off `main`.
+   The belt-and-braces layers behind that should both be in place: `ignoreCommand: "exit 0"` in
+   `frontend/vercel.json`, and `gitProviderOptions.createDeployments` disabled at the project level.
+   **Measured 2026-10-09, only the first was:** `createDeployments` read `enabled` on
+   `designer-repository`. Disabling it is `scripts/vercel-ci-setup.mjs` step 2, or one `PATCH
+   /v9/projects/{id}`, and it is part of the dashboard work agreed that day. If the link is ever
+   restored for PR previews, those two are what keep Git builds off `main`.
 
 3. **Merge these workflow files to `main`.** `workflow_run` only fires for workflow files that exist
    **on the default branch** — on a feature branch, stages 2 and 3 will not trigger no matter what
@@ -772,8 +822,10 @@ same value in two places. Change one there and re-run this workflow (or push) to
   inside an existing workflow, not another `workflow_run` link.
 - **`concurrency.cancel-in-progress` is off for both deploys.** Cancelling a backend run mid-deploy
   can leave `fieldrepo` stopped between the service stop and the migrate, with no restart step left
-  to run. Overlapping pushes queue instead. Only the Android build is cancellable — nothing outside
-  the runner is mutated there.
+  to run. Overlapping pushes queue instead. The Android build, the emulator run and the Checks are
+  the ones that cancel a run in progress — none of them mutates anything outside the runner — and a
+  Checks run cancelled on `main` is read by the deploys' `wait-for-checks` as superseded once `main`
+  has moved past its commit, and otherwise as cancelled rather than failed (§1.1).
 
 ---
 
@@ -811,8 +863,9 @@ the moment `main` moves, which is *before* the backend has deployed and migrated
 spends that window calling endpoints that answer 404. GitHub Actions is the single publisher and it
 waits for the backend. The Ignored Build Step is a Git-integration feature only — `vercel build` and
 `vercel deploy --prebuilt` from CI never run it, so this cannot block the pipeline. Git-triggered
-deployments are *also* disabled at the project level (`gitProviderOptions.createDeployments`), so
-this is belt and braces.
+deployments are *meant* to be disabled at the project level as well
+(`gitProviderOptions.createDeployments`), making this belt and braces. Measured 2026-10-09 they were
+not (§3, step 2), so on that date this setting was the only layer behind the removed Git link.
 
 **`npm ci can only install packages when … in sync`.** `frontend/package-lock.json` is stale. Run
 `npm install` in `frontend/` and commit the lockfile (DEPLOYMENT_VERCEL.md §7.5).
@@ -825,6 +878,32 @@ restore the Ignored Build Step — see §3.2.
 three assertions in §1 fail the run instead. If it happens anyway, the assertions have a hole and
 that hole is the bug — do not just fix the variable. Start at
 [DEPLOYMENT_VERCEL.md §2.2](DEPLOYMENT_VERCEL.md).
+
+**Stage 2 is red on "Assert the bundle the CDN is serving is the one that was verified".** That
+build is already live. Roll the alias back first, with `vercel alias set` (§1.2, "Rolling back the
+web app"), not Instant Rollback. Then make the next push the fix or a revert.
+
+**A deploy run is red on "Wait for Checks on this commit".** Read the error. *Checks failed* means a
+gating job is red on that commit: fix it, and the next push ships it. *Checks … was CANCELLED, not
+failed* means the Checks run was cancelled while the commit was still `main`'s tip and nothing re-ran
+it within twenty minutes: re-run that Checks run (or dispatch Checks on `main`), then re-run the
+deploy. A gating job that hits its own `timeout-minutes` also ends as cancelled, so check the job
+before blaming a person. *Timed out* means no verdict at all in twenty minutes (§1.1).
+
+**A deploy run is green with a "Superseded by a newer commit on main" notice and nothing shipped.**
+Working as designed since 2026-10-09: the Checks run for that commit was cancelled because a newer
+push to `main` started its own, and the newer commit's own deploy run ships both (§1.1). Look at that
+run, not this one.
+
+**Stage 2 warns "Production runs a different Node major from CI".** The project's Node.js Version is
+not the major `checks.yml` and the build run on. Set it in the dashboard
+([DEPLOYMENT_VERCEL.md](DEPLOYMENT_VERCEL.md) §1); the next publish picks it up. It is a warning
+because both majors run the current bundle; the risk is code that behaves differently between them.
+
+**Stage 2 warns "The frontend project holds database credentials".** A storage integration is
+connected to the Vercel project. Disconnect it from the project rather than deleting the variables
+one by one, and leave the integration and the store alone ([DEPLOYMENT_VERCEL.md](DEPLOYMENT_VERCEL.md)
+§2.3).
 
 **Android build fails on the SDK.** The workflow installs `platforms;android-35` and
 `build-tools;35.0.0` explicitly because runner images drift. If `compileSdk` in
@@ -858,11 +937,20 @@ this checkout is `cxacraftecosystem-ui/designer-portal`. Its step 3 writes `VERC
 put a **live, team-scoped Vercel token** into the Actions secrets of a repository that is not this
 one — where any workflow in that repository can read it, and anyone who can push a branch there can
 add a workflow that does — and left this repository with no token, which is the state §2's
-"stage 2 skips instead of failing" paragraph describes.
+"stage 2 skips instead of failing" paragraph described (struck: since 2026-08-23 that state fails
+the run).
 
 The script now derives the slug from `GITHUB_REPOSITORY` or the `origin` remote, exits non-zero if
 neither resolves, prints the repository and Vercel project it is about to touch, and refuses to run
 unattended without `--yes`.
+
+**2026-10-09: it ran again.** Until then it read `frontend/.vercel/project.json` unconditionally,
+and with that file gone from every checkout it died with ENOENT before printing anything. It now
+takes the project from that file or from `VERCEL_ORG_ID` and `VERCEL_PROJECT_ID`, for example
+`node --env-file=.env.vercel scripts/vercel-ci-setup.mjs`. It refuses when the two sources name
+different projects, or when only one of the two variables is set. It reads the project's name from
+the API before printing anything, and refuses the field repository's project by name, as the deploy
+workflow does.
 
 **If that script has ever been run, treat the token as exposed.** By hand, in this order:
 
@@ -924,11 +1012,12 @@ parts that are not are exactly the parts that were wrong before.
 |---|---|
 | The workflows, their triggers and their step order | `.github/workflows/*.yml`. `grep -n "^name:\|^on:\|    - name:" .github/workflows/deploy-frontend.yml` renders the shape of a workflow in one command. **This row said "the three workflows"; then five; at 2026-09-03 there are TEN**, named rather than counted because the count is precisely what goes stale — twice now: `android-build.yml`, `android-emulator.yml`, `backup-db.yml`, `checks.yml`, `deploy-backend.yml`, `deploy-frontend.yml`, `e2e-live.yml`, `keep-supabase-active.yml`, `monitor.yml`, `publish-android.yml`. Re-derive them with `ls .github/workflows/` rather than from this sentence; the same stale count was just repaired in `checks.yml`'s own header, which now NAMES the workflows beside it for exactly this reason ("a count is the one fact in this header that a new file falsifies silently and nobody re-reads"). |
 | **"Runs" versus "gates"** | **Not checkable from a checkout, which is why §1 and §5 say it in words rather than leaving it implied.** A workflow file proves a job RUNS; nothing in `.github/` proves it BLOCKS anything, because required status checks live in the repository's branch-protection settings (`gh api repos/:owner/:repo/branches/main/protection`, or the Settings page). A reader who takes a green Checks tick as protection for `main` is wrong today. **The gap this row used to record is CLOSED and the row is kept for the rule, not the complaint:** `checks.yml` landed on 2026-08-20 with a long header about what it stops and no sentence about what it does not, and it now carries one — the `THIS WORKFLOW RUNS. IT DOES NOT, BY ITSELF, GATE ANYTHING` block, which names the two specific things it does not do (block a merge without the three job names set as required checks, and block a deploy, since `deploy-backend.yml` fires on its own `push: main` trigger and the two RACE). **The second of those two is no longer true, as of 2026-09-03**, and the correction is worth stating precisely rather than crossing the sentence out: both deploy workflows now carry a `wait-for-checks` job that polls the Checks run at the same SHA and refuses to hand over to `deploy` unless the three gating jobs are green (§1.1). **The remaining gap, stated so it is not mistaken for closed:** the backend's wait is scoped to pushes that touched `backend/`, so a frontend-only push is gated by the *frontend's* copy of the wait and by nothing in the backend run — and neither wait touches MERGING at all. A red Checks still merges to `main` until branch protection names the three jobs. Whenever a bullet in §5 moves from "not a gate" to built, say which of the two it became — and say it in the workflow as well as here, because a reader who opens the YAML rarely opens this file. |
+| The `wait-for-checks` copies (§1.1) | One in each deploy workflow here, and one in each of `documentation-portal`'s. Their run selection, verdict program and `cancelled` branch are byte-identical as of 2026-10-09 and must stay so. `grep -n superseded` over `.github/workflows/deploy-backend.yml` and `.github/workflows/deploy-frontend.yml` finds, in each file, the job's output, the branch that writes it and the `deploy` job's refusal; `grep -n 'select(.conclusion != "cancelled")'` over the same two finds the selection. Fix a defect in one copy, fix it in all four. |
 | The secrets **table** (names and purposes) | `grep -ho 'secrets\.[A-Z_]*' .github/workflows/*.yml \| sort -u` lists every secret the workflows read. Anything in that output missing from §2 is undocumented. |
 | Which secrets **exist** | **Not checkable from a checkout, and deliberately not stated.** `gh secret list`, or the Actions settings page. A previous version asserted an inventory here and it went stale within days. |
 | The §5 non-gates | The absence of a job. A row leaves that list when a workflow gains the step — so re-read §5 against the workflow files, not against memory. **This row is not enough on its own and 2026-08-19 proved it:** the Android bullet went stale not because a workflow changed but because the *tree* did — the step was already there, branching on whether `app/src/test` had sources, and the sources arrived. A non-gate bullet that describes the CODE as well as the workflow has two ways to rot, and only one of them is visible in `.github/`. |
 | The measured pytest figure in §5 | **There is no longer a figure to re-date, on purpose.** It said "294 cases passing in 8.7 s" for three weeks after the suite had roughly septupled and grown ~28 `TestClient` modules, and a stale number quoted as the cost of a proposed CI job is worse than no number. §5 points at [REPO_FACTS.md](REPO_FACTS.md), which is generated. If you put a timing back, date it and say which `DATABASE_URL` it ran with — the same command takes seconds with the database modules skipping and minutes with them running. |
-| Vercel project settings (Root Directory, Git link, `createDeployments`) | **UNVERIFIED from here** — dashboard state. §3 and §6 say what they must be; the workflow's own "Assert the project is still rooted at frontend/" step is the only thing that actually checks one of them, and it checks it at deploy time. |
+| Vercel project settings (Root Directory, Git link, `createDeployments`, Node.js Version, project domains, store connections) | **UNVERIFIED from here** — dashboard state. §3 and §6 say what they must be. At deploy time the workflow **asserts** Root Directory and **warns** on a Node.js Version whose major differs from the build's and on any database credential in the pulled environment; the rest is checked by nothing. The 2026-10-09 measurements quoted in §0, §1.2, §2, §3 and §6 are dated so they can be re-taken: they record what was true, not what is. |
 | **§0's identity register** | `docs/tools/check-docs.mjs` (`checkSiblingIdentity`), which reads THIS table and then sweeps every tracked file for the field repository's values: each occurrence must say whose it is within a few lines, or the run reports it. Where a checkout holds the artefacts §0 names, the *this portal* column is corroborated against them — `outputs.api_public_ip` and `outputs.s3_bucket` of the `designrepo` Terraform workspace, `frontend/.vercel/project.json`, and `git remote get-url origin`. So the way to add a fact is to add a ROW: an identity established anywhere else is one the sweep cannot see, and a row that states its value in prose instead of a backticked literal is a row that has quietly left the sweep — both are failures, and the number of sibling values this table yields is pinned in `EXPECTED_SIBLING_VALUES`. **An unlabelled sibling value is a failure wherever it is written**, .kt and .tf and .env.example included, since those are the files that point a deploy at a machine. The nine mentions already in the tree are listed one per line in `SIBLING_ALLOWLIST` and printed as `known` on every run; shrinking that list is the work. Changed 2026-08-22 — until then only `docs/*.md` could fail, so a reintroduced deploy target in a source file produced a green run. |
 | The CloudFront row staying empty | Two checks, in both directions. `checkAndroidApiHost` requires ENVIRONMENT.md to carry the open question for exactly as long as the handset default and its infrastructure table disagree; `checkSiblingIdentity` requires §0's CloudFront row to say UNRESOLVED for exactly as long as that question stands, and to stop saying it the moment it is answered. Neither picks a side, and neither will let the question be quietly dropped or quietly outlive its answer. |
 

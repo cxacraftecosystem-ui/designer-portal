@@ -113,7 +113,9 @@ fun InspectionListScreen(
     onOpenWorkshop: (workshopId: String) -> Unit,
 ) {
     val viewer = remember(repository) { repository.cachedUser() }
-    // MIRRORS `assert_inspection_surface`, WHICH REFUSES AN ADMIN. Re-derived here from the cached
+    // THE HANDSET'S DOOR, NARROWER THAN `assert_inspection_surface`: the server also admits an admin
+    // appointed to inspect (since 2026-10-09), and on this handset that is web-only, so every admin
+    // is refused here — see `canInspectDesignWorkshops`. Re-derived here from the cached
     // account rather than trusted from the menu: a nav entry is not a guard, and an account demoted
     // since the drawer was drawn must meet the same refusal the server would give it. Nothing is
     // REQUESTED when the answer is already known — asking the server to refuse something this client

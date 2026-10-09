@@ -131,6 +131,11 @@ authority. Every one of their sentences is imported from ``services/sanction_ord
 re-worded, so the refusal an officer meets here is byte-for-byte the one they meet on the form —
 which is what ``test_the_refusal_sentence_is_identical_on_every_surface`` exists to keep true.
 
+A SIXTH JOINED THEM ON 2026-10-09, unnumbered because it is not a way a sheet goes wrong but a door
+the register closed: any spelling of the master admin's mailbox (``SANCTION_MASTER_MAILBOX``). The
+account an order would create there is the one nobody but the master admin may hold, so it is refused
+on the form and here alike — ``designer_standing_verdict`` answers it, before any read.
+
 ══ WHITESPACE AND CASE ══════════════════════════════════════════════════════════════════════════
 
 Folded and silent, everywhere, in both columns. NFKC, then every run of whitespace (including the
@@ -617,7 +622,7 @@ async def _review_one_row(
             verdict = await sanction_orders.designer_standing_verdict(address, officer=officer)
             standing[verdict.canonical] = verdict
 
-        # ── #10 AND #16-19: THE FIVE THAT ARE NEVER OFFERED FOR CONFIRMATION ─────────────────
+        # ── #10, #16-19 AND THE MASTER'S MAILBOX: THE SIX NEVER OFFERED FOR CONFIRMATION ─────
         if verdict.refusal is not None:
             return refuse(verdict.refusal.detail)
 

@@ -557,3 +557,45 @@ def test_the_role_ladder_records_the_sanction_exception_rather_than_denying_it()
         "the ladder names the exception but not the refusal that bounds it, so a reader who deletes "
         "that refusal has nothing telling them what it was holding up"
     )
+
+
+@pytest.mark.parametrize("spelling", ["new.master@gmail.com", "newmaster+old.order@gmail.com"])
+async def test_no_link_is_reissued_for_an_account_on_the_master_admins_mailbox(
+    monkeypatch, spelling
+):
+    """R4's last door (2026-10-09). Phase 0 no longer names the master admin's mailbox, but an order
+    recorded before it refused to may already name a DESIGNER account there — one the officer
+    outranks, so the re-issue's own rank test lets it through. A link for it would be that account's
+    password in the officer's hands; the register refuses it with the form's own sentence, before
+    any link is minted."""
+    from types import SimpleNamespace
+
+    from app.core.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "master_admin_email", "new.master@gmail.com")
+    planted = SimpleNamespace(
+        id="acct-planted",
+        email=spelling,
+        name="Planted By An Old Order",
+        role="DESIGNER",
+        authProvider="LOCAL",
+        passwordHash="a-hash-the-register-minted",
+    )
+
+    class _Users:
+        async def find_unique(self, where):
+            return planted if where == {"id": planted.id} else None
+
+    async def _never(**_kwargs):
+        raise AssertionError("a link was minted for the master admin's mailbox")
+
+    monkeypatch.setattr(sanction_orders, "db", SimpleNamespace(user=_Users()))
+    monkeypatch.setattr(sanction_orders.credential_links, "issue_link", _never)
+    row = SimpleNamespace(accountCreated=True, designerUserId=planted.id)
+    officer = SimpleNamespace(
+        id="acct-officer", role="ASSISTANT_DIRECTOR", email="officer@ministry.gov.in"
+    )
+    with pytest.raises(HTTPException) as refused:
+        await sanction_orders.reissue_credential_link(row, officer)
+    assert refused.value.status_code == 422
+    assert refused.value.detail == sanction_orders.SANCTION_MASTER_MAILBOX

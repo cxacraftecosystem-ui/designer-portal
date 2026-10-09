@@ -23,10 +23,12 @@ written to be copied. What a porter must change, and nothing else:
   second is the reverse and is a WRITE: a revocation on either roster is mirrored onto the other, so
   the two screens cannot go on showing contradictory standing for one person. An application with no
   second allow-list deletes both functions, their call sites in ``auth.py`` and in the two roster
-  route modules, and the ``roster_allows``, ``suspend_empanelment`` and
-  ``note_recording_a_consequence`` imports they delegate to — those three are the designer roster
-  reaching in here and go out with the clauses, unlike the four spelling imports above them, which
-  stay.
+  route modules, the empanelment half of :func:`follow_email_change` (its one call of
+  ``carry_ended_empanelment``), and the ``carry_ended_empanelment``, ``roster_allows`` and
+  ``suspend_empanelment`` imports they delegate to — those three are the designer roster reaching in
+  here and go out with the clauses. The four spelling imports stay, and so does
+  ``note_recording_a_consequence``: it began as the mirror's, and since 2026-10-09 it also writes the
+  sentence an allow-list row carries when :func:`follow_email_change` moves a bar onto it.
 * Everything else — the four states, the two distinct refusals, the identity-proof precondition on
   the write, the dedupe, the cap, the rejected-stays-rejected rule — is the feature, and changing
   any of it changes what the user asked for.
@@ -83,27 +85,31 @@ genuinely trying to get their rejection reconsidered. Only an admin can move REJ
 
 import logging
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, NamedTuple
+
+from prisma.errors import UniqueViolationError
 
 from app.core.config import get_settings
 from app.core.db import db
 
 # One lower-caser, and one Gmail canonicaliser, for the whole repository. See the module docstring
-# for what a porter does with them — and note that the LAST THREE are a different KIND of import
-# from the four above them: they are the designer roster itself, reached for by the two
+# for what a porter does with them — and note that the names below are TWO KINDS of import, named
+# here rather than counted. ``GMAIL_DOMAINS``, ``canonical_email``, ``email_match_keys`` and
+# ``normalise_email`` are the spelling imports, and they stay; so does
+# ``note_recording_a_consequence``, which writes the sentence a barred row carries when
+# :func:`follow_email_change` moves a bar onto it as well as the mirror's. ``carry_ended_empanelment``,
+# ``roster_allows`` and ``suspend_empanelment`` are the designer roster itself, reached for by the
 # application-specific clauses, and they leave with those clauses.
 #
-# THE COUNT IN THIS COMMENT WAS WRONG AND IT WAS THE KIND OF WRONG A PORTER ACTS ON. It read "the
-# last two" against "the first four" while the list held six alphabetically sorted names, so the
-# cut it describes falls between ``normalise_email`` and ``note_recording_a_consequence`` — which
-# leaves ``note_recording_a_consequence`` on the STAYING side, and that is the sentence a mirrored
-# revocation writes about itself, with no meaning at all in an application that has no mirror. A
-# porter following this line keeps a helper whose only caller they have just deleted. The module
-# docstring above has always said three and three; this line now agrees with it, and both now
-# count ``GMAIL_DOMAINS`` among the spelling imports that stay.
+# NAMED AND NOT COUNTED BECAUSE A COUNT HERE WAS WRONG ONCE ALREADY, in the way a porter acts on: it
+# read "the last two" against "the first four" while the list held six alphabetically sorted names,
+# and the cut it described left a mirror-only helper on the staying side. Sorting is alphabetical, so
+# the next name added (``carry_ended_empanelment``, 2026-10-09) lands wherever its spelling puts it,
+# and no cut by position survives that.
 from app.services.designers import (
     GMAIL_DOMAINS,
     canonical_email,
+    carry_ended_empanelment,
     email_match_keys,
     normalise_email,
     note_recording_a_consequence,
@@ -359,9 +365,15 @@ async def admit(
     """Put an address on the allow-list, or return an already-ACTIVE row to ACTIVE.
 
     The one write that grants access, used by every path that can grant it: an admin approving a
-    pending request, an admin creating an account by hand (creating somebody's account IS approving
-    them — an admin who then had to approve their own new user in a second screen would rightly
-    file that as a bug), and the designer-empanelment clause above.
+    pending request, an account provisioner creating an account by hand (creating somebody's account
+    IS approving them — a provisioner who then had to approve their own new user in a second screen
+    would rightly file that as a bug), and the designer-empanelment clause above.
+
+    **IT RE-ACTIVATES A BARRED ROW**, REJECTED or SUSPENDED alike, and that is an administrator's
+    power only. Since 2026-10-09 a MINISTRY_ADMIN provisions accounts too, so the callers that reach
+    here on a provisioner's behalf refuse a barred address to anybody who is not ``is_admin`` BEFORE
+    calling this — ``account_provisioning.assert_not_overturning_a_bar``. This function does not ask,
+    because the admin paths through it are meant to be able to let somebody back in.
 
     ``joinedAt`` IS WRITTEN ONCE AND NEVER MOVED. It is the "date of joining the platform" the
     requirement asks the admin screen to show, and a restore after a suspension must not reset it —
@@ -426,18 +438,77 @@ async def admit(
     return await writer.accessroster.update(where={"id": existing.id}, data=update)
 
 
-async def follow_email_change(old_email: Any, new_email: Any, *, actor_id: str | None) -> None:
-    """Move an admission when an admin changes an account's address.
+#: What a destination row says about itself when the bar of the account moved onto it came with it.
+#: Appended through ``note_recording_a_consequence`` onto a row that was already there, so an
+#: administrator's own note survives and a second move does not stack the sentence; a row created to
+#: carry the bar (:func:`follow_email_change`, no row at the new mailbox) carries it alone.
+BAR_CARRIED_BY_EMAIL_MOVE_NOTE = (
+    "Barred automatically because an account an administrator had barred at another address was "
+    "moved to this one, and the bar moved with the account. Restore this row here if letting the "
+    "account back in was intended; moving it again will not."
+)
+
+#: The same, on the designer roster, for an empanelment an administrator had ended.
+EMPANELMENT_CARRIED_BY_EMAIL_MOVE_NOTE = (
+    "Empanelment ended automatically because the account whose empanelment an administrator had "
+    "ended at another address was moved to this one, and the ending moved with the account. Restore "
+    "it here if that was intended; moving the account again will not."
+)
+
+
+class EmailMove(NamedTuple):
+    """What :func:`follow_email_change` carried to the new address, for the caller's audit line."""
+
+    #: REJECTED or SUSPENDED when the old address was barred and that bar now holds the new one.
+    carried_bar: str | None = None
+    #: True when an ended designer empanelment was carried to the new mailbox.
+    carried_ended_empanelment: bool = False
+
+
+async def follow_email_change(old_email: Any, new_email: Any, *, actor_id: str | None) -> EmailMove:
+    """Move an admission when an admin changes an account's address — and A BAR GOES WITH IT.
 
     THE ALLOW-LIST IS KEYED BY EMAIL, so an admin who corrects a typo in somebody's address has,
     without this, just locked them out: the new address has no row, a missing row is a refusal, and
     the person's next sign-in puts them in the pending queue as though they were a stranger. The
     admin has no reason to connect the two — they edited a name field, not a permission.
 
-    The ROW IS MOVED rather than a second one created, so ``joinedAt``, the attempt history and the
-    name of the admin who admitted them follow the person instead of being stranded on an address
-    nobody uses. If the new address somehow already has a row (they had asked to join under it, say)
-    that row wins and is admitted, because it is the one the gate will actually read.
+    An ADMITTING ROW IS MOVED rather than a second one created, so ``joinedAt``, the attempt history
+    and the name of the admin who admitted them follow the person instead of being stranded on an
+    address nobody uses (a BARRED row never moves — below). If the new address already has a row
+    (they had asked to join under it, say) that row is the one the gate will actually read, so the
+    admission is written THROUGH it — ``admit`` given the found row's own spelling, since a canonical
+    key alone misses a row stored with dots and would create a second one beside it. That
+    re-activates the row even if an administrator had barred it, which is why
+    ``routes/users.update_user`` refuses that move (409) to a provisioner who is not an admin before
+    it gets here.
+
+    **AN ACCOUNT THAT IS BARRED STAYS BARRED, WHOEVER MOVES IT (2026-10-09).** This used to admit the
+    destination whatever the old row said. So a barred person who had planted a PENDING row at a
+    second address — a refused Google sign-in is enough — could be "corrected" onto it by anybody
+    allowed to edit an address, and walked back in with the admin's REJECTED or SUSPENDED row left
+    behind on an address no account held any more, the access screen still showing the bar.
+    ``update_user`` now refuses that move to a provisioner who is not an admin (409); this is the
+    defence in depth beneath it, and it holds for an ADMIN's move too, because what an admin is doing
+    on the users screen is correcting an address, not reviewing a bar — that is the access screen's
+    act, where it is recorded as one. So when the old address is barred: with no row at the new one,
+    a barred row is CREATED there — the status, who decided it and when, the tier and the name
+    copied, :data:`BAR_CARRIED_BY_EMAIL_MOVE_NOTE` saying why — and the old row STAYS, barred, where
+    it is; with an unbarred row there (or one a racing sign-in writes between the read and the
+    create), that row takes the bar and a sentence saying so; with a barred row there, nothing
+    changes.
+
+    **THE OLD ROW STAYS BECAUSE MOVING IT LIFTED THE BAR ON THE OLD MAILBOX (2026-10-09).** The
+    barred row used to move "as any row does", leaving the old address with no row at all: a Google
+    sign-in there was then a stranger's, queued PENDING with no trace of the suspension, and an
+    administrator approving that request let the barred person back in under a brand-new account.
+    An address correction is not a review of the bar, so it may not undo one on either address —
+    the rule ``designers.carry_ended_empanelment`` already keeps for an ended empanelment, which
+    leaves the old row where it is for the same reason. And an EMPANELMENT an administrator
+    ended at the old mailbox is carried to the new one
+    (``designers.carry_ended_empanelment``) — without that, ``ensure_empanelled`` would mint a fresh,
+    ACTIVE empanelment at the new address on the next sign-in, since it only ever looks for a row.
+    The returned :class:`EmailMove` says what was carried, so the caller's audit line can.
 
     **"CHANGED" IS DECIDED ON THE MAILBOX, WHICH IS WHY THE EARLY RETURN COMPARES CANONICAL FORMS.**
     An admin who tidies ``sandycraft3@gmail.com`` into ``sandy.craft3@gmail.com`` on somebody's
@@ -446,29 +517,74 @@ async def follow_email_change(old_email: Any, new_email: Any, *, actor_id: str |
     allow-list row for no reason and reset nothing but the reader's confidence in the screen.
     """
     new = canonical_email(new_email)
-    old_keys = email_match_keys(old_email)
-    new_keys = email_match_keys(new_email)
     if not new or canonical_email(old_email) == new:
-        return
-    existing_new = await db.accessroster.find_first(where={"email": {"in": new_keys}})
-    if existing_new is not None:
+        return EmailMove()
+    # THE ROW THAT DECIDES EACH ADDRESS, as the gate would read it — a barred twin wins
+    # (:func:`_the_row_that_decides`), so a bar under either spelling is the one carried.
+    old_row = await access_row(old_email)
+    destination = await access_row(new_email)
+    carried_empanelment = await carry_ended_empanelment(
+        old_email, new_email, because=EMPANELMENT_CARRIED_BY_EMAIL_MOVE_NOTE
+    )
+    bar = status_of(old_row)
+    if bar in BARRED:
+        now = datetime.now(UTC)
+        if destination is None:
+            # A BARRED ROW IS CREATED AT THE NEW MAILBOX, AND THE OLD ONE STAYS WHERE IT IS
+            # (2026-10-09). See the docstring: moving the row lifted the bar on the old address.
+            carried: dict[str, Any] = {
+                "email": new,
+                "status": bar,
+                "decidedAt": old_row.decidedAt or now,
+                "notes": BAR_CARRIED_BY_EMAIL_MOVE_NOTE,
+            }
+            for column, value in (
+                ("decidedById", old_row.decidedById or actor_id),
+                ("admitRole", role_of(old_row)),
+                ("fullName", old_row.fullName),
+            ):
+                if value is not None:
+                    carried[column] = value
+            try:
+                await db.accessroster.create(data=carried)
+            except UniqueViolationError:
+                # A sign-in wrote a row at the new mailbox between the read above and this create —
+                # a refused Google sign-in there queues one. It is the row the gate will read, so it
+                # takes the bar below exactly as a row that was already there would have.
+                destination = await access_row(new_email)
+            else:
+                return EmailMove(bar, carried_empanelment)
+        if destination is not None and status_of(destination) not in BARRED:
+            await db.accessroster.update(
+                where={"id": destination.id},
+                data={
+                    "status": bar,
+                    # Who barred the account, and when — the decision that is being carried. The
+                    # mover's id only where the old row never recorded one.
+                    "decidedAt": old_row.decidedAt or now,
+                    "decidedById": old_row.decidedById or actor_id,
+                    "notes": note_recording_a_consequence(
+                        destination.notes, BAR_CARRIED_BY_EMAIL_MOVE_NOTE
+                    ),
+                },
+            )
+        return EmailMove(bar, carried_empanelment)
+    if destination is not None:
         await admit(
-            new,
+            destination.email,
             actor_id=actor_id,
             note="Admitted when an administrator moved an existing account to this address.",
         )
-        return
-    old_row = (
-        await db.accessroster.find_first(where={"email": {"in": old_keys}}) if old_keys else None
-    )
+        return EmailMove(None, carried_empanelment)
     if old_row is None:
         await admit(
             new,
             actor_id=actor_id,
             note="Admitted when an administrator set this address on an existing account.",
         )
-        return
+        return EmailMove(None, carried_empanelment)
     await db.accessroster.update(where={"id": old_row.id}, data={"email": new})
+    return EmailMove(None, carried_empanelment)
 
 
 async def record_refused_attempt(email: Any, row: Any | None) -> str:
@@ -785,6 +901,93 @@ async def accounts_on_the_mailbox(email: Any) -> list[Any] | None:
     if not keys:
         return []
     return await _accounts_on_the_mailbox(keys, canonical_email(email))
+
+
+_ASCII_UPPER = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+_ASCII_LOWER = "abcdefghijklmnopqrstuvwxyz"
+#: Every printable ASCII character, ``!`` to ``~``. An address made only of these is one the fold in
+#: :data:`_GMAIL_MAILBOX_CANDIDATES_SQL` computes exactly as :func:`canonical_email` does.
+_PRINTABLE_ASCII = "".join(chr(code) for code in range(0x21, 0x7F))
+
+#: :func:`accounts_on_the_mailbox_for_sign_in`'s statement: the ids of the accounts on the two Gmail
+#: domains that could be ``$1``'s mailbox. $2 and $3 are the ASCII capitals and their lower cases, $4
+#: every printable ASCII character. The three arms of the second clause are argued, arm by arm, in
+#: that function's docstring; the domain clause is the one the sweep has always sent. The cap is
+#: written in rather than bound, as the sweep's own ``take`` is a constant.
+_GMAIL_MAILBOX_CANDIDATES_SQL = f"""
+SELECT "id" FROM "User"
+WHERE ("email" ILIKE '%@gmail.com' OR "email" ILIKE '%@googlemail.com')
+  AND (
+       replace(split_part(split_part(translate("email", $2, $3), '@', 1), '+', 1), '.', '')
+         || '@gmail.com' = $1
+    OR translate("email", $2, $3) = $1
+    OR translate("email", $4, '') <> ''
+  )
+LIMIT {GMAIL_ACCOUNT_SWEEP_LIMIT + 1}
+"""
+
+
+async def accounts_on_the_mailbox_for_sign_in(email: Any) -> list[Any] | None:
+    """:func:`accounts_on_the_mailbox`'s answer, EXACTLY, without reading every Gmail account.
+
+    FOR THE SIGN-IN PATH (``auth._local_account_on_the_mailbox``), which asked the sweep on EVERY
+    Google sign-in whose literal address missed: every first-time Gmail user, and every sign-in by
+    somebody whose password account is filed under another spelling — for ever, because attaching by
+    id never rewrites the stored spelling, so the literal lookup misses again next time. That was a
+    read of every Gmail account's whole row on the busiest path, on a five-connection pool. The
+    revocation and mirror doors keep the sweep: they are administrators' acts, rare, and already
+    argued for at length.
+
+    **THE FOLD IS PUSHED INTO POSTGRES, AND THE ANSWER IS PROVABLY THE SWEEP'S.** The sweep reads every
+    row passing the domain clause above and keeps the ones :func:`canonical_email` maps onto the
+    mailbox. This narrows the same domain clause to rows that pass one of three arms, then keeps the
+    ones :func:`canonical_email` maps onto the mailbox — the same Python test. So the two answers are
+    equal provided every row the sweep would keep passes an arm. Take such a row:
+
+    * if its address holds anything outside printable ASCII — a space, a control character, a
+      non-ASCII letter — the THIRD arm takes it, because ``str.strip`` and ``str.lower`` may treat it
+      in ways no SQL function is proven to copy;
+    * otherwise ``str.strip()`` changes nothing and ``str.lower()`` is exactly the ASCII
+      ``translate`` (``translate`` and never ``lower()``, whose case mapping follows the database's
+      locale). :func:`canonical_email` then either returned that lowered address unchanged — the
+      SECOND arm, equality — or partitioned it at its first ``@``, cut the local part at its first
+      ``+``, deleted every dot and wrote ``@gmail.com``: the FIRST arm, term for term, since
+      ``split_part`` takes the text before the first delimiter.
+
+    The arms may also select rows that do not match (two ``@``, say); the Python test rejects those,
+    as it rejected them from the sweep. ``tests/test_account_provisioning.py`` holds the two answers
+    equal over dotted, ``+tag``, ``googlemail.com``, capitalised and padded spellings.
+
+    The exact lookup is the sweep's, unchanged, and outside Gmail it is still the whole answer. The
+    cap is the sweep's too, with the sweep's meaning: past it the answer is withdrawn (``None``), never
+    shortened — though with matches alone coming back it is no longer a number a deployment can reach.
+    """
+    keys = [key for key in email_match_keys(email) if len(key) <= MAX_EMAIL_LENGTH]
+    if not keys:
+        return []
+    mailbox = canonical_email(email)
+    accounts = await db.user.find_many(where={"email": {"in": keys, "mode": "insensitive"}})
+    if mailbox.partition("@")[2] not in GMAIL_DOMAINS:
+        return accounts
+    rows = await db.query_raw(
+        _GMAIL_MAILBOX_CANDIDATES_SQL, mailbox, _ASCII_UPPER, _ASCII_LOWER, _PRINTABLE_ASCII
+    )
+    if len(rows) > GMAIL_ACCOUNT_SWEEP_LIMIT:
+        logger.error(
+            "the sign-in lookup could not check every spelling of %r: more than %s accounts on the "
+            "Gmail domains are candidates for it, so its answer was withdrawn. Raise "
+            "GMAIL_ACCOUNT_SWEEP_LIMIT.",
+            mailbox,
+            GMAIL_ACCOUNT_SWEEP_LIMIT,
+        )
+        return None
+    found = {account.id: account for account in accounts}
+    candidates = sorted({str(row["id"]) for row in rows} - set(found))
+    if candidates:
+        for account in await db.user.find_many(where={"id": {"in": candidates}}):
+            if canonical_email(account.email) == mailbox:
+                found[account.id] = account
+    return list(found.values())
 
 
 async def admissions_an_empanelment_carries(email: Any) -> list[Any] | None:

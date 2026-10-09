@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { motion } from "framer-motion";
 import { EyeOff, Lock } from "lucide-react";
 
@@ -23,7 +23,7 @@ import { isAdmin, ministrySurface, roleLabel, routeGuardFor } from "@/lib/permis
 import { mustChangePassword } from "@/lib/signIn";
 
 export function AppShell({ children }: { children: React.ReactNode }) {
-  const { user, loading, logout, refreshMe } = useAuth();
+  const { user, loading, logout, markPasswordChanged } = useAuth();
   const { adminMode, adminViewResolved, setAdminView } = useAdminView();
   const router = useRouter();
   const pathname = usePathname();
@@ -41,21 +41,18 @@ export function AppShell({ children }: { children: React.ReactNode }) {
    * navigation remounts it through `key={pathname}`, which is when `initial` is read again.
    */
   const reduce = useAppReducedMotion();
-  /**
-   * THIS VISIT HAS ALREADY REPLACED THE TEMPORARY PASSWORD — a latch, not a copy of the flag.
-   *
-   * `changeOwnPassword` has succeeded server-side by the time this is set, and the `refreshMe()`
-   * that would prove it is best-effort: on the connections this product is used over, a dropped
-   * request between two calls is an ordinary event. Without the latch that dropped request re-locks
-   * somebody the second after they complied, and the gate then tells them the current password they
-   * have just replaced is wrong.
-   *
-   * A LATCH AND NOT A STORED COPY OF `mustChangePassword`, and the direction matters: the condition
-   * below reads the LIVE account, so an administrator who sets the flag on a session that is already
-   * open is obeyed at that session's next `/me`. A copy taken at mount would be a copy that only
-   * ever goes stale in the direction that lets somebody through.
-   */
-  const [passwordSet, setPasswordSet] = useState(false);
+  /*
+    THERE IS NO LATCH IN THIS FILE ANY MORE, AND THAT IS THE FIX.
+
+    There used to be one here and another on /login, each set by its own host after a successful
+    change, and they did not know about each other: a person who chose their password on /login
+    landed on /dashboard, met a FRESH latch reading false over an account still stale until `/me`
+    answered, and was shown the password form a second time. Nor was this one ever reset, so
+    a flag raised again later in the same tab was ignored until a reload. `markPasswordChanged` in
+    `AuthProvider` is the one latch now: it clears the flag on the account both hosts read, so a
+    navigation has nothing stale to reveal, and a `/me` sent after it — the server's word — can raise
+    the flag again and is obeyed.
+  */
 
   useEffect(() => {
     if (!loading && !user) router.replace("/login");
@@ -82,12 +79,16 @@ export function AppShell({ children }: { children: React.ReactNode }) {
    * against people arriving and against nobody already inside. An administrator who resets somebody's
    * password through `PATCH /api/users/{id}` sets `mustChangePassword` on an account whose browser
    * tab is open, and that tab went on working indefinitely, because a session that never revisits
-   * /login never meets the door. The server REPORTS and deliberately never refuses — the only route
-   * that can change a password needs a bearer token, so a 403 at sign-in would be a demand the
-   * account could never satisfy — which makes the client the WHOLE of the enforcement, and half of
-   * the client was not enforcing. The handset has gated here since it landed
-   * (`ui/PasswordGate.kt`, a `when` arm replacing `HomeScreen`); this is the web's half of the same
-   * arrangement.
+   * /login never meets the door. The handset has gated here since it landed (`ui/PasswordGate.kt`, a
+   * `when` arm replacing `HomeScreen`); this is the web's half of the same arrangement.
+   *
+   * THE SERVER NOW REFUSES AS WELL, and this branch is how that refusal is met rather than suffered.
+   * The sign-in still succeeds (the only route that can change a password needs a bearer token), but
+   * every authenticated route outside a short allow-list answers 401 with
+   * `X-Password-Change-Required`. `apiFetch` keeps the session on that answer instead of throwing the
+   * token away, and `AuthProvider` re-reads `/me` — so a tab that was already open when the flag was
+   * raised, and whose next request was refused, lands HERE in place of its page rather than on a
+   * sign-in form.
    *
    * ── WHY IT IS AN EARLY RETURN AND NOT A PANEL INSIDE `<main>` ─────────────────────────────────
    *
@@ -117,11 +118,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
    *
    * ── WHAT THIS DOES NOT PROMISE ────────────────────────────────────────────────────────────────
    *
-   * It is not a poll. The flag is re-read whenever `/me` is — a page load, or any `refreshMe()` — so
-   * a reset performed while a tab sits idle is met the next time that tab reads the account, not
-   * within the second. That is the honest reach of a client-side gate over a fact the server states
-   * and does not enforce, and it is a great deal more than "the next visit to /login", which was the
-   * previous answer.
+   * It is not a poll. The flag is re-read whenever `/me` is — a page load, any `refreshMe()`, and
+   * now the first request the server refuses for it — so a reset performed while a tab sits idle is
+   * met the next time that tab asks the server for anything, not within the second. An idle tab that
+   * asks nothing is not a tab doing anything with the old password.
    *
    * ── THE ESCAPE, AND THE ONE DOOR THIS MUST NEVER STAND IN FRONT OF ────────────────────────────
    *
@@ -132,16 +132,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
    * `/set-password` — which is public and lives OUTSIDE `app/(protected)/`, so this gate is not in
    * front of it and must never be moved anywhere that would put it there.
    */
-  if (!passwordSet && mustChangePassword(user)) {
+  if (mustChangePassword(user)) {
     return (
       <FirstPasswordLocked
-        onDone={() => {
-          setPasswordSet(true);
-          // Best-effort and deliberately not awaited into the branch, the treatment /login gives its
-          // own re-read: the password IS set by this point, and the latch above is what closes the
-          // gate either way. This is only a cache invalidation.
-          refreshMe().catch(() => undefined);
-        }}
+        // The one latch, `/login`'s too: it clears the flag on the account this branch reads, so the
+        // app is drawn on the next render whether or not the re-read it starts ever lands.
+        onDone={markPasswordChanged}
         onSignOut={() => {
           // `logout` clears the session, which drops `user`, which sends the effect above to /login.
           // It does not continue into the app — a way out is not a way in.
@@ -282,10 +278,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
  *
  * ── NO `aria-live`, THOUGH BOTH PANELS BELOW HAVE ONE ─────────────────────────────────────────
  *
- * The form already opens with a `role="status"` box carrying the sentence that matters ("An
- * administrator set your password. Choose your own to continue."), and it is present from this
- * surface's first paint. A live region wrapped around a live region announces the same demand twice,
- * which on a screen reader is indistinguishable from the app repeating itself.
+ * The form already opens with a `role="status"` box carrying the sentence that matters ("Choose a
+ * new password to continue."), and it is present from this surface's first paint. A live region
+ * wrapped around a live region announces the same demand twice, which on a screen reader is
+ * indistinguishable from the app repeating itself.
  *
  * ── NO COPY OF ITS OWN BEYOND THE HEADING ─────────────────────────────────────────────────────
  *
@@ -299,14 +295,17 @@ function FirstPasswordLocked({ onDone, onSignOut }: { onDone: () => void; onSign
       <main id="main-content" tabIndex={-1} className="w-full max-w-md">
         <div className="mb-6 flex flex-col items-center gap-2 text-center">
           <WorkshopLogo className="h-12 w-12 rounded-xl shadow-sm" />
-          {/* Android's `PasswordGateScreen` heading, word for word — a designer refused on the phone
-              opens the website next, and a different sentence there reads as a different demand. */}
-          <h1 className="font-display text-2xl font-bold text-ink-900">Set your own password</h1>
+          {/* Android's `PasswordGateScreen` heading, word for word (`PASSWORD_GATE_HEADING`) — a
+              designer refused on the phone opens the website next, and a different sentence there
+              reads as a different demand. It was "Set your own password", which, like the sentence
+              under it, assumed somebody else had chosen the one being replaced. */}
+          <h1 className="font-display text-2xl font-bold text-ink-900">Set a new password</h1>
         </div>
         <section className="panel p-6">
           {/* Always "" here: the protected tree never saw a password typed at a door, so the form
               draws its "Current password" box. Android's gate does the same for the same case — a
-              session that was already open when the app was launched. */}
+              session that was already open when the app was launched. A wrong entry is answered
+              with a 400 and the box is cleared for another go; it no longer costs the session. */}
           <FirstPasswordGate currentPassword="" onDone={onDone} onSignOut={onSignOut} />
         </section>
       </main>

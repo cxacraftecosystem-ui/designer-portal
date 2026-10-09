@@ -48,6 +48,7 @@ import { BadgeCheck, DraftingCompass, FileClock, FileText, Images, Layers, ListC
 
 import { useAuth } from "@/components/AuthProvider";
 import { DictationConsentCard } from "@/components/designworkshop/DictationConsentCard";
+import { HeldPostNotice, heldPostReason, useHeldPostRefusal } from "@/components/designworkshop/HeldPostNotice";
 import { WorkshopSearchPanel } from "@/components/designworkshop/WorkshopSearchPanel";
 import { useConfirm } from "@/components/dialogs/ConfirmDialog";
 import { PageHeader } from "@/components/PageHeader";
@@ -717,7 +718,8 @@ function SubmissionCard({
   headerUnsent,
   unsentStages,
   offline,
-  onStatusChanged
+  onStatusChanged,
+  readOnlyReason = null
 }: {
   /** The id to PATCH — the server's, never a local draft id. */
   workshopId: string;
@@ -754,6 +756,12 @@ function SubmissionCard({
   offline: boolean;
   /** The status the server confirmed, handed up so the page can render it. */
   onStatusChanged: (status: string) => void;
+  /**
+   * Why this reader may not move THIS workshop's status although their role may, or null — today, a
+   * post they hold on it (`useHeldPostRefusal`). A status is a write to the workshop, and the server
+   * refuses it to whoever inspects or supervises the workshop through the admin routes as well.
+   */
+  readOnlyReason?: string | null;
 }) {
   const { user } = useAuth();
   const confirm = useConfirm();
@@ -762,7 +770,7 @@ function SubmissionCard({
   const [problem, setProblem] = useState<string | null>(null);
   const [outcome, setOutcome] = useState<string | null>(null);
 
-  const mayDecide = canRunDesignWorkshops(user);
+  const mayDecide = canRunDesignWorkshops(user) && !readOnlyReason;
   const token = (status ?? "").trim().toUpperCase();
   const known = (DW_STATUSES as string[]).includes(token);
   const actions = actionsFor(token);
@@ -1027,6 +1035,12 @@ function SubmissionCard({
           to mark complete or submit. Everything you have typed is saved here. Sync it from the workshops list first —
           the status can be set the moment it lands.
         </p>
+      ) : readOnlyReason ? (
+        // THE POST, NOT THE ROLE, AND IT GETS ITS OWN SENTENCE. The one below says "or an
+        // administrator", which is exactly what an admin who supervises this workshop is — so it
+        // would tell them a thing they can do is somebody else's for a reason that is not theirs.
+        // The server's own words instead, as the notice at the top of the page draws them.
+        <p className="text-sm leading-6 text-ink-700">{readOnlyReason}</p>
       ) : !mayDecide ? (
         // The affordance, matching the server's own `_require_designer` set. Not the boundary: the
         // route refuses this account whether or not this button is drawn.
@@ -1431,6 +1445,17 @@ export default function DesignWorkshopStagesPage({ params }: { params: Promise<{
    * was handed, so that test is the trap `neverReconciled` exists to warn about.
    */
   const neverSent = draft ? isLocalWorkshopId(id) && !draft.remoteId : false;
+  /**
+   * WHY THIS READER MAY READ THIS WORKSHOP AND NOT WRITE IT, or null — a post they hold on it.
+   *
+   * Since 2026-10-09 an admin may be appointed a workshop's inspector, Assistant Director or Regional
+   * Director, and the server then refuses them every write to it, through the admin arm too. Asked of
+   * the route's id, which the hook resolves to the repository's (a workshop only this device holds has
+   * no posts and asks nothing). It switches off exactly the controls that write — Edit details, the
+   * status buttons and the consent row here, and the forms on the screens below this one, which ask
+   * the same question — and says why above them. See `HeldPostNotice`.
+   */
+  const postRefusal = useHeldPostRefusal(id);
 
   if (unopenable) {
     /*
@@ -1501,7 +1526,7 @@ export default function DesignWorkshopStagesPage({ params }: { params: Promise<{
               (`notes`, the report template and the linked workshop record) do not exist at all.
 
               ── WHICH PREDICATE, AND WHY NOT THE OBVIOUS ONE ──────────────────────────────────────
-              `canRunDesignWorkshops` — the SET {DESIGNER, ADMIN, MASTER_ADMIN} — because that is
+              `canRunDesignWorkshops` — the SET `DESIGN_WORKSHOP_ROLES`, not a rank — because that is
               what the server enforces: `PATCH /design-workshops/{id}` runs `_require_designer` and
               then `load_workshop_or_404(..., for_edit=True)`, in that order. It is NOT
               `canCreateDesignWorkshops`: creating a workshop is admin-only and editing one is not,
@@ -1520,7 +1545,11 @@ export default function DesignWorkshopStagesPage({ params }: { params: Promise<{
               That screen says so plainly if the URL is reached another way; the affordance simply is
               not offered, for the same reason the Submission card withdraws its buttons.
             */}
-            {canRunDesignWorkshops(user) && !neverSent ? (
+            {/* AND NOT FOR SOMEBODY WHO HOLDS A POST ON IT (`postRefusal`): the PATCH behind that
+                screen is a write the server refuses them, and the notice below says why. Not while
+                the answer is out either (`null` is "none known"), so the link never appears and then
+                withdraws under the pointer. */}
+            {canRunDesignWorkshops(user) && !neverSent && postRefusal === null ? (
               <Link href={`/design-workshops/${id}/edit`} className="field-button-secondary">
                 <SquarePen className="h-4 w-4" aria-hidden />
                 Edit details
@@ -1614,6 +1643,11 @@ export default function DesignWorkshopStagesPage({ params }: { params: Promise<{
       {error ? (
         <div className="mb-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>
       ) : null}
+
+      {/* UNDER THE HEADER AND ABOVE EVERY CARD, because it is about the workshop and not about one
+          control: it is the reason three controls on this page are missing and the forms one click
+          away are switched off. */}
+      <HeldPostNotice refusal={postRefusal} />
 
       {offline || unsentStages ? (
         // The two facts a designer needs before they decide anything on this page, and neither is
@@ -1777,6 +1811,7 @@ export default function DesignWorkshopStagesPage({ params }: { params: Promise<{
           unsentStages={unsentStages}
           offline={offline}
           onStatusChanged={setConfirmedStatus}
+          readOnlyReason={heldPostReason(postRefusal)}
         />
       ) : null}
 
@@ -1814,6 +1849,7 @@ export default function DesignWorkshopStagesPage({ params }: { params: Promise<{
           // would read as though nobody had.
           recordedByName={consentByName ?? draft.consent?.recordedByName ?? null}
           synced={draft.consent ? draft.consent.synced : true}
+          readOnlyReason={heldPostReason(postRefusal)}
           onRecorded={() => {
             // Re-read from IndexedDB rather than patching state here: `recordDraftConsent` is the
             // one writer, and a second reconstruction of the record in this component is how the

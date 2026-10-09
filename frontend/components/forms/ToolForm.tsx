@@ -31,6 +31,7 @@ import {
 import { FieldBlock } from "@/components/tasks/TaskPrimitives";
 import { MultiSelectDropdown } from "@/components/ui/Dropdown";
 import { useWorkshopPicker, WorkshopPicker } from "@/components/forms/WorkshopPicker";
+import { HeldPostNotice, useRecordFilingHold } from "@/components/designworkshop/HeldPostNotice";
 import { ExistingMedia } from "@/components/media/ExistingMedia";
 import { GridMeasurement, MEASUREMENT_GRID_PURPOSE, type GridFiles, type GridGroup } from "@/components/media/GridMeasurement";
 import { RecordPhotoMeasure, type MeasureColumn } from "@/components/media/RecordPhotoMeasure";
@@ -624,6 +625,13 @@ export function ToolForm({
     isEdit,
     resetKey: initial?.id ?? null
   });
+  /*
+    A TOOL FILED UNDER A WORKSHOP THE READER INSPECTS OR SUPERVISES IS READ-ONLY TO THEM, and none may
+    be filed into one (2026-10-09; `useRecordFilingHold`). The server's 403 reaches the banner word for
+    word; this holds Save — and the picker, for a stored workshop — and says why beside Save.
+  */
+  const filing = useRecordFilingHold(initial?.designWorkshopId, workshop.designWorkshopId, "tool");
+  const filingNoticeId = useId();
 
   /**
    * FINISH WHAT THE SEED (OR THE QUERY STRING) STARTED — an artisan id alone is not a usable answer.
@@ -1174,6 +1182,9 @@ export function ToolForm({
     event.preventDefault();
     // Read the form synchronously: React nulls event.currentTarget across the await below.
     const form = new FormData(event.currentTarget);
+    // Held, and said beside Save — see `filing`. `requestSubmit()` from the unsaved-changes prompt is
+    // not stopped by a disabled button, so the rule is kept here too.
+    if (filing.saveHeld) return;
     // A workshop that has already ended makes this a late submission needing admin approval — say so
     // before anything is written. Resolves true immediately when there is nothing to warn about.
     if (!(await workshop.confirmSubmission())) return;
@@ -1593,7 +1604,7 @@ export function ToolForm({
               holds both boxes, because they are one question: the type, then the workshop of that
               type. `markDirty` by hand, as every themed control on this form must — a dropdown is a
               `<button>` and fires no native input event for the form's `onInput` to catch. */}
-          <WorkshopPicker state={workshop} onDirty={markDirty} saving={saving} />
+          <WorkshopPicker state={workshop} onDirty={markDirty} saving={saving} disabled={filing.recordHeld} />
           {/* Toolkit/English/craft/artisan names and place are title-cased by the API on write, so
               the box says what will be stored (Android parity — see forms/TitleCasedInput);
               `titleCased` mounts that exact component inside the dictated box rather than copying
@@ -2124,7 +2135,8 @@ export function ToolForm({
           title="Process stages"
           description="Document each step of making or using this tool. Captures are archived in order as STAGE_STEP_1, STAGE_STEP_2, …"
         />
-        {initial ? <ExistingMedia linkedRecordType="tool" linkedRecordId={initial.id} /> : null}
+        {/* The tool's files are its workshop's content too: held with the record — see `filing`. */}
+        {initial ? <ExistingMedia linkedRecordType="tool" linkedRecordId={initial.id} recordHold={filing.stored} /> : null}
         <MediaCaptureField
           files={mediaFiles}
           onFilesChange={(files) => {
@@ -2144,11 +2156,17 @@ export function ToolForm({
           separator is the only styling, and with no host there is no element at all.
         */}
         {footerFields ? <div className="grid gap-3 border-t border-line-200 pt-4">{footerFields}</div> : null}
+        {/* Why Save is held, beside it — see `filing`. */}
+        <HeldPostNotice refusal={filing.notice} id={filingNoticeId} className="" sayPending />
         <div className="flex justify-end gap-2">
           <button type="button" className="field-button-secondary" onClick={handleBack}>
             Cancel
           </button>
-          <button className="field-button" disabled={saving}>
+          <button
+            className="field-button"
+            disabled={saving || filing.saveHeld}
+            aria-describedby={filing.notice ? filingNoticeId : undefined}
+          >
             {saving ? "Saving..." : initial ? "Update tool" : "Save tool"}
           </button>
         </div>

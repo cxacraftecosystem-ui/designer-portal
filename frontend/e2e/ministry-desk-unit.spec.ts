@@ -194,19 +194,26 @@ test("nobody in the audience is shown an empty desk", () => {
   }
 });
 
-test("a master admin is offered the desk and not the officer's own read surface", () => {
+test("the per-row gating is real: an assistant director's desk lacks the rows its tier cannot open", () => {
   /*
-    THE ROW THAT PROVES THE PER-ROW GATING IS REAL RATHER THAN DECORATIVE. `assert_oversight_surface`
-    answers an admin and the master admin a 403 BY NAME — an admin scoped to their own oversight rows
-    sees an empty page and reads it as a broken deployment — so the one destination on this card that
-    a master admin cannot open is absent from their card and present on an Assistant Director's.
+    THE ROWS THAT PROVE THE PER-ROW GATING IS REAL RATHER THAN DECORATIVE. An Assistant Director is in
+    the desk's audience and is refused two of its destinations — the annual plan (a floor at 48) and
+    Workshop oversight (the assigner SET) — so both are absent from their card while Workshops I
+    monitor is on it.
 
-    If this ever flips, either the server's rule moved or somebody "completed" the card by widening a
-    row, and the two need telling apart.
+    ⚠ THIS TEST USED TO PROVE THE SAME THING WITH THE MASTER ADMIN, who was refused
+    `/officers/monitored` by name because an admin could hold no oversight row. The owner's ruling of
+    2026-10-09 lets the master admin be NAMED in either post, so that row is on their card now and is
+    asserted as such below. If either half flips, the server's rule moved or somebody "completed" the
+    card by widening a row, and the two need telling apart.
   */
+  const assistantHrefs = ministryDeskFor(user("ASSISTANT_DIRECTOR")).map((d) => d.href);
+  expect(assistantHrefs).toContain("/officers/monitored");
+  expect(assistantHrefs).not.toContain("/annual-plan");
+  expect(assistantHrefs).not.toContain("/officers");
+
   const masterHrefs = ministryDeskFor(user("MASTER_ADMIN")).map((destination) => destination.href);
-  expect(masterHrefs).not.toContain("/officers/monitored");
-  expect(ministryDeskFor(user("ASSISTANT_DIRECTOR")).map((d) => d.href)).toContain("/officers/monitored");
+  expect(masterHrefs).toContain("/officers/monitored");
 });
 
 test("the desk's screens are the directorate walkthrough's screens, in its order", () => {

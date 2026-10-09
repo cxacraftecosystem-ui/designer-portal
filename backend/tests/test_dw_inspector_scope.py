@@ -666,21 +666,30 @@ async def test_a_viewer_row_is_invisible_on_the_inspection_surface(world, client
     assert "Inspector / Reviewer" in refused.json()["detail"]
 
 
-@pytest.mark.parametrize("slug", ["admin", "colleague", "professor"])
-async def test_the_inspection_surface_refuses_everybody_else_including_admins(world, client, slug):
-    """**INCLUDING ADMINS, AND THAT IS THE INTERESTING ONE.**
-
-    Admitting an admin here would mean one of two things and both are worse than a refusal. Scoped by
-    THEIR OWN inspection rows they see an empty list and read it as a broken feature; scoped by
-    "everything, because they are an admin" this becomes a second full read of every workshop in the
-    repository — a second place to look when somebody has access they should not.
-
-    PROFESSOR is in the parametrisation because rank 40 is ABOVE INSPECTOR's 37: every "this tier and
-    above" spelling of the rule admits them, and the SET does not.
-    """
+@pytest.mark.parametrize("slug", ["colleague", "professor"])
+async def test_the_inspection_surface_refuses_a_role_that_can_hold_no_inspection(world, client, slug):
+    """PROFESSOR is in the parametrisation because rank 40 is ABOVE INSPECTOR's 37: every "this tier
+    and above" spelling of the rule admits them, and the SET does not."""
     response = client.get("/api/design-workshop-inspections", headers=_headers(world, slug))
     assert response.status_code == 403, response.text
     assert "Inspector / Reviewer" in response.json()["detail"]
+
+
+async def test_an_admin_with_no_inspection_sees_an_empty_list_and_not_everything(world, client):
+    """**ADMINS WERE REFUSED HERE UNTIL 2026-10-09.** They may now be appointed to inspect a
+    workshop, so the surface is theirs — scoped by THEIR OWN rows, never by "everything, because they
+    are an admin". This admin inspects nothing while workshops under inspection exist in this very
+    module, so an empty list is the rows deciding and not an empty table."""
+    workshop_id = _make_workshop(world, "Ikat, inspected by somebody else")
+    assert _assign(world, workshop_id, ["inspector"]).status_code == 200
+
+    response = client.get("/api/design-workshop-inspections", headers=_headers(world, "admin"))
+    assert response.status_code == 200, response.text
+    assert workshop_id not in [item["id"] for item in response.json()["items"]]
+    detail = client.get(
+        f"/api/design-workshop-inspections/{workshop_id}", headers=_headers(world, "admin")
+    )
+    assert detail.status_code == 404, "an admin with no inspection row read the workshop by rank"
 
 
 # ------------------------------------------------------------------------------------------
@@ -710,32 +719,23 @@ async def test_only_an_admin_assigns_an_inspection(world, client, slug):
     assert roster.json()["inspectors"] == []
 
 
-async def test_the_workshops_own_creator_cannot_be_its_inspector(world, client):
-    """**THE REFUSAL THAT EXISTS NOWHERE ELSE IN THE CODEBASE**, through its ``createdById`` arm.
+async def test_the_workshops_creator_may_inspect_it_when_they_wrote_none_of_it(world, client):
+    """**CREATING A WORKSHOP IS NOT AUTHORING IT** — the owner's ruling of 2026-10-09, and the
+    opposite of what this test asserted before it.
 
-    The sibling viewers module DROPS the creator from the set silently, as a harmless no-op — they
-    already hold the access being granted. That silence is right there and wrong here: naming the
-    creator asks for somebody to inspect their own work, which is a MISTAKE an admin needs to be
-    told about rather than a no-op.
-
-    **THE PROMOTION IS WHAT MAKES THIS TEST MEAN ANYTHING, and it is worth stating why.** ``creator``
-    is an ADMIN, because only an admin may start a workshop. Assigning an ADMIN is refused by the
-    ROLE branch, which ``continue``s — so a test that simply named the creator here would go green on
-    the wrong refusal and would keep going green if the creator arm were deleted outright. Promoting
-    them to INSPECTOR first gets past the role branch and reaches the arm actually under test.
-
-    **THE ACCOUNT HAS TO PASS THE ROLE CHECK FOR THIS TEST TO MEAN ANYTHING**, which is why it uses
-    the fixture's ``selfinspector`` and that account's own workshop rather than ``creator``.
-    ``creator`` is an ADMIN — only an admin may start a workshop — and an ADMIN is refused by the
-    ROLE branch, which ``continue``s. A test that simply named the creator would go green on the
-    wrong refusal and would keep going green if the creator arm were deleted outright.
+    This refused the creator outright, on the ground that naming them asked somebody to inspect their
+    own work. But the creator of a design workshop is whoever OPENED it — an administrator, or the
+    officer whose sanction order did — and opening one is an administrative act that writes none of
+    its fieldwork. So authorship is a viewer row or written stages (``services/design_workshop_posts``)
+    and ``selfinspector``, who made this workshop and wrote nothing in it, may inspect it. Holding
+    the row then costs them the write the creator column gave them — asserted in
+    ``test_admin_serve_as`` — which is what keeps the inspection independent.
     """
     response = _assign(world, world["self_made_workshop"], ["selfinspector"])
-    assert response.status_code == 422, response.text
-    detail = response.json()["detail"]
-    assert "Inspector Who Made One" in detail
-    assert "already on this workshop" in detail
-    assert "Nothing was changed." in detail
+    assert response.status_code == 200, response.text
+    assert [row["userId"] for row in response.json()["inspectors"]] == [
+        world["people"]["selfinspector"].id
+    ]
 
 
 async def test_a_co_designer_on_the_workshop_cannot_inspect_it(world, client):
@@ -750,13 +750,17 @@ async def test_a_co_designer_on_the_workshop_cannot_inspect_it(world, client):
     So the fixture builds the account in the state a promotion would leave it in: ``workedonit`` is
     an INSPECTOR holding a real ``DesignWorkshopViewer`` row on ``worked_on_workshop``. It passes the
     role check and is caught by the viewer arm, which is the only ordering that tests anything.
+
+    409 AND NOT 422 SINCE 2026-10-09: nothing is wrong with the account, it is how the workshop is
+    staffed that is in the way, and the sentence names the rule.
     """
     response = _assign(world, world["worked_on_workshop"], ["workedonit"])
-    assert response.status_code == 422, response.text
+    assert response.status_code == 409, response.text
     detail = response.json()["detail"]
     assert "Inspector Who Worked On One" in detail
-    assert "already on this workshop" in detail
-    assert "is not a review" in detail
+    assert "holds designer access to this workshop" in detail
+    assert "nobody inspects or supervises work they authored" in detail
+    assert "Nothing was changed." in detail
 
 
 async def test_a_designer_cannot_be_assigned_an_inspection(world, client):
@@ -906,10 +910,13 @@ async def test_the_picker_offers_inspectors_and_excludes_the_barred(world, clien
     assert people["inspector"].id in offered
     assert people["idle"].id in offered
     assert people["elsewhere"].id in offered
-    # The tier is a SET: a designer below it and a professor above it are both absent.
+    # The set is a SET: a designer below the tier and a professor above it are both absent.
     assert people["outsider"].id not in offered
     assert people["professor"].id not in offered
-    assert people["admin"].id not in offered
+    # AN ADMINISTRATOR IS OFFERED SINCE 2026-10-09 — they may be appointed — EXCEPT THE ONE ASKING,
+    # because nobody appoints themselves and a picker must not offer what the write refuses.
+    assert people["creator"].id in offered
+    assert people["admin"].id not in offered, "the picker offered the caller to themselves"
     # Barred by the allow-list: eligible by role, unable to sign in, so never offered.
     assert people["barred"].id not in offered
 

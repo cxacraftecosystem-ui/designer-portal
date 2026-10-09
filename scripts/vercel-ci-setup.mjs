@@ -6,10 +6,13 @@
  *
  *     VERCEL_TOKEN=xxxxxxxx node scripts/vercel-ci-setup.mjs          # interactive: it asks first
  *     VERCEL_TOKEN=xxxxxxxx node scripts/vercel-ci-setup.mjs --yes    # non-interactive: flag required
+ *     node --env-file=.env.vercel scripts/vercel-ci-setup.mjs         # token AND project ids from the
+ *                                                                     # gitignored root .env.vercel
  *
  * Create the token at https://vercel.com/account/tokens → Create Token, scoped to the TEAM that
- * owns the Vercel project `frontend/.vercel/project.json` names (not "Personal Account", or every
- * call below 403s). This script never prints it and never writes it to disk.
+ * owns the Vercel project this script resolves (see "WHERE THE PROJECT AND TEAM IDS COME FROM"
+ * below; not "Personal Account", or every call below 403s). This script never prints it and never
+ * writes it to disk.
  *
  * ─── WHICH REPOSITORY IT WRITES TO, AND WHY THAT IS NOT A LITERAL ANY MORE ──────────────────────
  * This file used to carry `const REPO = "cxacraftecosystem-ui/documentation-portal"`, hard-coded,
@@ -51,7 +54,7 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
@@ -83,6 +86,59 @@ function repoSlug(value) {
   if (!match) return null;
   if (match[1] === "." || match[1] === ".." || match[2] === "." || match[2] === "..") return null;
   return `${match[1]}/${match[2]}`;
+}
+
+/**
+ * ─── WHERE THE PROJECT AND TEAM IDS COME FROM — 2026-10-09 ───────────────────────────────────────
+ * This used to read `frontend/.vercel/project.json` unconditionally. That file is in no checkout
+ * any more, so the script died with ENOENT before printing a word: the documented way to re-seed
+ * the deploy secrets did not run at all. It now takes the two sources the Vercel CLI itself accepts:
+ *
+ *   1. `frontend/.vercel/project.json`, which `vercel link` writes inside frontend/;
+ *   2. the VERCEL_ORG_ID and VERCEL_PROJECT_ID environment variables, which is how CI links, and
+ *      how the gitignored root `.env.vercel` links a workstation (see the usage line above).
+ *
+ * The CLI silently prefers the environment when both exist. This script must not: it writes a
+ * deploy TARGET into another system's secrets, so two sources that name different projects mean
+ * one of them describes another product, and it refuses rather than picks. Half of the environment
+ * pair is refused too, as the CLI refuses it. Returns `{ error }` instead of exiting, so the caller
+ * owns every message the user sees.
+ */
+function resolveVercelLink() {
+  const file = path.join(REPO_ROOT, "frontend", ".vercel", "project.json");
+  let fromFile = null;
+  if (existsSync(file)) {
+    let link;
+    try {
+      link = JSON.parse(readFileSync(file, "utf8"));
+    } catch {
+      return { error: "frontend/.vercel/project.json exists but is not readable JSON. Delete it, or re-run `vercel link`." };
+    }
+    if (link.projectId && link.orgId) fromFile = { projectId: link.projectId, orgId: link.orgId };
+  }
+
+  const envOrg = (process.env.VERCEL_ORG_ID || "").trim();
+  const envProject = (process.env.VERCEL_PROJECT_ID || "").trim();
+  if (Boolean(envOrg) !== Boolean(envProject)) {
+    const [have, missing] = envOrg ? ["VERCEL_ORG_ID", "VERCEL_PROJECT_ID"] : ["VERCEL_PROJECT_ID", "VERCEL_ORG_ID"];
+    return { error: `${have} is set but ${missing} is not. Set both or neither.` };
+  }
+  const fromEnv = envOrg ? { projectId: envProject, orgId: envOrg } : null;
+
+  if (fromFile && fromEnv) {
+    if (fromFile.projectId !== fromEnv.projectId || fromFile.orgId !== fromEnv.orgId) {
+      return {
+        error:
+          `frontend/.vercel/project.json names project ${fromFile.projectId} in ${fromFile.orgId}, while ` +
+          `VERCEL_PROJECT_ID/VERCEL_ORG_ID name ${fromEnv.projectId} in ${fromEnv.orgId}. One of the two ` +
+          "describes a different project. Refusing to guess which.",
+      };
+    }
+    return { ...fromFile, source: "frontend/.vercel/project.json, and VERCEL_ORG_ID/VERCEL_PROJECT_ID agree" };
+  }
+  if (fromFile) return { ...fromFile, source: "frontend/.vercel/project.json" };
+  if (fromEnv) return { ...fromEnv, source: "VERCEL_ORG_ID/VERCEL_PROJECT_ID environment variables" };
+  return { error: "No Vercel project to link: frontend/.vercel/project.json does not exist and VERCEL_ORG_ID/VERCEL_PROJECT_ID are not set." };
 }
 
 function resolveRepo() {
@@ -117,15 +173,37 @@ if (!resolved) {
 }
 const REPO = resolved.slug;
 
-// projectId/orgId are identifiers, not credentials — they live in the linked project file.
-const link = JSON.parse(readFileSync(path.join(REPO_ROOT, "frontend", ".vercel", "project.json"), "utf8"));
-const { projectId, orgId } = link;
+// projectId/orgId are identifiers, not credentials. Where they come from is the note above
+// `resolveVercelLink`.
+const linked = resolveVercelLink();
+if (linked.error) {
+  console.error(`${linked.error}\n`);
+  console.error("  Link this checkout first, either way:");
+  console.error("    cd frontend && vercel link --yes --project designer-repository");
+  console.error("    or set VERCEL_ORG_ID and VERCEL_PROJECT_ID (docs/CI.md §2 gives both values)\n");
+  process.exit(1);
+}
+const { projectId, orgId } = linked;
 
-// Printed BEFORE the first API call, because every one of these is a thing that can be wrong in a
-// way that still succeeds. The token itself is never printed, here or anywhere below.
+// ONE READ before anything is printed or changed. An id is not something a person recognises and a
+// project name is, and the environment route above carries no name at all. Nothing has been written
+// when this throws, so a wrong token or a wrong id stops the script here.
+const target = await vercel("GET", `/v9/projects/${projectId}`);
+const projectName = target.name || "<no name returned>";
+// The one name known to be wrong, refused for the reason deploy-frontend.yml refuses it: the field
+// repository's project is a DIFFERENT product in the same team, and writing its id into this
+// repository's secrets would point this pipeline at that product's live site.
+if (projectName === "field-repository") {
+  console.error(`${projectId} is the Vercel project 'field-repository', a different product in the same team.`);
+  console.error("This repository publishes to 'designer-repository'. Nothing has been changed; see docs/CI.md §2.\n");
+  process.exit(1);
+}
+
+// Printed BEFORE the first call that CHANGES anything, because every one of these is a thing that
+// can be wrong in a way that still succeeds. The token itself is never printed, here or anywhere below.
 console.log("About to change:");
 console.log(`  GitHub repository   ${REPO}   [from ${resolved.source}]`);
-console.log(`  Vercel project      ${link.projectName}  (${projectId} in ${orgId})`);
+console.log(`  Vercel project      ${projectName}  (${projectId} in ${orgId})   [from ${linked.source}]`);
 console.log("        1. Root Directory -> frontend, framework -> nextjs");
 console.log("        2. Git-triggered deployments -> disabled");
 console.log(`        3. VERCEL_TOKEN / VERCEL_ORG_ID / VERCEL_PROJECT_ID -> Actions secrets of ${REPO}`);

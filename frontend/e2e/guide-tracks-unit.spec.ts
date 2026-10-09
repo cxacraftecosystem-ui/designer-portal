@@ -51,10 +51,12 @@ import type { User, UserRole } from "@/lib/types";
  *     extended to the two new decks and to every deck's exit tiles.
  *  4. THE SELECTION IS THE OWNER'S RULE, TIER BY TIER. An inspector gets the inspection deck; the
  *     three ministry posts get the directorate deck; everybody else — the master admin and an admin
- *     included — gets the designer's. `guideTrackFor` reuses `canReadWorkshopOversight` to mean
- *     "holds a ministry post", which is only safe while `OFFICER_ROLES` is exactly those three, so
- *     the tiers are named here rather than derived: the day that set moves, this goes red instead of
- *     silently defaulting somebody into the wrong deck.
+ *     included — gets the designer's. `guideTrackFor` reads `isDirectorateTier` to mean "holds a
+ *     ministry post", which is only safe while `OFFICER_ROLES` is exactly those three, so the tiers
+ *     are named here rather than derived: the day that set moves, this goes red instead of silently
+ *     defaulting somebody into the wrong deck. (It borrowed the read-surface predicates until
+ *     2026-10-09, when those surfaces opened to every account that may be appointed to a post,
+ *     admins included; the tier sets are the question this default actually asks.)
  *  5. NO DECK STATES A COUNT IT DID NOT DERIVE. The page header said the literal "Ten steps" while
  *     the array held sixteen, and then nineteen. Three decks is three chances to do it again.
  *  6. NO CARD PROMISES A LIVE RE-READ OF A REFERENCED RECORD. The designer's spec makes this
@@ -84,6 +86,9 @@ import type { User, UserRole } from "@/lib/types";
  *     render a heading over nothing. The second gate is asserted with the toggle both ways, because
  *     an admin with admin view OFF is the reader it subtracts from and is the one the first version
  *     of this filter still offered `/users`.
+ * 11. NO CARD PROMISES A NOTICE A TIER NEVER SEES. The held-post notice above a workshop's stages is
+ *     drawn from reads only an appointer may make, so of the directorate deck's three tiers only the
+ *     Ministry Admin sees it. A second literal tripwire, for the same reason as 7.
  */
 
 const ROOT = join(__dirname, "..");
@@ -508,6 +513,25 @@ test("the directorate deck states the copy rule, because it teaches the same sta
   const prose = [stages!.summary, stages!.why, ...stages!.fields, ...stages!.watch].join(" ");
   expect(prose).toMatch(/COPIES ITS VALUES/i);
   expect(prose).toMatch(/report prints that copy/i);
+});
+
+test("STANDING TRIPWIRE: the directorate deck never promises every tier a notice above the stages", () => {
+  /*
+    THE NOTICE IS AN APPOINTER'S. It asks the two staffing reads, which only an account that may
+    appoint is allowed (`readHeldWorkshopPosts`), so a Ministry Admin who holds a post sees it above the
+    stages and an Assistant or Regional Director never does — they learn it from the refused save. The
+    card for all three said "the page says so above the stages" until 2026-10-09, and two of the three
+    tiers it is written for were told about a notice that never appears for them.
+  */
+  const everything = DIRECTORATE_STEPS.flatMap((step) => [step.summary, step.why, ...step.fields, ...step.watch]).join(" ");
+  const notices = everything.match(/[^.]*\babove the stages\b[^.]*\./gi) ?? [];
+  expect(notices.length, "the sentence is still on the card").toBeGreaterThan(0);
+  for (const sentence of notices) {
+    expect(sentence, "a notice above the stages is promised only to the tier that sees it").toMatch(/Ministry Admin/);
+  }
+  expect(everything).not.toMatch(/the page says so above the stages/i);
+  // And the two tiers it does not reach are told where they DO learn it.
+  expect(everything).toMatch(/Assistant or Regional Director is told by the save itself/);
 });
 
 test("STANDING TRIPWIRE: nothing claims an inspector cannot change a workshop, full stop", () => {

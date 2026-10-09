@@ -66,11 +66,23 @@
  * selectable, following `attachedElsewhere` on the options endpoint, which annotates rather than
  * removes for the same reason. There is no `?force=` and no `confirm` boolean — `question-set.xlsx`'s
  * own docstring argues against putting a decision inside a parameter that defaults.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════════════════════════════
+ * A TARGET THE READER INSPECTS OR SUPERVISES: HELD, WITH THE REASON
+ * ═══════════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * Making the copy AT a workshop attaches it there, and the reuse door asks the attach gate of it
+ * (`_require_attachable_workshop`), so a post holder is refused with the 403 naming the post
+ * (2026-10-09). The target is asked as soon as it is picked; "Create the reuse" is held while the
+ * answer is out and when a post is held, and the picker stays live — another workshop, or "Don't
+ * attach it yet", is the way forward. Not on the source: copying FROM a held workshop's form is a
+ * read, and stays the reader's.
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useState } from "react";
 import { CopyPlus } from "lucide-react";
 
+import { attachHold, HeldPostNotice, useHeldPostRefusal, writesHeld } from "@/components/designworkshop/HeldPostNotice";
 import { FieldDialog } from "@/components/dialogs";
 import { Field, TextInput } from "@/components/FormControls";
 import { FieldBlock } from "@/components/tasks/TaskPrimitives";
@@ -180,6 +192,10 @@ export function ReuseDialog({
    * NULL test here. See the effect below for why the second one cannot be a query parameter.
    */
   const [atTarget, setAtTarget] = useState<string[] | null>(null);
+  /** The picked target's hold, three states — see this file's header. */
+  const targetHold = useHeldPostRefusal(designWorkshopId || null);
+  const hold = attachHold(targetHold, "the copy");
+  const holdNoticeId = useId();
 
   /**
    * The name the copy will ACTUALLY get if the box is left empty — counted up once the look at the
@@ -303,6 +319,8 @@ export function ReuseDialog({
   }
 
   async function submit() {
+    // A held "Create the reuse" is disabled; this keeps the rule for any other way in.
+    if (writesHeld(hold)) return;
     setBusy(true);
     setError(null);
     try {
@@ -369,7 +387,13 @@ export function ReuseDialog({
           <button type="button" className="field-button-secondary" onClick={close} disabled={busy}>
             Cancel
           </button>
-          <button type="button" className="field-button" onClick={submit} disabled={busy}>
+          <button
+            type="button"
+            className="field-button"
+            onClick={submit}
+            disabled={busy || writesHeld(hold)}
+            aria-describedby={typeof hold === "string" ? holdNoticeId : undefined}
+          >
             {busy ? "Copying the questions…" : "Create the reuse"}
           </button>
         </>
@@ -486,6 +510,10 @@ export function ReuseDialog({
             </div>
           )}
         </FieldBlock>
+
+        {/* Why "Create the reuse" is held, under the picker that decides it — mounted from the first
+            paint, so the answer that arrives after a target is picked is announced. */}
+        <HeldPostNotice refusal={hold} id={holdNoticeId} className="" sayPending />
 
         <Field label="Title for the copy">
           <TextInput

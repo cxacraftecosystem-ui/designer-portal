@@ -214,6 +214,13 @@ object FieldPermissions {
      * token is in neither. The two agree by arithmetic here and by construction there; a tier added
      * above 50 would break that agreement silently, and this drawer would offer an admin-only
      * destination to somebody the API refuses.
+     *
+     * ACCOUNT PROVISIONING IS A SEPARATE QUESTION, and since 2026-10-09 this tier passes it: the
+     * server's `ACCOUNT_PROVISIONER_ROLES` lets it create accounts at or below its own tier, and set
+     * temporary passwords, issue password links and correct names and emails on accounts below it.
+     * Nothing here tests for it —
+     * ministry and admin features are web-only by design — so [isAdmin] stays the right gate for
+     * every admin surface this client has.
      */
     const val RANK_MINISTRY_ADMIN = 48
 
@@ -431,31 +438,34 @@ object FieldPermissions {
 
     /**
      * `assert_inspection_surface` — READ a design & prototype workshop in order to inspect and
-     * review it. **THE INSPECTOR / REVIEWER TIER, AND NOBODY ELSE — ADMINS INCLUDED.**
+     * review it. **ON THIS HANDSET, THE INSPECTOR / REVIEWER TIER AND NOBODY ELSE — ADMINS INCLUDED.**
      *
      * ── THIS IS THE ONE PREDICATE IN THIS OBJECT WHOSE REFUSAL IS NOT MONOTONIC IN RANK ──────────
      *
      * [canRunDesignWorkshops] is already a set rather than a floor, but its set still contains both
      * admin tiers, so every one of these predicates has so far had the property that a
      * MASTER_ADMIN passes whatever a lesser tier passes. This one breaks that outright: a
-     * MASTER_ADMIN at rank 60 is REFUSED where an INSPECTOR at 37 is admitted, and the server does it
-     * by name. `INSPECTION_ROLES = frozenset({"INSPECTOR"})`, and `assert_inspection_surface`'s own
-     * docstring argues why admitting an admin would be worse than refusing them: scoped by THEIR OWN
-     * inspection rows an admin sees an empty page and reads it as a broken feature, and scoped by
-     * "everything, because they are an admin" this surface silently becomes a second full read of
-     * every workshop in the repository — a second place to look when somebody has access they should
-     * not.
+     * MASTER_ADMIN at rank 60 is REFUSED where an INSPECTOR at 37 is admitted.
+     *
+     * AND IT IS NARROWER THAN THE SERVER, ON PURPOSE. Until 2026-10-09 the server refused an admin
+     * here by name; the owner's ruling of that date lets a Ministry Admin, an admin and the master
+     * admin be APPOINTED to inspect a workshop, so `assert_inspection_surface` now admits those tiers
+     * too, each scoped by the inspection rows it holds. This handset was not taught that ruling —
+     * ministry and admin work is web-only (`docs/DECISION-ministry-surfaces-web-only.md`) — so an
+     * admin appointed to inspect reads that workshop on the web or through Design workshops, and this
+     * predicate stays the tier set: the fail-closed direction.
      *
      * So reading the ladder for this row gives the wrong answer every time, and `rank(user.role) >=
      * RANK_INSPECTOR` would be wrong for SIX of the eleven tiers in [RANKS] — PROFESSOR,
      * ASSISTANT_DIRECTOR, REGIONAL_DIRECTOR, MINISTRY_ADMIN, ADMIN and MASTER_ADMIN all clear 37 and
-     * are all refused. Getting it wrong that way would offer the menu
-     * entry to every admin in the repository and land all of them on a 403; the web hit the same
-     * fork and made the same call, and `docs/PERMISSIONS.md` §5 says so explicitly because §2's
-     * ladder gives the wrong answer for this row.
+     * are all refused here. Getting it wrong that way would offer the menu entry to every admin in the
+     * repository, onto a surface this handset leaves to the web — and the professor and the directorate
+     * posts onto a 403. The web hit the same fork (and since 2026-10-09 answers it with the server's
+     * wider set), and `docs/PERMISSIONS.md` §5 says so explicitly because §2's ladder gives the wrong
+     * answer for this row.
      *
-     * WHAT AN ADMIN GETS INSTEAD is the screen that appoints inspectors, which hangs off a workshop's
-     * stage index — and the refusal an inspector-less account meets names it.
+     * WHAT AN ADMIN GETS ON THIS HANDSET INSTEAD is the screen that appoints inspectors, which hangs
+     * off a workshop's stage index — and the refusal an inspector-less account meets names it.
      *
      * The rule itself lives in the DATA layer, matching [canCreateDesignWorkshops], because the
      * inspection screens have to ask it from a place that must not import a UI type. This is the
@@ -851,12 +861,13 @@ val FIELD_NAV_ITEMS: List<NavEntry> = listOf(
     // happens inside the stage this hands over to.
     NavEntry(NavDestination.SKETCHES_AND_PROTOTYPES, "Sketches & prototypes", Icons.Filled.Brush, NavGroup.BROWSE, FieldPermissions::canRunDesignWorkshops, "can_run_design_workshops (load_workshop_or_404 on the chosen workshop; get_current_user + visible_to_clause on the picker's list)"),
     // WORKSHOPS TO INSPECT — the fifth scope, and THE ONE ROW IN THIS LIST A MASTER ADMIN CANNOT
-    // REACH. `assert_inspection_surface` is set membership on {INSPECTOR} and 403s an ADMIN and a
-    // MASTER_ADMIN by name, so the predicate is deliberately NOT a rank floor: `>= RANK_INSPECTOR`
-    // would be the wrong answer for SIX of the eleven tiers (professor, the three directorate tiers,
-    // admin and master admin all clear 37 and are all refused) and would put this entry in every
-    // admin's menu in front of a
-    // 403. What an admin gets instead is the appointment screen off a workshop's stage index.
+    // REACH. On this handset the predicate is set membership on {INSPECTOR}: the server has also
+    // admitted an appointed admin since 2026-10-09, and this handset leaves that to the web (see
+    // `FieldPermissions.canInspectDesignWorkshops`). So it is deliberately NOT a rank floor:
+    // `>= RANK_INSPECTOR` would be the wrong answer for SIX of the eleven tiers (professor, the three
+    // directorate tiers, admin and master admin all clear 37 and are all refused here) and would put
+    // this entry in every admin's menu. What an admin gets instead is the appointment screen off a
+    // workshop's stage index.
     //
     // `Icons.Filled.FindInPage` appears nowhere else in this list, so the one-glyph-per-meaning rule
     // holds: Visibility belongs to Review, Star to Design review, Brush to Craft and to Sketches.

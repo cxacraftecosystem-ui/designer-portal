@@ -13,6 +13,7 @@ import { AadhaarField, aadhaarValidationError, isMaskedIdentityNumber } from "@/
 import { IdentityCardCapture } from "@/components/forms/IdentityCardCapture";
 import { CarryContextBanner, carryScope, useCarryContext, type CarryScopeState } from "@/components/forms/CarryContextBanner";
 import { DateField } from "@/components/forms/DateTimeField";
+import { HeldPostNotice, useRecordFilingHold } from "@/components/designworkshop/HeldPostNotice";
 import { DosDontsField } from "@/components/forms/DosDontsField";
 import { DuplicateArtisanDialog } from "@/components/forms/DuplicateArtisanDialog";
 import type { InlineHostSeed, InlineRecordSurfaceProps, UseExistingArtisan } from "@/components/forms/inlineRecordHost";
@@ -622,6 +623,14 @@ export function ArtisanForm({
     isEdit: Boolean(initial),
     resetKey: initial?.id ?? null
   });
+  /*
+    AN ARTISAN FILED UNDER A WORKSHOP THE READER INSPECTS OR SUPERVISES IS READ-ONLY TO THEM, and none
+    may be filed into one (2026-10-09; `useRecordFilingHold`). The server refuses either with a 403 the
+    banner shows word for word; this holds Save — and the picker, for a stored workshop — and says why
+    beside Save before anybody fills the form in.
+  */
+  const filing = useRecordFilingHold(initial?.designWorkshopId, workshop.designWorkshopId, "artisan");
+  const filingNoticeId = useId();
 
   /*
    * THE ONE EMAIL RULE, READ RATHER THAN RESTATED.
@@ -796,6 +805,9 @@ export function ArtisanForm({
     event.preventDefault();
     // Read the form synchronously: React nulls event.currentTarget across the await below.
     const form = new FormData(event.currentTarget);
+    // Save is disabled while this holds, and the sentence beside it says why; this is the line that
+    // keeps it so for `requestSubmit()` from the unsaved-changes prompt, which no disabled button stops.
+    if (filing.saveHeld) return;
     setError(null);
     setConflict(null);
     // Ask about a duplicate BEFORE the late-submission prompt: there is no point weighing up a late
@@ -1189,7 +1201,7 @@ export function ArtisanForm({
             `markDirty` BY HAND, as every themed control on this form must: a dropdown is a
             `<button>` and fires no native input event for the form's `onInput` to catch.
           */}
-          <WorkshopPicker state={workshop} onDirty={markDirty} saving={saving} />
+          <WorkshopPicker state={workshop} onDirty={markDirty} saving={saving} disabled={filing.recordHeld} />
           {/* Name, new craft name and place are title-cased by the API on write, so the box says
               what will actually be stored (Android parity — see components/forms/TitleCasedInput);
               `titleCased` mounts that exact component inside the dictated box rather than a copy of
@@ -1612,7 +1624,10 @@ export function ArtisanForm({
           />
           <StatusField canSetStatus={canSetStatus} initialStatus={initial?.status} onDirty={markDirty} />
         </div>
-        {initial ? <ExistingMedia linkedRecordType="artisan" linkedRecordId={initial.id} /> : null}
+        {/* The artisan's files are its workshop's content too: held with the record — see `filing`. */}
+        {initial ? (
+          <ExistingMedia linkedRecordType="artisan" linkedRecordId={initial.id} recordHold={filing.stored} />
+        ) : null}
         <MediaCaptureField
           files={mediaFiles}
           onFilesChange={(files) => {
@@ -1644,11 +1659,17 @@ export function ArtisanForm({
           is touched, and with no host there is no element at all.
         */}
         {footerFields ? <div className="grid gap-3 border-t border-line-200 pt-4">{footerFields}</div> : null}
+        {/* Why Save is held, beside it — see `filing`. */}
+        <HeldPostNotice refusal={filing.notice} id={filingNoticeId} className="" sayPending />
         <div className="flex justify-end gap-2">
           <button type="button" className="field-button-secondary" onClick={handleBack}>
             Cancel
           </button>
-          <button className="field-button" disabled={saving || checkingDuplicate}>
+          <button
+            className="field-button"
+            disabled={saving || checkingDuplicate || filing.saveHeld}
+            aria-describedby={filing.notice ? filingNoticeId : undefined}
+          >
             {checkingDuplicate ? "Checking..." : saving ? "Saving..." : initial ? "Update artisan" : "Save artisan"}
           </button>
         </div>

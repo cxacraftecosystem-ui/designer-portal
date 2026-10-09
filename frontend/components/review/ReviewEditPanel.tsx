@@ -1,8 +1,15 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 
 import { apiFetch } from "@/lib/api";
+import {
+  HeldPostNotice,
+  reviewEditHold,
+  reviewRecordWorkshopIds,
+  useHeldPostRefusals,
+  writesHeld
+} from "@/components/designworkshop/HeldPostNotice";
 import {
   reviewEditableFields,
   reviewRecordEndpoint,
@@ -28,6 +35,12 @@ import { RequiredMark } from "@/components/ui/RequiredMark";
  *    separately logged second action for the fix-the-typo-and-sign-it-off case.
  * 2. Only CHANGED keys travel. The server writes a RecordRevision from the payload, so posting an
  *    untouched value would put a no-op line in the record's edit history forever.
+ *
+ * And one rule the server added on 2026-10-09: a record filed under a design workshop, or a file one
+ * holds, is that workshop's content, and whoever inspects or supervises the workshop does not edit
+ * it — from this queue either (`review.edit_reviewed_record` asks the record forms' own gate). So the
+ * editor asks, once the record has loaded, and holds its boxes and both Save buttons with the reason
+ * beside them. Approve, Reject and Send for revision are the row's, not this panel's, and stay live.
  */
 export function ReviewEditPanel({
   recordType,
@@ -54,6 +67,13 @@ export function ReviewEditPanel({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
+  /**
+   * The design workshops the loaded record or file names ITSELF — its `designWorkshopId`, or for a
+   * file the two links on its row (`reviewRecordWorkshopIds`). Read off the GET this panel makes
+   * anyway; a workshop it belongs to only some other way is left to the server's 403, printed as
+   * written in the error box above the buttons.
+   */
+  const [filing, setFiling] = useState<string[]>([]);
 
   // The queue can be long; the record is fetched when the reviewer actually opens the editor rather
   // than a request per row for panels nobody opens.
@@ -69,6 +89,7 @@ export function ReviewEditPanel({
         const record = await apiFetch<unknown>(endpoint);
         if (cancelled) return;
         const loaded = reviewValuesFrom(record, fields);
+        setFiling(reviewRecordWorkshopIds(recordType, record));
         setBaseline(loaded);
         setValues(loaded);
       } catch (err) {
@@ -88,8 +109,22 @@ export function ReviewEditPanel({
   /** A column the schema declares `min_length=1` cannot be blanked — catch it before the 422. */
   const blanked = fields.filter((field) => field.required && changedKeys.includes(field.key) && !values[field.key]?.trim());
 
+  /*
+    THE WORKSHOP'S CONTENT IS NOT ITS POST HOLDERS' TO EDIT, FROM THIS QUEUE EITHER. The three states
+    of every hold (`HeldPostRefusal`): asked only for an account that may appoint, and only once the
+    record is here to say which workshop it belongs to; while the answer is out the boxes and both
+    Saves are held exactly as a save in flight holds them, so nothing is typed into an edit the server
+    will refuse. `null` is the one value that releases them.
+  */
+  const heldFor = useHeldPostRefusals(filing);
+  const hold = baseline ? heldFor(filing) : null;
+  const heldNotice = reviewEditHold(hold, recordType);
+  const locked = busy || writesHeld(hold);
+  const heldNoticeId = useId();
+
   async function submit(approve: boolean) {
-    if (!baseline || changedKeys.length === 0 || blanked.length > 0) return;
+    // A held Save is disabled; this keeps the rule for any other way in.
+    if (!baseline || changedKeys.length === 0 || blanked.length > 0 || writesHeld(hold)) return;
     setBusy(true);
     setError(null);
     setSaved(null);
@@ -108,7 +143,9 @@ export function ReviewEditPanel({
       // name-like columns, so the box must show the normalised value or the next diff is wrong.
       const endpoint = reviewRecordEndpoint(recordType, recordId);
       if (endpoint) {
-        const fresh = reviewValuesFrom(await apiFetch<unknown>(endpoint), fields);
+        const record = await apiFetch<unknown>(endpoint);
+        const fresh = reviewValuesFrom(record, fields);
+        setFiling(reviewRecordWorkshopIds(recordType, record));
         setBaseline(fresh);
         setValues(fresh);
       }
@@ -155,7 +192,7 @@ export function ReviewEditPanel({
             // somebody fixes a typo in the notes beside it.
             options={interviewLanguageOptions(value)}
             placeholder={INTERVIEW_LANGUAGE_PLACEHOLDER}
-            disabled={busy}
+            disabled={locked}
             onChange={(next) => setValues((prev) => ({ ...prev, [field.key]: next }))}
             // A vocabulary written in this repository rather than a list of records, so no filter
             // box — §11.5's rule is about where the options came from, not how many there are.
@@ -179,14 +216,14 @@ export function ReviewEditPanel({
             className={`${inputClass} min-h-20`}
             rows={3}
             value={value}
-            disabled={busy}
+            disabled={locked}
             onChange={(event) => setValues((prev) => ({ ...prev, [field.key]: event.target.value }))}
           />
         ) : (
           <input
             className={inputClass}
             value={value}
-            disabled={busy}
+            disabled={locked}
             onChange={(event) => setValues((prev) => ({ ...prev, [field.key]: event.target.value }))}
           />
         )}
@@ -218,6 +255,10 @@ export function ReviewEditPanel({
         approve it — the status stays pending and the change is recorded against your name in the edit history. Status,
         workshop, location and linked records are changed from the record&apos;s own edit screen.
       </p>
+      {/* ABOVE THE BOXES IT HOLDS, unlike the error below: a held field is greyed before anything is
+          typed, and the reason has to be where the eye lands on it. Mounted from the first paint, so
+          the refusal that arrives a round trip after the record is announced. */}
+      <HeldPostNotice refusal={heldNotice} id={heldNoticeId} className="" sayPending />
       {!baseline ? (
         <>
           {feedback}
@@ -231,16 +272,18 @@ export function ReviewEditPanel({
             <input
               className="field-input"
               value={note}
-              disabled={busy}
+              disabled={locked}
               onChange={(event) => setNote(event.target.value)}
             />
           </label>
           {feedback}
           <div className="flex flex-wrap items-center gap-2">
+            {/* Both Saves are held for a post holder, and name the reason while it is on screen. */}
             <button
               type="button"
               className="field-button h-9 min-h-0 px-3 text-xs"
-              disabled={busy || changedKeys.length === 0 || blanked.length > 0}
+              disabled={locked || changedKeys.length === 0 || blanked.length > 0}
+              aria-describedby={typeof heldNotice === "string" ? heldNoticeId : undefined}
               onClick={() => submit(false)}
             >
               {busy
@@ -252,7 +295,8 @@ export function ReviewEditPanel({
             <button
               type="button"
               className="field-button-secondary h-9 min-h-0 px-3 text-xs"
-              disabled={busy || changedKeys.length === 0 || blanked.length > 0}
+              disabled={locked || changedKeys.length === 0 || blanked.length > 0}
+              aria-describedby={typeof heldNotice === "string" ? heldNoticeId : undefined}
               onClick={() => submit(true)}
             >
               Save and approve

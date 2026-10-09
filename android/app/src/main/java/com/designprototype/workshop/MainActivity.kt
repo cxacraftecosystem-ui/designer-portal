@@ -235,14 +235,21 @@ import com.designprototype.workshop.data.apiErrorMessage
 import com.designprototype.workshop.data.DW_DICTATION_MAX_BYTES
 import com.designprototype.workshop.data.dwDictationServerAnswerSentence
 import com.designprototype.workshop.data.signInErrorMessage
+import com.designprototype.workshop.data.PasswordChangeSignal
+import com.designprototype.workshop.data.SessionEndedSignal
+import com.designprototype.workshop.data.SessionVerdict
+import com.designprototype.workshop.data.sessionVerdict
 import com.designprototype.workshop.data.occurrenceDate
 import com.designprototype.workshop.ui.AccessRosterScreen
 import com.designprototype.workshop.ui.accessRefusalChrome
 import com.designprototype.workshop.ui.signInHintHeading
+import com.designprototype.workshop.ui.DwInductionFlusher
 import com.designprototype.workshop.ui.IssuedPasswordLinkPanel
 import com.designprototype.workshop.ui.PasswordGateScreen
+import com.designprototype.workshop.ui.SESSION_ENDED_SENTENCE
 import com.designprototype.workshop.ui.SetPasswordLinkScreen
 import com.designprototype.workshop.ui.mustChangePasswordBlocks
+import com.designprototype.workshop.ui.passwordLinkOffered
 import com.designprototype.workshop.ui.WorkshopAccessQueueFailure
 import com.designprototype.workshop.ui.WorkshopAccessQueueView
 import com.designprototype.workshop.ui.workshopAccessQueueFailure
@@ -1407,6 +1414,11 @@ private fun RepositoryApp(
      * out — the same discipline `consentDoor.reset()` gets one line down, and for the same reason:
      * a value that outlives the person who entered it is a value the next person inherits. It is
      * never written to `TokenStore`, a preference, or a log.
+     *
+     * AND IT IS BLANKED AFTER A SIGN-IN THE SERVER DID NOT FLAG, which it was not until 2026-10-09:
+     * there is no gate to spend it on, and a gate that arrives LATER in the session (a request comes
+     * back gated) must ask for the password rather than send one typed hours before, which may well
+     * have been replaced since.
      */
     var doorPassword by remember { mutableStateOf("") }
     /**
@@ -1473,62 +1485,147 @@ private fun RepositoryApp(
 
     // Persistent login: start from the cached profile so minimise/resume never logs the user out.
     // Refresh in the background and only clear the session if the token is genuinely rejected.
-    LaunchedEffect(Unit) {
-        if (repository.hasToken()) {
-            runCatching { repository.refreshUser() }
-                .onSuccess { user = it }
-                .onFailure { err ->
-                    val status = (err as? HttpException)?.code()
-                    when {
-                        /*
-                         * 403 HERE MEANS THE ACCESS WAS WITHDRAWN WHILE THE APP WAS OPEN, and it is
-                         * the case a suspended designer actually hits. Suspension does not invalidate
-                         * a token — the roster is consulted per request — so the token stays valid,
-                         * `refreshUser` comes back 403, and the old code (which only cleared on 401,
-                         * and otherwise only spoke at all when there was no cached user) left the
-                         * designer sitting inside the app on a cached profile. Every screen would
-                         * then fail one by one with unexplained errors, and the app would look
-                         * broken rather than closed to them.
-                         *
-                         * The session is ended here so the refusal is stated once, on the sign-in
-                         * screen, in the server's own words.
-                         */
-                        status == 403 -> {
-                            repository.logout(appContext)
-                            user = null
-                            // The STATUS and headers first, then the message: reading the message
-                            // consumes Retrofit's buffered error body, so the classification has to
-                            // be taken while it is still cheap. An unlabelled 403 lands on
-                            // UNCLASSIFIED and the card then says only what the server said, which
-                            // is the correct answer when we do not know which refusal this is.
-                            refusal = err.accessRefusal()
-                            error = err.signInErrorMessage()
-                        }
-                        status == 401 -> {
+    //
+    // ONE `GET /me` AND WHAT ITS ANSWER MEANS, used at launch and again whenever a request comes back
+    // with the password gate's header, or with a 401 that may mean the session has ended (both below).
+    // The decision is `sessionVerdict`, pure and pinned by `PasswordChangeRequiredTest`; this only
+    // applies it.
+    suspend fun refreshSession() {
+        runCatching { repository.refreshUser() }
+            .onSuccess { user = it }
+            .onFailure { err ->
+                when (err.sessionVerdict()) {
+                    /*
+                     * A LIVE SESSION THAT OWES A NEW PASSWORD, NOT A DEAD ONE. `GET /me` is on the
+                     * server's allow-list, so this arm means a deployment or a proxy that disagrees
+                     * with it — and the honest reading is still the header's. Signing out would only
+                     * send the person round the sign-in card to arrive at the same gate.
+                     */
+                    SessionVerdict.CHOOSE_NEW_PASSWORD -> {
+                        val held = repository.holdForPasswordChange()
+                        if (held != null) {
+                            user = held
+                        } else {
+                            // No profile to put the gate in front of. The sign-in card states the
+                            // server's sentence, and signing in again brings back a profile — and
+                            // with it the gate.
                             repository.logout(appContext)
                             user = null
                             refusal = AccessRefusal.NOT_REFUSED
-                            error = "Your session expired. Please sign in again."
-                        }
-                        // Anything else is the network, and a network failure must never log anybody
-                        // out: the cached profile is what lets a designer keep working in a courtyard.
-                        user == null -> {
-                            error = err.message
-                                ?: "Unable to reach the server. Check your connection and try again."
+                            error = err.signInErrorMessage()
                         }
                     }
+                    /*
+                     * 403 HERE MEANS THE ACCESS WAS WITHDRAWN WHILE THE APP WAS OPEN, and it is
+                     * the case a suspended designer actually hits. Suspension does not invalidate
+                     * a token — the roster is consulted per request — so the token stays valid,
+                     * `refreshUser` comes back 403, and the old code (which only cleared on 401,
+                     * and otherwise only spoke at all when there was no cached user) left the
+                     * designer sitting inside the app on a cached profile. Every screen would
+                     * then fail one by one with unexplained errors, and the app would look
+                     * broken rather than closed to them.
+                     *
+                     * The session is ended here so the refusal is stated once, on the sign-in
+                     * screen, in the server's own words.
+                     */
+                    SessionVerdict.REFUSED -> {
+                        repository.logout(appContext)
+                        user = null
+                        // The STATUS and headers first, then the message: reading the message
+                        // consumes Retrofit's buffered error body, so the classification has to
+                        // be taken while it is still cheap. An unlabelled 403 lands on
+                        // UNCLASSIFIED and the card then says only what the server said, which
+                        // is the correct answer when we do not know which refusal this is.
+                        refusal = err.accessRefusal()
+                        error = err.signInErrorMessage()
+                    }
+                    /*
+                     * THE TOKEN IS DEAD, and since 2026-10-09 the commonest reason is not time: every
+                     * session is bound to the password it was opened with, so a change on the website,
+                     * on another phone, by an administrator or through a redeemed link retires this
+                     * one. "Your session expired" gave no reason, and the reason decides which
+                     * password the person types next — see `SESSION_ENDED_SENTENCE`. Reached at
+                     * launch, and from any request through `SessionEndedSignal` (below). The queues
+                     * keep their work: a sign-out clears the token, never the outbox.
+                     */
+                    SessionVerdict.EXPIRED -> {
+                        repository.logout(appContext)
+                        user = null
+                        refusal = AccessRefusal.NOT_REFUSED
+                        error = SESSION_ENDED_SENTENCE
+                    }
+                    // Anything else is the network, and a network failure must never log anybody
+                    // out: the cached profile is what lets a designer keep working in a courtyard.
+                    SessionVerdict.KEEP -> if (user == null) {
+                        error = err.message
+                            ?: "Unable to reach the server. Check your connection and try again."
+                    }
                 }
-        }
+            }
+    }
+    LaunchedEffect(Unit) {
+        if (repository.hasToken()) refreshSession()
         loading = false
+    }
+
+    /*
+     * ── A REQUEST CAME BACK GATED, SO PUT THE GATE ON SCREEN ─────────────────────────────────────
+     *
+     * `ApiClient` raises `PasswordChangeSignal` whenever any request — a screen's, the outbox loop's,
+     * the join-card flusher's — is answered with the password gate's header. Each of those callers
+     * keeps its own work (a 401 is "later" to all of them); this re-reads the profile, which the
+     * allow-list always answers, so the flag the server holds reaches `mustChangePasswordBlocks` and
+     * the `when` below. Without it, a flag this handset had not heard of would show as a dashboard
+     * where everything quietly fails. Whatever that re-read answers is applied exactly as at launch,
+     * so a token that has died since is signed out there and then. Nothing is done while the gate is
+     * already up: the screen's own requests are the allow-listed ones, and there is nothing further
+     * to learn.
+     */
+    LaunchedEffect(Unit) {
+        PasswordChangeSignal.raises.collect { raised ->
+            val current = user
+            if (raised > 0L && current != null && !mustChangePasswordBlocks(current)) refreshSession()
+        }
+    }
+
+    /*
+     * ── A REQUEST CAME BACK WITH A PLAIN 401, SO ASK WHETHER THE SESSION HAS ENDED ───────────────
+     *
+     * `ApiClient` raises `SessionEndedSignal` when a request sent with the token this handset still
+     * holds is answered by a 401 WITHOUT the gate's header. Since 2026-10-09 that is how a password
+     * changed somewhere else reaches this phone — the change retires every session opened with the
+     * old password — and until now nothing here listened: the verdict was read at launch only, so
+     * every queue retried with the dead token until the app was killed and reopened, under a banner
+     * saying the work would upload. This re-reads the profile with the CURRENT token and applies the
+     * answer exactly as at launch: a dead session reaches the EXPIRED arm and is signed out with a
+     * sentence that says why; a 401 that was about something else costs one `GET /me`. The callers
+     * keep their work either way.
+     *
+     * NOT WHILE THE PASSWORD GATE IS UP, for the gate signal's reason and one of its own. The gate's
+     * requests are the only ones made then, and a 401 to them is the gate's to read: after a change
+     * whose answer was lost it means the NEW password may already be in force, which is a different
+     * sentence from this one (`passwordGateAfterFailure`). Signing out here as well would race the
+     * gate with the wrong words.
+     */
+    LaunchedEffect(Unit) {
+        SessionEndedSignal.raises.collect { raised ->
+            val current = user
+            if (raised > 0L && current != null && !mustChangePasswordBlocks(current)) refreshSession()
+        }
     }
 
     // Appearance follows the ACCOUNT, not the handset: reconcile this device's copy with
     // /preferences/me once per sign-in. A saved row wins; no row means this device seeds the account,
     // so the look travels to the next device the researcher signs in on. Never throws — a failure
     // simply leaves what the device already had on screen.
+    //
+    // NOT WHILE THE PASSWORD GATE HOLDS: the server refuses `/preferences/me` until the account has a
+    // new password, and keying on the gate as well as the account is what runs it once the gate
+    // clears, which a key of the account alone would never do.
+    val passwordHeld = mustChangePasswordBlocks(user)
     val latestPreferences by rememberUpdatedState(preferences)
-    LaunchedEffect(user?.id) {
-        if (user == null) return@LaunchedEffect
+    LaunchedEffect(user?.id, passwordHeld) {
+        if (user == null || passwordHeld) return@LaunchedEffect
         onPreferencesChanged(syncAppPreferences(repository, latestPreferences))
     }
 
@@ -1566,8 +1663,25 @@ private fun RepositoryApp(
      * numbers on two surfaces of one app.
      */
     var pendingAccessRequests by remember { mutableIntStateOf(0) }
+    /*
+     * ── NONE OF THIS RUNS WHILE THE ACCOUNT OWES A NEW PASSWORD ─────────────────────────────────
+     *
+     * Not the loop, not the network callback below, not the access poll inside the loop. The server
+     * answers all of it with a gated 401 until the password is changed; nothing queued would be lost
+     * (every queue keeps its work on a 401) but every pass would spend a fieldworker's signal to
+     * learn nothing. Both effects are keyed on [user], so the gate's `onSatisfied` — a new profile
+     * with the flag cleared — is what starts them again, and the first pass is immediate. The
+     * join-card flusher holds back on the same test by itself; it is told the gate is up, and the
+     * one pass it owes is run here when the gate clears. `syncOutbox` also checks, for the callers
+     * that are not this loop.
+     */
     LaunchedEffect(user) {
         if (user == null) return@LaunchedEffect
+        if (mustChangePasswordBlocks(user)) {
+            DwInductionFlusher.holdForPasswordGate()
+            return@LaunchedEffect
+        }
+        DwInductionFlusher.resumeAfterPasswordGate(appContext)
         while (true) {
             runCatching { repository.syncOutbox(appContext) }
             outboxCounts = runCatching { repository.outboxCounts(appContext) }.getOrDefault(outboxCounts)
@@ -1588,7 +1702,7 @@ private fun RepositoryApp(
         }
     }
     DisposableEffect(user) {
-        if (user == null) return@DisposableEffect onDispose {}
+        if (user == null || mustChangePasswordBlocks(user)) return@DisposableEffect onDispose {}
         val cm = appContext.getSystemService(android.net.ConnectivityManager::class.java)
         val callback = object : android.net.ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: android.net.Network) {
@@ -1669,7 +1783,11 @@ private fun RepositoryApp(
                             // throws, so a consent that does not reach the server leaves the account
                             // signed in with the gate still open, and `UsageConsentGateScreen` asks
                             // properly one screen later rather than this reading as "sign-in failed".
-                            .onSuccess { user = usageAnswerAtTheDoor(appContext, repository, it, consentDoor) }
+                            .onSuccess {
+                                user = usageAnswerAtTheDoor(appContext, repository, it, consentDoor)
+                                // Kept only for a gate that is about to use it. See `doorPassword`.
+                                if (!mustChangePasswordBlocks(user)) doorPassword = ""
+                            }
                             .onFailure { failure ->
                                 // The STATUS AND HEADERS first, then the message, and in that order:
                                 // reading the message consumes Retrofit's buffered error body, so the
@@ -1789,11 +1907,14 @@ private fun RepositoryApp(
              * is dismissible, and "set a password if you feel like it" is not the requirement. See
              * `ui/PasswordGate.kt`, which also records why the escape hatch is not a way past it.
              *
-             * THE SERVER REPORTS AND THIS REFUSES. `POST /auth/login` mints a token for an account
-             * carrying `mustChangePassword` deliberately — the only route that can change a password
-             * needs one — so the blocking half is the client's, exactly as it is for consent.
-             * `mustChangePasswordBlocks` is a `== true` and nothing else; a null flag is a deployment
-             * older than the column and blocks nobody.
+             * THE DOOR LETS THEM IN; THE SERVER REFUSES EVERYTHING ELSE; THIS IS WHERE THEY ACT.
+             * `POST /auth/login` mints a token for an account carrying `mustChangePassword`
+             * deliberately — the only route that can change a password needs one — and since
+             * 2026-10-09 every other route outside a short allow-list answers that token with a gated
+             * 401 (`data/PasswordChangeRequired.kt`). So this arm is no longer the only thing holding
+             * the line, but it is still the only thing that tells the person what to do; the sync
+             * effects above wait while it is up. `mustChangePasswordBlocks` is a `== true` and
+             * nothing else; a null flag is a deployment older than the column and blocks nobody.
              */
             mustChangePasswordBlocks(user) -> PasswordGateScreen(
                 repository = repository,
@@ -1819,6 +1940,22 @@ private fun RepositoryApp(
                         repository.logout(appContext)
                         consentDoor.reset()
                         doorPassword = ""
+                        user = null
+                    }
+                },
+                // THE GATE'S OWN SIGN-OUT, WHICH HAS SOMETHING TO SAY. A change whose answer was lost
+                // was followed by a `GET /me` the server refused, so the change most likely landed and
+                // retired this session — and the person must be told the NEW password may be the one
+                // to type. The escape's lines above, plus the card's sentence.
+                onSessionEnded = { message ->
+                    scope.launch {
+                        runCatching { googleAuthClient.clear() }
+                        repository.logout(appContext)
+                        consentDoor.reset()
+                        doorPassword = ""
+                        refusal = AccessRefusal.NOT_REFUSED
+                        signInHint = SignInHint.NONE
+                        error = message
                         user = null
                     }
                 }
@@ -1855,7 +1992,10 @@ private fun RepositoryApp(
         // in `outboxDeviceBanner` — pure, and pinned by `OutboxBannerTest`, because every one of them
         // is read by somebody with no signal and there is no other way to check them. This composable
         // decides only where they sit and what colour they are.
-        val banner = if (user != null) {
+        // Not over the password gate: nothing moves while it holds, so "uploading when you're online"
+        // would be false on a phone that is online, and the tray it opens could only retry into the
+        // same refusal. The counts are where they were, and the banner returns with the sync loop.
+        val banner = if (user != null && !passwordHeld) {
             outboxDeviceBanner(outboxCounts, online = repository.isOnline(appContext))
         } else {
             null
@@ -1909,7 +2049,7 @@ private fun RepositoryApp(
                 }
             }
         }
-        if (showOutboxTray) {
+        if (showOutboxTray && !passwordHeld) {
             OfflineOutboxTray(
                 repository = repository,
                 onClose = { showOutboxTray = false },
@@ -4090,8 +4230,8 @@ private fun HomeScreen(
                 // control to an admin only, and the screen re-derives `require_admin` from the cached
                 // account on entry and again at the moment of the write. NOT the same rule as the row
                 // below and NOT the same rule as the inspector's own screens: this one is admin-only,
-                // and `canInspectDesignWorkshops` - the predicate that opens the READ - refuses an
-                // admin by name.
+                // and `canInspectDesignWorkshops` - the predicate that opens the READ - refuses every
+                // admin on this handset (the server admits an appointed one; that is web-only here).
                 onOpenInspectors = { message = null; screen = Screen.DesignWorkshopInspectors(s.workshopId) },
                 // Ungated HERE for the same reason as the row above it, and the index HIDES this one
                 // from a non-admin rather than explaining it — see the comment on that control.
@@ -4189,7 +4329,8 @@ private fun HomeScreen(
              * Ungated at this call site, like every sibling above: both screens re-derive
              * `canInspectDesignWorkshops` from the CACHED account and issue no request at all when
              * the answer is already known. That predicate is set membership on {INSPECTOR} and
-             * refuses an admin BY NAME - read its own note before assuming a rank comparison would do.
+             * refuses every admin on this handset - read its own note before assuming a rank
+             * comparison would do.
              */
             is Screen.DesignWorkshopInspections -> InspectionListScreen(
                 repository = repository,
@@ -19258,8 +19399,10 @@ private fun UserManagementForm(
             // `assert_can_manage_target`: the master admin manages everyone but other masters;
             // everyone else manages strictly lower tiers only.
             val canManageTarget = if (actorIsMaster) !isMaster else roleRank(appUser.role) < actorRank
-            // PATCH /users is `require_professor`, but a non-admin professor may only change `role`
-            // (the server 403s any other field) — so the capability toggles need admin and above.
+            // PATCH /users is `require_professor`, but the capability grants are an admin's alone: the
+            // server 403s a grant flag from anybody else — a MINISTRY_ADMIN included, although since
+            // 2026-10-09 it may correct names and set passwords (on the web) — so the toggles need
+            // admin and above.
             val canEditGrants = actorIsAdmin && canManageTarget && !targetIsProfessorPlus
             val expanded = expandedUsers.contains(appUser.id)
             // Count of granted privileges, for the collapsed summary line. One entry per toggle
@@ -19392,17 +19535,18 @@ private fun UserManagementForm(
                          * page. An administrator standing in a workshop with a designer who cannot
                          * sign in had to find a laptop.
                          *
-                         * ADMIN AND NOT MASTER ADMIN, matching the route (`require_admin`) and
-                         * matching `POST /api/users`: the account that can CREATE somebody with a
+                         * ADMIN AND NOT MASTER ADMIN: the account that can CREATE somebody with a
                          * password of the admin's choosing can obviously hand them a link to change
                          * it, and gating the safer of the two more tightly would only push admins
-                         * back to typing passwords for people. `canManageTarget` is the same
-                         * `assert_can_manage_target` mirror the role dropdown above uses.
+                         * back to typing passwords for people. The route also admits a MINISTRY
+                         * ADMIN since 2026-10-09; this button does not, because account provisioning
+                         * is one of the ministry features that are web-only by design.
+                         * `canManageTarget` is the same `assert_can_manage_target` mirror the role
+                         * dropdown above uses, and the route applies the same rule.
                          *
-                         * NOT OFFERED FOR A GOOGLE ACCOUNT. It has no password to set, and issuing
-                         * a link for one would hand an administrator a credential that turns a
-                         * Google-only account into a password one without anybody deciding to. The
-                         * web's users page omits the button on exactly the same test.
+                         * OFFERED BY "HAS A PASSWORD", NOT BY "IS NOT GOOGLE" — see
+                         * `passwordLinkOffered`, which records why the provider was the wrong proxy.
+                         * The web's users page keys its "Password link" on the same test.
                          *
                          * THE THROTTLE'S 429 IS SHOWN VERBATIM. It is per SUBJECT (four an hour),
                          * because redeeming revokes that account's sessions and a per-admin budget
@@ -19410,7 +19554,7 @@ private fun UserManagementForm(
                          * laptop. The server's sentence names the wait and the alternative; nothing
                          * this screen could write in its place would know either.
                          */
-                        if (actorIsAdmin && canManageTarget && appUser.authProvider != "GOOGLE") {
+                        if (actorIsAdmin && canManageTarget && passwordLinkOffered(appUser)) {
                             HorizontalDivider()
                             OutlinedButton(
                                 enabled = !linkBusy,

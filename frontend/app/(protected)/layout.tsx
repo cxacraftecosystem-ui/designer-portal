@@ -15,10 +15,22 @@ import { UnsavedChangesProvider } from "@/components/UnsavedChangesGuard";
  *
  * THE THIRD ONE IS NEW AND IS NOT A ROUTE RULE, which is why it is worth naming here. `ROUTE_GUARDS`
  * answers "may this person open THIS page"; `mustChangePassword` answers "may this person use the
- * product at all" while their account still holds a password an administrator typed. AppShell
- * returns a full surface for it ABOVE the island and above both guards — read the comment beside the
- * branch before moving anything near it, and note that `/set-password`, the one route somebody who
- * does not know that password can use, is deliberately not in this tree.
+ * product at all" while their account owes a new password. AppShell returns a full surface for it
+ * ABOVE the island and above both guards — read the comment beside the branch before moving anything
+ * near it, and note that `/set-password`, the one route somebody who does not know that password can
+ * use, is deliberately not in this tree.
+ *
+ * ⚠ THE THREE MOUNTED BESIDE AppShell ARE NOT BEHIND THAT GATE, and the server now enforces it:
+ * while the account owes a password, every request outside a short allow-list is refused with a 401
+ * carrying `X-Password-Change-Required`. `apiFetch` keeps the session on that answer rather than
+ * bouncing the tab to /login, so a stray request no longer costs a sign-in — but it still costs a
+ * refused round trip, and a notice drawn over the gate describes an app the person cannot see. So
+ * anything mounted here outside `<AppShell>` asks `useAuth().passwordChangeRequired` first:
+ * `DesignerProfileOnboarding` makes no request while it is true, `OfflineWatcher` raises nothing, and
+ * `AppUpdateWatcher` makes no request at all. The two banners INSIDE AppShell are not drawn behind
+ * the gate, and the drains they start (`lib/offline.ts`, `lib/designWorkshopStore.ts`) refuse to run
+ * while `sessionOwesPasswordChange()` is true — and stop without marking anything if the gate goes up
+ * mid-pass — so a gated tab never parks queued work.
  *
  * It is also where the app-wide dialogs are mounted, once each — same reasoning as the single
  * ToastProvider in the root layout:

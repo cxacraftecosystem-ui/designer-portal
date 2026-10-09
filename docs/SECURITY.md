@@ -276,8 +276,9 @@ first because it is the one that changed under this document's feet.
   the project's plan, not this repository, decides whether provider-side backups exist at all. No
   application configuration is required or possible either way. Re-confirm on the next provider
   move, with a date, as before.
-- Passwords are stored as bcrypt hashes (`passlib`, `CryptContext(schemes=["bcrypt"])`). Google
-  sign-in accounts have no password hash at all.
+- Passwords are stored as bcrypt hashes (`passlib`, `CryptContext(schemes=["bcrypt"])`). An account
+  CREATED by Google sign-in has no password hash at all; an account that has a password keeps it when
+  its owner later signs in with Google (§3.3).
 - **Nothing is encrypted at the column level.** Artisan names, phone numbers, addresses, GPS
   coordinates, interview transcripts and researcher notes are plaintext columns. Anyone with the
   database URL, a login to the provider's dashboard, or a `DATABASE_URL` leak reads all of it. Treat
@@ -310,6 +311,7 @@ first because it is the one that changed under this document's feet.
 | Allowed algorithms | HS256 / HS384 / HS512 only | `Settings._normalise_jwt_algorithm` — `JWT_ALGORITHM=none` refuses to start |
 | Expiry | `JWT_EXPIRES_MINUTES`, default 10080 (7 days) | `create_access_token`; `verify_exp` + `require_exp` on decode |
 | Subject | `sub` = user id, required | `require_sub` on decode, re-checked in `deps.get_current_user` |
+| Password binding | `cred` = 16 hex characters of a SHA-256 of the account's `passwordHash` as it stood when the token was minted, on every token minted since 2026-10-09 (§3.6) | `create_access_token(credential=…)`, which reserves the claim; compared with the row in `deps._user_from_bearer` |
 | Secret | ≥ 32 characters, never the example placeholder | `verify_jwt_configuration()` at `create_app()` |
 
 Pinning the algorithm closes **algorithm confusion**: without it, a token whose header says
@@ -336,8 +338,8 @@ python -c "import secrets; print(secrets.token_urlsafe(48))"
   The strict CSP on API responses does not help here — the risk lives on the *frontend* origin.
 - **No refresh tokens, and revocation is narrow rather than absent.** *Rewritten 2026-09-03; this
   bullet used to read "no refresh tokens and no revocation", and that had been half wrong for a
-  while and wholly wrong since that date.* A token is valid until `exp` unless one of two things has
-  happened.
+  while and wholly wrong since that date.* A token is valid until `exp` unless one of three things
+  has happened — the third since 2026-10-09.
 
   First, `get_current_user` re-loads the user row on **every** request, so a *deleted* user is
   rejected immediately and a *demoted* user loses privileges immediately — the role in the token is
@@ -345,15 +347,37 @@ python -c "import secrets; print(secrets.token_urlsafe(48))"
 
   Second, `User.sessionsValidFrom` is a **per-account revocation watermark**: `deps._user_from_bearer`
   refuses any token whose `iat` predates it. Nothing new is read on the hot path to do it — the `User`
-  row is loaded to authenticate the request regardless. Four acts write it: redeeming an
-  admin-issued password link (`routes/auth.set_password`, the original writer), and, since
-  2026-09-03, barring the address on the platform allow-list — `DELETE /api/access/roster/{id}` and
-  the REJECT arm of `POST /api/access/roster/{id}/decision` — and ending an empanelment on the
-  designer roster (`PATCH` and `DELETE /api/designers/roster/{id}`, which stamp only when the
-  empanelment was actually carrying admissions). Before that date, suspending an account stopped the
-  next sign-in and left the session the person was already in running for the rest of the token's
-  lifetime: an administrator suspended a departing colleague at 10am, watched the row go SUSPENDED,
-  and that colleague's phone went on creating records for up to seven days.
+  row is loaded to authenticate the request regardless. Its writers:
+
+  - **redeeming a password link** (`routes/auth.set_password`, the original writer);
+  - **barring the address on the platform allow-list**, since 2026-09-03 — `DELETE
+    /api/access/roster/{id}` and the REJECT arm of `POST /api/access/roster/{id}/decision`;
+  - **ending an empanelment on the designer roster**, since the same date — `PATCH` and `DELETE
+    /api/designers/roster/{id}`, which stamp only when the empanelment was actually carrying
+    admissions;
+  - **a provisioner setting somebody else's password, or raising their `mustChangePassword`**, at
+    `PATCH /api/users/{id}`, since 2026-10-09 — so every session the account holds is refused from its
+    next request, rather than lasting until a phone that re-reads `/me` only at launch is restarted.
+    When each device NOTICES is the client's part: a browser tab drops its token at that request, the
+    Android source since 2026-10-09 signs out there too, and builds up to 0.0.15 notice only at their
+    next launch, keeping their queued work either way (§3.6);
+  - **`scripts/seed_admin.py` resetting an existing master admin's password**, since the same date.
+
+  **The writers that set or flag a password take their timestamp after the password is hashed and
+  every awaited check has run, immediately before the write** (2026-10-09) — `PATCH /api/users/{id}`,
+  the link's redemption and `scripts/seed_admin.py`. It used to be taken first, so a sign-in with the
+  OLD password that read the row before the commit and minted its token in a later wall second —
+  bcrypt alone takes a noticeable fraction of one — post-dated the watermark and kept a week of
+  access. For a password write the binding in §3.6 now refuses that token on its first use as well;
+  for a flag raised on its own, the stamp's position is the whole of the defence.
+
+  Before 2026-09-03, suspending an account stopped the next sign-in and left the session the person
+  was already in running for the rest of the token's lifetime: an administrator suspended a departing
+  colleague at 10am, watched the row go SUSPENDED, and that colleague's phone went on creating records
+  for up to seven days. Changing your OWN password at `POST /api/auth/change-password` writes no
+  watermark — and since 2026-10-09 it ends every OTHER session of the account anyway, through the
+  third mechanism, while the answer hands the session that made the change a fresh token in its
+  `X-Session-Token` header (§3.6).
 
   **What is still NOT revoked, named so nobody infers otherwise.** Rows barred *before* 2026-09-03
   were never stamped and nothing backfills them on its own. And when the Gmail-alias sweep that finds
@@ -365,13 +389,26 @@ python -c "import secrets; print(secrets.token_urlsafe(48))"
   `ab@gmail.com` — was closed the same day: the lookup is now
   `access_roster.accounts_on_the_mailbox`, which canonicalises both sides and stamps every spelling.)
 
+  Third, since 2026-10-09, **every token is bound to the password it was opened with**: a token whose
+  `cred` claim no longer matches the account's current password is refused with the watermark's own
+  sentence, so any password change ends every session opened before it, whoever made the change and
+  by whichever door. §3.6 has the whole of it, including the tokens minted before that date, which
+  carry no claim and are not ended this way.
+
   A **role change** deliberately signs nobody out: losing a tier is not losing access, and the
   identity-cache invalidation is what makes a demotion take effect on the next request.
 
   Rotating `JWT_SECRET` still invalidates every token at once and remains the break-glass response
   to a suspected theft.
-- **7-day lifetime** is long for a token that can only be revoked by the writers named above. It is a
-  deliberate trade for field work with intermittent connectivity.
+- **7-day lifetime** is long for a token that can only be revoked by the writers named above or by a
+  change of the password it was opened with (§3.6). It is a deliberate trade for field work with
+  intermittent connectivity.
+- **A password one person typed for another is a shared secret.** Provisioners (§3.4) create accounts
+  with a password and set temporary ones, so for a while somebody besides the owner knows it. That is
+  why such a password is temporary by default, why, since 2026-10-09, the server holds the account
+  to replacing it (§3.4) rather than trusting both clients to, and why every session opened with it —
+  the provisioner's, or anybody's who read the message it travelled in — ends when it is replaced
+  (§3.6).
 - **Android backup.** `android:allowBackup="true"` lets the auth token and preferences travel
   through Google's backup. Excluding them needs a `dataExtractionRules` / `fullBackupContent`
   resource, or moving the token to `EncryptedSharedPreferences`.
@@ -379,10 +416,404 @@ python -c "import secrets; print(secrets.token_urlsafe(48))"
 ### 3.3 Google sign-in
 
 Google ID tokens are verified server-side against Google's keys with the audience restricted to
-the configured client ids (`GOOGLE_CLIENT_ID`, `GOOGLE_ANDROID_CLIENT_ID`). Brand-new self-registered
-accounts land on `DEFAULT_SIGNUP_ROLE`, which defaults to the **lowest** tier
-(`CROWDSOURCE_VOLUNTEER`) so an unknown Google account cannot read or write as a researcher until an
-admin elevates it.
+the configured client ids (`GOOGLE_CLIENT_ID`, `GOOGLE_ANDROID_CLIENT_ID`), and the address must be
+one Google has verified. **Admission is decided before anything is written**: an address the platform
+allow-list does not admit becomes a PENDING request and a 403, and no account is created
+([PERMISSIONS.md](PERMISSIONS.md) §1). An admitted address with no account becomes one at the tier
+its allow-list row names, or at `DEFAULT_SIGNUP_ROLE` when the row names none — the **lowest** tier
+(`CROWDSOURCE_VOLUNTEER`) by default, so an unknown Google account cannot read or write as a
+researcher until an admin elevates it.
+
+**WHICH ACCOUNT A GOOGLE IDENTITY SIGNS IN TO — owner's decision, 2026-10-09.** The literal address
+Google sent, first. On a miss, the one account WITH A PASSWORD (`authProvider` `LOCAL`) whose address
+is the same Gmail mailbox under another spelling — dots, a `+tag`, `googlemail.com`, letter case,
+canonicalised by `designers.canonical_email`. The sign-in reads it through
+`access_roster.accounts_on_the_mailbox_for_sign_in`, which has Postgres return only the candidate
+rows and then applies the same canonicalisation, so the answer is `accounts_on_the_mailbox`'s without
+reading every Gmail account on every such sign-in (the parity is pinned in
+`backend/tests/test_account_provisioning.py`). That is what stops a provisioner's
+`sandy.craft3@gmail.com` and its owner's Google `sandycraft3@gmail.com` becoming two accounts for one
+person, with their workshops split across both.
+
+- **Never for the configured master admin** (2026-10-09). The master's sign-in writes `MASTER_ADMIN`
+  onto whatever account it lands on, so the fold would have promoted an account a provisioner made
+  under another spelling of the master's mailbox — the provisioner's password still on it — to the one
+  tier nobody can manage; all it needed was an account planted before the master's first Google
+  sign-in on a deployment where the master's own row did not exist yet (a handover, an unseeded box).
+  The address at `MASTER_ADMIN_EMAIL` signs in to its literal row or to a new account there, and the
+  elevation is written only onto an account found under that literal address.
+- **And only onto one that is already a master admin or holds no password** (later the same day,
+  `_refuse_to_promote_a_password_account` in `backend/app/api/routes/auth.py`). An account with no
+  password at that address could only have been made by a Google sign-in on that mailbox. Any other
+  holds a password that whoever chose it still knows — the provisioner who made it, an officer who
+  redeemed a sanction order's first link before the register refused the mailbox, or the account's
+  own holder when `MASTER_ADMIN_EMAIL` is pointed at an existing account — and promoting it handed that
+  person a `MASTER_ADMIN` session no API door can take back. So the sign-in answers **409**
+  (`MASTER_ADDRESS_HOLDS_A_PASSWORD_ACCOUNT_DETAIL`, which names `scripts/seed_admin.py`), writes
+  nothing to the account, not even the avatar, and logs its id and role at ERROR. The operator runs
+  the script, which gives that account a new temporary password and the master's role and ends every
+  session the old password opened; the next Google sign-in then finds a master admin. A handover onto
+  an existing password account therefore takes the script first ([DOCKER.md](DOCKER.md)). This is the
+  defence beneath the doors: the users screen refuses any spelling of the mailbox to all but a master
+  admin, and the sanction register refuses it to everybody (§3.4). It cleans nothing up: an account
+  planted before that day can no longer be promoted this way, and repairing it is still the script.
+- **Several such accounts is a 409**, telling the person to sign in with their email address and
+  password and to ask an administrator to merge or correct the duplicates. Choosing between two
+  accounts for one person is an administrator's call, not a sort order's.
+- **A Gmail sweep cut by its own limit** is logged at ERROR and the old behaviour applies — a new
+  Google account may be created beside the existing one. A visible duplicate an administrator can fix
+  was preferred to locking every new Google user out of a large deployment.
+- **Why the fold is safe**: Google has verified that the caller controls the mailbox, and every
+  spelling the fold joins is, by Google's own published rule, delivered to that one mailbox. It is
+  applied to nothing else, and only to `LOCAL` accounts.
+
+**A PASSWORD ACCOUNT STAYS A PASSWORD ACCOUNT.** Signing in with Google is a second way into the same
+account, not a conversion: the password hash stays, `authProvider` stays `LOCAL`, the name a
+provisioner typed stays, and `mustChangePassword` stays — only the avatar is refreshed. So **Google
+sign-in does not get round the forced change** (§3.4): an account still holding a temporary password
+is held until its owner replaces it at change-password, which asks for that temporary password,
+until a provisioner issues it a password link, or until a provisioner withdraws the required change.
+An account Google created, with no password, behaves exactly as it always did. **A Google session
+lasts as long as the account's password does not change** (§3.6): it carries the fingerprint of
+whatever password the account held when it signed in, so a password set by any door afterwards ends
+it, and a name or avatar correction does not.
+
+### 3.4 Provisioned passwords, and the forced change
+
+**WHO TYPES A PASSWORD FOR WHOM.** Password accounts are created by the account provisioners —
+`MINISTRY_ADMIN`, `ADMIN` and `MASTER_ADMIN`, `deps.ACCOUNT_PROVISIONER_ROLES`
+([PERMISSIONS.md](PERMISSIONS.md) §1.2) — **at or below their own tier**: the ceiling is inclusive
+(`account_provisioning.assert_role`), so a ministry admin can create another ministry admin and an
+admin another admin, only a master admin creates a `MASTER_ADMIN`, and the account at the
+`MASTER_ADMIN_EMAIL` address is always created one. **Every act on an account that already exists** —
+a temporary password, the flag, a link, a name or an address correction — is for accounts **strictly
+below** the provisioner (`assert_can_manage_target`), master admins being peers who cannot manage each
+other. So a provisioner who creates a peer cannot manage it afterwards: its passwords are its owner's
+and a higher tier's to look after. (Corrected 2026-10-09: this paragraph first said both acts were
+for accounts strictly below, which understated who can multiply provisioning accounts.) **Never on
+their own account**: a password, the flag or a link for oneself is a 403 pointing at
+`POST /api/auth/change-password`, which asks for the current password and spends the per-account
+guessing budget. A door that skipped both would turn a stolen session into a permanent takeover —
+which is the one thing change-password exists to prevent.
+
+**`mustChangePassword` IS REFUSED BY THE SERVER, NOT ONLY REPORTED (2026-10-09).** The flag means the
+password the account holds was chosen by somebody else; a provisioner raises it by default when it
+creates an account or sets a password, and can raise it alone to ask for a new one at the next
+sign-in. A provisioner can also LOWER it alone, on an account it manages — `PATCH /api/users/{id}`
+with `{mustChangePassword: false}` — which says the password the account holds is final, the same
+power as setting one with the flag down, and so ends no session (owner's ruling, 2026-10-09). The
+sanction register's machine-minted account is created with the flag down since the same date: its
+random password was never shown to anybody, so it is no shared secret, and the INVITE link the register
+issues is how the designer chooses theirs. Raising the flag there held a designer who signed in with
+Google first behind a gate asking for a current password nobody had. Until 2026-10-09 the flag rode
+out on `/me` and both clients drew the change-password screen, while a script holding the temporary
+password and a bearer token could use the whole API for the token's seven days. Now
+`deps.refuse_while_password_change_pending` answers every authenticated route outside
+`deps.PASSWORD_CHANGE_ALLOWED_ROUTES` with **401**, the header `X-Password-Change-Required: 1` and the
+detail `Choose a new password to continue.` The allow-list is what the change-password screen needs and
+nothing else: `GET /api/me`, `GET /api/auth/me`, `POST /api/auth/change-password`,
+`POST /api/auth/logout`, `GET` and `POST /api/usage/consent`, and `GET /api/app/release/latest`,
+matched on the exact method and path.
+
+- **The sign-in itself still succeeds** and answers `mustChangePassword: true`: the route somebody
+  holding a temporary password uses to replace it, change-password, needs a bearer token, so refusing
+  the sign-in would leave the account unable to comply without a link. The belt is on the protected
+  routes instead.
+- **401 and never 403**, because both clients keep queued offline work on a 401 and treat a 403 as a
+  permanent refusal. The header tells a client to keep the token and draw the gate rather than sign
+  out; `app/main.py` lists it in CORS `expose_headers`, or a browser could not read it.
+- **Exempt: the account at `MASTER_ADMIN_EMAIL`, and no other** (`deps.is_configured_master_admin`).
+  It is the deployment's recovery path, and `scripts/seed_admin.py` leaves it holding a flagged `.env`
+  password that operator tooling signs in with. A SECOND master admin is held: a deputy made with a
+  password another master admin typed holds exactly the shared secret this gate exists to retire, on
+  the most powerful account there is, and holding it locks nobody out because change-password is on
+  the allow-list. The platform allow-list, which CAN lock an account out for good, still exempts every
+  master admin.
+- **An account with no password is never held**: there is nothing for it to replace, and
+  `PATCH /api/users/{id}` refuses (422) to raise the flag on one.
+- **Where it is checked**: inside `get_current_user`, so behind every `require_*` dependency, and in
+  `require_dataset_admin`, the one dependency that reads a bearer token without it. **A thirty-day
+  `dataset:read` token is retired before that check is reached, and for good**: raising the flag stamps
+  the watermark and a new password changes the fingerprint (§3.6), so a token minted before either is
+  refused with a plain 401, no header — and stays refused after the owner has chosen a password. The
+  operator mints a new one with the password the account holds now. What the check HOLDS, with the
+  header and only until the password is chosen, is a token minted while the flag was already up —
+  which the mint has refused since 2026-10-09 (`POST /api/datasets/token` answers a flagged account
+  with a 403 and a sentence), so only a token from before that date can be in that state. (This bullet
+  said a token minted before the flag went up "is held too" until it was corrected on 2026-10-09; such
+  a token was never held, it was ended.) A new dependency that reads a bearer token directly must call
+  the same check, or it is a door the flag does not close.
+- **The way out is guarded too.** A wrong current password at change-password is a 400 (a 401 would
+  read as a dead session on the web) and is still charged to the per-account budget; a new password
+  equal to the current one is a 400 and is not charged; a link redeemed while the flag is up refuses
+  the temporary password itself, without spending the link. Every password somebody chooses is
+  bounded at 200 characters (`security.MAX_PASSWORD_LENGTH`); the sign-in box is unbounded and
+  `verify_password` answers an over-long value as a wrong password rather than a 500.
+- **The clients.** The web keeps the session on a gated 401, re-reads `/me`, draws **Set a new
+  password** and pauses its offline drains until the flag clears. Android draws the same gate screen
+  from build 0.0.6, and its handling of the gated 401 itself — keep the session, pause the outbox and
+  the design-workshop and join-card sends — is in the Android source as of 2026-10-09 and reaches
+  handsets with the next published build. **Builds 0.0.2 to 0.0.5 have no gate screen**, so somebody
+  flagged while on one of them must choose the password on the web first. That cost was accepted.
+  When the change goes through, every other session of the account ends and the answer hands the
+  session that made it a fresh token in its `X-Session-Token` header, the body staying exactly
+  `{"ok": true}` (§3.6): the web adopts the token before it re-reads `/me`, the next Android build
+  does the same, and a handset on 0.0.6 to 0.0.15, which never reads the header, reports the change
+  as made and is refused from its next request; it notices only when the app next starts, and its
+  owner then signs in with the new password. When the answer to a change is LOST — no answer, a 5xx, a
+  plain 401 — the Android source's gate asks `GET /me` before it says anything, because the change may
+  have landed and retired the very session it was sent with (§3.6).
+
+**A PROMOTION DOES NOT CARRY A LOWER PROVISIONER'S CREDENTIAL UPWARD (2026-10-09).** A temporary
+password and a set-password link are both credentials the provisioner who made them holds, and raising
+the account above that provisioner would hand it an account it could never have managed — a ministry
+admin choosing an admin's password, or an admin a master admin's. So a `PATCH /api/users/{id}` that
+raises the role withdraws every outstanding link of the account in the same request, and answers 409
+while the account still holds a temporary password (the flag up and a password present) unless the
+same request sets a new one; and redeeming a link asks again whether its issuer could still manage the
+account (`account_provisioning.issuer_still_manages`). A master admin's link always passes, and so does
+a link nobody issued or whose issuer's account has since been deleted; anything else reads as
+withdrawn. **The access screen's approve and re-admit ask the same two questions** (since later the
+same day — until then they asked neither). They lift an existing account to the approved tier
+(`routes/access._lift_existing_account`); a lift withdraws the account's outstanding links after its
+write, and an account still holding a temporary password is not lifted at all. That door has no
+password field to set a new one in, and refusing the approval would leave the person's ACCESS
+undecided over a question about their TIER, so the approval of the address stands, the account keeps
+its tier, and the decision's answer carries `accountPromotionHeld` — a sentence naming the address,
+both tiers and the two ways on, which `/admin/access` shows in place of its receipt (`null` on every
+other decision). Both doors ask one predicate, `account_provisioning.holds_a_temporary_password`. Two
+doors still lift an account without asking — a Google sign-in on an empanelled address, and the
+sanction register — and both lift only to `DESIGNER`, below every provisioner, so neither can carry a
+credential past whoever issued it.
+
+**ANY SPELLING OF THE MASTER ADMIN'S MAILBOX IS A MASTER ADMIN'S TO ASSIGN (2026-10-09).**
+`account_provisioning.is_master_email` compares Gmail-canonical forms on both sides, so on the users
+screen and from the operator's script nobody but a master admin creates an account on, or moves one
+onto, any spelling of the `MASTER_ADMIN_EMAIL` mailbox — dots, a `+tag`, `googlemail.com` — and the
+answer is a 403. It compared the two strings until then, which is how the Google fold could be handed
+a planted account (§3.3). The master's own protections — always `MASTER_ADMIN`, never deleted, changed
+only by a master admin — stay on the configured address itself (`is_master_address`, literal), so an
+account under another spelling stays an ordinary, deletable account rather than inheriting them.
+
+**AND NO SANCTION ORDER NAMES THAT MAILBOX, FOR ANYBODY (later the same day).** The sanction register
+creates the account of each designer an order names, and it was the one account-creating door that did
+not ask: with no account at the master's address yet — a handover, an unseeded box — an order naming it
+created one at `DESIGNER`, admitted and empanelled it, and handed the recording officer, an Assistant
+Director upwards, its 72-hour first-password link; the officer set a password, the master's first
+Google sign-in promoted the account, and the officer's password opened a master admin's session. Now
+`sanction_orders.designer_standing_verdict` refuses any spelling of the mailbox with a **422**
+(`SANCTION_MASTER_MAILBOX`) right after the self-naming check and before any read — for the lead and
+every co-designer, and for every row a spreadsheet import reads, which reports it as refused and never
+offers it for confirmation — whoever records the order, a master admin included, and whether or not an
+account is already there. Re-issuing a first-password link from an older order is refused the same
+way for an account on that mailbox (`sanction_orders.reissue_credential_link`). Beneath every door,
+the master's Google sign-in promotes only an account that is already a master admin or holds no
+password (§3.3).
+
+**AN ADDRESS CORRECTION DOES NOT LEAVE A BAR BEHIND (2026-10-09).** A provisioner who is not an admin
+may not move an account onto an address an administrator barred on the allow-list — nor, since this
+date, OFF one, nor move a `DESIGNER` off an address whose empanelment an administrator ended: each is
+a 409 (`account_provisioning.assert_not_escaping_a_bar`). Only the destination used to be asked, so a
+suspended person who planted a PENDING row at a second address with one refused Google sign-in could
+be "corrected" onto it and walk back in, the SUSPENDED row stranded on an address no account held. An
+admin may still make the move, and the bar goes WITH the account (`access_roster.follow_email_change`):
+the destination's allow-list row takes the old status with a note saying why — an ACTIVE row there
+included, or one a racing sign-in writes there first — and an ended empanelment is carried to the new
+mailbox, so the next sign-in cannot empanel it afresh. **And the old address stays barred** (later the
+same day): where the destination has no row, a barred row is CREATED there — the status, who barred
+the account and when, its tier and name, and `BAR_CARRIED_BY_EMAIL_MOVE_NOTE` — and the old row is
+left where it is. The barred row used to move, leaving the old mailbox with no row at all, so a Google
+sign-in there was queued PENDING as a stranger's, with no trace of the suspension, and an administrator
+approving that request let the barred person back in under a new account. Letting the person back in
+is the access screen's act, or the designer roster's, on either address.
+
+**NOR MAY A NON-ADMIN END AN EMPANELMENT BY MOVING AN ACCOUNT (later the same day).** The carry above
+happens whatever the account's role, and carrying an ended empanelment onto an address with an ACTIVE
+one ENDS that one — an administrator's empanelment, possibly of somebody else. Ending an empanelment is
+an admin's act, so a provisioner who is not an admin moving any account whose old address carries an
+ended empanelment onto an address with an active one gets a 409
+(`ENDING_AN_EMPANELMENT_BY_MOVING_DETAIL`, `account_provisioning.empanelment_active`). An admin's move
+still carries the ending, and the server's audit line says so.
+
+**ONE ACCOUNT PER MAILBOX, FOR EVERY PROVISIONER (later the same day).** On the users screen and from
+the operator's script nobody — an admin or the master admin included — creates an account at, or
+moves one onto, any spelling of a Gmail mailbox another account already uses: 409 "Email already
+exists", the sentence an address taken in another letter case has always had
+(`account_provisioning.email_in_use`, reading `access_roster.accounts_on_the_mailbox_for_sign_in`). One inbox with two accounts shared one
+admission and one empanelment, since every gate reads the inbox as one key: a move onto it rewrote the
+first account's allow-list row, a carried ending ended its empanelment, and the Google sign-in, which
+will not guess between two password accounts on one mailbox, refused them both. A check that cannot
+read every spelling refuses with a 503 and writes nothing. Outside the Gmail domains the literal
+comparison is the whole answer. An account already sharing a mailbox with another is refused even a
+respelling within it until the pair is merged or corrected.
+
+**THE OPERATOR'S TWO SCRIPTS WRITE TEMPORARY PASSWORDS.** `scripts/seed_admin.py` stamps
+`mustChangePassword` on every password it writes, with no way to opt out, stamps the watermark when it
+resets an existing master admin, and leaves every other existing account untouched — re-running it
+used to overwrite a live colleague's password and tier. `scripts/provision_account.py` sets the flag
+unless `--no-must-change` is given, which is `POST /api/users`' own default and its own opt-out; reads
+the password from `PROVISION_PASSWORD` and from nowhere else; never echoes an argument it did not
+recognise (in case it was a password); dry-runs unless `--apply`; and refuses an actor the API would
+refuse — barred, not admitted, or itself still holding a password somebody else chose.
+
+### 3.5 Password links
+
+A set-password link is a credential: whoever holds it sets the account's password, with no sign-in and
+no role check, because the link is the whole authority.
+
+- **Who issues one: a provisioner, on an account it may manage, never its own** —
+  `account_provisioning.assert_may_reset_credentials`, the same target rule `PATCH /api/users/{id}`
+  asks. **That closed a takeover (2026-10-09).** `POST /api/auth/password-links` used to ask only
+  whether the CALLER was an admin and never whom the link was for, so any ADMIN could mint a link for a
+  MASTER_ADMIN or a peer ADMIN, redeem it, set that account's password and sign its holder out of every
+  device. Withdrawing a link is authorised on the account it belongs to, after a 404 for a link that
+  does not exist — the id is an unguessable cuid from the issuing response, so the early 404 reveals
+  nothing. **And redemption asks again** (2026-10-09): a link whose issuer could no longer manage the
+  account — promoted past it, or the issuer demoted — reads as withdrawn, on the check and on the
+  redemption alike (§3.4).
+- **Purpose and lifetime** (`credential_links.purpose_for`): INVITE, 72 hours, for an account nobody
+  has started using — one with no password, or one with a password nobody has signed in with yet
+  (`firstLoginAt` empty) that was created on or after 2026-08-30 17:00 UTC, when `firstLoginAt` began
+  to be written; RESET, 2 hours, for every other account with a password. A live account should not
+  have a spare key for three days. **The date is the half that matters** (since 2026-10-09): the column
+  was never backfilled, so every account in use before it carries an empty `firstLoginAt` it never
+  earned, and reading that as "never signed in" gave dormant, established accounts — the ones that most
+  often need a reset — a 72-hour link where a 2-hour one was meant. The sanction register's re-issue
+  follows the same rule.
+- **Refused for an account that signs in with Google and has no password** (422): there is nothing to
+  reset, and a link would quietly give it a second way in.
+- **Throttled per SUBJECT (429), not per issuer**: redeeming a link ends the account's sessions, so the
+  budget belongs to the person being reset, and two issuers taking turns is the same harm.
+- **Redemption** writes the password, stamps `passwordSetAt`, clears `mustChangePassword`, stamps
+  `sessionsValidFrom` — taken after bcrypt, immediately before the write — and marks the link used.
+  The link is bound to a fingerprint of the account's credential, so a password changed by any other
+  route kills every outstanding link; and since 2026-10-09 the same fingerprint binds every session
+  token (§3.6), so the new password also ends every session opened with the old one, whenever it was
+  opened.
+- **Delivery is a copy and paste.** There is no mailer: the provisioner copies the link out of the
+  screen (`credential_links.CopyLinkDelivery`) and hands it over. The server's log lines carry account
+  and link ids, never the link or an address. The link's origin is the backend's
+  `NEXT_PUBLIC_APP_URL`, which [ENVIRONMENT.md](ENVIRONMENT.md) documents.
+
+### 3.6 Sessions are bound to the password they were opened with (2026-10-09)
+
+**THE WATERMARK CANNOT SAY WHICH PASSWORD A SESSION WAS OPENED WITH, AND TWO FINDINGS LIVED IN THAT
+GAP.** A temporary password a provisioner typed and sent over a chat opened sessions — the
+provisioner's, anybody's who read the chat — and the owner's forced change then RELEASED them rather
+than ending them: the hold was per account and the change cleared it, so each had full access as the
+owner for the rest of its seven days. And a sign-in that read the old hash just before a reset
+committed minted its token in a later wall second than the reset's watermark, so it post-dated the
+revocation and lived for a week.
+
+**SO EVERY TOKEN CARRIES THE PASSWORD IT WAS OPENED WITH.** Each token the API mints — the password
+sign-in, the Google sign-in, the change-password answer and the dataset mint — carries `cred`:
+`credential_links.credential_fingerprint` of the account's `passwordHash` at that moment, through
+`deps.password_credential` and `security.CREDENTIAL_CLAIM`. It is 16 hex characters of a SHA-256,
+never the hash, and an account with no password digests a fixed sentinel. It is the digest a password
+link is bound by (§3.5), so "the password changed" has one definition for links and for sessions.
+`create_access_token` reserves the claim, and `backend/tests/test_password_change_enforcement.py`
+holds every mint in `backend/app/` to passing it.
+
+**A TOKEN WHOSE CLAIM NO LONGER MATCHES IS REFUSED** by `deps._user_from_bearer`: 401 with the
+watermark's sentence, `This session is no longer valid. Sign in again.`, and no
+`X-Password-Change-Required` header. A claim that is present but is not a string this code could have
+written is refused too. So any password change ends every older session and every older dataset token
+of the account, for good — the owner's forced change and a voluntary one at
+`POST /api/auth/change-password`, a provisioner's temporary password at `PATCH /api/users/{id}`, a
+link's redemption, and `scripts/seed_admin.py` resetting the master admin. A sign-in that raced a reset
+dies on its first request, whichever second its `iat` fell in. The check is one SHA-256 over the row
+the request already loaded, and no query. What the watermark still does that this cannot is end
+sessions when the password does NOT change — a bar on the allow-list, an ended empanelment, a raised
+flag — and both checks run on every request.
+
+**THE SESSION THAT MADE THE CHANGE CARRIES ON, ON A NEW TOKEN — HANDED BACK IN A HEADER, NEVER IN THE
+BODY.** `POST /api/auth/change-password` answers 200 with exactly the body it has always had,
+`{"ok": true}`, and puts a session token minted from the row its own write returned in the response
+header `X-Session-Token` (`SESSION_TOKEN_HEADER` in `backend/app/api/routes/auth.py`). That token
+carries the new fingerprint and is the one session the change does not end. It writes no
+`sessionsValidFrom` — the fingerprint retires exactly the sessions the old password opened, and a
+watermark stamped there would also refuse the new token, whose `iat` falls in the same wall second.
+**The header is in CORS `expose_headers`**, beside `X-Password-Change-Required` — `app/main.py`
+imports the constant rather than retyping it — because a browser hides any header not listed there
+from the page's script: the web would keep the token the change has just retired and be signed out on
+its next request, while the handset, which reads headers freely, would not.
+
+**WHY NOT THE BODY.** Handsets on builds 0.0.6 to 0.0.15 decode this answer as a map of true-or-false
+values, and a string beside `ok` makes that decode fail after the password has already changed: the
+gate then reports the change as a failure, in the decoder's own words, which quote the value — a live
+session token on the screen. The answer carried the token in its body for part of 2026-10-09, and was
+moved into the header the same day ([OPEN_FINDINGS.md](OPEN_FINDINGS.md) records the closed entry).
+`backend/tests/test_password_change_enforcement.py` holds the body to exactly `{"ok": true}` on every
+change it makes.
+
+- **The web** reads the header (`changeOwnPassword` in `frontend/lib/signIn.ts`, through
+  `apiFetchWithHeaders` in `frontend/lib/api.ts`) and never looks for a token in the body. It stores
+  the new token before it re-reads `/me`, on the first-sign-in gate and on the Settings card alike,
+  and a refusal of a request that was sent with the token it has just replaced no longer signs the tab
+  out (`sessionReplacedSince` in `frontend/lib/api.ts`). Both forms say what will happen before the
+  change is made: "You stay signed in here, and are signed out everywhere else."
+- **The next Android build** does the same: it reads the header off a successful answer only and
+  stores the token before its next request (`WorkshopRepository.changeOwnPassword`), decodes the body
+  with a type that skips any key it does not know, and its gate carries the same sentence. No build
+  carrying it has been published as of 2026-10-09.
+- **Handsets on builds 0.0.6 to 0.0.15 never read the header**, so to them the answer is what it always
+  was and the gate reports the change as made. The session the handset holds was opened with the old
+  password, so its next request is refused with the plain 401 above. Those builds read a session's end
+  only at launch: until the app is next started, or signed out by hand, its queues keep their work and
+  retry with the dead token, and the person then signs in with the password they have just chosen. Any
+  client that ignores the header — a script included — meets the same 401. (Builds 0.0.2 to 0.0.5 draw
+  no gate and never call this route — §3.4.)
+- **An answer with no header** — a server older than the binding, which ends no session when the
+  password changes — leaves each client's stored token where it was.
+
+**WHEN A DEVICE NOTICES THAT ITS SESSION HAS ENDED IS THE CLIENT'S PART, AND THE ANDROID SOURCE SINCE
+2026-10-09 NOTICES AT ITS NEXT REQUEST.** The server refuses a retired token from the moment of the
+change, everywhere; a browser tab drops it at its next request. A handset built from the source since
+that date does the same through `SessionEndedSignal` (`isSessionEnded` in
+`android/app/src/main/java/com/designprototype/workshop/data/PasswordChangeRequired.kt`, raised by
+`sessionInterceptor` in `ApiClient.kt`): a 401 with no `X-Password-Change-Required` header, to a request
+sent to the API itself with a token, while the handset still holds that same token — a 401 for a token
+replaced while the request was in flight is about a session already left. The app's root then re-reads
+`/me` with the current token and applies the answer as it does at launch, so only a session that really
+has ended is signed out, with "This sign-in has ended. If your password was changed on another device or
+by an administrator, sign in with the new one." — the sentence the launch check now gives too. Every
+queue keeps its work: the record outbox and the design-workshop sync treat the 401 exactly as before,
+and a sign-out clears the token, never the queues. While the first-password gate is on screen the root
+leaves the signal to the gate, whose own 401 means something else (below). Builds up to 0.0.15 read a
+session's end only at launch, so on them a password changed elsewhere stalls the phone until it is
+restarted, with nothing queued lost.
+
+**AND A CHANGE WHOSE ANSWER IS LOST IS NOT REPORTED AS A CHANGE THAT FAILED** (the Android source since
+2026-10-09). The server commits the new password before it answers, so a change that fails with no
+answer, a 5xx or a plain 401 may have landed and retired the session it was sent with — and the gate
+used to report it as a failure, in the transport's own words or as "nothing has changed" when there
+were none, over a password that was already in force; a retry then met the retired session's 401, and
+the person signed out, typed the temporary password and was refused. Now the gate asks `GET /me` with the session it holds
+before choosing a sentence (`passwordGateAfterFailure` in
+`android/app/src/main/java/com/designprototype/workshop/ui/PasswordSetupCopy.kt`): refused with a plain
+401, it signs out with "Your new password may already be in effect. Sign in with it; if it is refused,
+use the one you were given."; an account still owing a password gets the gate's usual words; one that no
+longer owes one closes the gate; no answer, or any other refusal, leaves the gate up, saying it could
+not tell whether the password was saved, with the same two-password advice. A refusal the route
+itself answered — a 400, 403, 422 or 429, or the gate's own 401 — is shown at once, as before. **And
+no credential write is sent twice by OkHttp**: change-password, set-password and issuing a password
+link go out with one-shot bodies, so the connection-failure retry the client keeps for everything
+else never transmits one again after a failure that may already have reached the server.
+
+**TOKENS MINTED BEFORE THE RELEASE THAT CARRIES THE BINDING HAVE NO CLAIM, AND ARE ACCEPTED EXACTLY AS
+BEFORE.** Refusing them would have signed everybody out at the deploy. They are the one kind a password
+change does not end: a session lives to its `exp`, at most `JWT_EXPIRES_MINUTES` (seven days) after
+that release reached the server, and a dataset token to its own, `DATASET_TOKEN_EXPIRES_MINUTES`
+(thirty days by default). That includes a session opened with a temporary password before the release,
+which the forced change still releases rather than ends. The watermark ends them for the acts that
+write it, exactly as before.
+
+**THE IDENTITY CACHE IS THE WINDOW, IN BOTH DIRECTIONS, FOR A PASSWORD WRITTEN OUTSIDE THE API.** The
+fingerprint is compared with the row `resolve_user` hands back, which may be the identity cache's
+(§4.1). Every writer inside the API invalidates, so through the API neither direction happens. For
+`scripts/seed_admin.py` run as its own process, or a `psql` session, an old session can outlive the
+write by up to `AUTH_USER_CACHE_TTL_SECONDS`, and a session opened with the NEW password inside that
+window is refused until the cached row expires.
 
 ---
 
@@ -414,17 +845,17 @@ in the same file has always driven the tier), and a sentence that says six is pr
 seventh keeps being left out of the next one. That gap is stated narrowly on purpose: a security
 document that overstates a coverage hole is the same defect as one that understates it.
 
-**The full capability matrix, the review state machine and the five layered access systems are
+**The full capability matrix, the review state machine and the layered access systems are
 [PERMISSIONS.md](PERMISSIONS.md).** This section states only the security-relevant properties, so
 that the matrix has exactly one home and cannot disagree with itself.
 
 | Rank | Role | Security-relevant powers |
 |---|---|---|
-| 60 | `MASTER_ADMIN` | Everything, **plus the three nobody else has**: read/set provider key values, repository settings, publish OTA releases. The only account that may act on a peer. |
-| 50 | `ADMIN` | Delete records, create/delete accounts, grant workshop access, approve **late** submissions |
-| 48 | `MINISTRY_ADMIN` | **NOT AN ADMIN.** `is_admin` is set membership on `{MASTER_ADMIN, ADMIN}`, so this tier passes no admin gate: no deletes, no account creation, no workshop-access grants, no key store, no `/admin` tree. What it does hold is the widest review **and rewrite** authority short of admin — everyone at `REGIONAL_DIRECTOR` and below, a professor included — plus every Professor-floor read (see the two notes under this table). |
+| 60 | `MASTER_ADMIN` | Everything, **plus the three nobody else has**: read/set provider key values, repository settings, publish OTA releases. The only account that may act on a peer's RECORDS; on ACCOUNTS master admins are peers, and none may change or remove another. The account at `MASTER_ADMIN_EMAIL` is the break-glass — exempt from the allow-list and from the forced password change (§3.4). |
+| 50 | `ADMIN` | Delete records, create and delete accounts, grant capability flags, overturn a bar on the allow-list, grant workshop access, approve **late** submissions |
+| 48 | `MINISTRY_ADMIN` | **NOT AN ADMIN.** `is_admin` is set membership on `{MASTER_ADMIN, ADMIN}`, so this tier passes no admin gate: no deletes, no capability grants, no allow-list decisions, no key store, no `/admin` tree. It **provisions password accounts** through a set of its own (§3.4, since 2026-10-09) — creates them at or below its tier, sets temporary passwords, requires a change, issues links — on accounts strictly below it, and it may be appointed to a post on one workshop (§4, "serving on one workshop"). It holds the widest review **and rewrite** authority short of admin — everyone at `REGIONAL_DIRECTOR` and below, a professor included — plus every Professor-floor read (see the two notes under this table). |
 | 45 | `REGIONAL_DIRECTOR` | Everything an assistant director holds, one tier wider: an assistant director's records come under review and correction too. Reviews and rewrites nothing at `ADMIN` or above. |
-| 42 | `ASSISTANT_DIRECTOR` | The first tier above `PROFESSOR`, and the first that clears **both** halves of the review pair — `can_review_record` (strictly below) **and** `can_edit_others_record` (that comparison narrowed to a Professor floor). So it may rewrite a professor's, an inspector's and a designer's records. Outside `can_run_design_workshops`, like every rank. |
+| 42 | `ASSISTANT_DIRECTOR` | The first tier above `PROFESSOR`, and the first that clears **both** halves of the review pair — `can_review_record` (strictly below) **and** `can_edit_others_record` (that comparison narrowed to a Professor floor). So it may rewrite a professor's, an inspector's and a designer's records. Inside `can_run_design_workshops` since 2026-09-14, with the other two directorate tiers (this row said "outside" until 2026-10-09). |
 | 40 | `PROFESSOR` | Manage crafts/workshops/questionnaire, download the dataset, view and promote users |
 | 37 | `INSPECTOR` (labelled **"Inspector / Reviewer"**) | Everything a researcher may do, **plus reviewing a `DESIGNER`'s records** and reading a design workshop it has been scoped to. **Read-only in the workshop tree, and only where scoped** — it is outside `can_run_design_workshops`, exactly as a professor is, so it cannot run, stage-write, submit or sign a workshop. See both notes under this table. |
 | 35 | `DESIGNER` | Everything a researcher may do, plus running a design & prototype workshop — the stage writes, the custom sections, the AI layers, the consent record (`can_run_design_workshops`). **Not reachable by outranking it** — see the note under this table. |
@@ -433,7 +864,8 @@ that the matrix has exactly one home and cannot disagree with itself.
 | 10 | `CROWDSOURCE_VOLUNTEER` | Media, questionnaire answers and comments on existing records only |
 
 **The one rule in this section that is not a threshold.** `can_run_design_workshops` is a **SET** —
-`DESIGNER`, `ADMIN`, `MASTER_ADMIN` — so a `PROFESSOR` at rank 40 and an `INSPECTOR` at 37 both
+`DESIGNER`, the three directorate tiers, `ADMIN`, `MASTER_ADMIN` (it named only three until
+2026-10-09; the frozenset is the authority) — so a `PROFESSOR` at rank 40 and an `INSPECTOR` at 37 both
 outrank a designer at 35 and still cannot run a design & prototype workshop. `is_admin` is written as a set and
 `is_master_admin` as an equality, but both name the TOP of the ladder and so behave exactly as
 thresholds; this one skips a tier in the middle, which nothing else here does
@@ -495,6 +927,55 @@ unchanged, because viewer eligibility is itself `DESIGN_WORKSHOP_ROLES`
 two different gates and an auditor looking for the report behind `can_run_design_workshops` will not
 find it there.
 
+**Serving on one workshop: whoever inspects or supervises a workshop does not write it (2026-10-09).**
+The three administering tiers may now be APPOINTED, by somebody else and one workshop at a time, as a
+workshop's designer, Assistant Director, Regional Director or inspector. Since an admin can write
+every workshop by role, and all three tiers sit in the design-workshop set, the independence an
+inspection or an oversight post exists for can no longer be kept by keeping role sets apart, so it is
+kept on the workshop, in one module
+(`app/services/design_workshop_posts.py`): nobody appoints themselves, and nobody takes themselves
+off an inspection or a director post either (a 409, since later the same day — another administrator
+has to, which is what the 403 below tells a holder to ask for; a holder who could drop their own post
+could write the workshop a second later, the deleted row the only record they held it); nobody
+inspects or supervises a workshop they authored (a viewer row, or stages they wrote — never merely
+having created it); nobody both supervises and inspects one; and while somebody holds a workshop's
+inspection or one of its
+director posts, every write to that workshop's CONTENT or its DESIGNER TEAM is refused to them with a
+403 naming the post, at any tier and through the admin routes too. Its content is its stages, the
+workshop itself (editing or deleting it), its artisan list (an upload or an unlink), the records filed
+under it — filing one in, and any edit, delete or interview merge of one filed there, the review
+queue's in-place edit of one, a tool's artisan links and every edit of a questionnaire form attached
+to it included — and the files it holds: adding one (a new upload tagged to it, attached to a record
+filed there or filed under it), deleting a photograph or a recording, setting, refining or re-running
+a transcript, re-queuing a failed transcription job, changing a caption or transcript from the review
+queue, deciding an identity photograph either way, and relinking a file out of it or into it. A file
+belongs to it by its `designWorkshopId`, its `designWorkshop` tag, a live stage entry naming it, a
+live AI layer made from it, or the record it hangs off being filed there
+(`design_workshop_posts.media_design_workshop_ids`).
+Its designer team is every door that decides who its designers are: the viewers `PUT`, the oversight
+screen's two designer doors, deciding an access request either way, printing a join card. They keep
+every read, appointing OTHER people to its posts and taking other people off them (under the same
+rules, so appointing themselves is still a 409), restoring it, and generating its report and
+recording its export; approving, rejecting or sending back a record filed there is not refused
+either, being review rather than authorship.
+One gate, `design_workshop_posts.refuse_a_holders_write`, answers all of those doors — the record and
+media doors ask it for every workshop the record or file belongs to — so no two can disagree about a
+holder. The three doors that did not ask it when the rule landed — a new upload, a retried
+transcription job and the review queue's in-place edit — ask it since later the same day, and a review
+edit no longer carries `designWorkshopId` at all (a 422 for everybody), so the review queue files no
+record anywhere: filing is the record form's, behind its own gate. **So do the unfiled-records
+report's doors** (`backend/app/services/workshop_inference.py`, also later that day), which an
+administrator could use to delete a workshop's stage photographs, its roster artisans and the records
+filed under it as "unfiled", or to file them under a crafts workshop, because that report's
+"unfiled" meant only "no crafts workshop": its single-row filing and discard refuse a holder with the
+403, and its bulk filing leaves a holder's rows alone and says how many. And a row a design workshop
+claims is no longer "unfiled" for anybody: the report does not list a record filed under one or a file
+filed under or tagged to one, and its discard refuses any row a design workshop claims, by any of the
+five ways, with a 409 that sends the administrator to the record's or file's own screen, whose delete
+asks the post rules. The rules, their status codes and
+the known limits are [PERMISSIONS.md](PERMISSIONS.md) §4.8, and each limit is an open entry in
+[OPEN_FINDINGS.md](OPEN_FINDINGS.md).
+
 Three corrections to what this table said previously, each of which mattered:
 
 - **A Field Contributor cannot create records.** `can_create_records` requires rank ≥ `RESEARCHER`.
@@ -503,7 +984,8 @@ Three corrections to what this table said previously, each of which mattered:
   is not strictly below rank 50. "Edit anyone's records" was wrong; "edit records created by anyone
   ranked below them" is right.
 - **`canManageCrafts` and `canManageWorkshops` are no longer read.** They are still columns on
-  `User`, and `users.py` still writes them, but no decision consults them: craft and workshop
+  `User`, and the account routes still write them (only an admin may set one, like every capability
+  flag), but no decision consults them: craft and workshop
   management is Professor **by rank alone**. The reason is a security one and is worth stating here
   rather than only in the docstring — a grant that lifts a researcher over the *taxonomy* is
   invisible in the role column, so nobody auditing the user table can see who holds it. Listing them
@@ -545,10 +1027,12 @@ week.
 
 The identity cache (`AUTH_USER_CACHE_*`) shortens that revocation window; it does not remove it.
 Five seconds by default, sized to collapse the burst of parallel requests one page load makes.
-Explicit invalidation runs on every write that changes a user's authority — `users.py` create/update/
-delete, the Google sign-in upsert in `auth.py`, `scripts/seed_admin.py`, and, since 2026-09-03, the
-two barring doors in `routes/access.py`, the empanelment-ending doors in `routes/designers.py`, and
-`set_password`'s session revocation in `auth.py` — so in-process a demotion or a bar takes effect on
+Explicit invalidation runs on every write that changes a user's authority — `users.py` update and
+delete (including a provisioner's password set or raised flag, which also stamps the watermark),
+account creation in `services/account_provisioning.py`, the Google sign-in upsert and change-password
+in `auth.py`, `scripts/seed_admin.py`, and, since 2026-09-03, the two barring doors in
+`routes/access.py`, the empanelment-ending doors in `routes/designers.py`, and `set_password`'s
+session revocation in `auth.py` — so in-process a demotion, a bar or a forced change takes effect on
 the very next request. A **miss is never cached**, so a deleted account 401s every time rather than
 for a TTL. An epoch counter is bumped by every invalidation and compared before the result is stored,
 so a query already in flight when a role was revoked cannot write the pre-revocation row back.
@@ -563,7 +1047,10 @@ carries the pre-revocation value. That only bites on writes no application proce
 session, `scripts/seed_admin.py`, a future second replica — because every revocation writer calls
 `invalidate_cached_user` and the deployment runs one worker on one replica. Cutting
 `AUTH_USER_CACHE_TTL_SECONDS` to 1–2 seconds, or to 0 with `AUTH_USER_CACHE_ENABLED=false`, is a
-cheaper trade than it was and is **recommended for the next deployment review**. It was deliberately
+cheaper trade than it was and is **recommended for the next deployment review**. Since 2026-10-09 the
+password binding (§3.6) reads the hash off the same row, so for a password written outside the API the
+TTL is a window in both directions: an old session outliving the write, and a new one refused until
+the cached row expires. It was deliberately
 not changed here as a silent constant edit: the number is a security parameter and moving it belongs
 in a decision somebody made, not in a docs wave.
 
@@ -916,7 +1403,8 @@ shell on this box. Verify with `aws ec2 describe-instances --instance-ids i-0e09
 | Variable | Default | Effect |
 |---|---|---|
 | `JWT_SECRET` | — (required) | HMAC signing key. Must be ≥ 32 chars and not the placeholder, or the API refuses to start. |
-| `JWT_EXPIRES_MINUTES` | `10080` (7 days) | Token lifetime. Revocation is limited to password-link redemption, allow-list barring and empanelment-ending (see §3.2), so shorter is still safer. |
+| `JWT_EXPIRES_MINUTES` | `10080` (7 days) | Token lifetime. Revocation is limited to the `sessionsValidFrom` writers — password-link redemption, allow-list barring, empanelment-ending, a provisioner's password set or raised flag, and the seed script's master-admin reset (see §3.2) — and, since 2026-10-09, to any change of the password a token was opened with (§3.6), which tokens minted before that release do not carry; so shorter is still safer. |
+| `MASTER_ADMIN_EMAIL` | — (required) | The break-glass account: always `MASTER_ADMIN`, never barred by the allow-list, and the ONE account exempt from the forced password change (§3.4). |
 | `JWT_ALGORITHM` | `HS256` | Restricted to HS256/384/512. |
 | `ALLOW_WEAK_JWT_SECRET` | `false` | Development-only override for the startup secret guard. |
 | `DATABASE_REQUIRE_SSL` | unset (auto) | `true`/`false` forces or disables `sslmode=require`; auto = require for remote hosts only. |
@@ -970,6 +1458,9 @@ is removed and the entry stays. Both teach the reader to trust the wrong thing. 
 | §1.2 response headers | `SecurityHeadersMiddleware` in `backend/app/main.py`. Check live: `curl -sI https://d3ekigkotd1xa2.cloudfront.net/health`. |
 | §1.4 docs exposure | `curl -s -o /dev/null -w "%{http_code}" https://d3ekigkotd1xa2.cloudfront.net/openapi.json`. **This entry closes when that returns 404**, not when the code changes. |
 | §3 tokens | `backend/app/core/security.py`; the startup guard is `verify_jwt_configuration`. |
+| §3.2 the watermark's writers | The comment at the foot of `deps._user_from_bearer` lists them. Re-check the list against the code with `grep -rn "sessionsValidFrom" backend/app backend/scripts` — a writer found there and not named in §3.2 is the drift. |
+| §3.3–§3.5 Google sign-in, the forced change, password links | `backend/app/core/deps.py` (`PASSWORD_CHANGE_ALLOWED_ROUTES`, `password_change_pending`, `refuse_while_password_change_pending`), `backend/app/services/account_provisioning.py` (`is_master_email`, `is_master_address`, `issuer_still_manages`, `assert_not_escaping_a_bar`, `empanelment_active`, `email_in_use`, `holds_a_temporary_password`), `_lift_existing_account` in `backend/app/api/routes/access.py`, `backend/app/services/credential_links.py` (`purpose_for`, `FIRST_LOGIN_TRACKED_SINCE`, the two TTLs, `revoke_outstanding`), `backend/app/services/access_roster.py` (`follow_email_change`, `accounts_on_the_mailbox_for_sign_in`), `backend/app/services/sanction_orders.py` (`master_mailbox_reason`, `designer_standing_verdict`, `reissue_credential_link`) and `backend/app/api/routes/auth.py` (`_refuse_to_promote_a_password_account`). Pinned by `backend/tests/test_password_change_enforcement.py`, which also asserts that every allow-listed route is one the application publishes, `backend/tests/test_account_provisioning.py` (its sections on a bar staying with the account and on the old address staying barred, one account per mailbox, an ended empanelment carried onto an active one, a promotion — by `PATCH` and by the access screen's approval — and the master admin's mailbox among them), `backend/tests/test_auth_identity_and_password_links.py` (`test_the_masters_google_sign_in_promotes_no_account_somebody_else_holds_a_password_to` among them) and `backend/tests/test_change_password_budget.py`; the sanction register's refusal by `test_no_order_names_any_spelling_of_the_master_admins_mailbox` in `backend/tests/test_sanction_orders.py`, `test_the_master_admins_mailbox_is_refused_by_the_real_verdict_and_never_confirmed` in `backend/tests/test_sanction_import.py` and `test_no_link_is_reissued_for_an_account_on_the_master_admins_mailbox` in `backend/tests/test_sanction_order_designer_eligibility.py`. Added 2026-10-09. |
+| §3.6 the password binding | `security.CREDENTIAL_CLAIM` and `create_access_token` in `backend/app/core/security.py`; `password_credential` and the second check in `_user_from_bearer` in `backend/app/core/deps.py`. Pinned by `backend/tests/test_password_change_enforcement.py` — `test_every_bearer_token_the_application_mints_is_bound_to_a_password` reads every mint in `backend/app/` and fails on one that passes no `credential=`, and the database-backed tests end a temporary password's sessions, a voluntary change's other sessions, a raced sign-in and a dataset token, keep a Google session through a name correction, and accept a token from before the binding. The answer's shape — a body of exactly `{"ok": true}` and the token in `X-Session-Token` — is held on every change those tests make, and `test_the_new_session_token_rides_in_a_header_a_browser_may_read` and `test_a_browser_may_send_the_change_and_read_the_token_it_hands_back` hold the header to CORS `expose_headers`, the second through a real preflight and a cross-origin answer. The clients' half is `frontend/e2e/password-change-enforcement-unit.spec.ts`, `frontend/e2e/change-password-card-unit.spec.ts`, `frontend/e2e/first-login-password-unit.spec.ts` and `android/app/src/test/java/com/designprototype/workshop/data/ChangePasswordSessionTest.kt`, which also drives the gate's question after a lost answer; when a handset notices an ended session, and that credential writes go out once, is `android/app/src/test/java/com/designprototype/workshop/data/SessionEndedSignalTest.kt`, which runs the app's own `ApiClient.httpClient` against canned answers and a local server. **The tell that it has rotted is a door that hands out a bearer token without `credential=`**, which that first test names. Added 2026-10-09. |
 | §4 the ladder | [PERMISSIONS.md](PERMISSIONS.md), which is itself checked — `docs/tools/check-docs.mjs` fails if the backend and web role ladders diverge. |
 | §4.1 identity cache | `backend/app/core/deps.py`, and `backend/tests/test_user_identity_cache.py`. |
 | §4A Aadhaar | `backend/app/services/artisan_identity.py`. The encoder-level masking is the property to re-check after any new export surface: add one, then confirm the number arrives masked. **Exercised 2026-08-24** on the design-workshop participant roster, which is the newest such surface: `mask_identity_number` is applied in the hydration lambda, and `test_both_identity_numbers_arrive_masked_and_neither_arrives_bare` pins that the bare digits of neither number cross. |
@@ -978,7 +1469,15 @@ is removed and the entry stays. Both teach the reader to trust the wrong thing. 
 
 **Review triggers:** `backend/app/core/config.py`, `backend/app/core/security.py`,
 `backend/app/core/deps.py`, `backend/app/main.py`, `backend/app/services/artisan_identity.py`,
-`android/app/src/main/res/xml/network_security_config.xml`, or any new export/download route.
+`backend/app/api/routes/auth.py`, `backend/app/services/account_provisioning.py`,
+`backend/app/services/credential_links.py`, `backend/app/services/design_workshop_posts.py`,
+`backend/app/services/record_design_workshop.py`, `backend/app/api/routes/media.py`,
+`backend/app/api/routes/review.py`, `backend/app/api/routes/access.py`,
+`backend/app/api/routes/datasets.py`, `backend/app/services/access_roster.py`,
+`backend/app/services/sanction_orders.py`, `backend/app/services/workshop_inference.py`,
+`android/app/src/main/java/com/designprototype/workshop/data/ApiClient.kt`,
+`android/app/src/main/res/xml/network_security_config.xml`, any new export/download route, any new
+door that creates an account, or any new door that mints a bearer token.
 
 **Audit cadence:** re-walk §5 quarterly and after any infrastructure change. Every P-numbered risk is
 a console action, so the register is only as current as the last time somebody opened the console —

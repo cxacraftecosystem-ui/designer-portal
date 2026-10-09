@@ -20,7 +20,7 @@ import {
 import { DIRECTORATE_STEPS } from "@/components/guide/directorateSteps";
 import { INSPECTOR_STEPS } from "@/components/guide/inspectorSteps";
 import { GUIDE_STEPS, type GuideStep } from "@/components/guide/steps";
-import { canInspectDesignWorkshops, canReadWorkshopOversight, isAdmin } from "@/lib/permissions";
+import { isAdmin, isDirectorateTier, isInspectorTier } from "@/lib/permissions";
 import type { User } from "@/lib/types";
 
 /*
@@ -177,15 +177,18 @@ export type GuideTrack = {
    * (`canAccessRoute`, plus the admin-view second gate `AppShell` applies after it) and draws the
    * subset that reader can really open; the DATA is allowed to be wider than any one tier.
    *
-   * THE TWO ENTRIES THAT MAKE IT WIDER TODAY, both of them created by that day's changes:
+   * THE ENTRY THAT MAKES IT WIDER TODAY, created by that day's changes:
    *   * `DESIGNER_TRACK`'s `/review`, which `canReview` admits from FIELD_CONTRIBUTOR up — so a
    *     CROWDSOURCE_VOLUNTEER, whom `guideTrackFor`'s fallback arm puts on that deck and the scoping
    *     now keeps there, is refused it. Recorded as accepted at the DATA level and fixed at the
    *     RENDERER level in `GuideOutro`'s header and in `e2e/guide-tracks-unit.spec.ts`.
-   *   * `INSPECTOR_TRACK`'s `/design-workshop-inspections`, which `canInspectDesignWorkshops` refuses
-   *     to ADMIN and MASTER_ADMIN BY NAME — and the admin carve-out makes them the only accounts
-   *     besides an INSPECTOR that ever reach that deck. The deck's headline destination is therefore
-   *     filtered out of its own closing band for the only tier that can switch to it.
+   *
+   * There were two until 2026-10-09. `INSPECTOR_TRACK`'s `/design-workshop-inspections` was refused
+   * to ADMIN and MASTER_ADMIN by name, so the deck's headline destination was filtered out of its own
+   * closing band for the only tiers besides an INSPECTOR that could switch to it. The owner's ruling
+   * that day lets the three administering tiers be APPOINTED to inspect, `canInspectDesignWorkshops`
+   * became every account that may be, and the tile is drawn for an admin again — over a list that
+   * holds only the workshops somebody else appointed them to.
    *
    * SO AN ENTRY NO TIER IN A DECK'S AUDIENCE CAN OPEN IS PROSE NOBODY WILL EVER SEE, and nothing
    * will say so. The filter is deliberately silent (`GuideOutro`'s header argues why), `tsc` has no
@@ -402,33 +405,45 @@ export const GUIDE_TRACKS: readonly GuideTrack[] = [DESIGNER_TRACK, DIRECTORATE_
  *
  * ── THE ORDER OF THE TWO TESTS IS THE WHOLE IMPLEMENTATION, AND IT IS NOT ARBITRARY ─────────────
  *
- * The inspector test is first because it is the narrowest: `canInspectDesignWorkshops` is a set with
- * exactly one member, so it can never claim an account another arm wanted. Reversing the two would
- * change nothing today and would be a latent bug the day the sets overlap — which is precisely the
- * kind of "agrees today, means something different" coupling this codebase keeps being bitten by.
+ * The inspector test is first because it is the narrowest: `isInspectorTier` is `INSPECTION_ROLES`, a
+ * set with exactly one member, so it can never claim an account another arm wanted. Reversing the two
+ * would change nothing today and would be a latent bug the day the sets overlap — which is precisely
+ * the kind of "agrees today, means something different" coupling this codebase keeps being bitten by,
+ * and the next section is the time it bit.
  *
- * ── WHY `canReadWorkshopOversight` AND NOT `canSeeMinistryDesk` ─────────────────────────────────
+ * ── WHY THE TIER PREDICATES, AND NOT THE SURFACE PREDICATES THIS USED TO BORROW ─────────────────
  *
- * They differ by exactly one tier and that tier is the master admin, who is in the card's audience
- * and must NOT be defaulted into the directorate deck. A master admin does every job in this
- * product; the deck that opens for them should be the one that describes what the product IS, and
- * that is the designer's. `canReadWorkshopOversight` is `OFFICER_ROLES`, which is exactly the three
- * ministry posts and refuses admins by name — so it reads here as "holds a ministry post", which is
- * the question being asked.
+ * The question is "whose job is this deck", and a job is a TIER. Until 2026-10-09 the two read-surface
+ * predicates answered it by coincidence: `canInspectDesignWorkshops` was exactly `{INSPECTOR}` and
+ * `canReadWorkshopOversight` was exactly the three ministry posts, refusing admins by name. The
+ * owner's ruling that day let a Ministry Admin, an admin and the master admin be APPOINTED inspector,
+ * Assistant Director or Regional Director of one workshop, and both surfaces widened to every account
+ * that may be appointed — admins included. Still borrowed, they put the master admin and an admin on
+ * the inspector's deck by default and gave a Ministry Admin the inspector's deck as its ONLY deck,
+ * which is the exact failure the warning that stood here predicted.
  *
- * ⚠ THAT IS A REUSE ACROSS TWO QUESTIONS AND IT IS ONLY SAFE WHILE THE SETS COINCIDE. If
- * `OFFICER_ROLES` ever stops being exactly the three directorate tiers — a fourth post, or one of
- * the three losing its read surface — this default needs a set of its own rather than a borrowed
- * one. `e2e/guide-tracks-unit.spec.ts` asserts the three tiers by name, so that day is a red test
- * here rather than a silent wrong default.
+ * So the default reads `isInspectorTier` and `isDirectorateTier`, which read `INSPECTION_ROLES` and
+ * `OFFICER_ROLES` — the TIER sets, whose literals did not move. Holding a post on one workshop is an
+ * appointment, not a job description, and it does not change which deck describes your work.
+ *
+ * NOT `canSeeMinistryDesk` EITHER. It differs from `isDirectorateTier` by exactly one tier and that
+ * tier is the master admin, who is in the card's audience and must NOT be defaulted into the
+ * directorate deck. A master admin does every job in this product; the deck that opens for them
+ * should be the one that describes what the product IS, and that is the designer's.
+ *
+ * ⚠ `OFFICER_ROLES` IS STILL READ FOR MORE THAN THIS DEFAULT — `oversightRefusalMeansNoPosts` reads
+ * it to tell a fault from an admin who holds no posts. If it ever stops being exactly the three
+ * directorate tiers — a fourth post — this default needs a set of its own.
+ * `e2e/guide-tracks-unit.spec.ts` asserts the three tiers by name, so that day is a red test here
+ * rather than a silent wrong default.
  *
  * A NULL USER GETS THE DESIGNER'S DECK. `AppShell` renders nothing until there is a user, so this
  * arm is not reachable from the page — but the function is exported and pure, and answering
  * `undefined` for an unknown account would push the null check onto every caller.
  */
 export function guideTrackFor(user: User | null | undefined): GuideTrack {
-  if (canInspectDesignWorkshops(user)) return INSPECTOR_TRACK;
-  if (canReadWorkshopOversight(user)) return DIRECTORATE_TRACK;
+  if (isInspectorTier(user)) return INSPECTOR_TRACK;
+  if (isDirectorateTier(user)) return DIRECTORATE_TRACK;
   return DESIGNER_TRACK;
 }
 
@@ -442,11 +457,17 @@ export function guideTrackFor(user: User | null | undefined): GuideTrack {
  *
  * This function is `isAdmin` over the answer `guideTrackFor` already gives, and every predicate in
  * that chain is a SET: `isAdmin` is `{ADMIN, MASTER_ADMIN}`, `INSPECTION_ROLES` is `{INSPECTOR}` and
- * `OFFICER_ROLES` is the three ministry posts. All three are non-monotonic in rank and two of them
- * refuse an admin BY NAME. `INSPECTOR` (37) sits BETWEEN `DESIGNER` (35) and `PROFESSOR` (40), so a
- * floor at 37 would hand the inspector's deck to every tier above it — professor, the three ministry
- * posts, admin and master admin, all of whom `assert_inspection_surface` refuses by name. That is
- * what makes a threshold instinct wrong here rather than merely imprecise.
+ * `OFFICER_ROLES` is the three ministry posts. All three are non-monotonic in rank, and the two tier
+ * sets leave the admins out by name. `INSPECTOR` (37) sits BETWEEN `DESIGNER` (35) and `PROFESSOR`
+ * (40), so a floor at 37 would hand the inspector's deck to every tier above it — professor, the
+ * three ministry posts, admin and master admin, none of whom inspects as a job. That is what makes a
+ * threshold instinct wrong here rather than merely imprecise.
+ *
+ * THE TIER SETS DID NOT MOVE ON 2026-10-09; THE SURFACES DID. `assert_inspection_surface` and
+ * `assert_oversight_surface` now admit a Ministry Admin, an admin and the master admin, because any
+ * of them may be appointed to a post on one workshop by somebody else. That widens which screens
+ * open, scoped to the rows they hold, and leaves this ladder of decks exactly as it was — an
+ * appointment is not a job, so it buys no deck.
  *
  * ── THE MAPPING IS TOTAL, AND FOUR TIERS REACH THEIR DECK BY FALLBACK RATHER THAN BY DESIGN ────
  *

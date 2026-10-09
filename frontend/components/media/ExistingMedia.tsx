@@ -1,7 +1,19 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 
+import {
+  HELD_POST_PENDING_FILES,
+  HeldPostNotice,
+  MEDIA_HELD_LABEL,
+  mediaHeldReason,
+  mediaListNotice,
+  mediaWorkshopIds,
+  mediaWriteHold,
+  useHeldPostRefusals,
+  writesHeld,
+  type HeldPostRefusal
+} from "@/components/designworkshop/HeldPostNotice";
 import { MediaCardGrid } from "@/components/media/MediaCardGrid";
 import { MediaLightbox, MediaPreviewTile, type PreviewMedia } from "@/components/media/MediaLightbox";
 import { TranscriptBlock } from "@/components/media/TranscriptBlock";
@@ -66,14 +78,33 @@ const CHOOSER_FLOOR = 2;
  * EMPTY MEANS EVERYTHING, by absence — the same rule as `useWorkshopScope` and `filters.types`. If
  * "nothing picked" meant "show nothing", then a panel whose files arrive over the network would blank
  * itself between the request and the answer, and there would be two spellings of "all of them".
+ *
+ * ── A FILE OF A WORKSHOP THE READER INSPECTS OR SUPERVISES IS READ-ONLY TO THEM ─────────────────
+ *
+ * The server refuses a post holder — any tier, the admin arm included — the delete and the re-run
+ * transcript of any file that belongs to that workshop (2026-10-09). A file belongs to it through the
+ * RECORD it hangs off when the record is filed there (`recordHold`, the record form's own answer),
+ * and through its own two columns (`mediaWorkshopIds`). Those files' ✕ and "Transcribe now" are
+ * held, each tile says so in words, and one notice above the gallery gives the server's sentence;
+ * a 403 that arrives anyway is printed as the server wrote it.
  */
 export function ExistingMedia({
   linkedRecordType,
   linkedRecordId,
+  recordHold,
   title = "Previously uploaded media"
 }: {
   linkedRecordType: string;
   linkedRecordId: string;
+  /**
+   * The answer for the design workshop the RECORD is filed under — `useRecordFilingHold(...).stored`
+   * on the record forms, `null` where the record can be filed under none (a craft, a crafts workshop).
+   *
+   * REQUIRED, AND WITH NO DEFAULT, because `undefined` is an answer here: "still asking", which holds
+   * every file. A default of `null` would turn a form's pending answer into "nothing held" — the trap
+   * `heldPostReason` exists for — so every mount has to say which it means.
+   */
+  recordHold: HeldPostRefusal;
   title?: string;
 }) {
   const [items, setItems] = useState<MediaFile[] | null>(null);
@@ -116,7 +147,15 @@ export function ExistingMedia({
   const currentRefresh = useRef(0);
 
   const confirm = useConfirm();
+  /** Each loaded file's own workshops, asked once per distinct workshop — see the header. */
+  const heldFor = useHeldPostRefusals((items ?? []).flatMap(mediaWorkshopIds));
+  /** One file's hold: the record's, or its own workshops' — refused if either is. */
+  const holdOf = (media: MediaFile): HeldPostRefusal => mediaWriteHold([recordHold, heldFor(mediaWorkshopIds(media))]);
+  const heldNoticeId = useId();
+
   async function removeMedia(media: MediaFile) {
+    // A held ✕ is disabled; this keeps the rule for anything that reaches the function some other way.
+    if (writesHeld(holdOf(media))) return;
     const ok = await confirm({
       title: "Remove this file?",
       body: `"${media.caption || media.originalFilename}" will be removed from this record.`,
@@ -314,6 +353,14 @@ export function ExistingMedia({
           </p>
         ) : null}
         {error ? <p className="mt-1 text-sm text-red-700">{error}</p> : null}
+        {/* Why some ✕s and re-runs are held: one notice for the gallery, a word on each held tile. */}
+        <HeldPostNotice
+          refusal={mediaListNotice(shown.map(holdOf), "removed or re-transcribed")}
+          id={heldNoticeId}
+          className="mt-2"
+          sayPending
+          pendingSentence={HELD_POST_PENDING_FILES}
+        />
       </div>
       {items.length >= CHOOSER_FLOOR ? (
         /*
@@ -394,6 +441,7 @@ export function ExistingMedia({
             transcriptText: media.transcriptText,
             transcriptError: media.transcriptError
           };
+          const hold = holdOf(media);
           return (
             // `content-start` because the wrapping <li> stretches this card to its row's height so
             // neighbours line up; without it the rows inside would stretch with it and float the
@@ -404,6 +452,9 @@ export function ExistingMedia({
                 onOpen={() => setActive(preview)}
                 onRemove={removingId === media.id ? undefined : () => removeMedia(media)}
                 removeLabel="Remove"
+                removeHeld={writesHeld(hold)}
+                removeDescribedBy={typeof hold === "string" ? heldNoticeId : undefined}
+                statusLabel={typeof hold === "string" ? MEDIA_HELD_LABEL : null}
               />
               <div className="min-w-0">
                 <div className="truncate text-sm font-medium text-ink" title={media.originalFilename}>
@@ -416,6 +467,7 @@ export function ExistingMedia({
                     refresh) does not put the stale transcript back on screen a moment later. */}
                 <TranscriptBlock
                   media={media}
+                  readOnlyReason={mediaHeldReason(hold)}
                   onUpdated={(updated) =>
                     setItems((current) => (current ? current.map((item) => (item.id === updated.id ? updated : item)) : current))
                   }

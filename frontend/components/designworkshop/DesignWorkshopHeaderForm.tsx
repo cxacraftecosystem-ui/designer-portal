@@ -230,8 +230,13 @@ function readRefusal(err: unknown): Refusal {
  * The server's own sentences are correct and are shown verbatim where they exist; what they cannot
  * carry is what the reader should DO, which differs per code and is the whole reason this exists:
  *
- *   * **403** — the account's ROLE is outside `{DESIGNER, ADMIN, MASTER_ADMIN}`. Nothing the reader
- *     can fix from this screen, so the sentence names who changes it.
+ *   * **403** — said in the server's own words and nothing added. It read as "the account's ROLE is
+ *     outside the designer set" and appended who changes a role, which stopped being the likely cause
+ *     the moment the route guard in front of this screen tested the same set: a 403 that reaches this
+ *     form is about THIS workshop — a post the reader holds on it (owner's ruling, 2026-10-09), or
+ *     the sanction-officer rule — and each of those sentences names its own remedy. A role clause
+ *     appended to "you are this workshop's Regional Director" sent an admin to ask an administrator
+ *     for access they already had.
  *   * **404** — either no such workshop or one this account holds no grant on, and
  *     `load_workshop_or_404` will not say which, deliberately: a 403 there would confirm the id
  *     exists to exactly the people it is turning away. So the remedy has to cover both, and "ask to
@@ -243,11 +248,7 @@ function readRefusal(err: unknown): Refusal {
 function describeSaveRefusal(err: unknown, serverSaid: string): string {
   const status = err instanceof ApiError ? err.status : 0;
   if (status === 403) {
-    return (
-      `${serverSaid || "This account may not edit a design workshop."} Editing a workshop's details ` +
-      "needs Designer access or above, which is set on your account rather than on this workshop — " +
-      "an administrator is who changes it. Nothing was sent and nothing was changed."
-    );
+    return `${serverSaid || "This account may not edit this design workshop."} Nothing was sent and nothing was changed.`;
   }
   if (status === 404) {
     return (

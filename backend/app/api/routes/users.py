@@ -5,41 +5,64 @@ from typing import Any, NamedTuple
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.encoders import jsonable_encoder
-from prisma.errors import ForeignKeyViolationError
+from prisma.errors import ForeignKeyViolationError, UniqueViolationError
 
-from app.core.config import get_settings
 from app.core.db import db
 from app.core.deps import (
-    ROLE_RANK,
+    can_provision_accounts,
     get_current_user,
     invalidate_cached_user,
     is_admin,
     is_master_admin,
+    require_account_provisioner,
     require_admin,
     require_professor,
     role_rank,
-    # The ROLE, spelled the one way. ``target_user.role`` is a Prisma enum member on a live row and
-    # a plain string on anything hand-built, and the peer guard in
-    # :func:`assert_can_manage_target` compares it against a literal — an equality test that
-    # silently answers False for the enum, i.e. lets the refusal through, which is the direction
-    # that loses an account. ``role_value`` collapses both spellings; do not inline
-    # ``target_user.role`` here.
     role_value,
 )
 from app.core.security import hash_password
 from app.schemas.users import UserCreate, UserUpdate
-from app.services import access_roster
+from app.services import access_roster, credential_links
 
-# THE ONE IMPLEMENTATION OF "AN ADMITTED DESIGNER IS AN EMPANELLED DESIGNER", imported from the
-# service rather than from ``routes/access``'s private helper: that module imports ``assert_role``
-# from this one, so reaching the other way would close an import cycle. See ``create_user``.
-from app.services.designers import ensure_empanelled
+# THE RULES OF WHO MAY DO WHAT TO WHOSE ACCOUNT, imported rather than defined here. ``assert_role``
+# and ``assert_can_manage_target`` lived in this module until 2026-10-09; the password-link routes
+# needed the second, and a route importing a route is how a rule loses its one home. They are
+# RE-EXPORTED from here on purpose — ``routes/access`` and ``tests/test_directorate_tiers.py`` import
+# ``users.assert_role`` — so do not "tidy" them out of this import.
+from app.services.account_provisioning import (
+    DUPLICATE_EMAIL_DETAIL,
+    GRANT_FLAGS,
+    MASTER_EMAIL_DETAIL,
+    NO_PASSWORD_TO_CHANGE_DETAIL,
+    OWN_CREDENTIALS_DETAIL,
+    PROMOTION_WITH_A_TEMPORARY_PASSWORD_DETAIL,
+    assert_can_manage_target,
+    assert_may_grant,
+    assert_not_escaping_a_bar,
+    assert_not_overturning_a_bar,
+    assert_role,
+    create_account,
+    email_in_use,
+    holds_a_temporary_password,
+    is_master_address,
+    is_master_email,
+    requested_grants,
+)
 from app.services.pagination import normalize_pagination, page_payload
 from app.services.records import clean_data, contains, count_and_page, with_id_tiebreak
 
 router = APIRouter(prefix="/users", tags=["users"])
 
-ALLOWED_ROLES = set(ROLE_RANK)
+#: The PATCH fields that are the person's identity, and the ones that are their password. Both are a
+#: provisioner's to change on an account it may manage; neither is a professor's.
+IDENTITY_FIELDS = frozenset({"name", "email"})
+CREDENTIAL_FIELDS = frozenset({"password", "mustChangePassword"})
+
+#: The refusal a professor or a directorate officer reads for a name, an address or a password.
+IDENTITY_NEEDS_PROVISIONER_DETAIL = (
+    "Correcting a person's name, email address or password requires Ministry Admin access or "
+    "above. Professors and the directorate change roles only."
+)
 
 # WHERE THE DRIFT IN :func:`_count_relation` GETS SHOUTED ABOUT. The 409 body is deliberately quiet
 # about it — an admin can do nothing with "the generated client has no model sanctionorderdesigner"
@@ -54,87 +77,12 @@ def serialize_user(user: Any) -> dict[str, Any]:
     return payload
 
 
-def assert_role(role: str | None, current_user: Any) -> None:
-    """A user may assign roles at or below their own tier: admins promote to their level and
-    beneath; only the master admin can mint MASTER_ADMIN."""
-    if not role:
-        return
-    if role not in ALLOWED_ROLES:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid user role"
-        )
-    if role == "MASTER_ADMIN" and not is_master_admin(current_user):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only the master admin can grant master admin",
-        )
-    if ROLE_RANK[role] > role_rank(current_user):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You can only assign roles at or below your own tier",
-        )
-
-
-#: Refusing a master admin an action on ANOTHER master admin. Named so the two routes and the test
-#: assert the same sentence, and phrased to say what the reader can actually do about it.
-_MASTER_PEER_DETAIL = (
-    "Master admin accounts are peers: no master admin may change or remove another. "
-    "Demote the account from an environment with database access, or leave it in place."
-)
-
-
-def assert_can_manage_target(current_user: Any, target_user: Any) -> None:
-    """Nobody manages a peer, INCLUDING the master admin; everyone else manages strictly lower
-    tiers. This blocks one admin from silently rewriting another admin's account.
-
-    **THE MASTER-ADMIN CLAUSE USED TO BE ``if is_master_admin(current_user): return`` WITH NO PEER
-    TEST**, and that made this the stricter of two mirrors' looser half. ``canManageUser`` in
-    ``frontend/lib/permissions.ts`` returns ``target.role !== "MASTER_ADMIN" || target.id ===
-    user?.id``, and ``docs/PERMISSIONS.md`` §2 states that rule as the system's — so both browsers
-    render a second master-admin row with no controls on it while ``PATCH /users/{id}`` and
-    ``DELETE /users/{id}`` accepted exactly that target. An operator who promoted a deputy for a
-    handover read "protected" off the screen and could still demote or delete them with one curl.
-    Worse, the only peer protection that existed keyed on ``MASTER_ADMIN_EMAIL``
-    (:func:`assert_not_demoting_master`), so protection followed one address in the environment
-    rather than the privilege — the deputy could demote or delete every master admin except the
-    configured one.
-
-    The mirrors are made to agree here, on the SERVER side, because this direction can only refuse:
-    the browsers already offered nothing on these rows, so no shipped flow loses a control, and a
-    guard that turns out to be too strict is reverted without having deleted anybody's account.
-
-    **THE COST, SAID OUT LOUD: promoting somebody to MASTER_ADMIN is now a one-way door through the
-    API.** They cannot be demoted by a peer (this guard) and cannot demote themselves
-    (``update_user`` refuses privilege changes on one's own row), which is the same standing the
-    configured master-admin address has always had. If a reversible deputy is wanted, the answer is
-    a lower tier, not a hole in this rule.
-    """
-    if is_master_admin(current_user):
-        # The self-exception mirrors ``canManageUser``'s ``target.id === user?.id``. Both callers
-        # already branch on self before reaching here — ``update_user`` down the identity-only
-        # path, ``delete_user`` with its 422 — so this arm is unreachable today and is written
-        # anyway, because a predicate that answers a different question from the one the UI asks
-        # is how these two got out of step in the first place.
-        if role_value(target_user) == "MASTER_ADMIN" and target_user.id != current_user.id:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_MASTER_PEER_DETAIL)
-        return
-    if role_rank(target_user) >= role_rank(current_user):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You can only manage users below your own tier",
-        )
-
-
-def is_master_email(email: str | None) -> bool:
-    if not email:
-        return False
-    return email.lower() == get_settings().master_admin_email.lower()
-
-
 def assert_not_demoting_master(
     target_user: Any, payload_role: str | None, current_user: Any
 ) -> None:
-    if not is_master_email(target_user.email):
+    # The configured address ITSELF, not any spelling of its mailbox: an account under another
+    # spelling is somebody's ordinary account (see ``account_provisioning.is_master_address``).
+    if not is_master_address(target_user.email):
         return
     if not is_master_admin(current_user):
         raise HTTPException(
@@ -207,103 +155,24 @@ async def list_users(
 
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def create_user(
-    payload: UserCreate, current_user: Any = Depends(require_admin)
+    payload: UserCreate, current_user: Any = Depends(require_account_provisioner)
 ) -> dict[str, Any]:
-    role = "MASTER_ADMIN" if is_master_email(payload.email) else payload.role
-    assert_role(role, current_user)
-    existing = await db.user.find_unique(where={"email": payload.email.lower()})
-    if existing:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already exists")
-    is_master = role == "MASTER_ADMIN"
-    user = await db.user.create(
-        data={
-            "email": payload.email.lower(),
-            "name": payload.name,
-            "passwordHash": hash_password(payload.password),
-            # ── THE FIRST-LOGIN PASSWORD ─────────────────────────────────────────────────
-            #
-            # An admin typing a password for somebody else is a shared secret by construction:
-            # it was chosen by one person, typed into a form, and read out or messaged to
-            # another. `mustChangePassword` is what makes it temporary — the account signs in
-            # with it and both clients then send the person to the change-password screen and
-            # nowhere else.
-            #
-            # IT REPORTS AND DOES NOT REFUSE (see the column's own comment in schema.prisma):
-            # the only route that can change a password needs a bearer token, so refusing the
-            # sign-in would leave the account permanently unable to comply. It is the same
-            # decision the usage-consent gate took, for the same reason.
-            "mustChangePassword": True,
-            # Stamped so that "has never had a password" stays distinguishable from "signs in
-            # with Google" — the whole reason this column exists. `datetime.now(UTC)` rather
-            # than letting it default, because there is no default: a column that is NULL for
-            # an account that demonstrably has a hash would be worse than not having it.
-            "passwordSetAt": datetime.now(UTC),
-            "role": role,
-            "authProvider": "LOCAL",
-            "canManageQuestionnaire": is_master or payload.canManageQuestionnaire,
-            "canManageCrafts": is_master or payload.canManageCrafts,
-            "canManageWorkshops": is_master or payload.canManageWorkshops,
-            "canReview": is_master or payload.canReview,
-            "canViewProvenance": is_master or payload.canViewProvenance,
-            # Dataset download is grantable by any admin (the whole route is admin-gated), unlike the
-            # master-admin-only grants above — so it needs no extra permission assertion.
-            "canDownloadDataset": is_master or payload.canDownloadDataset,
-        }
-    )
-    # A brand-new cuid cannot already be cached, but every write to a User row invalidates without
-    # exception — a rule with a documented exception is a rule the next person has to re-derive.
-    invalidate_cached_user(user.id)
-    # AN ADMIN CREATING AN ACCOUNT IS AN ADMIN APPROVING IT. Without this the platform allow-list
-    # would refuse the account the moment it was made: the admin would hand somebody a password,
-    # watch them be told they are awaiting approval, and then have to approve them in a second
-    # screen — for a request they themselves caused. The gate fails closed, deliberately (see
-    # `auth.assert_access_admits`), so every path that mints an account has to admit it, and this is
-    # the only other one besides Google sign-in.
-    admitted = await access_roster.admit(
-        user.email,
-        admit_role=role,
-        actor_id=current_user.id,
-        full_name=user.name,
-        note=f"Admitted with the account, created here by {current_user.email}.",
-    )
-    # ── AND AN ADMIN CREATING A DESIGNER HAS EMPANELLED THEM, 2026-09-03 ────────────────────────
-    #
-    # **THE FOURTH DOORWAY.** Three paths already treat "admitted as a DESIGNER" and "empanelled" as
-    # one act — ``auth.login`` on the way in, and ``access._empanel_an_admitted_designer`` from the
-    # approval and the roster edit — and this one, which is the path an admin uses when they have the
-    # person in front of them, did not. It called ``admit`` and stopped. The consequence is the
-    # incident the whole feature exists for, reached through the door most likely to be used: the
-    # admin types somebody in AS A DESIGNER, ``/admin/designers`` shows nothing, and the person
-    # themselves reads *"Your designer access has been suspended"* at the sign-in page about an
-    # empanelment nobody ever granted — until their first sign-in silently derives one, at which
-    # point the row exists but says it was derived rather than granted by the admin who granted it.
-    #
-    # THE TWO CONDITIONS ARE ``_empanel_an_admitted_designer``'S, ASKED OF THE STORED ROW, and they
-    # are re-spelled here rather than imported for one reason only: ``routes/access`` imports
-    # ``assert_role`` from THIS module (see the note at that import), so calling back into it would
-    # close an import cycle. If a third caller ever needs this pair, the function moves to
-    # ``app/services`` — it does not get copied a third time.
-    #
-    #   * ACTIVE, not merely "there is a row". ``admit`` returns an ACTIVE row on every path today,
-    #     so this is belt-and-braces — it is here so it stays true if that ever changes, exactly as
-    #     the sign-in path's ``access_roster.admits`` test is.
-    #   * ``role_of(admitted)`` and not ``role``, because the roster row is what the other three
-    #     paths read and a row that already carried a role is the row the gate will consult. Asking
-    #     the stored row is the one formulation that cannot drift from what was actually written.
-    #
-    # THE STORED ADDRESS AND NOT ``user.email``. The roster stores the canonical mailbox and
-    # ``User.email`` is deliberately not canonicalised, so for a Gmail alias the two differ — and the
-    # empanelment has to land on the key the OTHER roster and the sign-in gate are keyed on.
-    #
-    # ``actor_id`` IS THE ADMIN, unlike the sign-in path's ``None``: an administrator really did take
-    # this action, and ``addedById`` is how ``/admin/designers`` says who. Nothing here revives a
-    # suspended empanelment — ``ensure_empanelled`` only ever creates, which is the one rule in that
-    # function that must not be got wrong.
-    if (
-        access_roster.status_of(admitted) == access_roster.ACTIVE
-        and access_roster.role_of(admitted) == "DESIGNER"
-    ):
-        await ensure_empanelled(admitted.email, actor_id=current_user.id)
+    """Provision a password account: MINISTRY_ADMIN, ADMIN and MASTER_ADMIN (owner, 2026-10-09).
+
+    Every rule lives in ``services/account_provisioning.create_account`` so the operator script
+    obeys the same ones: the tier ceiling (403), capability flags for admins only (403), one account
+    per address in any letter case and — since 2026-10-09, for everybody — per Gmail mailbox under
+    any spelling (409, a concurrent double-submit included), and — for a provisioner who is not an
+    admin — no account on an address an administrator barred, nor a DESIGNER whose empanelment was
+    ended (409). The account is admitted to the allow-list with the
+    tier it was made at, and a DESIGNER is empanelled, because a provisioner creating somebody has
+    approved them and the sign-in gates fail closed.
+
+    ``mustChangePassword`` comes from the body and defaults to True. The answer is the ordinary user
+    payload, which carries ``mustChangePassword``, ``passwordSetAt`` and ``firstLoginAt`` so the
+    screen can say what to hand over and whether the temporary secret is still live.
+    """
+    user = await create_account(current_user, payload)
     return serialize_user(user)
 
 
@@ -313,32 +182,84 @@ async def update_user(
     payload: UserUpdate,
     current_user: Any = Depends(require_professor),
 ) -> dict[str, Any]:
+    """Change one account, FIELD BY FIELD — the policy replaced an all-or-role-only split, 2026-10-09.
+
+    * ``role`` — PROFESSOR and above, as it always was: the ceiling is ``assert_role``, the target
+      ``assert_can_manage_target``.
+    * ``name``, ``email``, ``password``, ``mustChangePassword`` — account provisioners
+      (``deps.can_provision_accounts``), on accounts they may manage. Anybody else gets a 403 naming
+      the tier that can.
+    * the six capability flags — admins only. A provisioner who is not an admin may echo the values an
+      account already holds and nothing else; a change is a 403 (``assert_may_grant``).
+
+    **NEVER YOUR OWN PASSWORD OR FLAG, AND THE REFUSAL IS DELIBERATE RATHER THAN THE ACCIDENT IT WAS.**
+    Until this change a self-PATCH of ``password`` failed only because ``passwordSetAt`` was added to
+    the payload before the self check counted the fields — and tidying that order would have let a
+    stolen admin session set a permanent password with no current password and no guessing budget.
+    It is now refused first, by name, with a sentence pointing at ``POST /auth/change-password``.
+
+    **A PASSWORD SET FOR SOMEBODY ELSE IS TEMPORARY** unless ``mustChangePassword: false`` is sent
+    with it. **RAISING THE FLAG, OR SETTING A PASSWORD, SIGNS THE PERSON OUT EVERYWHERE**
+    (``sessionsValidFrom``), so "at the next sign-in" is literal on a phone that would otherwise re-read
+    ``/me`` only at a cold start; both clients keep their queued work on the 401 that follows. Raising
+    the flag on an account with no password is a 422: nothing could ever satisfy it.
+
+    **``mustChangePassword: false`` ON ITS OWN WITHDRAWS A REQUIRED CHANGE**, and that is a
+    provisioner's act on an account it manages, as the owner ruled (2026-10-09). It is the same power
+    as setting a password with the flag off, which D1 already gives: it says "the password this account
+    holds is final", so it ends no session — a session opened with that password is a session opened
+    with the account's final one. The audit line records the field.
+
+    **A PROMOTION DOES NOT CARRY A LOWER PROVISIONER'S CREDENTIAL UPWARD** (2026-10-09; rule 5 of
+    ``services/account_provisioning.py``). A request that RAISES the role withdraws every outstanding
+    password link of the account in the same request, and is refused (409) while the account still
+    holds a temporary password, unless the same request sets a new one: the provisioner who typed
+    either would otherwise hold an account above its own reach.
+
+    **A PROVISIONER WHO IS NOT AN ADMIN CANNOT MOVE AN ACCOUNT ONTO A BARRED ADDRESS** (409):
+    ``access_roster.follow_email_change`` admits the new address, which would re-activate a row an
+    administrator rejected or suspended. **NOR A DESIGNER ACCOUNT ONTO AN ADDRESS WHOSE EMPANELMENT AN
+    ADMINISTRATOR ENDED** (409, since 2026-10-09), the rule a create already had: the account would
+    be refused at every sign-in. **NOR ANY ACCOUNT OFF AN ADDRESS BARRED EITHER WAY** (409, also
+    2026-10-09) — the move that left an administrator's bar on an address nobody held and let the
+    person back in at the new one. **NOR, WHATEVER THE ROLE, AN ACCOUNT CARRYING AN ENDED EMPANELMENT
+    ONTO AN ADDRESS WITH AN ACTIVE ONE** (409, also 2026-10-09): the move would end that empanelment,
+    and only an admin ends one. An admin may make each of these moves, as on create — and the bar
+    goes WITH the account (``follow_email_change`` carries it, and the old address stays barred), so
+    an admin correcting a barred account's address has not let it back in on either address; that is
+    the access screen's act. The audit line says what each address carried.
+
+    **NOBODY MOVES AN ACCOUNT ONTO ANOTHER ACCOUNT'S MAILBOX** (409 "Email already exists", for every
+    actor since 2026-10-09): any spelling of a Gmail inbox another account uses is that account's —
+    ``account_provisioning.email_in_use`` says what the co-tenancy cost.
+    """
     assert_role(payload.role, current_user)
     data = clean_data(payload.model_dump(exclude_unset=True))
-    if not is_admin(current_user):
-        # Professors manage the ladder, not accounts: they may promote/demote people below them
-        # (up to their own tier, per assert_role + assert_can_manage_target) but everything else —
-        # identity, passwords, privilege flags — stays admin-only.
-        extra_fields = set(data) - {"role"}
-        if extra_fields:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Professors can only change a user's role",
-            )
-    if "email" in data:
-        data["email"] = data["email"].lower()
-    if "password" in data:
-        data["passwordHash"] = hash_password(data.pop("password"))
-        data["passwordSetAt"] = datetime.now(UTC)
-        # WHOSE PASSWORD IT IS DECIDES WHETHER IT MUST BE CHANGED, and the branch is below
-        # rather than here because `user` has not been loaded yet at this line. See
-        # `_password_was_set_by_somebody_else` further down.
+    sent = set(data)
+    is_self = user_id == current_user.id
+    if is_self and sent & CREDENTIAL_FIELDS:
+        # Before anything is loaded, and before the tier test, so that everybody who tries this —
+        # professor or master admin — reads the one sentence that tells them where the right door is.
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=OWN_CREDENTIALS_DETAIL)
+    if sent & (IDENTITY_FIELDS | CREDENTIAL_FIELDS) and not can_provision_accounts(current_user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail=IDENTITY_NEEDS_PROVISIONER_DETAIL
+        )
     user = await db.user.find_unique(where={"id": user_id})
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
-    if user.id == current_user.id:
+    grants = requested_grants(data)
+    echoed: set[str] = set()
+    if grants and not is_admin(current_user):
+        assert_may_grant(current_user, grants, current=user)
+        # Every one of them matches what the account already holds (or the line above refused), so
+        # writing them would change nothing — and must not appear in the audit line as a grant.
+        echoed = set(grants)
+        for flag in echoed:
+            data.pop(flag, None)
+    if is_self:
         # Self-service is limited to identity fields; nobody edits their own role or privileges.
-        privileged_fields = set(data) - {"name", "email", "passwordHash"}
+        privileged_fields = set(data) - IDENTITY_FIELDS
         if privileged_fields:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -346,40 +267,144 @@ async def update_user(
             )
     else:
         assert_can_manage_target(current_user, user)
-        if "passwordHash" in data:
-            # AN ADMIN TYPED THIS PASSWORD FOR SOMEBODY ELSE, so it is a shared secret exactly
-            # as it is at account creation, and it is temporary for the same reason. The
-            # self-service branch above deliberately does NOT set this: a person who changed
-            # their own password has already chosen one.
-            data["mustChangePassword"] = True
-    assert_not_demoting_master(user, data.get("role"), current_user)
-    if "email" in data and data["email"] != user.email:
-        if is_master_email(data["email"]) and not is_master_admin(current_user):
+
+    ends_sessions = False
+    if "password" in data:
+        # bcrypt HERE, and the timestamps it goes with LAST, immediately before the write — see the
+        # stamp below for why the order matters.
+        data["passwordHash"] = hash_password(data.pop("password"))
+        # A PROVISIONER TYPED THIS PASSWORD FOR SOMEBODY ELSE, so it is a shared secret exactly as
+        # it is at account creation, and temporary for the same reason — unless the provisioner sent
+        # ``mustChangePassword: false`` beside it, which ``setdefault`` leaves standing.
+        data.setdefault("mustChangePassword", True)
+        ends_sessions = True
+    if data.get("mustChangePassword") is True:
+        if "passwordHash" not in data and user.passwordHash is None:
             raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Only the master admin can assign the master admin email",
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=NO_PASSWORD_TO_CHANGE_DETAIL,
             )
-        clash = await db.user.find_unique(where={"email": data["email"]})
-        if clash and clash.id != user_id:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already exists")
-    if "email" in data and is_master_email(data["email"]):
+        if not user.mustChangePassword:
+            ends_sessions = True
+
+    assert_not_demoting_master(user, data.get("role"), current_user)
+    if "email" in data:
+        data["email"] = data["email"].lower()
+    email_changed = "email" in data and data["email"] != user.email
+    # What an ADMIN's move found on either address, for the audit line: admins keep the power to
+    # move an account onto or off a barred address, and keep the record of having done it.
+    barred_on_arrival: str | None = None
+    empanelment_ended_on_arrival = False
+    barred_on_departure: str | None = None
+    empanelment_ended_on_departure = False
+    if email_changed:
+        # ANY SPELLING OF THE MASTER ADMIN'S MAILBOX, not merely the configured string — see
+        # ``account_provisioning.is_master_email`` for the escalation a dotless spelling allowed.
+        if is_master_email(data["email"]) and not is_master_admin(current_user):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=MASTER_EMAIL_DETAIL)
+        if await email_in_use(data["email"], except_id=user.id):
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=DUPLICATE_EMAIL_DETAIL)
+        # THE ROLE THE ACCOUNT WILL HOLD, because an ended empanelment refuses a DESIGNER's sign-in
+        # and nobody else's — the request's own ``role`` when it changes one, else the account's.
+        # Passed as ``role=None`` until 2026-10-09, which asked only about the allow-list: a ministry
+        # admin could move a designer onto an address whose empanelment an administrator had ended,
+        # and the account was then refused at every sign-in by a decision the provisioner had just
+        # stepped round. A create was refused that move from the start.
+        role_after = data.get("role") or role_value(user)
+        # THE ADDRESS IT IS LEAVING FIRST (2026-10-09). Only the destination used to be asked, so a
+        # barred account could be "corrected" onto a fresh address — or onto one the person had
+        # planted with a refused sign-in — and walk back in.
+        barred_on_departure, empanelment_ended_on_departure = await assert_not_escaping_a_bar(
+            current_user, user.email, data["email"], role=role_after
+        )
+        barred_on_arrival, empanelment_ended_on_arrival = await assert_not_overturning_a_bar(
+            current_user, data["email"], role=role_after, moving=True
+        )
+    # The configured address itself carries MASTER_ADMIN, not every spelling of its mailbox: a master
+    # admin moving an account onto another spelling has not asked for a promotion.
+    if "email" in data and is_master_address(data["email"]):
         data["role"] = "MASTER_ADMIN"
     if data.get("role") == "MASTER_ADMIN":
-        data["canManageQuestionnaire"] = True
-        data["canManageCrafts"] = True
-        data["canManageWorkshops"] = True
-        data["canReview"] = True
-        data["canViewProvenance"] = True
-        data["canDownloadDataset"] = True
-    updated = await db.user.update(where={"id": user_id}, data=data)
-    # This is the promotion/demotion route: the cached identity now describes authority the user no
-    # longer has (or has not been given yet), so it must not outlive the write by even one request.
+        data.update(dict.fromkeys(GRANT_FLAGS, True))
+    # A PROMOTION DOES NOT CARRY A LOWER PROVISIONER'S CREDENTIAL UPWARD — rule 5 of
+    # ``services/account_provisioning.py``. Asked of the role the write will leave, after the master
+    # address has had its say. "Still holds a temporary password" is one predicate shared with the
+    # access screen's approval (``account_provisioning.holds_a_temporary_password``), so the two
+    # doors that raise a role cannot come to mean two things by it.
+    promoted = "role" in data and role_rank(data["role"]) > role_rank(user)
+    if promoted and holds_a_temporary_password(user) and "passwordHash" not in data:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=PROMOTION_WITH_A_TEMPORARY_PASSWORD_DETAIL,
+        )
+    # THE TIMESTAMPS, TAKEN AFTER bcrypt AND EVERY AWAITED CHECK ABOVE, immediately before the write
+    # (2026-10-09). The watermark was taken first until then, so the hash and three reads ran between
+    # it and the commit: a sign-in with the OLD password that minted its token in that gap, in a
+    # later wall second, post-dated the revocation and lived for a week. The credential check in
+    # ``deps._user_from_bearer`` now catches that token for a password change anyway; for a flag
+    # raised alone, this position is the whole defence. It is the THIRD writer of the watermark — see
+    # the list in ``deps._user_from_bearer`` — at full precision, as ``access.end_live_sessions``
+    # argues: a token minted in the same wall second is refused, which fails closed by one second.
+    now = datetime.now(UTC)
+    if "passwordHash" in data:
+        data["passwordSetAt"] = now
+    if ends_sessions:
+        data["sessionsValidFrom"] = now
+    try:
+        updated = await db.user.update(where={"id": user_id}, data=data)
+    except UniqueViolationError as exc:
+        # Another request took the address between the check above and this write.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=DUPLICATE_EMAIL_DETAIL
+        ) from exc
+    # The cached identity now describes authority, an address or a session watermark the account no
+    # longer has, so it must not outlive the write by even one request.
     invalidate_cached_user(user_id)
-    if "email" in data and data["email"] != user.email:
-        # THE ALLOW-LIST IS KEYED BY EMAIL. An admin correcting a typo in an address would otherwise
-        # lock the account out at its next sign-in — the new address has no row, and the gate reads
-        # a missing row as "never approved". See `access_roster.follow_email_change`.
-        await access_roster.follow_email_change(user.email, data["email"], actor_id=current_user.id)
+    # After the write, so a refused write withdraws nothing. The redemption asks the issuer's reach
+    # again anyway (``auth._link_verdict``), which also covers a promotion made by any other door.
+    links_withdrawn = await credential_links.revoke_outstanding(user_id) if promoted else 0
+    moved = access_roster.EmailMove()
+    if email_changed:
+        # THE ALLOW-LIST IS KEYED BY EMAIL. A provisioner correcting a typo in an address would
+        # otherwise lock the account out at its next sign-in — the new address has no row, and the
+        # gate reads a missing row as "never approved". See `access_roster.follow_email_change`,
+        # which also carries a bar — the account's own, for an admin's move — to the new address.
+        moved = await access_roster.follow_email_change(
+            user.email, data["email"], actor_id=current_user.id
+        )
+    # THE AUDIT LINE: who changed what on whose account. Field NAMES only — the password itself, and
+    # its hash, never reach a log.
+    notes = [
+        f"moved off an address the allow-list held as {barred_on_departure}"
+        if barred_on_departure
+        else "",
+        "moved off an address whose designer empanelment was ended"
+        if empanelment_ended_on_departure
+        else "",
+        f"moved onto an address the allow-list held as {barred_on_arrival}"
+        if barred_on_arrival
+        else "",
+        "the new address's designer empanelment is suspended, so this designer cannot sign in "
+        "until it is restored"
+        if empanelment_ended_on_arrival
+        else "",
+        f"the account's {moved.carried_bar} bar went with it and its old address stays barred"
+        if moved.carried_bar
+        else "",
+        "the ended designer empanelment moved with it" if moved.carried_ended_empanelment else "",
+        f"promoted, so {links_withdrawn} outstanding password link(s) were withdrawn"
+        if links_withdrawn
+        else "",
+    ]
+    logger.info(
+        "users: %s updated account %s (fields=%s, mustChangePassword=%s, sessionsEnded=%s)%s",
+        current_user.id,
+        user_id,
+        ",".join(sorted(sent - echoed)) or "-",
+        updated.mustChangePassword,
+        ends_sessions,
+        "".join(f"; {note}" for note in notes if note),
+    )
     return serialize_user(updated)
 
 
@@ -736,7 +761,7 @@ async def delete_user(user_id: str, current_user: Any = Depends(require_admin)) 
     user = await db.user.find_unique(where={"id": user_id})
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
-    if is_master_email(user.email):
+    if is_master_address(user.email):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="The master admin account cannot be deleted",

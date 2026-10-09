@@ -19,7 +19,10 @@ kept intact and three of them are the reason this is not a JWT.
    the reason can be reported honestly to somebody holding a link that has simply gone cold.
 4. **SESSION REVOCATION ON RESET.** Redeeming a link writes ``User.sessionsValidFrom``, which
    ``deps._user_from_bearer`` compares every token's ``iat`` against. The reason somebody is
-   resetting is usually that a session they no longer control exists somewhere.
+   resetting is usually that a session they no longer control exists somewhere. Since 2026-10-09
+   :func:`credential_fingerprint` binds the bearer tokens too (``security.CREDENTIAL_CLAIM``), so a
+   new password retires the sessions opened with the old one whichever door wrote it — one
+   definition of "the password changed", for links and for sessions.
 
 ── WHAT WAS DELIBERATELY NOT PORTED ──────────────────────────────────────────────────────────────
 
@@ -96,6 +99,52 @@ MIN_PASSWORD_LENGTH = 8
 
 def ttl_hours(purpose: str) -> int:
     return INVITE_TTL_HOURS if purpose == INVITE else RESET_TTL_HOURS
+
+
+#: When ``User.firstLoginAt`` began to be written: the migration that added the column
+#: (``20260830170000_auth_identity_and_password_links``) backfilled nothing, and ``auth.login`` has
+#: stamped it only since that deploy. So a NULL means "never signed in" only for an account created
+#: from this instant on; before it, a NULL is just as likely an account in daily use until August.
+FIRST_LOGIN_TRACKED_SINCE = datetime(2026, 8, 30, 17, 0, tzinfo=UTC)
+
+
+def _created_since_first_logins_were_tracked(user: Any) -> bool:
+    created = getattr(user, "createdAt", None)
+    if not isinstance(created, datetime):
+        return False
+    if created.tzinfo is None:  # a hand-built row; every stored stamp in this schema is UTC
+        created = created.replace(tzinfo=UTC)
+    return created >= FIRST_LOGIN_TRACKED_SINCE
+
+
+def purpose_for(user: Any) -> str:
+    """INVITE for an account nobody has started using; RESET for one somebody has.
+
+    "NOBODY HAS STARTED USING IT" IS TWO STATES, NOT ONE (2026-10-09). An account with no password is
+    the obvious one. The other is an account a provisioner has just created WITH a password: it holds
+    a hash, so the old rule ("INVITE while the hash is NULL") handed its holder a two-hour RESET link —
+    read on a Monday, dead by lunch. ``firstLoginAt`` is NULL until the first sign-in that actually
+    got in (``auth.login``), so an account carrying a hash and no first login is still an invitation
+    in every sense that matters, and the sanction register already treated its unused accounts so.
+
+    **BUT ONLY FOR AN ACCOUNT CREATED SINCE THE COLUMN WAS WRITTEN** (:data:`FIRST_LOGIN_TRACKED_SINCE`).
+    Every account in use before then carries a NULL it never earned, and reading that as "never
+    signed in" gave exactly the dormant, established accounts that most often need a reset a
+    seventy-two-hour INVITE in place of the two-hour RESET — thirty-six times the window in which a
+    mis-pasted link takes over a live account. No backfill (no migration in this change), so the
+    rule asks for POSITIVE evidence of an unused account: a NULL first login on an account created
+    after the stamp began. Anything else with a password is RESET, as it was before this change; an
+    account with no password is INVITE, as it always was.
+
+    THE REASON INVITE IS NOT USED FOR EVERYBODY STILL HOLDS: once somebody has signed in, the account
+    is live, and a seventy-two-hour credential that ends their sessions when redeemed is a spare key
+    for three days rather than for two hours.
+    """
+    if getattr(user, "passwordHash", None) is None:
+        return INVITE
+    if getattr(user, "firstLoginAt", None) is None and _created_since_first_logins_were_tracked(user):
+        return INVITE
+    return RESET
 
 
 # --------------------------------------------------------------------------------------
@@ -190,6 +239,10 @@ class TokenVerdict:
     reason: str | None = None
     user_id: str | None = None
     purpose: str | None = None
+    #: Who issued the link, off its row — set only by :func:`describe_token` on a good verdict, for
+    #: the redemption's question of whether that account may still manage this one
+    #: (``account_provisioning.issuer_still_manages``). None when nobody did, or the issuer is gone.
+    issued_by_id: str | None = None
 
 
 def verify_token(raw: str | None, *, now: datetime | None = None) -> TokenVerdict:
@@ -301,11 +354,12 @@ class CopyLinkDelivery:
 
     async def deliver(self, *, user: Any, link: str, purpose: str, expires_at: datetime) -> str:
         # At INFO and WITHOUT THE LINK. The link is a credential; the fact that one was issued is
-        # an operational event worth having in a log, and the credential itself is not.
+        # an operational event worth having in a log, and the credential itself is not. The account
+        # is named by its id, like every other line about a password in this product.
         logger.info(
-            "auth: %s link issued for %s, expires %s (delivery: copy-link)",
+            "auth: %s link issued for account %s, expires %s (delivery: copy-link)",
             purpose,
-            getattr(user, "email", "?"),
+            getattr(user, "id", "?"),
             expires_at.isoformat(),
         )
         return self.name
@@ -341,8 +395,9 @@ async def issue_link(
 ) -> DeliveredLink:
     """Mint, record, deliver.
 
-    ``purpose`` defaults to INVITE for an account that has never had a password and RESET for one
-    that has — which is the only difference a reader can see, and it decides the lifetime.
+    ``purpose`` defaults to :func:`purpose_for` — INVITE for an account nobody has started using,
+    RESET for one somebody has — which is the only difference a reader can see, and it decides the
+    lifetime.
 
     The hash is read off the row the caller just loaded: binding the token to a stale hash would
     mint a link that was already spent, and binding it to none would mint one that stays valid after
@@ -356,7 +411,7 @@ async def issue_link(
     if recent >= ISSUE_BUDGET:
         raise IssueThrottled(retry_after_minutes=ISSUE_WINDOW_HOURS * 60)
 
-    kind = purpose or (INVITE if getattr(user, "passwordHash", None) is None else RESET)
+    kind = purpose or purpose_for(user)
     expires_at = now + timedelta(hours=ttl_hours(kind))
     token = mint_token(
         user_id=user.id,
@@ -383,6 +438,16 @@ async def issue_link(
         purpose=kind,
         deliveredBy=delivered,
     )
+
+
+async def link_row(row_id: str) -> Any | None:
+    """The ``PasswordResetToken`` row behind an issued link, or None.
+
+    For the revoke route, which has to know WHOSE link it is before it may withdraw it: revoking is
+    authorised on the account the link is for, exactly as issuing is, so a provisioner cannot reach
+    into the links of an account they could not have issued one for.
+    """
+    return await db.passwordresettoken.find_unique(where={"id": row_id})
 
 
 async def revoke_link(row_id: str) -> bool:
@@ -428,7 +493,21 @@ async def describe_token(raw: str | None) -> TokenVerdict:
     token_payload = json.loads(_unb64(str(raw).strip().split(".", 1)[0]).decode("utf-8"))
     if not fingerprint_matches(user.passwordHash, str(token_payload.get("cred"))):
         return TokenVerdict(False, SPENT)
-    return TokenVerdict(True, None, user.id, verdict.purpose)
+    return TokenVerdict(True, None, user.id, verdict.purpose, row.issuedById)
+
+
+async def revoke_outstanding(user_id: str) -> int:
+    """Withdraw every link for *user_id* that has been neither used nor revoked; returns how many.
+
+    For ``PATCH /api/users/{id}`` raising an account's role: a link is its issuer's credential, and a
+    promotion must not carry it above the issuer's reach (``account_provisioning``, rule 5). Guarded
+    in the WHERE, as :func:`revoke_link` is in Python, so a link redeemed a moment earlier keeps its
+    ``usedAt`` and is not rewritten as withdrawn.
+    """
+    return await db.passwordresettoken.update_many(
+        where={"userId": user_id, "usedAt": None, "revokedAt": None},
+        data={"revokedAt": datetime.now(UTC)},
+    )
 
 
 async def mark_used(raw: str) -> None:

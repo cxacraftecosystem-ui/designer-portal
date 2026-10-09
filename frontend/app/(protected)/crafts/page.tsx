@@ -541,7 +541,14 @@ function CraftsPageBody() {
             delete — the same surface the artisan/product/tool/workshop forms carry. */}
         {editing ? (
           <div className="md:col-span-2 lg:col-span-4">
-            <ExistingMedia linkedRecordType="craft" linkedRecordId={editing.id} title="Previously uploaded craft media" />
+            {/* `recordHold={null}`: a craft is never filed under a design workshop, so only a file's
+                own workshop columns can hold it — which the panel reads for itself. */}
+            <ExistingMedia
+              linkedRecordType="craft"
+              linkedRecordId={editing.id}
+              recordHold={null}
+              title="Previously uploaded craft media"
+            />
           </div>
         ) : null}
         <div className="flex gap-2 md:col-span-2 lg:col-span-4">

@@ -54,38 +54,51 @@ export type User = {
   /**
    * ── THE FIRST-LOGIN PASSWORD, 2026-08-30 ────────────────────────────────────────────────────
    *
-   * True when the password on this account was typed by an ADMINISTRATOR rather than chosen by its
-   * owner — `POST /api/users`, or a password written through `PATCH /api/users/{id}` for somebody
-   * else. It arrives on every `/me` and on the sign-in response for free, because `serialize_user`
-   * encodes the whole row.
+   * True when the account must choose its own password before it does anything else. An account
+   * provisioner sets it — at `POST /api/users` (unless they unticked "Require a new password at
+   * first sign-in"), with a temporary password written through `PATCH /api/users/{id}`, or by
+   * requiring a new password at next sign-in on a password that stays as it is — and the owner
+   * clears it by choosing one. It arrives on every `/me` and on the sign-in response for free,
+   * because `serialize_user` encodes the whole row.
    *
-   * **TWO SCREENS CONSUME IT ON THE WEB, AND THE SECOND ONE IS THE ENFORCEMENT.** This paragraph
-   * used to say that no screen on either client did, and it was right: the flag rode on every
-   * payload and nobody was ever asked anything, so an admin-issued password — a secret two people
-   * know by construction — stayed on the account for as long as its owner cared to keep using it.
+   * **THE SERVER ENFORCES IT; TWO SCREENS ON THE WEB ASK FOR THE PASSWORD.** This paragraph once said
+   * that no screen on either client consumed the flag, and then that the second web screen was "the
+   * enforcement". Both were true when written and neither is now. Since 2026-10-09, while the flag
+   * stands, every authenticated route outside a short allow-list answers 401 with
+   * `X-Password-Change-Required: 1` — see `mustChangePassword` in `lib/signIn.ts` for the list, the
+   * configured master's exemption, and why sign-in itself still succeeds. An admin-issued password,
+   * a secret two people know by construction, therefore buys nothing but the change itself.
+   *
    * `components/FirstPasswordGate.tsx` is the form; `app/login/page.tsx` renders it between sign-in
-   * and the dashboard, and `components/AppShell.tsx` renders it above the WHOLE protected tree.
-   *
-   * The second host is the one that closes the real hole, and it landed a day after the first. A
-   * gate that fires only at /login is a gate only new arrivals meet: an administrator who resets
-   * somebody's password through `PATCH /api/users/{id}` sets this flag on a session that is already
-   * OPEN, and a tab that never revisits the sign-in screen never meets the door.
+   * and the dashboard, and `components/AppShell.tsx` renders it above the WHOLE protected tree — the
+   * host that meets a session already OPEN when an administrator raises the flag through
+   * `PATCH /api/users/{id}`. Neither keeps a latch of its own: `AuthProvider.markPasswordChanged` is
+   * the one both read. And a refused request no longer ends the session — `apiFetch` keeps the token
+   * on that 401 and `AuthProvider` re-reads `/me`, so the gate is drawn in place.
    * `PasswordGateScreen` gates the handset the same way, as a `when` arm replacing the home screen.
    *
-   * The server still REPORTS and never refuses (see the column's comment in schema.prisma), for the
-   * reason that route gives: `POST /api/auth/change-password` needs a bearer token, so a 403 at the
-   * door would be a demand the account could never satisfy. Read `mustChangePassword` in
-   * `lib/signIn.ts` rather than this field directly — an absent field means "a server older than the
-   * column", which is neither "must" nor "need not".
+   * Read it through `mustChangePassword` rather than this field directly — an absent field means "a
+   * server older than the column", which is neither "must" nor "need not".
    *
-   * The admin's "Password link" action on /users remains the OTHER way this is cleared, and it is
-   * the one to reach for when somebody cannot sign in at all: /set-password clears the flag as part
-   * of the redemption, so the gate is never met by a person who arrived through a link.
+   * The "Password link" action on /users remains the OTHER way this is cleared, and it is the one
+   * to reach for when somebody cannot sign in at all: /set-password clears the flag as part of the
+   * redemption, so the gate is never met by a person who arrived through a link. It is offered on
+   * every account that HAS a password (`passwordSetAt`), and no longer keyed on `authProvider` — a
+   * password account somebody once signed into with Google is still a password account.
    */
   mustChangePassword?: boolean;
   /** ISO-8601. Null alongside a Google account means "never had a password", which is the
    *  distinction this column was added to make; see schema.prisma. */
   passwordSetAt?: string | null;
+  /**
+   * ISO-8601. The first time this account actually got IN, by either credential — stamped once at
+   * sign-in and never moved. Null means no sign-in has been recorded: an account nobody has used
+   * yet, or one last used before the column was added (August 2026). /users reads it for "Never
+   * signed in", and the server reads it to make a password link a 72-hour invitation rather than a
+   * 2-hour reset — but only for an account CREATED since the column existed, because an older account's
+   * silence proves nothing and gets the reset.
+   */
+  firstLoginAt?: string | null;
 };
 
 export type FieldProvenanceEntry = { by?: string; byName?: string; at?: string };

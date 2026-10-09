@@ -98,6 +98,29 @@ decision, not a second one.
 > is answered rather than waived:
 > [DECISION-ministry-orange-action-controls.md](DECISION-ministry-orange-action-controls.md).
 
+> **2026-10-09 — two rulings applied this carve-out to new powers on existing surfaces, and the table
+> above did not change.** Account provisioning — a Ministry Admin creating password accounts, setting
+> temporary passwords, requiring a change and issuing set-password links — is drawn on the web's
+> `/users` and nowhere on the handset, whose admin-only "Issue a set-password link" button stays as it
+> was ([PERMISSIONS.md](PERMISSIONS.md) §1.2, whose matrix has a column for the
+> handset). Serving on one workshop — the administering tiers appointed its designer, director or
+> inspector — is decided on `/officers` and enforced by the server, and the handset was not taught
+> it ([PERMISSIONS.md](PERMISSIONS.md) §4.8). The server's forced password change is NOT part of the
+> carve-out: it binds both clients, and the handset draws its gate. Both are desk work in the sense of
+> §2, which is the whole test.
+>
+> **One server change reached the handset anyway, and it is recorded here because it is the carve-out
+> leaking rather than holding.** The eligible-inspectors list widened with the ruling to the three
+> administering tiers, and the handset's admin-only inspectors screen draws whatever that list holds,
+> so on the builds in the field (0.0.15 and older, as of 2026-10-09) an admin can appoint a colleague
+> admin as a workshop's inspector from the phone — under copy saying only Inspector / Reviewer
+> accounts are offered. The server still applies every separation rule to that appointment. The next
+> build's copy describes the list as it is, never offers the reader, and never marks the reader's own
+> row as no longer eligible; the handset's menus stay as they were. The server's rule that nobody
+> takes themselves off a post (later the same day) reaches that screen the same way: an admin who
+> unticks their own inspection there is answered with the server's 409, printed as written, where the
+> web keeps the row ticked and switched off before the save.
+
 ## 4. What this does NOT cover — and this release is the demonstration
 
 **Ordinary record forms still require both clients.** Artisan, tool, product, process and interview

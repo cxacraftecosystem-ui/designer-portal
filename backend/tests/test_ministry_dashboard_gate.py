@@ -817,6 +817,37 @@ def test_the_designer_register_adds_only_the_two_link_counts_it_documents() -> N
     )
 
 
+def test_a_creator_is_counted_as_a_designer_only_where_they_wrote_the_workshop() -> None:
+    """**OPENING A WORKSHOP IS NOT DESIGNING IT** (2026-10-09).
+
+    A sanction order makes the recording officer the workshop's creator and then forbids them to
+    author it; a Ministry Admin promoting thirty plan rows opens thirty workshops somebody else will
+    run. Folding every creator into the designer register listed those officers as the designers of
+    workshops they may not write. The creator arm now asks ``design_workshops.stage_writers`` —
+    the authorship test the separation of duties applies, which already discounts the opening's own
+    prefill — and the read is a PRIMARY one: unguarded, because a register that silently lost it
+    would go back to counting every creator.
+    """
+    code = _code_of(route.list_designers)
+    assert "stage_writers(workshop_ids, creator_ids)" in code
+    assert "in authored" in code, "the creator fold is no longer conditioned on authorship"
+    assert "stage_writers" not in _calls_guarded_by_try(route.list_designers)
+
+
+def test_the_unposted_folds_list_the_tiers_whose_job_the_post_is_and_no_administrator() -> None:
+    """The officer and inspector directories offer every account that MAY be appointed, which since
+    2026-10-09 includes the three administrator tiers. Folded in unposted, they would read as
+    officers with nothing to do — and every ADMIN would be counted as a "withheld account holding a
+    row" when they hold none. So only the tiers whose job the post is are listed with a measured zero;
+    an administrator appears where a row names them."""
+    from app.services import design_workshop_oversight as officers
+
+    assert frozenset({"ASSISTANT_DIRECTOR", "REGIONAL_DIRECTOR"}) == officers.DIRECTORATE_POST_ROLES
+    assert "officers.DIRECTORATE_POST_ROLES" in _code_of(route.list_officers)
+    assert "INSPECTION_ROLES" in _code_of(route.list_inspectors)
+    assert "INSPECTION_HOLDER_ROLES" not in _code_of(route.list_inspectors)
+
+
 # ── The roster this register cannot contain, counted rather than guessed ────────────────────────
 
 
@@ -849,15 +880,14 @@ def test_the_roster_gap_derives_its_role_set_and_names_no_role() -> None:
     """**NOTHING IS HARDCODED**, which the owner asked for by name.
 
     A literal ``"DESIGNER"`` in the gap calculation would be a second opinion about who this
-    register lists, and it would stop agreeing with the fold the day a second workshop-capable role
-    is added — the gap would then report people as missing who are on screen. The eligible set is
-    recomputed from ``designers.workshop_capable_roles()`` minus the never-roster-gated tiers, which
-    is the SAME expression ``empanelled_designer_accounts`` produces by passing
-    ``include_admins=False``.
+    register lists, and it would stop agreeing with the fold the day the fold's set moves — the gap
+    would then report people as missing who are on screen. The listed set is
+    ``designers.ROSTER_GATED_ROLE``, the constant ``workshop_capable_accounts(include_admins=False)``
+    builds the fold's role clause from (2026-10-09: it was ``workshop_capable_roles()`` less the two
+    admin tiers, which had stopped being the same expression — see the test below).
     """
     code = _code_of(register.roster_representation)
-    assert "workshop_capable_roles()" in code
-    assert "NEVER_ROSTER_GATED_ROLES" in code
+    assert "designers.ROSTER_GATED_ROLE" in code
     for role in ROLE_RANK:
         assert f'"{role}"' not in code, (
             f"{role!r} is written out in roster_representation. The eligible set is derived, not "
@@ -866,6 +896,61 @@ def test_the_roster_gap_derives_its_role_set_and_names_no_role() -> None:
     # And it reads the same roster the fold reads, rather than a second opinion about who is
     # empanelled.
     assert "active_roster_emails" in code
+
+
+def test_the_roster_gap_counts_exactly_the_roles_the_fold_does_not_list(monkeypatch) -> None:
+    """**THE GAP AND THE FOLD HOLD ONE OPINION ABOUT WHO IS LISTED**, run rather than read.
+
+    The fold — ``empanelled_designer_accounts``, i.e. ``workshop_capable_accounts`` with
+    ``include_admins=False`` — lists DESIGNER accounts and nobody else since 2026-10-09. The gap used
+    to treat the three directorate posts as listed too, so an empanelled address whose account was
+    an Assistant Director, a Regional Director or a Ministry Admin appeared in neither figure: not on
+    screen, not in ``rosterOtherRole``. A gap that understates itself is the one failure this caveat
+    must never have.
+
+    So both are asked, over the same roster: the role clause the fold actually sends, and how the gap
+    counts one empanelled account at EVERY role on the ladder. Every role the fold does not list
+    must be counted, and no other — whichever way either side moves next.
+    """
+    import asyncio
+
+    from app.services import design_workshop_viewers
+
+    roles = sorted(ROLE_RANK)
+    emails = [f"{role.lower()}@roster.test" for role in roles]
+
+    async def _roster() -> tuple[list[str], bool]:
+        # One address with no account behind it, so the other figure is exercised too.
+        return [*emails, "invited-never-arrived@roster.test"], False
+
+    sent: list[dict] = []
+
+    class _Users:
+        async def find_many(self, where=None, **_kwargs):
+            sent.append(where)
+            if "AND" in where:  # the fold's own query; its rows are not what is being asked
+                return []
+            return [SimpleNamespace(email=e, role=r) for e, r in zip(emails, roles, strict=True)]
+
+    monkeypatch.setattr(design_workshop_viewers, "active_roster_emails", _roster)
+    monkeypatch.setattr(designers, "db", SimpleNamespace(user=_Users()))
+    monkeypatch.setattr(register, "db", SimpleNamespace(user=_Users()))
+
+    asyncio.run(
+        designers.workshop_capable_accounts(
+            search=None, include_suspended=False, include_admins=False
+        )
+    )
+    listed = set(sent[-1]["AND"][0]["role"]["in"])
+    assert listed == {designers.ROSTER_GATED_ROLE}, listed
+
+    report = asyncio.run(register.roster_representation())
+    assert report["rosterOtherRole"] == len(set(roles) - listed), (
+        "the gap counts a different set of roles as listed from the one the fold lists"
+    )
+    assert report["rosterWithoutAccount"] == 1
+    assert report["rosterAdmitted"] == len(emails) + 1
+    assert report["rosterReadTruncated"] is False
 
 
 def test_the_roster_gap_discloses_counts_and_never_an_address() -> None:

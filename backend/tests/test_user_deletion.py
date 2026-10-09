@@ -74,6 +74,9 @@ async def _designer(world: dict[str, Any], slug: str) -> Any:
         "name": f"Departing {slug}",
         "password": "LocalDev123!",
         "role": "DESIGNER",
+        # Final, not temporary: the test then acts AS this designer, and since 2026-10-09 the API
+        # refuses a flagged account everything but the change-password screen.
+        "mustChangePassword": False,
     })
     assert made.status_code == 201, made.text
     return made.json()

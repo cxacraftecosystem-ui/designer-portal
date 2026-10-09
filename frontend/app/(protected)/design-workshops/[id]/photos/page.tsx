@@ -39,10 +39,11 @@
  * the sharpest possible version of that mistake.
  */
 
-import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { use, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { Images } from "lucide-react";
 
+import { HeldPostNotice, useHeldPostRefusal, writesHeld } from "@/components/designworkshop/HeldPostNotice";
 import { PageHeader } from "@/components/PageHeader";
 import { Dropdown, type DropdownOption } from "@/components/ui/Dropdown";
 import { readCaptureStamp } from "@/lib/media";
@@ -162,6 +163,16 @@ export default function PhotoIntakePage({ params }: { params: Promise<{ id: stri
   const [notice, setNotice] = useState<string | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement | null>(null);
+  /**
+   * Why this reader may not file photographs into this workshop, or null — a post they hold on it.
+   * Confirm writes them into the stages, and the server refuses whoever inspects or supervises a
+   * workshop every stage write, so the picker and Confirm are held and the notice says why — before
+   * two hundred files are read for a filing that could only be refused. Held while that is still
+   * being asked, too (`writesHeld`). See `HeldPostNotice`.
+   */
+  const postRefusal = useHeldPostRefusal(id);
+  /** The notice's live region, which the picker and Confirm name while a refusal is shown. */
+  const heldNoticeId = useId();
 
   /* ── Load the registry and the local draft ─────────────────────────────── */
 
@@ -362,7 +373,7 @@ export default function PhotoIntakePage({ params }: { params: Promise<{ id: stri
   const chosen = useMemo(() => lines.filter((line) => line.choice), [lines]);
 
   async function confirm() {
-    if (!draft || !chosen.length) return;
+    if (!draft || !chosen.length || writesHeld(postRefusal)) return;
     setConfirming(true);
     setProblem(null);
     setNotice(null);
@@ -604,6 +615,7 @@ export default function PhotoIntakePage({ params }: { params: Promise<{ id: stri
         }
       />
 
+      <HeldPostNotice refusal={postRefusal} id={heldNoticeId} sayPending />
       {loadError ? (
         <div className="mb-4 rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-sm text-amber-800">
           {loadError}
@@ -654,7 +666,8 @@ export default function PhotoIntakePage({ params }: { params: Promise<{ id: stri
           type="file"
           multiple
           accept="image/*"
-          disabled={Boolean(reading) || confirming}
+          disabled={Boolean(reading) || confirming || writesHeld(postRefusal)}
+          aria-describedby={postRefusal ? heldNoticeId : undefined}
           onChange={(event) => void onPick(event.target.files)}
           className="mt-2 block w-full text-sm text-ink-700 file:mr-3 file:cursor-pointer file:rounded-md file:border-0 file:bg-purple-700 file:px-4 file:py-2 file:text-sm file:font-medium file:text-white hover:file:bg-purple-800"
         />
@@ -685,7 +698,8 @@ export default function PhotoIntakePage({ params }: { params: Promise<{ id: stri
             <button
               type="button"
               className="field-button"
-              disabled={!chosen.length || confirming || Boolean(reading)}
+              disabled={!chosen.length || confirming || Boolean(reading) || writesHeld(postRefusal)}
+              aria-describedby={postRefusal ? heldNoticeId : undefined}
               onClick={() => void confirm()}
             >
               {confirming ? "Attaching…" : `Confirm ${chosen.length} photograph${chosen.length === 1 ? "" : "s"}`}

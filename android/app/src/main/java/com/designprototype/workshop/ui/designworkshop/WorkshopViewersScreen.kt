@@ -172,6 +172,10 @@ fun WorkshopViewersScreen(
 
     val viewer = remember(repository) { repository.cachedUser() }
     val canAdminister = remember(viewer) { mayAdministerViewers(viewer) }
+    // Asked of the ROLE and not of `canAdminister`, though both are `isAdmin` today: this one decides
+    // whether a refusal may say who the act is open to, which is a statement about the reader's tier
+    // rather than about this screen's gate. See `dwViewerFailureMessage`.
+    val readerIsAdmin = remember(viewer) { viewer != null && FieldPermissions.isAdmin(viewer) }
 
     var loading by remember(workshopId) { mutableStateOf(canAdminister) }
     var reload by remember(workshopId) { mutableIntStateOf(0) }
@@ -252,7 +256,7 @@ fun WorkshopViewersScreen(
             title = it.title
             creatorId = it.createdById.orEmpty()
         }.onFailure { error ->
-            loadError = error.viewerFailure(DwViewerAttempt.READ)
+            loadError = error.viewerFailure(DwViewerAttempt.READ, readerIsAdmin)
             loading = false
             return@LaunchedEffect
         }
@@ -294,7 +298,7 @@ fun WorkshopViewersScreen(
                 // default `DwEligibleViewers()` says `complete`, so this early return is what keeps
                 // that from being read as "the eligible set is empty and we know it".)
                 offer = DwEligibleViewers()
-                loadError = error.viewerFailure(DwViewerAttempt.READ)
+                loadError = error.viewerFailure(DwViewerAttempt.READ, readerIsAdmin)
                 loading = false
                 return@LaunchedEffect
             }
@@ -306,7 +310,7 @@ fun WorkshopViewersScreen(
             }
             .onFailure { error ->
                 rows = null
-                if (loadError == null) loadError = error.viewerFailure(DwViewerAttempt.READ)
+                if (loadError == null) loadError = error.viewerFailure(DwViewerAttempt.READ, readerIsAdmin)
             }
         loading = false
     }
@@ -355,7 +359,7 @@ fun WorkshopViewersScreen(
                 // SAID, not swallowed. The alternative is the previous term's list sitting under the
                 // new term with nothing to say it is stale — a picker answering a question nobody
                 // asked, on the screen where the answer decides who can open a fortnight of work.
-                searchError = error.viewerFailure(DwViewerAttempt.READ)
+                searchError = error.viewerFailure(DwViewerAttempt.READ, readerIsAdmin)
             }
     }
 
@@ -400,7 +404,7 @@ fun WorkshopViewersScreen(
                         }
                     )
                 }
-                .onFailure { error -> saveError = error.viewerFailure(DwViewerAttempt.SAVE) }
+                .onFailure { error -> saveError = error.viewerFailure(DwViewerAttempt.SAVE, readerIsAdmin) }
             saving = false
         }
     }
@@ -510,11 +514,14 @@ fun WorkshopViewersScreen(
             val answered = offer.users.mapTo(HashSet()) { it.id }
             seenEligible.values.filter { it.id !in answered && it.id in selection.selected }
         }
-        val choices = remember(offer, retained, served, creator) {
+        val choices = remember(offer, retained, served, creator, viewer?.id) {
             dwViewerChoices(
                 eligible = offer.users,
                 viewers = served,
                 creatorId = creator,
+                // Never offered as a new choice — the save answers 409 to anybody naming themselves —
+                // while a row another admin gave them is still drawn, unmarked.
+                readerId = viewer?.id,
                 // The one claim a searched or cut list cannot support; see `DwEligibleViewers`.
                 eligibleListComplete = offer.complete,
                 retained = retained,
@@ -723,13 +730,14 @@ internal fun mayAdministerViewers(user: UserDto?): Boolean =
  * Forbidden", when the body carries no `detail`; that is a status line and not a sentence, so it is
  * filtered out here rather than shown to an administrator.
  */
-private fun Throwable.viewerFailure(attempt: DwViewerAttempt): String {
+private fun Throwable.viewerFailure(attempt: DwViewerAttempt, readerIsAdmin: Boolean): String {
     // No HttpException means nothing answered — no signal, DNS, a socket dropped mid-request — or the
     // answer would not parse. Both leave the outcome of a SAVE genuinely unknown, which is exactly
     // what the null-status arm says, so they share it rather than inventing a third sentence.
-    val status = (this as? HttpException)?.code() ?: return dwViewerFailureMessage(null, null, attempt)
+    val status = (this as? HttpException)?.code()
+        ?: return dwViewerFailureMessage(null, null, attempt, readerIsAdmin = readerIsAdmin)
     val said = apiErrorMessage("").takeIf { it.isNotBlank() && !it.startsWith("HTTP ") }
-    return dwViewerFailureMessage(status, said, attempt)
+    return dwViewerFailureMessage(status, said, attempt, readerIsAdmin = readerIsAdmin)
 }
 
 // --------------------------------------------------------------------------------------

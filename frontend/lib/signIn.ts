@@ -21,10 +21,14 @@
  * whose server forgot `expose_headers` all produce the same absence. The caller falls back to the
  * server's own sentence and neutral chrome — the only safe direction to be wrong in on the front
  * door.
+ *
+ * Further down: the password rules spelled once (`MIN_PASSWORD_LENGTH`, `MAX_PASSWORD_LENGTH`), and
+ * an account provisioner's calls behind /users — create a password account, require a new password,
+ * set a temporary one, correct a name or an address.
  */
 
-import { apiFetch } from "@/lib/api";
-import type { User } from "@/lib/types";
+import { apiFetch, apiFetchWithHeaders } from "@/lib/api";
+import type { User, UserRole } from "@/lib/types";
 
 /** Spelled once; see `auth.SIGN_IN_HINT_HEADER`. Lower-case because `Headers.get` is case-insensitive. */
 export const SIGN_IN_HINT_HEADER = "x-sign-in-hint";
@@ -84,6 +88,15 @@ export type IssuedPasswordLink = {
   deliveredBy: string;
 };
 
+/**
+ * Mint a link for an account the caller provisions — an account provisioner, on an account it
+ * manages, exactly as for `PATCH /users/{id}`. The SERVER picks the purpose: an INVITE (72 hours)
+ * for an account with no password, or with one nobody has signed in with since it was created (an
+ * account made after sign-ins began being recorded, late August 2026), and a RESET (2 hours)
+ * otherwise — so a link for an account made this morning is not dead by lunchtime, while an
+ * established account that merely predates the record gets the short one. A Google-only account (no
+ * password) is a 422 — giving it a password is a decision, taken through "Set temporary password".
+ */
 export async function issuePasswordLink(userId: string): Promise<IssuedPasswordLink> {
   return apiFetch<IssuedPasswordLink>("/auth/password-links", {
     method: "POST",
@@ -125,12 +138,120 @@ export async function setPasswordWithLink(token: string, password: string): Prom
   );
 }
 
-/** The signed-in account replacing its own password — the route `mustChangePassword` sends you to. */
-export async function changeOwnPassword(currentPassword: string, newPassword: string): Promise<void> {
-  await apiFetch("/auth/change-password", {
+/**
+ * The header the fresh session arrives in after a password change. Spelled once; lower-case because
+ * `Headers.get` is case-insensitive, and the server spells it `X-Session-Token`.
+ *
+ * A HEADER AND NOT A FIELD IN THE BODY, and the reason is a client already in people's hands. Android
+ * builds 0.0.6–0.0.15 decode the change-password answer as `Map<String, Boolean>`, so any string beside
+ * `ok` makes the decode throw — and the message they then put on screen, under "the change failed",
+ * carries the token itself, although the password has changed. So the body stays exactly
+ * `{"ok": true}`, as it was before sessions were bound to passwords, and nothing here reads it.
+ *
+ * IT MUST BE IN THE API'S CORS `expose_headers` (`backend/app/main.py`, beside
+ * `X-Password-Change-Required`), or a cross-origin browser hides it: this tab then keeps the token the
+ * change has just retired, its next request is one plain 401, and the person signs in again with the
+ * password they have just chosen. Safe, and one sign-in dearer.
+ */
+export const SESSION_TOKEN_HEADER = "x-session-token";
+
+/**
+ * The signed-in account replacing its own password — the route `mustChangePassword` sends you to, and
+ * the Settings card's.
+ *
+ * RETURNS THE SESSION TO CARRY ON WITH, or null. Since 2026-10-09 every session token carries the
+ * fingerprint of the password it was opened with, and the server refuses one whose password has since
+ * changed — so this change retires the very token that sent it, with every other session of the
+ * account (which is the point: a session opened with a temporary password somebody else knew must not
+ * outlive it). The answer carries a fresh token minted AFTER the write, in {@link SESSION_TOKEN_HEADER}
+ * and never in the body. The caller adopts it with `setToken` BEFORE anything re-reads `/me`, or that
+ * re-read is the first request refused and the person is signed out the moment they complied.
+ *
+ * NULL HAS TWO CAUSES AND ONE ANSWER. A server older than the rule sends no header and has retired
+ * nothing, so "carry on with the token you have" is all a caller did before. A header the browser was
+ * not allowed to read is the other, and that server HAS retired the token — the next request is a
+ * plain 401 and the person signs in again with the new password. Neither is improved by guessing, and
+ * a token is never dug out of the body, whatever a server puts there.
+ */
+export async function changeOwnPassword(currentPassword: string, newPassword: string): Promise<string | null> {
+  const { headers } = await apiFetchWithHeaders<unknown>("/auth/change-password", {
     method: "POST",
     body: JSON.stringify({ currentPassword, newPassword })
   });
+  const token = headers.get(SESSION_TOKEN_HEADER)?.trim();
+  return token ? token : null;
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * Provisioning — an account provisioner's half of a password account
+ *
+ * `canProvisionAccounts` in lib/permissions.ts decides who may call these; the server decides again,
+ * per target (`assert_can_manage_target` in backend/app/services/account_provisioning.py), and its
+ * sentence is what a screen shows on a 403, 409 or 422. EVERY PASSWORD BELOW IS SENT EXACTLY AS TYPED: `lib/forms.requiredText` trims, and a
+ * password stored trimmed while its owner pastes the untrimmed original is refused at sign-in for
+ * ever, with nothing on either screen to say why.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * `POST /api/users`. `mustChangePassword` is sent always rather than left to the server's default,
+ * so what was ticked on the form is what happened. The capability grants are an ADMIN's to send: a
+ * provisioner who is not an admin is refused with a 403 for any of them set true, so a caller leaves
+ * them out entirely rather than sending `false` it has no business deciding.
+ */
+export type NewPasswordAccount = {
+  name: string;
+  email: string;
+  role: UserRole;
+  password: string;
+  mustChangePassword: boolean;
+  canManageQuestionnaire?: boolean;
+  canDownloadDataset?: boolean;
+};
+
+export async function createPasswordAccount(account: NewPasswordAccount): Promise<User> {
+  return apiFetch<User>("/users", { method: "POST", body: JSON.stringify(account) });
+}
+
+/**
+ * "Require a new password at next sign-in" on an account that already HAS one — its password is not
+ * touched. Raising the flag signs the person out everywhere (the server stamps `sessionsValidFrom`),
+ * so the screen asking for this must say so. A 422 means the account has no password to replace.
+ */
+export async function requirePasswordChange(userId: string): Promise<User> {
+  return apiFetch<User>(`/users/${userId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ mustChangePassword: true })
+  });
+}
+
+/**
+ * Set a password FOR somebody else, and say whether they must replace it at their next sign-in.
+ * Sent explicitly in both directions, because the server's default for a password set for someone
+ * else is `true` and a `false` that was never sent would quietly be a `true`. Either way it signs the
+ * person out everywhere. Never for one's own account — that is a 403 pointing at change-password.
+ */
+export async function setTemporaryPassword(
+  userId: string,
+  password: string,
+  mustChangePassword: boolean
+): Promise<User> {
+  return apiFetch<User>(`/users/${userId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ password, mustChangePassword })
+  });
+}
+
+/**
+ * Correct the name or the sign-in address of an account the caller provisions. Send only what
+ * changed. A corrected address takes the account's place on the allow-list with it; a 409 is either
+ * an address another account holds or — for a provisioner who is not an admin — one an admin has
+ * refused or suspended, and the server's sentence says which.
+ */
+export async function correctAccountDetails(
+  userId: string,
+  changes: { name?: string; email?: string }
+): Promise<User> {
+  return apiFetch<User>(`/users/${userId}`, { method: "PATCH", body: JSON.stringify(changes) });
 }
 
 /* ────────────────────────────────────────────────────────────────────────────
@@ -152,6 +273,17 @@ export async function changeOwnPassword(currentPassword: string, newPassword: st
 export const MIN_PASSWORD_LENGTH = 8;
 
 /**
+ * The longest password this product will store — ONE ceiling, on every route that takes one.
+ *
+ * Creation and an admin's update used to accept 256 while change-password and set-password stopped
+ * at 200, so a 210-character temporary password signed in and could never be typed into the box
+ * that replaces it: the flag could then be cleared only through a link. Every password box on the
+ * web carries this as its `maxLength`. (bcrypt reads only the first 72 bytes either way; the ceiling
+ * is about agreement between routes, not about strength.)
+ */
+export const MAX_PASSWORD_LENGTH = 200;
+
+/**
  * The one line printed under a pair of password boxes.
  *
  * A FUNCTION AND NOT A CONSTANT, because the two screens have a genuinely different second clause —
@@ -166,13 +298,17 @@ export function passwordRuleLine(suffix?: string): string {
 /**
  * Must this account choose its own password before it is let into the product?
  *
- * ── WHY THE CLIENT ENFORCES WHAT THE SERVER ONLY REPORTS ──────────────────────────────────────
+ * ── THE SERVER HOLDS THE ACCOUNT; THE CLIENT IS WHERE IT CAN COMPLY ───────────────────────────
  *
- * `POST /auth/login` mints a token for an account carrying this flag, and that is not an oversight:
- * the only route that can change a password (`POST /auth/change-password`) needs a bearer token, so
- * refusing the sign-in would leave the account permanently unable to comply. It is the identical
- * decision the usage-consent gate took, argued in `auth.serialize_user` and in this column's own
- * comment in `schema.prisma`, and the blocking half belongs to the clients in exactly the same way.
+ * `POST /auth/login` still mints a token for an account carrying this flag, and that is not an
+ * oversight: the only route that can change a password (`POST /auth/change-password`) needs a bearer
+ * token, so refusing the sign-in would leave the account permanently unable to comply. What that
+ * token opens while the flag stands is a short allow-list — `/me`, change-password, sign-out, the
+ * usage-consent pair and the release check — and every other authenticated route answers 401 with
+ * `X-Password-Change-Required: 1` (a 401 and never a 403: both clients keep queued work on a 401
+ * and give it up on a 403). The configured break-glass master is exempt. So this predicate no
+ * longer decides WHETHER the account is held — the server does — only whether to put the one screen
+ * in front of it that lets the person comply, rather than a page whose every request fails.
  *
  * ── AN ABSENT FIELD IS "NO GATE", NEVER "GATE OPEN" AND NEVER "GATE SHUT" ─────────────────────
  *

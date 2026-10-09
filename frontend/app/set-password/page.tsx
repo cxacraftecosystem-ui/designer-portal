@@ -34,11 +34,13 @@ import { Suspense, useCallback, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Eye, EyeOff, Lock } from "lucide-react";
 
+import { useAuth } from "@/components/AuthProvider";
 import { WorkshopLogo } from "@/components/WorkshopLogo";
 import { Button } from "@/components/ui/button";
 import { GLASS_PANEL, GlassSurface } from "@/components/ui/GlassSurface";
 import { ApiError } from "@/lib/api";
 import {
+  MAX_PASSWORD_LENGTH,
   MIN_PASSWORD_LENGTH,
   checkPasswordLink,
   passwordRuleLine,
@@ -80,6 +82,7 @@ function SetPasswordForm() {
   const router = useRouter();
   const params = useSearchParams();
   const token = params.get("token") ?? "";
+  const { clearSession } = useAuth();
 
   /** `null` while the check is in flight — "Checking…" and an empty page are different answers. */
   const [linkValid, setLinkValid] = useState<boolean | null>(null);
@@ -128,6 +131,25 @@ function SetPasswordForm() {
       setError(null);
       try {
         await setPasswordWithLink(token, password);
+        /*
+          THE SERVER HAS JUST ENDED EVERY SESSION THIS ACCOUNT HAD, SO THIS TAB'S IS DROPPED HERE.
+
+          Redemption stamps `sessionsValidFrom`, which revokes every earlier token, and clears
+          `mustChangePassword`. `AuthProvider` sits in the root layout and was still holding the
+          account it read when this page loaded — so "Go to sign in" used to land a person who had
+          been locked at the gate straight back in front of it, asking for a current password, and
+          the one they had just set was then refused with "This session is no longer valid". Now
+          /login opens on its form, and the password just chosen is the one it asks for.
+
+          Local only, and never `logout()`: there is no session left to end, and the link may be
+          somebody else's, in which case the session in this tab is alive and simply not the one
+          the next sign-in is for. Done BEFORE the confirmation is drawn, so no path out of this
+          screen — the button, the address bar, Back — reaches a page holding the stale account.
+          Every other tab of this browser shares the token and loses it too — until reloaded they
+          still draw the account, send unsigned requests that fail, and hold what they queue in the
+          outbox as an expired sign-in, which is the state a sign-out in another tab already leaves.
+        */
+        clearSession();
         setDone(true);
       } catch (err) {
         setError(
@@ -139,7 +161,7 @@ function SetPasswordForm() {
         setSaving(false);
       }
     },
-    [confirm, password, token]
+    [clearSession, confirm, password, token]
   );
 
   if (done) {
@@ -205,6 +227,7 @@ function SetPasswordForm() {
               autoComplete="new-password"
               required
               minLength={MIN_PASSWORD_LENGTH}
+              maxLength={MAX_PASSWORD_LENGTH}
               value={password}
               onChange={(event) => setPassword(event.target.value)}
               className="field-input h-[52px] pl-10 pr-11"
@@ -239,6 +262,7 @@ function SetPasswordForm() {
               autoComplete="new-password"
               required
               minLength={MIN_PASSWORD_LENGTH}
+              maxLength={MAX_PASSWORD_LENGTH}
               value={confirm}
               onChange={(event) => setConfirm(event.target.value)}
               className="field-input h-[52px] pl-10"

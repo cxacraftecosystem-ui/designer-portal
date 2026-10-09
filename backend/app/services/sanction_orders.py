@@ -117,9 +117,14 @@ silent in the way everything else here is silent:
   ``services/design_workshops._refuse_if_the_officer_is_authoring_what_they_sanctioned``, and the two
   are now a pair. Read both before loosening either.
 
-EVERY ONE OF THESE IS A READ (or, for the self-naming one, no read at all), TAKEN BEFORE THE
-TRANSACTION OPENS. Do not "optimise" them into it: from in there they would read the rows this
-transaction is writing and answer about its own work.
+AND ONE MORE ON 2026-10-09: ``master_mailbox_reason``. Any spelling of the configured master admin's
+mailbox is refused, because an order naming it before the master's own first sign-in created the
+account on it, handed the officer its first-password link, and the master's Google sign-in then
+promoted that account — the officer's password still on it — to MASTER_ADMIN.
+
+EVERY ONE OF THESE IS A READ (or, for the self-naming and master-mailbox ones, no read at all), TAKEN
+BEFORE THE TRANSACTION OPENS. Do not "optimise" them into it: from in there they would read the rows
+this transaction is writing and answer about its own work.
 
 ══ THE MONEY ══════════════════════════════════════════════════════════════════════════════════
 
@@ -154,6 +159,7 @@ from app.core.deps import (
 )
 from app.core.security import hash_password
 from app.services import access_roster, credential_links, designers
+from app.services.account_provisioning import is_master_email
 from app.services.design_workshops import (
     attach_the_named_designer,
     entry_rows,
@@ -221,7 +227,8 @@ def can_record_sanction_orders(user: Any) -> bool:
     Read this beside the ``ASSISTANT_DIRECTOR`` block in ``app/core/deps.py``, which is where the
     ladder's capabilities are argued, and which this route is a deliberate, named exception to. Three
     of the acts behind this predicate are ones that block lists as things a directorate tier does NOT
-    get: an account is minted (``POST /api/users`` is ``require_admin``), an allow-list admission is
+    get: an account is minted (``POST /api/users`` is ``require_account_provisioner`` — MINISTRY_ADMIN
+    and above since 2026-10-09, still not the directorate officers), an allow-list admission is
     written (``/api/access`` is ``require_access_manager`` = ``is_admin``), and a
     ``DesignWorkshopViewer`` row is granted (``/design-workshops/{id}/viewers`` is ``require_admin``).
     That is the OWNER'S DECISION and it is what the feature is for — a designer who can start the
@@ -355,6 +362,24 @@ SANCTION_SELF_NAMED = (
     "approves the money is not the person who spends it. Record the order naming the designer who "
     "will do the work; if you are that designer, ask a colleague at Assistant Director or above to "
     "record it."
+)
+
+#: THE MASTER ADMIN'S MAILBOX, UNDER ANY SPELLING, IS NOBODY'S TO NAME HERE (2026-10-09).
+#:
+#: Until this refusal the register was the one door that could create an account on the configured
+#: ``MASTER_ADMIN_EMAIL`` before the master's own first sign-in — a handover to a new address, an
+#: unseeded box — and the 201 handed the officer that account's first-password link. The master's
+#: first Google sign-in then promoted the account it found at the address, the officer's password
+#: still on it, to the one tier nobody can manage or recover through the API. ``POST /api/users``
+#: refuses the same address to everybody but a master admin
+#: (``account_provisioning.MASTER_EMAIL_DETAIL``); this is the register's half, asked of the lead,
+#: of every co-designer and of every row an import reads, through :func:`master_mailbox_reason` —
+#: and by :func:`reissue_credential_link`, for an account an older order may already name there.
+SANCTION_MASTER_MAILBOX = (
+    "This address is the master admin's mailbox, under one spelling or another, and a sanction "
+    "order cannot name it. Nobody but the master admin creates or changes the account on that "
+    "mailbox, and an order naming it would create one and hand you its first sign-in link. Record "
+    "the order naming the designer who will do the work, at an address of their own."
 )
 
 #: The duplicate. Worded so the officer can tell WHICH of the two situations they are in, because
@@ -620,6 +645,21 @@ def self_named_reason(officer: Any, keys: Sequence[str]) -> str | None:
     return None
 
 
+def master_mailbox_reason(address: str) -> str | None:
+    """:data:`SANCTION_MASTER_MAILBOX` when this address reaches the master admin's mailbox, else None.
+
+    Pure, like :func:`self_named_reason` beside it — a comparison against the configured setting, no
+    query — so :func:`designer_standing_verdict` asks it before the first read, and the importer
+    answers it for two hundred rows without touching the database. ``is_master_email`` and not the
+    literal ``is_master_address``: a dotless, ``+tag`` or ``googlemail.com`` spelling is the same
+    inbox, and the account a Google sign-in on that inbox lands on is the one this must not create.
+    It refuses an order naming the master's EXISTING account too, which no sanction order needs.
+    """
+    if is_master_email(address):
+        return SANCTION_MASTER_MAILBOX
+    return None
+
+
 def _refuse_if_the_officer_named_themselves(officer: Any, keys: list[str]) -> None:
     """422 when the address on the order is one of the recording officer's own spellings.
 
@@ -638,8 +678,8 @@ def _refuse_if_the_officer_named_themselves(officer: Any, keys: list[str]) -> No
     sign-in. The officer then authors the fortnight of fieldwork as the puppet at rank 35 and reviews,
     rewrites and approves it as themselves at 42 — ``can_review_record`` is strictly-below and
     ``can_edit_others_record`` is the PROFESSOR floor AND that, so both hold. No admin is involved at
-    any point, and ``POST /api/users`` (``require_admin``) is the door that decision is supposed to
-    go through.
+    any point, and ``POST /api/users`` (``require_account_provisioner``) is the door that decision is
+    supposed to go through.
 
     ── WHY A REFUSAL AND NOT A NARROWER GATE ─────────────────────────────────────────────────────
 
@@ -1047,14 +1087,16 @@ class StandingVerdict:
 
 
 async def designer_standing_verdict(address: str, *, officer: Any) -> StandingVerdict:
-    """The four standing refusals and the two account lookups, asked once, about one address.
+    """The five standing refusals and the two account lookups, asked once, about one address.
 
     **THE ORDER OF THE QUESTIONS IS THE ORDER THE SINGLE-ORDER ROUTE HAS ALWAYS ASKED THEM IN**, and
     it is load-bearing rather than incidental: the refusals have different next moves, so which one
     an officer meets decides what they do next. Self-naming is asked first because it needs no query
-    at all; then the allow-list (a barred address is an administrator's decision and outranks
-    everything about the roster); then the empanelment; then the two account lookups, whose answer
-    the LAST question needs. Reordering these changes which sentence a doubly-refused address gets.
+    at all, and the master admin's mailbox second for the same reason (2026-10-09,
+    :func:`master_mailbox_reason`); then the allow-list (a barred address is an administrator's
+    decision and outranks everything about the roster); then the empanelment; then the two account
+    lookups, whose answer the LAST question needs. Reordering these changes which sentence a
+    doubly-refused address gets.
 
     ``_refuse_if_number_taken`` is NOT here, deliberately. It is a fact about the ORDER and not about
     a designer, so asking it here would ask it once per designer and could report the duplicate
@@ -1062,10 +1104,11 @@ async def designer_standing_verdict(address: str, *, officer: Any) -> StandingVe
 
     ⚠ **EVERY REFUSAL THIS CAN ANSWER IS ONE A SPREADSHEET MUST NEVER BE ABLE TO OVERTURN**, which is
     the rule the importer's confirmation step is built on: an ended empanelment, a barred address, an
-    account that cannot run a workshop, the officer's own mailbox and a mailbox two accounts answer
-    to are administrators' decisions and facts about the request. They are reported and the row is
-    refused; they are never offered as something to confirm. Everything a human could legitimately
-    have MEANT differently is confirmable, and is decided in ``services/sanction_import`` instead.
+    account that cannot run a workshop, the officer's own mailbox, the master admin's mailbox and a
+    mailbox two accounts answer to are administrators' decisions and facts about the request. They
+    are reported and the row is refused; they are never offered as something to confirm. Everything
+    a human could legitimately have MEANT differently is confirmable, and is decided in
+    ``services/sanction_import`` instead.
     """
     keys = designers.email_match_keys(address)
     canonical = designers.canonical_email(address)
@@ -1087,6 +1130,14 @@ async def designer_standing_verdict(address: str, *, officer: Any) -> StandingVe
         )
 
     reason = self_named_reason(officer, keys)
+    if reason is not None:
+        return refused(Refusal(status.HTTP_422_UNPROCESSABLE_ENTITY, reason))
+
+    # NO ORDER CREATES, OR REACHES, THE ACCOUNT ON THE MASTER ADMIN'S MAILBOX — asked of every name
+    # an order carries and every row an import reads, because both come through here. Refused
+    # outright rather than only when the order would create the account: an order naming the
+    # master's existing account has no legitimate use either. See :data:`SANCTION_MASTER_MAILBOX`.
+    reason = master_mailbox_reason(address)
     if reason is not None:
         return refused(Refusal(status.HTTP_422_UNPROCESSABLE_ENTITY, reason))
 
@@ -1331,11 +1382,11 @@ async def create_from_sanction(payload: Any, officer: Any) -> dict[str, Any]:
                 #
                 # (a) POST /api/users. Its body REQUIRES a password and ``APIModel`` forbids extras,
                 #     so a sanction flow cannot post without inventing one and cannot add
-                #     ``invite: true`` without a schema change. It is also ``require_admin``, where
-                #     ``is_admin`` is the SET {ADMIN, MASTER_ADMIN} and not a rank, so a
-                #     MINISTRY_ADMIN at 48 is refused by it outright. Calling it from here would mean
-                #     widening the one route in this product that mints accounts, for a caller that
-                #     is not an admin.
+                #     ``invite: true`` without a schema change. It is also
+                #     ``require_account_provisioner`` — MINISTRY_ADMIN, ADMIN and MASTER_ADMIN since
+                #     2026-10-09 — so the Assistant and Regional Directors this register serves are
+                #     refused by it outright. Calling it from here would mean widening the route that
+                #     mints accounts by hand below the provisioners, for a caller that is not one.
                 #
                 # (b) Adding ``password: str | None`` + ``invite: bool`` to ``UserCreate``. That
                 #     makes the password OPTIONAL on the route an administrator uses by hand — a real
@@ -1344,20 +1395,29 @@ async def create_from_sanction(payload: Any, officer: Any) -> dict[str, Any]:
                 #
                 # (c) THIS. Mint 32 bytes of ``secrets.token_urlsafe`` here, hash it with the same
                 #     ``hash_password`` every other account uses, and never return it, log it or
-                #     store it in plaintext. The account is then in EXACTLY the state POST /api/users
-                #     leaves one in — a real ``passwordHash``, a real ``passwordSetAt``,
-                #     ``mustChangePassword: True`` — which is the state every downstream gate and
-                #     every test already understands.
+                #     store it in plaintext. The account then has a real ``passwordHash`` and a real
+                #     ``passwordSetAt``, which every downstream gate and every test understands.
+                #
+                # ``mustChangePassword: False``, AND THAT IS NOT THE STATE POST /api/users LEAVES
+                # (2026-10-09). The flag means "a password somebody else KNOWS opens this account",
+                # and since that date the server enforces it on every route. Nobody knows this one —
+                # it is random and was never shown to anyone — so there is no shared secret to retire,
+                # and setting the flag held a designer who signed in with Google (their sanction
+                # address is usually a Gmail one) behind a "choose a new password" gate asking for a
+                # current password nobody has, with a link as the only way out. The password the
+                # designer will use is set through the INVITE link below, which needs no flag to
+                # mean "choose your own".
                 #
                 # WHY NOT LEAVE ``passwordHash`` NULL. ``issue_link`` reads it: NULL means purpose
                 # INVITE with a 72-hour TTL, which is the RIGHT purpose here — but a NULL hash also
                 # means the account can be signed into by nobody at all if the link is lost. A random
                 # hash gives up nothing (it is unguessable by construction, so the account is equally
                 # unreachable) and it keeps ``passwordSetAt`` honest as "this account has had a
-                # password since the day it was made". The purpose is therefore passed EXPLICITLY
-                # below rather than inferred, because a non-NULL hash would otherwise infer RESET and
-                # its 2-hour TTL, which is far too short for a link an officer forwards by hand to
-                # somebody in the field.
+                # password since the day it was made". The purpose is passed EXPLICITLY below rather
+                # than inferred: a non-NULL hash used to infer RESET and its 2-hour TTL, far too
+                # short for a link an officer forwards by hand to somebody in the field — and though
+                # ``purpose_for`` now reads a just-made, never-used account as INVITE as well, this
+                # moment is a first credential by definition.
                 #
                 # ONE SECRET PER DESIGNER, KEPT IN A DICT KEYED BY THE MAILBOX RATHER THAN IN A
                 # SINGLE VARIABLE. A shared `secret` would have been overwritten by the next
@@ -1391,7 +1451,8 @@ async def create_from_sanction(payload: Any, officer: Any) -> dict[str, Any]:
                         "name": designer.name,
                         "passwordHash": hash_password(secret),
                         "passwordSetAt": datetime.now(UTC),
-                        "mustChangePassword": True,
+                        # Not a shared secret — see (c) above for why this is False.
+                        "mustChangePassword": False,
                         "role": "DESIGNER",
                         "authProvider": "LOCAL",
                         # Every grant spelled out and every one False, matching ``UserCreate``'s own
@@ -1685,9 +1746,11 @@ async def _issue_first_credential(
         delivered = await credential_links.issue_link(
             user=user,
             # EXPLICIT, NOT INFERRED. The account was just given a real (random, unguessable) hash,
-            # so the default would infer RESET and its 2-hour TTL — far too short for a link an
-            # officer forwards by hand to somebody who may be in the field. INVITE is 72 hours and
-            # is what this moment actually is: a first credential, not a reset.
+            # and the default used to infer RESET from any hash — two hours, far too short for a
+            # link an officer forwards by hand to somebody who may be in the field. Since 2026-10-09
+            # ``credential_links.purpose_for`` reads a just-created, never-used account as INVITE
+            # too, so the two agree; the purpose stays named because this moment is a first
+            # credential by definition, whatever that default comes to say.
             purpose=credential_links.INVITE,
             issued_by_id=getattr(officer, "id", None),
         )
@@ -1716,9 +1779,17 @@ async def reissue_credential_link(row: Any, officer: Any) -> dict[str, Any]:
     **AND NO ``purpose`` IS PASSED, WHICH IS THE OPPOSITE OF THE CREATION PATH.** There, the account
     had just been given a machine-minted hash nobody holds, so INVITE's 72 hours were right. Here the
     designer may have set a password weeks ago, and forcing INVITE would triple the lifetime of a
-    session-revoking credential for an established account. The default — INVITE while the hash is
-    NULL, RESET once it is not — is the distinction ``ttl_hours`` exists to draw, and this route
-    lets it do its job.
+    session-revoking credential for an established account. The default —
+    ``credential_links.purpose_for``: INVITE while the hash is NULL or nobody has signed in yet
+    (``firstLoginAt`` NULL on an account created since that column began to be written — which every
+    account this register mints was), RESET once somebody has — is the distinction ``ttl_hours``
+    exists to draw, and this route lets it do its job.
+
+    WHICH CHANGED WHAT THIS ROUTE MINTS ON 2026-10-09, AND IT IS WRITTEN DOWN BECAUSE NOTHING ELSE
+    HERE MOVED. The default used to be "INVITE while the hash is NULL", and every account this
+    register mints holds a hash, so a re-issue was always RESET — two hours. A designer who has never
+    signed in now gets INVITE, seventy-two hours, the same link the order's own creation handed out.
+    Once they have signed in it is RESET, exactly as before.
 
     ⚠ **IT IS THIS REGISTER'S OWN ACCOUNTS ONLY, AND THAT IS THE CHECK THIS ARM SHIPPED WITHOUT.**
     Until 2026-09-16 this docstring claimed phase 0 of the create bounded the whole arm, so no
@@ -1732,7 +1803,8 @@ async def reissue_credential_link(row: Any, officer: Any) -> dict[str, Any]:
     THIS route would then mint a RESET link for it, hand the URL back in the response body, and let
     the officer set that account's password — signing the real holder out of every device on the way
     past. ``POST /api/auth/password-links`` is the honest door for that and it is
-    ``Depends(require_admin)``; this was an unprivileged second one.
+    ``Depends(require_account_provisioner)`` plus ``account_provisioning.assert_may_reset_credentials``
+    on the target (2026-10-09); this was an unprivileged second one.
 
     So the first refusal below is the create path's own written invariant, finally enforced on both
     doors: :func:`create_from_sanction`'s gate docstring says the account this flow mints "is always
@@ -1775,6 +1847,13 @@ async def reissue_credential_link(row: Any, officer: Any) -> dict[str, Any]:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="The designer this order names no longer has an account.",
+        )
+    # NOR FOR AN ACCOUNT ON THE MASTER ADMIN'S MAILBOX (2026-10-09). Phase 0 no longer names that
+    # mailbox (:func:`master_mailbox_reason`), but an order recorded before it refused to may already
+    # name an account there, and a link for it is that account's password in the officer's hands.
+    if is_master_email(getattr(user, "email", None)):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=SANCTION_MASTER_MAILBOX
         )
     if role_rank(user) >= role_rank(officer):
         raise HTTPException(

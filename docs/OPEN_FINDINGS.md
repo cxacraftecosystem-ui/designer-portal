@@ -1,8 +1,75 @@
 # Open findings
 
-**Status: 3 open, 1 decision recorded and 1 deferral, 62 closed.** Open, the decision and the
-deferral last re-counted by heading on 2026-09-16; the closed sections were last re-checked against
-the tree on 2026-09-03.
+**Status: 14 open, 1 decision recorded and 1 deferral, 94 closed.** Every count re-counted by
+heading on 2026-10-09; the entries closed on 2026-10-09 were checked against the tree that day, and
+the older closed sections were last re-checked on 2026-09-03.
+
+**A focused review of that last pass found eight more defects the same day, and each was closed
+before the day was out.** They are the last eight entries under *Closed on 2026-10-09*: the sanction
+register creating the account on the master admin's mailbox for the master's Google sign-in to
+promote; an administrator's address correction moving a barred allow-list row off the old mailbox; a
+non-admin's correction ending an administrator's empanelment, or landing a second account on another
+spelling of a Gmail mailbox; the unfiled-records report's discard, filing and bulk filing writing a
+design workshop's records and files; four web doors the server refuses a post holder that the web did
+not hold; a post holder taking themselves off their own post; the handset never noticing a session a
+password change elsewhere had ended; and the handset's password gate reporting a change whose answer
+was lost as a change that failed. None was ever recorded open, so the open count does not move. The
+web's missing-warning entry stays open and is rewritten rather than closed: it named two places that
+went unwarned and left out four doors that did too, those four are held now, and everything still
+unwarned is named — a heading corrected is not a heading closed. Counted by heading: 14 open, and
+86 + 8 = 94 closed.
+
+**The last pass of 2026-10-09 closed five of the seven entries that day's review had opened, then
+opened one and closed it the same day.** It closed shipped handsets misreading the change-password
+answer (the fresh session token moved into a response header, and the body went back to exactly
+`{"ok": true}`), the access screen's promotion, the review queue's edit, the two media doors, and the
+sentence a post holder's join-card scan was given. Of the two it left open, tokens minted before the
+password binding close on their own as they expire, and the web's missing warning stays one heading,
+narrowed to the list rows' Delete now that the media controls ask too: a heading narrowed is not a
+heading closed, so it moves neither count. The one it opened — the same join-card sentence given to a
+scan that syncs after the card's date — was given a sentence of its own before the change shipped.
+Counted by heading: 19 − 5 + 1 − 1 = 14 open, and 80 + 5 + 1 = 86 closed.
+
+**The review of that day's change moved both numbers again: nine closed, seven opened.** It closed a
+Ministry Admin lifting an administrator's bar by moving the barred account to another address;
+sessions that outlived the temporary password they were opened with, and a sign-in that outran a
+reset; a promoted account keeping the credentials a lower provisioner held for it; the master admin's
+first Google sign-in landing on a planted spelling of its mailbox; a post holder changing a workshop's
+files, or the records filed under it; a refused record create leaving an orphan `Location` behind; a
+sanction-register designer held behind an unanswerable gate after a Google sign-in; 72-hour links for
+accounts used before `firstLoginAt` existed; and a duplicate allow-list row from the operator script's
+Google-only mode. The seven it opened are the limits those fixes left standing, each dated that day:
+shipped handsets misreading the change-password answer, tokens minted before the password binding,
+the access screen's promotion, the review queue's edit, two media doors, the web's missing warning at
+the list rows and the media controls, and a join-card sentence. Counted by heading: 12 + 7 = 19 open,
+and 71 + 9 = 80 closed.
+
+**What moved on 2026-10-09**, stated so the arithmetic can be re-done: the change that gave the
+administering tiers account provisioning and workshop posts, and made the server enforce a required
+password change, closed the entries under *Closed on 2026-10-09* below — each a defect found in the
+code it was rewriting, closed with the test that fails without the fix — and recorded under `## Open`
+the limits it left standing, each dated that day. Two of those are in sibling Vercel apps (cxa-cms
+and the walkthrough) that the same investigation examined; they are filed here because that
+investigation ran from this repository, and the code each one is about lives in those repositories.
+Counted by heading, with the two the follow-up below added: 3 + 9 = 12 open.
+
+**The serve-as follow-up the same day moved both numbers by two, and one defect sits on each side of
+the ledger on purpose.** It closed two entries — a post holder unfiling or moving a record out of a
+workshop they supervise through the record forms, and the web's missing advance warning for an
+administrator holding a post — and opened two: the director tiers' share of that warning, which the
+web cannot give them, and a change of role that leaves a `DESIGNER` on an ended empanelment. The
+warning is one closed heading and one open heading because its halves reach different people and
+close by different changes; it is not one defect counted twice, which is the double count the
+paragraphs below warn about. When the open half closes, it adds one to the closed count and nothing
+is deduplicated.
+
+**And "62 closed" had been wrong by two since 2026-09-03, in the direction that under-reports.** The
+paragraph below says that wave closed "eleven" entries and adds 51 + 11; its own section holds
+**thirteen** headings, all written in the same commit as the sentence, and none of them is a
+part-closed duplicate (the refused-save mismatch is still the only one). Recounted rather than
+incremented, as the maintenance table asks: 51 + 13 = 64 before this day, and 64 + 7 = 71 after it.
+It is the failure the paragraphs below record more than once, and each time the headings were right
+and the number was not.
 
 **Two things moved that line on 2026-09-16, and one of them is a correction rather than an addition.**
 The deferral is new — design-workshop approvals, ruled into 0.0.13, filed under `## Open` because its
@@ -221,7 +288,10 @@ That round trip is gone: the database was co-located on 2026-09-02 and a keyed `
 real but much smaller — and the TTL now also bounds *session* revocation, not just role and
 existence, because `_user_from_bearer` reads `sessionsValidFrom` off the cached row. In practice it
 bites only on writes no application process made, since every revocation writer invalidates and the
-deployment runs one worker on one replica. **1–2 seconds, or 0 with `AUTH_USER_CACHE_ENABLED=false`,
+deployment runs one worker on one replica. Since 2026-10-09 it also bounds the password binding in
+both directions, for a password written outside the API: an old session outliving the write, and a
+session opened with the new password refused until the cached row expires
+([SECURITY.md §3.6](SECURITY.md)). **1–2 seconds, or 0 with `AUTH_USER_CACHE_ENABLED=false`,
 is now a cheaper trade than it was.** It was not changed in this wave on purpose: a security
 parameter moved as a silent constant edit is a change nobody reviewed. It belongs in the next
 deployment review. The full argument is in [SECURITY.md §4.1](SECURITY.md).
@@ -282,6 +352,1038 @@ because with `ARCHIVED → PRE_SUBMISSION` legal it was a two-hop laundering pat
 from `LEGAL_TRANSITIONS` rather than listed twice, so re-admitting one to the header edit takes a
 deliberate edit to `DECISION_EDGES` — and what it would buy is a status change with no audit row,
 which is a decision that appears to have made itself.
+
+### [LOW] A workshop appointment is validated and then written, not both in one transaction (backend) — opened 2026-10-09
+
+`backend/app/services/design_workshop_posts.py` decides whether an appointment breaks a
+separation-of-duties rule, and every door that makes one — the oversight slots, the inspector panel,
+the viewers `PUT`, the oversight screen's designer doors, approving an access request, redeeming a
+join card — asks it and then writes. That is the read-then-write pattern these validators already
+had, and it leaves one race: two administrators saving DIFFERENT screens for the same person on the
+same workshop at the same instant can both pass — one naming them its Regional Director while the
+other gives them designer access, say — and the workshop ends up holding a pairing neither request
+would have been allowed to make alone.
+
+**The write it would enable does not get through.** The 403 that keeps a post holder away from a
+workshop's content and designer team is asked at the moment of each write, of the rows as they stand
+then, so the person holding both still cannot write what they supervise. What is left is a pairing
+on the books, which an administrator removes by taking the person off one half of it; the query in
+the next entry finds one. Closing the race means one transaction per workshop across every one of
+those doors. See [PERMISSIONS.md](PERMISSIONS.md) §4.8.
+
+### [LOW] Rows written before the serve-as ruling that break its rules are not cleaned up (backend) — opened 2026-10-09
+
+The separation-of-duties rules apply to every appointment made from 2026-10-09 on; nothing rewrote the
+rows already there. An Assistant or Regional Director has been able to hold designer access to a
+workshop since the directorate tiers joined the design-workshop set on 2026-09-14, and until the ruling
+the check ran in one direction only: appointing a workshop's co-designer as its director was refused,
+but giving designer access to somebody already serving as its director was not. Such a pairing stays
+until somebody removes one half of it. **Production held none
+when checked read-only on 2026-10-09**, and the write refusal applies to any such person at once, so a
+leftover pairing cannot be used to write what it supervises. Re-check with:
+
+```sql
+-- A post holder with designer access to the same workshop, a director who also inspects it,
+-- or one person in both director slots.
+select 'post and designer access' as pairing, p."designWorkshopId", p."userId"
+from (select "designWorkshopId", "userId" from "DesignWorkshopOversight"
+      union select "designWorkshopId", "userId" from "DesignWorkshopInspector") p
+join "DesignWorkshopViewer" v using ("designWorkshopId", "userId")
+union all
+select 'director and inspector', o."designWorkshopId", o."userId"
+from "DesignWorkshopOversight" o join "DesignWorkshopInspector" i using ("designWorkshopId", "userId")
+union all
+select 'both director slots', "designWorkshopId", "userId"
+from "DesignWorkshopOversight" group by "designWorkshopId", "userId" having count(*) > 1;
+```
+
+The other half of authorship — stages a post holder wrote — is `design_workshops.stage_writers` in
+`backend/app/services/design_workshops.py`, which a one-off script can ask about every post on the
+books. See [PERMISSIONS.md](PERMISSIONS.md) §4.8.
+
+### [LOW] ADMIN and MASTER_ADMIN post holders are withheld by name on the ministry dashboard's registers (backend) — opened 2026-10-09
+
+The ministry dashboard names people on its officer and inspector registers and never names an ADMIN
+or a MASTER_ADMIN account: `WITHHELD_PERSON_ROLES` in `backend/app/services/ministry_dashboard.py` is
+the dashboard's disclosure boundary, and it was drawn before an administrator could hold a post. Since
+the ruling of 2026-10-09 an administrator may be a workshop's Assistant Director, Regional Director or
+inspector, and such a holder appears on those registers only inside the withheld count — so a ministry
+reader can see that somebody withheld supervises or inspects, and not who. A MINISTRY_ADMIN holder is
+listed by name wherever a row names them. Whether the boundary should give way for a post holder is
+the owner's question rather than a code fix.
+
+### [LOW] Handsets on builds 0.0.2 to 0.0.5 have no screen for a required password change (android) — opened 2026-10-09
+
+Since 2026-10-09 the server holds an account carrying `mustChangePassword`: every route outside a short
+allow-list answers `401` with `X-Password-Change-Required: 1` until the owner chooses a password
+([PERMISSIONS.md](PERMISSIONS.md) §1.2). The handset draws a gate screen for the flag from build 0.0.6,
+and its handling of the gated `401` itself — keep the token and every queue, pause the sends, resume
+when the flag clears — is in the Android source since that date and reaches handsets with the next
+published build. **Builds 0.0.2 to 0.0.5 have no gate at all**, so an account flagged while its owner
+is on one of them is refused nearly everything with nothing on the phone saying what the server is
+waiting for, and has to choose its password on the web first. The owner accepted that cost with the
+ruling rather than weaken the hold. `GET /api/app/release/latest` is on the allow-list, so such a
+handset can still learn that a newer build exists; the entry closes as those handsets update, and
+nothing on the server can close it without giving the hold up.
+
+### [LOW] An administrator holding a workshop post who edits a stage on a phone is refused only at the save (android) — opened 2026-10-09
+
+The serve-as ruling is web-only
+([DECISION-ministry-surfaces-web-only.md](DECISION-ministry-surfaces-web-only.md)), so the handset
+knows nothing of posts. An ADMIN or MASTER_ADMIN reaches every workshop through the
+admin arm, so one serving as a workshop's inspector or director can open it on a phone and type into
+its stages. Each save is answered with the 403 write refusal ("You are this workshop's …"), which the
+phone records against that stage with the server's sentence and holds — nothing typed is lost and
+nothing reaches the workshop, which is the rule working. The handset's viewers screen and its
+join-card printing are designer-team doors the same rule refuses such an administrator, and they too
+answer only with the 403 — as, since the record and media doors began asking later that day, do a
+record edit or delete on a record filed under that workshop, a review-queue edit of one, a media
+delete or transcript edit on one of its files, an upload into it and a retried transcription; and,
+later still, the unfiled-records screen's filing and discard of a row the workshop claims, printed as
+the server wrote them (the discard's 409 for every administrator). That screen's bulk filing reports
+only the count it filed — the handset reads no `heldBack` — so a holder's held rows simply stay on the
+re-read report. An administrator who unticks their own row on the handset's inspectors screen meets
+the server's 409 — nobody takes themselves off a post — in the same way. What is missing is the
+warning: the web hides or disables most of those controls for a post holder and says why, and the
+phone says nothing until the save.
+Closing it on the handset needs the post rows, or a summary the server computes, mirrored there —
+which the web-only ruling deferred. See [PERMISSIONS.md](PERMISSIONS.md) §4.8.
+
+### [LOW] An Assistant or Regional Director holding a workshop post is warned of a refused write only by the server's 403 (frontend) — opened 2026-10-09
+
+The web's advance warning for a post holder — closed below for the administering tiers — learns which
+posts the reader holds from the workshop's two staffing reads, its oversight rows and its inspector
+panel, and both belong to the accounts that may appoint: a Ministry Admin, an admin or the master
+admin (`readHeldWorkshopPosts`, over `readWorkshopStaffing`, in
+`frontend/app/(protected)/officers/oversight.ts`). Anybody else gets no request and an answer of "none
+known", never "none held". So an Assistant or Regional Director
+appointed to a workshop's post who still reaches one of its write screens — as the workshop's
+creator, or through a designer row written before the ruling — or a record form for a record filed
+under it, which asks the same way since later that day, sees the controls live and learns of the
+refusal from the server's 403 at the save, in the server's own sentence. Nothing is written and
+nothing typed is lost; what is missing is the warning before the typing. Closing it needs a read a
+holder may make about their own posts on one workshop, which the server does not offer as of
+2026-10-09, rather than opening the staffing reads to the tiers they staff. See
+[PERMISSIONS.md](PERMISSIONS.md) §4.8.
+
+### [LOW] A change of role alone can make an account a DESIGNER on an address whose empanelment was ended, and the account then cannot sign in (backend) — opened 2026-10-09
+
+Since 2026-10-09 a provisioner who is not an admin may not put a `DESIGNER` on an address whose
+designer empanelment an administrator ended — not by creating the account at `POST /api/users`, and
+not by moving an account onto that address with `PATCH /api/users/{id}` — each a 409 from
+`account_provisioning.assert_not_overturning_a_bar`. A `PATCH` that changes the role and not the
+address asks nothing about the address: it is open to a Professor and above (`require_professor`, the
+ceiling `assert_role`, the target `assert_can_manage_target`), and making an account a `DESIGNER`
+where the empanelment was ended is not refused, for anybody. Nothing is overturned by it, because the
+sign-in gate still reads the ended empanelment: the account is refused at its next sign-in until its
+role is changed back or an administrator restores the empanelment on the designer roster — a
+lock-out the person making the change was never told about. Refusing it would be a new refusal for
+professors and the directorate tiers, outside what the change of that day took on. See
+[PERMISSIONS.md](PERMISSIONS.md) §1.2.
+
+### [LOW] PostgreSQL TLS does not verify the server's certificate in the two sibling Vercel apps (cxa-cms, virtual-walkthrough) — opened 2026-10-09
+
+Both apps that reach PostgreSQL from Vercel encrypt the connection and accept whatever certificate the
+far end presents. The walkthrough's `pg` pool (`virtual-walkthrough/src/server/db/postgres.ts`) runs
+with `rejectUnauthorized: false` in its default `require` mode, and its `verify-full` mode supplies no
+CA, so it cannot work as written; cxa-cms's Prisma URLs carry `sslmode=require`, which does not verify
+the peer either. An attacker on the path between a function and the database's pooler could present
+any certificate, ask for cleartext password authentication, and read the password and the traffic.
+That path runs inside the cloud providers' networks, which is why this is LOW — but nothing checks the
+peer. The fix is the database provider's root CA shipped with each app and verification switched on:
+`ssl: { ca, rejectUnauthorized: true }` behind a CA variable in the walkthrough, and `sslrootcert`
+traced into the function bundle for cxa-cms. Both repositories' deployment documents record the gap
+as of 2026-10-09; neither has built the fix.
+
+### [MEDIUM] cxa-cms scheduled publishing lands hours after its time, until the owner chooses a scheduler (cxa-cms) — opened 2026-10-09
+
+The Vercel Hobby plan refuses any cron that fires more than once a day, so cxa-cms runs its publish
+trigger from a GitHub Actions schedule (`*/5`) in its heartbeat workflow,
+`cxa-cms/.github/workflows/keep-warm.yml`. GitHub's scheduler is best-effort: over the 100 runs from
+2026-09-20 to 2026-10-08 the gap between runs had a median of 263 minutes (90th percentile 398,
+longest 529). So a page an editor schedules for 10:00 stays SCHEDULED in the studio, and keeps its old
+`isPublished` flag in the search index, for hours. Public pages compare publication dates on every
+request, so nothing goes live early or stays up late; what lags is the studio's status and the search.
+
+On 2026-10-09 the publish step was moved first and ungated — it used to wait on a wake-up ping written
+for the database host cxa-cms used previously, so any failed ping skipped publishing — and the ping
+became a health check that gates nothing. That stops a ping from costing a publish; it does not make
+the schedule keep time. The fix is a scheduler that does — the database's own cron (`pg_cron` with
+`pg_net`), or Vercel Pro with the cron back in `vercel.json` — and which one is the owner's decision,
+open as of 2026-10-09 (cxa-cms's `DEPLOYMENT.md` §1.7).
+
+### [LOW] Sessions and dataset tokens minted before the password binding are not ended by a password change (backend) — opened 2026-10-09
+
+The binding ([SECURITY.md](SECURITY.md) §3.6) is carried by every token minted by the release that
+introduced it. A token minted before that release has no `cred` claim and is accepted exactly as
+before, by decision, so that nobody was signed out at the deploy — which makes it the one kind of token
+a password change does not end. In particular a session opened with a temporary password before the
+release is still released, not ended, by the owner's forced change: the finding closed below, for that
+one population. The watermark still ends such tokens for every act that writes it. The window closes
+on its own, counted from the day the release reached the server: `JWT_EXPIRES_MINUTES` (seven days)
+for a session and `DATASET_TOKEN_EXPIRES_MINUTES` (thirty days by default) for a dataset token.
+Rotating `JWT_SECRET` ends them all at once if that wait is too long. Close this entry when the second
+has elapsed.
+
+### [LOW] The web warns a post holder on the workshop's screens, the record forms, the media controls and the doors that add to a workshop, but not at the list rows' Delete (frontend) — opened 2026-10-09
+
+The web holds a workshop's own write screens, the five record forms and an attached questionnaire
+form for an administrator holding a post ([PERMISSIONS.md](PERMISSIONS.md) §4.8); since later that
+day the controls that change a stored file as well — `/media`'s Delete and Transcribe now, a record's
+attached files on the artisan, product, tool and process forms, and the relink among `/admin`'s
+recovered recordings (`useHeldPostRefusals` and `mediaWriteHold` in
+`frontend/components/designworkshop/HeldPostNotice.tsx`); and later still the doors that add to a
+workshop or edit it from elsewhere — the review queue's Save and "Save and approve", `/media`'s
+Upload, the jobs panel's Retry, and creating, uploading or reusing a questionnaire into it (the closed
+entry below on four web doors). Section 5 of `frontend/e2e/workshop-post-holder-readonly-unit.spec.ts`
+pins the file controls and sweeps the web calls that delete a file, re-run its transcript, decide an
+identity photograph or relink a file; section 6 pins the doors that add to a workshop and registers
+every caller of them, the unfiled-records report's writes included, so a new one fails until it is
+held. An identity photograph's keep and discard sit under the stage form's own lock, and the web has
+no control that edits or refines a transcript. **This entry named two places still unwarned and left
+out four doors that were too**, and said the sweep caught every web call that changes a stored file
+while it missed the unfiled-records report's delete; those four doors are held now and that call is
+registered.
+It stays open, as of 2026-10-09, for what still asks nothing before the click. The per-row Delete on
+the design-workshop list, on the artisan, product, process and tool lists and on the interview list
+would each need a staffing read per distinct workshop on the page. The web warns about a file only by
+the workshop links its screen can see — the file's `designWorkshopId` and `designWorkshop` tag, and on
+the upload the filing of the record chosen — so a file that belongs to a held workshop only through a
+stage entry, an AI layer or the record it hangs off is not warned about on `/media`, among the
+recovered recordings, on the jobs panel or in the review queue's edit. Moving an existing
+questionnaire into a held workshop from its own page saves on select. And the unfiled-records report's
+single-row filing and discard ask nothing first, though a row a design workshop's column or tag claims
+is not listed there at all. Every one is refused by the server, its answer printed word for word, so
+nothing is written; what is missing is the warning before the click.
+
+---
+
+## Closed on 2026-10-09
+
+Found by the read-only investigation that preceded the account-provisioning and serve-as change, while
+making it, or by the review of it the same day, and closed by that change — six by its final pass,
+the six that end with the two join-card scans, five of them after the review had recorded them open
+and one found by that pass itself; and the last eight below by a focused review of that final pass,
+which found each and saw it closed the same day without recording it open. Every entry below was
+verified against the tree on the day it was written and names the test that fails without the fix.
+
+### [HIGH] Any admin could mint a password link for the master admin or a peer admin, and take the account over (backend) — **CLOSED 2026-10-09**
+
+`POST /api/auth/password-links` checked only that the caller was an admin (`require_admin`) and never
+looked at whose account the link was for, and its revoke route was unscoped the same way.
+`POST /api/auth/set-password` writes whatever password the link's bearer chooses, for whoever the link
+names, with no role check of its own — rightly, since the link IS the authority, which is exactly why
+the authority has to be checked where the link is issued. So an ADMIN could issue a RESET link for
+the MASTER_ADMIN (an INVITE, for a master with no password), redeem it, sign in as the master admin,
+and hold the provider keys, the repository settings, the release channel and the power to mint more
+master admins; the same worked against a peer admin. The web hid the action on master-admin rows, and
+that was the only guard. The sanction register's credential door had already closed the same hole
+with a rank test.
+
+Both link routes now stand behind `require_account_provisioner` and authorise the TARGET with
+`account_provisioning.assert_may_reset_credentials` — the rule `PATCH /api/users/{id}` uses: strictly
+lower tiers only, master admins are peers who cannot manage each other, and never your own account (a
+403 pointing at Change password). A Google-only account with no password gets a 422, and revoking a
+link that does not exist is a 404. Pinned by
+`test_an_admin_cannot_mint_a_link_for_the_master_admin_or_a_peer` and
+`test_revoking_a_link_needs_the_same_authority_as_issuing_it` in
+`backend/tests/test_account_provisioning.py`, and by the database-free table
+`test_a_password_link_is_authorised_on_the_target` in
+`backend/tests/test_auth_identity_and_password_links.py`.
+
+### [MEDIUM] `mustChangePassword` was reported and never refused, so a temporary password opened the whole API for a token's life (backend) — **CLOSED 2026-10-09**
+
+The flag means the password an account holds was chosen by somebody else, and both clients drew a
+change-password screen for it — but the server only reported it, by design at the time (the schema
+comment above the column said "IT REPORTS, IT DOES NOT REFUSE"). Anybody holding the temporary
+password could sign in from a script, never see the screen, and use the account's whole role — an
+admin's dataset-token mint included — for the life of the token, `JWT_EXPIRES_MINUTES`.
+
+The server enforces it now (owner's ruling, 2026-10-09). `deps.refuse_while_password_change_pending`,
+called inside `get_current_user` and `require_dataset_admin`, answers every route outside
+`deps.PASSWORD_CHANGE_ALLOWED_ROUTES` with `401`, `X-Password-Change-Required: 1` and "Choose a new
+password to continue."; CORS exposes the header; `POST /api/datasets/token` refuses a flagged account
+with a 403. Only the account at `MASTER_ADMIN_EMAIL` is exempt, and an account with no password is
+never held. Both clients keep the session on that `401` and draw the gate
+([PERMISSIONS.md](PERMISSIONS.md) §1.2). Pinned by `backend/tests/test_password_change_enforcement.py`,
+which enumerates the allow-list, sends a flagged account to listing and writing routes alike over
+Postgres, and proves the flag clears after a change — on the fresh session the change hands back, in
+its `X-Session-Token` header, since later that day, when the sessions opened with the replaced
+password began to end with it (the entry below). **The residue is open above**: handsets on builds
+0.0.2 to 0.0.5 have no gate. The schema comment above the column was corrected the same day and
+describes the refusal, its exemptions and the flag's writers as they stand — the sanction register no
+longer among them, a provisioner's withdrawal included — so [DATA_MODEL.md](DATA_MODEL.md) §5 and
+`backend/prisma/schema.prisma` agree.
+
+### [MEDIUM] A Google sign-in opened a second account beside a password account on another spelling of the same Gmail mailbox (backend) — **CLOSED 2026-10-09**
+
+`login_with_google` looked Google's address up literally, and `User.email` is stored as it was typed,
+lower-cased but not canonicalised. So an account an administrator created as `first.last@gmail.com`
+was missed when Google answered `firstlast@gmail.com` — Gmail ignores dots and `+tags` and treats
+`googlemail.com` as `gmail.com` — and a second account was created beside it, splitting one person's
+workshops and records across two accounts with no way to merge them. On an exact match it did the
+opposite damage: it rewrote the account's provider to GOOGLE and replaced the name the administrator
+had typed, which hid the password-link and re-issue doors from an account that still had a password.
+
+Owner's ruling, 2026-10-09: an account that has a password keeps its hash, its LOCAL provider, its name
+and its `mustChangePassword` flag when its owner signs in with Google, and the sign-in refreshes its
+avatar. When the literal lookup misses, the sign-in goes to the ONE password account on the same
+mailbox (`access_roster.accounts_on_the_mailbox`, the canonicalisation the allow-list's revocation
+already trusts — read since later that day through `accounts_on_the_mailbox_for_sign_in`, which has
+Postgres return only the candidates instead of every Gmail account on each such sign-in and gives the
+same answer, pinned by `test_the_sign_in_fold_answers_exactly_what_the_sweep_answered`), and two or
+more is a 409 telling the person to sign in with their password and ask an administrator. The
+configured master admin's sign-in never folds (an entry below). A sweep that cannot answer logs at
+ERROR and falls back to the old behaviour rather than lock out every new Google user — a visible
+duplicate an administrator can fix. Pinned by
+`test_google_on_a_password_account_keeps_the_password_the_provider_and_the_name`,
+`test_google_finds_the_password_account_under_another_spelling_of_the_mailbox`,
+`test_two_password_accounts_on_one_mailbox_are_refused_rather_than_guessed` and
+`test_a_google_only_account_signs_in_exactly_as_before` in `backend/tests/test_account_provisioning.py`,
+with database-free twins in `backend/tests/test_auth_identity_and_password_links.py`.
+
+### [LOW] Setting your own password through `PATCH /api/users/{id}` was refused only by accident (backend) — **CLOSED 2026-10-09**
+
+`update_user` added `passwordSetAt` to the payload before the self-service check, whose allowed set was
+`{name, email, passwordHash}` — so a password sent for one's own account failed with "You cannot
+change your own role or privileges", a sentence about roles, while the comment beside it said
+self-service included the password. The obvious tidy-up — moving the stamp below the check — would
+have let a stolen admin session set a permanent password without knowing the current one and outside
+the per-account guessing budget, which is the takeover `POST /api/auth/change-password` is written to
+prevent.
+
+The self case is refused first now, deliberately, for every tier and before the target is loaded: a
+password or the flag for one's own account is a 403 pointing at Change password, which asks for the
+current password and spends the budget. Pinned by `test_nobody_sets_their_own_password_or_flag_here`
+in `backend/tests/test_account_provisioning.py` and
+`test_nobody_may_reset_their_own_credentials_through_a_provisioning_door` in
+`backend/tests/test_auth_identity_and_password_links.py`.
+
+### [MEDIUM] An expired sign-in parked a designer's queued workshop drafts as refused (frontend) — **CLOSED 2026-10-09**
+
+The web's design-workshop draft drain (`frontend/lib/designWorkshopStore.ts`) asked of every failed
+stage save whether it was about that stage or about the whole pass, and a plain `401` — a token that
+ran out, which a fortnight in the field outlasts, or a second tab signing out — answered "about the
+stage". So every dirty stage was stamped with the server's "Could not validate credentials" as a
+permanent refusal of an answer nobody got wrong, and `blocksRetry` held each one shut after the
+designer had signed in again; the same `401` on any other arm was written onto the whole workshop, and
+on the photograph leg onto the photograph. Nothing was lost, and nothing was sent either. The records
+outbox had stopped on a `401` without marking anything for long before, and
+`frontend/lib/failureTriage.ts` states the rule both drains are meant to obey: a credential that
+expired stops the pass, marks nothing, and asks for a sign-in. Found while the password gate's own
+`401` was being taught that rule the same day.
+
+`stageRefusalIsPassLevel` now hands any credential expiry to the pass-level catch, which stops and
+records `credentialExpired` rather than a failure, and the photograph leg rethrows it instead of
+recording it against the file. Pinned by `frontend/e2e/draft-drain-credential-expiry-unit.spec.ts`.
+
+### [MEDIUM] A post holder could unfile a record from a workshop they supervise, or move it out, through the record forms (backend) — **CLOSED 2026-10-09**
+
+`record_design_workshop.assert_payload_workshop` is the one gate the record forms share for
+`designWorkshopId` — the create and `PATCH` routes for artisans, products, processes and tools, and
+the questionnaire interview's `PATCH`. It asked only about the DESTINATION. Filing a record into a
+workshop goes through `load_workshop_or_404(for_edit=True)`, which since the serve-as ruling refuses
+whoever holds that workshop's inspection or one of its director posts; but an explicit
+`designWorkshopId: null` was allowed with no question about the workshop being left — deliberately, so
+a filer removed from a workshop can still take their own record back — and a move asked only about
+where the record was going. So a post holder who may edit the record — their own, or, through the
+Professor floor every administering tier clears, one created by an account ranked below them — could
+take an artisan, product, process, tool or interview out of a workshop they inspect or supervise with
+one `PATCH`: the artisan unlink the oversight screen refuses them, reached through another door. A
+designer's own questionnaire had the same shape at `PATCH /api/questionnaires/{id}`: a detach asked
+nothing, and an admin may change any designer's form, so an administrator holding a post could take a
+form whose sittings print in the report's annexure off the workshop. Found on 2026-10-09 by the pass
+that refused the designer-team doors, which recorded it rather than closing it.
+
+Closed the same day. The five update routes pass the workshop the stored row names (`filed_under`),
+and a payload that leaves it — an unfile, or a move, whose leave is asked first — went through
+`assert_may_unfile_from`, which asks `design_workshop_posts.refuse_a_holders_write` and nothing else;
+the questionnaire's `PATCH` asked it too before a detach or a move. A post holder gets the same 403 and
+the same sentence as at every other refused door, and anybody who holds no post there is asked
+nothing, as before. **Later the same day the gate was widened to every write to a filed record and
+renamed `assert_may_write_a_record_filed_under`** — the entry on a workshop's files and records below.
+Pinned by
+`test_a_record_form_refuses_a_holder_taking_a_record_out_of_their_workshop`,
+`test_every_record_form_passes_the_workshop_its_row_is_filed_under`,
+`test_the_questionnaire_form_patch_refuses_a_holder_everything_and_writes_nothing` (named for a detach
+or a move until the gate widened, and re-checked on 2026-10-09 when this pin was found pointing at the
+old name) and, over Postgres for all six kinds,
+`test_a_post_holder_files_no_record_into_the_workshop_and_takes_none_out`, all in
+`backend/tests/test_admin_serve_as.py`.
+
+### [LOW] The workshop's own pages let an administrator holding a post type into writes the server refuses (frontend) — **CLOSED 2026-10-09**
+
+When the server began refusing a post holder every write to a workshop's content and designer team
+([PERMISSIONS.md](PERMISSIONS.md) §4.8 rule 5), the web went on drawing every write control for the
+administering tiers that hold one — an admin or the master admin reaches every workshop's controls
+through the admin arm — so one appointed a workshop's inspector or director could type a stage, a
+custom section or a report colour into a form whose every save was refused, and learn why only from
+the 403. Nothing reached the workshop and nothing typed was lost, but nothing warned before the
+typing.
+
+Closed the same day for the tiers that may appoint. `useHeldPostRefusal` in
+`frontend/components/designworkshop/HeldPostNotice.tsx` asks the server which posts the reader holds
+on the workshop and, for a post holder, holds the controls with the server's own sentence as the
+reason: the workshop's page — its stage index, the Edit details link and the status and consent
+buttons — the stage form, the Edit details page, custom sections, AI layers, photo import, report
+settings and the report colour, sketches upload and ranking order, the design-workshop visibility
+panel and the Designers panel on Workshop oversight, whose artisan panel was already held. Every read,
+the ratings, report generation and the appointment panels stay live, and a write refused anyway still
+prints the 403 word for word. Two writes outside those screens answered a post holder with the 403
+alone when this closed — the per-row Delete on the workshop list, which would need a staffing read per
+row, and a record form's workshop box. The record forms caught up later the same day (they hold Save,
+and the workshop box for a stored held workshop), and so did the media controls and then the doors
+that add to a workshop (an entry below); the list rows are open above.
+Pinned by `frontend/e2e/workshop-post-holder-readonly-unit.spec.ts`.
+**The rest is open above**: the reads the warning rests on belong to accounts that may appoint, so an
+Assistant or Regional Director holding a post is still warned only by the 403.
+
+### [HIGH] A Ministry Admin could lift an administrator's bar by moving the barred account to another address (backend) — **CLOSED 2026-10-09**
+
+`PATCH /api/users/{id}` asked about an address change only at the DESTINATION —
+`account_provisioning.assert_not_overturning_a_bar` refused a non-admin moving an account onto a
+REJECTED or SUSPENDED address, or a `DESIGNER` onto an ended empanelment — and never about the address
+the account was leaving; and `access_roster.follow_email_change` admitted whatever row it found at the
+new address. So a suspended person signed in once with Google at a second address, which leaves a
+PENDING row and no account; a Ministry Admin "corrected" their address onto it; the planted row was
+admitted ACTIVE, the SUSPENDED row stayed on an address no account held — the access screen still
+showing the bar — and the person signed in with their password. A move to a fresh address took back
+in a designer whose empanelment had been ended, too: their allow-list row was still ACTIVE (an ended
+empanelment mirrors only onto a row that admitted the person as a designer), and the first sign-in at
+the new address empanelled it afresh. Only admins could change an address before that day's ruling,
+so the hole arrived with the Ministry Admin's address corrections and was found by their review.
+
+Closed the same day, at both ends. A non-admin's move off a barred address, or of a `DESIGNER` off an
+ended empanelment, is a 409 naming the bar (`account_provisioning.assert_not_escaping_a_bar`), before
+anything is written. And the bar now goes with the account whoever moves it, an admin included:
+`follow_email_change` carries a REJECTED or SUSPENDED status onto the destination's row with a note —
+an ACTIVE row there included — or, where there is none, creates a barred row there and leaves the old
+one barred, and `designers.carry_ended_empanelment` carries an ended empanelment to the new mailbox.
+(The barred row itself MOVED when this closed, which lifted the bar on the old mailbox; that, and a
+non-admin's move ending an active empanelment, were closed later the same day — entries below.)
+Letting the person back in is the access screen's act. Pinned by
+`test_a_ministry_admin_cannot_move_a_suspended_account_onto_a_planted_address`,
+`test_a_ministry_admin_cannot_move_a_rejected_account_to_a_fresh_address`,
+`test_a_ministry_admin_cannot_move_a_designer_off_an_ended_empanelment` and
+`test_an_admin_may_move_a_barred_account_and_the_bar_goes_with_it` in
+`backend/tests/test_account_provisioning.py`.
+
+### [MEDIUM] Sessions opened with a temporary password outlived its replacement, and a sign-in racing a reset outlived the reset (backend) — **CLOSED 2026-10-09**
+
+Two holes in session revocation, both found by the review of that day's forced-change work. **The
+forced change released sessions rather than ending them.** The hold on a flagged account was per
+account, the change cleared it, and `POST /api/auth/change-password` wrote no watermark — so every
+session opened with the temporary password, by the provisioner who typed it or by anybody who read the
+message it travelled in, had full access as the owner from the moment the owner replaced it, for the
+rest of its seven days; a test pinned the release. **And the watermark was stamped too early.**
+`PATCH /api/users/{id}` and `POST /api/auth/set-password` took the timestamp before bcrypt and the
+awaited checks, so a sign-in with the old password that read the row before the commit and minted its
+token in a later wall second post-dated the revocation and kept a week of access.
+
+Closed the same day by binding every session to the password it was opened with
+([SECURITY.md](SECURITY.md) §3.6): each token carries a fingerprint of the account's `passwordHash`,
+`deps._user_from_bearer` refuses one whose fingerprint no longer matches, and change-password hands
+the session that made the change a fresh token — in the answer's body at first, and in its
+`X-Session-Token` header since the entry below moved it there. Every writer of the watermark now
+takes its timestamp after bcrypt, immediately before the write. Pinned by
+`test_a_session_opened_with_a_temporary_password_ends_when_it_is_replaced`,
+`test_a_voluntary_change_ends_the_other_sessions_too`,
+`test_a_sign_in_that_raced_a_reset_is_refused_on_first_use`,
+`test_a_token_ends_when_the_password_it_was_opened_with_does` and
+`test_every_bearer_token_the_application_mints_is_bound_to_a_password` in
+`backend/tests/test_password_change_enforcement.py`. **One residue is open above**: tokens minted
+before the release carry no fingerprint and run to their expiry. The other it left — handsets on
+0.0.6 to 0.0.15 misreading an answer that carried the token in its body — is closed below, and so,
+for the next build, is a handset that noticed a session ended this way only when the app was
+restarted.
+
+### [MEDIUM] The master admin's first Google sign-in could land on, and promote, an account a provisioner planted under another spelling of its mailbox (backend) — **CLOSED 2026-10-09**
+
+`login_with_google` takes `MASTER_ADMIN` from the literal address and, on a literal miss, signs in to
+the one password account on the same Gmail mailbox (the entry above on a second account) — and then
+wrote `MASTER_ADMIN` onto whatever account it had found. `account_provisioning.is_master_email`
+compared strings, so a Ministry Admin or an admin could create `newmaster+x@gmail.com` beside a master
+configured as `new.master@gmail.com` — one inbox — with a password of their choosing. On a deployment
+where the master's own row did not exist yet (a handover that changes `MASTER_ADMIN_EMAIL`, an unseeded
+box), the master's first Google sign-in landed on that account and promoted it, the provisioner's
+password still on it: a break-glass master admin nobody can manage, opened by its planter.
+
+Closed the same day. The master's sign-in never folds — it signs in to the literal row or creates one
+there — and the elevation is written only onto an account found under the literal address.
+`is_master_email` compares canonical forms, so on the users screen and from the operator script
+nobody but a master admin creates an account on, or moves one onto, any spelling of the master's
+mailbox (403), while the master's own protections stay on the literal address (`is_master_address`).
+The sanction register could still create the account there, and the elevation was still written onto
+whatever account sat at the literal address, until later the same day (an entry below). Pinned by
+`test_nobody_but_a_master_admin_puts_an_account_on_any_spelling_of_its_mailbox` and
+`test_the_master_admins_google_sign_in_never_lands_on_another_spelling` in
+`backend/tests/test_account_provisioning.py`, and
+`test_the_master_admins_mailbox_is_every_spelling_of_it_and_its_account_only_one` in
+`backend/tests/test_auth_identity_and_password_links.py`.
+
+### [MEDIUM] A post holder could change a workshop's photographs, recordings and transcripts, and edit or delete the records filed under it (backend) — **CLOSED 2026-10-09**
+
+The serve-as ruling refuses whoever holds a workshop's inspection or one of its director posts every
+write to its content, through the admin routes too — and the media routes asked nothing. An ADMIN
+appointed a workshop's inspector could delete one of its stage photographs (`DELETE /api/media/{id}`),
+rewrite or re-run a recording's transcript — which the report's annexure then prints, stamped as a
+human edit — or discard an identity photograph, each answering 2xx, while the researcher guide said
+such a holder changes no stage "even with admin rights" and [PERMISSIONS.md](PERMISSIONS.md) said the
+content was closed "through the admin routes too". The record forms had the same gap one door over:
+the entry above on unfiling closed taking a record out of a held workshop, and left every other
+`PATCH` of a record filed there, its `DELETE`, an interview merge, a tool's artisan links and every
+edit of a questionnaire form attached to it open to a holder who may edit the record. Found by the
+review of the serve-as change.
+
+Closed the same day. The media doors ask `design_workshop_posts.refuse_a_holders_media_write` before
+they write — the delete, the transcript's set, refine and transcribe-now, the identity photograph's
+decision either way, and the relink at both ends — for every workshop a file belongs to, found five
+ways (`media_design_workshop_ids`). Every write to a record filed under a workshop asks
+`record_design_workshop.assert_may_write_a_record_filed_under`, the unfiling gate widened and renamed,
+and a questionnaire form's edits ask `_refuse_its_workshops_holder` in
+`backend/app/api/routes/questionnaire_forms.py`. An administrator who holds no post there keeps every
+power. Pinned by `test_a_post_holder_changes_no_file_their_workshop_holds_by_any_door`,
+`test_a_file_belongs_to_every_workshop_that_names_it_by_any_of_five_ways`,
+`test_every_media_door_asks_about_the_files_workshops_before_it_writes`,
+`test_a_post_holder_edits_and_deletes_no_record_filed_under_their_workshop`,
+`test_a_post_holder_merges_no_sitting_on_either_side_of_their_workshop`,
+`test_a_post_holder_changes_no_artisan_link_of_a_tool_filed_under_their_workshop` and
+`test_every_other_write_to_a_filed_record_asks_about_the_workshop_it_is_filed_under`, all in
+`backend/tests/test_admin_serve_as.py`.
+
+**Found while closing it:** keeping an identity photograph
+(`POST /api/design-workshops/ocr/identity/retention` with `STORE`) had always answered 500 on Postgres:
+it wrote a bare dictionary into a JSON column the database client refuses, and its only tests ran
+against an in-memory store that accepted one. It writes the column through `records.jsonify_metadata`
+now, and the store in `backend/tests/test_identity_photo_retention.py` refuses a bare dictionary as the
+table does. Three doors that did not ask yet — the review queue's edit, a new upload and a retried
+transcription — were closed later the same day (entries below), and so were the unfiled-records
+report's three doors, which wrote a workshop's records and files by another route (an entry below).
+The web held the media controls the same day and the doors that add to a workshop after that (an
+entry below); what it still does not warn about is open above.
+
+### [LOW] A promoted account kept the credentials a lower provisioner held for it (backend) — **CLOSED 2026-10-09**
+
+A set-password link is authorised once, when it is issued, and a temporary password is known to
+whoever typed it; neither looked at the account's tier again. So a Ministry Admin who created an
+account, or issued it an invitation, still held that credential after an admin promoted the account to
+ADMIN — the routine way to onboard an admin, since a Ministry Admin cannot create one — and could redeem
+the link, or replace the temporary password, and hold an ADMIN account with the deletes, grants and bar
+decisions the ruling withholds from the tier. Noisy and attributable, which is why it is LOW.
+
+Closed the same day. A `PATCH /api/users/{id}` that raises the role withdraws every outstanding link in
+the same request (`credential_links.revoke_outstanding`) and answers 409 while the account still holds
+a temporary password unless the same request sets a new one; and redeeming a link asks again whether
+its issuer could still manage the account (`account_provisioning.issuer_still_manages`, read on the
+check and on the redemption alike), reading as withdrawn otherwise. Pinned by
+`test_a_promotion_withdraws_the_links_a_lower_provisioner_issued` and
+`test_a_promotion_waits_for_a_temporary_password_to_be_replaced` in
+`backend/tests/test_account_provisioning.py`, and
+`test_a_link_is_redeemable_while_its_issuer_could_still_manage_the_account` and
+`test_a_link_whose_issuer_was_outranked_reads_as_withdrawn` in
+`backend/tests/test_auth_identity_and_password_links.py`. The access screen's approve and re-admit,
+which lifted an account without asking either question, caught up later the same day (an entry
+below).
+
+### [LOW] A refused record create could leave an orphan `Location` row, and a craft, behind (backend) — **CLOSED 2026-10-09**
+
+The artisan, product and tool creates wrote the record's `Location` row (`attach_location`) — and the
+artisan create looked up, and could create, its craft (`resolve_craft_id`) — before asking the workshop
+gates. A create those gates then refused, a post holder filing into a held workshop among them, left
+those rows behind with nothing pointing at them. Found by the review of the serve-as change.
+
+Closed the same day: the workshop gates run first on the creates, and on the artisan, product, tool
+and interview `PATCH`es as well, so a refusal writes nothing. Pinned by
+`test_a_refused_create_mints_no_location_and_no_craft` in `backend/tests/test_admin_serve_as.py`,
+with the order pinned on the routes' source beside it.
+
+### [LOW] A sanction-register designer who signed in with Google first was held behind a gate asking for a password nobody had (backend) — **CLOSED 2026-10-09**
+
+The sanction register creates the account of each designer an order names, with a random password
+nobody is ever shown, and issues an INVITE link for the designer to choose their own. It raised
+`mustChangePassword` on that account, as though somebody had typed the password. A designer who pressed
+"Sign in with Google" instead of opening the link signed in to that account — a password account keeps
+its flag through a Google sign-in — and met the server's hold, on the web and the handset alike, with a
+gate asking for a current password nobody had; only the original link, or one an officer re-issued,
+got them out.
+
+Closed the same day: the register creates the account with the flag down, since a secret nobody was
+shown is not a shared one, and the link still sets the password. Pinned by
+`test_a_designer_who_signs_in_with_google_first_is_not_held_and_the_link_still_works` in
+`backend/tests/test_sanction_orders.py`, which also shows the redemption ending the Google session, and
+by `test_five_fields_produce_seven_rows` in the same file asserting the flag down.
+
+### [LOW] Accounts in use before `firstLoginAt` existed were given 72-hour INVITE links where a 2-hour RESET was meant (backend) — **CLOSED 2026-10-09**
+
+`credential_links.purpose_for` began that day to read an empty `firstLoginAt` as "nobody has signed in
+yet", so that an account a provisioner had just created with a password got a 72-hour invitation
+rather than a 2-hour reset. But the column's migration of 2026-08-30 backfilled nothing, so every
+account in use before then carried an empty `firstLoginAt` it never earned — and the dormant,
+established accounts that most often need a reset were handed a link thirty-six times as long-lived,
+which ends their sessions when it is redeemed.
+
+Closed the same day without a backfill: an empty `firstLoginAt` counts as "never signed in" only on an
+account created on or after 2026-08-30 17:00 UTC (`credential_links.FIRST_LOGIN_TRACKED_SINCE`), and
+every other account with a password gets RESET, as before the change. Pinned by
+`test_the_link_purpose_follows_whether_anybody_has_used_the_account` in
+`backend/tests/test_auth_identity_and_password_links.py`,
+`test_the_link_is_an_invitation_until_the_account_is_used` in
+`backend/tests/test_account_provisioning.py`, and the INVITE re-issues asserted in
+`test_a_throttled_link_does_not_roll_back_the_sanction_order` in `backend/tests/test_sanction_orders.py`.
+
+### [LOW] The operator script's `--google-only` mode wrote a second allow-list row beside a legacy spelling of the mailbox (backend) — **CLOSED 2026-10-09**
+
+`backend/scripts/provision_account.py --google-only` read the allow-list under the typed address —
+which finds a row stored under another Gmail spelling — and then wrote under the canonical one, and
+`access_roster.admit`'s key list for a canonical address is that address alone. So against a legacy row
+stored with dots (`record_refused_attempt` wrote rows as typed between 2026-08-16 and 2026-08-30) it
+created a second row and printed "ADMITTED", while the legacy row went on deciding the sign-in: a
+PENDING person stayed pending, and an ACTIVE row at another tier went on creating the account at that
+tier.
+
+Closed the same day: the admission writes through the row it found, under that row's own spelling, as
+the access screen's decision does. Pinned by
+`test_google_only_writes_through_a_legacy_spelling_of_the_mailbox` in
+`backend/tests/test_account_provisioning.py`.
+
+### [MEDIUM] A token in the change-password answer's body made handsets on 0.0.6 to 0.0.15 report a successful change as a failure, quoting the token (backend) — **CLOSED 2026-10-09**
+
+When every session became bound to the password it was opened with (the entry above on sessions that
+outlived a temporary password), `POST /api/auth/change-password` began to answer
+`{"ok": true, "accessToken": "<token>"}`, so that the session making the change could carry on. Every
+handset build that can call the route — 0.0.6 to 0.0.15, the builds with the gate screen — declares
+that answer as `Map<String, Boolean>` (read it with
+`git show v0.0.15:android/app/src/main/java/com/designprototype/workshop/data/WorkshopRepositoryApi.kt`),
+so decoding the token failed AFTER the server had changed the password: the gate showed the decoder's
+message, which quotes the whole token, as the reason the change had failed — putting on the screen a
+live seven-day session that nothing had stored. Reproduced that day by decoding the answer the way
+those builds declare it, and recorded open by the review.
+
+Closed the same day by taking the token out of the body. The body is exactly `{"ok": true}` again, as
+it was before the binding, and the token minted after the write rides in the response header
+`X-Session-Token` (`SESSION_TOKEN_HEADER` in `backend/app/api/routes/auth.py`), which
+`backend/app/main.py` adds to CORS `expose_headers` so the web may read it. The web
+(`changeOwnPassword` in `frontend/lib/signIn.ts`) and the next Android build
+(`WorkshopRepository.changeOwnPassword`) adopt it before they re-read `/me`, and neither looks for a
+token in the body. Builds 0.0.6 to 0.0.15 decode the answer as they always have and report the change
+as made; the session they hold was opened with the old password, so their next request is a plain
+401, which those builds notice only at their next launch, and the person then signs in with the
+password they have just chosen — the cost the binding's ruling accepted for a client that does not
+adopt the token ([SECURITY.md](SECURITY.md) §3.6). Pinned by
+`test_the_new_session_token_rides_in_a_header_a_browser_may_read` and
+`test_a_browser_may_send_the_change_and_read_the_token_it_hands_back` in
+`backend/tests/test_password_change_enforcement.py`, whose every change also asserts a body of exactly
+`{"ok": true}` beside the header, as `backend/tests/test_change_password_budget.py` does; by
+`frontend/e2e/password-change-enforcement-unit.spec.ts`, which never adopts a token from the body and
+reads `expose_headers` and the route's answer off the backend's source; and by
+`the body is the one every build decodes, shipped or not` in
+`android/app/src/test/java/com/designprototype/workshop/data/ChangePasswordSessionTest.kt`, which
+decodes the body with the shipped builds' map as well as this build's type, and shows the map
+refusing a token beside `ok`.
+
+### [LOW] A promotion through the access screen did not wait for a temporary password to be replaced, nor withdraw the account's links (backend) — **CLOSED 2026-10-09**
+
+A `PATCH /api/users/{id}` that raises an account's role withdraws its password links and waits for a
+temporary password to be replaced (the entry above on a promoted account). The access screen's
+approve and re-admit raise an existing account to the tier approved as well — `_lift_existing_account`
+in `backend/app/api/routes/access.py` — and asked neither question. A link was still caught at
+redemption, which re-asks whether its issuer could manage the account; a temporary password was not,
+so an admin who approved or re-admitted the address of an account a Ministry Admin had created, at a
+tier above the Ministry Admin, left the Ministry Admin holding a password into an account it could
+never have managed. Narrow and attributable, and recorded open by the review of that day's change.
+
+Closed the same day with the `PATCH`'s rule, through one predicate both doors ask
+(`account_provisioning.holds_a_temporary_password`). A lift withdraws every outstanding link after
+its write, a master admin's included. An account still holding a temporary password is not lifted:
+this door has no password field, and refusing the approval would leave the person's access undecided
+over a question about their tier, so the approval of the address stands, the account keeps its tier,
+and the decision's answer carries `accountPromotionHeld` — `APPROVAL_KEEPS_THE_TIER_DETAIL`, naming
+the address, both tiers and the two ways on — which `/admin/access` shows word for word in place of
+its receipt ([PERMISSIONS.md](PERMISSIONS.md) §1.2). Pinned by
+`test_an_approval_that_lifts_an_account_withdraws_its_links` and
+`test_an_approval_leaves_an_account_holding_a_temporary_password_at_its_tier` in
+`backend/tests/test_account_provisioning.py`, and by
+`test_a_temporary_password_is_the_flag_on_an_account_that_has_one`,
+`test_the_access_approval_lifts_an_account_and_withdraws_its_links` and
+`test_the_access_approval_leaves_a_temporary_password_at_its_tier` in
+`backend/tests/test_auth_identity_and_password_links.py`; the screen's half by
+`frontend/e2e/users-provisioning-unit.spec.ts`. The handset decodes the answer as the roster row and
+skips the key, so an approval made on a phone does not say that the tier was held back.
+
+### [MEDIUM] The review queue's edit changed a record or a file of a workshop its reviewer holds a post on, and re-filed a record with no filing gate at all (backend) — **CLOSED 2026-10-09**
+
+`POST /api/review/{recordType}/{recordId}/edit` (`edit_reviewed_record` in
+`backend/app/api/routes/review.py`) corrects a record's fields in place from the review queue, for a
+reviewer who may edit that record — Professor and above, on a record created below them. It validated
+the payload against each record type's own update schema and asked nothing about design workshops.
+So an administrator holding a workshop's inspection or a director post could change a record filed
+under that workshop, or a file's caption and transcript, through this door, where every other door
+refused them ([PERMISSIONS.md](PERMISSIONS.md) §4.8 rule 5). And, older than that ruling,
+`designWorkshopId` was in those update schemas and not in `_NOT_REVIEW_EDITABLE`, so this edit filed a
+record into a design workshop, or took it out of one, with no filing gate at all — the write
+`backend/app/services/record_design_workshop.py` exists to guard — into a workshop the reviewer could
+not even see included. Recorded open by the review of that day's change.
+
+Closed the same day. Before its transaction the edit asks the record gate,
+`record_design_workshop.assert_may_write_a_record_filed_under`, about the record as stored, or
+`design_workshop_posts.refuse_a_holders_media_write` about a file, so a post holder gets the same 403
+and sentence as at every other door and nothing is written; a role that can hold no post is answered
+without a staffing read. `designWorkshopId` is in `_NOT_REVIEW_EDITABLE`, a 422 for everybody, the
+master admin included, like `workshopId` beside it: filing belongs to the record's own form. Approve,
+reject and send back stay open to a holder, being moderation rather than authorship. Pinned over
+Postgres by `test_a_post_holder_rewrites_nothing_of_their_workshop_from_the_review_queue` in
+`backend/tests/test_admin_serve_as.py`, for every reviewable kind, with the order held on the source
+by `test_the_upload_the_job_retry_and_the_review_edit_ask_before_they_write`; and without a database
+by `test_the_workshops_inspector_rewrites_none_of_its_records_from_the_queue`,
+`test_a_role_that_holds_no_post_is_answered_without_asking`,
+`test_a_review_edit_files_no_record_under_any_workshop` and
+`test_a_file_of_the_workshop_is_not_its_holders_to_caption_from_the_queue` in
+`backend/tests/test_review_edit_authority.py`. The web's edit panel holds its boxes and both Saves for
+such a reviewer since later the same day (the entry below on four web doors).
+
+### [LOW] Two media doors were not refused to a workshop's post holder: a new upload into it, and a retried transcription (backend) — **CLOSED 2026-10-09**
+
+The media doors that change a file a workshop holds refused its post holders from that day (the entry
+above on a workshop's files and records); two that add to it did not. `POST /api/media/complete`
+registered a holder's NEW upload tagged to the workshop, or attached to a record filed there — only an
+upload filed by its `designWorkshopId` met the edit loader. And `POST /api/media/jobs/{jobId}/retry`
+re-queued a failed transcription of one of the workshop's recordings, whose text the queue then writes
+as its transcript — the very write `POST /api/media/{id}/transcribe-now` is refused. Recorded open by
+the review of that day's change.
+
+Closed the same day with the call the other media doors make,
+`design_workshop_posts.refuse_a_holders_media_write`. The upload asks it about the row it is about to
+create (`_upload_as_filed` in `backend/app/api/routes/media.py`: the workshop the upload is filed
+under and its link tag, with no id, so the stage and AI-layer reads answer nothing without a query),
+after the replay of the caller's own earlier upload of the same object, which is answered as before,
+and before the storage check, the `Location` row and the create. The retry asks it about the job's file
+before re-queuing the job. Pinned over Postgres by
+`test_a_post_holder_uploads_no_new_file_into_their_workshop` and
+`test_a_post_holder_requeues_no_transcription_of_their_workshops_recording`, and without a database by
+`test_an_upload_is_read_as_the_row_it_would_become` and
+`test_the_upload_the_job_retry_and_the_review_edit_ask_before_they_write`, all in
+`backend/tests/test_admin_serve_as.py`. The web held both — `/media`'s Upload and the jobs panel's
+Retry — later the same day (the entry below on four web doors).
+
+### [LOW] A post holder's join-card scan was told the card "had already been used" (backend) — **CLOSED 2026-10-09**
+
+A join card scanned by an account the grant rule refuses — since 2026-10-09 that includes whoever
+holds an inspection or a director post on the card's workshop — lands as a provisional foothold marked
+`INELIGIBLE`, without spending the seat, as it should ([PERMISSIONS.md](PERMISSIONS.md) §4.8). The
+answer carried the spent card's sentence, `_PROVISIONAL_DETAIL` in
+`backend/app/services/design_workshop_grants.py`, which begins "That card had already been used, so
+you are not on the workshop yet" — untrue for this outcome, where the card was not used up and the
+refusal is about who scanned it. Older than the ruling, for every ineligible scanner, and recorded
+open by the review of that day's change.
+
+Closed the same day with a second sentence rather than an edit to the first: `_INELIGIBLE_DETAIL`
+says the card cannot put the account on the workshop by itself, that nothing recorded is lost and that
+the card was not used up, and names no reason — no roster, no role, no post. `_provisional_detail`
+chooses it for the first answer and for a replay alike. Pinned by
+`test_a_card_scanned_by_an_ineligible_account_never_spends_its_seat`, replay included, and
+`test_a_post_holder_scanning_the_card_lands_ineligible_and_keeps_the_seat` in
+`backend/tests/test_design_workshop_grant_tokens.py`, which write the sentence out rather than import
+it, and over Postgres by
+`test_a_post_holder_who_scans_their_workshops_join_card_lands_provisional_and_spends_nothing` in
+`backend/tests/test_admin_serve_as.py`. The scan that syncs after the card's date, which this fix left
+alone, is the entry below.
+
+### [LOW] A join-card scan that synced after the card's date was told the card "had already been used" (backend) — **CLOSED 2026-10-09**
+
+A genuine join-card scan that reaches the server after the card's date, inside the grace window, lands
+as a provisional foothold marked `EXPIRED` — never a full grant, because expiry is judged by when the
+scan arrived and a device clock cannot buy an extension, and never thrown away, because the fieldwork
+behind it is real. The answer carried `_PROVISIONAL_DETAIL` in
+`backend/app/services/design_workshop_grants.py`, the spent card's sentence, which opens "That card had
+already been used, so you are not on the workshop yet" — untrue for this outcome, which is about the
+card's date and not its seats. Found while the same sentence was replaced for an ineligible scanner
+(above), whose fix left this arm alone; older than 2026-10-09. Nothing was lost or wrongly granted:
+only the reason the scanner read was wrong.
+
+Closed the same day with a third sentence: `_EXPIRED_DETAIL` says the card's date had passed by the
+time the scan reached the server, that nothing recorded is lost and that the card was not used up, and
+— because the scan waits as a PENDING request — that an administrator can confirm it.
+`_provisional_detail` chooses it for the first answer and for a replay alike. Pinned by
+`test_an_expired_card_never_becomes_a_full_grant` in
+`backend/tests/test_design_workshop_grant_tokens.py`, replay included, which writes the sentence out
+rather than importing it.
+
+### [MEDIUM] The sanction register could create the account on the master admin's mailbox, for the master's first Google sign-in to promote with the officer's password still on it (backend) — **CLOSED 2026-10-09**
+
+The entry above on the master admin's first Google sign-in closed the fold onto a planted spelling,
+and the sentence that closed it — nobody but a master admin creates an account on that mailbox — had
+one door it did not cover. The sanction register creates the account of every designer an order
+names, and `sanction_orders.designer_standing_verdict` asked about the officer's own mailbox, the
+allow-list, the empanelment and the accounts already there, and never whether the address was the
+master's. With no account at `MASTER_ADMIN_EMAIL` yet — a handover, an unseeded box, the same
+precondition — an Assistant Director, a Regional Director, a Ministry Admin or an admin could record an
+order naming that address as its lead or a co-designer: the order created the account at `DESIGNER`,
+admitted and empanelled it, and its answer handed the officer a 72-hour first-password link. The
+officer set a password; admins could no longer suspend, edit or delete the account, which sat at the
+master's address; the master's first Google sign-in found it under the literal address and wrote
+`MASTER_ADMIN` onto it, keeping the officer's password; and only `scripts/seed_admin.py` or the
+database could take it back. An admin could plant it this way although `POST /api/users` refused them
+that address. Found by the focused review of that day's final pass and traced end to end.
+
+Closed the same day. `designer_standing_verdict` refuses any spelling of the mailbox with a 422,
+`SANCTION_MASTER_MAILBOX`, right after the self-naming check and before any read
+(`master_mailbox_reason`, through `account_provisioning.is_master_email`), so one question closes the
+single-order route — its lead and every co-designer — and the spreadsheet importer, where it is a
+refusal and never offered for confirmation. It refuses whoever records the order, and whether or not
+the account exists. `reissue_credential_link` refuses the same way for an account an older order put
+on that mailbox. Beneath every door, `login_with_google` writes the elevation only onto an account at
+the literal address that is already a master admin or holds no password; any other is answered 409
+naming `scripts/seed_admin.py`, with nothing written and its id and role logged at ERROR
+([SECURITY.md](SECURITY.md) §3.3), so a handover onto an existing password account now runs that
+script first ([DOCKER.md](DOCKER.md)). An account planted before the fix is not cleaned up: it can no
+longer be promoted or handed a re-issued link, and repairing it is still the script. Pinned over
+Postgres by `test_no_order_names_any_spelling_of_the_master_admins_mailbox` in
+`backend/tests/test_sanction_orders.py` — the lead, a dotless spelling, a `+tag` on `googlemail.com`
+and a co-designer, each a 422 carrying the sentence alone, with no account, allow-list row,
+empanelment or order written for anybody on the order — and without a database by
+`test_the_master_admins_mailbox_is_refused_by_the_real_verdict_and_never_confirmed` in
+`backend/tests/test_sanction_import.py`,
+`test_no_link_is_reissued_for_an_account_on_the_master_admins_mailbox` in
+`backend/tests/test_sanction_order_designer_eligibility.py` and
+`test_the_masters_google_sign_in_promotes_no_account_somebody_else_holds_a_password_to` in
+`backend/tests/test_auth_identity_and_password_links.py`.
+
+### [LOW] An administrator's address correction moved a barred allow-list row off the old mailbox, so a sign-in there was queued as a stranger's (backend) — **CLOSED 2026-10-09**
+
+The entry above on a Ministry Admin lifting a bar made the bar go with an account whoever moves it:
+`access_roster.follow_email_change` carried a REJECTED or SUSPENDED status onto the destination's row
+— and, where the destination had none, MOVED the barred row there. That left the old mailbox with no
+row at all. So when an admin corrected a suspended researcher's address from their Gmail address to a
+fresh one, the person's next Google sign-in at the old address met no row, was told their request was
+waiting for an administrator, and appeared on the access screen as a brand-new PENDING request with
+no trace of the suspension; an admin working the queue approved it, and the next Google sign-in,
+finding no account on that mailbox, created one — the person the suspension barred, back in under a
+new account. The row had always moved; the empanelment carry beside it already kept its old row, for
+the reason it gives — a revocation is never undone by a side effect. Found by the focused review.
+
+Closed the same day. When the old row is barred and the destination has none, `follow_email_change`
+CREATES a barred row at the new mailbox — the status, who decided it and when (the mover's id only
+where none was recorded), the tier and the name, with `BAR_CARRIED_BY_EMAIL_MOVE_NOTE` — and leaves the
+old row barred where it is; a row a sign-in writes there between the read and the create takes the
+bar as an existing row would. The admin's audit line says the bar went with the account and its old
+address stays barred. Pinned over Postgres by
+`test_an_admins_correction_bars_the_new_mailbox_and_leaves_the_old_one_barred` in
+`backend/tests/test_account_provisioning.py` — both rows SUSPENDED, a Google sign-in at the old address
+still refused as suspended with no PENDING row written, and a password sign-in at the new address
+refused — and without a database by
+`test_a_barred_row_is_created_at_a_fresh_mailbox_and_the_old_one_stays_barred` and
+`test_a_row_a_sign_in_writes_in_the_race_takes_the_bar_instead` in
+`backend/tests/test_auth_identity_and_password_links.py`.
+
+### [LOW] A non-admin's address correction could end an administrator's active empanelment, and could put a second account on another spelling of a live account's Gmail mailbox (backend) — **CLOSED 2026-10-09**
+
+`follow_email_change` carries an ended empanelment to the new mailbox whatever the account's role, and
+carrying it ENDS an active empanelment there (`designers.carry_ended_empanelment`), while the
+non-admin 409s asked about empanelments only for a `DESIGNER`. So a Ministry Admin moving a professor,
+an inspector or a directorate officer whose old address carried an empanelment an administrator had
+long ago ended — or a de-empanelled designer, demoted in the same `PATCH` — onto an address an
+administrator had empanelled ended that empanelment, with nothing in the answer to say so, though
+ending one is an admin's act. And the duplicate check compared addresses as typed, so such a move could
+land on a dotless or `+tag` spelling of a live designer's Gmail mailbox: one inbox, two accounts. The
+move rewrote that designer's allow-list decision and notes, ended their empanelment, and their next
+sign-in was refused. Found by the focused review, which traced the second half.
+
+Closed the same day, at both ends. For a provisioner who is not an admin,
+`account_provisioning.assert_not_escaping_a_bar` refuses with a 409,
+`ENDING_AN_EMPANELMENT_BY_MOVING_DETAIL`, a move of an account of any role from an address with an
+ended empanelment onto one with an active empanelment (`empanelment_active`); an admin's move still
+carries the ending, as documented, and its audit line says so. And `email_in_use` asks about the
+mailbox for every actor: after the literal check, any Gmail address is looked up through
+`access_roster.accounts_on_the_mailbox_for_sign_in`, the account being moved left out, so no account
+is created at, or moved onto, a mailbox another account uses — "Email already exists" — and a lookup
+that cannot finish refuses with a 503 rather than guessing. An account already sharing a mailbox with
+another cannot be respelled within it until the pair is merged or corrected. Pinned over Postgres by
+`test_a_ministry_admin_cannot_end_an_empanelment_by_moving_an_account_onto_it`,
+`test_an_admins_same_move_carries_the_ending_onto_the_active_empanelment`,
+`test_no_account_is_created_on_a_mailbox_another_account_uses` and
+`test_no_account_is_moved_onto_another_accounts_mailbox_and_its_owner_keeps_everything` — the other
+account's row, note, empanelment and sign-in untouched — in `backend/tests/test_account_provisioning.py`,
+and without a database by
+`test_one_account_per_mailbox_is_asked_of_gmail_alone_and_never_of_the_account_moving` and
+`test_only_an_admin_carries_an_ended_empanelment_onto_an_active_one` in
+`backend/tests/test_auth_identity_and_password_links.py`.
+
+### [MEDIUM] The unfiled-records report let a workshop's post holder delete, file and bulk-file its records and files, and offered any administrator a design workshop's evidence to delete as "unfiled" (backend) — **CLOSED 2026-10-09**
+
+The report of records with no workshop on the `/workshops` page (`/api/workshops/unmapped`,
+`backend/app/services/workshop_inference.py`) read "no workshop" as an empty CRAFTS `workshopId`. A
+record filed under a design workshop, an artisan imported onto its roster and a stage photograph
+tagged to it are empty there too, so the report listed a workshop's evidence as having "nothing on the
+record that points at a workshop", and its three doors asked nothing about design workshops and threw
+the caller away. An ADMIN appointed a workshop's inspector, refused `DELETE /api/media/{id}` and
+`DELETE /api/artisans/{id}` with rule 5's 403, could delete the same stage photograph — its AI layers
+and stored object with it, the stage entry left naming an id nothing answers to — or the same roster
+artisan through `DELETE /api/workshops/unmapped/{bucket}/{id}`; could file a product filed under the
+workshop under a crafts workshop with `POST /api/workshops/unmapped/{bucket}/{id}`, a write its record
+form refused; and could have the bulk `POST /api/workshops/unmapped/map` stamp a crafts workshop on the
+workshop's rows. Every other administrator was invited to delete that evidence permanently as unfiled.
+Older than the serve-as ruling, which never reached this module; found by the focused review.
+
+Closed the same day. A row a design workshop claims is no longer unfiled: the ladder's reads leave out
+every record whose `designWorkshopId` is set and every file filed under a design workshop or tagged to
+one, the tag compared in any letter case and the filter written so a file with no tag is still read
+(`_UNFILED_RECORD`, `_UNFILED_MEDIA`). The discard refuses a holder of any workshop that claims the row
+— a file by any of the five ways it can belong to one — with rule 5's 403, and every other
+administrator with a 409 naming the workshop and sending them to the record's or file's own screen,
+before anything is counted, deleted or removed from storage; its delete carries the same conditions.
+The single-row filing refuses a holder with the 403. The bulk filing leaves the rows a holder holds
+alone and reports them — `heldBack` per bucket, `totals.heldBack` and one sentence in `heldBackDetail`
+— rather than refusing a run that is otherwise the server's own derivation. All three routes bind the
+caller. A file claimed only through a stage entry, an AI layer or the record it hangs off is still
+listed, and an administrator who holds no post there may still file it under a crafts workshop, singly
+or in bulk, as the ruling allows — only its crafts column moves, and only from empty
+([PERMISSIONS.md](PERMISSIONS.md) §4.8). Pinned over Postgres in `backend/tests/test_admin_serve_as.py`
+by `test_the_unfiled_report_lists_no_row_a_design_workshop_claims`,
+`test_the_batched_holder_question_answers_exactly_what_the_file_by_file_one_does`,
+`test_nobody_discards_from_the_unfiled_report_a_row_a_design_workshop_claims` — the holder's 403,
+every other administrator's 409, the rows and the stored object surviving, and an unclaimed row still
+deleted — `test_a_post_holder_files_no_row_of_their_workshop_from_the_unfiled_report` and
+`test_a_holders_bulk_map_leaves_their_workshops_rows_alone_and_says_so`; without a database by
+`test_the_ladder_reads_no_row_a_design_workshop_claims` and
+`test_the_unfiled_doors_ask_about_the_design_workshop_before_they_write` there, and by
+`test_the_preview_says_nothing_was_held_back_because_nothing_was_asked` and
+`test_a_holders_run_reports_what_it_left_alone_per_bucket_and_in_one_sentence` in
+`backend/tests/test_workshop_inference.py`. The web prints all three answers as the server wrote them
+(section 6 of `frontend/e2e/workshop-post-holder-readonly-unit.spec.ts`); the handset prints the two
+refusals, and its bulk filing does not show what it left alone (open above).
+
+### [LOW] Four web doors the server refuses a post holder asked nothing first, while this register said only the list rows' Delete and indirect files went unwarned (frontend) — **CLOSED 2026-10-09**
+
+The entries above taught the server to refuse a workshop's post holder a review-queue edit of its
+records and files, a new upload into it and a retried transcription of one of its recordings, and the
+questionnaire doors already refused attaching a form to it. The web held none of them for an
+administrator holding a post: the review queue's edit panel drew its boxes and both Saves live;
+`/media`'s Upload put every byte into storage before `POST /api/media/complete` refused each file; the
+media jobs panel offered Retry; and creating, uploading or reusing a questionnaire into the workshop
+was answered with the 403. Meanwhile the open entry above, [PERMISSIONS.md](PERMISSIONS.md) §4.8 and
+the researcher guide said only the list rows' Delete and files tied to a workshop indirectly went
+unwarned, and the open entry said its sweep caught every web call that changes a stored file, which
+missed the unfiled-records report's delete. Nothing was written and every refusal printed word for
+word: what was missing was the warning, and the documents overstated what the web gave. Found by the
+focused review.
+
+Closed the same day for the tiers that may appoint, with the hold the record forms use (three states
+— still asking, none known, held — an always-mounted notice the control points at, and a guard inside
+each handler as well as on the control; `frontend/components/designworkshop/HeldPostNotice.tsx`). The
+review edit panel holds its boxes, Save and "Save and approve" on the workshop its record or file
+names, leaving Approve, Reject and Send for revision live and saying so (`reviewRecordWorkshopIds`,
+`reviewEditHold`). `/media` holds Upload on the design workshop chosen and on the filing of the record
+the files would hang off, before a byte is sent (`mediaUploadHold`). The jobs panel holds Retry row by
+row, its job rows now carrying the file's two workshop links. The questionnaire page's Create, the
+upload dialog and the reuse dialog hold on the workshop chosen, the picker staying live so another can
+be chosen (`attachHold`). The unfiled-records report prints the discard's 409, the filing's 403 and the
+bulk filing's `heldBackDetail` as the server wrote them. A second register reads the tree for every
+caller of `uploadMediaBatch(`, `uploadMediaFile(`, `retryMediaProcessingJob(`, the review edit, the
+unfiled-records writes, the questionnaire attach calls and the two staffing writes, so a new one fails
+until it is held or the reason it needs none is written down. Pinned by section 6 of
+`frontend/e2e/workshop-post-holder-readonly-unit.spec.ts`. **The rest is open above**: the list rows'
+Delete, a file tied to a held workshop only indirectly, moving an existing form into a held workshop
+from its own page, and the unfiled-records report's single-row doors still warn only by the server's
+answer.
+
+### [LOW] A workshop's inspector or director could take themselves off the post in one call and then write the workshop, though the 403 told them to ask whoever made the appointment (backend) — **CLOSED 2026-10-09**
+
+Rule 1 of the serve-as ruling refuses appointing yourself, as an act; nothing refused the release.
+`replace_inspectors` deleted the caller's own inspection row like any other removal, and an oversight
+request emptied or reassigned the caller's own director slot — the routes asked only whether the
+caller may appoint. So an ADMIN appointed a workshop's inspector, refused its stage saves with rule 5's
+403, could send `PUT /api/design-workshop-inspections/{id}/inspectors` with no ids and write the
+workshop a moment later, the deleted row the only record they had held the post; an ADMIN or Ministry
+Admin director could do the same through `PUT /api/design-workshop-oversight/{id}`. The 403's own
+sentence — ask whoever made the appointment to take you off that post — and the web's copy described a
+rule the server did not hold. Recorded as plausible by the focused review, with two ways to close it:
+refuse the release, or allow it and audit it. The fix refused it.
+
+Closed the same day. An inspector panel save that would delete the caller's own row, and an oversight
+request that would empty the caller's own slot or give it to somebody else, are refused whole with a
+409, `design_workshop_posts.self_release_refusal` — "You are this workshop's inspector, and nobody
+takes themselves off a post: another administrator has to take you off. Nothing was changed." for an
+inspector — before anything is written. Another assigner taking the holder off works as
+before, and a holder still takes other people off. The web keeps the reader's own inspector row and
+director slot ticked and switched off, with that sentence as the reason, and stops its own save with
+the whole 409; the handset's inspectors screen prints the server's 409. Pinned over Postgres by
+`test_nobody_takes_themselves_off_an_inspection_or_oversight_post` in
+`backend/tests/test_admin_serve_as.py` — the inspector panel, the Assistant Director slot and the
+Regional Director slot, each emptied and each handed to somebody else, every row surviving, and
+another assigner then taking the holder off — with the sentence held without a database by
+`test_nobody_takes_themselves_off_a_post_and_the_sentence_says_who_can`, and the web's half, its
+sentence read off the server's source, by section 6 of
+`frontend/e2e/workshop-post-holder-readonly-unit.spec.ts`.
+
+### [LOW] A handset kept a session that a password change elsewhere had ended, and retried with it until the app was restarted (android) — **CLOSED 2026-10-09**
+
+Since every session became bound to the password it was opened with (the entry above on sessions
+that outlived a temporary password), a password changed on the web, on another phone, by an
+administrator or through a redeemed link ends the phone's session, and the server answers its next
+request with a plain 401. The handset read a session's end only when the app started (and on the
+password gate's own signal): the record outbox keeps a 401 as transient and the design-workshop sync
+reads one as a dropped connection, so both retried with the dead token on every pass while the screen
+went on saying the work would upload, and nothing sent anybody to sign in until the app was restarted
+or signed out by hand. Fieldwork captured over the following days stayed on the phone unsent. Nothing
+was lost — the queues kept every entry — though the source's own comment on the gate's copy said the
+tablet in the next room "is signed out at its next request". Found by the focused review.
+
+Closed the same day in the Android source. `ApiClient.sessionInterceptor` raises a new
+`SessionEndedSignal` when a request that carried a token, sent to the API itself, is answered by a 401
+without `X-Password-Change-Required` while the handset still holds that same token; a request with no
+token, an answer from another host and a 401 for a token swapped while the request was in flight raise
+nothing. The app's root re-reads `/me` with the current token and applies the answer as at launch, so
+a session that has really ended is signed out with "This sign-in has ended. If your password was
+changed on another device or by an administrator, sign in with the new one." — `SESSION_ENDED_SENTENCE`,
+which the launch check now gives too, in place of "Your session expired". The queues treat the 401
+exactly as before, and keep their work. While the password gate is on screen the signal is left to the
+gate (the entry below). Pinned by
+`android/app/src/test/java/com/designprototype/workshop/data/SessionEndedSignalTest.kt`, which runs
+the app's own `ApiClient.httpClient` against canned answers:
+`a tokened request answered by a plain 401 raises SessionEndedSignal and not PasswordChangeSignal`,
+`a gated 401 raises only PasswordChangeSignal`, `an untokened 401 raises nothing`,
+`a 401 for a token replaced before the answer arrived raises nothing` and
+`a 401 from anywhere but the API raises nothing`. And by
+`an ended session is a plain 401 to the token still held, and nothing else is` in
+`android/app/src/test/java/com/designprototype/workshop/data/PasswordChangeRequiredTest.kt`, and
+`a sign-in that has ended says why, and which password to type` in
+`android/app/src/test/java/com/designprototype/workshop/ui/PasswordSetupCopyTest.kt`. No published
+build carries it as of 2026-10-09; builds up to 0.0.15 notice at their next launch, queues intact.
+
+### [LOW] The handset's password gate reported a change whose answer was lost as a change that failed, though the new password could already be in force (android) — **CLOSED 2026-10-09**
+
+The server stores a new password before it answers, and from that moment the session the request
+carried is retired. On a field connection that answer can be lost — a read timeout, a connection
+dropped mid-answer, a gateway's 504 after the origin had committed — and OkHttp could even send the
+change a second time by itself after a connection failure. The gate then reported a failure in the
+transport's own words, or as "Your new password did not reach the server, so nothing has changed."
+when the failure carried none, and a retry, sent with the retired session, came back "This session is
+no longer valid. Sign in again." Somebody who then signed out and typed the temporary password they
+had been told was still theirs was refused, and concluded they were locked out, though the password
+they had just chosen worked. Recorded as plausible by the focused review, which found the "nothing has
+changed" sentence rarer than first raised and the gap real.
+
+Closed the same day in the Android source. When a change fails without settling anything — no
+answer, a 5xx or a plain 401 — the gate asks `GET /me` with the session it holds before it chooses a
+sentence, its button disabled meanwhile (`passwordGateAfterFailure` and `changePasswordOutcomeKnown` in
+`android/app/src/main/java/com/designprototype/workshop/ui/PasswordSetupCopy.kt`): refused with a plain
+401, it signs out with "Your new password may already be in effect. Sign in with it; if it is refused,
+use the one you were given."; an account still owing a password gets the gate's usual words, which are
+then true; one owing none closes the gate; anything else keeps the gate up, saying the phone could not
+tell whether the password was saved, with the same two-password advice. A refusal the route answered
+is shown at once, as before. And change-password, set-password and issuing a link are sent with
+one-shot bodies, so OkHttp never transmits one twice after a failure that may have reached the server.
+Pinned by the seven probe-path tests in
+`android/app/src/test/java/com/designprototype/workshop/data/ChangePasswordSessionTest.kt`, among them
+`a lost answer followed by a refused probe signs out, saying the new password may be in force`,
+`a gateway's 504 after the send takes the probe path too` and
+`a probe that goes unanswered too leaves the outcome unknown, and says so`; by
+`OkHttp itself resends an ordinary POST after a 408, and never a change of password` and
+`the credential writes reach the wire one-shot, and nothing else does` in
+`android/app/src/test/java/com/designprototype/workshop/data/SessionEndedSignalTest.kt`; and by
+`a change nobody could confirm never says nothing has changed` in
+`android/app/src/test/java/com/designprototype/workshop/ui/PasswordSetupCopyTest.kt`. No published
+build carries it as of 2026-10-09.
 
 ---
 
@@ -916,7 +2018,7 @@ The two counts disagree in BOTH directions, and only one direction is safe:
 | response | `refused_answer_count` (server) | `countRefusedAnswers` (web) |
 |---|---|---|
 | `{"tool[0]": {"a": …, "b": …}}` | 2 | 2 |
-| `{"costing": {}}` | **0** — `len({})` | **1** — the deliberate `|| 1` |
+| `{"costing": {}}` | **0** — `len({})` | **1** — the deliberate `\|\| 1` |
 | `{"costing": "required"}` | **1** — its non-mapping guard | **8** — `Object.keys` on a string returns INDICES |
 
 So reading the field alone would have reintroduced an under-report: a non-empty `errors` announced as

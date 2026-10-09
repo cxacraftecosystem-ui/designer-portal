@@ -29,10 +29,12 @@ landed, because nothing here reads a database or an enum.
 
 FOUR THINGS ARE PINNED, and each is a way this scope could ship looking finished while being wrong.
 
-1. **THE DOORS.** An inspector reaches their own read surface; everybody else — INCLUDING ADMINS —
-   is refused there with a sentence naming the route they actually want. The administration of who
-   inspects what is admin-only, and an INSPECTOR is refused it: the inspected must not choose the
-   inspector, and neither may the inspector choose themselves.
+1. **THE DOORS.** Whoever may HOLD an inspection reaches the read surface — the INSPECTOR tier and,
+   since the owner's ruling of 2026-10-09, the three administrator tiers, who may be appointed to
+   inspect one workshop at a time; everybody else is refused there with a sentence naming the route
+   they actually want. The administration of who inspects what belongs to the assigners, and an
+   INSPECTOR is refused it: the inspected must not choose the inspector, and neither may the
+   inspector choose themselves.
 
 2. **THE WRITE REFUSALS, EACH ASSERTED RATHER THAN DOCUMENTED.** Six write doors on
    ``/design-workshops`` refuse an inspector BEFORE any database read. "We never built the UI for
@@ -90,10 +92,21 @@ EVERY_OTHER_TIER = (
     "RESEARCHER",
     "DESIGNER",
     "PROFESSOR",
+    "ASSISTANT_DIRECTOR",
+    "REGIONAL_DIRECTOR",
+    "MINISTRY_ADMIN",
     "ADMIN",
     "MASTER_ADMIN",
 )
 INSPECTOR = "INSPECTOR"
+
+#: The administrator tiers that may be APPOINTED to inspect a workshop (owner's ruling, 2026-10-09).
+#: Literal for the reason ``EVERY_OTHER_TIER`` gives; the test of the holder set below compares the
+#: two spellings, so they cannot part silently.
+SERVING_ADMINS = ("MINISTRY_ADMIN", "ADMIN", "MASTER_ADMIN")
+
+#: Every tier that may hold no inspection at all — the surface's refusals.
+CANNOT_HOLD_AN_INSPECTION = tuple(t for t in EVERY_OTHER_TIER if t not in SERVING_ADMINS)
 
 
 class _DatabaseTouched(Exception):
@@ -220,20 +233,15 @@ def test_an_inspector_reaches_their_own_read_surface(api, path):
 @pytest.mark.parametrize(
     "path", ["/design-workshop-inspections", f"/design-workshop-inspections/{WORKSHOP_ID}"]
 )
-@pytest.mark.parametrize("role", EVERY_OTHER_TIER)
-def test_everybody_else_is_refused_the_inspection_surface_including_admins(api, path, role):
-    """403 for every other tier, decided before any database read.
+@pytest.mark.parametrize("role", CANNOT_HOLD_AN_INSPECTION)
+def test_every_tier_that_cannot_hold_an_inspection_is_refused_the_surface(api, path, role):
+    """403 for every tier that may hold no inspection, decided before any database read.
 
-    **ADMIN AND MASTER_ADMIN ARE IN THIS LIST ON PURPOSE**, which is the row a reader will want to
-    argue with. Admitting them would mean one of two things and both are worse than a refusal:
-    scoped by their OWN inspection rows an admin sees an empty list and reads it as a broken
-    deployment, and scoped by "everything, because they are an admin" this surface silently becomes a
-    second full read of every workshop in the repository — a second place to look when somebody has
-    access they should not.
-
-    So the refusal NAMES THE OTHER DOOR, and that sentence is asserted rather than left to a code
-    review: an admin told only "forbidden" on a READ surface will reasonably conclude something is
-    broken and file a bug against it.
+    THE TWO DIRECTORATE POSTS AND THE PROFESSOR ARE THE ROWS A RANK INSTINCT GETS WRONG: all three
+    outrank an inspector, and the ruling of 2026-10-09 named the three administrator tiers and nobody
+    else. So the refusal NAMES THE OTHER DOOR, and that sentence is asserted rather than left to a
+    code review: somebody told only "forbidden" on a READ surface will reasonably conclude something
+    is broken and file a bug against it.
     """
     outcome = api.call("GET", path, as_role=role)
     assert outcome.status_code == 403, outcome
@@ -241,6 +249,24 @@ def test_everybody_else_is_refused_the_inspection_surface_including_admins(api, 
     assert "/api/design-workshops" in outcome.detail, (
         "the refusal has to name the route this caller actually wants; see NOT_AN_INSPECTOR_DETAIL"
     )
+
+
+@pytest.mark.parametrize(
+    "path", ["/design-workshop-inspections", f"/design-workshop-inspections/{WORKSHOP_ID}"]
+)
+@pytest.mark.parametrize("role", SERVING_ADMINS)
+def test_an_administrator_reaches_the_surface_and_the_rows_decide_what_they_see(api, path, role):
+    """**ADMINS WERE REFUSED HERE UNTIL 2026-10-09, AND THIS IS THE ROW THAT RULING TURNED.**
+
+    A Ministry Admin, an admin and the master admin may now be APPOINTED to inspect a workshop, so
+    the surface admits them and their own inspection rows decide what it shows — an empty list until
+    somebody appoints them, which is the truth rather than a broken page. "Reached the database" is
+    the whole assertion that can be made here, and the right one: what the read then answers — rows
+    only, never "everything, because they are an admin" — is asserted over Postgres in
+    ``test_admin_serve_as``.
+    """
+    outcome = api.call("GET", path, as_role=role)
+    assert outcome.reached, outcome
 
 
 @pytest.mark.parametrize(
@@ -299,9 +325,9 @@ def test_an_assigner_reaches_the_inspection_roster_and_the_picker(api, role):
     get through. Before it, the ministry staged a workshop into PRE_SUBMISSION and then could cause
     nobody at all to inspect it — the journey stopped with no refusal anybody could act on.
 
-    The invariant it did not touch: MINISTRY_ADMIN is outside ``INSPECTION_ROLES``, so the account
-    that appoints an inspector still cannot BE one, and ``test_everybody_else_is_refused_the_
-    inspection_surface_including_admins`` above still refuses it the inspector's own read surface.
+    SINCE 2026-10-09 THE APPOINTER MAY ALSO BE APPOINTED — by somebody else. Naming yourself is
+    refused per workshop with a 409 (``services/design_workshop_posts``), and the picker below does
+    not offer the caller at all.
     """
     outcome = api.call(
         "GET", f"/design-workshop-inspections/{WORKSHOP_ID}/inspectors", as_role=role
@@ -315,18 +341,23 @@ def test_the_literal_path_is_not_swallowed_by_the_workshop_id_route(api):
     """``/eligible-inspectors`` must not be read as a workshop id.
 
     ``GET /design-workshop-inspections/{workshop_id}`` matches that string perfectly well and would
-    answer 403-then-404 for an admin, which is the trap that once left the admin's DESIGNER picker
-    empty on a server where the route existed. Asserted through the OUTCOME rather than by reading
-    declaration order, so it stays true however the module is reorganised: an admin reaching the
-    picker proves the literal route won, because an admin is refused the ``{workshop_id}`` route
-    before it can touch anything.
+    answer 404 for the picker, which is the trap that once left the admin's DESIGNER picker empty on
+    a server where the route existed. Asserted through the OUTCOME rather than by reading declaration
+    order, so it stays true however the module is reorganised.
+
+    THE CONTROL IS AN INSPECTOR AND NOT AN ADMIN since 2026-10-09: an admin now reaches BOTH routes,
+    so only a caller the two doors answer differently can tell which one matched. An INSPECTOR is
+    admitted to the ``{workshop_id}`` route and refused the picker — so a 403 on the literal path is
+    the picker's own door answering, which is the literal route winning.
     """
+    refused = api.call("GET", "/design-workshop-inspections/eligible-inspectors", as_role=INSPECTOR)
+    assert refused.status_code == 403, refused
+    assert api.tripwire.touched is False
+    # And the id-shaped path does admit that inspector, so the 403 above was not the surface's.
+    admitted = api.call("GET", f"/design-workshop-inspections/{WORKSHOP_ID}", as_role=INSPECTOR)
+    assert admitted.reached, admitted
     outcome = api.call("GET", "/design-workshop-inspections/eligible-inspectors", as_role="ADMIN")
     assert outcome.reached, outcome
-    # The control: the same admin on the id-shaped path IS refused, so the assertion above is the
-    # literal route matching rather than admins being admitted to everything on this prefix.
-    refused = api.call("GET", f"/design-workshop-inspections/{WORKSHOP_ID}", as_role="ADMIN")
-    assert refused.status_code == 403, refused
 
 
 # --------------------------------------------------------------------------------------
@@ -722,23 +753,36 @@ def test_the_two_clauses_are_different_expressions_over_different_relations():
     )
 
 
-def test_the_two_role_sets_stay_disjoint():
-    """An account must never be eligible to hold BOTH a viewer row and an inspection row.
+def test_the_tier_stays_out_of_the_designer_set_and_the_holders_overlap_it_by_ruling():
+    """**THE IMPORT-TIME DISJOINTNESS CHECK IS GONE, AND THIS IS WHAT REPLACED IT (2026-10-09).**
 
-    A viewer row carries stage WRITES; an inspection row is read-only. One account eligible for both
-    on one workshop is the contradiction the whole feature is built to prevent — and it is what makes
-    ``_assert_every_id_may_inspect``'s "already on this workshop" refusal a backstop rather than the
-    only guard. The module raises at import if this ever stops being true; this says so where a
-    reader will find it.
+    It used to assert that no role could hold both a viewer row and an inspection row, because a
+    viewer row carries stage WRITES and an inspection row is read-only. The owner's ruling put the
+    three administrator tiers in both sets on purpose — designers by role, inspectors by appointment
+    — so the guarantee moved to where it was always meant to be: ONE WORKSHOP. Nobody inspects a
+    workshop they authored, a viewer row is refused to its inspector, and its inspector's every write
+    is refused by ``load_workshop_or_404`` (``services/design_workshop_posts``, and the database tests
+    in ``test_admin_serve_as``).
+
+    What is still a fact about the SETS is pinned here: the inspector TIER writes no workshop by
+    role, and the holder set is that tier plus the three administrator tiers and nobody else — not
+    the professor and not the two directorate posts, who all outrank an inspector.
     """
-    assert not (inspectors.INSPECTION_ROLES & deps.DESIGN_WORKSHOP_ROLES)
+    assert frozenset({INSPECTOR}) == inspectors.INSPECTION_ROLES
     assert INSPECTOR not in deps.DESIGN_WORKSHOP_ROLES, (
         "INSPECTOR must stay out of DESIGN_WORKSHOP_ROLES, which is 'the people who sign the "
         "report'. Adding it hands the tier all eighteen _require_designer routes at once."
     )
+    assert frozenset({INSPECTOR, *SERVING_ADMINS}) == inspectors.INSPECTION_HOLDER_ROLES
+    # THE OVERLAP IS EXACTLY THE RULING, and an import that refused it would not boot.
+    overlap = inspectors.INSPECTION_HOLDER_ROLES & deps.DESIGN_WORKSHOP_ROLES
+    assert overlap == frozenset(SERVING_ADMINS)
+
     assert inspectors.is_inspector(_user(INSPECTOR)) is True
+    assert inspectors.may_hold_an_inspection(_user(INSPECTOR)) is True
     for role in EVERY_OTHER_TIER:
         assert inspectors.is_inspector(_user(role)) is False, role
+        assert inspectors.may_hold_an_inspection(_user(role)) is (role in SERVING_ADMINS), role
 
 
 # --------------------------------------------------------------------------------------

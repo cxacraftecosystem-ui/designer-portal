@@ -134,12 +134,26 @@ cd backend
 if (-not (Test-Path .env)) { Copy-Item .env.example .env }
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-pip install -e .
+pip install -r requirements.lock
+pip install -e . --no-deps
 python -m prisma generate --schema=prisma/schema.prisma
-python -m prisma migrate dev --schema=prisma/schema.prisma --name init
+python -m prisma migrate deploy --schema=prisma/schema.prisma
 python scripts/seed_admin.py
 uvicorn app.main:app --reload --port 8000
 ```
+
+The install and database lines are deliberate, and they replaced an unpinned `pip install -e .` and
+a `prisma migrate dev --name init` that used to be here:
+
+- **The lock, then the project with `--no-deps`.** `requirements.lock` is the pinned resolution CI and
+  the EC2 deploy install from; `--no-deps` stops pip re-resolving the project's own ranges past it, so
+  a laptop runs the versions production runs ([docs/CI.md](docs/CI.md) §1.3).
+- **`prisma generate`** writes the client every module that reaches the database imports, and talks to
+  no database.
+- **`prisma migrate deploy`, never `prisma migrate dev`.** Migrations in this repository are
+  hand-written, forward-only files under `backend/prisma/migrations/`; `deploy` applies them in order.
+  `dev` would try to author a new migration from any drift it detects, and may offer to reset the
+  database to do it — this is the same rule CI applies before every database-backed test run.
 
 Backend checks:
 
@@ -197,6 +211,21 @@ The local admin account is seeded by `backend/scripts/seed_admin.py` from `backe
   `ADMIN_PASSWORD must be set in .env before seeding local admin accounts` rather than seeding a
   guessable one. Choose a password and put it in your private `.env`.
 
+**Every password the script writes is temporary.** A password sitting in a `.env` file is a shared
+secret, so the seeded accounts carry `mustChangePassword`: the first sign-in asks you to choose your
+own, and until you do the API answers every route except the change-password screen's own with
+`401` and `X-Password-Change-Required: 1`. The one exception is the account at `MASTER_ADMIN_EMAIL`,
+the break-glass, which the server never holds. Re-running the script resets the master admin —
+which ends every session that account has open — and **leaves every other existing account alone**;
+it used to overwrite the `ADMIN_EMAIL` account's password and role. To create any other account from a shell, use
+`python -m scripts.provision_account` from `backend/`: it applies the same rules as the users screen,
+as the existing provisioner `--actor-email` names, reads the password from `PROVISION_PASSWORD` only,
+and changes nothing until you add `--apply`. With `--google-only` it creates no account at all — it
+admits the address on the allow-list at `--role`, and the person's first Google sign-in creates the
+account at that tier. It does not reset an existing account's password; the users screen and password
+links do that, with a record of who did it. See [docs/PERMISSIONS.md](docs/PERMISSIONS.md) §1.2 and
+[docs/DOCKER.md](docs/DOCKER.md) for running it inside the container.
+
 ## Android App
 
 The Kotlin Android app lives in `android/` and uses the same backend:
@@ -213,7 +242,7 @@ Run from Android Studio:
 2. Let Gradle sync.
 3. Start the backend on `127.0.0.1:8000`.
 4. Run the `app` configuration on an emulator.
-5. Log in with the admin email and password from your private `.env`, or use Google sign-in after OAuth is configured.
+5. Log in with the admin email and password from your private `.env` (and choose your own password when the app asks — the seeded one is temporary), or use Google sign-in after OAuth is configured.
 
 Command-line build, if Android SDK is installed:
 
@@ -268,11 +297,11 @@ per-user grantable booleans (`canManageQuestionnaire`, `canReview`, `canViewProv
 
 | Tier | Rank | Powers |
 | --- | --- | --- |
-| `MASTER_ADMIN` | 60 | Reserved for `MASTER_ADMIN_EMAIL`. Everything, plus the three nobody else has: provider key values, repository settings, OTA releases. The only account that may act on a peer. |
-| `ADMIN` | 50 | Create/delete accounts; **delete records**; grant workshop access; assign tasks; approve **late** submissions. |
-| `MINISTRY_ADMIN` | 48 | **Not an admin** — `is_admin` is a SET (`{ADMIN, MASTER_ADMIN}`), so no account creation, no deletes, no access grants, no key store. The widest review and correction authority short of admin: approve, reject, send back **and rewrite** records created by anyone at Regional Director and below, plus everything a professor can do — which includes reading an artisan's **unmasked Aadhaar number** and taking every row out in an export. |
+| `MASTER_ADMIN` | 60 | Reserved for `MASTER_ADMIN_EMAIL`. Everything, plus the three nobody else has: provider key values, repository settings, OTA releases. The only account that may act on a peer's records; on accounts, master admins are peers and none may change or remove another. May be appointed to a post on one workshop, by somebody else (the `ADMIN` row). |
+| `ADMIN` | 50 | Delete accounts; **delete records**; grant capability flags; decide who may sign in; grant workshop access; assign tasks; approve **late** submissions. Creates password accounts and looks after their passwords, as a Ministry Admin does. May be **appointed**, by somebody else, a workshop's designer, Assistant Director, Regional Director or inspector — and writes neither that workshop's content nor its designer team while holding a director or inspector post there. |
+| `MINISTRY_ADMIN` | 48 | **Not an admin** — `is_admin` is a SET (`{ADMIN, MASTER_ADMIN}`), so no deletes, no capability grants, no allow-list decisions, no key store. **Provisions password accounts** through a set of its own (`ACCOUNT_PROVISIONER_ROLES`, 2026-10-09): creates them at or below its tier, sets temporary passwords, requires a change, issues password links and corrects names and addresses, on accounts below it. Names a workshop's designers, directors and inspectors, and may itself be appointed to those posts by somebody else, never over work it authored. The widest review and correction authority short of admin: approve, reject, send back **and rewrite** records created by anyone at Regional Director and below, plus everything a professor can do — which includes reading an artisan's **unmasked Aadhaar number** and taking every row out in an export. |
 | `REGIONAL_DIRECTOR` | 45 | Everything an assistant director can do, one tier wider: an assistant director's records come under review and correction too. Reads design-workshop stage data on screen; cannot export it. |
-| `ASSISTANT_DIRECTOR` | 42 | The first tier above Professor, and therefore the first that may **rewrite** a professor's record as well as review it (`can_edit_others_record`). Craft/workshop/questionnaire management, dataset download, the user table, and the Professor-floor PII reads. **Does not run workshops** — that is a set, not a rank. |
+| `ASSISTANT_DIRECTOR` | 42 | The first tier above Professor, and therefore the first that may **rewrite** a professor's record as well as review it (`can_edit_others_record`). Craft/workshop/questionnaire management, dataset download, the user table (roles only), and the Professor-floor PII reads. **Runs a workshop it holds** since 2026-09-14 — the directorate tiers are in the design-workshop set — but does not start one. |
 | `PROFESSOR` | 40 | Everything a researcher can do, plus craft/workshop/questionnaire management, dataset download, viewing and promoting users, and editing records created by anyone below them. No account creation, no deletes. |
 | `INSPECTOR` | 37 | Labelled **Inspector / Reviewer**. Inspects and reviews a designer's work: may approve, reject and send back records created by anyone at Designer and below. **Does not run workshops and does not sign reports** — outranking a designer is not the same as being one. May not *rewrite* another person's record either; that floor is Professor. |
 | `DESIGNER` | 35 | Run design & prototype workshops and sign the report: the 22 stages, the custom sections, the AI layers, the report exports. Everything a researcher can do. **NOT a rank threshold** — see the third rule below. |
@@ -280,7 +309,7 @@ per-user grantable booleans (`canManageQuestionnaire`, `canReview`, `canViewProv
 | `FIELD_CONTRIBUTOR` | 20 | Populate existing records — media, answers, comments — and review volunteers. **Cannot create records.** |
 | `CROWDSOURCE_VOLUNTEER` | 10 | Lowest tier and the default for new self-registered Google accounts (`DEFAULT_SIGNUP_ROLE`). Upload media, answer questionnaires, comment. |
 
-Four rules people get wrong:
+The rules people get wrong:
 
 - **A Field Contributor cannot create records.** `can_create_records` requires Researcher. The two
   tiers below *populate* records rather than open them — that is the reason they exist.
@@ -289,7 +318,9 @@ Four rules people get wrong:
   can never rewrite another admin's account or approve their work; only the master admin manages
   peers.
 - **`DESIGNER` is a rank in the ladder, but running a design workshop is not a rank threshold.**
-  `can_run_design_workshops` is a **SET** — `{DESIGNER, ADMIN, MASTER_ADMIN}` — not a floor, so a
+  `can_run_design_workshops` is a **SET** — `DESIGN_WORKSHOP_ROLES`: `DESIGNER`, the three directorate
+  tiers, `ADMIN` and `MASTER_ADMIN` (it read `{DESIGNER, ADMIN, MASTER_ADMIN}` here until 2026-10-09,
+  three weeks after the set grew) — not a floor, so a
   Professor at 40 outranks a designer at 35 and still cannot run a workshop. That is deliberate: the
   ladder answers "how much may this account do to the repository", and running a workshop is a job
   somebody was empanelled for, not a privilege earned by seniority. A DESIGNER account may also sign
@@ -301,13 +332,35 @@ Four rules people get wrong:
   2026-08-27 the same way, in the middle of the free 36-39 band so a later tier can still go on
   either side of it, and it inherits the same non-inheritance: **an inspector is not in that set
   either**, so rank 37 buys no workshop authority at all. An inspector reaches a design workshop
-  only through a read-only, per-workshop assignment an **admin** makes — the inspected does not
-  choose the inspector — and never through the ladder. See
+  only through a read-only, per-workshop assignment a **Ministry Admin, an admin or the master
+  admin** makes — the inspected does not choose the inspector — and never through the ladder. See
   [docs/PERMISSIONS.md](docs/PERMISSIONS.md) §1 and §4.5.
+
+- **Whoever inspects or supervises a workshop does not write it.** Since 2026-10-09 the three
+  administering tiers may be APPOINTED, by somebody else, as one workshop's designer, Assistant
+  Director, Regional Director or inspector, through the same pickers as everybody else. Nobody
+  appoints themselves, and nobody takes themselves off an inspection or director post — another
+  administrator has to; nobody inspects or supervises a workshop they authored (designer access to
+  it, or stages they wrote — creating it does not count); one person never holds both director posts,
+  nor a director post and the inspection; and while somebody holds a workshop's inspection or a
+  director post, the server refuses them its content and its designer team, admin routes included —
+  its stages, editing or deleting it, its artisan list, filing a record into it and any edit, delete
+  or merge of a record filed under it (the review queue's in-place edit included), its photographs,
+  recordings and transcripts (a new upload into it, a delete, a transcript set, refined or re-run, a
+  retried transcription job, an identity-photograph decision, a relink), filing or deleting its records
+  and files from the unfiled-records report (whose bulk filing leaves them alone for a holder and says
+  so), and who its designers are, by any door (an access-request decision and a join card included).
+  That report no longer treats a design workshop's records and files as unfiled at all, for anybody:
+  it does not list one filed under or tagged to a design workshop, and refuses to delete any it claims.
+  Reading the workshop, appointing other people to its posts or taking them off, restoring it,
+  generating its report, and approving, rejecting or sending back a record filed under it stay open. See
+  [docs/PERMISSIONS.md](docs/PERMISSIONS.md) §4.8.
 
 - **`MINISTRY_ADMIN` is not an admin, and neither are the other two directorate tiers.** `is_admin`
   is `role in {MASTER_ADMIN, ADMIN}` — set membership, not a rank floor — so a tier at 48 passes no
-  admin gate anywhere in this product. It is the one place in this table where a token's English
+  admin gate anywhere in this product. What it holds beyond its rank it holds through named sets of
+  its own — provisioning password accounts, naming a workshop's posts, being appointed to one — each a
+  separate decision ([docs/PERMISSIONS.md](docs/PERMISSIONS.md) §1 and §1.2). It is the one place in this table where a token's English
   reading and its meaning in the code point in opposite directions, which is why it is written down
   in four places: here, `deps.ROLE_RANK`'s comment, the tier's migration header, and
   [docs/PERMISSIONS.md](docs/PERMISSIONS.md) §2's footnote ⁷.
@@ -445,7 +498,18 @@ Researchers can create questionnaire interviews, link one interview to many arti
 - `POST /api/auth/login`
 - `POST /api/auth/logout`
 - `GET /api/me`
-- `CRUD /api/users` for admins
+- `CRUD /api/users` — listed and re-roled by Professor and above, **created** and given passwords by
+  the account provisioners (Ministry Admin, Admin, Master Admin), **deleted** by admins; one account
+  per mailbox, so any spelling of a Gmail inbox another account uses is a 409 on create and on an
+  address change alike
+- `POST /api/auth/password-links` — a provisioner issues a set-password link for an account below it
+- `POST /api/auth/change-password` — the signed-in account replaces its own password; the one route
+  besides `/me`, sign-out, the usage-consent pair and the release check that answers an account still
+  holding a temporary password. Answers exactly `{"ok": true}`, and hands the caller a fresh session
+  token in the `X-Session-Token` response header (listed in CORS `expose_headers`), because the change
+  ends every session opened with the old password, this one's old token included. A client that
+  ignores the header meets one plain `401` on its next request and signs in again with the new
+  password ([docs/SECURITY.md](docs/SECURITY.md) §3.6)
 - `CRUD /api/artisans`
 - `CRUD /api/crafts`
 - `CRUD /api/workshops`
@@ -467,6 +531,8 @@ Researchers can create questionnaire interviews, link one interview to many arti
 - `GET /api/export/products.csv` — dataset-download permission required
 - `GET /api/export/tools.csv` — dataset-download permission required
 - `POST /api/datasets/token` — exchange **admin** email/password for a read-only `dataset:read` token
+  (refused while the account still holds a password somebody else chose; the token is retired for
+  good by any later change of that password, or by a raised `mustChangePassword`)
 - `GET /api/datasets` — bulk-download catalogue: every dataset, its row count and its URLs
 - `GET /api/datasets/{dataset}` — one page of a dataset (JSON)
 - `GET /api/datasets/{dataset}.ndjson` — the whole dataset, streamed, no row cap
@@ -541,7 +607,8 @@ Useful optional backend variables:
 - `AWS_REGION` (default `us-east-1`; production `ap-south-1`) and `AWS_S3_PUBLIC_BASE_URL` for preview/export links — use the **dual-stack** host so media loads on IPv6-only mobile networks.
 - `AWS_S3_ENDPOINT` only for MinIO or other non-AWS storage; leave it unset on real AWS.
 - `DATABASE_USE_TRANSACTION_POOLER` (default `true`; it *declares* that `DATABASE_URL` is a transaction-mode pooler and adds `pgbouncer=true` to any remote DSN — **set it `false` for a direct endpoint**; no hostname is matched, see [docs/ENVIRONMENT.md](docs/ENVIRONMENT.md)), `DATABASE_CONNECTION_LIMIT` (code default `10` per worker — raising it once exhausted a pooler's client ceiling and crash-looped startup; **the deployment sets `5`**), `DATABASE_POOL_TIMEOUT` (unset by default → Prisma's own 10 s; **the deployment sets `5`** seconds, so a saturated pool fails rather than hangs). Both deployed values are stated once, with their reasoning, in [docs/ENVIRONMENT.md](docs/ENVIRONMENT.md).
-- `NEXT_PUBLIC_APP_URL` and `BACKEND_CORS_ORIGINS` — comma-separated **exact** frontend origins, no trailing slash or wildcard.
+- `BACKEND_CORS_ORIGINS` — comma-separated **exact** frontend origins, no trailing slash or wildcard.
+- `NEXT_PUBLIC_APP_URL` — the web app's one public origin, and the base of every set-password, invite and sanction link the API issues. Optional on a laptop (it defaults to `http://localhost:3000`) and **required in production**, where a wrong value issues links that open nowhere useful; see [docs/ENVIRONMENT.md](docs/ENVIRONMENT.md).
 - `GOOGLE_CLIENT_ID` to verify Google OAuth ID tokens; `GOOGLE_ANDROID_CLIENT_ID` to also accept Android OAuth audience tokens if needed.
 - `MASTER_ADMIN_NAME` defaults to `Ankit Kumar`; `DEFAULT_SIGNUP_ROLE` defaults to `CROWDSOURCE_VOLUNTEER`.
 - `ELEVENLABS_API_KEY`/`ELEVENLABS_STT_MODEL`, `DEEPGRAM_API_KEY`/`DEEPGRAM_STT_MODEL`, `OPENAI_API_KEY`/`OPENAI_TRANSCRIPTION_MODEL`/`OPENAI_CHAT_MODEL`, `GEMINI_API_KEY`/`GEMINI_API_KEYS`/`GEMINI_MEASUREMENT_MODEL` (default `gemini-2.5-flash-lite`), `NEXT_PUBLIC_MAPTILER_API_KEY` for optional transcription, refinement, measurement and map picking.
@@ -555,7 +622,7 @@ Frontend variables — all four are `NEXT_PUBLIC_*`, so they are **inlined into 
 build time**: none can be a secret, and changing one on Vercel needs a redeploy to take effect.
 
 - `NEXT_PUBLIC_API_URL` (required) — backend **origin only**, e.g. `https://d3ekigkotd1xa2.cloudfront.net`. `frontend/lib/api.ts` appends `/api`, so a trailing `/api` or `/` turns every call into a 404.
-- `NEXT_PUBLIC_APP_URL` (optional in the web build) — public origin of the web app itself. No code under `frontend/` reads it; it shares its name with the **backend** variable so one value can feed both. The origin that actually has to be configured is `BACKEND_CORS_ORIGINS` on the API.
+- `NEXT_PUBLIC_APP_URL` (optional in the web build) — public origin of the web app itself. No code under `frontend/` reads it; it shares its name with the **backend** variable so one value can feed both. The origins that actually have to be configured live on the API: `BACKEND_CORS_ORIGINS`, and the backend's own `NEXT_PUBLIC_APP_URL`, which builds the password links.
 - `NEXT_PUBLIC_GOOGLE_CLIENT_ID` (optional) — blank hides the Google button.
 - `NEXT_PUBLIC_MAPTILER_API_KEY` (optional) — blank falls back to manual latitude/longitude entry.
 
@@ -643,7 +710,7 @@ one to fix.
 | The role table | A summary of [docs/PERMISSIONS.md](docs/PERMISSIONS.md), which is the authority and is itself parity-checked against `frontend/lib/permissions.ts`. |
 | The provider chain | A summary of [docs/ARCHITECTURE.md §6](docs/ARCHITECTURE.md); the default order is generated. |
 | Environment variables | A summary of [docs/ENVIRONMENT.md](docs/ENVIRONMENT.md), which has a one-command completeness check. |
-| Local setup commands | Run them on a clean clone. Nothing else verifies a `README` quick-start, and a broken one is the first thing a new contributor meets. |
+| Local setup commands | Run them on a clean clone. Nothing else verifies a `README` quick-start, and a broken one is the first thing a new contributor meets. The install and migration lines are the ones `.github/workflows/checks.yml` runs (the lock, `prisma generate`, `prisma migrate deploy`), so the workflow is the place to compare them against when either changes. |
 | The endpoint list under "Core API Endpoints" | **Illustrative, not exhaustive** — it is a sample of the surface, and the real inventory is the OpenAPI schema. Treat a route missing from it as normal; treat a route *listed* and absent as a bug. The design-workshop block is the exception: it is the complete router, and is diffable against the `@router` decorators in `backend/app/api/routes/design_workshops.py`. |
 | "The Workshop Record" | A summary of [docs/DESIGN_WORKSHOP.md](docs/DESIGN_WORKSHOP.md), which is the authority and carries its own source-of-truth table for the registry, the storage model and the report pipeline. |
 

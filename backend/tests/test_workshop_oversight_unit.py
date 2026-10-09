@@ -48,6 +48,14 @@ ALL_ROLES = tuple(deps.ROLE_RANK)
 OFFICERS = {"ASSISTANT_DIRECTOR", "REGIONAL_DIRECTOR", "MINISTRY_ADMIN"}
 ASSIGNERS = {"MINISTRY_ADMIN", "ADMIN", "MASTER_ADMIN"}
 
+#: The administrator tiers that may be APPOINTED to a post on one workshop (owner's ruling,
+#: 2026-10-09). The same three members as ``ASSIGNERS`` and a different fact, which is why it is a
+#: second name.
+SERVING_ADMINS = {"MINISTRY_ADMIN", "ADMIN", "MASTER_ADMIN"}
+
+#: Who may hold an oversight row in some slot — the officer surface's door since that ruling.
+HOLDERS = {"ASSISTANT_DIRECTOR", "REGIONAL_DIRECTOR"} | SERVING_ADMINS
+
 #: The two sets 0.0.12's rulings were required NOT to move, spelled here so the assertions about
 #: them compare a name to a name.
 #:
@@ -82,7 +90,20 @@ def test_the_ladder_has_the_three_directorate_tiers_this_feature_is_built_on():
 
 @pytest.mark.parametrize("role", ALL_ROLES)
 def test_exactly_the_three_ministry_posts_are_officers(role):
+    """The TIER. Not the surface's door any more — see the test below."""
     assert oversight.is_officer(user(role)) is (role in OFFICERS), role
+
+
+@pytest.mark.parametrize("role", ALL_ROLES)
+def test_exactly_the_roles_that_may_hold_a_slot_reach_the_officer_surface(role):
+    """The two directorate posts and, since 2026-10-09, the three administrator tiers.
+
+    An ADMIN and the MASTER_ADMIN were refused here because they could hold no slot, and a
+    MINISTRY_ADMIN was admitted to a list that could never contain anything for the same reason. The
+    ruling made all three holders, so the door is the holder set and the ROWS decide the list.
+    """
+    assert oversight.may_hold_oversight(user(role)) is (role in HOLDERS), role
+    assert frozenset(HOLDERS) == oversight.OVERSIGHT_HOLDER_ROLES
 
 
 @pytest.mark.parametrize("role", ALL_ROLES)
@@ -113,16 +134,21 @@ def test_neither_predicate_admits_a_missing_user():
     assert oversight.is_officer(SimpleNamespace(role=None)) is False
 
 
-def test_an_admin_is_refused_the_officers_own_surface_and_is_told_which_door_they_want():
-    """Admitting admins here would mean an empty page they read as a broken deployment, or a second
-    full read of every workshop in the repository. So it is a 403 that names the other door."""
+def test_a_designer_is_refused_the_officers_own_surface_and_an_admin_is_not():
+    """A role that can hold no slot gets a 403 naming the door it wants; an admin is ADMITTED.
+
+    Until 2026-10-09 the ADMIN was the refusal asserted here. They may now be named a workshop's
+    Assistant or Regional Director, so the surface is theirs and their rows decide what it shows —
+    never "everything, because they are an admin", which ``test_the_scope_clause_reads_its_own_
+    relation_and_has_no_creator_arm`` and the database tests pin.
+    """
     with pytest.raises(HTTPException) as exc:
-        oversight.assert_oversight_surface(user("ADMIN"))
+        oversight.assert_oversight_surface(user("DESIGNER"))
     assert exc.value.status_code == 403
     assert "/api/design-workshops" in exc.value.detail
-    assert "Ministry Admin" in exc.value.detail
-    # The control: an officer is not refused.
-    oversight.assert_oversight_surface(user("ASSISTANT_DIRECTOR"))
+    assert "Ministry Admins, admins and the master admin" in exc.value.detail
+    for role in ("ASSISTANT_DIRECTOR", "REGIONAL_DIRECTOR", *sorted(SERVING_ADMINS)):
+        oversight.assert_oversight_surface(user(role))
 
 
 def test_the_assigner_refusal_names_the_screen_an_officer_should_use_instead():
@@ -138,18 +164,24 @@ def test_the_assigner_refusal_names_the_screen_an_officer_should_use_instead():
 # --------------------------------------------------------------------------------------
 
 
-def test_one_role_per_capacity_and_a_ministry_admin_fits_neither():
-    """A flat set would let an officer be filed in the other's slot, which prints the wrong post
-    beside the right name on a document going to a ministry.
+def test_each_directorate_post_fits_its_own_slot_and_an_administrator_fits_both():
+    """A flat set would let an Assistant Director be filed in the Regional Director's slot, which
+    prints the wrong post beside the right name on a document going to a ministry — so each tier fits
+    its own slot only.
 
-    MINISTRY_ADMIN is in the DIRECTORY and in NEITHER SLOT: the directory answers "who are the
-    officers", and the requirement names exactly two posts per workshop.
+    THE THREE ADMINISTRATOR TIERS FIT BOTH SINCE 2026-10-09 — "MINISTRY_ADMIN fits neither" is what
+    this test asserted until that ruling. What stops one of them holding BOTH slots on one workshop is
+    not this map: it is the per-workshop rule ``assert_may_hold`` applies, asserted below.
     """
-    assert oversight.CAPACITIES == ("ASSISTANT_DIRECTOR", "REGIONAL_DIRECTOR")
+    both = ["ASSISTANT_DIRECTOR", "REGIONAL_DIRECTOR"]
+    assert tuple(both) == oversight.CAPACITIES
     assert oversight.capacities_for("ASSISTANT_DIRECTOR") == ["ASSISTANT_DIRECTOR"]
     assert oversight.capacities_for("REGIONAL_DIRECTOR") == ["REGIONAL_DIRECTOR"]
-    assert oversight.capacities_for("MINISTRY_ADMIN") == []
-    assert oversight.capacities_for("ADMIN") == []
+    for role in SERVING_ADMINS:
+        assert oversight.capacities_for(role) == both, role
+    for role in set(ALL_ROLES) - HOLDERS:
+        assert oversight.capacities_for(role) == [], role
+    assert frozenset(both) == oversight.DIRECTORATE_POST_ROLES
 
 
 def test_every_capacity_the_enum_declares_has_a_role_that_may_hold_it():
@@ -250,15 +282,37 @@ def test_an_officer_with_no_oversight_row_sees_nothing_at_all(scoped):
 
 def test_the_loader_re_checks_the_role_even_behind_its_own_dependency(scoped):
     """Belt and braces on purpose: this is the function a future caller will reach for, and a loader
-    that trusts its caller's gate is how a scope leaks onto a surface nobody re-read."""
+    that trusts its caller's gate is how a scope leaks onto a surface nobody re-read.
+
+    The account HOLDS a row on this workshop and is refused anyway, because its role can hold no
+    slot — a row outliving a role change is honoured nowhere. (An ADMIN stood here until 2026-10-09,
+    when administrators became holders.)
+    """
     with pytest.raises(HTTPException) as exc:
         asyncio.run(
             oversight.load_overseen_workshop_or_404(
-                WORKSHOP_ID, SimpleNamespace(id=OFFICER_ID, role="ADMIN")
+                WORKSHOP_ID, SimpleNamespace(id=OFFICER_ID, role="DESIGNER")
             )
         )
     assert exc.value.status_code == 404, "404 and not 403 — see the loader's docstring"
     assert exc.value.detail == "Record not found"
+
+
+def test_an_administrator_holding_a_row_reads_that_workshop(scoped):
+    """The other half of the ruling: the row decides, for an administrator exactly as for an officer."""
+    record = asyncio.run(
+        oversight.load_overseen_workshop_or_404(
+            WORKSHOP_ID, SimpleNamespace(id=OFFICER_ID, role="ADMIN")
+        )
+    )
+    assert record.id == WORKSHOP_ID
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(
+            oversight.load_overseen_workshop_or_404(
+                WORKSHOP_ID, SimpleNamespace(id=STRANGER_ID, role="MASTER_ADMIN")
+            )
+        )
+    assert exc.value.status_code == 404, "an admin with no row was shown a workshop by rank"
 
 
 def test_a_workshop_out_of_scope_is_a_404_that_reads_like_any_other(scoped):
@@ -815,7 +869,7 @@ def test_eligibility_is_asked_of_the_added_ids_and_never_of_the_removed_ones():
     one trip rather than N.
     """
     source = _body_without_docstring(oversight.set_named_designers)
-    assert "assert_every_designer_may_be_named(set(added))" in source
+    assert "assert_every_designer_may_be_named(set(added)," in source
     assert source.index("assert_every_designer_may_be_named(") < source.index(
         "attach_the_named_designer("
     ), "validation runs after the first write, so one bad id leaves the good half applied"
@@ -864,8 +918,9 @@ def team(monkeypatch: pytest.MonkeyPatch):
     async def _remove(workshop_id, user_id):
         calls["removed"].append(user_id)
 
-    async def _validate(user_ids):
+    async def _validate(user_ids, *, workshop_id=None, appointing=None):
         calls["validated"].append(set(user_ids))
+        calls.setdefault("validated_context", []).append((workshop_id, appointing))
 
     async def _move_lead(workshop_id, user_id, *, actor):
         calls["lead_moved"].append(user_id)
@@ -1052,6 +1107,9 @@ def test_adding_a_co_designer_validates_only_the_added_id_and_leaves_the_lead_al
     """
     _save(["lead-1", "co-1", "new-1"])
     assert team["validated"] == [{"new-1"}]
+    # THE WORKSHOP AND THE ACTOR TRAVEL WITH THE IDS (2026-10-09), so the rule can refuse this
+    # workshop's own inspector or supervisor as a designer, and the officer naming themselves.
+    assert team["validated_context"] == [("w1", "u-MINISTRY_ADMIN")]
     assert team["added"] == ["new-1"]
     assert team["removed"] == []
     assert team["lead_moved"] == []
@@ -1180,40 +1238,180 @@ def test_the_staffing_filter_counts_a_blank_designer_name_as_unstaffed():
 
 
 # --------------------------------------------------------------------------------------
-# 7d. OQ-6 — A MINISTRY ADMIN APPOINTS INSPECTORS AND STILL CANNOT BE ONE
+# 7d. OQ-6 — A MINISTRY ADMIN APPOINTS INSPECTORS, AND SINCE 2026-10-09 MAY BE ONE (NOT BY THEMSELVES)
 #
 # The three inspector routes moved from ``require_admin`` to ``require_workshop_assigner`` in
 # 0.0.12. ``tests/test_dw_inspector_scope_gate.py`` asserts the doors on that router; what belongs
-# HERE is the invariant the ruling was allowed to stand on, because it is a fact about the two SETS
-# this file owns.
+# HERE is the rule the 2026-10-09 ruling stands on instead of the old disjointness of the two sets.
 # --------------------------------------------------------------------------------------
 
 
-def test_the_set_that_appoints_an_inspector_is_disjoint_from_the_set_that_may_be_one():
-    """**"THE INSPECTED MUST NOT CHOOSE THE INSPECTOR" IS A STATEMENT ABOUT THE SETS.**
+def test_an_appointer_may_be_appointed_and_never_by_themselves():
+    """**THE SETS OVERLAP ON PURPOSE SINCE 2026-10-09, SO THE INDEPENDENCE IS PER APPOINTMENT.**
 
-    It was satisfied under ``require_admin`` by accident of ADMIN and MASTER_ADMIN being outside
-    ``INSPECTION_ROLES``; after 0.0.12 it is satisfied for MINISTRY_ADMIN the same way and for the
-    same reason. This asserts it as a property of the two frozensets rather than of any one tier,
-    so a future member of either — an "INSPECTION_COORDINATOR" in one, a fourth assigner in the
-    other — cannot land on both and make the appointment self-serving.
-
-    The other half of the guarantee is not a set and is not asserted here:
-    ``_assert_every_id_may_inspect``'s fourth refusal turns away anybody already on the workshop as
-    its creator or a viewer, which is what stops an assigner appointing the people who ran it.
+    This asserted, until that ruling, that the set that appoints an inspector and the set that may BE
+    one were disjoint — which kept "the inspected must not choose the inspector" true by keeping
+    administrators off the panel altogether. The owner's ruling lets the three administrator tiers be
+    appointed, so the two sets now share exactly those three members, and what keeps an appointment
+    independent is that nobody makes it about themselves: ``separation_refusals`` refuses a
+    self-appointment to every post, and both appointment writes pass the caller in.
     """
-    from app.services.design_workshop_inspectors import INSPECTION_ROLES
+    from app.services import design_workshop_posts as posts
+    from app.services.design_workshop_inspectors import INSPECTION_HOLDER_ROLES, INSPECTION_ROLES
 
     assert oversight.OVERSIGHT_ASSIGNER_ROLES == ASSIGNERS
-    assert set(INSPECTION_ROLES) == INSPECTABLE
-    assert not oversight.OVERSIGHT_ASSIGNER_ROLES & INSPECTION_ROLES, (
-        "an account that appoints an inspector may now be one; the appointment is no longer "
-        "independent of the people it appoints"
+    assert set(INSPECTION_ROLES) == INSPECTABLE, "the inspector TIER is still the inspector tier"
+    shared = oversight.OVERSIGHT_ASSIGNER_ROLES & INSPECTION_HOLDER_ROLES
+    assert shared == frozenset(SERVING_ADMINS)
+    assert frozenset(SERVING_ADMINS) == posts.SERVING_ADMIN_ROLES
+    # The two directorate posts may hold their own slot and may never be appointed an inspector.
+    assert not {"ASSISTANT_DIRECTOR", "REGIONAL_DIRECTOR"} & INSPECTION_HOLDER_ROLES
+
+    for post in ("ASSISTANT_DIRECTOR", "REGIONAL_DIRECTOR", "INSPECTOR", "DESIGNER"):
+        refused = posts.separation_refusals(
+            person="Me (me@x.test)", post=post, standing=posts.Standing(), self_appointed=True
+        )
+        assert len(refused) == 1 and "nobody appoints themselves" in refused[0], post
+
+
+# --------------------------------------------------------------------------------------
+# 7e. THE AD/RD APPOINTMENT'S SEPARATION OF DUTIES, JUDGED ON THE WORKSHOP AS THE SAVE LEAVES IT
+# --------------------------------------------------------------------------------------
+
+
+class _Users:
+    """``db.user`` over a handful of accounts, answering the one ``id IN`` query the write makes."""
+
+    def __init__(self, accounts):
+        self.by_id = {account.id: account for account in accounts}
+
+    async def find_many(self, where=None, **_kwargs):
+        return [self.by_id[uid] for uid in where["id"]["in"] if uid in self.by_id]
+
+
+class _OversightRows:
+    """``db.designworkshopoversight`` holding the slots the workshop has NOW."""
+
+    def __init__(self, rows):
+        self.rows = list(rows)
+
+    async def find_many(self, where=None, **_kwargs):
+        return [r for r in self.rows if r.designWorkshopId == where["designWorkshopId"]]
+
+
+@pytest.fixture
+def slots(monkeypatch: pytest.MonkeyPatch):
+    """``assert_may_hold`` over fake rows, with the posts readers answering from dicts.
+
+    Returns a callable: ``slots(wanted, current={...}, inspecting=set(), authored={...},
+    appointing=...)`` runs the validator and answers the raised HTTPException, or ``None``.
+    """
+    from app.services import access_roster, design_workshop_posts as posts
+
+    accounts = [user(role) for role in ALL_ROLES]
+
+    def run(wanted, *, current=None, inspecting=(), authored=None, appointing=None):
+        rows = [
+            SimpleNamespace(designWorkshopId="w1", capacity=capacity, userId=holder)
+            for capacity, holder in (current or {}).items()
+        ]
+
+        async def _barred(emails):
+            return set()
+
+        async def _authorship(workshop_id, user_ids):
+            return {uid: frozenset(kinds) for uid, kinds in (authored or {}).items()}
+
+        async def _posts(workshop_id, user_ids):
+            return {uid: frozenset({posts.INSPECTOR}) for uid in inspecting}
+
+        monkeypatch.setattr(
+            oversight,
+            "db",
+            _Client(user=_Users(accounts), designworkshopoversight=_OversightRows(rows)),
+        )
+        monkeypatch.setattr(access_roster, "barred_among", _barred)
+        monkeypatch.setattr(posts, "authorship_among", _authorship)
+        monkeypatch.setattr(posts, "supervisory_posts_among", _posts)
+        try:
+            asyncio.run(oversight.assert_may_hold("w1", wanted, appointing=appointing))
+        except HTTPException as refusal:
+            return refusal
+        return None
+
+    return run
+
+
+AD, RD = "ASSISTANT_DIRECTOR", "REGIONAL_DIRECTOR"
+
+
+@pytest.mark.parametrize("role", sorted(SERVING_ADMINS))
+def test_every_administrator_tier_may_be_named_to_either_slot(slots, role):
+    assert slots({AD: f"u-{role}"}) is None
+    assert slots({RD: f"u-{role}"}) is None
+
+
+def test_a_directorate_post_is_still_refused_the_other_slot_with_a_422(slots):
+    """The ROLE refusal is about the account, so it stays 422 — and it names who MAY hold the slot."""
+    refusal = slots({AD: "u-REGIONAL_DIRECTOR"})
+    assert refusal is not None and refusal.status_code == 422
+    assert "a Ministry Admin, an admin or the master admin" in refusal.detail
+
+
+def test_naming_yourself_to_a_slot_is_refused_and_keeping_a_slot_you_were_given_is_not(slots):
+    refusal = slots({AD: "u-ADMIN"}, appointing="u-ADMIN")
+    assert refusal is not None and refusal.status_code == 409
+    assert "nobody appoints themselves" in refusal.detail
+    # Re-saving the screen with yourself still in a slot SOMEBODY ELSE gave you is not an appointment.
+    assert slots({AD: "u-ADMIN", RD: "u-MINISTRY_ADMIN"}, current={AD: "u-ADMIN"},
+                 appointing="u-ADMIN") is None
+
+
+def test_one_person_in_both_slots_is_refused_once_however_it_arrives(slots):
+    both = slots({AD: "u-ADMIN", RD: "u-ADMIN"})
+    assert both is not None and both.status_code == 409
+    assert both.detail.count("both the Assistant Director and the Regional Director") == 1, (
+        "the same fact is said once, not once per slot"
     )
-    assert "MINISTRY_ADMIN" not in INSPECTION_ROLES
-    # And the three officer posts stay out of it too, so widening the ASSIGNER set later cannot
-    # quietly pull an inspectable tier in with it.
-    assert not OFFICERS & INSPECTION_ROLES
+    # Arriving in two saves: the RD slot is set while the AD the workshop already has is the same
+    # person, and the AD key was not even sent.
+    later = slots({RD: "u-ADMIN"}, current={AD: "u-ADMIN"})
+    assert later is not None and later.status_code == 409
+
+
+def test_a_swap_between_the_slots_is_judged_on_where_it_lands(slots):
+    """Moving the AD into the RD slot while somebody else takes AD is not "holding both"."""
+    assert slots({AD: "u-MINISTRY_ADMIN", RD: "u-ADMIN"}, current={AD: "u-ADMIN"}) is None
+    # Nor is moving them across while the slot they leave is emptied.
+    assert slots({AD: None, RD: "u-ADMIN"}, current={AD: "u-ADMIN"}) is None
+
+
+def test_the_workshops_inspector_cannot_be_its_supervisor(slots):
+    refusal = slots({RD: "u-MASTER_ADMIN"}, inspecting={"u-MASTER_ADMIN"})
+    assert refusal is not None and refusal.status_code == 409
+    assert "inspects this workshop" in refusal.detail
+
+
+@pytest.mark.parametrize(
+    ("evidence", "phrase"),
+    [
+        ({"DESIGNER_ACCESS"}, "holds designer access to this workshop"),
+        ({"STAGE_WRITES"}, "has written this workshop's stages"),
+    ],
+)
+def test_an_author_cannot_supervise_the_workshop(slots, evidence, phrase):
+    refusal = slots({AD: "u-ASSISTANT_DIRECTOR"}, authored={"u-ASSISTANT_DIRECTOR": evidence})
+    assert refusal is not None and refusal.status_code == 409
+    assert phrase in refusal.detail
+    assert "Creating a workshop is not authoring it" in refusal.detail
+
+
+def test_an_account_problem_and_a_staffing_problem_arrive_together_as_a_422(slots):
+    """One trip: the 422 carries the 409's sentence too, so nothing is learned only on the retry."""
+    refusal = slots({AD: "u-DESIGNER", RD: "u-ADMIN"}, inspecting={"u-ADMIN"})
+    assert refusal is not None and refusal.status_code == 422
+    assert "DESIGNER" in refusal.detail
+    assert "inspects this workshop" in refusal.detail
 
 
 def test_the_inspector_routes_import_the_assigner_door_rather_than_declaring_a_second_one():

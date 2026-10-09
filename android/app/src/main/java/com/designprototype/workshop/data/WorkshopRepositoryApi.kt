@@ -38,12 +38,21 @@ interface WorkshopRepositoryApi {
      * The signed-in account replacing its own password. The route `mustChangePassword` sends
      * somebody to, and until 2026-08-31 nothing on either client called it.
      *
-     * IT DOES NOT REVOKE SESSIONS, unlike redeeming a link, and the difference is who is asking: a
-     * person changing their own password from inside a session they are using has not lost control
-     * of anything, and signing them out of their own handset for tidiness is the worse answer.
+     * IT ENDS EVERY OLDER SESSION OF THE ACCOUNT, THIS ONE INCLUDED. Since 2026-10-09 a session
+     * token carries a fingerprint of the password it was opened with, so the write retires every
+     * token opened against the old one — the other tablet, and whoever else signed in with a
+     * temporary password somebody typed. (A token minted before that date carries no fingerprint and
+     * lives out its own expiry.) The answer therefore carries a fresh token for the session making
+     * the call — in the [SESSION_TOKEN_HEADER] response header, never in the body, which stays the
+     * `{"ok": true}` every shipped build decodes; see [ChangePasswordResponse] for why.
+     *
+     * A `Response`, NOT THE BARE BODY, because Retrofit hands back headers only inside one — the way
+     * the manifest streams read theirs. The price is that a refusal no longer throws by itself, so
+     * `WorkshopRepository.changeOwnPassword` throws the same `HttpException` the bare declaration
+     * did, and the gate reads a 400 exactly as before: the status, then the server's sentence.
      */
     @POST("auth/change-password")
-    suspend fun changeOwnPassword(@Body body: ChangePasswordRequest): Map<String, Boolean>
+    suspend fun changeOwnPassword(@Body body: ChangePasswordRequest): Response<ChangePasswordResponse>
 
     /**
      * Mint a set-password link for another account. Admin only, and throttled PER SUBJECT.
@@ -1853,14 +1862,16 @@ interface WorkshopRepositoryApi {
     // grants STAGE WRITES, because `load_workshop_or_404(..., for_edit=True)` performs no role check
     // at all. Do not move these five up beside the viewers block.
     //
-    // TWO DOORS, AND THEY ARE NOT NESTED. The two administration routes are `Depends(require_admin)`
-    // — the inspected must not choose the inspector, so a designer gets no say at all, not even a
-    // "suggest" route. The three read routes are `Depends(require_inspector)`, which is set
-    // membership on {INSPECTOR} and **403s an ADMIN and a MASTER ADMIN by name**. So an account that
-    // may call the first pair may not call the second, and vice versa: this is the one family in
-    // this interface where the two gates are DISJOINT rather than one being a widening of the other.
-    // Nothing here enforces either; the screens do, from `canInspectDesignWorkshops` and
-    // `FieldPermissions.isAdmin`, and the server does again.
+    // TWO DOORS, AND THEY ARE NOT NESTED. The administration routes are
+    // `Depends(require_workshop_assigner)` — a Ministry Admin, an admin or the master admin; the
+    // inspected must not choose the inspector, so a designer gets no say at all, not even a
+    // "suggest" route. The read routes are `Depends(require_inspector)`, which until 2026-10-09
+    // **403'd an ADMIN and a MASTER ADMIN by name** and since then admits every tier that may be
+    // appointed to inspect, scoped by its rows. THIS HANDSET KEEPS THE TWO DISJOINT, deliberately: its
+    // screens ask `canInspectDesignWorkshops` (the Inspector / Reviewer tier alone) and
+    // `FieldPermissions.isAdmin`, because ministry and admin work is web-only — so here an account
+    // that may use the first door may not use the second, the one family in this interface shaped
+    // that way. Nothing here enforces either; the screens do, and the server does again.
     //
     // EVERY ROUTE AN INSPECTOR CAN REACH IS A GET, AND THAT IS THE FEATURE. There is no PATCH twin,
     // no stage save and no report route on this prefix, and `load_inspectable_workshop_or_404` takes

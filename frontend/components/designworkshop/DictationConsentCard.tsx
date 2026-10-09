@@ -89,6 +89,15 @@ export type DictationConsentCardProps = {
   synced: boolean;
   /** Called with nothing once an answer has been written, so the page can re-read its draft. */
   onRecorded: () => void;
+  /**
+   * Why this reader may not record the answer ON THIS WORKSHOP although their role may, or null.
+   *
+   * Today that is a post: whoever inspects or supervises a workshop does not write it, and the
+   * consent is a write the server refuses them (`useHeldPostRefusal`). Drawn in place of the buttons,
+   * for this card's own reason — a greyed control refuses a press without saying why. Without it the
+   * answer would be taken on this device and refused on its way up, a recording that never counts.
+   */
+  readOnlyReason?: string | null;
 };
 
 export function DictationConsentCard({
@@ -98,14 +107,15 @@ export function DictationConsentCard({
   recordedAt,
   recordedByName,
   synced,
-  onRecorded
+  onRecorded,
+  readOnlyReason = null
 }: DictationConsentCardProps) {
   const { user } = useAuth();
   const [busy, setBusy] = useState<DwConsentDecision | null>(null);
   const [outcome, setOutcome] = useState<string | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
 
-  const mayRecord = canRunDesignWorkshops(user);
+  const mayRecord = canRunDesignWorkshops(user) && !readOnlyReason;
   const token = (consent ?? "").trim().toUpperCase();
   const granted = token === "GRANTED";
 
@@ -255,7 +265,7 @@ export function DictationConsentCard({
           </div>
         </>
       ) : (
-        <p className="text-xs leading-5 text-ink-500">{NOT_YOURS_TO_RECORD}</p>
+        <p className="text-xs leading-5 text-ink-500">{readOnlyReason ?? NOT_YOURS_TO_RECORD}</p>
       )}
 
       {/* Announced, because the visible change either button makes is a line of prose several rows

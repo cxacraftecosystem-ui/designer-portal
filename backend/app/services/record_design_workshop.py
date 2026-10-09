@@ -62,6 +62,30 @@ Two behaviours come with the helper and both are wanted:
   workshop would file it under something none of its own surfaces can show; the admin who can still
   see the trash restores it first, and the sentence tells them so.
 
+The helper brings a third since 2026-10-09: **403 for whoever holds the workshop's inspection or one
+of its two director posts**, who read it and do not write it. So filing a record INTO such a workshop
+— on a create or on a move — is refused to them by the same line, with nothing added here.
+
+===================================================================================================
+A RECORD FILED UNDER A WORKSHOP IS ITS CONTENT, AND ITS HOLDERS WRITE NONE OF IT (2026-10-09)
+===================================================================================================
+
+The owner's ruling: **the workshop's inspector and its Assistant and Regional Directors do not write
+its content, and the records filed under it are its content** — its scoped lists, its totals, the
+material its report is offered. So :func:`assert_may_write_a_record_filed_under` is asked by EVERY
+write to a record that already exists, about the workshop the stored row names: any PATCH, whatever
+it carries — an unfile and a move out are only two of its shapes — the DELETE, an interview merge
+with either side filed there, a tool's artisan links, and every edit of a questionnaire form attached
+to one. The PATCH asks it through :func:`assert_payload_workshop`, whose ``filed_under`` is required
+so no record form can leave it out.
+
+Without it, a holder who may edit somebody else's record (the PROFESSOR floor, which every
+administrator tier clears) could change through the record forms exactly what the oversight
+screen's own unlink and the stage saves refuse them. It asks
+``design_workshop_posts.refuse_a_holders_write`` and nothing else — no rights over the workshop — so
+a designer taking their own record back from a workshop they were removed from is exactly as free as
+before, and a role that can hold no post pays no query.
+
 ===================================================================================================
 WHAT THIS DOES NOT DO
 ===================================================================================================
@@ -79,6 +103,8 @@ WHAT THIS DOES NOT DO
 from __future__ import annotations
 
 from typing import Any
+
+from app.services import design_workshop_posts
 
 #: The column name, spelled once. Every schema, route and test that names it reads this.
 DESIGN_WORKSHOP_KEY = "designWorkshopId"
@@ -108,18 +134,45 @@ async def assert_may_file_under(workshop_id: str | None, user: Any) -> None:
     await load_workshop_or_404(workshop_id, user, for_edit=True)
 
 
-async def assert_payload_workshop(data: dict[str, Any], user: Any) -> None:
-    """:func:`assert_may_file_under` for a cleaned write payload, keyed on presence.
+async def assert_may_write_a_record_filed_under(workshop_id: str | None, user: Any) -> None:
+    """Refuse (403, naming the post) when ``user`` inspects or supervises the workshop a record is
+    FILED UNDER. Everybody else may, and is asked nothing about the workshop.
 
-    ``exclude_unset=True`` means the key is present only when the caller actually sent it, so an
-    UPDATE that does not mention the workshop is not re-validated — which matters because a record
-    filed under a workshop a designer has since been removed from must still be editable. Only a
-    caller who is CHANGING the link has to hold the link.
-
-    An explicit ``None`` unfiles the record and is always allowed: taking your own record out of a
-    workshop needs no permission on that workshop, and refusing it would strand a record filed by
-    mistake under a workshop the filer was later removed from.
+    Asked by every write to a record that already exists — see the module header for the list —
+    with the workshop its STORED row names. ``None`` and ``""`` are a record filed under no workshop,
+    and nothing is asked. A role that can hold no post is answered by the shared gate from memory,
+    so a designer saving their own record pays no query.
     """
+    if not workshop_id:
+        return
+    await design_workshop_posts.refuse_a_holders_write(workshop_id, user)
+
+
+async def assert_payload_workshop(
+    data: dict[str, Any], user: Any, *, filed_under: str | None
+) -> None:
+    """The record forms' workshop gate, in two halves: the workshop the stored row is filed under,
+    asked on EVERY call (:func:`assert_may_write_a_record_filed_under`), and the workshop the payload
+    files it under, asked when the payload names one (:func:`assert_may_file_under`).
+
+    ``filed_under`` IS THE WORKSHOP THE STORED ROW NAMES, and it is required so no write path can
+    leave it out by accident: an UPDATE passes its row's ``designWorkshopId``, a CREATE passes
+    ``None`` because a row that does not exist yet is filed nowhere. Its half is asked whatever the
+    PATCH carries, because the holder it refuses may not change ANY of the record (2026-10-09), and
+    first, so a holder moving the record is told about their post rather than about the destination.
+
+    THE DESTINATION IS KEYED ON PRESENCE. ``exclude_unset=True`` means the key is present only when
+    the caller actually sent it, so an UPDATE that does not mention the workshop is not re-validated
+    — which matters because a record filed under a workshop a designer has since been removed from
+    must still be editable. Only a caller who SENDS the link has to hold it, and re-sending the id
+    the row already holds is asked about exactly as it always was.
+
+    An explicit ``None`` unfiles the record and is allowed to everybody but the workshop's inspector
+    and its two directors: taking your own record out of a workshop needs no permission on that
+    workshop, and refusing it would strand a record filed by mistake under a workshop the filer was
+    later removed from.
+    """
+    await assert_may_write_a_record_filed_under(filed_under, user)
     if DESIGN_WORKSHOP_KEY not in data:
         return
     await assert_may_file_under(data.get(DESIGN_WORKSHOP_KEY), user)

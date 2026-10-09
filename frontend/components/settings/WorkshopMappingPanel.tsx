@@ -29,6 +29,16 @@
  * (`UnfiledRecordCard`) opening the three acts the owner asked for — open the record, file it under a
  * workshop by hand, or delete it permanently. `POST` / `DELETE /workshops/unmapped/{bucket}/{id}` are the
  * endpoints, both `require_admin`, which is the same gate this whole report already sits behind.
+ *
+ * A DESIGN WORKSHOP'S OWN RECORDS AND FILES ARE NOT "UNFILED" (2026-10-09). A record filed under a
+ * design & prototype workshop, or a photograph tagged to one, is that workshop's content even with no
+ * crafts workshop on it, and the server's ladder no longer offers it here — so this report never again
+ * invites an admin to delete a workshop's evidence as rubbish. One the ladder still meets (a file that
+ * belongs to a workshop only through a stage or the record it hangs off) is refused at the door: the
+ * discard with a 409 that sends the admin to the record's own screen, the filing — single or bulk —
+ * with the 403 naming the post when the admin inspects or supervises that workshop. Every one of those
+ * sentences is printed as the server wrote it — and so is the bulk filing's `heldBackDetail`, its own
+ * sentence for the rows it left alone for that reason, said beside the count it filed.
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -40,6 +50,7 @@ import {
   UnfiledRecordDialog,
   type UnfiledRecord
 } from "@/components/settings/UnfiledRecordCard";
+import { heldBackSentence } from "@/components/settings/unfiledRecords";
 import { apiFetch } from "@/lib/api";
 import { isAdmin } from "@/lib/permissions";
 
@@ -68,6 +79,13 @@ type MappingBucket = {
   rows: MappingRow[];
   rowsTruncated: boolean;
   applied: number | null;
+  /**
+   * On the bulk filing's answer: how many of this bucket's rows were LEFT ALONE because the admin who
+   * pressed it inspects or supervises the design workshop they belong to — a filing there is that
+   * workshop's content. Optional, because this client and the API deploy separately: absent is "none
+   * reported", never a zero.
+   */
+  heldBack?: number | null;
 };
 
 export type WorkshopMappingPlan = {
@@ -89,7 +107,16 @@ export type WorkshopMappingPlan = {
    */
   allWorkshops?: Array<{ id: string; title: string }>;
   buckets: MappingBucket[];
-  totals: { unassigned: number; resolved: number; unresolved: number; applied: number | null };
+  totals: {
+    unassigned: number;
+    resolved: number;
+    unresolved: number;
+    applied: number | null;
+    /** The buckets' `heldBack`, summed by the server — optional for the same reason. */
+    heldBack?: number | null;
+  };
+  /** The server's one sentence for those rows, on the bulk filing's answer when there are any. */
+  heldBackDetail?: string | null;
 };
 
 /** Type-of noun for the counts sentence. Plural unless the count is exactly one, as everywhere else. */
@@ -124,6 +151,8 @@ export function WorkshopMappingPanel() {
   const [applying, setApplying] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [applied, setApplied] = useState<number | null>(null);
+  /** Beside `applied`: what the same press left alone for a post the reader holds, in the server's words. */
+  const [heldBack, setHeldBack] = useState<string | null>(null);
   /**
    * The card whose actions are open, and whether the dialog is showing.
    *
@@ -174,12 +203,16 @@ export function WorkshopMappingPanel() {
     try {
       const result = await apiFetch<WorkshopMappingPlan>("/workshops/unmapped/map", { method: "POST" });
       setApplied(result.totals.applied ?? 0);
+      // From the APPLY answer, not the re-read below: the plan that follows is the same for every
+      // admin, and only this answer knows what was skipped for the one who pressed.
+      setHeldBack(heldBackSentence(result));
       // RE-READ rather than render the apply response. That response is built from the ladder run the
       // writes were derived FROM — it is a record of what was done, not a picture of what is left — so
       // rendering it would leave the tiles reporting the records just filed as still unfiled and the
       // button offering to file them again. A fresh read is the only thing that can say "nothing left".
       await load();
     } catch (cause) {
+      // The server's sentence, as written — a refusal names its reason, and a 403 names the post.
       setError(cause instanceof Error ? cause.message : "The records could not be mapped.");
     } finally {
       setApplying(false);
@@ -232,7 +265,9 @@ export function WorkshopMappingPanel() {
             data browser, the exports and the completion matrix — while still appearing under{" "}
             <span className="font-medium text-ink-700">All records</span>. That reads as an empty workshop
             rather than as a filter. This finds them and files each one where its own evidence points: the
-            record it hangs off, the artisans in it, or the workshop whose dates it was recorded inside.
+            record it hangs off, the artisans in it, or the workshop whose dates it was recorded inside. A
+            record or file filed under a design &amp; prototype workshop is not listed: it belongs to that
+            workshop, and is changed from its own screen.
           </p>
         </div>
         <button
@@ -425,8 +460,20 @@ export function WorkshopMappingPanel() {
             <p className="mt-3 flex items-center gap-2 rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-xs text-ink-700">
               <Check className="h-4 w-4 shrink-0 text-success-600" aria-hidden />
               {applied === 0
-                ? "Nothing left to file — every record the evidence could settle was already filed."
+                ? heldBack
+                  ? "Nothing was filed."
+                  : "Nothing left to file — every record the evidence could settle was already filed."
                 : `${applied} record${applied === 1 ? "" : "s"} filed. They now appear under their workshop everywhere: the search box, the map, the data browser, the exports and the completion matrix.`}
+            </p>
+          ) : null}
+          {/* WHAT THE SAME PRESS LEFT ALONE, AND WHY — the server's sentence, said whenever it reports
+              any, because the tiles above still count those rows as "can be filed now" for the next
+              admin who reads them, and a button that keeps offering to file them must not read as one
+              that did nothing. */}
+          {applied !== null && heldBack ? (
+            <p className="mt-2 flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-xs leading-5 text-amber-800">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+              {heldBack}
             </p>
           ) : null}
 

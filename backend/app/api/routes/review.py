@@ -27,8 +27,13 @@ from app.schemas.records import (
     WorkshopUpdate,
     drop_masked_identity_numbers,
 )
+from app.services import design_workshop_posts
 from app.services.access import record_revision
 from app.services.concurrency import gather_reads
+from app.services.record_design_workshop import (
+    DESIGN_WORKSHOP_KEY,
+    assert_may_write_a_record_filed_under,
+)
 from app.services.records import (
     clean_data,
     decimal_to_string,
@@ -413,6 +418,12 @@ _EDIT_SCHEMAS: dict[str, type[APIModel]] = {
 #   would let them clear ``needsAdminApproval`` and then approve their way past the admin gate.
 # - ``workshopId`` — moving a record between workshops is a workshop submission with its own
 #   assignment + window checks (``enforce_workshop_submission``); it belongs on the record's own PATCH.
+# - ``designWorkshopId`` — filing a record under a design & prototype workshop, or taking it out of
+#   one, is a filing with its own gate (``record_design_workshop.assert_payload_workshop``: the
+#   destination's loader, and the refusal of the inspector and the two directors of either end), so
+#   it belongs on the record's own PATCH for ``workshopId``'s reason. Until 2026-10-09 it was not on
+#   this list, and because ``_EDIT_SCHEMAS`` are the records' own ``*Update`` models a review edit
+#   could re-file any record under any workshop with no filing gate at all.
 # - the relation lists and ``location`` — those are separate writes (join rows, a Location row), not
 #   column updates, and a review edit is for correcting field values.
 _NOT_REVIEW_EDITABLE = frozenset(
@@ -420,6 +431,7 @@ _NOT_REVIEW_EDITABLE = frozenset(
         "status",
         "extraMetadata",
         "workshopId",
+        DESIGN_WORKSHOP_KEY,
         "location",
         "artisanIds",
         "craftIds",
@@ -481,6 +493,17 @@ async def edit_reviewed_record(
     the value) and a ``ReviewLog`` row records that this reviewer edited the record and why.
 
     The status is NOT touched unless ``approve`` is set — an edit is not an approval.
+
+    **NOT BY WHOEVER INSPECTS OR SUPERVISES THE WORKSHOP THE RECORD BELONGS TO (2026-10-09).** A
+    record filed under a design & prototype workshop is that workshop's content, and so is a file it
+    holds, caption and transcript included; its inspector and its Assistant and Regional Directors
+    read it and do not write it (``design_workshop_posts``, rule 5). The record forms and the media
+    routes already refuse them, and this is the same write reached from the review queue — so it
+    asks the same two gates, about the STORED row, before anything is written:
+    ``record_design_workshop.assert_may_write_a_record_filed_under`` for a record, and
+    ``design_workshop_posts.refuse_a_holders_media_write`` for a file. Approve, reject and send back
+    stay open to them: those are moderation, not authorship. And ``designWorkshopId`` itself is not
+    review-editable at all — see ``_NOT_REVIEW_EDITABLE``.
     """
     key = record_type.lower()
     delegate, log_type, creator_relation = delegate_for(record_type)
@@ -533,6 +556,15 @@ async def edit_reviewed_record(
                 "This record was submitted outside its workshop's dates. Only an admin or master "
                 "admin can edit or approve a late submission."
             ),
+        )
+    # THE WORKSHOP'S CONTENT IS NOT ITS HOLDERS' TO WRITE, from this door either: see the docstring.
+    # After the two authority checks, which cost no query, and before the transaction. A role that
+    # can hold no post is answered from memory by both gates; a record filed nowhere asks nothing.
+    if key == "media":
+        await design_workshop_posts.refuse_a_holders_media_write(record, reviewer)
+    else:
+        await assert_may_write_a_record_filed_under(
+            get_value(record, DESIGN_WORKSHOP_KEY), reviewer
         )
 
     # Same shape as every PATCH route: clean (which also title-cases the name-like fields) and

@@ -113,6 +113,10 @@ export type DiscardedRecord = {
  *
  * Both ids go through `encodeURIComponent`: they are CUIDs today and a path segment is not the place
  * to assume that stays true.
+ *
+ * REFUSED WITH A 403 NAMING THE POST to an admin who inspects or supervises the design workshop the
+ * record or file belongs to (2026-10-09) — a filing is a write of that workshop's content. The dialog
+ * prints the sentence as the server wrote it (`readableError`), and so must any second caller.
  */
 export async function fileUnfiledRecord(
   bucket: string,
@@ -125,7 +129,13 @@ export async function fileUnfiledRecord(
   );
 }
 
-/** Delete one unfiled record permanently. The server gates this on admin exactly as it gates the report. */
+/**
+ * Delete one unfiled record permanently. The server gates this on admin exactly as it gates the report.
+ *
+ * AND ANSWERS 409, FOR EVERY ADMIN, ON A ROW A DESIGN WORKSHOP CLAIMS (2026-10-09): such a row is that
+ * workshop's evidence, not rubbish nobody filed, and the sentence sends the admin to the record's or
+ * the file's own screen. Printed as the server wrote it — it is the only place the way forward is said.
+ */
 export async function discardUnfiledRecord(bucket: string, id: string): Promise<DiscardedRecord> {
   return apiFetch<DiscardedRecord>(
     `/workshops/unmapped/${encodeURIComponent(bucket)}/${encodeURIComponent(id)}`,
@@ -150,4 +160,59 @@ export function discardedNotice(result: DiscardedRecord): string {
   if (result.mediaKept <= 0) return gone;
   const files = result.mediaKept === 1 ? "1 media file" : `${result.mediaKept} media files`;
   return `${gone} ${files} that were attached to it were NOT deleted — they stay in the repository with nothing pointing at them, under Miscellaneous Media.`;
+}
+
+/**
+ * The part of `POST /workshops/unmapped/map`'s answer that says what it LEFT ALONE for a post the admin
+ * holds — per bucket, totalled, and in one sentence. All optional, because this client and the API
+ * deploy separately; each count is null on the preview, which wrote nothing.
+ */
+export type HeldBackCounts = {
+  buckets: ReadonlyArray<{ heldBack?: number | null }>;
+  totals: { heldBack?: number | null };
+  /** The server's own sentence for them (`workshop_inference.HELD_BACK_DETAIL`), when there are any. */
+  heldBackDetail?: string | null;
+};
+
+/**
+ * How many rows a bulk filing LEFT ALONE because the admin who pressed it inspects or supervises the
+ * design workshop they belong to (2026-10-09: filing one there writes that workshop's content). The
+ * server's total, else the buckets' counts added up, else null — an answer that reports nothing is
+ * "not reported", which must never be printed as "none were left alone".
+ */
+export function heldBackOf(answer: HeldBackCounts): number | null {
+  if (typeof answer.totals.heldBack === "number") return answer.totals.heldBack;
+  const counts = answer.buckets
+    .map((bucket) => bucket.heldBack)
+    .filter((count): count is number => typeof count === "number");
+  return counts.length ? counts.reduce((sum, count) => sum + count, 0) : null;
+}
+
+/**
+ * This client's sentence for `count` such rows, or null for none — the server's `HELD_BACK_ONE_DETAIL`
+ * for one row and `HELD_BACK_DETAIL` for several, word for word (both pinned by
+ * `e2e/workshop-post-holder-readonly-unit.spec.ts`, which reads them off the server). Only ever the
+ * FALLBACK: {@link heldBackSentence} prints the server's own when it sent one.
+ */
+export function heldBackNotice(count: number | null): string | null {
+  if (!count || count <= 0) return null;
+  return count === 1
+    ? "1 record belongs to a design workshop you inspect or supervise, so it was left as it was: whoever inspects " +
+        "or supervises a workshop does not write it. It stays on this report for an administrator who holds no post " +
+        "on that workshop."
+    : `${count} records belong to a design workshop you inspect or supervise, so they were left as they were: ` +
+        "whoever inspects or supervises a workshop does not write it. They stay on this report for an administrator " +
+        "who holds no post on that workshop.";
+}
+
+/**
+ * What the report says about the rows a bulk filing left alone, or null for none: THE SERVER'S
+ * SENTENCE, verbatim, and this client's only where a server reported a count without one. Said beside
+ * the count the same press filed, because the tiles still count those rows as "can be filed now" — for
+ * the next admin, rightly — and a button that keeps offering to file them must not read as one that
+ * did nothing.
+ */
+export function heldBackSentence(answer: HeldBackCounts): string | null {
+  const said = answer.heldBackDetail?.trim();
+  return said ? said : heldBackNotice(heldBackOf(answer));
 }

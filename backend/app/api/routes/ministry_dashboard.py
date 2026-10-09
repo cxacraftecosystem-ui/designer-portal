@@ -95,7 +95,8 @@ from app.core.deps import (
 )
 from app.services import design_workshop_oversight as officers, ministry_dashboard as register
 from app.services.concurrency import gather_reads
-from app.services.design_workshops import workshop_summary
+from app.services.design_workshop_inspectors import INSPECTION_ROLES
+from app.services.design_workshops import stage_writers, workshop_summary
 from app.services.pagination import normalize_pagination, page_payload
 from app.services.records import contains
 
@@ -1050,6 +1051,15 @@ async def list_designers(
     are reported separately and ``workshops`` counts each workshop ONCE, because a designer who opened
     a workshop and was later also added as a viewer is one designer on one workshop.
 
+    **AND THE CREATOR ARM COUNTS A CREATOR ONLY WHERE THEY DESIGNED IT (2026-10-09).** Opening a
+    workshop is an administrative act: a sanction order makes the recording officer its creator and
+    then forbids them to author it, and a Ministry Admin promoting thirty plan rows opens thirty
+    workshops somebody else will run. Counting every creator listed those officers as the designers
+    of workshops they may not write, with progress against them. A creator is counted where
+    ``design_workshops.stage_writers`` says they wrote its stages — the same authorship test the
+    separation of duties applies, which already discounts the opening's own prefill — so
+    ``workshopsCreated`` now reads "opened and worked on".
+
     ── THE EMPANELLED DESIGNER WITH NOTHING TO DO IS THE MOST ACTIONABLE ROW ON THIS SCREEN ──────
 
     A register built only from links cannot contain them: somebody with no workshop row would be
@@ -1104,12 +1114,14 @@ async def list_designers(
             logger.exception("ministry dashboard: measuring roster representation failed")
             return None
 
-    # FIVE READS, GATHERED, AND ONLY TWO OF THEM MAY FAIL. The viewer links and the creator accounts
-    # are what this register IS; the scoring, the roster and the representation gap are columns and
-    # captions on it. See the section header.
-    links, creators, scored_map, roster, representation = await gather_reads(
+    # SIX READS, GATHERED, AND ONLY THREE OF THEM MAY FAIL. The viewer links, the creator accounts
+    # and which creators actually wrote their workshops are what this register IS; the scoring, the
+    # roster and the representation gap are columns and captions on it. See the section header.
+    creator_ids = {str(getattr(record, "createdById", "") or "") for record in records} - {""}
+    links, creators, authored, scored_map, roster, representation = await gather_reads(
         register.designer_links(workshop_ids),
         register.creator_accounts(records),
+        stage_writers(workshop_ids, creator_ids),
         _people_progress_or_none(workshop_ids, "designer"),
         _roster_or_none(),
         _representation_or_none(),
@@ -1156,7 +1168,11 @@ async def list_designers(
         register.add_score(row, progress.get(str(record.id)))
 
     for record in records:
-        _fold(creators.get(str(getattr(record, "createdById", "") or "")), record, created=True)
+        creator_id = str(getattr(record, "createdById", "") or "")
+        # OPENING A WORKSHOP IS NOT DESIGNING IT — see the docstring. A creator who wrote none of it
+        # is not a designer of it, so they are neither counted nor withheld here.
+        if (str(record.id), creator_id) in authored:
+            _fold(creators.get(creator_id), record, created=True)
     for link in links:
         _fold(
             getattr(link, "user", None),
@@ -1244,9 +1260,9 @@ async def list_officers(
     three colleagues as "the directorate" would be reading their own postings as the country.
 
     ``byCapacity`` AND NOT A ROLE COUNT. An oversight row carries the CAPACITY the person was filed
-    in, and ``OVERSIGHT_CAPACITY_ROLES`` allows exactly one role per capacity today — so the two
-    happen to agree, and would stop agreeing the day a third capacity is added, which is an
-    ``ALTER TYPE`` plus an entry in that map. The keys are seeded from ``CAPACITIES`` so a third one
+    in, and since 2026-10-09 the role no longer says which: an administrator may be named to either
+    slot (``OVERSIGHT_CAPACITY_ROLES``). A third capacity would be an ``ALTER TYPE`` plus an entry in
+    that map. The keys are seeded from ``CAPACITIES`` so a third one
     appears here without a code change, and ``unknownCapacity`` catches a capacity a server one
     release ahead can legitimately store — the same reasoning ``group_of`` and ``unclassified``
     already carry for a ninth status.
@@ -1328,23 +1344,24 @@ async def list_officers(
         else:
             row["unknownCapacity"] += 1
         # The PK is [designWorkshopId, capacity], so one person can hold BOTH capacities on one
-        # workshop only by being filed in two slots — which `OVERSIGHT_CAPACITY_ROLES` forbids today
-        # by role. Counted per row regardless: `workshops` is what this register measured, and
-        # inventing a de-duplication for a state the schema does not produce would be a rule nobody
-        # could test.
+        # workshop only by being filed in two slots. Since 2026-10-09 an administrator fits both
+        # slots by role, and what forbids one person holding both is the separation-of-duties rule
+        # every appointment passes (`services/design_workshop_posts`). Counted per row regardless:
+        # `workshops` is what this register measured, and a row written before that rule — the one
+        # way the state can exist — is a row, not something for this screen to explain away.
         register.count_workshop(row, record)
         register.add_score(row, progress.get(str(record.id)))
 
     for entry in (directory or {}).get("users", []):
-        # ⚠ ONLY THE POSTS THAT CAN HOLD A CAPACITY, AND THE OMISSION IS A ROLE FACT RATHER THAN A
-        # TRUNCATION. `officer_directory` answers all THREE ministry posts, and
-        # `OVERSIGHT_CAPACITY_ROLES` admits a MINISTRY_ADMIN to neither slot — which is exactly what
-        # that payload's `capacities` key exists to tell a picker, and why this reads the key rather
-        # than re-deriving the rule from a role name. A Ministry Administrator listed here with two
-        # zeros would read as an officer supervising nothing, when in truth they supervise nothing
-        # BY ROLE and can never appear in the relation this list is counted over. The sentence under
+        # ⚠ ONLY THE TWO POSTS WHOSE JOB A SLOT IS, AND THE OMISSION IS A ROLE FACT RATHER THAN A
+        # TRUNCATION. `officer_directory` answers every account that MAY be named to a slot, which
+        # since 2026-10-09 includes the three administrator tiers. An administrator posted to
+        # nothing is not an officer with no work — supervising is not their job, only something
+        # they may be appointed to — so they appear on this register where a row names them and
+        # nowhere else. Folding them in would also count every ADMIN in the installation as a
+        # "withheld account holding a row" when they hold none. The sentence under
         # `unpostedAccountsNote` says so rather than leaving the absence to be noticed.
-        if not entry.get("capacities"):
+        if entry.get("role") not in officers.DIRECTORATE_POST_ROLES:
             continue
         # The directory's rows are plain dicts, not User records, so they are wrapped in the same
         # attribute shape `new_person_row` reads. Nothing new is disclosed: `officer_directory`
@@ -1373,10 +1390,10 @@ async def list_officers(
         scoring_read=scoring_read,
         includes_unposted=directory is not None,
         unposted_note=(
-            "Officers holding a ministry post but posted to nothing in this scope are listed with "
-            "a measured zero. Only the two posts that can hold a capacity are listed — a Ministry "
-            "Administrator may be named on no oversight slot at all, so they are not an officer "
-            "this register counts."
+            "Assistant Directors and Regional Directors posted to nothing in this scope are listed "
+            "with a measured zero. An administrator — a Ministry Administrator included — may be "
+            "named to either slot, and is listed only where one names them: supervising is not "
+            "their job, so holding no slot is not a gap in their work."
             if directory is not None
             else (
                 "This list is only the officers posted to workshops you can see. The directory of "
@@ -1502,6 +1519,12 @@ async def list_inspectors(
         register.add_score(row, progress.get(str(record.id)))
 
     for entry in (directory or {}).get("users", []):
+        # ⚠ ONLY THE INSPECTOR TIER IS LISTED UNPOSTED. `eligible_inspectors` answers every account
+        # that MAY be assigned an inspection, which since 2026-10-09 includes the three
+        # administrator tiers; the reason they appear only where a row names them is the officers'
+        # register's, written beside its own fold.
+        if entry.get("role") not in INSPECTION_ROLES:
+            continue
         _person(
             SimpleNamespace(
                 id=entry.get("id"),
@@ -1527,8 +1550,9 @@ async def list_inspectors(
         scoring_read=scoring_read,
         includes_unposted=directory is not None,
         unposted_note=(
-            "Inspectors who may be assigned but hold no inspection in this scope are listed with a "
-            "measured zero."
+            "Inspectors who hold no inspection in this scope are listed with a measured zero. An "
+            "administrator may also be appointed to inspect a workshop, and is listed only where "
+            "an inspection names them."
             if directory is not None
             else (
                 "This list is only the inspectors assigned to workshops you can see. The directory "

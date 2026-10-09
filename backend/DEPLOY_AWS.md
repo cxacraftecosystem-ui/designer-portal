@@ -332,7 +332,13 @@ GEMINI_API_KEYS=...,...
 MEDIA_QUEUE_WORKER_ENABLED=false
 
 BACKEND_CORS_ORIGINS=https://your-frontend-domain
+# Required in production: the origin every set-password and invite link is built on. The default,
+# http://localhost:3000, only suits a laptop. Use the same origin as the first CORS entry above.
+NEXT_PUBLIC_APP_URL=https://your-frontend-domain
 ```
+
+On this deployment those two values do not come from the template: `.github/workflows/deploy-backend.yml`
+pins both, to `https://designer-repository.vercel.app`, on every deploy (§8.2).
 
 Do **not** commit `.env`. Presigned PUTs use SigV4 (already configured in `services/s3.py`), so any
 region works.
@@ -379,8 +385,8 @@ Everything below is codified in the repo so the only manual inputs are credentia
 ### 8.1 Provision with Terraform (`infra/terraform/`)
 
 Creates the **S3 bucket** (public-read `media/*` + CORS), an **IAM user** with
-`PutObject/GetObject/DeleteObject` and a fresh **access key**, and a **t3.micro**
-EC2 box with an **Elastic IP**, a 2 GiB swap file, **nginx** (reverse proxy on 80,
+`PutObject/GetObject/DeleteObject` and a fresh **access key**, and a **t3.small**
+(a `t3.micro` until 2026-09-17; §1 says why) EC2 box with an **Elastic IP**, a 2 GiB swap file, **nginx** (reverse proxy on 80,
 so port 8000 is never exposed) and **ffmpeg** (needed for Whisper long-audio
 chunking), plus the `fieldrepo` systemd unit. It creates **no database** — that stays off the box.
 
@@ -425,7 +431,10 @@ units — on every push to `main` that touches `backend/`. Set these repo secret
 | `AWS_MEDIA_ACCESS_KEY_ID` / `AWS_MEDIA_SECRET_ACCESS_KEY` | the `designrepo-media` IAM user's key pair, so the backup job can write the dump into the media bucket. **Deliberately not `AWS_ACCESS_KEY_ID`** — that pair belongs to `designrepo-ci-sg`, whose policy allows exactly two security-group calls and is handed to the step that opens port 22. It must never be widened. |
 
 The `.env` is piped to the server over the SSH tunnel — it is never written to
-the workflow logs or a command line. **There is no standing SSH access to this box**: the deploy
+the workflow logs or a command line. Two of its keys are then overwritten in the workflow itself,
+because they are public and must not drift: `BACKEND_CORS_ORIGINS` and, since 2026-10-09,
+`NEXT_PUBLIC_APP_URL`, both pinned to the production web origin by the step *Pin the CORS origins
+and the link origin*. **There is no standing SSH access to this box**: the deploy
 opens port 22 for one runner IP and revokes it in an `if: always()` step, and a human reaches the box
 with `aws ssm start-session`. `docs/CI.md` §1.2 is the full runbook, including the rollback.
 
@@ -435,8 +444,11 @@ with `aws ssm start-session`. `docs/CI.md` §1.2 is the full runbook, including 
 > troubleshooting — is **[docs/DEPLOYMENT_VERCEL.md](../docs/DEPLOYMENT_VERCEL.md)**. The summary
 > below is what matters from the backend's point of view.
 
-The Vercel project is linked to this GitHub repo (same account), so each push to
-`main` auto-deploys. In the Vercel project settings:
+~~The Vercel project is linked to this GitHub repo (same account), so each push to
+`main` auto-deploys.~~ The Vercel project has been **unlinked** from GitHub since 2026-07-27, and
+`.github/workflows/deploy-frontend.yml` publishes it after this backend deploys, so the site never
+calls an endpoint the box does not have yet ([docs/CI.md](../docs/CI.md) §1). In the Vercel project
+settings:
 
 - **Root Directory:** `frontend` (this is a monorepo; `frontend/vercel.json` pins the Next.js
   framework, `npm ci` install and `next build`). Leaving it at the repo root fails the build with
@@ -447,7 +459,10 @@ The Vercel project is linked to this GitHub repo (same account), so each push to
   `NEXT_PUBLIC_GOOGLE_CLIENT_ID` and `NEXT_PUBLIC_MAPTILER_API_KEY`. Do **not** add
   `NEXT_PUBLIC_APP_URL` here expecting an effect — no code under `frontend/` reads it, so setting it
   in Vercel changes nothing. What lets the Vercel origin reach the API is its presence in
-  `BACKEND_CORS_ORIGINS` (last bullet below), not its name in this dashboard.
+  `BACKEND_CORS_ORIGINS` (last bullet below), not its name in this dashboard. **The backend's
+  variable of the same name is the opposite case: required in production**, because every
+  set-password and invite link is built on it. The deploy pins it beside the CORS origins (§8.2),
+  and [docs/ENVIRONMENT.md](../docs/ENVIRONMENT.md) has the row.
 - **Redeploy after any env change.** `NEXT_PUBLIC_*` values are inlined into the bundle at build
   time, so editing them in the dashboard changes nothing until a fresh build runs (redeploy with
   the build cache disabled).
@@ -457,9 +472,11 @@ The Vercel project is linked to this GitHub repo (same account), so each push to
   would still be blocked.) The Android app talks to the same CloudFront URL.
 - **Google sign-in:** add the Vercel origin to the Google OAuth web client's *Authorized JavaScript
   origins*, or the GSI button returns 403.
-- Add the resulting Vercel URL to `BACKEND_CORS_ORIGINS` (in `BACKEND_ENV`) and to
-  the bucket's `cors_allowed_origins` Terraform var. Both take **exact** origins — scheme + host,
-  no trailing slash, no wildcards — so preview deployments (per-deployment hostnames) are not
+- Add the resulting Vercel URL to `BACKEND_CORS_ORIGINS` and to the bucket's
+  `cors_allowed_origins` Terraform var. On this deployment the first lives in the pin step of
+  `.github/workflows/deploy-backend.yml`, not in `BACKEND_ENV`, which that step overrides; change the
+  backend's `NEXT_PUBLIC_APP_URL` there in the same edit. Both lists take **exact** origins — scheme
+  + host, no trailing slash, no wildcards — so preview deployments (per-deployment hostnames) are not
   covered by the production entry.
 
 ### 8.4 Point the Android app at the box

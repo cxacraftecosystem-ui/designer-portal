@@ -19,8 +19,9 @@
  * **404** to them, exactly as it does to a professor. The three directorate tiers are now inside
  * that set, so that is no longer the reason and this page must not lean on it: what makes a
  * MONITORED workshop read-only is the oversight assignment it is rendered from, which grants
- * watching and not authoring. An officer who separately holds a viewer grant on the same workshop
- * edits it in the workshop tree, not here.
+ * watching and not authoring. Since the owner's ruling of 2026-10-09 that holds in the workshop tree
+ * too: whoever holds a post on a workshop — an admin named its Regional Director, say — is refused
+ * its writes there for as long as they hold it, and a designer row on it is refused to them.
  *
  * The read-only banner is DECLARED rather than left to be inferred from the absence of buttons: a
  * screen with no Save on it looks the same as a screen whose Save has not loaded yet.
@@ -71,19 +72,25 @@ import {
 import { formatDate } from "@/lib/format";
 import { isUnreachable } from "@/lib/offline";
 import { canReadWorkshopOversight, roleLabel } from "@/lib/permissions";
+import type { User } from "@/lib/types";
 import {
   CAPACITY_LABELS,
   getOverseenWorkshop,
   oversightIsReadOnly,
+  oversightRefusalMeansNoPosts,
   type DwOversightDetail
 } from "../../oversight";
 
-function describeFailure(error: unknown): string {
+function describeFailure(error: unknown, user: User | null | undefined): string {
   if (!(error instanceof ApiError) || isUnreachable(error)) {
     return "This device cannot reach the repository, so this workshop could not be read. Nothing was loaded at all.";
   }
+  if (oversightRefusalMeansNoPosts(error, user)) {
+    // An admin the server will not yet show this surface to holds no post anywhere — so none here.
+    return "This workshop is not one you supervise: you do not hold any Assistant Director or Regional Director posts. A Ministry Admin, an admin or the master admin names them one workshop at a time, on Workshop oversight.";
+  }
   if (error.status === 404) {
-    return "This workshop is not one you have been assigned to supervise, or it no longer exists. A Ministry Admin assigns an Assistant Director and a Regional Director one workshop at a time, on Workshop oversight.";
+    return "This workshop is not one you have been named on as Assistant Director or Regional Director, or it no longer exists. A Ministry Admin, an admin or the master admin names them one workshop at a time, on Workshop oversight.";
   }
   return error.message;
 }
@@ -329,7 +336,7 @@ export default function WorkshopUnderOversightPage({
       })
       .catch((err) => {
         if (cancelled) return;
-        setError(describeFailure(err));
+        setError(describeFailure(err, user));
       });
     return () => {
       cancelled = true;
@@ -375,7 +382,7 @@ export default function WorkshopUnderOversightPage({
             PURPLE, DELIBERATELY, ON THE ONE PANEL OF THIS PAGE THAT IS NOT A MINISTRY SURFACE.
             The read-only band above moved to the `ministry` ramp in 0.0.12 and this padlock did
             not: a refusal is shown to somebody who is NOT a ministry account — a designer, a
-            professor, an admin — and painting the ministry's own colour around the notice that
+            professor, an inspector — and painting the ministry's own colour around the notice that
             they are not of the ministry would be a lie told in colour. `AppShell` makes the same
             call one level up and stamps `data-surface="ministry"` only when the page is served.
           */}
@@ -386,8 +393,9 @@ export default function WorkshopUnderOversightPage({
             Officer access required
           </h1>
           <p className="mx-auto mt-3 max-w-lg text-sm leading-6 text-ink-500">
-            This page belongs to the Assistant Director, Regional Director and Ministry Admin posts.
-            Designers and admins read design &amp; prototype workshops on Design workshops instead.
+            A monitored workshop is read by whoever was named on it as Assistant Director or Regional
+            Director — an officer of that tier, a Ministry Admin, an admin or the master admin.
+            Designers read design &amp; prototype workshops on Design workshops instead.
           </p>
           <p className="mt-3 text-xs text-ink-500">
             You are signed in as{" "}

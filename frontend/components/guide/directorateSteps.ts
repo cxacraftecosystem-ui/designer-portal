@@ -30,9 +30,10 @@ import type { GuideStep } from "@/components/guide/steps";
  *     earned the capability yet — a researcher reads the workshop arc, meets a padlock, and at
  *     least knows what the padlock is in front of. That argument works because the arc describes
  *     ONE surface with ONE gate and the cards say so in one repeated sentence. The cards below
- *     have a different gate EACH — four of them non-monotonic in rank, and three of them refusing
- *     an ADMIN by name. One repeated padlock sentence cannot be written for them, which is why each
- *     card carries its own and why they are not mixed in among cards that share one.
+ *     have a different gate EACH — four of them non-monotonic in rank, and the ministry dashboard
+ *     refusing an ADMIN by name (Workshops I monitor did too, until admins could be appointed to a
+ *     post on 2026-10-09). One repeated padlock sentence cannot be written for them, which is why
+ *     each card carries its own and why they are not mixed in among cards that share one.
  *  3. ANDROID READS `steps.ts` AS TEXT. `WalkthroughStepsTest.kt` scans from the `GUIDE_STEPS`
  *     declaration to the end of the file for `^    id: "`, and asserts the handset has a step for
  *     every id it finds. A second array appended to that file would therefore be read as fifteen
@@ -319,7 +320,8 @@ export const DIRECTORATE_STEPS: GuideStep[] = [
     ],
     watch: [
       "A REGIONAL DIRECTOR IS REFUSED THIS SCREEN, AND THEY OUTRANK AN ASSISTANT DIRECTOR. Every rank instinct is wrong about it, which is why the rule is a set and not a threshold: the supervised must not choose the supervisor. Naming officers is a Ministry Admin's act, or an admin's. A Regional Director who genuinely needs to assign is a Ministry Admin, which is a role change on Users — not a widening here.",
-      "A MINISTRY ADMIN CANNOT BE NAMED IN EITHER SLOT, and the picker draws them greyed with the reason on the row: they supervise the scheme rather than one workshop. The server refuses it too, so this is a rule and not a UI preference.",
+      "A MINISTRY ADMIN, AN ADMIN OR THE MASTER ADMIN CAN BE NAMED IN EITHER SLOT, OR AS AN INSPECTOR — BY SOMEBODY ELSE. Nobody names themselves, so you are never offered in your own pickers. One person is never both the Assistant Director and the Regional Director of one workshop, never supervises a workshop they also inspect, and never supervises or inspects one they hold designer access to or have written stages in — opening a workshop does not count as writing it. The server refuses each of these with the rule in the sentence, and nothing is changed when it does.",
+      "WHOEVER SUPERVISES OR INSPECTS A WORKSHOP DOES NOT WRITE IT. Holding either post, or an inspection, takes that workshop's writes away from you for as long as you hold it — its stages, its details, its artisan list and who its designers are — on this screen and every other, admin or not. You can still read all of it, name OTHER people to its posts, and generate its report. Ask whoever appointed you to take you off the post if you need to work on it.",
       "NAMING A DESIGNER IS ALSO GIVING THEM ACCESS. It copies their profile — name, institution, biography, experience, contact details — into stages 1 and 3, and overwrites nothing else those stages already hold. A designer with no profile of their own leaves those boxes empty rather than borrowing yours, so it is worth asking them to fill their profile in first.",
       "AN OVERSIGHT ROW IS NOT ACCESS TO THE WORKSHOP. The two officers can READ every stage and save nothing — they read it on Workshops I monitor, which is a different screen from the one the designers use.",
       "⚠ THE ARTISAN PRO-FORMA CARRIES AADHAAR NUMBERS, which are regulated personal data. Do not email the filled-in file and do not leave it in a shared folder; delete it once the upload is confirmed. The workbook itself is never stored here — only its name, the counts, and the rows that could not be read.",
@@ -354,14 +356,21 @@ export const DIRECTORATE_STEPS: GuideStep[] = [
       "THIS IS SET MEMBERSHIP AND NOT A RANK, and the ladder gives the wrong answer for it every time. A PROFESSOR sits below all three of your tiers and is still refused, because being senior to a designer is not being one; an INSPECTOR is refused for a sharper reason — they would be authoring the stages they later review.",
       "YOU CANNOT START A BARE WORKSHOP. Creating one from nothing is an admin's and the master admin's. Your two doors are the two cards above this one: a Ministry Admin opens a planned row on Annual plan, an Assistant Director or Regional Director records a sanction order. Both create a real workshop; neither is the “New workshop” button, and you will not see that button.",
       "⚠ IF YOU RECORDED THE SANCTION ORDER THAT OPENED A WORKSHOP, YOU CANNOT SAVE A STAGE IN IT. The workshop is on your list, every stage opens, the report generates — and the first save answers 403 with that sentence. Read the Sanction orders card above for the whole rule; the short version is that signing for the work and doing the work are two people.",
-      "BEING NAMED AS A WORKSHOP'S ASSISTANT DIRECTOR OR REGIONAL DIRECTOR DOES NOT PUT IT HERE. An oversight assignment is a reading posting and lives on Workshops I monitor. You reach a workshop here by having created it, or by being added to it on the workshop's own screen.",
+      // WHO IS TOLD, AND WHERE, DIFFERS BY TIER — and this said "the page says so above the stages" to
+      // all three until 2026-10-09. The notice above the stages asks the staffing reads, which are the
+      // appointers' (`readHeldWorkshopPosts`): a Ministry Admin sees it, an Assistant or Regional
+      // Director never does and learns it from the refused save — and, on a workshop their own
+      // sanction order opened, from the sanction-order sentence, which the server checks first.
+      "BEING NAMED AS A WORKSHOP'S ASSISTANT DIRECTOR OR REGIONAL DIRECTOR DOES NOT PUT IT HERE. An oversight assignment is a reading posting and lives on Workshops I monitor. You reach a workshop here by having created it, or by being added to it on the workshop's own screen — and a workshop you hold a post on is read-only to you here as well. A Ministry Admin is told so above the stages; an Assistant or Regional Director is told by the save itself, which is refused with a sentence naming the post (or, on a workshop your own sanction order opened, with the sanction-order sentence above).",
       "CHOOSING A RECORD IN A STAGE COPIES ITS VALUES ONTO THE STAGE, and the report prints that copy. Correcting the artisan record next week does not change a report generated last month — which is the point, and the reason a correction has to be made on the stage as well if the document has already gone."
     ]
   },
   {
     // LAST, because it is the read-back: the fortnight has happened and an officer is looking at
-    // what came of it. It also carries the one fact in this deck that reads as a defect and is not
-    // — a Ministry Admin passes this screen's gate and can never have a row on it.
+    // what came of it. It carried, until 2026-10-09, the one fact in this deck that read as a defect
+    // and was not — a Ministry Admin passed this screen's gate and could never have a row on it. The
+    // owner's ruling that day lets a Ministry Admin, an admin and the master admin be NAMED in either
+    // post by somebody else, so the screen opens for all three and is scoped to their rows.
     id: "ministry-monitored",
     label: "Workshops I monitor",
     action: "Read a workshop you supervise",
@@ -383,9 +392,8 @@ export const DIRECTORATE_STEPS: GuideStep[] = [
       "All 22 stages, read-only, with who wrote each field"
     ],
     watch: [
-      "AN ADMIN IS REFUSED THIS SCREEN BY NAME, and that is the server's rule rather than this client narrowing one. The argument is worth knowing because it looks like an oversight: an admin scoped to their OWN oversight rows sees an empty page and reads it as a broken feature, and an admin scoped to “everything, because they are an admin” turns this into a second full read of every workshop in the archive. Admins read design & prototype workshops on Design workshops.",
-      "⚠ A MINISTRY ADMIN OPENS THIS SCREEN AND WILL NEVER HAVE A ROW ON IT. The gate admits all three ministry posts, and the rows are oversight assignments — and a Ministry Admin cannot be named as a workshop's Assistant Director or Regional Director, which is the rule on the Workshop oversight card above. So the page is permanently the empty state for that tier. It is correct, it is not a fault, and it is written here because nothing on the screen itself can tell you that your empty page is structural rather than “nobody has assigned you yet”.",
-      "AN EMPTY PAGE IS A REAL ANSWER AND THE SCREEN SAYS WHICH KIND IT IS. Nothing assigned reads “No workshop is assigned to you”; a list that could not be read says so instead and keeps whatever was already on screen — because a correct empty state and a silent failure look identical, and there is no other surface here to cross-check against.",
+      "AN ADMIN CAN HAVE ROWS HERE TOO, NAMED BY SOMEBODY ELSE. A Ministry Admin, an admin or the master admin can be named a workshop's Assistant Director or Regional Director by somebody else, and then reads it here exactly as an officer does — scoped to the workshops they were named on, never every workshop. Until somebody names them this screen says they hold no posts.",
+      "AN EMPTY PAGE IS A REAL ANSWER AND THE SCREEN SAYS WHICH KIND IT IS. Nothing assigned reads “You do not hold any … posts”, naming the post or posts you may hold; a list that could not be read says so instead and keeps whatever was already on screen — because a correct empty state and a silent failure look identical, and there is no other surface here to cross-check against.",
       "PHOTOGRAPHS, RECORDINGS AND ATTACHMENTS ARE COUNTED, NOT SHOWN — “3 files recorded here”. An empty gallery would look like a file that failed to load, which is not what happened.",
       "THERE IS NO SAVE, NO SUBMIT AND NO DELETE ON THIS PAGE, and none of them is missing: there is no route behind it that would accept one. If a stage is wrong, the people who can change it are its designers."
     ]

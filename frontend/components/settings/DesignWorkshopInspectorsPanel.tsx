@@ -3,15 +3,16 @@
 import { ScanEye, Save } from "lucide-react";
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 
+import { useAuth } from "@/components/AuthProvider";
 import { SearchInput } from "@/components/SearchInput";
 import { FieldBlock } from "@/components/tasks/TaskPrimitives";
 import { Dropdown, MultiSelectDropdown, type DropdownOption } from "@/components/ui/Dropdown";
 import { useToast } from "@/components/ui/Toast";
-import { ApiError } from "@/lib/api";
 import {
   eligibleInspectorNotice,
   ELIGIBLE_INSPECTOR_SEARCH_MAX,
   inspectionAdministrationMissing,
+  inspectorAdministrationFailure,
   listDesignWorkshopInspectors,
   listEligibleDesignWorkshopInspectors,
   MAX_DESIGN_WORKSHOP_INSPECTORS,
@@ -20,9 +21,9 @@ import {
   type DwInspector
 } from "@/lib/designWorkshopInspections";
 import { listDesignWorkshops, type DwSummary } from "@/lib/designWorkshops";
+import { absenceProvesIneligible } from "@/lib/designWorkshopViewers";
 import { formatDateTime } from "@/lib/format";
-import { isUnreachable } from "@/lib/offline";
-import { roleLabel } from "@/lib/permissions";
+import { canAssignWorkshopOversight, roleLabel, selfReleaseRefusal, selfReleaseRefused } from "@/lib/permissions";
 import {
   designWorkshopOptions,
   deviceLooksOffline,
@@ -37,9 +38,10 @@ import {
 /**
  * WHO INSPECTS ONE DESIGN & PROTOTYPE WORKSHOP — the ASSIGNER's half of the fifth scope.
  *
- * The other half is the inspector's own read surface at /design-workshop-inspections, which none of
- * these accounts can open: `assert_inspection_surface` 403s an admin by name. Two halves, two doors,
- * and this panel is the only place an inspection comes into existence.
+ * The other half is the inspector's own read surface at /design-workshop-inspections, which these
+ * accounts open too since the owner's ruling of 2026-10-09 — to read the workshops THEY have been
+ * appointed to inspect, by somebody else. Two halves, two doors, and this panel is the only place an
+ * inspection comes into existence.
  *
  * ── IT SAID "the admin's half" UNTIL 0.0.12, AND THE CHANGE IS AN OWNER'S RULING ─────────────────
  *
@@ -49,12 +51,21 @@ import {
  * stage a workshop into PRE_SUBMISSION and then cause nobody at all to inspect it — the journey
  * simply stopped, with no refusal anybody could act on.
  *
- * **THE TIER'S OWN RULE IS UNTOUCHED, WHICH IS WHAT MADE THE WIDENING SAFE.** "The inspected must
- * not choose the inspector" is a statement about INSPECTION_ROLES — a frozenset of one, {INSPECTOR}
- * — and MINISTRY_ADMIN is outside it, so the account that appoints an inspector still cannot BE
- * one. `_assert_every_id_may_inspect`'s fourth refusal still turns away anybody already on the
- * workshop as its creator or a co-designer, and a REGIONAL_DIRECTOR is still refused the assignment
- * screen altogether, because the supervised must not choose the supervisor.
+ * **SINCE THE OWNER'S RULING OF 2026-10-09 THE ACCOUNT THAT APPOINTS AN INSPECTOR MAY ALSO BE ONE —
+ * ON SOMEBODY ELSE'S SAY.** This paragraph used to rest the widening's safety on the appointing tiers
+ * being outside the inspection set; ruling D3 put them inside it (`INSPECTION_HOLDER_ROLES`), so the
+ * independence moved to rules about ONE workshop, all enforced by the server on save with a 409
+ * whose sentence names the rule: nobody appoints themselves, nobody inspects a workshop they
+ * authored, and nobody inspects a workshop they also supervise as its Assistant Director or Regional
+ * Director. This panel never offers the reader, and otherwise prints those sentences rather than
+ * guessing at them. A REGIONAL_DIRECTOR is still refused the assignment screen altogether, because
+ * the supervised must not choose the supervisor.
+ *
+ * **AND NOBODY TAKES THEMSELVES OFF ONE EITHER** (the same day's ruling, made precise). A reader
+ * somebody else appointed to inspect this workshop finds their own row ticked and switched off, with
+ * `selfReleaseRefusal`'s sentence under the picker: the server refuses a save that would drop the
+ * caller with a 409, and another assigner taking them off is the way out. Everybody else on the panel
+ * stays theirs to add and remove — appointing other people is what a post holder keeps.
  *
  * ── TWO MOUNTS, AND THE `workshopId` PROP IS THE DIFFERENCE BETWEEN THEM ─────────────────────────
  *
@@ -83,20 +94,21 @@ import {
  *    than a row in this table, so an empty answer here means NOBODY IS INSPECTING THIS WORKSHOP —
  *    the literal truth — and this panel prints it as such with no caveat, because there is none.
  *
- * 2. **THE WORKSHOP'S OWN PEOPLE ARE REFUSED, AND THE SERVER DOES THE REFUSING.** The creator and
- *    any co-designer holding a `DesignWorkshopViewer` row are answered with a 422 saying an
- *    independent review by somebody who worked on it is not a review. That refusal exists nowhere
- *    else in this codebase and it is the point of the tier. This panel does not pre-empt it: the two
- *    role sets are disjoint today, so the case is reachable only through a promotion, and a
- *    client-side copy of a rule it can only guess at would go stale silently. It surfaces the
- *    server's sentence, which names the account and the remedy.
+ * 2. **THE WORKSHOP'S OWN PEOPLE ARE REFUSED, AND THE SERVER DOES THE REFUSING.** Anybody who
+ *    worked on it — a co-designer holding a `DesignWorkshopViewer` row, somebody who wrote its
+ *    stages — is answered with a sentence saying an independent review by somebody who worked on it
+ *    is not a review; so is its Assistant Director or Regional Director. That refusal is the point of
+ *    the tier, and since admins may be appointed it is reachable every day rather than only through
+ *    a promotion. This panel still does not pre-empt it: a client-side copy of a per-workshop rule it
+ *    can only guess at would go stale silently. It surfaces the server's sentence, which names the
+ *    account and the remedy.
  *
- * 3. **THE ELIGIBLE SET IS ONE ROLE AND NO ROSTER.** `eligible_inspectors` offers accounts in
- *    `INSPECTION_ROLES` — Inspector / Reviewer and nothing else — minus anyone the platform
- *    allow-list has barred. `DesignerRoster` is not consulted, because an inspector is empanelled to
- *    run nothing and requiring a row there would refuse every inspector there will ever be. So the
- *    truncation notice here has three states where the viewers' has four; see
- *    `eligibleInspectorNotice` for why the fourth cannot occur.
+ * 3. **THE ELIGIBLE SET IS ONE ROLE SET AND NO ROSTER.** `eligible_inspectors` offers
+ *    `INSPECTION_HOLDER_ROLES` — Inspector / Reviewer, Ministry Admin, Admin and Master Admin — minus
+ *    the account asking and anyone the platform allow-list has barred. `DesignerRoster` is not
+ *    consulted, because an inspection is held by appointment and requiring an empanelment would
+ *    refuse every inspector there will ever be. So the truncation notice here has three states where
+ *    the viewers' has four; see `eligibleInspectorNotice` for why the fourth cannot occur.
  *
  * 4. **THE SET IS CAPPED AT 25.** An inspection panel is one person, occasionally two; the cap is
  *    the server's `MAX_DESIGN_WORKSHOP_INSPECTORS` and the `max_length` of the body's `userIds`. It
@@ -162,40 +174,22 @@ function personLabel(person: { name?: string | null; email?: string | null } | n
 }
 
 /**
- * The failures this panel can suffer, told apart in words.
- *
- * `isUnreachable` and not `isTransient`: the latter answers "is it worth retrying" and counts every
- * 5xx as yes, so a repository that ANSWERED and then failed would be reported as a connection
- * problem — which sends an admin to look at their signal and leaves a real fault wearing an offline
- * message.
- *
- * THE 422 IS PASSED THROUGH ALMOST BARE, and that is the important arm here rather than a fallback.
- * The server's refusals on this route name the account, say what is wrong with it and say where the
- * remedy is — "clear that on the access screen first", "take them off the workshop's viewers first"
- * — and every one of them ends in "Nothing was changed." Paraphrasing any of that would replace a
- * sentence an admin can act on with one they cannot.
+ * The failures this panel can suffer, told apart in words — `inspectorAdministrationFailure` in
+ * `lib/designWorkshopInspections`, where the decision can be exercised without a renderer.
  */
-function describeFailure(error: unknown, fallback: string): string {
-  if (!(error instanceof ApiError) || isUnreachable(error)) {
-    return "This device cannot reach the repository, so nothing was sent and nothing has changed. Check the connection and try again.";
-  }
-  if (error.status === 403) {
-    return `The repository refused this. ${error.message} Choosing who inspects a workshop is administration, so it is open to a Ministry Admin, an admin and the master admin.`;
-  }
-  if (error.status === 422) {
-    return `The repository would not accept this. ${error.message}`;
-  }
-  if (error.status === 404) {
-    return `${error.message} This workshop may have been deleted since the list was loaded — reload the page to see the current list.`;
-  }
-  return error.message || fallback;
-}
+const describeFailure = inspectorAdministrationFailure;
 
 export function DesignWorkshopInspectorsPanel({
   refreshToken,
-  workshopId: fixedWorkshopId
+  workshopId: fixedWorkshopId,
+  onSaved
 }: {
   refreshToken?: number;
+  /**
+   * Told after every save the server accepted. Workshop oversight passes it so the page can re-read
+   * who holds what on the workshop — the reader may just have been taken off an inspection there.
+   */
+  onSaved?: () => void;
   /**
    * The workshop to administer, when the PAGE has already chosen one.
    *
@@ -210,6 +204,10 @@ export function DesignWorkshopInspectorsPanel({
   workshopId?: string;
 }) {
   const { toast } = useToast();
+  const { user } = useAuth();
+  /** Who is choosing — never offered as an inspector, because nobody appoints themselves. */
+  const readerId = user?.id ?? null;
+  const readerMayAssign = canAssignWorkshopOversight(user);
 
   /** Is this panel choosing its own workshop, or being told one? Read once, everywhere below. */
   const ownsThePicker = fixedWorkshopId === undefined;
@@ -373,13 +371,15 @@ export function DesignWorkshopInspectorsPanel({
               return;
             }
             setEligible([]);
-            setLoadError(describeFailure(err, "Unable to load the accounts that may be assigned an inspection"));
+            setLoadError(
+              describeFailure(err, "Unable to load the accounts that may be assigned an inspection", readerMayAssign)
+            );
           });
       },
       term ? SEARCH_DEBOUNCE_MS : 0
     );
     return () => window.clearTimeout(timer);
-  }, [refreshToken, search]);
+  }, [refreshToken, search, readerMayAssign]);
 
   /* ── The chosen workshop's inspectors ───────────────────────────────────── */
 
@@ -402,9 +402,9 @@ export function DesignWorkshopInspectorsPanel({
       setInspectors([]);
       setBaseline([]);
       setSelected([]);
-      setLoadError(describeFailure(err, "Unable to load who is inspecting this workshop"));
+      setLoadError(describeFailure(err, "Unable to load who is inspecting this workshop", readerMayAssign));
     }
-  }, [workshopId]);
+  }, [workshopId, readerMayAssign]);
 
   useEffect(() => {
     setLoadError(null);
@@ -490,6 +490,16 @@ export function DesignWorkshopInspectorsPanel({
   const eligibleListIsComplete = !eligibleTruncated && !searchTerm;
 
   /**
+   * The server's answer minus the reader, who may not appoint themselves. The server's own directory
+   * already leaves the appointer out; dropping them here as well means an older server cannot offer
+   * the one choice the save would refuse. Every count below is asked of THIS, not of `eligible`.
+   */
+  const offerable = useMemo(
+    () => (eligible ?? []).filter((person) => person.id !== readerId),
+    [eligible, readerId]
+  );
+
+  /**
    * Everyone the picker offers: the accounts the server's current answer holds, plus anybody who
    * already HOLDS an inspection row, plus anybody ticked from an earlier search.
    *
@@ -504,20 +514,29 @@ export function DesignWorkshopInspectorsPanel({
   const inspectorOptions = useMemo(() => {
     const options: DropdownOption[] = [];
     const seen = new Set<string>();
-    const offer = (id: string, label: string) => {
+    const offer = (id: string, label: string, held?: Pick<DropdownOption, "disabled" | "hint">) => {
       if (!id || seen.has(id)) return;
       seen.add(id);
-      options.push({ value: id, label });
+      options.push({ value: id, label, ...held });
     };
-    for (const person of eligible ?? []) {
+    for (const person of offerable) {
       offer(person.id, `${personLabel(person)} · ${roleLabel(person.role)}`);
     }
+    // EVERY CURRENT INSPECTOR, THE READER INCLUDED: this is a whole-set save, and a row the panel
+    // does not draw is a row the next Save deletes. The reader's own row is never "no longer
+    // eligible" — see `absenceProvesIneligible`: an admin somebody else appointed to inspect this
+    // workshop used to read themselves as barred on their own screen. AND IT CANNOT BE UNTICKED:
+    // nobody takes themselves off a post (`selfReleaseRefusal`). A disabled row is skipped by the
+    // toggle and by "Select all" / "Clear all" alike, so the tick the save carries cannot be lost.
     for (const row of inspectors ?? []) {
       offer(
         row.userId,
         `${personLabel(row)} · ${roleLabel(row.role)}${
-          eligibleListIsComplete ? " — inspecting, no longer eligible" : " — inspecting"
-        }`
+          absenceProvesIneligible(eligibleListIsComplete, row.userId, readerId)
+            ? " — inspecting, no longer eligible"
+            : " — inspecting"
+        }`,
+        row.userId === readerId ? { disabled: true, hint: "you — another administrator has to take you off" } : undefined
       );
     }
     for (const id of selected) {
@@ -525,7 +544,7 @@ export function DesignWorkshopInspectorsPanel({
       if (person) offer(person.id, `${personLabel(person)} · ${roleLabel(person.role)}`);
     }
     return options;
-  }, [eligible, inspectors, selected, known, eligibleListIsComplete]);
+  }, [offerable, inspectors, selected, known, eligibleListIsComplete, readerId]);
 
   /* ── Unsaved state ──────────────────────────────────────────────────────── */
 
@@ -537,11 +556,19 @@ export function DesignWorkshopInspectorsPanel({
 
   const overCap = selected.length > MAX_DESIGN_WORKSHOP_INSPECTORS;
 
+  /**
+   * Does the READER hold an inspection here — a SAVED row, somebody else's appointment? Then their own
+   * row stays ticked and switched off, and the sentence under the picker says why. Read off the
+   * baseline and never off the pending set: it is the post they hold that they may not release.
+   */
+  const readerInspects = readerId !== null && baseline.includes(readerId);
+  const selfNoteId = useId();
+
   const searchNotice = searching && searchTerm
     ? "Searching…"
     : eligibleInspectorNotice({
         truncated: eligibleTruncated,
-        offered: eligible?.length ?? 0,
+        offered: offerable.length,
         searched: Boolean(searchTerm)
       });
   const searchNoticeId = useId();
@@ -549,16 +576,15 @@ export function DesignWorkshopInspectorsPanel({
   /**
    * What the picker says when it has no rows to draw — two different facts.
    *
-   * "No account holds the Inspector / Reviewer tier yet" is a statement about the repository and is
-   * only true of an unsearched empty answer. Saying it under a search term would be the
-   * silent-emptiness bug in one sentence: the reader mistyped a surname and is told the repository
-   * has nobody in it.
+   * "Nobody else may be appointed to inspect yet" is a statement about the repository and is only
+   * true of an unsearched empty answer. Saying it under a search term would be the silent-emptiness
+   * bug in one sentence: the reader mistyped a surname and is told the repository has nobody in it.
    */
   const pickerEmptyLabel = searching
     ? "Searching…"
     : searchTerm
-      ? "No Inspector / Reviewer account matches that search."
-      : "No account holds the Inspector / Reviewer tier yet";
+      ? "No account that may inspect matches that search."
+      : "Nobody else may be appointed to inspect yet";
 
   const labelById = useMemo(
     () => new Map(inspectorOptions.map((option) => [option.value, option.label])),
@@ -586,6 +612,12 @@ export function DesignWorkshopInspectorsPanel({
 
   async function save() {
     if (!workshopId || overCap) return;
+    // NOBODY TAKES THEMSELVES OFF A POST. The row cannot be unticked; this keeps the rule for any other
+    // way the pending set could lose it, and says the server's reason before its 409 has to.
+    if (readerId && baseline.includes(readerId) && !selected.includes(readerId)) {
+      setSaveError(selfReleaseRefused("INSPECTION"));
+      return;
+    }
     setSaving(true);
     setSaveError(null);
     try {
@@ -607,8 +639,9 @@ export function DesignWorkshopInspectorsPanel({
           : "Nobody is assigned to inspect it. The designers who run it are unaffected.",
         tone: "success"
       });
+      onSaved?.();
     } catch (err) {
-      setSaveError(describeFailure(err, "Unable to save who is inspecting this workshop"));
+      setSaveError(describeFailure(err, "Unable to save who is inspecting this workshop", readerMayAssign));
     } finally {
       setSaving(false);
     }
@@ -629,10 +662,11 @@ export function DesignWorkshopInspectorsPanel({
       </div>
 
       <p className="mt-3 rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-xs leading-5 text-ink-500">
-        An inspection is READ-ONLY: an Inspector / Reviewer assigned here can open every stage of this
-        workshop and change none of it. A Ministry Admin, an admin or the master admin decides who
-        inspects what — the designers who run a workshop have no say in who examines it, and cannot be
-        its inspector themselves.
+        An inspection is READ-ONLY: whoever is assigned here can open every stage of this workshop and
+        change none of it — an admin appointed to inspect it loses their own write access to it for as
+        long as they hold the post. A Ministry Admin, an admin or the master admin decides who inspects
+        what, and never appoints themselves; the designers who run a workshop have no say in who
+        examines it, and cannot be its inspector themselves.
       </p>
 
       {featureMissing ? (
@@ -731,9 +765,11 @@ export function DesignWorkshopInspectorsPanel({
                   label="Inspectors assigned to this workshop"
                   hint={
                     <p className="text-xs leading-5 text-ink-500">
-                      Only accounts holding the Inspector / Reviewer tier are offered, and only those the platform
-                      access list still admits — assigning somebody who cannot sign in would leave this screen saying
-                      they are inspecting while they are shown a refusal at the door. Unticking somebody ends their
+                      Inspector / Reviewer accounts are offered, and so are Ministry Admin, admin and master admin
+                      accounts — never you — and only those the platform access list still admits: assigning somebody
+                      who cannot sign in would leave this screen saying they are inspecting while they are shown a
+                      refusal at the door. Somebody who worked on this workshop, or who is its Assistant Director or
+                      Regional Director, is refused when you save, with the reason. Unticking somebody ends their
                       inspection when you save. At most {MAX_DESIGN_WORKSHOP_INSPECTORS} accounts.
                     </p>
                   }
@@ -741,7 +777,7 @@ export function DesignWorkshopInspectorsPanel({
                   <div className="grid gap-2">
                     <SearchInput
                       onChange={(next) => setSearch(next.slice(0, ELIGIBLE_INSPECTOR_SEARCH_MAX))}
-                      placeholder="Search Inspector / Reviewer accounts by name or email"
+                      placeholder="Search accounts that may inspect, by name or email"
                       value={search}
                     />
                     {/* At most ONE line here, ever: what the search is doing, or the single sentence
@@ -753,11 +789,15 @@ export function DesignWorkshopInspectorsPanel({
                     ) : null}
                     <MultiSelectDropdown
                       ariaLabel="Inspectors assigned to this workshop"
-                      // Pointed at the notice only while it is on screen: `aria-describedby` naming
+                      // Pointed at each notice only while it is on screen: `aria-describedby` naming
                       // an id that is not in the document is worse than naming nothing.
                       capHint="Use the search box above to reach the rest — it asks the repository, so it sees every eligible account."
                       confirmLabel="Done"
-                      describedBy={searchNotice ? searchNoticeId : undefined}
+                      describedBy={
+                        [searchNotice ? searchNoticeId : null, readerInspects ? selfNoteId : null]
+                          .filter(Boolean)
+                          .join(" ") || undefined
+                      }
                       emptyLabel={pickerEmptyLabel}
                       onChange={setSelected}
                       options={inspectorOptions}
@@ -765,6 +805,17 @@ export function DesignWorkshopInspectorsPanel({
                       searchable={false}
                       values={selected}
                     />
+                    {/* WHY THE READER'S OWN ROW CANNOT BE UNTICKED, under the picker that holds it. The
+                        amber pair, as every held control in the app says its reason. */}
+                    {readerInspects ? (
+                      <p
+                        id={selfNoteId}
+                        className="rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-xs leading-5 text-amber-800"
+                      >
+                        {selfReleaseRefusal("INSPECTION")} Your own row stays ticked; everybody else on this
+                        workshop&rsquo;s panel is still yours to add or take off.
+                      </p>
+                    ) : null}
                   </div>
                 </FieldBlock>
               </div>

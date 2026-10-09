@@ -25,7 +25,11 @@ import type { GuideStep } from "@/components/guide/steps";
  * build a questionnaire and cannot open a designer profile, while being senior to the person who
  * does all four. That is not an oversight in the ladder; it is the entire reason the tier exists.
  * An inspector who could author a stage would be reviewing their own work, and the gate is what
- * prevents it — `backend/app/core/deps.py` refuses to boot if the two sets ever intersect.
+ * prevents it. (An import-time check in `design_workshop_inspectors.py` once refused to boot if the
+ * two sets intersected; it went on 2026-10-09, when the admin tiers — who are inside
+ * `DESIGN_WORKSHOP_ROLES` — became appointable inspectors, and the rule moved to one workshop at a
+ * time: `design_workshop_posts` refuses an inspection to whoever authored that workshop, and refuses
+ * whoever inspects it every write to it.)
  *
  * The consequence for THIS file is that the inspector's surface is reached through machinery the
  * designer's deck never touches: a per-workshop assignment table (`DesignWorkshopInspector`), its
@@ -38,11 +42,16 @@ import type { GuideStep } from "@/components/guide/steps";
  *
  * ── AND WHAT AN ADMIN IS, WHICH IS THE SECOND THING EVERY INSTINCT GETS WRONG ───────────────────
  *
- * `INSPECTION_ROLES` is `frozenset({"INSPECTOR"})` — one member. An ADMIN is refused this surface
- * with a 403 BY NAME, and so is the master admin, and so is a professor. So no card below may say
- * "and above", or anything that reads as a threshold, in either direction. What an admin gets
- * instead is the ADMINISTRATION of who inspects what, on Manage workshop access — a different
- * screen behind a different predicate, and neither implies the other.
+ * `INSPECTION_ROLES` is `frozenset({"INSPECTOR"})` — one member, the TIER. Until 2026-10-09 it was
+ * also the surface's door, and an ADMIN, the master admin and a professor were all refused with a
+ * 403 by name. The owner's ruling that day lets a Ministry Admin, an admin and the master admin be
+ * APPOINTED to inspect one workshop by somebody else, so the door is now `INSPECTION_HOLDER_ROLES`
+ * and those three open the surface — scoped, like an inspector, to the workshops they were
+ * appointed to and nothing else. A professor and the two directorate posts are still refused. So no
+ * card below may say "and above", or anything that reads as a threshold, in either direction: the
+ * tiers admitted are a set, and they are admitted by appointment rather than by rank. Choosing who
+ * inspects what is a separate act on Workshop oversight, behind a different predicate, and neither
+ * implies the other.
  *
  * ── THE RULES THIS DECK KEEPS ──────────────────────────────────────────────────────────────────
  *
@@ -95,10 +104,10 @@ export const INSPECTOR_STEPS: GuideStep[] = [
       "Nothing else — there is no filter by designer, district or date on this list"
     ],
     watch: [
-      "YOU DO NOT ASK FOR AN INSPECTION AND YOU CANNOT GIVE YOURSELF ONE. An admin assigns them, one workshop at a time, on Manage workshop access — a screen you cannot open. There is no request route, no “ask to inspect” button, and nothing here is hidden behind one.",
-      "THIS SURFACE IS THE INSPECTOR / REVIEWER TIER'S ALONE, and it is a set with exactly one member — not “Inspector and above”. An admin is refused it, the master admin is refused it, and a professor is refused it. The rank ladder is what misleads here: 37 sits between Designer and Professor, so every threshold instinct admits the three tiers above and all three are out.",
+      "YOU DO NOT ASK FOR AN INSPECTION AND YOU CANNOT GIVE YOURSELF ONE. A Ministry Admin, an admin or the master admin appoints them, one workshop at a time, on Workshop oversight — a screen you cannot open. There is no request route, no “ask to inspect” button, and nothing here is hidden behind one.",
+      "THIS SURFACE IS NOT “INSPECTOR AND ABOVE”. It is your tier's by role. A Ministry Admin, an admin or the master admin can open it too, because any of them may be appointed to inspect a workshop by somebody else — and reads on it only the workshops they were appointed to, exactly as you do. A professor, an Assistant Director and a Regional Director are refused it. The rank ladder is what misleads here: 37 sits between Designer and Professor, so every threshold instinct admits the tiers above by rank, and none of them is admitted that way.",
       "YOU CANNOT BE ASSIGNED A WORKSHOP YOU WORKED ON. The server refuses it with the reason spelled out — an independent review by somebody who worked on it is not a review — so if a workshop you expected is missing, that is one possible cause worth checking before reporting a fault.",
-      "AN EMPTY LIST IS A REAL ANSWER AND THE SCREEN SAYS WHICH KIND IT IS. Nothing assigned reads “No workshop is assigned to you” and says in as many words that the page is not hiding anything; a list that could not be loaded says that instead, and keeps whatever rows were already on screen. A correct empty state and a silent failure look identical, and there is no other surface here to cross-check against."
+      "AN EMPTY LIST IS A REAL ANSWER AND THE SCREEN SAYS WHICH KIND IT IS. Nothing assigned reads “You do not hold any inspection posts” and says in as many words that the page is not hiding anything; a list that could not be loaded says that instead, and keeps whatever rows were already on screen. A correct empty state and a silent failure look identical, and there is no other surface here to cross-check against."
     ]
   },
   {

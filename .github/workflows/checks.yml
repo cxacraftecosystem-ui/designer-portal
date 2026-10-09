@@ -79,9 +79,14 @@ permissions:
   contents: read
 
 concurrency:
-  # Safe to cancel, unlike the deploy workflows: nothing outside the runner is mutated here, and
-  # a superseded commit's result is noise. Keyed per PR (or per branch on a push) so two open PRs
-  # never cancel each other.
+  # Safe to cancel, unlike the deploy workflows: nothing outside the runner is mutated here. Keyed
+  # per PR (or per branch on a push) so two open PRs never cancel each other. On main a push cancels
+  # the previous commit's run while it is still going, and the deploy workflows' wait-for-checks
+  # treat a run cancelled this way as SUPERSEDED once main has moved past its commit (2026-10-09):
+  # that commit's pipeline ends green and ships nothing, and the newer commit's run ships both. A run
+  # cancelled while its commit is still main's tip is not superseded — the wait holds for a re-run or
+  # a dispatch of Checks, then fails as cancelled, not failed. A dispatch on main cancels the push
+  # run for the same commit too; the wait grades the run that was not cancelled. See docs/CI.md §1.1.
   group: checks-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 

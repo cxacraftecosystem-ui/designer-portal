@@ -52,6 +52,7 @@ import app.core.db as core_db
 from app.api.router import api_router
 from app.api.routes import data_access, media, questionnaire
 from app.core import deps
+from app.services import design_workshop_inspectors
 from app.services.artisan_identity import verhoeff_ok
 
 #: Every tier, in ladder order. It must BE ``deps.ROLE_RANK`` and not a hand-kept copy of it —
@@ -785,11 +786,12 @@ def test_the_designer_set_reaches_the_workshop_write(
 # --- The inspector's two write doors, added 2026-09-13 -------------------------------------------
 #
 # THE MIRROR IMAGE OF THE BLOCK ABOVE, AND IT IS WORTH HAVING BOTH. That one says the tier that
-# outranks a designer cannot write the report; this one says the tier that writes the CORRECTIONS is
-# the only one who can, admins included in the refusal. `assert_inspection_surface` is
-# `INSPECTION_ROLES` membership — a set of ONE — so an ADMIN and the MASTER_ADMIN are refused these
-# two routes exactly as a volunteer is, and told which door they actually want. An admin decides WHO
-# inspects; an inspector decides WHAT the report should say.
+# outranks a designer cannot write the report; this one says only whoever may HOLD an inspection
+# writes the CORRECTIONS. `assert_inspection_surface` is `INSPECTION_HOLDER_ROLES` membership — the
+# Inspector / Reviewer tier and, since the owner's ruling of 2026-10-09, the three administrator
+# tiers, who may be appointed to inspect a workshop. Everybody else is refused these two routes
+# before the database, and told which door they actually want. WHICH workshop a holder may file on
+# is their inspection row, decided by the scoped loader and asserted over Postgres.
 #
 # THE BODIES ARE VALID ON PURPOSE. `note` is `min_length=1`, so an empty body would be answered 422
 # by pydantic BEFORE the dependency is solved, and every refusal below would pass for the wrong
@@ -800,17 +802,23 @@ INSPECTOR_WRITES = [
     ("POST", "/design-workshop-inspections/w1/send-back", {"note": "The cost sheet does not add up."}),
 ]
 
-#: Every tier that is NOT an inspector — the whole ladder less INSPECTOR, derived so a rank added
-#: later is covered without anybody remembering this list.
-OUTSIDE_INSPECTION_SET = tuple(role for role in ALL_ROLES if role != "INSPECTOR")
+#: Who may hold an inspection, read off the server's own set rather than retyped.
+INSPECTION_HOLDERS = tuple(
+    role for role in ALL_ROLES if role in design_workshop_inspectors.INSPECTION_HOLDER_ROLES
+)
+
+#: Every tier that may hold no inspection — derived so a rank added later is covered without anybody
+#: remembering this list.
+OUTSIDE_INSPECTION_SET = tuple(role for role in ALL_ROLES if role not in INSPECTION_HOLDERS)
 
 
 @pytest.mark.parametrize("method,path,body", INSPECTOR_WRITES)
 @pytest.mark.parametrize("role", OUTSIDE_INSPECTION_SET)
-def test_nobody_outside_the_inspection_tier_files_a_correction_suggestion(
+def test_nobody_who_may_hold_no_inspection_files_a_correction_suggestion(
     api: _Api, method: str, path: str, body: dict, role: str
 ) -> None:
-    """403 before any database read, for ADMIN and MASTER_ADMIN as much as for anybody else."""
+    """403 before any database read — the two directorate posts and the professor included, all of
+    whom outrank an inspector."""
     outcome = api.as_(_user(role)).call(method, path, body)
 
     assert outcome.refused, outcome
@@ -821,12 +829,16 @@ def test_nobody_outside_the_inspection_tier_files_a_correction_suggestion(
 
 
 @pytest.mark.parametrize("method,path,body", INSPECTOR_WRITES)
-def test_an_inspector_reaches_the_two_write_doors(api: _Api, method: str, path: str, body: dict) -> None:
-    """"Reached" means the tier gate passed and the scoped loader began — which is as deep as this
-    file can see, and the right depth: WHICH workshop this officer may write on is a row in
-    `DesignWorkshopInspector`, decided by that loader and asserted over a database in
-    `tests/test_dw_inspector_scope.py`."""
-    assert api.as_(_user("INSPECTOR")).call(method, path, body).reached
+@pytest.mark.parametrize("role", INSPECTION_HOLDERS)
+def test_whoever_may_hold_an_inspection_reaches_the_two_write_doors(
+    api: _Api, method: str, path: str, body: dict, role: str
+) -> None:
+    """"Reached" means the role gate passed and the scoped loader began — which is as deep as this
+    file can see, and the right depth: WHICH workshop this account may file on is its inspection row,
+    decided by that loader and asserted over a database in ``tests/test_dw_inspector_scope.py`` and
+    ``tests/test_admin_serve_as.py``. An administrator holding no row is answered the stranger's 404
+    there, exactly as an inspector is."""
+    assert api.as_(_user(role)).call(method, path, body).reached
 
 
 # --- The tuple that let this happen --------------------------------------------------------------
