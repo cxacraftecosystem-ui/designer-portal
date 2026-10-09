@@ -25,6 +25,7 @@ from app.schemas.auth import (
     ChangePasswordRequest,
     IssuePasswordLinkRequest,
     LoginRequest,
+    PasswordLinkCheckRequest,
     SetPasswordRequest,
     TokenResponse,
 )
@@ -1071,8 +1072,40 @@ async def check_set_password_token(token: str = "") -> dict[str, Any]:
     The reason IS returned, because every one of them has a different next action — expired means
     "ask for another", revoked means "ask the administrator what happened", used means "you already
     set it, go and sign in" — and a single "invalid link" leaves a person with none of them.
+
+    **THE TOKEN IS IN THE QUERY STRING HERE, SO THIS IS THE OLD DOOR (2026-10-09).** A query string
+    is part of the request line, and anything in front of the API that logs request lines writes the
+    token down: :func:`check_set_password_token_in_body` asks the same question with the token in
+    the body, and the web asks that. This GET stays, answering exactly as it always has, because
+    handset builds already in people's hands call it with ``@Query("token")``;
+    ``AccessLogRedaction`` in ``app/main.py`` keeps its token out of uvicorn's own access line.
     """
-    verdict = await _link_verdict(token)
+    return await _link_check(token)
+
+
+@router.post("/set-password/check")
+async def check_set_password_token_in_body(payload: PasswordLinkCheckRequest) -> dict[str, Any]:
+    """:func:`check_set_password_token`, with the token in a JSON body — ``{"token": "…"}``.
+
+    **THE SAME QUESTION AND THE SAME ANSWER, AND ONLY THE TRANSPORT DIFFERS.** Both doors hand the
+    raw value to :func:`_link_check`, so ``{"valid", "reason", "purpose"}`` cannot come to differ
+    between them: an empty, absent or null token is ``missing``, an over-long one ``malformed`` (see
+    ``PasswordLinkCheckRequest``), a dead link says why, and nothing names the account.
+    Unauthenticated for the GET's reason, and limited as the GET is: ``app/scale/rate_limit.py``
+    charges both to the general per-network allowance and neither to the credential budget, which
+    covers sign-in and the dataset token. Nothing here logs the token: the request line now carries
+    none, and the only line :func:`_link_verdict` writes names account ids.
+
+    A BODY RATHER THAN A HEADER, though either keeps the token off the request line: the redemption
+    beside it already takes its token in exactly this shape, and one shape for both link routes is
+    one thing for each client to get right.
+    """
+    return await _link_check(payload.token)
+
+
+async def _link_check(raw: str | None) -> dict[str, Any]:
+    """What both link checks answer: :func:`_link_verdict`, cut to what a screen may know."""
+    verdict = await _link_verdict(raw)
     return {"valid": verdict.ok, "reason": verdict.reason, "purpose": verdict.purpose}
 
 

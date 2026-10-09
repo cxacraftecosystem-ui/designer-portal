@@ -60,6 +60,21 @@ class IssuePasswordLinkRequest(APIModel):
     userId: str = Field(min_length=1, max_length=64)
 
 
+class PasswordLinkCheckRequest(APIModel):
+    """Asking whether a link is still good, with the token in the BODY (2026-10-09).
+
+    ``POST /auth/set-password/check`` answers exactly what ``GET /auth/set-password?token=…``
+    answers, and exists because a query string is part of the request line, which anything in front
+    of the API may write down (``docs/OPEN_FINDINGS.md``). So the field takes exactly what the GET's
+    query parameter takes: any string, the empty one and an absent one answered "missing", and NO
+    length bound — a token past ``credential_links.MAX_TOKEN_LENGTH`` is "malformed" from
+    ``credential_links.verify_token``, before any HMAC, as it is through the GET. A bound here would
+    turn that answer into a 422 the GET never gives.
+    """
+
+    token: str | None = None
+
+
 class SetPasswordRequest(APIModel):
     """Redeeming a link. Unauthenticated by necessity — the whole point is that the person cannot
     sign in — which is why the token is the entire authority and is checked four ways."""

@@ -827,18 +827,19 @@ def _mounted_route_templates(app: FastAPI) -> list[str]:
 
 # --- The access log -------------------------------------------------------------------------------
 #
-# A SET-PASSWORD LINK'S TOKEN WAS WRITTEN DOWN EVERY TIME SOMEBODY OPENED THE LINK. Both clients ask
-# whether a link is still good with `GET /api/auth/set-password?token=<the token>` — the web's
-# set-password page through `checkPasswordLink` in `frontend/lib/signIn.ts`, the handset through
-# `WorkshopRepositoryApi.checkPasswordLink`'s `@Query("token")` — and production runs uvicorn with its
-# access log on, which writes every request line, query string and all, to stdout: the service's
-# journal. The token is the link's whole authority, so whoever could read the journal could set the
-# account's password until the link was used or expired. The GET stays, because builds already in the
-# field call it; the filter below changes what the log keeps of it.
+# A SET-PASSWORD LINK'S TOKEN WAS WRITTEN DOWN EVERY TIME SOMEBODY OPENED THE LINK. Both clients
+# asked whether a link was still good with `GET /api/auth/set-password?token=<the token>` — the
+# handset still does, through `WorkshopRepositoryApi.checkPasswordLink`'s `@Query("token")` — and
+# production runs uvicorn with its access log on, which writes every request line, query string and
+# all, to stdout: the service's journal. The token is the link's whole authority, so whoever could
+# read the journal could set the account's password until the link was used or expired. The GET
+# stays, because builds already in the field call it; the filter below changes what the log keeps.
 #
-# WHAT IT CANNOT REACH is open in docs/OPEN_FINDINGS.md: anything in front of uvicorn that logs the
-# request line, starting with the box's own nginx. The complete fix moves the token out of the URL —
-# into a POST body or a header — in the next web and Android release.
+# WHAT IT CANNOT REACH is anything in front of uvicorn that logs the request line, starting with the
+# box's own nginx. Since 2026-10-09 the web asks `POST /api/auth/set-password/check` with the token
+# in the body instead (`checkPasswordLink` in `frontend/lib/signIn.ts`), and a body is on no request
+# line. What is still open — the handset's GET, and the `?token=` in the link itself — is in
+# docs/OPEN_FINDINGS.md.
 
 #: Query parameters whose value is a credential, compared case-insensitively with the DECODED name.
 #: Exact names, and not ``ai.redact_secrets``' rule, which blanks any name that merely ENDS in one of

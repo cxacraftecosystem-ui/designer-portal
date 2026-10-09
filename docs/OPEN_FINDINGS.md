@@ -4,6 +4,15 @@
 heading on 2026-10-09; the entries closed on 2026-10-09 were checked against the tree that day, and
 the older closed sections were last re-checked on 2026-09-03.
 
+**Moving a set-password link's token off the web's request lines narrowed one entry the same day,
+and moved neither number.** The web now checks a link with `POST /api/auth/set-password/check`, the
+token in the body, and `/set-password` reads the token from a `#token=` fragment as well as the query
+and takes it out of the address bar before it does anything else. That closes the web's half of the
+open entry on what still writes the token down. The handset's check, the `?token=` the server still
+puts in every link, and the browser's history, which keeps the address a link was opened with in
+either form, keep it open, and it is rewritten to say exactly that: a heading narrowed is not a
+heading closed. Counted by heading: still 15 open and 95 closed.
+
 **A verifier's pass over what the release writes to logs and terminals moved both numbers by one,
 the same day.** It closed a set-password link's token reaching the API's journal every time the link
 was checked — both clients send the token in the query string of `GET /api/auth/set-password`, and
@@ -568,28 +577,53 @@ single-row filing and discard ask nothing first, though a row a design workshop'
 is not listed there at all. Every one is refused by the server, its answer printed word for word, so
 nothing is written; what is missing is the warning before the click.
 
-### [LOW] A set-password link's token still reaches anything in front of the API that logs the request line (backend, frontend, android) — opened 2026-10-09
+### [LOW] A set-password link's token still rides two request lines, the handset's check and the link itself, and stays in the browser's history (backend, android) — opened 2026-10-09, narrowed 2026-10-09
 
-Both clients check a link with `GET /api/auth/set-password?token=<the token>`, and the token is the
-link's whole authority. The filter that keeps it out of uvicorn's access log (the entry closed below)
-runs inside the API process, so it reaches nothing in front of it, and anything there that writes the
-request line down still records the token: the box's own nginx — `infra/terraform/user_data.sh` sets
-no `access_log`, so Ubuntu's default writes every request line, query string included, to
-`/var/log/nginx/access.log` — and CloudFront, if its standard logging is ever switched on (not
-verifiable from this repository). Whoever can read those can set the account's password until the
-link is used or expires. The complete fix moves the token out of the URL — into a POST body or a
-header — in the next web and Android release, keeping the GET until the builds that call it have left
-the field.
+**Closed for the web, 2026-10-09.** The web checks a link with `POST /api/auth/set-password/check`
+and `{"token": …}` in the body, which answers exactly what the GET answers
+(`check_set_password_token_in_body` in `backend/app/api/routes/auth.py`), and it asks the GET only
+when the POST is answered 404 or 405, which is what an API older than the POST answers
+(`checkPasswordLink` in `frontend/lib/signIn.ts`). A body is on no request line, so nothing in front
+of the API receives the token from the web. `/set-password` reads the token from a `#token=` fragment
+first and the query second, and replaces the address with one carrying neither before it checks
+anything (`takeLinkTokenFromAddress`), so the token is not left in the address bar, a copied address, a
+bookmark or the entry Back returns to. Measured against a production build in Chromium the same day,
+both ways a link can arrive: the address settled without the token, Back returned to that clean
+address, and the check went out as a POST with the token in its body. Pinned by the tests under "The
+link check with the token off the request line" in
+`backend/tests/test_auth_identity_and_password_links.py` and by
+`frontend/e2e/set-password-link-token-unit.spec.ts`.
 
-The link itself carries the token the same way, and that reaches further than the API check does. The
-address handed to the person is `{NEXT_PUBLIC_APP_URL}/set-password?token=…`
-(`credential_links.link_for`), so every open sends the token to the web host's request log and leaves
-it in the browser's history, where the next user of a shared computer can find it until the link is
-used or expires. A fragment (`/set-password#token=…`) is never sent to any server, and the web page can
-read it as easily as the query. It is not switched yet because the handset is offered these links too
-(the `/set-password` filter in `android/app/src/main/AndroidManifest.xml`) and the shipped builds read
-the token from the query: the next Android release must accept both forms, and `link_for` can move to
-the fragment once the builds that accept only the query have left the field. Open as of 2026-10-09.
+**Still open: the handset's check.** Shipped handset builds check a link with
+`GET /api/auth/set-password?token=<the token>` (`WorkshopRepositoryApi.checkPasswordLink`'s
+`@Query("token")`), so the GET stays, and every check a handset makes still writes the token wherever
+something in front of the API logs the request line: the box's own nginx —
+`infra/terraform/user_data.sh` sets no `access_log`, so Ubuntu's default writes every request line,
+query string included, to `/var/log/nginx/access.log` — and CloudFront, if its standard logging is
+ever switched on (not verifiable from this repository). `AccessLogRedaction` keeps it out of uvicorn's
+own line (the entry closed below) and reaches nothing in front of it. Whoever can read those logs can
+set the account's password until the link is used or expires. The fix is the next Android release
+asking the POST; the GET can go once the builds that call it have left the field.
+
+**Still open: the link itself.** `credential_links.link_for` still issues
+`{NEXT_PUBLIC_APP_URL}/set-password?token=…`, because the handset is offered these links too (the
+`/set-password` filter in `android/app/src/main/AndroidManifest.xml`) and the shipped builds read the
+token only from the query. So opening a link still sends the token to the web host: in the request for
+the page, and again as the `Referer` of every stylesheet, script and font the page asks for before its
+script can rewrite the address (measured 2026-10-09 against a production build: 17 such requests, all
+to the web host's own origin; the API saw none, because `Referer-Policy: strict-origin-when-cross-origin`
+sends another origin only the origin). The web already reads `#token=`, so moving `link_for` to the
+fragment needs no web release: the next Android release must accept both forms, and `link_for` moves
+once the builds that accept only the query have left the field. A fragment is never sent to any server
+and never appears in a `Referer`, so that move closes the web host's leg too (measured the same day: no
+request carried a `#token=` link's token).
+
+**Not closed by either form: the browser's history.** Measured in Chromium on 2026-10-09, a link
+opened either way is recorded in the History database with its token, `?token=` and `#token=` alike;
+the page's `replaceState` adds the clean address beside it and does not remove the visit that brought
+the token. So on a shared computer the token stays readable in the history until somebody clears it,
+and stays usable until the link is used or expires: 72 hours for an INVITE, 2 for a RESET. Using the
+link is what retires it. Open as of 2026-10-09.
 
 ---
 
@@ -1424,7 +1458,7 @@ build carries it as of 2026-10-09.
 
 ### [MEDIUM] A set-password link's token was written to the API's journal every time the link was checked (backend) — **CLOSED 2026-10-09**
 
-Both clients ask whether a link is still good with `GET /api/auth/set-password?token=<the token>` —
+Both clients asked whether a link was still good with `GET /api/auth/set-password?token=<the token>` —
 the web's set-password page through `checkPasswordLink` in `frontend/lib/signIn.ts`, the handset
 through `WorkshopRepositoryApi.checkPasswordLink`'s `@Query("token")` — and the API box runs uvicorn
 with its access log on (the `ExecStart` in `.github/workflows/deploy-backend.yml`), which writes every
@@ -1444,7 +1478,9 @@ raises. The GET is unchanged, because the builds in the field call it. Pinned in
 with uvicorn's own formatter, by
 `test_importing_the_application_puts_the_filter_on_uvicorns_access_logger`, and by the tables beside
 them. **The residue is open above**: anything in front of uvicorn that logs the request line still
-records the token.
+records the token whenever a client asks the GET. Narrowed the same day: the web now asks
+`POST /api/auth/set-password/check` with the token in the body, so the handset's check and the link
+itself are what remain.
 
 ---
 

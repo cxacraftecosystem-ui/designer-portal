@@ -1,4 +1,4 @@
-"""EVERY ROUTE IN THE APPLICATION, ASKED ANONYMOUSLY, AND THE EIGHT THAT ARE ALLOWED TO ANSWER.
+"""EVERY ROUTE IN THE APPLICATION, ASKED ANONYMOUSLY, AND THE NINE THAT ARE ALLOWED TO ANSWER.
 
 **THIS CLASS OF DEFECT HAS SHIPPED IN THIS REPOSITORY TWICE, AND BOTH TIMES IT LOOKED FINE ON THE
 SCREEN.** The shape is always "a UI guard over an open endpoint": the web client hides the button and
@@ -23,7 +23,7 @@ stops at the first is a sweep somebody fixes one route at a time over three days
 
 ── THE ALLOWLIST IS THE POINT, AND IT IS A LIST OF DECISIONS ─────────────────────────────────────
 
-Eight endpoints in this API deliberately answer a caller with no credentials, plus the two health
+Nine endpoints in this API deliberately answer a caller with no credentials, plus the two health
 probes. Each is named below WITH THE REASON, because the only failure mode of a test like this is an
 allowlist that grows: the day somebody's new endpoint fails this test, the cheapest way to make the
 build green is to add a line here, and a line here has to be a sentence somebody would defend out
@@ -92,9 +92,12 @@ PUBLIC_ALLOWLIST: dict[tuple[str, str], str] = {
     # token would mean an expired session could not sign itself out.
     ("POST", "/api/auth/logout"): "clears the client's own storage; there is no server-side session.",
     # The person holding a set-password link cannot sign in — that is the whole reason they were sent
-    # one. Both arms are guarded by the link's own signature, expiry, single-use row and credential
-    # fingerprint, and the GET deliberately reports nothing about the ACCOUNT, only about the link.
+    # one. Every arm is guarded by the link's own signature, expiry, single-use row and credential
+    # fingerprint, and the two checks deliberately report nothing about the ACCOUNT, only about the
+    # link. The POST check (2026-10-09) is the GET's question with the token in the body, so that it
+    # stays off the request line; the GET stays for the handset builds already in the field.
     ("GET", "/api/auth/set-password"): "a link holder has no session by definition; the token is the credential.",
+    ("POST", "/api/auth/set-password/check"): "the GET's question and answer, the token moved off the request line.",
     ("POST", "/api/auth/set-password"): "same: redeeming the link is how the account gets a password at all.",
     # The machine credential door. Email + password in, a scoped read token out — the second thing in
     # this API that turns a password into a token, and like the first it cannot ask for one.
