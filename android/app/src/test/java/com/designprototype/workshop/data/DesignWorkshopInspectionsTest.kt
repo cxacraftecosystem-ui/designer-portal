@@ -278,7 +278,7 @@ class DesignWorkshopInspectionsTest {
         )
         assertTrue(
             "the viewers' first sentence must not appear here at all",
-            dwInspectorOfferNotice(cutAndEmpty)?.contains("no search can reach them") != true
+            dwInspectorOfferNotice(cutAndEmpty)?.contains("searching will not bring them up") != true
         )
     }
 
@@ -323,7 +323,7 @@ class DesignWorkshopInspectionsTest {
         // leaves the removals applied and the additions not.
         val lost = dwInspectionFailureMessage(null, null, DwInspectionAttempt.SAVE)
         assertFalse(lost.contains("Nothing has been changed"))
-        assertTrue(lost.contains("may still have landed"))
+        assertTrue(lost.contains("may already have been saved"))
 
         val read = dwInspectionFailureMessage(null, null, DwInspectionAttempt.READ)
         assertTrue("a read that failed changed nothing by construction", read.contains("Nothing has been changed."))
@@ -336,7 +336,7 @@ class DesignWorkshopInspectionsTest {
         // never be investigated.
         val said = dwInspectionFailureMessage(500, null, DwInspectionAttempt.READ)
         assertTrue(said.contains("This is not a connection problem."))
-        assertFalse(said.contains("could not reach the repository"))
+        assertFalse(said.contains("Could not connect"))
     }
 
     @Test
@@ -350,8 +350,11 @@ class DesignWorkshopInspectionsTest {
             "master admin."
         val said = dwInspectionFailureMessage(403, notAnInspector, DwInspectionAttempt.READ)
         assertTrue(said.startsWith("$notAnInspector "))
-        assertTrue(said.contains("two different"))
-        assertTrue("a rule is not a fault, and the sentence has to say so", said.contains("Neither is a fault."))
+        assertTrue(said.contains("decides who inspects what"))
+        assertTrue(
+            "a rule is not a fault, and the sentence has to say whose rule it is",
+            said.contains("a Ministry Admin, an admin or the master admin decides who inspects what.")
+        )
         // AND THE CLAUSE AFTER IT NO LONGER CONTRADICTS IT. Until that date it said "only an Inspector
         // / Reviewer can read a workshop under inspection", which the ruling made false — directly
         // after a server sentence listing the admin tiers.
@@ -383,7 +386,7 @@ class DesignWorkshopInspectionsTest {
         // produced "Admin access required The inspection surface …", which reads as a truncated
         // string and makes a reader distrust the whole message.
         val said = dwInspectionFailureMessage(403, "Admin access required", DwInspectionAttempt.SAVE)
-        assertTrue(said.startsWith("Admin access required. The inspection surface"))
+        assertTrue(said.startsWith("Admin access required. A workshop under inspection"))
     }
 
     @Test
@@ -558,7 +561,7 @@ class DesignWorkshopInspectionsTest {
             schema, e, e.fields[0],
             row("artisanRef" to JsonPrimitive("clx123"))
         )
-        assertEquals(DwInspectionReading.Text("A linked record this read cannot name"), reading)
+        assertEquals(DwInspectionReading.Text("A linked record"), reading)
         assertFalse((reading as DwInspectionReading.Text).text.contains("clx123"))
     }
 
@@ -585,7 +588,7 @@ class DesignWorkshopInspectionsTest {
         )
         // The SAME row read through the non-parent reference must NOT borrow `documentedFor`.
         assertEquals(
-            DwInspectionReading.Text("A linked record this read cannot name"),
+            DwInspectionReading.Text("A linked record"),
             dwInspectionFieldReading(
                 schema, parentOnly, parentOnly.fields[2],
                 row(

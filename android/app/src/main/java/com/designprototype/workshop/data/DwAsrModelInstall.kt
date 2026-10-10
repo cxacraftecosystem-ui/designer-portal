@@ -805,15 +805,15 @@ fun dwAsrModelOfferSentence(
          */
         DwAsrModelOffer.DOWNLOAD ->
             if (fromEndpoint) {
-                "${dwBytesLabel(model?.onDiskBytes)} to fetch from this deployment, and the same " +
-                    "again is what it takes on the phone. Nothing is fetched until you tap."
+                "${dwBytesLabel(model?.onDiskBytes)} to download, and it takes the same space on " +
+                    "the phone. Nothing is fetched until you tap."
             } else {
                 "${dwBytesLabel(artifact?.downloadBytes)} to fetch, " +
                     "${dwBytesLabel(model?.onDiskBytes)} to keep. Nothing is fetched until you tap."
             }
 
         DwAsrModelOffer.RESUME ->
-            "Paused. Resuming asks the server only for the part that is missing."
+            "Paused. Resuming downloads only the part that is missing."
 
         DwAsrModelOffer.RETRY ->
             "The last attempt did not finish and nothing was kept."
@@ -828,7 +828,7 @@ fun dwAsrModelOfferSentence(
             "Installing now."
 
         DwAsrModelOffer.NOTHING_PINNED ->
-            "This app pins no speech model."
+            "There is no speech model to install."
 
         /*
          * THE ANSWER EVERY HANDSET WITHOUT A STAGED COPY GETS TODAY, and it stays two sentences
@@ -844,9 +844,7 @@ fun dwAsrModelOfferSentence(
          * where the maintainer reads it: docs/ASR-MODEL-SIDELOAD.md is the cable route.
          */
         DwAsrModelOffer.CONTAINER_NOT_READABLE_IN_THIS_BUILD ->
-            "Published as a ${artifact?.container?.extension ?: "compressed archive"}, which this " +
-                "app cannot open, and this deployment does not have its own copy. Somebody with a " +
-                "cable can still put it on this phone — ask whoever set up your account."
+            "The speech model cannot be downloaded to this phone right now."
 
         /*
          * THE SERVER'S OWN 403 SENTENCE, QUOTED, and not a second phrasing of the rule. The gate is
@@ -856,19 +854,17 @@ fun dwAsrModelOfferSentence(
          * that trap and deliberately does not say "or above".
          */
         DwAsrModelOffer.NOT_ENTITLED ->
-            "The offline speech model is part of running a design workshop, so it needs a " +
-                "Designer, Admin or Master Admin account. Ask whoever manages accounts here."
+            "The offline speech model is for designers, admins and the master admin. Ask an " +
+                "administrator if you need it."
 
         DwAsrModelOffer.SESSION_LAPSED ->
-            "This phone is signed out of the deployment, so it could not ask for the model. Sign " +
-                "in again and tap “Check again”."
+            "You have been signed out. Sign in again and tap “Check again”."
 
         // NOT "the deployment has no model": it has one, and it is not the one this app knows how to
         // ask for. Sending this designer to an administrator wastes both their time — the bytes will
         // be present and correct — so the sentence names the move that helps.
         DwAsrModelOffer.DEPLOYMENT_DOES_NOT_KNOW_THIS_MODEL ->
-            "This deployment does not recognise the speech model this version of the app asks for. " +
-                "Updating the app is what fixes it; a cable still works in the meantime."
+            "Update the app to download the speech model."
 
         DwAsrModelOffer.STORAGE_UNMEASURED ->
             "This phone would not say how much storage is free. Tap “Check again”."
@@ -894,18 +890,15 @@ fun dwAsrModelOfferSentence(
         }
 
         DwAsrModelOffer.UNKNOWN ->
-            "Not looked at yet. Tap “Check again”."
+            "Not checked yet. Tap “Check again”."
     }
 }
 
 /** Said when a file does not match its pinned digest. It is deleted, and this is why. */
 const val DW_ASR_MODEL_MISMATCH_SENTENCE: String =
-    "One of the speech model's files did not match the fingerprint built into this app, so it has " +
-        "been deleted and nothing was installed. A model whose vocabulary file has been swapped does " +
-        "not fail — it writes fluent nonsense in the wrong alphabet, which nobody would catch by " +
-        "reading the field — so this app refuses it rather than trying to work around it. If it was " +
-        "downloaded, the transfer probably broke; try again. If it happens twice, or if it was put " +
-        "on the phone with a cable, tell whoever supplied the file: it is not the file this app pins."
+    "One of the speech model's files was not the expected file, so it has been deleted and " +
+        "nothing was installed. If it was downloaded, the transfer probably broke; try again. If it " +
+        "happens twice, or if it was put on the phone with a cable, tell whoever supplied the file."
 
 /**
  * **WHAT THIS MODEL WOULD ADD TO *THIS* PHONE — WHICH IS NOT THE SAME AS WHAT IT SERVES.**
@@ -938,7 +931,7 @@ fun dwAsrModelWhatItBuysSentence(
     support: DwRecognitionSupport?,
     plans: List<DwModelPlan> = DW_TIER1_CATALOGUE,
 ): String {
-    val plan = plans.firstOrNull() ?: return "No speech model is measured in this build."
+    val plan = plans.firstOrNull() ?: return "There is no speech model to install."
     val served = labels.keys.filter { plan.servesLanguage(it) }
     if (served.isEmpty()) {
         return "Serves none of this app's dictation languages, so it would add nothing here."

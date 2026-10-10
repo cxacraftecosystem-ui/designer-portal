@@ -389,7 +389,7 @@ fun findWorkshopCodeInDraft(
             label = dwCardRowTitle(source.entity, rows[index], index),
             detail = buildString {
                 append(source.stage.title)
-                append(" · row ${index + 1}")
+                append(" · entry ${index + 1}")
                 if (code.isNotBlank()) append(" · $code")
             },
         )

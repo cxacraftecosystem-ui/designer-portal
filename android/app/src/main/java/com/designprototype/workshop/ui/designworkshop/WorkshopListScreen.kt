@@ -828,7 +828,7 @@ fun WorkshopListScreen(
 
         if (offline) {
             Text(
-                "The server could not be reached. Showing what is stored on this device.",
+                "Could not connect. Showing what is stored on this device.",
                 color = MaterialTheme.field.warning,
                 fontSize = 12.sp
             )
@@ -956,9 +956,9 @@ fun WorkshopListScreen(
         val deletionsNow = outstanding.sumOf { it.unsentDeletions }
         val deletionsLine = if (deletionsNow == 0) "" else {
             " $deletionsNow stage${if (deletionsNow == 1) "" else "s"} " +
-                "${if (deletionsNow == 1) "holds a row deletion" else "hold row deletions"} a sync " +
-                "cannot move — open the stage once with a connection so this phone can read it, and " +
-                "the deletion goes up on the save straight after."
+                "${if (deletionsNow == 1) "holds a deleted entry" else "hold deleted entries"} that " +
+                "cannot upload yet — open the stage once with a connection, and the deletion is sent " +
+                "on the next save."
         }
         /*
           AND THE THIRD THING A SYNC PASS CANNOT MOVE (2026-09-03), found the same way as the two above
@@ -1040,9 +1040,8 @@ fun WorkshopListScreen(
                                 // "0 stage(s)" for a pass whose whole achievement was that.
                                 if (result.workshopsResumed > 0) {
                                     append(
-                                        " ${result.workshopsResumed} workshop(s) turned out to be on " +
-                                            "the server already and have been linked to this phone " +
-                                            "rather than sent a second time."
+                                        " ${result.workshopsResumed} workshop(s) were already " +
+                                            "uploaded and have been linked to this phone."
                                     )
                                 }
                             }
@@ -1060,7 +1059,7 @@ fun WorkshopListScreen(
                         // of the news and it is the half that says nothing was lost.
                         result.refused > 0 -> onMessage(
                             buildString {
-                                append("${result.refused} item(s) were refused by the server and are ")
+                                append("${result.refused} item(s) could not be saved online and are ")
                                 append("still on this device. Open the workshop below to see which, ")
                                 append("and why.")
                                 if (result.stoppedOffline) {
@@ -1100,7 +1099,7 @@ fun WorkshopListScreen(
                             "There was nothing to send." +
                                 "$refusedAnswersLine$deletionsLine$droppedLine"
                         )
-                        else -> onMessage("Everything on this device is already on the server.")
+                        else -> onMessage("Everything on this device is already uploaded.")
                     }
                     busy = false
                     reload++
@@ -1184,8 +1183,8 @@ fun WorkshopListScreen(
                                         "upload as soon as there is signal."
                                 )
                                 result.refused > 0 -> onError(
-                                    "${result.refused} item(s) of “${row.title}” were refused by the " +
-                                        "server. Nothing has been deleted — open the details on the row " +
+                                    "${result.refused} item(s) of “${row.title}” could not be saved " +
+                                        "online. Nothing has been deleted — open the details on the row " +
                                         "to see why."
                                 )
                                 // "Try again" CLEARS a create failure before the pass runs (see
@@ -1205,8 +1204,7 @@ fun WorkshopListScreen(
                                         // The id was recovered rather than a workshop filed; the two
                                         // counts above are both 0 on the pass that does only that.
                                         if (result.workshopsResumed > 0) {
-                                            " It turned out to be on the server already and has been " +
-                                                "linked to this phone rather than sent a second time."
+                                            " It was already uploaded and has been linked to this phone."
                                         } else {
                                             ""
                                         }
@@ -1215,7 +1213,7 @@ fun WorkshopListScreen(
                                     "The connection dropped. Nothing has been lost — it will pick up " +
                                         "where it stopped."
                                 )
-                                else -> onMessage("“${row.title}” is already fully on the server.")
+                                else -> onMessage("“${row.title}” is already fully uploaded.")
                             }
                             busy = false
                             reload++
@@ -1234,7 +1232,7 @@ fun WorkshopListScreen(
                             } else {
                                 onMessage(
                                     "Freed ${syncBytes(bytes)} by removing $count uploaded file(s) from " +
-                                        "this phone. They are still on the server, but reports " +
+                                        "this phone. They are still saved online, but reports " +
                                         "generated on this device will no longer include them."
                                 )
                             }
@@ -1324,7 +1322,7 @@ fun WorkshopListScreen(
                     }.getOrNull()
                     if (moved == null) {
                         onError(
-                            "That draft could not be moved. If it has since been sent to the server " +
+                            "That draft could not be moved. If it has since been uploaded " +
                                 "on its own, nothing needed moving and nothing has been lost."
                         )
                     } else {
@@ -1355,7 +1353,7 @@ fun WorkshopListScreen(
                 showCreate = false
                 reload++
                 if (wasLocal) {
-                    onMessage("Started on this device. Send it to the server from this list once you have a connection.")
+                    onMessage("Started on this device. Upload it from this list once you have a connection.")
                 }
                 onOpen(id)
             },
@@ -2174,9 +2172,9 @@ private fun CreateWorkshopDialog(
                         emptyMessage = if (designerOffer?.search != null) {
                             "No eligible account matches that search."
                         } else {
-                            "No account on this repository may be named as this workshop's designer. " +
+                            "No account can be named as this workshop's designer yet. " +
                                 "An account has to be able to run a design workshop, and be on the " +
-                                "ACTIVE designer roster, before it can be named on one."
+                                "active designer roster, before it can be named on one."
                         },
                         enabled = !busy && designerStandDown == null,
                         onSelectedChange = { picked ->
@@ -2656,7 +2654,7 @@ internal fun classifyCreate(error: Throwable?, isTransient: (Throwable) -> Boole
         error == null -> CreateOutcome.Local
         isTransient(error) -> CreateOutcome.Local
         else -> CreateOutcome.Refused(
-            error.apiErrorMessage("The server refused to start this workshop.")
+            error.apiErrorMessage("This workshop could not be started.")
         )
     }
 
@@ -2704,7 +2702,7 @@ internal fun dwDesignerPickerStandDown(
     if (offline) return cannotReach
     if (error == null) return null
     if (dwViewerAdministrationMissing((error as? HttpException)?.code())) {
-        return "This repository does not offer the designer list yet. The workshop can still be " +
+        return "The list of designers could not be read just now. The workshop can still be " +
             "started; stage 1 will carry whoever started it."
     }
     if (isConnectionFailure(error)) return cannotReach

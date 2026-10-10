@@ -607,7 +607,7 @@ class PasswordSetupCopyTest {
     @Test
     fun `the gate's usual words are the ones it always showed`() {
         assertEquals(
-            "Your new password did not reach the server, so nothing has changed. Try again.",
+            "Your new password could not be sent, so nothing has changed. Try again.",
             PASSWORD_CHANGE_NOT_SENT
         )
         assertEquals(

@@ -348,7 +348,7 @@ class OutboxConflictTest {
         val warning = outboxDiscardConfirmation("Kutch mirror work", files = 1, isConflict = false)
         assertEquals(
             "“Kutch mirror work” and the 1 file saved with it will be deleted from this device. " +
-                "This cannot be undone, and nothing about it has reached the server.",
+                "This cannot be undone, and none of it has been uploaded.",
             warning,
         )
     }
@@ -368,13 +368,13 @@ class OutboxConflictTest {
         )
         assertFalse(
             "the one sentence this arm exists to stop:\n$warning",
-            warning.contains("nothing about it has reached the server"),
+            warning.contains("none of it has been uploaded"),
         )
         assertEquals(
             "“Giriraj Prasad” and the 2 files saved with it will be deleted from this device. This " +
-                "cannot be undone. The record is already on the server and stays there — entering it " +
-                "again would leave two of it. The 2 files are the part the server never got — attach " +
-                "them to the record there instead, if you still can.",
+                "cannot be undone. The record is already saved online and stays there — entering it " +
+                "again would leave two of it. The 2 files were not uploaded — attach them to the " +
+                "record again instead, if you still can.",
             warning,
         )
     }
@@ -392,7 +392,7 @@ class OutboxConflictTest {
     fun `an entry with no files is not offered a count of them`() {
         assertEquals(
             "“Rabari embroidery” will be deleted from this device. This cannot be undone, and " +
-                "nothing about it has reached the server.",
+                "none of it has been uploaded.",
             outboxDiscardConfirmation("Rabari embroidery", files = 0, isConflict = false),
         )
     }

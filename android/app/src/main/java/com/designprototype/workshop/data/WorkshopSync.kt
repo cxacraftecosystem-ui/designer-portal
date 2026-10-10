@@ -460,10 +460,10 @@ data class WorkshopSyncStatus(
     val summary: String
         get() = when {
             remoteId == null && pendingStages == 0 && pendingMedia == 0 -> "On this device only"
-            isFullySynced -> "Backed up to the server"
+            isFullySynced -> "Saved online"
             hasFailures -> buildList {
-                if (failedStages > 0) add("$failedStages stage${plural(failedStages)} refused")
-                if (failedMedia > 0) add("$failedMedia file${plural(failedMedia)} refused")
+                if (failedStages > 0) add("$failedStages stage${plural(failedStages)} not saved")
+                if (failedMedia > 0) add("$failedMedia file${plural(failedMedia)} not uploaded")
             }.joinToString(", ")
             // Said in its own words rather than through the "waiting to upload" branch below, which
             // would be false: nothing is waiting, the save has already happened and the repository
@@ -478,7 +478,7 @@ data class WorkshopSyncStatus(
             pendingStages == 0 && pendingMedia == 0 &&
                 (refusedAnswers > 0 || unsentDeletions > 0 || droppedAnswers > 0) ->
                 buildList {
-                    if (refusedAnswers > 0) add("$refusedAnswers answer${plural(refusedAnswers)} refused")
+                    if (refusedAnswers > 0) add("$refusedAnswers answer${plural(refusedAnswers)} not accepted")
                     if (unsentDeletions > 0) {
                         // STAGES, and the words say so. It counts stages holding a deletion, not rows
                         // — the rows are gone from the draft, which is what the deletion means, so
@@ -494,9 +494,9 @@ data class WorkshopSyncStatus(
                     if (droppedAnswers > 0) {
                         add("$droppedAnswers answer${plural(droppedAnswers)} not stored")
                     }
-                }.joinToString(", ") + " — the rest is backed up"
+                }.joinToString(", ") + " — the rest is saved online"
             else -> buildList {
-                if (remoteId == null) add("not created on the server")
+                if (remoteId == null) add("the workshop itself")
                 if (pendingStages > 0) add("$pendingStages stage${plural(pendingStages)}")
                 if (pendingMedia > 0) add("$pendingMedia file${plural(pendingMedia)}")
             }.joinToString(", ").replaceFirstChar { it.uppercase() } + " waiting to upload"
@@ -625,8 +625,8 @@ fun dwDeviceSyncBanner(
     val headline = buildList {
         if (stages > 0) add("$stages stage${plural(stages)}")
         if (files > 0) add("$files file${plural(files)}, $bytesText")
-        if (failures > 0) add("$failures refused outright")
-        if (refusedAnswers > 0) add("$refusedAnswers answer${plural(refusedAnswers)} refused")
+        if (failures > 0) add("$failures not saved")
+        if (refusedAnswers > 0) add("$refusedAnswers answer${plural(refusedAnswers)} not accepted")
         if (unsentDeletions > 0) {
             add("$unsentDeletions stage${plural(unsentDeletions)} with a deletion not sent")
         }
@@ -657,12 +657,11 @@ fun dwDeviceSyncBanner(
     */
     val dOne = unsentDeletions == 1
     val deletionSentence = "$unsentDeletions stage${plural(unsentDeletions)} " +
-        (if (dOne) "holds a row deletion" else "hold row deletions") +
-        " that ${if (dOne) "has" else "have"} not reached the server, and a sync will NOT move " +
-        "${if (dOne) "it" else "them"}: this phone has to READ " +
-        "${if (dOne) "that stage" else "those stages"} once before it can tell the server what to " +
-        "delete. Open the workshop, then the stage, with a connection — the deletion goes up on the " +
-        "save straight after."
+        (if (dOne) "has a deletion" else "have deletions") +
+        " that ${if (dOne) "has" else "have"} not been sent, and syncing alone will not send " +
+        "${if (dOne) "it" else "them"}. Open the workshop, then " +
+        "${if (dOne) "the stage" else "those stages"}, with a connection — the deletion is sent " +
+        "when the stage saves."
     /*
       THE DROPPED ANSWER'S OWN SENTENCE, AND WHY IT IS NOT THE REFUSAL'S.
 
@@ -691,30 +690,30 @@ fun dwDeviceSyncBanner(
     val droppedSentence = "$droppedAnswers answer${plural(droppedAnswers)} " +
         "${if (pOne) "was" else "were"} not stored: this workshop's own sections no longer ask " +
         "${if (pOne) "that question" else "those questions"}. Open the workshop once with a " +
-        "connection — it re-reads the sections, and the next sync clears this."
+        "connection to clear this."
     val detail = buildString {
         append(
             when {
                 // NOTHING IS WAITING. Said in its own words, because the sentence below is the one that
                 // sent a designer looking for signal over an answer no amount of signal will move.
-                refusedAnswers > 0 && !waiting -> "$across Everything else is on the server. " +
-                    (if (one) "That answer" else "Those answers") +
-                    " will NOT upload by ${if (one) "itself" else "themselves"} — the repository has " +
-                    "already read $them and declined, and kept what it already held. Open the " +
-                    "workshop, then the stage, to see which and correct $them."
+                refusedAnswers > 0 && !waiting -> "$across Everything else is saved online. " +
+                    (if (one) "That answer was" else "Those answers were") +
+                    " not accepted, so ${if (one) "it" else "they"} will not upload by " +
+                    "${if (one) "itself" else "themselves"}. Open the workshop, then the stage, to " +
+                    "see which and correct $them."
                 // Both at once: the first half is true of the pending work and false of the refusals,
                 // so the refusals get their own clause rather than being covered by "it uploads when
                 // there is a connection".
                 refusedAnswers > 0 -> "$across Everything is saved here and editable offline; the " +
                     "stages and files above upload whenever there is a connection. The " +
-                    "$refusedAnswers refused answer${plural(refusedAnswers)} will not — the " +
-                    "repository has already declined $them and needs $them corrected."
+                    "$refusedAnswers answer${plural(refusedAnswers)} that ${if (one) "was" else "were"} " +
+                    "not accepted will not upload until $them ${if (one) "is" else "are"} corrected."
                 // The same two arms again for a device whose only stuck item is a deletion. They are
                 // arms and not an appended clause because the FIRST half differs: with nothing pending
                 // "everything else is on the server" is true and is the reassurance that stops a
                 // designer re-checking twenty stages.
                 unsentDeletions > 0 && !waiting ->
-                    "$across Everything else is on the server. $deletionSentence"
+                    "$across Everything else is saved online. $deletionSentence"
                 unsentDeletions > 0 -> "$across Everything is saved here and editable offline; the " +
                     "stages and files above upload whenever there is a connection. $deletionSentence"
                 // And the same two arms a third time, for a device whose only stuck item is an answer
@@ -723,7 +722,7 @@ fun dwDeviceSyncBanner(
                 // item is a dropped custom answer gets a named sentence rather than the "waiting to
                 // upload" fall-through this function exists to end.
                 droppedAnswers > 0 && !waiting ->
-                    "$across Everything else is on the server. $droppedSentence"
+                    "$across Everything else is saved online. $droppedSentence"
                 droppedAnswers > 0 -> "$across Everything is saved here and editable offline; the " +
                     "stages and files above upload whenever there is a connection. $droppedSentence"
                 else -> "$across Everything is saved here and editable offline; it uploads whenever " +
@@ -1206,8 +1205,8 @@ internal fun dwClaimedRemoteIds(drafts: List<DwDraftClaim>): Set<String> {
  * before any other.
  */
 internal const val DW_WORKSHOP_CREATE_AMBIGUOUS =
-    "This workshop was sent once and this phone never saw the answer, and the server now holds more " +
-        "than one workshop with this title created by you — so this phone cannot tell which one is " +
+    "This workshop was sent once but the reply did not arrive, and there is now more than one " +
+        "workshop online with this title created by you — so this phone cannot tell which one is " +
         "yours, and sending it again could file it twice. Nothing on this phone has been deleted: " +
         "every stage, photograph and recording you captured is still here. Open the workshop list, " +
         "check which of them is the one you started, and either rename this one or delete the copy " +
@@ -1265,8 +1264,8 @@ private fun Throwable.refusal(fallback: String): ApiRefusal {
     // skims and abandons before the half that tells them waiting for signal cannot help.
     val lead = if (text.endsWith('.') || text.endsWith('!') || text.endsWith('?')) text else "$text."
     return refusal.copy(
-        message = "$lead The server answered, so a better connection will not help — this will keep " +
-            "being refused until whatever caused it is corrected. Use Try again once it has been."
+        message = "$lead A better connection will not help — this will not be saved until the " +
+            "problem is corrected. Use Try again once it has been."
     )
 }
 
@@ -1282,10 +1281,9 @@ private fun Throwable.refusal(fallback: String): ApiRefusal {
  * to be corrected and the other left telling a researcher to go and fix an answer that is not wrong.
  */
 internal fun skewSentence(what: String, said: String): String =
-    "$what could not be read by the repository: $said Nothing you typed is wrong and nothing has been " +
-        "thrown away — this app and the repository are out of step, and no edit will clear it. Your " +
-        "work is safe on this device, and it will be sent by itself the next time you open the app " +
-        "after either has been updated; you do not have to do anything."
+    "$what could not be saved because the app needs an update. Nothing you typed is wrong and " +
+        "nothing has been lost. Your work is safe on this device, and it will be sent by itself the " +
+        "next time you open the app after an update; you do not have to do anything."
 
 /**
  * What one stage still owes the server as a DELETION — nothing about values, rows or files.
@@ -1538,7 +1536,7 @@ object WorkshopSyncEngine {
         val problems = ArrayList<String>()
 
         draft.sync.createFailure?.let {
-            problems += "This workshop could not be created on the server: $it"
+            problems += "This workshop could not be saved online: $it"
         }
 
         var pendingMedia = 0
@@ -1555,7 +1553,7 @@ object WorkshopSyncEngine {
             when {
                 descriptor.uploadFailure != null -> {
                     failedMedia++
-                    problems += "“${descriptor.originalFilename}” was refused: ${descriptor.uploadFailure}"
+                    problems += "“${descriptor.originalFilename}” was not uploaded: ${descriptor.uploadFailure}"
                 }
                 descriptor.isConfirmedRemote -> if (onDisk) {
                     releasable++
@@ -1626,7 +1624,7 @@ object WorkshopSyncEngine {
                             if (isNotEmpty()) append(", and ")
                             else append("you deleted ")
                             val n = owed.rows.size
-                            append("$n row${plural(n)} from ")
+                            append("$n entr${if (n == 1) "y" else "ies"} from ")
                             append(
                                 owed.rows
                                     .map { it.substringBefore(DW_ROW_KEY_SEPARATOR, "") }
@@ -1636,10 +1634,8 @@ object WorkshopSyncEngine {
                         }
                     }
                     problems += "Stage ${spec.number} (${spec.title}): $what on this phone, and that " +
-                        "deletion has NOT reached the server — this stage has not been read from this " +
-                        "device yet, so it cannot yet be told what to delete. Nothing else about this " +
-                        "stage is held up. Open the stage once with a connection and it goes up on the " +
-                        "save straight after."
+                        "deletion has not been sent. Nothing else about this stage is held up. Open " +
+                        "the stage once with a connection and the deletion is sent when it saves."
                 }
             }
             // ONE FUNCTION, NOT TWO COPIES OF A TEST. This gate and the one in `pushStages` were
@@ -1704,12 +1700,10 @@ object WorkshopSyncEngine {
         */
         dwStrandedStages(schema, draft).forEach { stored ->
             pendingStages++
-            problems += "“${stored.title.ifBlank { stored.stageId }}”: this phone's copy of the " +
-                "stage list no longer describes this stage, so the answers it holds cannot be sent " +
-                "— nothing has been thrown away. Open the app with a connection so it can fetch the " +
-                "current stage list; if the stage stays here after that, this workshop was built " +
-                "with a stage the repository has since retired and someone will have to move the " +
-                "answers by hand."
+            problems += "“${stored.title.ifBlank { stored.stageId }}”: this stage is no longer part " +
+                "of the form, so its answers cannot be sent — nothing has been lost. Open the app " +
+                "with a connection to get the latest form layout; if the stage stays here after " +
+                "that, ask an administrator to move its answers."
         }
 
         // A non-permanent note (the server dropped a field it did not recognise, an answer it
@@ -2300,7 +2294,7 @@ object WorkshopSyncEngine {
             } catch (e: Throwable) {
                 if (repository.isConnectionFailure(e)) {
                     noteSync(context, workshopId) {
-                        it.copy(lastError = e.apiErrorMessage("The server could not be reached."))
+                        it.copy(lastError = e.apiErrorMessage(CONNECTION_FAILED_SENTENCE))
                     }
                     return false
                 }
@@ -2311,11 +2305,11 @@ object WorkshopSyncEngine {
                 // whole fortnight, header, stages and photographs alike, behind a refusal nobody can
                 // act on. Same answer as the stage arm: say what happened, and let the next app run
                 // find out whether the skew has closed.
-                val refusal = e.refusal("The server refused to create this workshop.")
+                val refusal = e.refusal("This workshop could not be saved.")
                 noteSync(context, workshopId) {
                     it.copy(
                         createFailure = if (refusal.schemaSkew) {
-                            skewSentence("What this copy of the app sent for this workshop", refusal.message)
+                            skewSentence("This workshop", refusal.message)
                         } else {
                             refusal.message
                         },
@@ -2340,9 +2334,8 @@ object WorkshopSyncEngine {
                 tally.refused++
                 noteSync(context, workshopId) {
                     it.copy(
-                        createFailure = "the server accepted this workshop but did not say what it " +
-                            "saved, so it cannot be confirmed. Nothing on this device has been " +
-                            "changed. If you are on a wi-fi network that asks you to sign in, " +
+                        createFailure = "the reply could not be confirmed. Nothing on this " +
+                            "device has been changed. If you are on a wi-fi network that asks you to sign in, " +
                             "connect properly, check whether the workshop already exists, and use " +
                             "Try again.",
                         createFailedAt = Instant.now().toString(),
@@ -2615,8 +2608,8 @@ object WorkshopSyncEngine {
                         // file from the retry it is waiting for.
                         DwMediaUploadProgress.refused(
                             descriptor.id,
-                            "the file store answered HTTP ${refused.status}. Nothing is wrong with " +
-                                "this file — it will be sent again on the next attempt.",
+                            "the upload did not finish. Nothing is wrong with this file — it " +
+                                "will be sent again on the next attempt.",
                             permanent = false,
                         )
                         return@forEachIndexed
@@ -2626,9 +2619,8 @@ object WorkshopSyncEngine {
                     // a 413 is a sentence that cannot be acted on, and the number is the one thing a
                     // person reporting this can carry to somebody who can fix it. The bytes stay —
                     // see [DraftMedia.uploadFailure].
-                    val reason = "the file store refused it with HTTP ${refused.status}. This is a " +
-                        "setting on the store rather than your connection, so trying again will not " +
-                        "clear it. The file is still on this device and nothing has been deleted."
+                    val reason = "the upload was not accepted, and trying again will not change " +
+                        "that. The file is still on this device and nothing has been deleted."
                     noteMediaFailure(context, draft.workshopId, descriptor.id, reason)
                     DwMediaUploadProgress.refused(descriptor.id, reason, permanent = true)
                     tally.refused++
@@ -2644,7 +2636,7 @@ object WorkshopSyncEngine {
                     }
                     return false
                 }
-                val reason = e.refusal("the server refused this file.").message
+                val reason = e.refusal("the file could not be uploaded.").message
                 noteMediaFailure(
                     context, draft.workshopId, descriptor.id,
                     // `.message` only: a media upload is multipart form-data rather than an
@@ -2663,8 +2655,7 @@ object WorkshopSyncEngine {
                 // request with its own page is the field case, and this app already knows they exist.
                 // Treating it as success would record a reference to nothing AND — if the bytes were
                 // ever released on the strength of it — throw the photograph away.
-                val unnamed = "the server accepted the upload but did not say what it stored, so it " +
-                    "cannot be confirmed. The file is still on this device. If you are on a wi-fi " +
+                val unnamed = "the upload could not be confirmed. The file is still on this device. If you are on a wi-fi " +
                     "network that asks you to sign in, connect properly and try again."
                 noteMediaFailure(context, draft.workshopId, descriptor.id, unnamed)
                 DwMediaUploadProgress.refused(descriptor.id, unnamed, permanent = true)
@@ -2833,11 +2824,11 @@ object WorkshopSyncEngine {
                   learned `merge` and the phone was still refusing to send. `skewRun` buys the next
                   app run one attempt, with nobody tapping anything. See [blocksRetry].
                 */
-                val refusal = e.refusal("the server refused this stage.")
+                val refusal = e.refusal("this stage could not be saved.")
                 noteStage(context, draft.workshopId, spec.key) {
                     it.copy(
                         failure = if (refusal.schemaSkew) {
-                            skewSentence("What this copy of the app sent for this stage", refusal.message)
+                            skewSentence("This stage", refusal.message)
                         } else {
                             refusal.message
                         },
@@ -3641,16 +3632,15 @@ private suspend fun recordStageSent(
     val droppedCustom = result.droppedCustomKeys.takeIf { it.isNotEmpty() }
     val notes = listOfNotNull(
         dropped?.let { keys ->
-            "the server did not recognise ${keys.size} field${plural(keys.size)} and did not store " +
-                "them (${keys.joinToString(", ").take(160)}). This phone is running a newer field " +
-                "registry than the server."
+            "${keys.size} field${plural(keys.size)} in this stage could not be saved, because the " +
+                "form has changed. Nothing you typed is lost."
         },
         droppedCustom?.let { keys ->
             "this workshop's own sections no longer ask ${keys.size} " +
                 "question${plural(keys.size)} this phone still holds an answer for, so " +
                 (if (keys.size == 1) "it was" else "they were") +
-                " not stored (${keys.joinToString(", ").take(160)}). The sections have been edited " +
-                "since this phone last read them — open this workshop once with a connection."
+                " not stored. The sections have been edited since this phone last read them — open " +
+                "this workshop once with a connection."
         },
     ).takeIf { it.isNotEmpty() }?.joinToString(" ")
 
@@ -3669,10 +3659,10 @@ private suspend fun recordStageSent(
     */
     val refused = dwRefusedAnswerCount(result.errors)
     val refusalNote = refused.takeIf { it > 0 }?.let { count ->
-        "the repository refused $count of the answers in this stage and kept what it already held " +
-            "for ${if (count == 1) "it" else "them"}. Everything else on the stage was saved, and " +
-            "nothing you typed has been thrown away — open the stage to see which answers, and what " +
-            "the repository holds."
+        "$count of the answers in this stage ${if (count == 1) "was" else "were"} not accepted, " +
+            "and the earlier ${if (count == 1) "answer was" else "answers were"} kept. Everything " +
+            "else on the stage was saved, and nothing you typed has been lost — open the stage to " +
+            "see which answers."
     }
     /*
       THE SWEEP TRIPWIRE. `StageSaveResultDto.removed` was decoded off every stage save this app has
@@ -3699,10 +3689,9 @@ private suspend fun recordStageSent(
     val sweptNote = result.removed
         .takeIf { it > 0 && !built.body.replaceCollections }
         ?.let { count ->
-            "the server deleted $count row${plural(count)} from this stage that this device did not " +
-                "ask it to delete. This save claimed no authority over which rows exist, so it should " +
-                "have deleted none. Nothing you typed was lost, but rows entered elsewhere may have " +
-                "been — open this workshop with a connection and check this stage against the server."
+            "$count entr${if (count == 1) "y was" else "ies were"} removed from this stage during " +
+                "this save. Nothing you typed was lost — open this workshop with a connection and " +
+                "check this stage."
         }
 
     val allNotes = listOfNotNull(notes, refusalNote, sweptNote)

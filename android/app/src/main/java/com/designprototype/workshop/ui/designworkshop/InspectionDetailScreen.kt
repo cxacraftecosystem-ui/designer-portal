@@ -166,10 +166,10 @@ fun InspectionDetailScreen(
     ) {
         if (!mayInspect) {
             InspectionNotice(
-                "The inspection surface belongs to the Inspector / Reviewer tier, and is scoped to " +
-                    "the workshops an admin has assigned to that account. Designers and admins read " +
-                    "design & prototype workshops on Design workshops instead; an admin chooses who " +
-                    "inspects a workshop from that workshop's own stage index.",
+                "Workshops to inspect is for Inspector / Reviewer accounts, and shows the workshops " +
+                    "an admin has assigned to you. Designers and admins open design & prototype " +
+                    "workshops from Design workshops; an admin chooses who inspects a workshop from " +
+                    "that workshop's own stage index.",
                 warning = true
             )
             return@Column
@@ -233,8 +233,7 @@ fun InspectionDetailScreen(
             InspectionNotice(
                 "Read-only. This is an inspection: every stage below is shown as the designers " +
                     "recorded it, with who wrote each field, and nothing here can be edited, " +
-                    "submitted or deleted. Photographs, recordings and attachments are not carried " +
-                    "on an inspection read.",
+                    "submitted or deleted.",
                 warning = true
             )
         }
@@ -245,9 +244,9 @@ fun InspectionDetailScreen(
             // this is close to unreachable — but "close to" is not "never", and drawing an empty
             // page would read as a workshop with no stages rather than as a build with no registry.
             InspectionNotice(
-                "This phone could not read the field registry, so the stages cannot be laid out. " +
-                    "The workshop itself is fine — nothing here has been changed and nothing is " +
-                    "missing from the repository.",
+                "The stages cannot be shown because the form layout could not be loaded. The " +
+                    "workshop itself is fine and nothing has been changed. Update the app, then open " +
+                    "this workshop again.",
                 warning = false
             )
             return@Column
@@ -326,7 +325,7 @@ private fun InspectionStage(
             Text(
                 "Nothing has been recorded on this stage." +
                     if (stage.optionalStage) {
-                        " The source document marks it as one a workshop may legitimately skip."
+                        " This stage is optional, so a workshop may skip it."
                     } else {
                         ""
                     },
@@ -383,9 +382,7 @@ private fun InspectionStage(
                 "$customCount ${if (customCount == 1) "answer" else "answers"} to " +
                     (if (customCount == 1) "a question" else "questions") +
                     " this workshop's designer added to this stage " +
-                    (if (customCount == 1) "is" else "are") + " recorded. The questions themselves " +
-                    "are read through a route an inspection does not reach, so the answers are not " +
-                    "shown without them.",
+                    (if (customCount == 1) "is" else "are") + " recorded.",
                 color = MaterialTheme.field.muted,
                 fontSize = 12.sp
             )
@@ -438,9 +435,7 @@ private fun InspectionRecord(
                         // sentence. A field with nothing in it is `Empty` and is counted as
                         // unanswered instead, so "no photograph" and "a photograph this read does
                         // not carry" never collapse into one line.
-                        "${reading.count} ${if (reading.count == 1) "file" else "files"} recorded " +
-                            "here. An inspection read does not carry photographs, recordings or " +
-                            "attachments.",
+                        "${reading.count} ${if (reading.count == 1) "file" else "files"} recorded here.",
                         stamps[fieldSpec.key],
                         media = true,
                     )

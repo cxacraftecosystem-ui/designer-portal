@@ -108,7 +108,7 @@ fun Throwable.workshopAccessQueueFailure(): WorkshopAccessQueueFailure {
         // Named arguments are evaluated top to bottom, so the status is read while the body is still
         // there. Do not reorder these two lines.
         refused = http?.code() == 403,
-        message = apiErrorMessage("The server did not say why."),
+        message = apiErrorMessage("No reason was given."),
     )
 }
 
@@ -160,12 +160,11 @@ fun workshopAccessQueueNotice(
                 // many people are waiting, and pretending otherwise is the defect this file exists
                 // for. It also never names another account or a rank ladder — the server's own
                 // sentence is the whole disclosure, exactly as in [accessRefusalChrome].
-                body = "The server refused this account. Requests across every workshop are readable " +
-                    "by an admin or the master admin only, so this is not an empty queue — it is a " +
-                    "queue you were not shown, and researchers may be waiting in it. If you could " +
-                    "open this before, your role was changed after you signed in: sign out and back " +
-                    "in to see what you now hold, and ask a master admin to restore it. The server " +
-                    "said: ${failure.message}$stale",
+                body = "Requests across every workshop can be read by an admin or the master admin " +
+                    "only, so this queue is not shown to this account — researchers may be waiting " +
+                    "in it. If you could open this before, your role was changed after you signed " +
+                    "in: sign out and back in to see what you now hold, and ask a master admin to " +
+                    "restore it. ${failure.message}$stale",
                 answered = false,
             )
         } else {
@@ -173,9 +172,9 @@ fun workshopAccessQueueNotice(
                 heading = "The queue could not be read",
                 // No signal is the normal condition for this fleet, so this is a state rather than a
                 // scolding — but it refuses outright to be mistaken for "nothing waiting".
-                body = "This handset could not reach the server, so nothing here says whether anybody " +
-                    "is waiting. Requests are held on the server and none of them is lost; try again " +
-                    "where there is signal. The reason given: ${failure.message}$stale",
+                body = "This phone could not connect, so nothing here says whether anybody is " +
+                    "waiting. Requests are kept online and none of them is lost; try again where " +
+                    "there is signal. ${failure.message}$stale",
                 answered = false,
             )
         }

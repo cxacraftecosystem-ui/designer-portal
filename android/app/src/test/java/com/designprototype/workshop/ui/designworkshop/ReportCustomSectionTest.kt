@@ -374,7 +374,7 @@ class ReportCustomSectionTest {
         // …but the question is NAMED, because a question silently absent from the field copy and
         // present in the office's is the exact divergence this lane exists to end.
         assertTrue("the question is named: $text", text.contains("Signed by"))
-        assertTrue("and the type is named, so it can be reported", text.contains("SIGNATURE"))
+        assertTrue("and it points to where the answer is held", text.contains("online workshop record"))
     }
 
     /**

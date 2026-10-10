@@ -397,7 +397,7 @@ class DwAsrModelTest {
         // AND AN EMPTY CATALOGUE IS A DIFFERENT FACT FROM A MODEL THAT COVERS NOTHING. Collapsing them
         // would print "serves none of this app's languages" about a build that pins no model at all.
         assertEquals(
-            "No speech model is measured in this build.",
+            "There is no speech model to install.",
             dwAsrModelWhatItBuysSentence(labels, null, plans = emptyList()),
         )
     }

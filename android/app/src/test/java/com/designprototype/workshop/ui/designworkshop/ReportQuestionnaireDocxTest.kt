@@ -314,7 +314,7 @@ class ReportQuestionnaireDocxTest {
         assertTrue("the form must be named: $printed", printed.contains("Loom census"))
         assertTrue(
             "and the file must say the gap is in THIS copy: $printed",
-            printed.contains("this device holds no copy of the answers"),
+            printed.contains("Their answers are in the online workshop record"),
         )
         assertEquals(
             "nothing may be indexed — there is no answer to index, and a numbered heading over an " +

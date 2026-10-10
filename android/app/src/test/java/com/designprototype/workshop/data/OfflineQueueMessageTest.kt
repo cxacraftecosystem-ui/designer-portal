@@ -45,15 +45,14 @@ class OfflineQueueMessageTest {
             text.contains("the office still sees the earlier version"),
         )
         assertTrue(text, text.contains("saved on this device"))
-        // AND WHO WINS, which the sentence used to leave out. `writeFromEntry` replays a correction as
-        // a whole create-shaped body with no version and no If-Match, so when it finally goes it
-        // overwrites every change anyone else made in between — silently, on both sides. The trade is
-        // defensible for a register a small team keeps; making it silently is not.
-        assertTrue(
-            "a queued correction must say that it will overwrite a later edit:\n$text",
+        // WHEN IT GOES, and nothing about the overwrite. A queued correction replays as a whole body
+        // with no version check; that gap is recorded in docs/OPEN_FINDINGS.md and is not narrated
+        // on a toast (2026-10-10).
+        assertFalse(
+            "a queued correction does not narrate the overwrite gap:\n$text",
             text.contains("your version wins"),
         )
-        assertTrue(text, text.contains("replaces the whole record"))
+        assertTrue(text, text.contains("It will be sent when you have a signal"))
         // THREE FACTS, NOT FIVE (2026-09-03). This closed with "Tell them if that matters" — an
         // instruction naming nobody, on a toast that is gone in five seconds, addressed to a designer
         // who has already put the phone in their pocket. Every fact above survives; the ceiling is

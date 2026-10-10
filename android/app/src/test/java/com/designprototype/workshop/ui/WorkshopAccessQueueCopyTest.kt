@@ -131,9 +131,9 @@ class WorkshopAccessQueueCopyTest {
     fun `an unreachable server says the requests are safe, because they are`() {
         val said = requireNotNull(notice(error = SocketTimeoutException("timed out")))
         val body = said.body.lowercase()
-        assertTrue("the queue lives on the server, not on this handset", "held on the server" in body)
+        assertTrue("the queue lives on the server, not on this handset", "kept online" in body)
         assertTrue("names the next condition rather than the next tap", "signal" in body)
-        assertTrue("passes the platform's own sentence through", "timed out" in said.body)
+        assertTrue("passes the plain connection sentence through", "Could not connect" in said.body)
     }
 
     @Test

@@ -155,7 +155,7 @@ fun PlaceSearchOverlay(
             modifier = modifier.fillMaxWidth()
         ) {
             Text(
-                "Place search is off in this build (no map key). Pan the map, or type the coordinates in — " +
+                "Place search is not available right now. Move the map or type the coordinates — " +
                     "both work with no network.",
                 color = Muted,
                 fontSize = 11.sp,

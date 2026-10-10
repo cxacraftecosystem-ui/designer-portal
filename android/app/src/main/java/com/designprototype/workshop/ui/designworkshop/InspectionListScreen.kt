@@ -188,10 +188,10 @@ fun InspectionListScreen(
         // ── The refusal, and it is the one refusal in this app an ADMIN also meets ───────────────
         if (!mayInspect) {
             InspectionNotice(
-                "The inspection surface belongs to the Inspector / Reviewer tier, and is scoped to " +
-                    "the workshops an admin has assigned to that account. Designers and admins read " +
-                    "design & prototype workshops on Design workshops instead; an admin chooses who " +
-                    "inspects a workshop from that workshop's own stage index.",
+                "Workshops to inspect is for Inspector / Reviewer accounts, and shows the workshops " +
+                    "an admin has assigned to you. Designers and admins open design & prototype " +
+                    "workshops from Design workshops; an admin chooses who inspects a workshop from " +
+                    "that workshop's own stage index.",
                 warning = true
             )
             return@Column
@@ -206,9 +206,7 @@ fun InspectionListScreen(
         // Said before anything fails, not after. An inspection is read from the server every time,
         // and an inspector who does not know that reads an offline moment as a withdrawn assignment.
         Text(
-            "This screen needs a connection. An inspection is read from the repository each time and " +
-                "is never kept on this phone — an assignment an admin ends today has ended, and a " +
-                "copy held here could not know that.",
+            "Inspections need a connection. If the list does not load, try again when you have signal.",
             color = MaterialTheme.field.muted,
             fontSize = 11.sp
         )
@@ -277,8 +275,7 @@ fun InspectionListScreen(
                     fontSize = 16.sp
                 )
                 Text(
-                    "This searches only the workshops assigned to you, which is the whole of what " +
-                        "you can read here. Clear the search to see them all.",
+                    "This searches only the workshops assigned to you. Clear the search to see them all.",
                     color = MaterialTheme.field.muted,
                     fontSize = 13.sp
                 )
@@ -293,8 +290,7 @@ fun InspectionListScreen(
                 )
                 Text(
                     "An admin assigns inspections one workshop at a time, from that workshop's own " +
-                        "stage index. Until they have, there is nothing here to read — this screen " +
-                        "is not hiding anything from you, and nothing failed to load.",
+                        "stage index. Workshops assigned to you will appear here.",
                     color = MaterialTheme.field.muted,
                     fontSize = 13.sp
                 )

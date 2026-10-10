@@ -311,15 +311,15 @@ private enum class GapTone { UNKNOWN, IDLE, MATCH, AHEAD, BEHIND }
 private data class ProgressGap(val tone: GapTone, val label: String)
 
 private fun progressGap(reported: Int, derived: Int?): ProgressGap {
-    if (derived == null) return ProgressGap(GapTone.UNKNOWN, "Repository count unavailable")
+    if (derived == null) return ProgressGap(GapTone.UNKNOWN, "Recorded count unavailable")
     // Two zeroes agree, but agreeing about nothing is not an achievement: a green "matches" tick on
     // an untouched task would read as reassurance on exactly the row that deserves a chase.
     if (reported == 0 && derived == 0) return ProgressGap(GapTone.IDLE, "Nothing reported or recorded yet")
     val delta = reported - derived
     return when {
-        delta > 0 -> ProgressGap(GapTone.BEHIND, "$delta more reported than the repository can find")
-        delta < 0 -> ProgressGap(GapTone.AHEAD, "${-delta} more in the repository than reported")
-        else -> ProgressGap(GapTone.MATCH, "Reported figure matches the repository")
+        delta > 0 -> ProgressGap(GapTone.BEHIND, "$delta more reported than recorded")
+        delta < 0 -> ProgressGap(GapTone.AHEAD, "${-delta} more recorded than reported")
+        else -> ProgressGap(GapTone.MATCH, "Reported figure matches the records")
     }
 }
 
@@ -487,7 +487,7 @@ fun TaskAdminScreen(
         runCatching { repository.taskProgress(workshopId.ifBlank { null }) }
             .onSuccess { report = it; reportError = null }
             .onFailure {
-                val text = it.apiErrorMessage("Unable to load the accountability rollup")
+                val text = it.apiErrorMessage("Unable to load progress")
                 reportError = text
                 onError(text)
             }
@@ -540,8 +540,8 @@ fun TaskAdminScreen(
             )
         }
         Text(
-            "Hand documentation work to the people below you, then watch what they report against " +
-                "what the repository can actually find.",
+            "Hand documentation work to the people below you, then compare what they report with " +
+                "what is actually recorded.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -567,9 +567,9 @@ fun TaskAdminScreen(
             )
             Text(
                 if (workshopTitle != null) {
-                    "Artisans, the rollup and the assignment list below are all limited to $workshopTitle."
+                    "Artisans, progress and the assignment list below are all limited to $workshopTitle."
                 } else {
-                    "Nothing is narrowed yet. Pick a workshop to scope the artisan picker, the rollup " +
+                    "Nothing is narrowed yet. Pick a workshop to scope the artisan picker, progress " +
                         "and the assignment list."
                 },
                 style = MaterialTheme.typography.bodySmall,
@@ -628,7 +628,7 @@ fun TaskAdminScreen(
                 modifier = Modifier.fillMaxWidth()
             )
             Text(
-                "Searched at the server, so it reaches names that are not on the lists below.",
+                "Searches everyone, including names that are not on the lists below.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -871,10 +871,10 @@ private fun AssignWorkTab(
             StepHeader(
                 number = 2,
                 title = "Who does the work",
-                hint = "Only people ranked below you can be given a task. Narrow by tier first if the " +
-                    "list is long — one task row is created per person."
+                hint = "Only people below you can be given a task. Narrow by role first if the " +
+                    "list is long — each person gets their own task."
             )
-            FieldLabel("Filter by tier")
+            FieldLabel("Filter by role")
             SingleSelectField(
                 value = form.roleFilter,
                 placeholder = "Everyone below me",
@@ -1003,7 +1003,7 @@ private fun AssignWorkTab(
             )?.let { WarningLine(it) }
             PickedHint(
                 labels = artisanNames,
-                empty = if (workshopId.isNotBlank()) "Every artisan at this workshop." else "Every artisan in the repository."
+                empty = if (workshopId.isNotBlank()) "Every artisan at this workshop." else "Every artisan."
             )
 
             FieldLabel("Target count")
@@ -1115,11 +1115,11 @@ private fun AssignWorkTab(
             SummaryRow("Task title", form.title.trim().ifBlank { generatedTitle })
             SummaryRow("Workshop", workshopTitle ?: "Not tied to a workshop")
             SummaryRow(
-                "Repository counts against",
+                "Counted against",
                 if (derivedTarget != null) {
                     "$derivedTarget item${if (derivedTarget == 1) "" else "s"} per person"
                 } else {
-                    "No fixed denominator"
+                    "No fixed total"
                 }
             )
             SummaryRow("Due", form.dueDate?.let { formatDate(it.toDueInstant()) } ?: "No deadline")
@@ -1127,7 +1127,7 @@ private fun AssignWorkTab(
             if (!hasWork && hasPeople) {
                 WarningLine(
                     "Pick at least one record type or questionnaire section — a task with no work in " +
-                        "it is rejected."
+                        "it cannot be created."
                 )
             }
             if (hasWork && !hasPeople) {
@@ -1200,12 +1200,12 @@ private fun AccountabilityTab(
 ) {
     when {
         error != null -> ErrorBanner(error)
-        loading && report == null -> LoadingLine("Loading the rollup...")
+        loading && report == null -> LoadingLine("Loading progress…")
         report == null -> Unit
         report.assignees.isEmpty() -> EmptyStateBlock(
             title = "Nobody has been given work here yet",
             body = "Assign work on the first tab and this becomes the accountability view: who has " +
-                "what, what they say they have done, and what the repository can actually find."
+                "what, what they say they have done, and what is actually recorded."
         )
         else -> Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
             StatTileGrid(
@@ -1220,15 +1220,15 @@ private fun AccountabilityTab(
 
             if (report.truncated) {
                 WarningBanner(
-                    "This rollup hit its scan limit, so it is a partial picture. Pick a single " +
-                        "workshop above to narrow it."
+                    "This view covers only part of the work. Pick a single workshop above to " +
+                        "see all of it."
                 )
             }
 
             Text(
-                "Reported is what the person says they have done. In repository is what the database " +
-                    "can find them having actually created inside the task's scope. Neither overwrites " +
-                    "the other — a wide gap is the thing to ask about.",
+                "Reported is what the person says they have done. Recorded is what they have " +
+                    "actually created within the task. Neither overwrites the other — a wide gap " +
+                    "is the thing to ask about.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -1487,7 +1487,7 @@ private fun BatchCard(batch: TaskBatchDto, busy: Boolean, onRemove: () -> Unit) 
                     Text(
                         "reported ${assignee.progressCount}" +
                             (batch.targetCount?.let { " / $it" } ?: "") +
-                            " · in repository ${assignee.derivedCount?.toString() ?: "—"}",
+                            " · recorded ${assignee.derivedCount?.toString() ?: "—"}",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.weight(1f)
@@ -2131,7 +2131,7 @@ private fun ProgressGapMeter(reported: Int, derived: Int?, target: Int?) {
         }
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
             Text(
-                "In repository",
+                "Recorded",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.width(88.dp)
