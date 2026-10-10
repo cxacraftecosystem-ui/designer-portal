@@ -1,0 +1,23 @@
+<!doctype html>
+<!--
+  The handset's 3D model viewer page. `DwModelViewer.kt` opens it in a WebView through the app's
+  asset loader with ?src=<the model's local address>&format=<glb|stl|…>; viewer.js is the web's own
+  viewer (frontend/lib/modelViewerCore.ts) bundled by frontend/scripts/build-android-model-viewer.mjs.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+    <title>3D model</title>
+    <style>
+      html, body { margin: 0; height: 100%; background: #f4f2ee; overflow: hidden; font: 13px/1.45 sans-serif; color: #57534e; }
+      #viewer { position: absolute; inset: 0; }
+      #note { position: absolute; inset: auto 12px 12px 12px; padding: 8px 10px; border-radius: 8px; background: #fef3c7; color: #92400e; }
+    </style>
+  </head>
+  <body>
+    <div id="viewer" role="img" aria-label="3D model"></div>
+    <p id="note" role="alert" hidden></p>
+    <script src="viewer.js"></script>
+  </body>
+</html>

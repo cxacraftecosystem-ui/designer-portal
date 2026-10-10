@@ -1241,12 +1241,14 @@ export const GUIDE_STEPS: GuideStep[] = [
       "Artisan cards — one per roster entry",
       "Prototype tags — one per prototype",
       "Print sheet, sized for a home printer",
-      "Scan a code back — camera, an uploaded picture, a dropped or pasted picture, or typed"
+      "Scan a code back — camera, an uploaded picture, a dropped or pasted picture, or typed",
+      "Join cards — print one for a colleague joining this workshop, and cancel the ones nobody needs"
     ],
     watch: [
       "Print them at the start of the fortnight, before there are many prototypes, so every tag is tied on straight away.",
       "You can also scan codes from the stage index, or from Scan a code anywhere in the app. This screen reads its own workshop's codes even without signal.",
-      "Printing the sheet and scanning a code here both work without signal."
+      "Printing the sheet and scanning a code here both work without signal.",
+      "A join card lets the rest of the team join the same workshop instead of starting their own. Print one here or on the phone app, and scan it from Scan a code, this screen or the phone app. A card is for one person unless an admin allows more. If someone scans a card that has already been used, their request goes to an admin, and their work is kept while they wait."
     ]
   },
   {
@@ -1387,7 +1389,7 @@ export const GUIDE_STEPS: GuideStep[] = [
       // for four draggable corners on THIS screen and does not find them concludes the guide lies.
       // Do not move this bullet onto this screen's own controls without moving the mount first.
       "To straighten a photographed sheet, use the stage 11 form: drag the four corners of the sheet, and it becomes black lines on white. The result is saved as a new “Line art / vector file”, never over your photograph, and it works without signal.",
-      "“360° capture” is what reviewers see and what the report prints.",
+      "A 3D model file can be turned in 3D on its stage, on the web and in the phone app, and can still be downloaded. “360° capture” is what reviewers see and what the report prints as pictures; the model itself is listed as “1 3D model attached”, with the number of capture photographs beside it.",
       "The comparison has four views: Drawing, Wipe, Photograph and Difference. Start with Wipe; use Difference when you need a closer check.",
       "“Attach as” saves SVG or PNG to the record. PDF, EPS and DXF are downloads for you to take away — EPS for print shops, DXF for laser cutters and CNC machines, PDF for sharing. A download doesn't change the record.",
       "Record set-aside sketches too. Stage 11 is for designs that were never prototyped, and they can be rated in both rounds.",

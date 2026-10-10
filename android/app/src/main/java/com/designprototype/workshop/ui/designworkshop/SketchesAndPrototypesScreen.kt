@@ -759,10 +759,10 @@ internal const val DW_SKETCH_CHOOSER_PICK_FIRST: String =
 
    1. `backend/app/services/report_builder.py`
       * `format_value`'s media branch: FILE, AUDIO and VIDEO have no image path to be placed by, so
-        their stored ids become the literal string `"{count} document(s) attached"` and nothing more
-        — deliberately not even a filename, because that module is ALSO the on-device report builder
-        and may not query for one. `"3D model"` is a FILE, so the officer's page reads
-        **3D model — 1 document attached**. That is the whole of it.
+        their stored ids become a count and a noun — deliberately not a filename, because that module
+        is ALSO the on-device report builder and may not query for one. `"3D model"` is named by its
+        own noun (`MODEL_3D_FIELD_KEYS`), so the officer's page reads **3D model — 1 3D model
+        attached**, followed by the number of “360° capture” photographs when there are any.
       * `_image_sources` — pass one filters on `FieldType.IMAGE` and `FieldType.IMAGE_LIST` and on
         the tier, and on NOTHING ELSE. `turntablePhotos` is an IMAGE_LIST, so its frames really are
         placed on the page, as a named plate captioned with the field's own label. `_images` is "the
@@ -775,7 +775,7 @@ internal const val DW_SKETCH_CHOOSER_PICK_FIRST: String =
         these fields are tier A. `PROTOTYPE_DEVELOPMENT` is a section of DCH_STANDARD, DIC_STANDARD
         and DETAILED_TECHNICAL (all via `_standard_sections`, where `include_photos` is true and
         `max_photos` is 0 — uncapped) and of no other template. So on Compact summary, Implementing
-        agency format and Photo catalogue, NEITHER the frames NOR the “1 document attached” line
+        agency format and Photo catalogue, NEITHER the frames NOR the “1 3D model attached” line
         appear at all — the whole prototype stage is absent from those three. The sentence below does
         not try to say that on a phone: it is the smaller claim, which is true under every template
         that prints stage 13 at all.
@@ -783,15 +783,12 @@ internal const val DW_SKETCH_CHOOSER_PICK_FIRST: String =
       * The one annexure that carries something a writer cannot draw carries TRANSCRIPTS of AUDIO,
         and only under the stage-20 toggle. There is no sibling for FILE. A .glb has no transcript.
 
-  ── WHY THE COPY DOES NOT PROMISE A VIEWER ─────────────────────────────────────────────────────────
+  ── THE VIEWER, AND WHY IT DOES NOT CHANGE THE PRINTED PAGE ────────────────────────────────────────
 
-  Nothing in this application draws a 3D model, on either surface, and the sentence says so in the
-  web's own words. On this handset that is checkable: `android/app/build.gradle.kts` has no 3D
-  dependency (no sceneview, filament, glTF or model-viewer — checked 2026-08-27; re-check with
-  `grep -in 'sceneview\|filament\|gltf\|model-viewer' android/app/build.gradle.kts`). Coil draws
-  images and video thumbnails and media3 plays video; neither opens a mesh. And a viewer would not
-  change the sentence anyway — the limit is in the document generator, and the person the turntable
-  is for is the officer reading the .docx, not the designer holding the phone.
+  A stored model is turned on its stage by `DwModelViewer` (a WebView hosting the web's own
+  `lib/modelViewerCore.ts`, bundled into `assets/model-viewer`). That helps the designer holding the
+  phone; it does not change the document, which can carry the model only as words. The person the
+  turntable is for is the officer reading the .docx.
 
   ── WHY THE WORDING IS THE WEB'S, WORD FOR WORD ────────────────────────────────────────────────────
 
@@ -822,10 +819,11 @@ internal const val DW_SKETCH_CHOOSER_PICK_FIRST: String =
  * piece.
  */
 internal const val DW_PROTOTYPE_3D_IN_THE_REPORT: String =
-    "On stage 13 a prototype takes a “3D model” file and a “360° capture”. The report places the " +
-        "360° capture's photographs on the page and lists the 3D model as “1 document attached”, " +
-        "and the file stays with the record for anyone to download. The photographs are what an " +
-        "officer sees of the piece in the report, so photograph the piece as well."
+    "On stage 13 a prototype takes a “3D model” file and a “360° capture”. The 3D model can be " +
+        "turned on its stage, here and on the web. The report places the 360° capture's photographs " +
+        "on the page and lists the 3D model as “1 3D model attached”, and the file stays with the " +
+        "record for anyone to download. The photographs are what an officer sees of the piece in the " +
+        "report, so photograph the piece as well."
 
 /**
  * HOW TO SHOOT A TURN THAT IS WORTH PRINTING. `PrototypeModelField.tsx`'s second paragraph, verbatim.

@@ -177,7 +177,7 @@ class DwDocumentOpenTargetTest {
             dwWithheldFileNote("CV"),
         )
         assertEquals(
-            "Stored and downloadable. Only a PDF can be shown inside the app, so this one opens in " +
+            "Stored and downloadable. A PDF or a 3D model is shown inside the app; this one opens in " +
                 "whatever program handles it on your device.",
             dwUndrawnDocumentNote(noun = "market survey", openableHere = true),
         )

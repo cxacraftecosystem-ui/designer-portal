@@ -836,6 +836,45 @@ class ReportEntityParityTest {
     }
 
     /**
+     * A 3D MODEL IS NAMED AS ONE, AND POINTS AT ITS PHOTOGRAPHS — `report_builder.format_value` and
+     * `model_preview_note`, which `tests/test_report_attachments.py` pins with the same strings.
+     */
+    @Test
+    fun `a 3D model prints as a model and names the photographs of it on the same row`() {
+        val schema = schemaOf(
+            StageDto(
+                number = 13, key = "PROTOTYPE_DEVELOPMENT", title = "Prototypes",
+                entities = listOf(
+                    EntityDto(
+                        key = "setup", cardinality = "SINGLETON", title = "Prototype",
+                        fields = listOf(
+                            attachmentField("modelFile", "3D model", "FILE"),
+                            FieldDto(key = "turntablePhotos", label = "360° capture", type = "IMAGE_LIST", reportRole = "GALLERY"),
+                            attachmentField("measurementSheet", "Measurement sheet", "FILE"),
+                        ),
+                    )
+                )
+            )
+        )
+        val document = build(
+            schema,
+            draftOf(
+                "PROTOTYPE_DEVELOPMENT",
+                values = mapOf(
+                    "modelFile" to JsonPrimitive("media-model-1"),
+                    "turntablePhotos" to JsonArray(listOf(JsonPrimitive("f1"), JsonPrimitive("f2"))),
+                    "measurementSheet" to JsonPrimitive("media-sheet-1"),
+                ),
+            ),
+            imageFor = everyImageResolves,
+        )
+        val printed = printedText(document)
+        assertTrue(printed, printed.contains("3D model: 1 3D model attached; 2 photographs of it under “360° capture”"))
+        assertTrue(printed, printed.contains("Measurement sheet: 1 document attached"))
+        assertFalse(printed, printed.contains("3D model: 1 document attached"))
+    }
+
+    /**
      * A REQUIRED PHOTOGRAPH THAT WAS TAKEN MUST NOT BE CALLED MISSING BESIDE ITSELF.
      *
      * THE REGRESSION THIS PINS, IN THE ORDER IT HAPPENED. `printable` used to skip every media-typed
