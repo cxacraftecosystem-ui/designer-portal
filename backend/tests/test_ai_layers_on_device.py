@@ -18,7 +18,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.services.ai_layers import AiTier, LayerKind, LayerSource, UNRECORDED
+from app.services.ai_layers import UNRECORDED, AiTier, LayerKind, LayerSource
 from app.services.ai_verbs import (
     ON_DEVICE_KINDS,
     ON_DEVICE_MODEL_IDS,
@@ -31,29 +31,29 @@ _AT = datetime(2026, 10, 10, 9, 30, tzinfo=UTC)
 
 
 def _plan(**overrides):
-    args = dict(
-        workshop_id="wsp_1",
-        kind=LayerKind.PROOFREAD,
-        text="The dabu paste is pressed onto the cloth.",
-        source_text="the dabu paist is presed onto the cloth",
-        model_id="gemma-4-E2B-it.litertlm",
-        model_version="litertlm-android 0.18.0",
-        language="en",
-        produced_at=_AT,
-        created_by_id="usr_1",
-    )
+    args = {
+        "workshop_id": "wsp_1",
+        "kind": LayerKind.PROOFREAD,
+        "text": "The dabu paste is pressed onto the cloth.",
+        "source_text": "the dabu paist is presed onto the cloth",
+        "model_id": "gemma-4-E2B-it.litertlm",
+        "model_version": "litertlm-android 0.18.0",
+        "language": "en",
+        "produced_at": _AT,
+        "created_by_id": "usr_1",
+    }
     args.update(overrides)
     return on_device(**args)
 
 
 def test_the_two_pinned_android_models_are_the_only_ones_accepted():
-    assert ON_DEVICE_MODEL_IDS == {"gemma-4-E2B-it.litertlm", "gemma-4-E4B-it.litertlm"}
+    assert {"gemma-4-E2B-it.litertlm", "gemma-4-E4B-it.litertlm"} == ON_DEVICE_MODEL_IDS
     with pytest.raises(VerbError):
         _plan(model_id="some-other-model.litertlm")
 
 
 def test_only_proofread_and_translation_are_accepted_from_a_handset():
-    assert ON_DEVICE_KINDS == {LayerKind.PROOFREAD, LayerKind.TRANSLATION}
+    assert {LayerKind.PROOFREAD, LayerKind.TRANSLATION} == ON_DEVICE_KINDS
     with pytest.raises(VerbError):
         _plan(kind=LayerKind.EXPANDED)
 
