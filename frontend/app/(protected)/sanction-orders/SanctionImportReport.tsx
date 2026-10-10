@@ -23,12 +23,10 @@
  * not derivable from the row counts — one order can create three accounts and the next none — and it
  * is the number an officer's next hour depends on.
  *
- * **THAT NO SIGN-IN LINK WAS ISSUED, AND WHAT TO DO ABOUT IT.** A link is shown once and can never be
- * shown again; the register does not e-mail, and the officer's clipboard is the transport. An
- * import that returned two hundred live credentials on one screen would change the SECURITY posture
- * of the feature — one accidental close strands two hundred designers, one screenshot is two hundred
- * credentials — so it mints none, and this panel has to say so in words or the accounts it made are
- * accounts nobody can sign in to.
+ * **WHERE THEIR FIRST SIGN-IN LINKS ARE.** An import issues them exactly as the form does, one per
+ * account an order created; the page draws each in its own panel above this report, to copy with its
+ * prewritten message. A link is shown once, so this panel says where they are and what to do about
+ * one that was not copied: re-issue it from that designer's button on the register.
  *
  * ── THE ARITHMETIC IS DRAWN SO IT CAN BE CHECKED ────────────────────────────────────────────────
  *
@@ -56,7 +54,8 @@ function tallies(report: Report): Array<{ label: string; value: number; always?:
     { label: "orders recorded", value: report.recorded, always: true },
     { label: "rows you left out", value: report.skipped, always: true },
     { label: "rows not recorded", value: report.refused, always: true },
-    { label: "designer accounts created", value: report.accountsCreated }
+    { label: "designer accounts created", value: report.accountsCreated },
+    { label: "sign-in links issued", value: report.credentialLinksIssued }
   ];
 }
 
@@ -187,21 +186,21 @@ export function SanctionImportReport({
 
       {report.accountsCreated > 0 ? (
         /*
-          NOT DECORATION, AND THE ONE THING ON THIS PANEL AN OFFICER MUST NOT MISS. The import
-          created accounts and issued no credentials for them, on purpose — see `lib/sanctionOrders`.
-          Without this sentence the feature quietly produces N people who exist on the platform and
-          cannot sign in, and the only thing that would ever tell anybody is a designer ringing up.
+          NOT DECORATION, AND THE ONE THING ON THIS PANEL AN OFFICER MUST NOT MISS: the links are
+          shown once, above, and a designer whose link is not passed on cannot sign in.
         */
         <p className="mt-4 flex items-start gap-2 rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-sm leading-6 text-ink-700">
           <KeyRound className="mt-1 h-4 w-4 shrink-0 text-ink-500" aria-hidden />
           <span>
             <span className="font-medium text-ink-900">
               {report.accountsCreated} designer{report.accountsCreated === 1 ? "" : "s"} now
-              {report.accountsCreated === 1 ? " has" : " have"} an account and no sign-in link.
+              {report.accountsCreated === 1 ? " has" : " have"} an account.
             </span>{" "}
-            An import issues none: a link is shown once and can never be shown again, and nothing is
-            emailed by this product. Use “Re-issue sign-in link” on each order below when you are
-            ready to send them.
+            {report.credentialLinksIssued === report.accountsCreated
+              ? "Each one's first sign-in link is above this report, with a message to send it in."
+              : `${report.credentialLinksIssued} first sign-in link${report.credentialLinksIssued === 1 ? " is" : "s are"} above this report; the rows below say whose could not be issued.`}{" "}
+            Copy each one now: a link is shown once and nothing is emailed. If one is not copied, use
+            that designer&apos;s “Re-issue” button on the register below.
           </span>
         </p>
       ) : null}

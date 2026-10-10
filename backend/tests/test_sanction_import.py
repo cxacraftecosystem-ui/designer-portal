@@ -811,13 +811,15 @@ async def test_a_skipped_row_is_counted_and_named_and_never_silently_dropped(wor
     assert any(p["row"] == 2 and "chose to leave it out" in p["reason"] for p in report["problems"])
 
 
-async def test_no_sign_in_links_are_ever_returned_by_an_import(world, monkeypatch):
-    """A recorded decision, and the report says how many accounts were made instead.
+async def test_an_import_hands_back_first_sign_in_links_as_the_form_does(world, monkeypatch):
+    """F10 (2026-10-10): an import issues first sign-in links like every other door.
 
-    Two hundred one-time credentials on one screen changes the SECURITY posture of the feature: the
-    link is shown once and cannot be shown again, the officer's clipboard is the only transport, and
-    a screen holding two hundred is a screen whose accidental closure strands two hundred designers.
-    ``accountsCreated`` is what an officer actually needs — it is how many links they must re-issue.
+    The links are the ones ``create_from_sanction`` minted — this module mints nothing — so every
+    rule of the issuance is the form's: the officer is the issuer, a new account gets INVITE, an
+    existing one gets none. They come back per recorded order with the whole order beside them (the
+    screen's prewritten message names it), ``credentialLinksIssued`` counts them, and a link the
+    throttle refused is a WARNING against its Excel row while the order stands. The ledger row stores
+    sentences only, never a link.
     """
 
     async def fake_create(payload: Any, officer: Any) -> dict[str, Any]:
@@ -829,17 +831,40 @@ async def test_no_sign_in_links_are_ever_returned_by_an_import(world, monkeypatc
                 "designers": [
                     {"designerUserId": "u1", "accountCreated": True},
                     {"designerUserId": "u2", "accountCreated": False},
+                    {"designerUserId": "u3", "accountCreated": True},
                 ],
             },
-            "credentialLink": {"link": "https://example/reset/SECRET"},
-            "credentialLinks": [{"link": "https://example/reset/SECRET"}],
+            "credentialLink": {"link": "https://example/set-password?token=SECRET"},
+            "credentialLinks": [
+                {
+                    "designerUserId": "u1",
+                    "designerName": "Asha",
+                    "signInEmail": "asha@example.org",
+                    "link": {"id": "t1", "link": "https://example/set-password?token=SECRET"},
+                    "problem": None,
+                },
+                {
+                    "designerUserId": "u3",
+                    "designerName": "Ravi",
+                    "signInEmail": "ravi@example.org",
+                    "link": None,
+                    "problem": "the sign-in link could not be issued",
+                },
+            ],
         }
 
     monkeypatch.setattr(sanction_orders, "create_from_sanction", fake_create)
     report = await sanction_import.apply_confirmed_rows(confirm_body(), Officer())
-    assert report["accountsCreated"] == 1
-    assert report["credentialLinksIssued"] == 0
-    assert "SECRET" not in str(report)
+    assert report["accountsCreated"] == 2
+    assert report["credentialLinksIssued"] == 1
+    created = report["created"][0]
+    assert created["sanctionOrder"]["id"] == "s1"
+    assert [entry["designerUserId"] for entry in created["credentialLinks"]] == ["u1", "u3"]
+    assert created["credentialLinks"][0]["link"]["link"].endswith("SECRET")
+    throttled = [p for p in report["problems"] if "could not be issued" in p["reason"]]
+    assert len(throttled) == 1 and throttled[0]["severity"] == "warning"
+    assert throttled[0]["reason"].startswith("Ravi: ")
+    assert "SECRET" not in str(world["db"].sanctionorderimport.written[-1])
 
 
 async def test_the_ledger_row_records_the_upload_and_never_fails_the_import(world, monkeypatch):

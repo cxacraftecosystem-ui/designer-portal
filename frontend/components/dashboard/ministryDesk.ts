@@ -10,7 +10,7 @@ import {
 
 import {
   canAssignWorkshopOversight,
-  canManageAnnualPlan,
+  canReadAnnualPlan,
   canReadWorkshopOversight,
   canRunDesignWorkshops,
   canSeeMinistryDashboard
@@ -103,7 +103,7 @@ export const MINISTRY_DESK: readonly MinistryDestination[] = [
     href: "/annual-plan",
     icon: CalendarRange,
     note: "The ministry's directory of what is planned this year, and the row you open a workshop from",
-    can: canManageAnnualPlan
+    can: canReadAnnualPlan
   },
   {
     label: "Sanction orders",

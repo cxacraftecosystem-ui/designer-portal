@@ -1775,3 +1775,86 @@ async def layer_decisions(layer_id: str) -> list[Any]:
     return await db.dwailayerdecision.find_many(
         where={"layerId": layer_id}, order={"createdAt": "asc"}
     )
+
+
+# --------------------------------------------------------------------------------------
+# The decision history, read on its own
+# --------------------------------------------------------------------------------------
+
+#: The third kind of entry in a history, beside ``ACCEPTED`` and ``WITHDRAWN``. It is not a
+#: ``DwAiDecision`` member and is never written to ``DwAiLayerDecision``: declining a layer is the
+#: soft delete (``deletedAt``/``deletedById``), and the history reads it back off the layer row so
+#: "who said no to this suggestion, and when" is answered in the same list as "who signed for it".
+DECLINED = "DECLINED"
+
+
+async def decisions_for_layers(layer_ids: Sequence[str]) -> list[Any]:
+    """Every acceptance and withdrawal recorded against these layers, in one query."""
+    ids = sorted({str(layer_id) for layer_id in layer_ids if layer_id})
+    if not ids:
+        return []
+    return await db.dwailayerdecision.find_many(
+        where={"layerId": {"in": ids}}, order=[{"createdAt": "asc"}, {"id": "asc"}]
+    )
+
+
+def history_entries(layers: Sequence[Any], decisions: Sequence[Any]) -> list[dict[str, Any]]:
+    """Who accepted, withdrew or declined which layer, and when — NEWEST FIRST.
+
+    Pure: the layers and the decision rows are read by the caller. ``actorName`` is left ``None``
+    here and filled by :func:`with_actor_names`, so this function can be asserted without a
+    database. A decline comes from the layer row itself (see :data:`DECLINED`); a layer declined by
+    an account since deleted still appears, with no actor, because the decline happened.
+    """
+    kinds = {str(getattr(row, "id", "")): _enum_str(getattr(row, "kind", None)) for row in layers}
+    entries: list[dict[str, Any]] = []
+    for row in decisions:
+        layer_id = str(getattr(row, "layerId", "") or "")
+        entries.append(
+            {
+                "id": str(getattr(row, "id", "") or ""),
+                "layerId": layer_id,
+                "layerKind": kinds.get(layer_id),
+                "decision": _enum_str(getattr(row, "decision", None)),
+                "note": getattr(row, "note", None),
+                "actorId": getattr(row, "actorId", None),
+                "actorName": None,
+                "createdAt": _iso(getattr(row, "createdAt", None)),
+            }
+        )
+    for row in layers:
+        declined_at = getattr(row, "deletedAt", None)
+        if declined_at is None:
+            continue
+        layer_id = str(getattr(row, "id", "") or "")
+        entries.append(
+            {
+                "id": f"declined-{layer_id}",
+                "layerId": layer_id,
+                "layerKind": kinds.get(layer_id),
+                "decision": DECLINED,
+                "note": None,
+                "actorId": getattr(row, "deletedById", None),
+                "actorName": None,
+                "createdAt": _iso(declined_at),
+            }
+        )
+    entries.sort(key=lambda entry: (entry["createdAt"] or "", entry["id"]), reverse=True)
+    return entries
+
+
+async def with_actor_names(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Fill ``actorName`` from the accounts named, in one query. An account since deleted stays
+    ``None`` — the screen says "an account that no longer exists" rather than guessing."""
+    ids = sorted({str(entry["actorId"]) for entry in entries if entry.get("actorId")})
+    if not ids:
+        return entries
+    users = await db.user.find_many(where={"id": {"in": ids}})
+    names = {
+        str(user.id): (getattr(user, "name", None) or getattr(user, "email", None))
+        for user in users
+    }
+    for entry in entries:
+        actor = entry.get("actorId")
+        entry["actorName"] = names.get(str(actor)) if actor else None
+    return entries

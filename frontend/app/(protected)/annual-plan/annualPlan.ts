@@ -21,7 +21,7 @@
  * arrival. The counts in particular are therefore held as DATA on the report panel (see
  * `PlanUploadReport`), so that a count added to the wire cannot be silently left off the screen.
  *
- * There is deliberately NO Kotlin twin: Android calls none of these ten routes, so a
+ * There is deliberately NO Kotlin twin: Android calls none of these routes, so a
  * `@Serializable` class there would be dead code the next reader has to prove is dead. See
  * `backend/app/services/annual_plan.py`'s module docstring for that decision in full.
  */
@@ -148,7 +148,15 @@ export type AnnualPlanYear = {
   withdrawn: number;
 };
 
-export type AnnualPlanPage = PageResult<AnnualPlanEntry>;
+/**
+ * One page of the directory. `regionalStates` is the caller's scope: `null` for the whole directory
+ * (a Ministry Admin and above), else the states a Regional Director has been assigned — the rows on
+ * the page are already narrowed to them by the server.
+ */
+export type AnnualPlanPage = PageResult<AnnualPlanEntry> & { regionalStates?: string[] | null };
+
+/** A Regional Director, with the states whose plan rows they may read and correct. */
+export type RegionalDirectorScope = { id: string; name: string; email: string; states: string[] };
 
 // --------------------------------------------------------------------------------------
 // Reads
@@ -175,6 +183,19 @@ export function updateAnnualPlanNotes(id: string, notes: string | null) {
     method: "PATCH",
     body: JSON.stringify({ notes })
   });
+}
+
+/** Every Regional Director and their states. The Ministry Admin's and above. */
+export function listRegionalDirectors() {
+  return apiFetch<{ items: RegionalDirectorScope[] }>("/annual-plan/regional-directors");
+}
+
+/** Replace the states one Regional Director answers for — the whole set. The Ministry Admin's and above. */
+export function setRegionalDirectorStates(userId: string, states: string[]) {
+  return apiFetch<{ id: string; states: string[] }>(
+    `/annual-plan/regional-directors/${encodeURIComponent(userId)}`,
+    { method: "PUT", body: JSON.stringify({ states }) }
+  );
 }
 
 export function withdrawAnnualPlanEntry(id: string) {

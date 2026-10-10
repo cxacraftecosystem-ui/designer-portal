@@ -47,8 +47,11 @@ def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
-@pytest.mark.parametrize("path", [PERMISSIONS, NAV, HUB])
-def test_the_route_guard_the_nav_entry_and_the_hub_tile_name_one_predicate(path: Path):
+@pytest.mark.parametrize(
+    ("path", "predicate"),
+    [(PERMISSIONS, "canReadAnnualPlan"), (NAV, "canReadAnnualPlan"), (HUB, "canManageAnnualPlan")],
+)
+def test_the_route_guard_the_nav_entry_and_the_hub_tile_name_one_predicate(path: Path, predicate: str):
     """ONE PREDICATE, THREE SURFACES, so they cannot answer differently.
 
     Three hand-written copies of "rank >= 48" would be three places to get it wrong, and the way
@@ -56,7 +59,7 @@ def test_the_route_guard_the_nav_entry_and_the_hub_tile_name_one_predicate(path:
     a route guard that is too generous shows the page's own empty state over an API that refused —
     which reads as "the ministry has not uploaded the plan".
     """
-    assert "canManageAnnualPlan" in _read(path)
+    assert predicate in _read(path)
 
 
 def test_the_annual_plan_route_is_not_nested_under_admin():
@@ -90,7 +93,8 @@ def test_the_route_guard_names_the_server_dependency_it_mirrors():
     source = _read(PERMISSIONS)
     start = source.index('path: "/annual-plan"')
     row = source[start : source.index("},", start)]
-    assert 'gate: "require_annual_plan_manager"' in row, row
+    assert 'gate: "require_annual_plan_reader"' in row, row
+    assert "can: canReadAnnualPlan" in row, row
 
 
 def test_the_page_exists_and_is_a_client_component():

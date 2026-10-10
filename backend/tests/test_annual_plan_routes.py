@@ -53,18 +53,44 @@ def test_no_literal_path_is_declared_below_the_id_family():
         assert "/{entry_id}" in line, line
 
 
-def test_every_route_on_this_router_carries_the_annual_plan_gate():
-    """ALL TEN, THE GETS INCLUDED.
+#: The four arms a Regional Director also reaches, each narrowed to the states assigned to them.
+READER_ARMS = {
+    ("/annual-plan/years", "GET"),
+    ("/annual-plan", "GET"),
+    ("/annual-plan/{entry_id}", "GET"),
+    ("/annual-plan/{entry_id}", "PATCH"),
+}
 
-    The plan is a list of named places and dates the ministry has not announced. A read gate one
-    tier looser than the write gate would make the unannounced plan browsable by people who cannot
-    be told apart from those who may change it — the reason ``require_access_manager`` gates its own
-    queue's reads.
+
+def test_every_route_on_this_router_carries_the_annual_plan_gate():
+    """ALL TWELVE, THE GETS INCLUDED — and exactly four of them on the reader gate.
+
+    The plan is a list of named places and dates the ministry has not announced. Since 2026-10-10 a
+    Regional Director reads and corrects the remarks of their own states' rows through
+    ``require_annual_plan_reader``, which the service narrows per row; every other arm — upload,
+    export, pro-forma, promote, withdraw, reinstate and the scope assignment — stays
+    ``require_annual_plan_manager``. An arm on neither gate is the defect this test exists to catch.
     """
-    assert len(routes.router.routes) == 10
+    assert len(routes.router.routes) == 12
     for route in routes.router.routes:
         names = [d.call.__name__ for d in route.dependant.dependencies if d.call is not None]
-        assert "require_annual_plan_manager" in names, f"{route.path} {sorted(route.methods)}"
+        for method in route.methods:
+            wanted = (
+                "require_annual_plan_reader"
+                if (route.path, method) in READER_ARMS
+                else "require_annual_plan_manager"
+            )
+            assert wanted in names, f"{route.path} {method}: {names}"
+
+
+def test_every_reader_arm_narrows_to_the_callers_scope():
+    """The reader gate admits a Regional Director to the screen; the SCOPE is what keeps them in
+    their own states. Each reader arm must ask ``plan_scope`` itself, or through the one helper
+    that does."""
+    for name in ("list_plan_years", "list_annual_plan"):
+        assert "plan_scope(" in inspect.getsource(getattr(routes, name)), name
+    for name in ("get_annual_plan_entry", "update_annual_plan_entry"):
+        assert "_entry_in_scope_or_404(" in inspect.getsource(getattr(routes, name)), name
 
 
 def test_the_upload_takes_its_scalars_as_form_fields_and_not_query_parameters():
