@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import asyncio
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, Self
 
 import pytest
 from fastapi import HTTPException
@@ -30,10 +30,10 @@ class _Tx:
     async def _find(self, where: dict[str, Any]) -> Any:
         return self.record
 
-    async def __aenter__(self) -> _Tx:
+    async def __aenter__(self) -> Self:
         return self
 
-    async def __aexit__(self, *exc: Any) -> bool:
+    async def __aexit__(self, *exc: object) -> bool:
         return False
 
 
