@@ -174,6 +174,18 @@ development; `.env.example` ships the line commented in.
 
 ### 3. Configure And Run Frontend
 
+Node 24 (`engines.node` in `frontend/package.json`, the major CI, the production build and Vercel all
+run) and npm 12 (`npm install --global npm@12`; no Node release ships it yet). npm 12 runs a
+dependency's install script only when `allowScripts` in `frontend/package.json` approves it, which is
+the policy every workflow installs under.
+
+TypeScript is installed twice, on purpose, the TypeScript team's side-by-side arrangement:
+`npx tsc --noEmit` runs TypeScript 7 (`"@typescript/native": "npm:typescript@^7"`), and the
+`typescript` package is the TS 6.0 API (`npm:@typescript/typescript6`), which typescript-eslint,
+`next build` and the two specs that call `transpileModule` import. TypeScript 7 ships no JavaScript
+API, and typescript-eslint supports TypeScript below 6.1. Replace both aliases with a plain
+`typescript` once TypeScript 7.1's API has shipped and typescript-eslint supports it.
+
 ```powershell
 cd frontend
 if (-not (Test-Path .env.local)) { Copy-Item .env.local.example .env.local }
@@ -238,7 +250,7 @@ The Kotlin Android app lives in `android/` and uses the same backend:
 
 - Default (production) base URL: `https://d3ekigkotd1xa2.cloudfront.net/api/` — the API fronted by **CloudFront over HTTPS**. CloudFront is **dual-stack** (publishes a native IPv6 `AAAA` record), so the app connects on IPv6-only mobile networks (common with Jio/Airtel). The IPv4-only EC2 origin — whether addressed by its bare IP `13.206.216.18` or its AWS hostname `ec2-13-206-216-18.ap-south-1.compute.amazonaws.com` — works on Wi-Fi but fails on such cellular networks ("Failed to connect" for the IP, "No address associated with hostname" for the hostname, because `AI_ADDRCONFIG` drops an IPv4-only name when the phone has no IPv4 and there is no DNS64/NAT64). HTTPS also clears the web app's mixed-content block. Media uploads/reads use the **dual-stack S3 endpoint** (`s3.dualstack.ap-south-1.amazonaws.com`) for the same reason. A live device that still has IPv4 on cellular can be forced by setting the APN protocol to `IPv4/IPv6`.
 - Emulator base URL: set `apiBaseUrl=http://10.0.2.2:8000/api/` in `android/local.properties`.
-- Other physical device / LAN: set an ignored `apiBaseUrl` line in `android/local.properties`, for example `apiBaseUrl=http://192.168.1.20:8000/api/`, and run the backend with `--host 0.0.0.0`.
+- Other physical device / LAN: set an ignored `apiBaseUrl` line in `android/local.properties`, for example `apiBaseUrl=http://192.168.1.20:8000/api/`, add that IP as a temporary `<domain>` in `android/app/src/main/res/xml/network_security_config.xml` (plain HTTP is allowed only to the emulator and loopback hosts), and run the backend with `--host 0.0.0.0`. Use a **debug** build: since the app targets API 37 (2026-10-09), Android 17 blocks traffic to the local network until `ACCESS_LOCAL_NETWORK` ("Nearby devices") is granted, only `android/app/src/debug/AndroidManifest.xml` declares it, and the debug build asks for it at launch. Commit neither change; `android/README.md` has the details.
 - Package name: `com.designprototype.workshop`
 - Google sign-in: Android Credential Manager requests a Google ID token with the same web OAuth client ID used by the Next.js app, then posts it to `POST /api/auth/login`.
 

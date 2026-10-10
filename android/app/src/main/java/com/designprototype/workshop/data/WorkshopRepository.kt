@@ -291,9 +291,12 @@ fun WorkshopDetailDto.occurrenceDate(): String = startDate ?: date ?: createdAt 
 private val errorBodyJson = Json { ignoreUnknownKeys = true; isLenient = true }
 
 /**
- * The message the API meant the user to read; failing that, the exception's own text, and only then
- * [fallback]. Never swallows a gateway/transport failure ("HTTP 504 Gateway Time-out", "Unable to
- * resolve host") behind a generic sentence — that text is the one clue that the save never landed.
+ * The message the API meant the user to read; failing that, [fallback]. A request that never got an
+ * answer (no signal, DNS, a dropped socket, a timeout) reads as [CONNECTION_FAILED_SENTENCE] rather
+ * than the platform's text, which names hosts and sockets; an answer with no readable `detail` (a
+ * gateway's HTML page, an empty 500) reads as [fallback] rather than Retrofit's "HTTP 504 Gateway
+ * Time-out". Any other exception's own message is kept, because the app's own throws carry sentences
+ * written for the reader.
  *
  * Retrofit collapses every non-2xx response into an `HttpException` whose `message` is just
  * "HTTP 409 Conflict" — nothing a researcher can act on when what they need to know is WHICH artisan
@@ -364,23 +367,48 @@ data class ApiRefusal(
     val namedFields: List<String> = emptyList(),
 )
 
+/**
+ * What a reader is told when a request never got an answer: no signal, DNS, a dropped socket, a
+ * timeout. The platform's own text for these ("Unable to resolve host …", "failed to connect to …")
+ * names hosts and sockets and tells the reader nothing they can act on.
+ */
+internal const val CONNECTION_FAILED_SENTENCE = "Could not connect. Check your connection and try again."
+
+/**
+ * Did this request fail on the way, with nobody answering it? The platform's own network exception
+ * types, plus OkHttp's plain `IOException` that wraps a stream cut off mid-answer. A plain
+ * `IOException` the app throws itself carries a sentence for the reader and is not matched.
+ */
+private fun Throwable.isTransportFailure(): Boolean =
+    this is java.net.UnknownHostException ||
+        this is java.net.SocketException ||
+        this is java.net.UnknownServiceException ||
+        this is java.io.InterruptedIOException ||
+        this is javax.net.ssl.SSLException ||
+        (this is IOException && (cause is java.io.EOFException || cause is java.net.SocketException))
+
 /** See [ApiRefusal]. Call once per failure — it consumes the buffered error body. */
 fun Throwable.apiRefusal(fallback: String): ApiRefusal {
+    if (isTransportFailure()) return ApiRefusal(CONNECTION_FAILED_SENTENCE, schemaSkew = false)
+    // A payload that would not parse: the parser's message quotes the payload, so the caller's
+    // sentence is what the reader gets.
+    if (this is SerializationException) return ApiRefusal(fallback, schemaSkew = false)
     val plain = message?.takeIf { it.isNotBlank() } ?: fallback
-    // Not an HTTP failure at all (no connection, timeout, serialization): the platform message is all
-    // there is, and it is more informative than anything this function could invent.
+    // Not an HTTP failure at all: the app's own exceptions carry a sentence written for the reader.
     val http = this as? HttpException ?: return ApiRefusal(plain, schemaSkew = false)
+    // An answer with nothing readable in it — an empty body, a gateway's HTML page, JSON with no
+    // `detail` — reads as the caller's sentence, never as Retrofit's "HTTP 502 Bad Gateway".
     val raw = runCatching { http.response()?.errorBody()?.string() }.getOrNull()
-    if (raw.isNullOrBlank()) return ApiRefusal(plain, schemaSkew = false)
+    if (raw.isNullOrBlank()) return ApiRefusal(fallback, schemaSkew = false)
     val detail = (runCatching { errorBodyJson.parseToJsonElement(raw) }.getOrNull() as? JsonObject)
         ?.get("detail")
-        ?: return ApiRefusal(plain, schemaSkew = false)
+        ?: return ApiRefusal(fallback, schemaSkew = false)
     // Only a 422 qualifies: a 500 carrying the same words is a server fault, not a dialect mismatch,
     // and no update to either side is going to change it.
     val skew = http.code() == 422 && (detail as? JsonArray)?.any { entry ->
         ((entry as? JsonObject)?.get("type") as? JsonPrimitive)?.contentOrNull == "extra_forbidden"
     } == true
-    return ApiRefusal(detailMessage(detail) ?: plain, schemaSkew = skew, namedFields = detail.locFields())
+    return ApiRefusal(detailMessage(detail) ?: fallback, schemaSkew = skew, namedFields = detail.locFields())
 }
 
 /**
@@ -657,7 +685,7 @@ fun Throwable.signInErrorMessage(): String {
     val fallback = when ((this as? HttpException)?.code()) {
         401 -> "That email and password were not accepted. Check them and try again."
         403 -> "This account is not allowed to sign in. Contact your administrator."
-        null -> "Could not reach the server. Check your connection and try again."
+        null -> CONNECTION_FAILED_SENTENCE
         else -> "Sign-in failed. Please try again."
     }
     return apiErrorMessage(fallback)
@@ -924,7 +952,7 @@ class WorkshopRepository(
         "dos",
         "donts"
     )
-    // Mirrors the Retrofit converter's config (ApiClient.kt:42) so a body re-encoded here to carry the
+    // Mirrors the Retrofit converter's config (`ApiClient.json`) so a body re-encoded here to carry the
     // checksum is byte-identical to the one the plain call would have sent — same omitted nulls, same
     // omitted defaults. A `processingRequests: []` that should have been absent changes what the
     // server does with the file.
@@ -3392,10 +3420,11 @@ class WorkshopRepository(
             // throw away the only part of the answer that helps.
             throw IllegalStateException(
                 errorBodyDetail(response.errorBody()?.string())
-                    ?: "That workbook could not be downloaded (HTTP ${response.code()})."
+                    ?: "That workbook could not be downloaded. Try again."
             )
         }
-        val body = response.body() ?: throw IllegalStateException("The download response was empty.")
+        val body = response.body()
+            ?: throw IllegalStateException("That workbook could not be downloaded. Try again.")
         val name = filenameFromContentDisposition(response.headers()["Content-Disposition"])
             ?: defaultArtefactFilename(artefact, fallbackStem)
         // Spooled to the cache first and copied second, exactly as `downloadReport` does: the
@@ -3710,8 +3739,27 @@ class WorkshopRepository(
      * draw the form anyway, because the network may simply be down and telling somebody their link is
      * invalid when it has not been examined sends them back to an administrator for nothing. The POST
      * is the authority either way. The web screen takes the same position in as many words.
+     *
+     * ── ASKED WITH THE TOKEN IN A BODY, AND IN THE ADDRESS ONLY WHEN THE SERVER CANNOT HEAR A BODY ──
+     *
+     * `POST /auth/set-password/check` first, because a request line is what logs keep (see
+     * [WorkshopRepositoryApi.checkPasswordLinkInBody]). The old `GET /auth/set-password?token=` is
+     * asked only when that POST is answered **404 or 405**: the two statuses that mean "no such route
+     * here", which is what a server from before the route answers. A handset outlives the deployment
+     * it was built against in both directions, so it has to work with either.
+     *
+     * NOTHING ELSE FALLS BACK, and that is the security half of the rule. A 5xx, a 422, a 429 or a
+     * dropped connection says nothing about whether the route exists; answering one by re-sending the
+     * token in a URL would put it back in the logs on exactly the days the server is struggling. Each
+     * is thrown, and the screen reads a thrown check as "unknown", as it always has.
      */
-    suspend fun checkPasswordLink(token: String): PasswordLinkCheckDto = api.checkPasswordLink(token)
+    suspend fun checkPasswordLink(token: String): PasswordLinkCheckDto =
+        try {
+            api.checkPasswordLinkInBody(PasswordLinkCheckRequest(token = token))
+        } catch (refused: HttpException) {
+            if (refused.code() != 404 && refused.code() != 405) throw refused
+            api.checkPasswordLink(token)
+        }
 
     /**
      * Redeem a link and set the password on it.
@@ -4477,8 +4525,11 @@ class WorkshopRepository(
         val out = File(dir, "design-workshop-v$versionCode.apk")
         val request = Request.Builder().url(url).get().build()
         storageClient.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) throw IllegalStateException("Update download failed: HTTP ${response.code}")
-            val body = response.body ?: throw IllegalStateException("Update download returned no body")
+            if (!response.isSuccessful) {
+                throw IllegalStateException("The update could not be downloaded. Try again.")
+            }
+            val body = response.body
+                ?: throw IllegalStateException("The update could not be downloaded. Try again.")
             body.byteStream().use { input -> FileOutputStream(out).use { output -> input.copyTo(output, 64 * 1024) } }
         }
         // MEASURED OFF THE FILE AFTER THE COPY, not off the stream's own idea of what it handed over
@@ -5239,8 +5290,8 @@ class WorkshopRepository(
      */
     suspend fun downloadReport(context: Context, path: String = ""): String = withContext(Dispatchers.IO) {
         val response = api.dataReport(format = "xlsx", path = path)
-        if (!response.isSuccessful) throw IllegalStateException("Report request failed (HTTP ${response.code()})")
-        val body = response.body() ?: throw IllegalStateException("The report response was empty")
+        if (!response.isSuccessful) throw IllegalStateException("The report could not be downloaded. Try again.")
+        val body = response.body() ?: throw IllegalStateException("The report could not be downloaded. Try again.")
         val stamp = DateTimeFormatter.ofPattern("ddMMyyyyHHmmss").withZone(ZoneId.systemDefault()).format(Instant.now())
         val name = "DesignWorkshop_report_$stamp.xlsx"
         val tmp = File(context.cacheDir, name)
@@ -5360,8 +5411,8 @@ class WorkshopRepository(
         format: String? = null
     ): String = withContext(Dispatchers.IO) {
         val response = api.downloadDataMedia(mediaId, format?.blankToNull())
-        if (!response.isSuccessful) throw IllegalStateException("Download failed (HTTP ${response.code()})")
-        val body = response.body() ?: throw IllegalStateException("The download response was empty")
+        if (!response.isSuccessful) throw IllegalStateException("The file could not be downloaded. Try again.")
+        val body = response.body() ?: throw IllegalStateException("The file could not be downloaded. Try again.")
         val name = filename.blankToNull()?.replace(Regex("[^A-Za-z0-9._-]+"), "_") ?: mediaId
         val tmp = File(context.cacheDir, name)
         body.byteStream().use { input -> FileOutputStream(tmp).use { out -> input.copyTo(out) } }
@@ -5391,7 +5442,7 @@ class WorkshopRepository(
             }
             val resolver = context.contentResolver
             val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
-                ?: throw IllegalStateException("Could not create the download entry")
+                ?: throw IllegalStateException("The file could not be saved to Downloads.")
             resolver.openOutputStream(uri).use { out -> source.inputStream().use { it.copyTo(out!!) } }
             values.clear()
             values.put(MediaStore.Downloads.IS_PENDING, 0)
@@ -6024,7 +6075,7 @@ class WorkshopRepository(
                         // bytes already counted.
                         digest.update(bytes, bytes.size)
                         val url = partUrls[partNumber.toString()]
-                            ?: throw IllegalStateException("Missing presigned URL for part $partNumber")
+                            ?: throw IllegalStateException("The upload could not be started. Try again.")
                         val base = sentTotal
                         val etag = putPart(
                             url = url,
@@ -6122,7 +6173,7 @@ class WorkshopRepository(
                 executeCancellable(storageClient.newCall(Request.Builder().url(target).put(body).build())).use { response ->
                     if (response.isSuccessful) {
                         return response.header("ETag")
-                            ?: throw IllegalStateException("S3 returned no ETag for the uploaded part")
+                            ?: throw IllegalStateException("The upload could not be confirmed. Try again.")
                     }
                     if (response.code == 403 && !refreshed) expired = true
                     // [StorageRefusedError] rather than a bare IllegalStateException, for the reason
@@ -6131,23 +6182,23 @@ class WorkshopRepository(
                     // status no triage function can read.
                     else if (response.code < 500) throw StorageRefusedError(
                         response.code,
-                        "Part upload failed: HTTP ${response.code}"
+                        "The upload was not accepted."
                     )
-                    lastError = StorageRefusedError(response.code, "Part upload failed: HTTP ${response.code}")
+                    lastError = StorageRefusedError(response.code, "The upload was not accepted.")
                 }
             } catch (e: IOException) {
                 lastError = e
             }
             if (expired) {
                 refreshed = true
-                target = repesign() ?: throw (lastError ?: IllegalStateException("Part upload failed: HTTP 403"))
+                target = repesign() ?: throw (lastError ?: IllegalStateException("The upload was not accepted."))
                 continue
             }
             failures++
             if (failures >= maxAttempts) break
             delay(800L * failures)
         }
-        throw lastError ?: IllegalStateException("Part upload failed")
+        throw lastError ?: IllegalStateException("The upload did not finish. Try again.")
     }
 
     /** Attach an already-uploaded staged object to a saved record, applying the final filename. */
@@ -7001,7 +7052,7 @@ class WorkshopRepository(
                 // `apiRefusal`, not `apiErrorMessage`: both facts have to come out of ONE read of the
                 // error body, because reading it consumes Retrofit's buffer. `isTransient` above is
                 // safe to ask first — it reads only the status code.
-                val refusal = e.apiRefusal("The server rejected this record.")
+                val refusal = e.apiRefusal("This record could not be saved.")
                 if (clash) {
                     return ReplayOutcome.Rejected(
                         outboxConflictSentence(
@@ -7072,7 +7123,7 @@ class WorkshopRepository(
                 }
                 return ReplayOutcome.Rejected(
                     if (refusal.schemaSkew) {
-                        skewSentence("What this copy of the app sent for this record", refusal.message)
+                        skewSentence("This record", refusal.message)
                     } else {
                         refusal.message
                     },
@@ -7138,8 +7189,8 @@ class WorkshopRepository(
             // here — and re-attempting it every app run would re-POST a record that is ALREADY on the
             // server. This one really does wait for a person.
             return ReplayOutcome.Rejected(
-                "It was saved, but ${refused.size} file(s) were refused: ${refused.distinct().joinToString(" ")} " +
-                    "Re-attach them on the record."
+                "It was saved, but ${refused.size} file(s) could not be uploaded: ${refused.distinct().joinToString(" ")} " +
+                    "Attach them to the record again."
             )
         }
         return ReplayOutcome.Synced
@@ -7217,7 +7268,7 @@ class WorkshopRepository(
                 } catch (e: Throwable) {
                     if (isTransient(e)) throw e
                     landed.add(
-                        FileOutcome.Refused(index, "\"${pm.originalFilename}\": ${e.apiErrorMessage("refused by the server.")}")
+                        FileOutcome.Refused(index, "\"${pm.originalFilename}\": ${e.apiErrorMessage("it could not be uploaded.")}")
                     )
                 }
             }
@@ -7878,19 +7929,19 @@ class WorkshopRepository(
                         expired = true
                         lastError = StorageRefusedError(
                             response.code,
-                            "Object storage upload failed: HTTP ${response.code}"
+                            "The upload was not accepted."
                         )
                     } else if (response.code < 500) {
                         // Client errors (4xx) won't fix themselves — fail immediately, carrying the
                         // status as a NUMBER so the queue can tell this from a lost connection.
                         throw StorageRefusedError(
                             response.code,
-                            "Object storage upload failed: HTTP ${response.code}"
+                            "The upload was not accepted."
                         )
                     } else {
                         lastError = StorageRefusedError(
                             response.code,
-                            "Object storage upload failed: HTTP ${response.code}"
+                            "The upload did not finish. Try again."
                         )
                     }
                 }
@@ -7904,7 +7955,7 @@ class WorkshopRepository(
                 // the honest reading: a failure raised while trying to EXPLAIN a failure is a worse
                 // account of what happened than the original.
                 val fresh = repesign?.invoke()
-                    ?: throw (lastError ?: StorageRefusedError(403, "Object storage upload failed: HTTP 403"))
+                    ?: throw (lastError ?: StorageRefusedError(403, "The upload was not accepted."))
                 target = fresh.uploadUrl
                 targetHeaders = fresh.headers
                 // Re-sending from byte zero against the new signature, so the row must not be left
@@ -7920,7 +7971,7 @@ class WorkshopRepository(
             onProgress?.invoke(0L, contentLength)
             delay(800L * failures)
         }
-        throw lastError ?: IllegalStateException("Object storage upload failed")
+        throw lastError ?: IllegalStateException("The upload did not finish. Try again.")
     }
 
     /** A re-openable upload source: exact byte size, a fresh stream per attempt, and cleanup. */

@@ -20,6 +20,16 @@
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.CAMERA" />
+    <!-- The camera is WANTED, not REQUIRED, and saying so is what lint's
+         PermissionImpliesUnsupportedChromeOsHardware asked for from the day android-build.yml began
+         running lint. A CAMERA permission with no feature line makes stores and ChromeOS treat
+         `android.hardware.camera` as required. It is not: every QR surface also takes a picked image and
+         a typed code, and a photograph field takes a file, so a handset or Chromebook with no back
+         camera is a reduced app, not an unusable one. This changes nothing on a sideloaded install,
+         which is the only way this app reaches a phone today. -->
+    <uses-feature
+        android:name="android.hardware.camera"
+        android:required="false" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
@@ -110,15 +120,24 @@
               Until this existed the only route into `SetPasswordLinkScreen` was the paste box on the
               sign-in card: a designer who cannot sign in receives a link, taps it, lands in a
               browser, and has to come back, open the app, find "I have a set-password link" and
-              paste. This filter puts the app on the chooser for that tap, and `takePasswordLink` in
-              `MainActivity.kt` drops the whole URL into that box so the check fires immediately.
+              paste. This filter offers the app for that tap — on Android 11 and earlier through the
+              chooser, on 12 and later only where the person has approved the domain (see below) —
+              and `takePasswordLink` in `MainActivity.kt` drops the whole URL into that box so the
+              check fires immediately.
 
               ⚠ THIS IS A PLAIN FILTER AND **NOT** A VERIFIED APP LINK. There is no
               `android:autoVerify="true"` below and the absence is deliberate, not an oversight:
 
-                WHAT IS SHIPPED. Android shows a disambiguation dialog — this app beside the
-                browser — and the person chooses. Nothing is taken away from the browser, which
-                still works and is still the route for anybody who does not have the app.
+                WHAT IS SHIPPED, AND WHAT IT DOES ON ANDROID 12 AND LATER. Up to Android 11 a tap
+                shows a disambiguation dialog — this app beside the browser — and the person
+                chooses. From Android 12 (API 31, every app, whatever it targets) a generic web
+                intent reaches an app only if it is approved for the domain: a verified App Link,
+                or the person turning the domain on under Settings › Apps › this app › Open by
+                default. Neither is in place here, so on those phones the tap opens the BROWSER and
+                pasting the link into the sign-in card's "I have a set-password link" is the way in
+                (developer.android.com/about/versions/12/behavior-changes-all, read 2026-10-09).
+                Nothing is taken away from the browser, which still works and is still the route
+                for anybody who does not have the app.
 
                 WHAT A VERIFIED LINK WOULD OWE, and every item is a DEPLOYMENT obligation rather
                 than a code change here:

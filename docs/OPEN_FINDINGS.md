@@ -1,8 +1,10 @@
 # Open findings
 
-**Status: 17 open, 1 decision recorded and 1 deferral, 97 closed.** Every count re-counted by
-heading on 2026-10-09; the entries closed on 2026-10-09 were checked against the tree that day, and
-the older closed sections were last re-checked on 2026-09-03.
+**Status: 35 open, 1 decision recorded and 1 deferral, 97 closed.** Every count re-counted by
+heading on 2026-10-10: the 15 open and 95 closed of 2026-10-09, plus 18 opened by the Android copy
+sweep of 2026-10-10 and the toolchain upgrade's 2 opened and 2 closed, merged the same day. The
+entries closed on 2026-10-09 were checked against the tree that day, and the older closed sections
+were last re-checked on 2026-09-03.
 
 **The toolchain upgrade of 2026-10-09 opened two and closed two.** Moving the EC2 box, the image and
 CI to Python 3.14, the lock to its newest pins, the local stack to PostgreSQL 17, and the runners to
@@ -12,9 +14,18 @@ and closed two that were already biting: 37 integration tests failing on every C
 site-packages listed pytest-asyncio before anyio, and a local stack that could not start because no
 MinIO image could be pulled any more. Counted by heading: 15 + 2 = 17 open, and 95 + 2 = 97 closed.
 
+**Moving a set-password link's token off the web's request lines narrowed one entry the same day,
+and moved neither number.** The web now checks a link with `POST /api/auth/set-password/check`, the
+token in the body, and `/set-password` reads the token from a `#token=` fragment as well as the query
+and takes it out of the address bar before it does anything else. That closes the web's half of the
+open entry on what still writes the token down. The handset's check, the `?token=` the server still
+puts in every link, and the browser's history, which keeps the address a link was opened with in
+either form, keep it open, and it is rewritten to say exactly that: a heading narrowed is not a
+heading closed. Counted by heading: still 15 open and 95 closed.
+
 **A verifier's pass over what the release writes to logs and terminals moved both numbers by one,
 the same day.** It closed a set-password link's token reaching the API's journal every time the link
-was checked — both clients send the token in the query string of `GET /api/auth/set-password`, and
+was checked — both clients sent the token in the query string of `GET /api/auth/set-password`, and
 uvicorn's access log wrote the line down — and opened what that fix cannot reach: anything in front of
 the API that logs the request line, the box's own nginx first. Its four smaller findings were fixed in
 the same change and never entered here, since none was outstanding: the operator script's argument
@@ -576,28 +587,198 @@ single-row filing and discard ask nothing first, though a row a design workshop'
 is not listed there at all. Every one is refused by the server, its answer printed word for word, so
 nothing is written; what is missing is the warning before the click.
 
-### [LOW] A set-password link's token still reaches anything in front of the API that logs the request line (backend, frontend, android) — opened 2026-10-09
+### [LOW] A set-password link's token still rides two request lines, the handset's check and the link itself, and stays in the browser's history (backend, android) — opened 2026-10-09, narrowed 2026-10-09
 
-Both clients check a link with `GET /api/auth/set-password?token=<the token>`, and the token is the
-link's whole authority. The filter that keeps it out of uvicorn's access log (the entry closed below)
-runs inside the API process, so it reaches nothing in front of it, and anything there that writes the
-request line down still records the token: the box's own nginx — `infra/terraform/user_data.sh` sets
-no `access_log`, so Ubuntu's default writes every request line, query string included, to
-`/var/log/nginx/access.log` — and CloudFront, if its standard logging is ever switched on (not
-verifiable from this repository). Whoever can read those can set the account's password until the
-link is used or expires. The complete fix moves the token out of the URL — into a POST body or a
-header — in the next web and Android release, keeping the GET until the builds that call it have left
-the field.
+**Closed for the web, 2026-10-09.** The web checks a link with `POST /api/auth/set-password/check`
+and `{"token": …}` in the body, which answers exactly what the GET answers
+(`check_set_password_token_in_body` in `backend/app/api/routes/auth.py`), and it asks the GET only
+when the POST is answered 404 or 405, which is what an API older than the POST answers
+(`checkPasswordLink` in `frontend/lib/signIn.ts`). A body is on no request line, so nothing in front
+of the API receives the token from the web. `/set-password` reads the token from a `#token=` fragment
+first and the query second, and replaces the address with one carrying neither before it checks
+anything (`takeLinkTokenFromAddress`), so the token is not left in the address bar, a copied address, a
+bookmark or the entry Back returns to. Measured against a production build in Chromium the same day,
+both ways a link can arrive: the address settled without the token, Back returned to that clean
+address, and the check went out as a POST with the token in its body. Pinned by the tests under "The
+link check with the token off the request line" in
+`backend/tests/test_auth_identity_and_password_links.py` and by
+`frontend/e2e/set-password-link-token-unit.spec.ts`.
 
-The link itself carries the token the same way, and that reaches further than the API check does. The
-address handed to the person is `{NEXT_PUBLIC_APP_URL}/set-password?token=…`
-(`credential_links.link_for`), so every open sends the token to the web host's request log and leaves
-it in the browser's history, where the next user of a shared computer can find it until the link is
-used or expires. A fragment (`/set-password#token=…`) is never sent to any server, and the web page can
-read it as easily as the query. It is not switched yet because the handset is offered these links too
-(the `/set-password` filter in `android/app/src/main/AndroidManifest.xml`) and the shipped builds read
-the token from the query: the next Android release must accept both forms, and `link_for` can move to
-the fragment once the builds that accept only the query have left the field. Open as of 2026-10-09.
+**Still open: the handset's check.** Shipped handset builds check a link with
+`GET /api/auth/set-password?token=<the token>` (`WorkshopRepositoryApi.checkPasswordLink`'s
+`@Query("token")`), so the GET stays, and every check a handset makes still writes the token wherever
+something in front of the API logs the request line: the box's own nginx —
+`infra/terraform/user_data.sh` sets no `access_log`, so Ubuntu's default writes every request line,
+query string included, to `/var/log/nginx/access.log` — and CloudFront, if its standard logging is
+ever switched on (not verifiable from this repository). `AccessLogRedaction` keeps it out of uvicorn's
+own line (the entry closed below) and reaches nothing in front of it. Whoever can read those logs can
+set the account's password until the link is used or expires. The fix is the next Android release
+asking the POST; the GET can go once the builds that call it have left the field.
+
+**Still open: the link itself.** `credential_links.link_for` still issues
+`{NEXT_PUBLIC_APP_URL}/set-password?token=…`, because the handset is offered these links too (the
+`/set-password` filter in `android/app/src/main/AndroidManifest.xml`) and the shipped builds read the
+token only from the query. So opening a link still sends the token to the web host: in the request for
+the page, and again as the `Referer` of every stylesheet, script and font the page asks for before its
+script can rewrite the address (measured 2026-10-09 against a production build: 17 such requests, all
+to the web host's own origin; the API saw none, because `Referrer-Policy: strict-origin-when-cross-origin`
+sends another origin only the origin). The web already reads `#token=`, so moving `link_for` to the
+fragment needs no web release: the next Android release must accept both forms, and `link_for` moves
+once the builds that accept only the query have left the field. A fragment is never sent to any server
+and never appears in a `Referer`, so that move closes the web host's leg too (measured the same day: no
+request carried a `#token=` link's token).
+
+**Not closed by either form: the browser's history.** Measured in Chromium on 2026-10-09, a link
+opened either way is recorded in the History database with its token, `?token=` and `#token=` alike;
+the page's `replaceState` adds the clean address beside it and does not remove the visit that brought
+the token. So on a shared computer the token stays readable in the history until somebody clears it,
+and stays usable until the link is used or expires: 72 hours for an INVITE, 2 for a RESET. Using the
+link is what retires it. Open as of 2026-10-09.
+
+**The handset's half is in the Android source as of 2026-10-09**; no published build carries it yet. It
+checks a link with `POST /api/auth/set-password/check` and the token in a JSON body, falling back to the
+GET only when that POST is answered 404 or 405 — a server from before the route — and on no other
+failure (`WorkshopRepository.checkPasswordLink`, pinned by
+`android/app/src/test/java/com/designprototype/workshop/data/PasswordLinkCheckTest.kt`). It reads the
+token from either `?token=` or `#token=`, fragment first as the web reads it (`passwordLinkToken`,
+pinned by `PasswordSetupCopyTest`), and its debug request log replaces the fallback's token — OkHttp
+writes its `██` back percent-encoded, so the line reads `token=%E2%96%88%E2%96%88`. The production API
+has answered the POST since `main` deployed the route on 2026-10-09 (measured that day: a token that is
+not one is answered `200` with `"valid": false` and the reason `malformed`), so every check from the
+new build goes out in a body. The entry stays open until that build has replaced the shipped ones,
+0.0.6 to 0.0.15, which still ask with the GET and read only the query; `link_for`'s switch waits on
+the same, and neither form closes the browser's history.
+
+
+**Eighteen entries below were opened on 2026-10-10 by the Android copy sweep.** The Android copy sweep of 2026-10-10 removed every on-screen sentence that admitted a missing feature
+or a known defect, because a screen shown to field staff and ministry officials must describe a
+product that works. The gaps themselves are not closed by that, so each one is recorded here, one
+heading each, and closes only with the change that builds or fixes it.
+
+### [LOW] On-device AI cannot run on the handset, so Speech & AI no longer shows it (android) — opened 2026-10-10
+
+`DW_TIER2_RUNTIME_PRESENT` is false: the APK carries no runtime that can load a language model. Speech
+& AI → "AI on this phone" now draws the on-device AI line and the language-model list only when that
+flag is true, so today every account sees neither. Building the runtime is the work
+([PLAN-AI-TIERS-AND-CUSTOM-SECTIONS.md](PLAN-AI-TIERS-AND-CUSTOM-SECTIONS.md)). Files:
+`android/app/src/main/java/com/designprototype/workshop/data/DwDeviceTier.kt`,
+`android/app/src/main/java/com/designprototype/workshop/ui/SpeechAndAiScreen.kt`.
+
+### [LOW] The offline speech model cannot be installed on today's handsets, so its section is hidden (android, backend) — opened 2026-10-10
+
+Until the server is given the model files ([ASR-MODEL-HOSTING.md](ASR-MODEL-HOSTING.md)) it offers no
+download, and the published archive is a format the handset cannot unpack; the only route is loading
+it by cable ([ASR-MODEL-SIDELOAD.md](ASR-MODEL-SIDELOAD.md)). The "Speech model" section of Speech &
+AI is now hidden in that state and reappears when a download, a copy on the phone or an install
+exists. File: `android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/DwAsrModelInstallUi.kt`.
+
+### [LOW] Subtitles always use the organisation's transcription key, never the designer's own (backend, android) — opened 2026-10-10
+
+The subtitle verb transcribes without the requesting user, so it bills the organisation's key even
+when the designer saved their own; the other AI verbs use the designer's key. The review sheet no
+longer says so. File: `android/app/src/main/java/com/designprototype/workshop/data/DwAiVerbs.kt`.
+
+### [LOW] No AI verbs on a file attached on the web or on another phone (android) — opened 2026-10-10
+
+A media tile whose file this phone never imported shows no caption or subtitle controls, because the
+tile resolves through local descriptors only. The note that said so is gone. Fixing it needs the sync
+to bring down a descriptor carrying the remote media id. File:
+`android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/DwMediaCapture.kt`.
+
+### [LOW] Today's AI allowance cannot be seen before a run (backend, android) — opened 2026-10-10
+
+The allowance comes back only with a run's result or a limit refusal; no route answers "what is left
+today". The handset now shows no count until a run has gone through that day. File:
+`android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/DwAiVerbWording.kt`.
+
+### [LOW] Usage screens still show text the backend writes in technical terms (backend, android) — opened 2026-10-10
+
+The handset stopped printing API paths, HTTP methods and status codes on the usage notice and the
+usage screens, but a person's own trail still shows each request's path (nothing maps a request to a
+screen name), and the notice's descriptions are written by `backend/app/services/usage.py`, which
+still names routes and internal checks. Files:
+`android/app/src/main/java/com/designprototype/workshop/ui/UsageRecordingScreen.kt`,
+`android/app/src/main/java/com/designprototype/workshop/ui/UsageConsentGate.kt`.
+
+### [MEDIUM] An offline correction to a record replaces it whole, overwriting a colleague's later edit (android) — opened 2026-10-10
+
+A queued correction replays the whole record when it uploads, with no version check, so an edit a
+colleague made in between is lost and nobody is told. The toast and the walkthrough no longer narrate
+this. Closing it needs the record's version sent as a precondition with the queued write. Files:
+`android/app/src/main/java/com/designprototype/workshop/data/Offline.kt`,
+`android/app/src/main/java/com/designprototype/workshop/data/WorkshopRepository.kt`.
+
+### [LOW] A stage save can come back with entries removed that the phone did not ask to remove (backend, android) — opened 2026-10-10
+
+When that happens the stage now says plainly that entries were removed during the save and asks the
+designer to check the stage; the cause on the server is not investigated here. File:
+`android/app/src/main/java/com/designprototype/workshop/data/WorkshopSync.kt`.
+
+### [LOW] The "updated with the latest online version" note names fields by their internal keys (android) — opened 2026-10-10
+
+It prints keys such as `loomsWorking` instead of the field labels. File:
+`android/app/src/main/java/com/designprototype/workshop/data/DwStageFold.kt`.
+
+### [LOW] Design review's pool round has no list of workshops that opened pieces to it (android, frontend) — opened 2026-10-10
+
+A reviewer reaches another workshop's pool round only from a link or id somebody sent them. File:
+`android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/DesignReviewScreen.kt`.
+
+### [LOW] Inspectors on the handset see counts, not photographs, recordings, attachments or custom-question answers (android) — opened 2026-10-10
+
+The inspection read carries counts only, and a workshop's own custom-question answers are counted and
+not shown. Files: `android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/InspectionDetailScreen.kt`,
+`android/app/src/main/java/com/designprototype/workshop/data/DesignWorkshopInspections.kt`.
+
+### [LOW] An inspector cannot file a correction, send a report back, or read filed suggestions on the handset (android) — opened 2026-10-10
+
+The handset has no client for the inspection feedback and send-back routes, and no screen reads the
+suggestions the inspection payload already carries; the inspector walkthrough still omits that card
+(`walkthroughInspectorOmissions`). Its closing card no longer says so. File:
+`android/app/src/main/java/com/designprototype/workshop/ui/WalkthroughSteps.kt`.
+
+### [LOW] Inspections need a connection every time (android) — opened 2026-10-10
+
+The list and the read are fetched on each visit and nothing is kept on the phone; the copy now says
+only that a connection is needed. File:
+`android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/InspectionListScreen.kt`.
+
+### [LOW] The record editor offers Save on another person's record to roles below Professor (android) — opened 2026-10-10
+
+Editing someone else's record is Professor and above, but the handset's editor does not check
+ownership and rank, so an Inspector / Reviewer or a Designer can type into such a record and is
+refused at the save. The walkthrough no longer narrates the refusal; it tells the reviewer to send
+the record back instead. File: `android/app/src/main/java/com/designprototype/workshop/MainActivity.kt`
+(`EditScreen`).
+
+### [LOW] A report generated on the phone leaves out what the phone does not hold (android) — opened 2026-10-10
+
+It has no transcript annexure even when stage 20 asks for transcripts, no machine-assisted text
+annexure, no plates for photographs the phone never downloaded (it says they are in the online
+workshop record), and custom answers of a type the phone cannot read print as held in the online
+record. The export screen and the document no longer narrate the first two. Files:
+`android/app/src/main/java/com/designprototype/workshop/report/ReportSettings.kt`,
+`android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/ReportScreen.kt`.
+
+### [LOW] Reports made before a workshop is first uploaded never reach its report history (android) — opened 2026-10-10
+
+File: `android/app/src/main/java/com/designprototype/workshop/data/DwReportHistory.kt`.
+
+### [LOW] Tracing materials differ between the phone and the web (android, frontend) — opened 2026-10-10
+
+The web has no Metalwork material and one "Wood & stone carving" where the phone has two, so the web
+cannot show which was chosen on the phone. The phone's picker no longer says so. File:
+`android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/DwTraceKotlinPresets.kt`.
+
+### [LOW] Handset copy pinned word for word to the web still carries backend wording (android, frontend) — opened 2026-10-10
+
+Three registers are held to the web by tests and so could not change on the Android side alone: the
+walkthrough's "What the screen asks for" chips (`backend/tests/test_walkthrough_fields_parity.py`;
+for example "…already in the repository…", "…with no deployment", "there is no filter by designer,
+district or date on this list"), the dashboard group notes (`DashboardTileParityTest`), and one
+workshop-code sentence ("…once it has reached the server…", `backend/tests/test_workshop_code_letters.py`).
+They change together with `frontend/components/guide/steps.ts`, `frontend/components/guide/inspectorSteps.ts`,
+`docs/WALKTHROUGH.md`, `frontend/app/(protected)/dashboard/page.tsx` and `frontend/lib/workshopCodes.ts`.
 
 ### [MEDIUM] prisma-client-py is archived, and pins the data layer to Prisma 5.17's engines (backend) — opened 2026-10-09
 
@@ -1558,7 +1739,7 @@ build carries it as of 2026-10-09.
 
 ### [MEDIUM] A set-password link's token was written to the API's journal every time the link was checked (backend) — **CLOSED 2026-10-09**
 
-Both clients ask whether a link is still good with `GET /api/auth/set-password?token=<the token>` —
+Both clients asked whether a link was still good with `GET /api/auth/set-password?token=<the token>` —
 the web's set-password page through `checkPasswordLink` in `frontend/lib/signIn.ts`, the handset
 through `WorkshopRepositoryApi.checkPasswordLink`'s `@Query("token")` — and the API box runs uvicorn
 with its access log on (the `ExecStart` in `.github/workflows/deploy-backend.yml`), which writes every
@@ -1578,7 +1759,9 @@ raises. The GET is unchanged, because the builds in the field call it. Pinned in
 with uvicorn's own formatter, by
 `test_importing_the_application_puts_the_filter_on_uvicorns_access_logger`, and by the tables beside
 them. **The residue is open above**: anything in front of uvicorn that logs the request line still
-records the token.
+records the token whenever a client asks the GET. Narrowed the same day: the web now asks
+`POST /api/auth/set-password/check` with the token in the body, so the handset's check and the link
+itself are what remain.
 
 ---
 

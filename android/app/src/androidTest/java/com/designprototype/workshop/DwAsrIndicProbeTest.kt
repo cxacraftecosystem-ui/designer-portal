@@ -70,6 +70,11 @@ import org.junit.runner.RunWith
  * **AN ABSENT DIRECTORY IS A SKIP AND NOT A FAILURE.** Nothing in this repository ships these bytes,
  * so on any handset without them this test says so and returns. A failure would turn a measurement
  * nobody staged into a red suite.
+ *
+ * THE RUNNER REPORTS THAT RETURN AS A PASS, and an `Assume` is no better: AGP 9.4's connected-test
+ * report files an `AssumptionViolatedException` under FAILURES (android-emulator.yml run 37951774101,
+ * 2026-10-09). So the "NOT STAGED" line this test logs is what says it measured nothing, and
+ * android-emulator.yml's verdict step turns that line into a warning on the run.
  */
 @RunWith(AndroidJUnit4::class)
 class DwAsrIndicProbeTest {

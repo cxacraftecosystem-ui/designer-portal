@@ -223,6 +223,7 @@ import com.designprototype.workshop.data.QuestionnaireSectionDto
 import com.designprototype.workshop.data.questionnaireSaveRefusal
 import com.designprototype.workshop.data.QuestionnaireSectionUpdateRequest
 import com.designprototype.workshop.data.TokenStore
+import com.designprototype.workshop.data.apiHostNeedsLocalNetwork
 import com.designprototype.workshop.data.ToolCreateRequest
 import com.designprototype.workshop.data.UserDto
 import com.designprototype.workshop.data.WorkshopCreateRequest
@@ -250,6 +251,7 @@ import com.designprototype.workshop.ui.SESSION_ENDED_SENTENCE
 import com.designprototype.workshop.ui.SetPasswordLinkScreen
 import com.designprototype.workshop.ui.mustChangePasswordBlocks
 import com.designprototype.workshop.ui.passwordLinkOffered
+import com.designprototype.workshop.ui.isSetPasswordLinkAddress
 import com.designprototype.workshop.ui.WorkshopAccessQueueFailure
 import com.designprototype.workshop.ui.WorkshopAccessQueueView
 import com.designprototype.workshop.ui.workshopAccessQueueFailure
@@ -398,6 +400,7 @@ import com.designprototype.workshop.ui.MapScreen
 import com.designprototype.workshop.ui.WorkshopScopeSelect
 import com.designprototype.workshop.ui.rememberWorkshopScope
 import com.designprototype.workshop.ui.ProvideAppPreferences
+import com.designprototype.workshop.ui.SystemBarsInsetsRoot
 import com.designprototype.workshop.ui.SearchRecordTypes
 import com.designprototype.workshop.ui.SearchScreen
 import com.designprototype.workshop.ui.SearchableMultiSelectField
@@ -434,7 +437,7 @@ import com.designprototype.workshop.ui.WalkthroughDialog
 import com.designprototype.workshop.ui.markWalkthroughSeen
 import com.designprototype.workshop.ui.walkthroughSeen
 import kotlinx.coroutines.launch
-import coil.compose.AsyncImage
+import coil3.compose.AsyncImage
 import retrofit2.HttpException
 import android.app.DatePickerDialog
 import androidx.activity.compose.BackHandler
@@ -579,18 +582,17 @@ import java.time.LocalDate
 import java.time.ZoneId
 import java.util.Locale
 
-/**
- * The screen an administrator's password link points at, as the deep-link filter and this file both
- * have to spell it.
+/*
+ * The address an administrator's password link points at is `SET_PASSWORD_LINK_HOST` and
+ * `SET_PASSWORD_LINK_PATH` in ui/PasswordSetupCopy.kt, checked by `isSetPasswordLinkAddress`.
  *
- * ONE CONSTANT, THREE PLACES, AND THE THIRD IS IN ANOTHER LANGUAGE. `credential_links` on the
- * server defines this path and builds every link from it; `AndroidManifest.xml` names it in the VIEW
- * filter so the OS knows which links to offer this app for; and [MainActivity.takePasswordLink]
- * checks it again on the intent that arrives, because a filter is what the OS matched and not
+ * ONE ADDRESS, THREE PLACES, AND THE THIRD IS IN ANOTHER LANGUAGE. `credential_links` on the server
+ * defines the path and builds every link from it; `AndroidManifest.xml` names host and path in the
+ * VIEW filter so the OS knows which links to offer this app for; and [MainActivity.takePasswordLink]
+ * checks them again on the intent that arrives, because a filter is what the OS matched and not
  * evidence about what the app was handed. Changing the server's path changes every link already in
  * somebody's hands — its own comment says so — and would have to change the two here with it.
  */
-private const val SET_PASSWORD_LINK_PATH = "/set-password"
 
 class MainActivity : ComponentActivity() {
     /**
@@ -656,15 +658,36 @@ class MainActivity : ComponentActivity() {
      * the signature, the expiry, the row and the credential fingerprint — a client-side shape test
      * could only invent a seventh refusal for a string the server might well have accepted.
      *
-     * The path is compared against the one `credential_links.SET_PASSWORD_PATH` defines, with a
-     * trailing slash tolerated, so that a VIEW intent arriving through the questionnaire filters —
-     * which match on MIME type and a `.dpwq` path — cannot be read as a password link.
+     * The scheme, the host and the path are held to the three the filter names
+     * (`isSetPasswordLinkAddress`), with a trailing slash tolerated: the activity is exported for the
+     * launcher, so another app can address it EXPLICITLY with any data at all, and the filter never
+     * sees such an intent. A VIEW arriving through the questionnaire filters — a MIME type and a
+     * `.dpwq` path — is turned away by the same test.
+     *
+     * ── ONLY A DELIVERY THAT IS NEW ───────────────────────────────────────────────────────────
+     *
+     * [incomingPasswordLink] is cleared once the redeem screen takes it, but the launch [Intent] is
+     * not, and `onCreate` runs again on things `configChanges` does not cover — a change of
+     * language, a restore after the process was killed — and on a relaunch from Recents, which
+     * replays the intent that created the task. Each of those reopened the redeem screen over the
+     * sign-in card with the same, by then usually spent, link. So `onCreate` passes [restored] for a
+     * saved instance state, and an intent marked `FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY` is not a
+     * delivery at all. `onNewIntent` is always a fresh one.
+     *
+     * ── THE WHOLE URI, FRAGMENT INCLUDED ──────────────────────────────────────────────────────
+     *
+     * `Uri.toString()` and not a parameter read off it, because the token may be in either place:
+     * `?token=…` on every link issued so far, `#token=…` once the server moves links to the
+     * fragment, which no server ever receives. `uri.getQueryParameter("token")` would see only the
+     * first; `passwordLinkToken` reads both, and it is the one reader the paste box uses too. The
+     * filter still matches either shape, since a fragment does not change the path.
      */
-    private fun takePasswordLink(intent: Intent?) {
-        if (intent?.action != Intent.ACTION_VIEW) return
+    private fun takePasswordLink(intent: Intent?, restored: Boolean = false) {
+        if (restored || intent == null) return
+        if (intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY != 0) return
+        if (intent.action != Intent.ACTION_VIEW) return
         val uri = intent.data ?: return
-        val path = uri.path?.trimEnd('/') ?: return
-        if (path != SET_PASSWORD_LINK_PATH) return
+        if (!isSetPasswordLinkAddress(uri.scheme, uri.host, uri.path)) return
         incomingPasswordLink.value = uri.toString()
     }
 
@@ -679,6 +702,30 @@ class MainActivity : ComponentActivity() {
         incomingQuestionnaire.value = candidate
     }
 
+    /**
+     * A developer's backend on the LAN or the emulator's host, reachable again on Android 17.
+     *
+     * Since 2026-10-09 the app targets API 37, and Android 17 blocks traffic to the local network
+     * until `ACCESS_LOCAL_NETWORK` is granted; a TCP connection to a blocked address does not fail,
+     * it times out. Only a DEBUG build can be in that position — production is a public CloudFront
+     * host, and only `src/debug/AndroidManifest.xml` declares the permission — so on any other build
+     * this asks nothing. Asked at launch because the first request is the sign-in, and a permission
+     * granted after a request has already timed out reads as a broken backend. The answer needs no
+     * handling: a refusal leaves exactly the timeout the permission exists to explain, and the next
+     * request after a grant simply goes through.
+     */
+    private val localNetworkPermission =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
+
+    private fun askForLocalNetworkWhenTheApiNeedsIt() {
+        if (!BuildConfig.DEBUG) return
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.CINNAMON_BUN) return
+        if (!apiHostNeedsLocalNetwork(BuildConfig.DEFAULT_API_BASE_URL)) return
+        val permission = Manifest.permission.ACCESS_LOCAL_NETWORK
+        if (ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED) return
+        localNetworkPermission.launch(permission)
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         // `setIntent` so that a configuration change re-reading `getIntent()` sees the delivery that
@@ -691,7 +738,8 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         takeQuestionnaireDelivery(intent)
-        takePasswordLink(intent)
+        takePasswordLink(intent, restored = savedInstanceState != null)
+        askForLocalNetworkWhenTheApiNeedsIt()
         val tokenStore = TokenStore(applicationContext)
         val repository = WorkshopRepository(ApiClient.create(tokenStore), tokenStore)
         val googleAuthClient = GoogleAuthClient(this)
@@ -707,21 +755,24 @@ class MainActivity : ComponentActivity() {
                 // "Larger text" is applied here — ProvideAppPreferences scales the density every `sp`
                 // in the app resolves against, so type grows and the layout does not.
                 ProvideAppPreferences(preferences) {
-                    RepositoryApp(
-                        repository = repository,
-                        googleAuthClient = googleAuthClient,
-                        incomingQuestionnaire = incomingQuestionnaire.value,
-                        onIncomingQuestionnaireConsumed = { incomingQuestionnaire.value = null },
-                        incomingPasswordLink = incomingPasswordLink.value,
-                        onIncomingPasswordLinkConsumed = { incomingPasswordLink.value = null },
-                        preferences = preferences,
-                        onPreferencesChanged = { next ->
-                            // Apply first, persist second: the switch must feel instant. The screen
-                            // itself owns the PUT; the device copy is ours.
-                            preferences = next
-                            preferencesStore.write(next)
-                        }
-                    )
+                    // The window's edges, paid once for every screen below: see `SystemBarsInsetsRoot`.
+                    SystemBarsInsetsRoot {
+                        RepositoryApp(
+                            repository = repository,
+                            googleAuthClient = googleAuthClient,
+                            incomingQuestionnaire = incomingQuestionnaire.value,
+                            onIncomingQuestionnaireConsumed = { incomingQuestionnaire.value = null },
+                            incomingPasswordLink = incomingPasswordLink.value,
+                            onIncomingPasswordLinkConsumed = { incomingPasswordLink.value = null },
+                            preferences = preferences,
+                            onPreferencesChanged = { next ->
+                                // Apply first, persist second: the switch must feel instant. The
+                                // screen itself owns the PUT; the device copy is ours.
+                                preferences = next
+                                preferencesStore.write(next)
+                            }
+                        )
+                    }
                 }
             }
         }
@@ -1557,8 +1608,11 @@ private fun RepositoryApp(
                     // Anything else is the network, and a network failure must never log anybody
                     // out: the cached profile is what lets a designer keep working in a courtyard.
                     SessionVerdict.KEEP -> if (user == null) {
-                        error = err.message
-                            ?: "Unable to reach the server. Check your connection and try again."
+                        error = if (err is HttpException) {
+                            "Sign-in could not be completed. Please try again."
+                        } else {
+                            "Could not connect. Check your connection and try again."
+                        }
                     }
                 }
             }
@@ -1724,7 +1778,7 @@ private fun RepositoryApp(
             .padding(16.dp)
     ) {
         when {
-            loading -> Text("Loading repository...", color = Muted, modifier = Modifier.align(Alignment.Center))
+            loading -> Text("Loading…", color = Muted, modifier = Modifier.align(Alignment.Center))
             /*
              * ── REDEEMING AN ADMINISTRATOR'S LINK, WHICH REPLACES THE SIGN-IN CARD ──────────────
              *
@@ -4882,7 +4936,7 @@ internal fun unroutableRecordLine(recordType: String): String =
     if (recordType == SearchRecordTypes.DESIGN_WORKSHOP) {
         DESIGN_WORKSHOP_NO_ROUTE_LINE
     } else {
-        "This version of the app has no screen for a \"$recordType\" record. Open it in the web portal."
+        "Update the app to open this record, or open it in the web portal."
     }
 
 /**
@@ -4955,8 +5009,7 @@ private fun AdminViewHiddenCard(
     RecordCard(title = title, icon = Icons.Filled.VisibilityOff) {
         Text(
             if (canToggle) {
-                "$blurb You switched admin view off, so the repository is behaving exactly as it does " +
-                    "for an ordinary user."
+                "$blurb You switched admin view off, so the app shows what an ordinary user sees."
             } else {
                 "$blurb Those tools belong to administrators; everything your role does reach is in " +
                     "the menu."
@@ -4982,8 +5035,8 @@ private fun AdminViewHiddenCard(
 private fun DataBrowserEntryCard(onOpen: () -> Unit) {
     RecordCard(title = "Data Browser", icon = Icons.Filled.Storage) {
         Text(
-            "Browse the repository as a directory tree, preview media and transcripts, and download " +
-                "any folder as a zip with content-type filters.",
+            "Browse all records as folders, preview media and transcripts, and download any " +
+                "folder as a zip, filtered by file type.",
             color = Muted,
             fontSize = 12.sp
         )
@@ -5783,9 +5836,8 @@ private fun DashboardScreen(
         val filedCount = filled.sumOf { (_, members) -> members.size }
         if (filedCount != tiles.size) {
             Text(
-                "${tiles.size - filedCount} of your cards could not be filed under a heading and " +
-                    "are not shown above. That is a fault in this screen and not a change to what " +
-                    "you may open — every one of them is still in the navigation menu.",
+                "${tiles.size - filedCount} of your cards are not shown above. Every one of them " +
+                    "is in the navigation menu.",
                 color = MaterialTheme.field.muted,
                 fontSize = 12.sp,
                 lineHeight = 17.sp
@@ -5805,7 +5857,7 @@ private fun DashboardScreen(
                         "You are signed in as $roleLabel. That covers answering existing " +
                             "interviews, uploading media and commenting on records other people " +
                             "opened. Creating artisans, products, processes and tools needs " +
-                            "Researcher access or above — ask an admin to raise your tier.",
+                            "Researcher access or above — ask an admin to raise your access.",
                         color = Muted,
                         fontSize = 13.sp
                     )
@@ -6253,7 +6305,7 @@ private fun StatsCard(
         Column(modifier = Modifier.padding(18.dp)) {
             Text("At a glance", display = true, color = MaterialTheme.field.onBrandTile, fontSize = 24.sp)
             Text(
-                "Everything in the repository, not only your own entries.",
+                "Everything in the portal, not only your own entries.",
                 color = MaterialTheme.field.onBrandTileMuted,
                 fontSize = 12.sp
             )
@@ -6465,7 +6517,7 @@ private fun RecentSubmissionsCard(stats: DashboardStats?, onOpenRecord: (EntryMo
                 color = MaterialTheme.colorScheme.onSurface
             )
             Text(
-                "The newest entries across the repository, whoever filed them.",
+                "The newest entries across the portal, whoever filed them.",
                 color = Muted,
                 fontSize = 11.sp
             )
@@ -8279,7 +8331,7 @@ private fun WorkshopField(state: WorkshopPickerState, saving: Boolean = false) {
         }
         if (blocked) {
             Text(
-                "You are not assigned to this workshop, so saving will be refused. Ask an admin to " +
+                "You are not assigned to this workshop, so this record cannot be saved under it. Ask an admin to " +
                     "assign you to it, or pick another workshop.",
                 color = MaterialTheme.colorScheme.error,
                 fontSize = 12.sp
@@ -9689,9 +9741,9 @@ private fun DwInlineRecordDialog(
                         // believe that will go and do it the long way regardless.
                         Text(
                             if (editing) {
-                                "Changes are saved to the repository record. The stage you are filling in stays open."
+                                "Changes are saved to the record. The stage you are filling in stays open."
                             } else {
-                                "This $noun is saved to the repository and linked here. The stage you are filling in stays open."
+                                "This $noun is saved and linked here. The stage you are filling in stays open."
                             },
                             color = Muted,
                             fontSize = 12.sp
@@ -9723,11 +9775,9 @@ private fun DwInlineRecordDialog(
                      */
                     CompositionLocalProvider(LocalUnsavedGuard provides null) {
                         when {
-                            mode == null -> Text(
-                                "This app cannot create a $model record from here.",
-                                color = Muted,
-                                fontSize = 13.sp
-                            )
+                            // Unreachable: a picker only opens this dialog for the four models
+                            // mapped above, so there is nothing to say here.
+                            mode == null -> Unit
                             // EDIT reuses the app's own loader wholesale — it fetches the record and
                             // picks the right form, which is one place for that decision rather than
                             // two that can disagree. Deleting is withheld: a REF picker is where a
@@ -10472,7 +10522,7 @@ private fun ArtisanForm(
         // this form saves offline, so a form that only learned the number was missing from a 422
         // would let a researcher walk away from the artisan with an unsavable record in hand.
         if (aadhaarRequired && aadhaar.isBlank()) {
-            aadhaarError = "Enter the artisan's 12-digit Aadhaar number. It is how the repository " +
+            aadhaarError = "Enter the artisan's 12-digit Aadhaar number. It is how the portal " +
                 "recognises someone another researcher has already documented."
             runCatching { aadhaarFocus.requestFocus() }
             onError("The Aadhaar number is required — see the highlighted field."); return
@@ -13279,8 +13329,8 @@ private fun MyActivityScreen(
         Text(
             // Says out loud that this screen needs a connection, in the WorkshopCodesScreen manner —
             // the alternative is a designer reading an empty list as lost work.
-            "Everything you've recorded, most recent first. Tap an entry to open it. This list is read " +
-                "from the server, so it needs a connection.",
+            "Everything you've recorded, most recent first. Tap an entry to open it. This list needs " +
+                "a connection.",
             color = Muted,
             fontSize = 13.sp
         )
@@ -13303,8 +13353,8 @@ private fun MyActivityScreen(
             // NOTHING ANSWERED. Saying "you haven't recorded anything yet" here would tell a designer
             // whose only copy of a morning's work is on this handset that the work is gone.
             current.allFailed -> Text(
-                "Your activity couldn't be loaded — the server could not be reached. Anything you have " +
-                    "recorded is safe; open this again when there is a connection.",
+                "Your activity couldn't be loaded. Anything you have recorded is safe; open this again " +
+                    "when you have a connection.",
                 color = Coral,
                 fontSize = 13.sp
             )
@@ -14704,7 +14754,7 @@ private fun OrphanRecordingsCard(repository: WorkshopRepository, onError: (Strin
             title = { Text("Permanently delete recording?") },
             text = {
                 Text(
-                    "This removes the file from storage and the database for good. It cannot be undone, " +
+                    "This deletes the recording permanently. It cannot be undone, " +
                         "and the recording can no longer be re-linked. Delete “${toDelete.originalFilename}”?"
                 )
             },
@@ -15672,8 +15722,8 @@ private fun DatasetDownloadCard(repository: WorkshopRepository, onError: (String
                             // nowhere: a partial archive that presents itself as complete is worse
                             // than a failed one, because nobody goes back for the rest.
                             if (res.truncated) {
-                                "\n\nWARNING: this export hit the server's row cap, so it does NOT " +
-                                    "contain all of the data. Ask an admin for a full extract." +
+                                "\n\nNote: this export does not contain all of the data. Ask an " +
+                                    "admin for a full extract." +
                                     // WHICH kind of incomplete, when the server can say. `truncated`
                                     // is raised by a capped table OR by a media row the server could
                                     // not address, and those need different follow-up: one is "ask
@@ -15683,7 +15733,7 @@ private fun DatasetDownloadCard(repository: WorkshopRepository, onError: (String
                                     if (res.skippedMedia > 0) {
                                         " (${res.skippedMedia} media file" +
                                             "${if (res.skippedMedia == 1) "" else "s"} could not be " +
-                                            "addressed at all and are not in the archive.)"
+                                            "found and are not in the archive.)"
                                     } else ""
                             } else ""
                     }.onFailure { onError(it.message ?: "Unable to download the dataset") }
@@ -15837,7 +15887,7 @@ private fun CompletionMatrixCard(
                     .padding(10.dp)
             ) {
                 Text(
-                    "$hidden interview${if (hidden == 1) "" else "s"} in the repository name no workshop",
+                    "$hidden interview${if (hidden == 1) " is" else "s are"} not filed under any workshop",
                     color = MaterialTheme.field.onWarningContainer,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.SemiBold
@@ -15876,7 +15926,7 @@ private fun CompletionMatrixCard(
         if (matrix?.overridesAreRepositoryWide == true) {
             Text(
                 "The workshop scope narrows the green derived from recordings. An admin override is a " +
-                    "judgement about that artisan's section across the whole repository, so a marked cell " +
+                    "judgement about that artisan's section across every workshop, so a marked cell " +
                     "keeps its colour under every scope.",
                 color = MaterialTheme.field.muted,
                 fontSize = 11.sp
@@ -16495,7 +16545,7 @@ private fun AndroidMediaForm(
         // (ElevenLabs → Deepgram → Whisper), so naming one of them tells the researcher something
         // that is only sometimes true. The web misc-media screen already says it this way.
         Text(
-            "Images, videos, audio and files upload to the same repository backend. Audio is queued for transcription after upload.",
+            "Images, videos, audio and files are saved online with your records. Audio is queued for transcription after upload.",
             color = Muted,
             fontSize = 12.sp
         )
@@ -16728,7 +16778,7 @@ private fun AndroidMediaForm(
                             selectedUris = failedUris.toList()
                             uploadStatus = ActionStatus.ERROR
                             val msg = if (success == 0) {
-                                "All ${failedUris.size} file(s) failed to upload. Check your internet connection, then tap Upload to retry — the files are still staged."
+                                "All ${failedUris.size} file(s) failed to upload. Check your internet connection, then tap Upload to retry — the files are still selected."
                             } else {
                                 "$success uploaded, ${failedUris.size} failed. Tap Upload to retry the remaining file(s)."
                             }
@@ -16889,7 +16939,7 @@ private fun MediaProcessingJobsCard(
                                     // window or while the server is idle, and never during a provider
                                     // cooldown — so an empty drain is usually a closed window, and
                                     // saying otherwise has an admin press this twice and give up.
-                                    "No job was eligible just now — transcription waits for the off-peak window (or an idle server) and pauses during a provider cooldown. Queued jobs stay queued."
+                                    "No job could run just now — transcription runs in the off-peak window or when the system is not busy, and pauses while a provider is unavailable. Waiting jobs stay in the queue."
                                 } else {
                                     "Ran ${run.processed} job(s): ${run.succeeded} succeeded, ${run.failed} failed."
                                 }
@@ -16925,7 +16975,7 @@ private fun MediaProcessingJobsCard(
                     scope.launch {
                         runCatching { repository.retryMediaJob(job.id) }
                             .onSuccess {
-                                notice = "Re-queued ${job.mediaFile?.originalFilename ?: "this file"}. The worker picks it up on its next pass."
+                                notice = "Re-queued ${job.mediaFile?.originalFilename ?: "this file"}. It runs on the next pass."
                                 tick += 1
                             }
                             .onFailure { error -> onError(error.message ?: "Unable to re-queue this job") }
@@ -17819,7 +17869,7 @@ private fun QuestionnaireForm(
                     .onFailure {
                         if (it !is kotlinx.coroutines.CancellationException) {
                             syncStatus = ActionStatus.ERROR
-                            onError(it.message ?: "Unable to synchronize")
+                            onError(it.message ?: "Could not refresh. Check your connection and try again.")
                         }
                     }
                 syncing = false
@@ -17833,10 +17883,10 @@ private fun QuestionnaireForm(
         Spacer(Modifier.width(8.dp))
         Text(
             when {
-                syncing -> "Synchronizing…"
-                syncStatus == ActionStatus.SUCCESS -> "Synchronised ✓"
-                syncStatus == ActionStatus.ERROR -> "Sync failed — tap to retry"
-                else -> "Synchronize with Database"
+                syncing -> "Refreshing…"
+                syncStatus == ActionStatus.SUCCESS -> "Up to date ✓"
+                syncStatus == ActionStatus.ERROR -> "Refresh failed — tap to retry"
+                else -> "Refresh questions and artisans"
             }
         )
     }
@@ -19354,11 +19404,10 @@ private fun UserManagementForm(
 
     RecordCard(title = "Users and access") {
         Text(
-            "Professors and above can move a user along the eleven-tier ladder (never above their own " +
-                "tier); admins can additionally grant or revoke questionnaire-builder, record " +
-                "review & approval, view-provenance and dataset-download access. Craft and workshop " +
-                "creation are not grantable — they come with Professor, so promote instead. Tap a " +
-                "user to expand and manage them.",
+            "Professors and above can change a user's role (never above their own); admins can also " +
+                "grant or revoke questionnaire-builder, record review & approval, view-provenance " +
+                "and dataset-download access. Craft and workshop creation come with the Professor " +
+                "role, so change the role instead. Tap a user to manage them.",
             color = Muted,
             fontSize = 12.sp
         )
@@ -20594,8 +20643,8 @@ private fun MyTasksScreen(
             // this handset survives a fortnight with no signal; this screen does not, and saying so
             // up front is what stops an unreachable server being read as an empty workload.
             "Work assigned to you, with what it covers and how far along you are. Move the status as you " +
-                "go so whoever assigned it can see where things stand. Tasks are read and updated " +
-                "online only — they are not carried in the offline queue.",
+                "go so whoever assigned it can see where things stand. Tasks need a connection to load " +
+                "and update.",
             color = Muted,
             fontSize = 12.sp
         )
@@ -20605,7 +20654,7 @@ private fun MyTasksScreen(
             Text(
                 "Handing work out happens on the assignment board: one scope — record types, an " +
                     "artisan subset, questionnaire sections, a target count — given to several " +
-                    "people at once, with the accountability rollup beside it.",
+                    "people at once, with each person's progress beside it.",
                 color = Muted,
                 fontSize = 12.sp
             )
@@ -20654,14 +20703,14 @@ private fun MyTasksScreen(
             Text(
                 when {
                     tasks.isEmpty() ->
-                        "Your tasks couldn't be loaded — the server could not be reached. Tasks are read " +
-                            "and updated online only, so try again when there is a connection."
+                        "Your tasks couldn't be loaded. Tasks need a connection, so try again when you " +
+                            "have one."
                     staleForAnotherFilter ->
-                        "The server could not be reached, so the filter you just chose was never sent. " +
+                        "Could not connect, so the filter you just chose was not applied. " +
                             "The tasks below are the last list that loaded, under the previous filter."
                     else ->
-                        "The server could not be reached, so this is the last list that loaded. It may be " +
-                            "out of date, and status changes will not send until there is a connection."
+                        "Could not connect, so this is the last list that loaded. It may be out of date, " +
+                            "and status changes will not be sent until you have a connection."
                 },
                 color = Coral,
                 fontSize = 12.sp
@@ -20741,7 +20790,7 @@ private fun TaskCard(
                     append("Reported ${task.progressCount}")
                     if (target != null) append(" of $target")
                     if (derived != null) {
-                        append(" · repository sees $derived")
+                        append(" · records found $derived")
                         task.derivedTarget?.let { append(" of $it") }
                     }
                 },
@@ -20895,7 +20944,7 @@ private fun WorkshopMappingCard(
 
             current.totals.unassigned == 0 ->
                 Text(
-                    "Every record in the repository names the workshop it was captured at. Nothing is hidden " +
+                    "Every record is filed under the workshop it was captured at. Nothing is hidden " +
                         "from a workshop scope.",
                     color = MaterialTheme.field.body,
                     fontSize = 12.sp
@@ -21074,7 +21123,7 @@ private fun WorkshopMappingCard(
         plan?.let { current ->
             if (current.workshops.isEmpty()) {
                 Text(
-                    "No workshop in the repository has a date, so nothing can be filed by when it was " +
+                    "No workshop has a date, so nothing can be filed by when it was " +
                         "recorded. Adding a start and end date to a workshop makes that evidence available.",
                     color = MaterialTheme.field.muted,
                     fontSize = 11.sp
@@ -21250,7 +21299,7 @@ private fun DwUnfiledRecordCard(
         } else {
             Text(
                 "Delete \u201C${row.title}\u201D permanently? This cannot be undone. Any photographs or " +
-                    "recordings attached to it stay in the repository with nothing pointing at them.",
+                    "recordings attached to it are kept, but no longer attached to anything.",
                 color = MaterialTheme.colorScheme.error,
                 fontSize = 11.sp,
                 lineHeight = 15.sp
@@ -21270,8 +21319,8 @@ private fun DwUnfiledRecordCard(
                                     if (answer.mediaKept > 0) {
                                         onError(
                                             "${answer.noun.ifBlank { noun }} deleted. ${answer.mediaKept} " +
-                                                "attached file(s) stayed in the repository with nothing " +
-                                                "pointing at them — Miscellaneous Media lists them."
+                                                "attached file(s) were kept — Miscellaneous Media " +
+                                                "lists them."
                                         )
                                     }
                                 }

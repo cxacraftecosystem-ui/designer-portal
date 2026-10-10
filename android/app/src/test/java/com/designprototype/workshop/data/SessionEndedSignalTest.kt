@@ -247,8 +247,10 @@ class SessionEndedSignalTest {
             runCatching { service.changeOwnPassword(ChangePasswordRequest(currentPassword = "a", newPassword = "b")) }
             runCatching { service.setPasswordWithLink(SetPasswordRequest(token = "a-link", password = "chosen-by-meera")) }
             runCatching { service.issuePasswordLink(IssuePasswordLinkRequest(userId = "u-2")) }
-            // Not credential writes: withdrawing a link ends one, and signing in mints only a session.
+            // Not credential writes: withdrawing a link ends one, signing in mints only a session, and
+            // checking a link reads it — a POST only so that its token rides in a body, not a URL.
             runCatching { service.revokePasswordLink("link-1") }
+            runCatching { service.checkPasswordLinkInBody(PasswordLinkCheckRequest(token = "a-link")) }
             runCatching { service.login(LoginRequest(email = "meera@example.org", password = "chosen-by-meera")) }
         }
 
@@ -259,6 +261,7 @@ class SessionEndedSignalTest {
                 "auth/set-password" to true,
                 "auth/password-links" to true,
                 "auth/password-links/link-1/revoke" to false,
+                "auth/set-password/check" to false,
                 "auth/login" to false,
             ),
             oneShot,

@@ -152,12 +152,12 @@ test.describe("Location card in the dark theme, at 360px", () => {
     await expect(notice).toBeVisible({ timeout: 30_000 });
 
     /*
-     * The reason this assertion exists: the repo's usual warning pairing is
-     * `border-amber-200 bg-amber-50`, and neither shade is in this project's amber ramp
-     * (tailwind.config.ts defines 100/500/800 only). Those classes therefore resolve to nothing,
-     * leaving dark-brown text on whatever the card is — unreadable on the dark theme. These
+     * The reason this assertion exists: the notice's text is `amber-800`, a literal dark brown
+     * that the dark theme does not invert, so it is legible there only on a panel of its own. The
+     * repo's usual warning pairing, `border-amber-200 bg-amber-50`, uses Tailwind's stock shades
+     * rather than this project's amber rungs (tailwind.config.ts writes 100/500/800 itself). These
      * notices are the only thing standing between a network estimate and a research record, so
-     * they are painted with tokens that exist.
+     * they are painted with `bg-amber-100`, and the panel must never come out transparent.
      */
     const painted = await notice.evaluate((element) => {
       const panel = element.closest("div");

@@ -4,7 +4,7 @@ import com.designprototype.workshop.ui.PASSWORD_CHANGE_UNCONFIRMED
 import com.designprototype.workshop.ui.PASSWORD_MAY_ALREADY_BE_IN_EFFECT
 import com.designprototype.workshop.ui.PasswordGateAfterFailure
 import com.designprototype.workshop.ui.passwordGateAfterFailure
-import com.jakewharton.retrofit2.converter.kotlinx.serialization.asConverterFactory
+import retrofit2.converter.kotlinx.serialization.asConverterFactory
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.builtins.MapSerializer
@@ -212,7 +212,8 @@ class ChangePasswordSessionTest {
     @Test
     fun `the body is the one every build decodes, shipped or not`() {
         // `ApiClient.json` stands in for the shipped decoder honestly: v0.0.15 builds it with the same
-        // four flags, on the same kotlinx-serialization 1.7.3.
+        // four flags. It does so on kotlinx-serialization 1.7.3, and this build has run 1.11.0 since
+        // 2026-10-09 — so this passing is also the check that the two still read this body alike.
         val shipped = MapSerializer(String.serializer(), Boolean.serializer())
         val body = """{"ok":true}"""
         assertEquals(mapOf("ok" to true), ApiClient.json.decodeFromString(shipped, body))
@@ -357,6 +358,13 @@ class ChangePasswordSessionTest {
     /** An OkHttp call that never opens a socket: it answers from [canned], synchronously. */
     private class CannedCall(private val req: Request, private val canned: Canned) : Call {
         override fun request(): Request = req
+        // OkHttp 5.3 added these five to `okhttp3.Call`. A canned call carries no event listener
+        // and no tags, so each answers as an empty one would.
+        override fun addEventListener(eventListener: okhttp3.EventListener) = Unit
+        override fun <T : Any> tag(type: kotlin.reflect.KClass<T>): T? = null
+        override fun <T> tag(type: Class<out T>): T? = null
+        override fun <T : Any> tag(type: kotlin.reflect.KClass<T>, computeIfAbsent: () -> T): T = computeIfAbsent()
+        override fun <T : Any> tag(type: Class<T>, computeIfAbsent: () -> T): T = computeIfAbsent()
         override fun execute(): Response = answer()
         override fun enqueue(responseCallback: Callback) {
             val response = try {

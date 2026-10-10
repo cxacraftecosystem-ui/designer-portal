@@ -609,7 +609,7 @@ fun SearchScreen(
 
         SearchCard(title = "Search", icon = Icons.Filled.Search) {
             Text(
-                "Search across artisans, workshops, products, tools and media with shared API filters.",
+                "Search across artisans, workshops, products, tools and media.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -617,7 +617,7 @@ fun SearchScreen(
             OutlinedTextField(
                 value = filters.query,
                 onValueChange = { filters = filters.copy(query = it) },
-                label = { Text("Search repository") },
+                label = { Text("Search records") },
                 singleLine = true,
                 leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null, modifier = Modifier.size(20.dp)) },
                 trailingIcon = {

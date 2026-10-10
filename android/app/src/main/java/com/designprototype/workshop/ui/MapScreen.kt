@@ -200,7 +200,7 @@ private fun levelHint(level: String): String? = when (level) {
 
 /** The web's `SCOPE_COPY`. `scope` defaults to "" in the DTO, and an absent enum is not a claim. */
 private fun scopeCopy(scope: String): String = when (scope) {
-    "all" -> "Everything in the repository"
+    "all" -> "Every record"
     "filtered" -> "The records matching your filters"
     "record" -> "One record, shown in context"
     else -> "The records on this map"
@@ -615,7 +615,7 @@ fun MapScreen(
                                 "No records with a mapped address in the chosen workshops. Widen " +
                                     "the workshop scope, or choose All records."
                             } else {
-                                "No records with a mapped address anywhere in the repository yet."
+                                "No records have a mapped address yet."
                             },
                             color = MaterialTheme.field.muted,
                             fontSize = 13.sp
@@ -1570,12 +1570,12 @@ private fun MapSummaryCard(
                             }
                         )
                         append(
-                            " carry no place column of their own, so they are placed only by the " +
-                                "address on the location they were captured at."
+                            " have no address of their own, so they are placed by the location " +
+                                "they were captured at."
                         )
                     }
                     if (summary.captureTruncated) {
-                        append(" More GPS fixes matched than this map will fold; the busiest are shown.")
+                        append(" There are too many GPS points to show them all; the busiest are shown.")
                     }
                     if (summary.clusterKilometres > 0) {
                         append(" GPS fixes within ${summary.clusterKilometres} km are drawn as one pin.")

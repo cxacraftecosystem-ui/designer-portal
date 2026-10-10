@@ -40,8 +40,16 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: "20"
+          # 24, the newest LTS line (20 reached end of life on 2026-04-30). Written out because the root
+          # package.json this job installs declares no engines; frontend/package.json's `engines.node`
+          # is the line the rest of the repository follows, so move this with it.
+          node-version: "24"
           cache: "npm"
+
+      - name: Install npm 12
+        # The npm every other job installs with; no Node release ships it yet. None of the root
+        # package's dependencies has an install script, so npm 12's script blocking changes nothing here.
+        run: npm install --global npm@12 && npm --version
 
       - name: Install keep-alive dependencies
         run: npm ci

@@ -157,7 +157,7 @@ class DwCustomDefinitionWireTest {
         assertEquals("INT", fields[0].type)
         assertEquals("SIGNATURE", fields[1].type)
         assertFalse("a v1.1 type must not be drawable", dwCustomFieldDrawable(fields[1].type))
-        assertTrue(dwCustomUnsupportedNote(fields[1].type).contains("SIGNATURE"))
+        assertTrue(dwCustomUnsupportedNote(fields[1].type).contains("Update the app"))
     }
 
     companion object {

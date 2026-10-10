@@ -155,7 +155,7 @@ export function DocumentPreview({
    * the same reason `StoredMediaImage` keeps its frame there — a portrait and a signature are not
    * the same shape, and neither are these.
    */
-  className = "h-[32rem]"
+  className = "h-128"
 }: {
   mediaId: string | null | undefined;
   noun: string;

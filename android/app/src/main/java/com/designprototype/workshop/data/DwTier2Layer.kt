@@ -7,9 +7,9 @@ package com.designprototype.workshop.data
  * Nothing here runs a model — [DW_TIER2_RUNTIME_ABSENCE] says why in one sentence — and nothing here
  * makes a network call. What it is: the payload a handset-produced layer would be posted as, the
  * provenance that is mandatory in it, and the two gates that must NOT be in front of it. Written now,
- * with tests, because the order the brief gives is deliberate: the runtime is a Kotlin upgrade away and
- * the write path is a decision nobody has taken, and of the two the decision is the one that gets made
- * badly under time pressure.
+ * with tests, because the order the brief gives is deliberate: the runtime was a Kotlin upgrade away
+ * (made on 2026-10-09, so it is now build work alone) and the write path is a decision nobody has
+ * taken, and of the two the decision is the one that gets made badly under time pressure.
  *
  * ── THE FIVE RULES, AND WHERE EACH IS ENFORCED IN THIS FILE ────────────────────────────────────
  *

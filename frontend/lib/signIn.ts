@@ -27,7 +27,7 @@
  * set a temporary one, correct a name or an address.
  */
 
-import { apiFetch, apiFetchWithHeaders } from "@/lib/api";
+import { ApiError, apiFetch, apiFetchWithHeaders } from "@/lib/api";
 import type { User, UserRole } from "@/lib/types";
 
 /** Spelled once; see `auth.SIGN_IN_HINT_HEADER`. Lower-case because `Headers.get` is case-insensitive. */
@@ -118,16 +118,73 @@ export type PasswordLinkCheck = {
 /**
  * Is this link still good?
  *
+ * ── THE TOKEN GOES IN THE BODY, NOT THE ADDRESS (2026-10-09) ──────────────────────────────────
+ *
+ * `POST /auth/set-password/check` with `{"token": …}` answers exactly what
+ * `GET /auth/set-password?token=…` answers. The GET put the link's whole authority on the request
+ * line, and a request line is what nginx, a CDN and every other access log in front of the API write
+ * down; a body is not. The GET is asked ONLY when the POST is answered 404 or 405 — an API older than
+ * the POST, which has no such route — and never after any other failure: a 5xx, a refusal or an
+ * unreachable server says nothing about which door exists, and asking again the old way would put the
+ * token on a request line for nothing. The page reads whatever this throws as "not examined", never
+ * as "dead". Delete the fallback once every API this web build can be pointed at serves the POST.
+ *
  * `redirectOn401: false` because this route is PUBLIC and the person holding the link is by
  * definition not signed in — the default 401 redirect would bounce them to /login, which is exactly
  * the page they cannot use.
  */
 export async function checkPasswordLink(token: string): Promise<PasswordLinkCheck> {
-  return apiFetch<PasswordLinkCheck>(
-    `/auth/set-password?token=${encodeURIComponent(token)}`,
-    {},
-    { redirectOn401: false }
-  );
+  try {
+    return await apiFetch<PasswordLinkCheck>(
+      "/auth/set-password/check",
+      { method: "POST", body: JSON.stringify({ token }) },
+      { redirectOn401: false }
+    );
+  } catch (error) {
+    if (!(error instanceof ApiError) || (error.status !== 404 && error.status !== 405)) throw error;
+    return apiFetch<PasswordLinkCheck>(
+      `/auth/set-password?token=${encodeURIComponent(token)}`,
+      {},
+      { redirectOn401: false }
+    );
+  }
+}
+
+/**
+ * The token a password link carries, and the address to show once it is taken out.
+ *
+ * ── FRAGMENT FIRST, QUERY SECOND ──────────────────────────────────────────────────────────────
+ *
+ * A fragment (`/set-password#token=…`) is never sent to any server — not in the request for the page,
+ * not in a `Referer` — so it is where the token belongs, and it is read first. The query
+ * (`/set-password?token=…`) is read second because it is what every link issued so far carries:
+ * `credential_links.link_for` on the server writes it, and goes on writing it until the handset
+ * builds that read only the query have left the field (docs/OPEN_FINDINGS.md). Both are read with
+ * `URLSearchParams`, as `useSearchParams` read the query before.
+ *
+ * `address` is the same path with `token` removed from the query and the fragment, everything else
+ * kept, for `history.replaceState`: the token then leaves the address bar and the tab's history entry,
+ * so it is not in a copied address, a bookmark, a screenshot or what Back returns to. Null when there
+ * was no token in either place, so nothing is rewritten for nothing. PURE — it reads the string it is
+ * given and touches no `window` — so `set-password-link-token-unit.spec.ts` can drive it in Node.
+ */
+export function takeLinkTokenFromAddress(href: string): { token: string; address: string | null } {
+  const url = new URL(href);
+  const fragment = new URLSearchParams(url.hash.slice(1));
+  const inFragment = fragment.has("token");
+  const inQuery = url.searchParams.has("token");
+  if (!inFragment && !inQuery) return { token: "", address: null };
+  const token = fragment.get("token") || url.searchParams.get("token") || "";
+  url.searchParams.delete("token");
+  // A fragment that held no token is kept exactly as it was: re-serialising `#section` would write
+  // `#section=`.
+  let hash = url.hash;
+  if (inFragment) {
+    fragment.delete("token");
+    const rest = fragment.toString();
+    hash = rest ? `#${rest}` : "";
+  }
+  return { token, address: `${url.pathname}${url.search}${hash}` };
 }
 
 export async function setPasswordWithLink(token: string, password: string): Promise<void> {

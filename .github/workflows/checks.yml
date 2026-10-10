@@ -537,12 +537,23 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          # 22 to match deploy-frontend.yml, which matches Vercel's current build image. A
-          # typecheck that passes on a different major than the one that builds production is
-          # not the check anybody thinks it is.
-          node-version: "22"
+          # `engines.node` in frontend/package.json (24.x since 2026-10-09), the ONE line that also
+          # decides deploy-frontend.yml's build, e2e-live.yml's and the Node production runs on —
+          # Vercel takes `engines.node` over the project's dashboard setting. A typecheck that passes
+          # on a different major than the one that builds production is not the check anybody thinks
+          # it is, and a number written here again is how this job came to test 22 while production
+          # ran 24.
+          node-version-file: frontend/package.json
           cache: npm
           cache-dependency-path: frontend/package-lock.json
+
+      - name: Install npm 12
+        # No Node release ships npm 12 yet (24.21.0 brings 11.19.0, 26.11.1 brings 11.20.0), and npm
+        # 12 is the release `npm ci` has to pass under: it skips every dependency install script that
+        # `allowScripts` in frontend/package.json does not approve, and deploy-frontend.yml builds the
+        # site with it. `@12`, not an exact release — it follows its major the way `engines.node` does.
+        # Delete this step once the Node that `engines.node` resolves to brings npm 12 itself.
+        run: npm install --global npm@12 && npm --version
 
       - name: Install
         # `npm ci` only. NO `npx playwright install` — MEASURED: the selected specs run to
@@ -621,7 +632,9 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: "22"
+          # The major frontend/package.json's `engines.node` names; written out because this job
+          # installs nothing and reads no package.json. Move it with that line.
+          node-version: "24"
 
       - name: Verify the documentation set
         # No `npm ci` anywhere: the script imports nothing outside node: builtins, deliberately,

@@ -108,7 +108,7 @@ data class DwWorkshopJoinAck(
  *
  * DECLARED HERE RATHER THAN ADDED TO `WorkshopRepositoryApi`, and `ApiClient.retrofit`'s own
  * docstring is the licence: it exists "so a feature can declare its OWN typed service without
- * standing up a second HTTP stack beside this one". `ui/designworkshop/DwAsrModelInstallUi.kt:728`
+ * standing up a second HTTP stack beside this one". `ui/designworkshop/DwAsrModelInstallUi.kt:730`
  * is the standing precedent for doing it from a UI file. Going through `ApiClient` is what keeps
  * this call inside the 504 retry that exists because CloudFront times this origin out, and inside
  * the auth interceptor that reads a FRESH token per request.
@@ -251,9 +251,8 @@ fun dwInductionNote(
         }
         append("The device's own clock said the scan was at ")
         append(pending.scannedAtDeviceUtc)
-        append(" (UTC) — that is what the handset claims, not something this app can verify; a ")
-        append("phone's date can be changed by anyone holding it. Which scan reached the server ")
-        append("first is the only ordering that counts.")
+        append(" (UTC) — that is what the handset claims, and a phone's date can be changed by ")
+        append("anyone holding it. Whichever scan was uploaded first counts.")
     }
 }
 

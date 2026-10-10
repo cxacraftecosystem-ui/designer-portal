@@ -72,7 +72,7 @@ function RetiredAnswer({ label, answer, replaced }: { label: string; answer: str
           {/* The wording is struck through and the ANSWER is not: the question stopped being asked, the
               answer did not stop being true. */}
           <p className="text-sm text-ink-700 line-through decoration-ink-300">{label}</p>
-          <p className="mt-1 break-words text-sm text-ink-900">{answer}</p>
+          <p className="mt-1 wrap-break-word text-sm text-ink-900">{answer}</p>
           <p className="mt-1 text-xs leading-5 text-ink-500">
             {replaced
               ? "This question was reworded. Its original wording and the answer given under it are kept — an answer means what it meant when it was given."

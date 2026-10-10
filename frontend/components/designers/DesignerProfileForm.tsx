@@ -1468,7 +1468,7 @@ function DocumentSlot({
         It is still deliberately the SAME word the label uses — a page that calls it "CV" above the
         box and "curriculum vitae" inside it is a page with two names for one thing.
       */}
-      <DocumentPreview mediaId={mediaId} noun={label} className="h-[30rem]" />
+      <DocumentPreview mediaId={mediaId} noun={label} className="h-120" />
       <MediaCaptureField
         files={files}
         onFilesChange={onFilesChange}

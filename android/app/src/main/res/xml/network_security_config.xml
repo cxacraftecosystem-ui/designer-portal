@@ -4,6 +4,13 @@
   (d3ekigkotd1xa2.cloudfront.net) and media is HTTPS through S3, both with publicly-trusted
   certificates, so neither needs an entry here.
 
+  CERTIFICATE TRANSPARENCY AND ENCRYPTED CLIENT HELLO ARE ON WITHOUT AN ENTRY HERE, since the app has
+  targeted API 37 (2026-10-09): Android 17 checks that a server certificate was publicly logged, and
+  tries ECH, on every connection by default. Both production hosts' certificates come from public CAs,
+  which log them, so neither needs a `<certificateTransparency>` or `<domainEncryption>` element. The
+  platform turns CT checking off by itself wherever a `user` or inline trust anchor is in force, which
+  is what keeps the debug-overrides below working with a proxy certificate.
+
   Cleartext (plain HTTP) is permitted ONLY for the loopback/emulator development hosts below. It is
   deliberately NOT permitted for any production host: an http:// API call would expose the bearer
   token and every field record to anyone on the network path, and would be trivially modifiable in

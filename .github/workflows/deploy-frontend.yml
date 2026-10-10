@@ -1020,26 +1020,45 @@ jobs:
           # the API and the site that calls it come from the same tree.
           ref: ${{ needs.gate.outputs.sha }}
 
-      # ─── TWO NODE VERSIONS MEET IN THIS JOB, AND ONLY ONE OF THEM IS SET HERE — 2026-10-09 ──
+      # ─── ONE LINE DECIDES THE NODE THAT BUILDS THIS SITE AND THE NODE THAT RUNS IT — 2026-10-09 ──
       # This step decides the Node that COMPILES the site: `vercel build` below runs on the runner.
-      # The Node that RUNS the on-demand pages in production is a different setting, the project's
-      # Node.js Version. `vercel pull` writes it into `.vercel/project.json` and `vercel build` hands
-      # it to the Next.js builder, which stamps it on every function. The comment here used to say
-      # "22 matches Vercel's current build image", and that was wrong twice. This pipeline never
-      # builds on Vercel, and the project read 24.x when it was measured on 2026-10-09. 22 is the major
-      # checks.yml's web job type-checks, lints and unit-tests on. So the project must be set to 22.x
-      # as well (docs/DEPLOYMENT_VERCEL.md §1). The step after `vercel pull` warns on every run where
-      # the two majors differ.
+      # The Node that RUNS the on-demand pages in production is the one `vercel build` stamps on every
+      # function, and `engines.node` in frontend/package.json decides that too: Vercel takes the field
+      # over the project's Node.js Version ("Version overrides in package.json" in Vercel's Node.js
+      # versions page), so the dashboard setting decides nothing while the field is there. This step
+      # reads the same field, and so do checks.yml's web job and e2e-live.yml, so the build, the
+      # checks and production cannot drift apart again. They did: this file said 22, the project
+      # read 24.x, and the comment here told people to set the project to 22.x as well — LOWERING
+      # production to meet a runner that was behind it. When Vercel offers a newer major, raise
+      # `engines.node` (with @types/node and frontend/Dockerfile's NODE_VERSION); never lower anything
+      # to match. The step after `vercel pull` warns when the project setting disagrees with this build.
       - name: Set up Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: "22" # Next 16 needs ≥ 20.9; 22 is also checks.yml's web job and must be the project's Node.js Version
+          node-version-file: frontend/package.json # engines.node, 24.x; Next 16 needs ≥ 20.9
           cache: npm
           cache-dependency-path: frontend/package-lock.json
+
+      - name: Install npm 12
+        # `vercel build` installs the site with whatever `npm` this runner has (frontend/vercel.json's
+        # installCommand, `npm ci`), so this is the npm production is built with. No Node release ships
+        # npm 12 yet (24.21.0 brings 11.19.0), and npm 12 skips every dependency install script that
+        # `allowScripts` in frontend/package.json does not approve — the policy checks.yml's web job
+        # installs under too. `@12` follows its major, as `engines.node` does. Delete this step once
+        # the Node that `engines.node` resolves to brings npm 12 itself.
+        run: npm install --global npm@12 && npm --version
 
       - name: Install the Vercel CLI
         # Unpinned on purpose so token/API changes never strand the pipeline. If a CLI
         # release ever breaks the build, pin the version here — see docs/CI.md.
+        #
+        # Under npm 12 this install prints "install scripts blocked … esbuild" and that is expected:
+        # a global install has no package.json to hold an allowScripts entry, and the CLI does not
+        # need the script. esbuild's postinstall looks for the platform binary npm already installed
+        # as an optional dependency (fetching it only when that is missing) and, off Windows,
+        # hard-links it over the `esbuild` command's JavaScript shim; esbuild's own API finds the
+        # binary without it. Measured 2026-10-09 with vercel 63.1.0 (esbuild 0.27.0): `vercel
+        # --version` and an esbuild transform both worked with the script skipped.
         run: npm install --global vercel@latest
 
       # Every CLI command below runs from the REPOSITORY ROOT, not from frontend/. The
@@ -1064,21 +1083,40 @@ jobs:
             exit 1
           fi
 
-      - name: Say so when production would run on a different Node major from this build
-        # 2026-10-09. The "Set up Node" step carries the argument: this runner compiles on Node 22, and
-        # the on-demand pages then run on whatever the project's Node.js Version says, which read 24.x
-        # that day. A WARNING, not a failure, because a mismatch is a risk and not a broken site. Both
-        # majors run this bundle today, and failing the publish over a dashboard setting would hold
-        # back work that has nothing to do with it. What the warning buys is that the mismatch is
-        # visible on every run, instead of known only to whoever last opened the project settings.
+      - name: Say so when the project's Node.js Version disagrees with this build
+        # 2026-10-09. The "Set up Node" step carries the argument: `engines.node` decides the Node this
+        # runner builds on AND the one production runs on, so the dashboard's Node.js Version decides
+        # nothing while that field is set. What it can still do is mislead — whoever reads 22.x there
+        # believes production runs 22 — and it decides everything again the day the field is removed.
+        # A WARNING, not a failure: production runs this build's major either way, and failing the
+        # publish over a dashboard setting would hold back work that has nothing to do with it.
+        #
+        # EVERY REMEDY BELOW POINTS UP. A project setting NEWER than this build means Vercel offers a
+        # major the repository has not moved to: raise `engines.node` to it (with @types/node and
+        # frontend/Dockerfile's NODE_VERSION), and this build moves with it. A setting OLDER than this
+        # build is stale: raise the setting. Never lower either side to meet the other; lowering the
+        # project to the runner's 22 is the mistake this step was rewritten after.
         run: |
           set -euo pipefail
           build="$(node -p 'process.versions.node.split(".")[0]')"
-          runtime="$(node -p "require('./.vercel/project.json').settings?.nodeVersion ?? ''")"
-          echo "build Node ${build}; project Node.js Version '${runtime:-<unset>}'"
-          if [ "$runtime" != "${build}.x" ]; then
-            echo "::warning title=Production runs a different Node major from CI::The Vercel project's Node.js Version is '${runtime:-<unset>}', so its on-demand pages run on that while checks.yml and this build run on Node ${build}. Set it to ${build}.x in Vercel -> Project -> Settings -> Node.js Version; the next publish picks it up."
+          engines="$(node -p "require('./frontend/package.json').engines?.node ?? ''")"
+          project="$(node -p "require('./.vercel/project.json').settings?.nodeVersion ?? ''")"
+          echo "build Node ${build}; frontend/package.json engines.node '${engines:-<unset>}'; project Node.js Version '${project:-<unset>}'"
+          if [ -z "$engines" ]; then
+            echo "::warning title=frontend/package.json names no Node major::Without engines.node, setup-node had no version to read (this build ran on Node ${build}) and production runs on the project's Node.js Version ('${project:-<unset>}'). Put engines.node back at the newest major Vercel offers, never below ${build}.x."
+            exit 0
           fi
+          major="${project%%.*}"
+          case "$major" in
+            ''|*[!0-9]*) ;;
+            *)
+              if [ "$major" -gt "$build" ]; then
+                echo "::warning title=Vercel offers a newer Node major than this build::The project's Node.js Version is '${project}', but engines.node in frontend/package.json is '${engines}', so production and this build run on Node ${build}. Raise engines.node to ${major}.x (with @types/node and frontend/Dockerfile's NODE_VERSION). Do not lower the project setting."
+              elif [ "$major" -lt "$build" ]; then
+                echo "::warning title=The project's Node.js Version is behind this build::The project's Node.js Version reads '${project}', but engines.node ('${engines}') overrides it, so production runs on Node ${build}, as this build does. Raise the setting to ${build}.x in Vercel -> Project -> Settings -> Build and Deployment -> Node.js Version so it stops misleading readers. Do not lower engines.node."
+              fi
+              ;;
+          esac
 
       - name: Resolve the production alias of the project we are publishing to
         id: alias

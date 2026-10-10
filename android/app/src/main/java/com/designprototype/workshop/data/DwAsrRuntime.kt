@@ -253,12 +253,12 @@ data class DwAsrArtifact(
      */
     val libraries: List<DwAsrLibrary>,
 
-    /** The upstream release these libraries came out of, e.g. `sherpa-onnx v1.13.5`. Audit trail. */
+    /** The upstream release these libraries came out of, e.g. `sherpa-onnx v1.13.8`. Audit trail. */
     val upstreamVersion: String,
 
     /**
      * How the release builder obtained them, in a sentence, e.g. "extracted from
-     * sherpa-onnx-static-link-onnxruntime-1.13.5.aar, downloaded from the k2-fsa GitHub release".
+     * sherpa-onnx-static-link-onnxruntime-1.13.8.aar, downloaded from the k2-fsa GitHub release".
      *
      * Required, because the digest establishes only that the file is the one the release builder
      * pinned — this field is the only place the app records WHAT they believed they were pinning.
@@ -591,12 +591,16 @@ fun dwAsrMayLoad(status: DwAsrRuntimeStatus): Boolean =
 // ---------------------------------------------------------------------------------------------
 
 /**
- * The static-linked engine's own bytes for `arm64-v8a`: **23,646,824**. MEASURED, not published.
+ * The static-linked engine's own bytes for `arm64-v8a`: **24,169,352** at 1.13.8. MEASURED, not
+ * published.
  *
  * docs/ASR-RUNTIME-MEASUREMENT.md, "the delta per ABI, off the APKs' central directories": row A →
  * row E takes `lib/arm64-v8a/` from 11,074,640 to 34,721,464 bytes. Every `lib/` entry in that APK
  * reads STORED — `minSdk = 26`, `extractNativeLibs="false"`, read out of the merged manifest rather
- * than recalled — **so these are the bytes on the phone as well as the bytes in the archive.**
+ * than recalled — **so these are the bytes on the phone as well as the bytes in the archive.** That
+ * delta, 23,646,824, was the 1.13.5 engine, and it equalled that AAR's `jni/arm64-v8a` entry to the
+ * byte; so when the APK moved to 1.13.8 on 2026-10-09 the figure was re-read off the new AAR's
+ * entry rather than estimated (the same document records both).
  *
  * WHY THE STATIC-LINKED FIGURE AND NOT THE OTHER ONE. That document's recommendation 2: if this goes
  * ahead it is `sherpa-onnx-static-link-onnxruntime`, measured at +39,811,828 for the ARM pair against
@@ -612,17 +616,18 @@ fun dwAsrMayLoad(status: DwAsrRuntimeStatus): Boolean =
  * real artifact is pinned, [DwAsrArtifact.downloadBytes] is the number that gets printed and these
  * constants go back to being what the disabled card says.
  */
-const val DW_ASR_ENGINE_BYTES_ARM64: Long = 23_646_824L
+const val DW_ASR_ENGINE_BYTES_ARM64: Long = 24_169_352L
 
 /**
- * The same figure for `armeabi-v7a`: **16,152,132** — 6,789,192 → 22,941,324 in the same table.
+ * The same figure for `armeabi-v7a`: **16,437,284** at 1.13.8 — 16,152,132 at 1.13.5, which is
+ * 6,789,192 → 22,941,324 in the same table.
  *
  * A DIFFERENT NUMBER IS SHOWN TO A DIFFERENT DESIGNER, which is why this is per-ABI rather than one
  * rounded figure for everybody. 16 MB and 24 MB are different decisions on a prepaid bundle in a
  * district town, and the phones that report only `armeabi-v7a` are exactly the oldest and cheapest
  * handsets in the fleet — the ones whose owners are least able to shrug at eight megabytes.
  */
-const val DW_ASR_ENGINE_BYTES_ARM32: Long = 16_152_132L
+const val DW_ASR_ENGINE_BYTES_ARM32: Long = 16_437_284L
 
 /**
  * WHICH of this handset's ABIs the measurement actually covers, or null when none of them is.

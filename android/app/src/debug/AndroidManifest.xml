@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  DEBUG BUILDS ONLY: merged over src/main/AndroidManifest.xml for the debug variant and never into a
+  release APK.
+
+  ACCESS_LOCAL_NETWORK, for a developer's own backend. Since 2026-10-09 the app targets API 37, and
+  Android 17 blocks an app's traffic to the local network until this runtime permission is granted
+  (it sits in the Nearby devices group). Production is CloudFront, a public host, so a field build
+  never needs it, and declaring it there would put a permission in the install details that the app
+  never uses. A debug build pointed at `apiBaseUrl=http://10.0.2.2:8000/api/` or at a laptop on the
+  LAN does need it, and `MainActivity` asks for it at launch when `apiHostNeedsLocalNetwork` says the
+  configured host is one of those.
+
+  A RELEASE build pointed at a LAN host has no way to reach it on Android 17 — the permission is not
+  declared there to be granted. Test a LAN backend with a debug build.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.ACCESS_LOCAL_NETWORK" />
+</manifest>

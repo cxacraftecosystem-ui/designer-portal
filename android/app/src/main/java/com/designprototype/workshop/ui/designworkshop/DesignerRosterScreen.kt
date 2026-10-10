@@ -373,7 +373,7 @@ fun DesignerRosterScreen(
         }
 
         Text(
-            "A designer signs in only while an ACTIVE row here carries their email. Add somebody " +
+            "A designer can sign in only while an active entry here carries their email. Add somebody " +
                 "before they have an account and the account creates itself the first time they " +
                 "sign in with Google.",
             color = MaterialTheme.field.muted,
@@ -405,9 +405,9 @@ fun DesignerRosterScreen(
         // is simply not there on some rows and there on others.
         if (directoryCapped) {
             RosterNotice(
-                "The account list this screen reads to match a row to a person stops at " +
-                    "$DESIGNER_DIRECTORY_CAP accounts, so \"Open designer profile\" may be missing " +
-                    "from a row whose account does exist. The roster itself is unaffected."
+                "Only the first $DESIGNER_DIRECTORY_CAP accounts can be matched to this roster, so " +
+                    "\"Open designer profile\" may be missing from an entry whose account does exist. " +
+                    "The roster itself is unaffected."
             )
         }
 
@@ -474,8 +474,8 @@ fun DesignerRosterScreen(
             readFailure != null -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 RosterEmptyState(
                     title = "The roster could not be loaded",
-                    body = "This is not showing who is empanelled, and it is not a claim that " +
-                        "nobody is — the request did not come back. Nothing on the server has changed.",
+                    body = "This does not mean nobody is empanelled — the list did not load. " +
+                        "Nothing has been changed. Try again when you have a connection.",
                 )
                 rosterFilterRefusalHint(grammarUnderstood, grammarKeysSent)?.let { RosterNotice(it) }
             }
@@ -488,9 +488,8 @@ fun DesignerRosterScreen(
 
             rows.isEmpty() && hasActiveRosterFilters(RosterKind.DESIGNER, filters) -> RosterEmptyState(
                 title = "Nobody matches these filters",
-                body = "The filters are applied on the server, over the whole roster and not only " +
-                    "the rows this page had loaded, so this is an answer about every empanelment " +
-                    "there has ever been. Clear every filter to see everybody again, suspended " +
+                body = "The filters search the whole roster, not only the entries already shown, so " +
+                    "nobody on it matches. Clear every filter to see everybody again, suspended " +
                     "entries included.",
             )
 

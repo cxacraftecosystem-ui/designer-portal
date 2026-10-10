@@ -207,9 +207,9 @@ export function StageAddressField({
            * designer, who was standing there, to say which half of it is the mistake.
            *
            * `amber-100` behind `amber-800`, which is the pairing `LocationFields`' own `CardNotice`
-           * settled on and wrote down: 50 and 200 are not in this project's amber ramp
-           * (tailwind.config.ts defines 100/500/800), so `bg-amber-50` would leave dark-brown text on
-           * whatever the card is and vanish on the dark theme. A fixed light chip is legible in both.
+           * settled on and wrote down: both are this project's own amber rungs (tailwind.config.ts
+           * writes 100/500/800 itself; every other amber is Tailwind's stock shade), both are literal
+           * colours the theme never inverts, and so the notice is a fixed light chip, legible in both.
            */
           <p className="flex items-start gap-2 rounded-md border border-amber-500 bg-amber-100 px-3 py-2 text-xs text-amber-800">
             <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />

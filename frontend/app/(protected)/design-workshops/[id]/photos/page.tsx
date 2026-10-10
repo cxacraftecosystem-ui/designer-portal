@@ -707,7 +707,7 @@ export default function PhotoIntakePage({ params }: { params: Promise<{ id: stri
           </div>
 
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[56rem] border-collapse text-sm">
+            <table className="w-full min-w-4xl border-collapse text-sm">
               <thead>
                 <tr className="border-b border-line-200 bg-surface-50 text-left">
                   <th scope="col" className="px-4 py-2 font-medium text-ink-700">

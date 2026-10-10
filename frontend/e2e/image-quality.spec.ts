@@ -360,7 +360,9 @@ test.describe("imageQuality — missing views, only where the registry has real 
 /**
  * The module is compiled and injected rather than imported by the page, because there is no route
  * that exposes it and adding one would be app surface built purely for a test. `transpileModule`
- * only strips types, so what runs in the browser is this module's real source.
+ * only strips types, so what runs in the browser is this module's real source. It comes from the
+ * `typescript` package, which is the TS 6.0 API (`npm:@typescript/typescript6`): TypeScript 7, the
+ * `tsc` that type-checks this repository, ships no JavaScript API.
  */
 async function browserModuleSource(): Promise<string> {
   const ts = await import("typescript");

@@ -38,8 +38,9 @@ import java.io.IOException
  *    of them and useful for none: expired means "ask for another", already-used means "go and sign
  *    in", which is the opposite of asking anybody for anything. A `when` that collapsed two of them
  *    would leave a person with no next action and would look completely fine on screen.
- * 3. **The token is extracted from a pasted LINK, and left alone when it is a bare token.** Get this
- *    wrong in either direction and the redeem screen refuses a link the server would have accepted.
+ * 3. **The token is extracted from a pasted LINK — from its query or, since 2026-10-09, from its
+ *    fragment — and left alone when it is a bare token.** Get this wrong in any direction and the
+ *    redeem screen refuses a link the server would have accepted.
  * 4. **The identifier hint is read off the HEADER and never out of the body.**
  *    `tests/test_platform_access_gate.py` asserts the refusal body holds nothing but `detail`, and
  *    `auth.py` records that a second field there "would be the first crack in a rule the whole
@@ -231,6 +232,104 @@ class PasswordSetupCopyTest {
     @Test
     fun `an empty paste is an empty token, not a request`() {
         assertEquals("", passwordLinkToken("   "))
+    }
+
+    // ── 3b. The same token when the link carries it in the FRAGMENT ─────────────────────────────
+    //
+    // Where the server is moving links: `/set-password#token=…`, because a fragment is never sent to
+    // any server, so the token stays out of the web host's request log and the browser's history.
+    // Links of the old shape stay in chat histories until they expire, so both are read, and they
+    // must give the same answer — a link that worked yesterday and is refused today because its
+    // token moved would look exactly like an expired one.
+
+    @Test
+    fun `a link carrying the token in its fragment yields the token`() {
+        assertEquals(
+            "abc.def",
+            passwordLinkToken("https://designer-repository.vercel.app/set-password#token=abc.def")
+        )
+    }
+
+    @Test
+    fun `the query form and the fragment form of one link give one token`() {
+        val token = "eyJ1IjoidXNlci0xIn0.c2lnbmF0dXJl_-"
+        val query = passwordLinkToken("https://designer-repository.vercel.app/set-password?token=$token")
+        val fragment = passwordLinkToken("https://designer-repository.vercel.app/set-password#token=$token")
+        assertEquals(token, query)
+        assertEquals(query, fragment)
+    }
+
+    @Test
+    fun `other parameters in the fragment are not swallowed into the token`() {
+        assertEquals("abc.def", passwordLinkToken("https://x/set-password#token=abc.def&from=email"))
+        assertEquals("abc.def", passwordLinkToken("https://x/set-password#from=email&token=abc.def"))
+        // A query that names something else, and the token in the fragment after it.
+        assertEquals("abc.def", passwordLinkToken("https://x/set-password?lang=hi#token=abc.def"))
+    }
+
+    @Test
+    fun `the percent-encoding a fragment carries is undone too`() {
+        assertEquals("abc=def", passwordLinkToken("https://x/set-password#token=abc%3Ddef"))
+    }
+
+    @Test
+    fun `a fragment that carries no token is not read as one`() {
+        // No token anywhere: the text goes to the server as typed, and its refusal word says why.
+        assertEquals("https://x/set-password#top", passwordLinkToken("https://x/set-password#top"))
+        // `token=` must open a parameter; the end of a longer name is not it.
+        assertEquals(
+            "https://x/set-password#notoken=abc",
+            passwordLinkToken("https://x/set-password#notoken=abc")
+        )
+    }
+
+    // ── 3c. A paste that is the whole message, and a link that carries both ─────────────────────
+    //
+    // A designer copies the administrator's whole message more often than the link alone, and a
+    // base64url token holds no whitespace. Read whole, the words after the link were sent as part of
+    // the token, came back "malformed", and hid the password boxes for a link that was good.
+
+    @Test
+    fun `words pasted after the link are not part of the token`() {
+        assertEquals("abc.def", passwordLinkToken("https://x/set-password?token=abc.def expires at 14:12"))
+        assertEquals("abc.def", passwordLinkToken("https://x/set-password#token=abc.def\nAsk me if it fails."))
+    }
+
+    @Test
+    fun `words pasted before the link are skipped, a hash among them included`() {
+        assertEquals(
+            "abc.def",
+            passwordLinkToken("Message #3 from the admin: https://x/set-password?token=abc.def")
+        )
+    }
+
+    @Test
+    fun `a pasted token parameter on its own is read`() {
+        assertEquals("abc.def", passwordLinkToken("token=abc.def"))
+    }
+
+    @Test
+    fun `when a link carries both, the fragment wins, as on the web`() {
+        // `takeLinkTokenFromAddress` on the web reads the fragment first; one link pasted on either
+        // client must give one token.
+        assertEquals("BBB", passwordLinkToken("https://x/set-password?token=AAA#token=BBB"))
+    }
+
+    // ── 3d. What the activity will take from an intent ──────────────────────────────────────────
+
+    @Test
+    fun `only an https link to the web app's set-password path is an administrator's link`() {
+        assertTrue(isSetPasswordLinkAddress("https", "designer-repository.vercel.app", "/set-password"))
+        assertTrue(isSetPasswordLinkAddress("HTTPS", "Designer-Repository.vercel.app", "/set-password/"))
+        // An explicit intent from another app is never seen by the manifest's filter.
+        assertFalse(isSetPasswordLinkAddress("content", "designer-repository.vercel.app", "/set-password"))
+        assertFalse(isSetPasswordLinkAddress("http", "designer-repository.vercel.app", "/set-password"))
+        assertFalse(isSetPasswordLinkAddress("https", "evil.example.org", "/set-password"))
+        assertFalse(isSetPasswordLinkAddress("https", "designer-repository.vercel.app.evil.org", "/set-password"))
+        assertFalse(isSetPasswordLinkAddress("https", "designer-repository.vercel.app", "/set-password-x"))
+        // A questionnaire file arriving through the VIEW filters is not a password link either.
+        assertFalse(isSetPasswordLinkAddress("content", "media", "/external/downloads/form.dpwq"))
+        assertFalse(isSetPasswordLinkAddress(null, null, null))
     }
 
     // ── 4. The identifier hint rides the header ──────────────────────────────────────────────────
@@ -508,7 +607,7 @@ class PasswordSetupCopyTest {
     @Test
     fun `the gate's usual words are the ones it always showed`() {
         assertEquals(
-            "Your new password did not reach the server, so nothing has changed. Try again.",
+            "Your new password could not be sent, so nothing has changed. Try again.",
             PASSWORD_CHANGE_NOT_SENT
         )
         assertEquals(

@@ -17,10 +17,10 @@ version: 2
 #
 # ─── THE CADENCES ARE DIFFERENT ON PURPOSE ───────────────────────────────────────────────
 # `github-actions` is WEEKLY because those bumps are the security-relevant ones and each is a
-# two-line diff a reviewer can actually judge. `npm` and `pip` are MONTHLY because they are not:
-# a Next or FastAPI bump needs the suite run and a deploy behind it, and a weekly stream of them
-# on a repository this size is how people learn to close Dependabot pull requests unread. An
-# ignored bot is worth less than no bot.
+# two-line diff a reviewer can actually judge. `npm`, `pip` and `gradle` are MONTHLY because they
+# are not: a Next, FastAPI or Compose bump needs the suite run and a deploy or a handset behind it,
+# and a weekly stream of them on a repository this size is how people learn to close Dependabot
+# pull requests unread. An ignored bot is worth less than no bot.
 #
 # The open-PR limits are small for the same reason. Three at a time is a queue somebody clears;
 # fifteen is a wall somebody mutes.
@@ -35,8 +35,20 @@ version: 2
 # this repository wanted from a lock in the first place.
 #
 # It also does not know about the Vercel CLI (`npm i -g vercel@latest` in deploy-frontend.yml,
-# unpinned on purpose — see the comment there) or the Gradle/AGP versions under `android/`, which
-# `gradle` ecosystem support could cover and which is a separate decision with its own test cost.
+# unpinned on purpose — see the comment there).
+#
+# ─── THE HANDSET'S BUILD IS WATCHED TOO, SINCE 2026-10-09 ────────────────────────────────
+# Leaving `android/` out was written down here until 2026-10-09 as "a separate decision with its own test cost",
+# and its cost turned out to be the opposite one: with nothing proposing a bump, the handset's
+# whole toolchain sat at its late-2024 versions (AGP 8.7.3, Kotlin 2.0.21, Gradle 8.9, Compose BOM
+# 2024.10.01, SDK 35) until it took one coordinated change to move it, because by then every
+# library's newest release needed a compileSdk, an AGP and a Kotlin the build did not have. The
+# `gradle` entry below reads the plugin versions in `android/build.gradle.kts` and the string
+# coordinates in every module's `build.gradle.kts`, and it bumps the Gradle wrapper too (its
+# pull requests are titled "Bump gradle-wrapper from …" and regenerate `gradle/wrapper/` and both
+# scripts). What it cannot read is the vendored sherpa-onnx AAR (a file named in four places — see
+# `android/app/build.gradle.kts`), the JDK in the three Android workflows' `setup-java`, and the
+# SDK platform and build-tools those workflows install; those still move by hand, together.
 
 updates:
   # ── GitHub Actions: the pins added on 2026-09-03 ────────────────────────────────────────
@@ -74,6 +86,34 @@ updates:
       # One pull request for the patch/minor stream instead of a dozen. Majors stay individual —
       # a Next or React major is a piece of work, not a bump, and grouping it with six patches
       # would hide it inside a diff nobody reads to the end.
+      minor-and-patch:
+        update-types:
+          - minor
+          - patch
+
+  # ── The handset ────────────────────────────────────────────────────────────────────────
+  - package-ecosystem: gradle
+    # The Gradle ROOT, where settings.gradle.kts and the wrapper live; Dependabot finds the five
+    # modules (`:app` and the four `:core-*`) from there.
+    directory: "/android"
+    schedule:
+      # Monthly, like npm and pip, and for their reason: an AndroidX or Compose bump needs the
+      # Android build and its tests behind it, and some need a handset, so a weekly stream would
+      # be closed unread.
+      interval: monthly
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: deps
+    labels:
+      - dependencies
+      - android
+    groups:
+      # The Kotlin compiler and its two compiler plugins share one version and must move as one:
+      # `android/build.gradle.kts` declares them side by side, and a pull request that bumped one
+      # of the three would build a module with a compiler plugin that does not match its compiler.
+      kotlin:
+        patterns:
+          - "org.jetbrains.kotlin.*"
       minor-and-patch:
         update-types:
           - minor

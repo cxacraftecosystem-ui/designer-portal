@@ -27,8 +27,10 @@ import java.util.Locale
  *    `length[B]` → `outputs[B,1024,T']`) plus a two-node `ctc_decoder.onnx` (Conv 1×1 with weight
  *    `[5633,1024,1]`, then Transpose → `logprobs[B,T',5633]`). Concatenated, that is **exactly** the
  *    NeMo-CTC contract `OfflineRecognizer.from_nemo_ctc` expects. Merged and loaded on sherpa-onnx
- *    **1.13.5 — the same version vendored in this APK** — it decoded real audio. No re-export from a
- *    `.nemo` checkpoint was needed, and no third-party repackage was involved.
+ *    **1.13.5 — the version vendored in this APK at the time** — it decoded real audio. No re-export
+ *    from a `.nemo` checkpoint was needed, and no third-party repackage was involved. (The APK has
+ *    carried 1.13.8 since 2026-10-09: the same binding, class for class, over onnxruntime 1.28.2;
+ *    the decode is re-checked on the handset before a release carries it.)
  *  * ~~**The old note's "one Malayalam-only" conversion was never Malayalam-only.** That artifact emits
  *    **5633** classes and ships a **5633-line** `tokens.txt` spanning all 22 languages; it was read as
  *    monolingual because its model card names one.~~ **THAT CORRECTION WAS ITSELF WRONG, AND IT IS
@@ -181,7 +183,8 @@ enum class DwAsrModelFamily {
      * `ai4bharat/indic-conformer-600m-multilingual`'s `encoder.onnx` becomes once its two-node
      * `ctc_decoder.onnx` is appended. Verified against the vendored AAR: the constructor
      * `OfflineNemoEncDecCtcModelConfig(String)` and the `OfflineModelConfig.nemo` property are both
-     * present in `sherpa-onnx-static-link-onnxruntime-1.13.5.aar`'s `classes.jar`.
+     * present in `sherpa-onnx-static-link-onnxruntime-1.13.5.aar`'s `classes.jar`, and `javap`
+     * prints both classes identically in the 1.13.8 AAR the APK has carried since 2026-10-09.
      */
     NEMO_ENC_DEC_CTC,
 }
@@ -512,13 +515,14 @@ val DW_ASR_MODELS: List<DwAsrModel> = listOf(
 /**
  * The ABIs the engine in THIS APK was built for. **Read off the AAR, not off a wish.**
  *
- * `sherpa-onnx-static-link-onnxruntime-1.13.5.aar` carries `libsherpa-onnx-jni.so` for all four
- * Android ABIs; the release build's `abiFilters` narrows the packaged set to these two, which is the
- * same pair every other native library in this app ships for and is measured in
- * `docs/ASR-RUNTIME-MEASUREMENT.md`. The two `.so` sizes in that AAR — **23,646,824** for arm64-v8a
- * and **16,152,132** for armeabi-v7a — are byte-for-byte the figures [DW_ASR_ENGINE_BYTES_ARM64] and
- * [DW_ASR_ENGINE_BYTES_ARM32] were derived from by subtracting two packaged APKs, which is a pleasing
- * cross-check of that document's arithmetic from a completely different direction.
+ * `sherpa-onnx-static-link-onnxruntime-1.13.8.aar` (1.13.5 until 2026-10-09; both read) carries
+ * `libsherpa-onnx-jni.so` for all four Android ABIs; the release build's `abiFilters` narrows the
+ * packaged set to these two, which is the same pair every other native library in this app ships
+ * for and is measured in `docs/ASR-RUNTIME-MEASUREMENT.md`. The two `.so` sizes in the 1.13.5 AAR —
+ * **23,646,824** for arm64-v8a and **16,152,132** for armeabi-v7a — were byte-for-byte the figures
+ * that document arrived at by subtracting two packaged APKs, which is a pleasing cross-check of its
+ * arithmetic from a completely different direction, and the reason [DW_ASR_ENGINE_BYTES_ARM64] and
+ * [DW_ASR_ENGINE_BYTES_ARM32] are now read straight off the 1.13.8 AAR's entries.
  *
  * **ONLY THE FIRST OF THEM HAS BEEN RUN.** `DwAsrEngineProbeTest` was executed on an arm64-v8a
  * handset. Whether the armeabi-v7a build loads, and what it costs, is **unmeasured** — the same word

@@ -352,13 +352,13 @@ export function ApiKeysPanel() {
                         <span className={`inline-block rounded-full border px-2.5 py-1 text-xs font-medium ${source.tone}`}>
                           {source.label}
                         </span>
-                        <p className="mt-1 max-w-[12rem] text-[0.6875rem] leading-4 text-ink-500">{source.help}</p>
+                        <p className="mt-1 max-w-48 text-[0.6875rem] leading-4 text-ink-500">{source.help}</p>
                         {/* Why an "Environment" (or "Not set") row is nonetheless offering "Clear
                             override": there IS a saved key here, it just cannot be decrypted any
                             more, so it is not the key being sent. Without this sentence the badge
                             and the button contradict each other on screen. */}
                         {secret.overrideUnreadable ? (
-                          <p className="mt-1 max-w-[12rem] text-[0.6875rem] leading-4 text-error-600">
+                          <p className="mt-1 max-w-48 text-[0.6875rem] leading-4 text-error-600">
                             A key saved here can no longer be decrypted, so it is not in use. Re-enter it, or clear the
                             broken override.
                           </p>
@@ -373,7 +373,7 @@ export function ApiKeysPanel() {
                           {secret.lastCheckedAt ? `Checked ${formatDateTime(secret.lastCheckedAt)}` : "Never tested"}
                         </p>
                         {secret.lastError ? (
-                          <p className="mt-1 max-w-[14rem] text-[0.6875rem] leading-4 text-error-600">{secret.lastError}</p>
+                          <p className="mt-1 max-w-56 text-[0.6875rem] leading-4 text-error-600">{secret.lastError}</p>
                         ) : null}
                       </td>
 

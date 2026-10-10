@@ -1,7 +1,7 @@
 package com.designprototype.workshop.data
 
 import com.designprototype.workshop.BuildConfig
-import com.jakewharton.retrofit2.converter.kotlinx.serialization.asConverterFactory
+import retrofit2.converter.kotlinx.serialization.asConverterFactory
 import kotlinx.serialization.json.Json
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
@@ -27,9 +27,11 @@ object ApiClient {
     /**
      * Only requests that are safe to repeat are auto-retried, so a 504 (where the origin may or may not
      * have already processed the call) can never create a duplicate record. GETs are always safe; among
-     * POSTs only the side-effect-free upload-setup calls qualify — presigning a URL or starting/aborting
-     * a multipart upload can be re-issued harmlessly. Record-creating calls (complete, create*, update*)
-     * are deliberately excluded; their resilience comes from the save/back-guard flow instead.
+     * POSTs only the side-effect-free calls qualify — presigning a URL or starting/aborting a multipart
+     * upload can be re-issued harmlessly, and so can a set-password link CHECK, which reads and writes
+     * nothing: it is a POST only so that its token rides in a body rather than a URL, and as the GET it
+     * replaced it was retried, so it still is. Record-creating calls (complete, create*, update*) are
+     * deliberately excluded; their resilience comes from the save/back-guard flow instead.
      */
     private fun isSafelyRetriable(method: String, path: String): Boolean {
         if (method.equals("GET", ignoreCase = true)) return true
@@ -37,7 +39,8 @@ object ApiClient {
             return path.endsWith("/media/presign") ||
                 path.endsWith("/media/multipart/create") ||
                 path.endsWith("/media/multipart/presign-parts") ||
-                path.endsWith("/media/multipart/abort")
+                path.endsWith("/media/multipart/abort") ||
+                path.endsWith("/auth/set-password/check")
         }
         return false
     }
@@ -177,6 +180,34 @@ object ApiClient {
             .build()
 
     /**
+     * The request log, on debug builds only — and with the credentials a log line could carry
+     * blanked out of it.
+     *
+     * `logcat` on a shared handset is not a private place (the issued-link panel says the same of a
+     * link). BASIC writes each request line, and the one request line this app still sends with a
+     * credential in it is the set-password link check's fallback GET, `?token=…`, kept for servers
+     * older than the POST. `redactQueryParams` replaces that value — OkHttp 5.5 writes its `██` back
+     * into the URL percent-encoded, so the line reads `token=%E2%96%88%E2%96%88` — and `redactHeader`
+     * blanks the session both ways should somebody raise the level to HEADERS while debugging: the
+     * bearer token on the way out, and the fresh one a password change sends back in
+     * [SESSION_TOKEN_HEADER]. BODY must never be used here: it would print the check's
+     * `{"token": …}` and every password the sign-in and the two password screens send.
+     *
+     * Internal, with the logger and level as parameters, so `PasswordLinkCheckTest` can read what it
+     * writes.
+     */
+    internal fun httpLogging(
+        logger: HttpLoggingInterceptor.Logger = HttpLoggingInterceptor.Logger.DEFAULT,
+        level: HttpLoggingInterceptor.Level =
+            if (BuildConfig.DEBUG) HttpLoggingInterceptor.Level.BASIC else HttpLoggingInterceptor.Level.NONE,
+    ): HttpLoggingInterceptor = HttpLoggingInterceptor(logger).apply {
+        this.level = level
+        redactQueryParams("token")
+        redactHeader("Authorization")
+        redactHeader(SESSION_TOKEN_HEADER)
+    }
+
+    /**
      * The OkHttp stack under [retrofit]: the gateway retry, the credential writes sent once, the
      * session and its two signals, the timeouts.
      *
@@ -185,9 +216,7 @@ object ApiClient {
      * canned answer after the last of them, where the socket would be, and nothing is copied.
      */
     internal fun httpClient(tokenStore: TokenStore): OkHttpClient {
-        val logging = HttpLoggingInterceptor().apply {
-            level = if (BuildConfig.DEBUG) HttpLoggingInterceptor.Level.BASIC else HttpLoggingInterceptor.Level.NONE
-        }
+        val logging = httpLogging()
 
         return OkHttpClient.Builder()
             // Mobile data is slower and drops connections more than Wi-Fi, so allow generous timeouts
@@ -222,7 +251,7 @@ object ApiClient {
                         runCatching { Thread.sleep(backoffMillis(attempt)) }
                     }
                 }
-                throw lastError ?: IOException("Request failed after $maxAttempts attempts")
+                throw lastError ?: IOException(CONNECTION_FAILED_SENTENCE)
             }
             // A CREDENTIAL WRITE IS SENT ONCE — by OkHttp as well as by the loop above. An
             // application interceptor, so OkHttp's own retry layer, which runs after every one of

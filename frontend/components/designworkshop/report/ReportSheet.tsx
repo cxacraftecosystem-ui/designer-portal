@@ -1309,7 +1309,7 @@ export function ReportSheets({
         >
           Zoom out
         </button>
-        <span className="min-w-[3.5rem] text-center text-xs tabular-nums text-ink-500">
+        <span className="min-w-14 text-center text-xs tabular-nums text-ink-500">
           {Math.round(scale * 100)}%
         </span>
         <button

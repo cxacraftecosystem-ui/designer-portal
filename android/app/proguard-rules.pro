@@ -4,16 +4,30 @@
 # that is reached reflectively already SHIPS ITS OWN consumer rules inside its artifact, and R8
 # applies those automatically:
 #
-#   kotlinx-serialization-core-jvm-1.7.3.jar  META-INF/proguard/kotlinx-serialization-common.pro
-#                                             META-INF/com.android.tools/proguard/…
-#   retrofit-2.11.0.jar                       META-INF/proguard/retrofit2.pro
-#   okhttp-4.12.0.jar                         META-INF/proguard/okhttp3.pro
+#   kotlinx-serialization-core-jvm-1.11.0.jar META-INF/proguard/kotlinx-serialization-common.pro
+#                                             META-INF/com.android.tools/{proguard,r8}/…
+#   retrofit-3.0.0.jar                        META-INF/proguard/retrofit2.pro
+#   okhttp-android-5.5.0.aar                  proguard.txt (-dontwarn only; OkHttp needs no keep)
 #
-# (verified by unzipping them out of the Gradle cache, not assumed). Compose's rules come with AGP.
-# Copying those rules in here would create a SECOND copy that silently goes stale the next time a
-# dependency is upgraded, which is the failure this file exists to avoid rather than cause.
+# (verified by unzipping them, not assumed — re-read on 2026-10-09 for these versions; until then
+# the list named kotlinx-serialization 1.7.3, retrofit 2.11.0 and okhttp 4.12.0, which shipped the
+# same rules). Compose's rules come with AGP. Copying those rules in here would create a SECOND copy
+# that silently goes stale the next time a dependency is upgraded, which is the failure this file
+# exists to avoid rather than cause.
 #
-# What remains below is only what is specific to THIS application.
+# What remains below is only what is specific to THIS application — and one global switch.
+
+# ── R8 optimisation stays OFF, as it always has been here ──────────────────────────────────────
+#
+# Until 2026-10-09 the release build named AGP's `proguard-android.txt`, which is AGP's common rules
+# plus this one line. AGP 9 refuses that file outright and its own error message prescribes the
+# replacement: name `proguard-android-optimize.txt` (the same common rules plus
+# `-allowaccessmodification`) and put `-dontoptimize` in the app's own file. So R8 still shrinks and
+# obfuscates and does not optimise, as before; what the optimize baseline adds is leave to widen
+# member access where that lets R8 move a class while it renames. Deleting this line is the
+# decision to optimise, and it belongs with a release build run on a handset — see the
+# `proguardFiles` comment in `build.gradle.kts`.
+-dontoptimize
 
 # ── Our own serialized wire types ───────────────────────────────────────────────────────────────
 #
@@ -36,10 +50,17 @@
 
 # ── Retrofit service interfaces ─────────────────────────────────────────────────────────────────
 #
-# Reached through `Retrofit.create(WorkshopRepositoryApi::class.java)` (ApiClient.kt:42) and
+# Reached through `Retrofit.create(WorkshopRepositoryApi::class.java)` (`ApiClient.create`) and
 # `.create(SttProviderApi::class.java)` (TranscriptionProviders.kt:168) — a dynamic proxy, so
 # nothing statically calls these methods and R8 cannot see that they are used. Retrofit's own rules
-# cover the annotations and the generic signatures; this covers OUR interfaces by name.
+# cover the annotations and the generic signatures; this covers two of OUR interfaces by name.
+#
+# THERE ARE SEVEN, NOT TWO (counted 2026-10-09): UsageApi, DwReportHistoryApi, DwAsrModelEndpointApi,
+# DwJoinCardApi and DwWorkshopJoinApi are created the same way and named nowhere here. What keeps
+# them is Retrofit 3.0.0's own `-if interface * { @retrofit2.http.* <methods>; }
+# -keep,allowobfuscation interface <1>`, and the R8 release build of that day was read for all seven,
+# methods included, before it was launched on the API 37 emulator (android-emulator.yml's temporary
+# release-smoke job, docs/CI.md §1.5). The two lines below are belt and braces, not the only brace.
 -keep,allowobfuscation interface com.designprototype.workshop.data.WorkshopRepositoryApi { *; }
 -keep,allowobfuscation interface com.designprototype.workshop.ui.SttProviderApi { *; }
 

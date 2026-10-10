@@ -47,14 +47,19 @@
 # The four build.gradle.kts differ from upstream, on purpose, and each one carries a comment at the
 # top of itself saying exactly how and why: `jvmToolchain(17)` became an explicit `jvmTarget` (this
 # machine has one JDK and it is 21), and Kotlin incremental compilation is switched off (with it on,
-# the first compile failed three times in four with "Could not close incremental caches"). They are
-# listed below with BOTH digests, so a reader can tell a deliberate deviation from a drift:
+# the first compile failed three times in four with "Could not close incremental caches"). Since
+# 2026-10-09 each also passes `-Xjdk-release=17`, because CI now runs Gradle on JDK 25 and a
+# `jvmTarget` alone does not stop kotlinc binding JDK 21+ API, and core-pipeline asks for
+# kotlinx-serialization-json 1.11.0 where upstream asked for 1.7.3, the version `:app` declares.
+# The VENDORED digests below were re-taken that day; the UPSTREAM ones are unchanged, since nothing
+# was re-read from upstream. They are listed with BOTH digests, so a reader can tell a deliberate
+# deviation from a drift:
 #
 #   vendored here                                                     upstream
-#   0db115fab6b9d701c7110fec87260ad15240b831e40f846144a5f00e9f76255e  acb71a637f8c709f6867f7027c5c795ae5358467d8ecce2d6c75d34bdfd8b959
-#   3b0bff3bfe98ff558c78a0e4e19209ec59498ed6b354389dc0b1da2fae74b8b2  44b8ea6750429d4c9ec090c8d6d7e9b855b89936e8ff0670d00d567da076b126
-#   06644fec78b281a34b8025b70eb9734e96c459d0f0fabdb29fe0f00634100e3d  6c72ec9520a9191bb41d47c5f1f2bbaf93560c741dde04e265db84f17a5a9e77
-#   450f2d3c44e5dc44015ee99fa0f9c7b72cac75b9f82d363311701973066357fe  658659276d1f01698a948c5d9ddecc82e9a60741a47f841aa36357de06868d47
+#   87a5543ff1199bb1142de8dbd9e731e2d6f02f312cf810364fd56d58e3424fc1  acb71a637f8c709f6867f7027c5c795ae5358467d8ecce2d6c75d34bdfd8b959
+#   0c2e861ef578586a937d0dcdaf332ac3d80630606887bad32d3a97898e35c09a  44b8ea6750429d4c9ec090c8d6d7e9b855b89936e8ff0670d00d567da076b126
+#   9b584bbc52e1bf1c501fa602b4c5b2ec4073bd45cf6f1acd41d53c126e2cbe62  6c72ec9520a9191bb41d47c5f1f2bbaf93560c741dde04e265db84f17a5a9e77
+#   a3991a219e21f48081af30a8481df79b3305ddcc817300116a85f76e8526c7a0  658659276d1f01698a948c5d9ddecc82e9a60741a47f841aa36357de06868d47
 #
 # ── LINE ENDINGS, WHICH WILL BITE SOMEONE ────────────────────────────────────────────────────────
 #
@@ -191,10 +196,10 @@ f73e917372897ae5c59932b60bbef9a4d29d570fcee4025f30ff9aac3db8faa3 android/core-ve
 7ef00434989c1dfef1308b499cf1285a73f7872214b1e72cfd95a826f7a910be android/core-vector/src/test/java/com/offlinetracer/vector/SvgPathDataTest.kt
 bcbcffb6e001d77d3bd11702454a2378561e27a9cb9d142039b3be7d73221a0b android/core-vector/src/test/java/com/offlinetracer/vector/SvgWriterTest.kt
 08187831a85986ea8f7374f33383d9c63afb97ce3b64d527afcdc9fd62c36b1b android/core-vector/src/test/java/com/offlinetracer/vector/VectorizeTest.kt
-0db115fab6b9d701c7110fec87260ad15240b831e40f846144a5f00e9f76255e android/core-imaging/build.gradle.kts
-3b0bff3bfe98ff558c78a0e4e19209ec59498ed6b354389dc0b1da2fae74b8b2 android/core-vector/build.gradle.kts
-06644fec78b281a34b8025b70eb9734e96c459d0f0fabdb29fe0f00634100e3d android/core-pipeline/build.gradle.kts
-450f2d3c44e5dc44015ee99fa0f9c7b72cac75b9f82d363311701973066357fe android/core-export/build.gradle.kts
+87a5543ff1199bb1142de8dbd9e731e2d6f02f312cf810364fd56d58e3424fc1 android/core-imaging/build.gradle.kts
+0c2e861ef578586a937d0dcdaf332ac3d80630606887bad32d3a97898e35c09a android/core-vector/build.gradle.kts
+9b584bbc52e1bf1c501fa602b4c5b2ec4073bd45cf6f1acd41d53c126e2cbe62 android/core-pipeline/build.gradle.kts
+a3991a219e21f48081af30a8481df79b3305ddcc817300116a85f76e8526c7a0 android/core-export/build.gradle.kts
 31d8ac496d09701c00adb4228b3aaf4cdd8b280362e8ca0a5dec6353d523b700 docs/fixtures/gradient-blob.json
 0c0af2ef0007878bdc5928d2149642bbf4a11f0190a666c772f6dcdf83ddcd99 docs/fixtures/single-pixel.json
 b4be0d9861b6a72a01a94042a30f1ca68229062a056f924e9dfb03fe817230b5 docs/fixtures/step-edge.json

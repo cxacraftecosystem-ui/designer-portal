@@ -1163,8 +1163,9 @@ def _access_formatter() -> logging.Formatter:
 
 
 def test_the_access_line_for_a_link_check_never_carries_the_token():
-    """THE FINDING: both clients check a link with ``GET /api/auth/set-password?token=…``, and
-    uvicorn's access log wrote that line, token and all, into the service's journal."""
+    """THE FINDING: both clients checked a link with ``GET /api/auth/set-password?token=…`` — the
+    handset still does — and uvicorn's access log wrote that line, token and all, into the
+    service's journal."""
     from app.main import AccessLogRedaction
 
     record = _uvicorn_access_record("/api/auth/set-password", f"token={LINK_TOKEN}".encode())
@@ -1371,3 +1372,163 @@ async def test_the_provisioning_script_still_names_the_option_at_fault(argv, com
     code = await provision_account.run(argv, environ={}, out=out, err=err)
     assert code == provision_account.EXIT_USAGE
     assert err.getvalue().endswith(f"error: {complaint}\n")
+
+
+# ==================================================================================================
+# The link check with the token off the request line (2026-10-09)
+# ==================================================================================================
+#
+# ``POST /api/auth/set-password/check`` takes ``{"token": …}`` and must answer exactly what
+# ``GET /api/auth/set-password?token=…`` answers: the web now asks the POST and falls back to the
+# GET only when an older API has no POST, and the handsets in the field go on asking the GET.
+# Nothing below needs a database: every verdict either comes from a stand-in for
+# ``describe_token`` or is decided by ``verify_token`` before any row is read.
+
+#: Every answer a link check can give, as ``credential_links.describe_token`` hands it back.
+LINK_VERDICTS = [
+    credential_links.TokenVerdict(True, None, "acct-0451", credential_links.INVITE),
+    credential_links.TokenVerdict(True, None, "acct-0451", credential_links.RESET),
+    *(
+        credential_links.TokenVerdict(False, reason)
+        for reason in (
+            credential_links.MISSING,
+            credential_links.MALFORMED,
+            credential_links.EXPIRED,
+            credential_links.REVOKED,
+            credential_links.SPENT,
+            credential_links.UNKNOWN_ACCOUNT,
+        )
+    ),
+]
+
+
+@pytest.mark.parametrize("verdict", LINK_VERDICTS, ids=lambda v: v.reason or v.purpose)
+async def test_the_body_check_answers_exactly_what_the_query_check_answers(monkeypatch, verdict):
+    """THE CONTRACT: one question, one answer, two transports. Both doors hand the raw token to the
+    same verdict and reduce it the same way, so no answer can come to differ between them."""
+    from app.api.routes import auth as auth_routes
+    from app.schemas.auth import PasswordLinkCheckRequest
+
+    asked: list[str | None] = []
+
+    async def _describe(raw):
+        asked.append(raw)
+        return verdict
+
+    monkeypatch.setattr(auth_routes.credential_links, "describe_token", _describe)
+    by_query = await auth_routes.check_set_password_token(token=LINK_TOKEN)
+    by_body = await auth_routes.check_set_password_token_in_body(
+        PasswordLinkCheckRequest(token=LINK_TOKEN)
+    )
+    assert by_body == by_query
+    assert by_body == {"valid": verdict.ok, "reason": verdict.reason, "purpose": verdict.purpose}
+    # The token reached the verdict exactly as it was sent, through either door.
+    assert asked == [LINK_TOKEN, LINK_TOKEN]
+
+
+def _link_check_client():
+    """The whole application — every middleware, the router, the validation — with no lifespan, so
+    no database is opened. Only tokens ``verify_token`` refuses before reading a row are sent."""
+    import httpx
+
+    from app.main import create_app
+
+    return httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=create_app()), base_url="http://link-check.test"
+    )
+
+
+@pytest.mark.parametrize(
+    "token",
+    [
+        "",
+        "   ",
+        "not-a-link",
+        "a.b.c",
+        # Signed with some other secret: the shape of a real token, refused at the signature.
+        LINK_TOKEN,
+        # Past ``MAX_TOKEN_LENGTH``: "malformed" through both doors, and never a 422 through one.
+        "x" * (credential_links.MAX_TOKEN_LENGTH + 1),
+    ],
+    ids=["empty", "blank", "no-separator", "two-separators", "forged", "over-long"],
+)
+async def test_both_doors_give_one_answer_over_http(token):
+    async with _link_check_client() as client:
+        by_query = await client.get("/api/auth/set-password", params={"token": token})
+        by_body = await client.post("/api/auth/set-password/check", json={"token": token})
+    assert by_query.status_code == by_body.status_code == 200
+    assert by_body.json() == by_query.json()
+    assert by_body.json()["valid"] is False
+    assert by_body.json()["reason"] in {credential_links.MISSING, credential_links.MALFORMED}
+
+
+@pytest.mark.parametrize(
+    "body", [{}, {"token": None}, {"token": ""}], ids=["absent", "null", "empty"]
+)
+async def test_a_body_with_no_token_is_missing_as_a_query_with_none_is(body):
+    """No token at all is "missing" through the GET (``token`` defaults to the empty string), so it
+    is "missing" through the POST too — never a 422 the GET would not give."""
+    async with _link_check_client() as client:
+        by_query = await client.get("/api/auth/set-password")
+        by_body = await client.post("/api/auth/set-password/check", json=body)
+    assert by_body.status_code == 200
+    assert by_body.json() == by_query.json() == {
+        "valid": False,
+        "reason": credential_links.MISSING,
+        "purpose": None,
+    }
+
+
+def test_the_rate_limiter_treats_both_doors_alike():
+    """"Limited as the GET is": neither path is exempt, and neither is on the credential budget, so
+    both are charged to the same general per-network allowance whenever the limiter is on."""
+    from app.scale import rate_limit
+
+    for path in ("/api/auth/set-password", "/api/auth/set-password/check"):
+        assert not path.startswith(rate_limit._EXEMPT_PREFIXES), path
+        assert not path.startswith(rate_limit._CREDENTIAL_PREFIXES), path
+
+
+async def test_neither_door_writes_the_token_to_a_log(monkeypatch, caplog):
+    """The one line a check can write is ``_link_verdict``'s refusal of a link whose issuer was
+    outranked. It is made to fire here, through both doors, and it names account ids only."""
+    from types import SimpleNamespace
+
+    from app.api.routes import auth as auth_routes
+    from app.schemas.auth import PasswordLinkCheckRequest
+
+    rows = {
+        "acct-target": _account(id="acct-target", role="ADMIN"),
+        "acct-issuer": _actor("MINISTRY_ADMIN", user_id="acct-issuer"),
+    }
+
+    async def _describe(_raw):
+        return credential_links.TokenVerdict(
+            True, None, "acct-target", credential_links.INVITE, "acct-issuer"
+        )
+
+    class _Users:
+        async def find_unique(self, where):
+            return rows.get(where["id"])
+
+    monkeypatch.setattr(auth_routes.credential_links, "describe_token", _describe)
+    monkeypatch.setattr(auth_routes, "db", SimpleNamespace(user=_Users()))
+    # Every logger at DEBUG, the route's own included whatever level it was given: a token written
+    # anywhere during either check fails this.
+    with (
+        caplog.at_level(logging.DEBUG),
+        caplog.at_level(logging.DEBUG, logger=auth_routes.logger.name),
+    ):
+        by_query = await auth_routes.check_set_password_token(token=LINK_TOKEN)
+        by_body = await auth_routes.check_set_password_token_in_body(
+            PasswordLinkCheckRequest(token=LINK_TOKEN)
+        )
+    assert by_body == by_query == {
+        "valid": False,
+        "reason": credential_links.REVOKED,
+        "purpose": None,
+    }
+    refusals = [r for r in caplog.records if "refused password link" in r.getMessage()]
+    assert len(refusals) == 2, "the line under test was not written"
+    assert all("acct-target" in r.getMessage() for r in refusals)
+    assert LINK_TOKEN not in caplog.text

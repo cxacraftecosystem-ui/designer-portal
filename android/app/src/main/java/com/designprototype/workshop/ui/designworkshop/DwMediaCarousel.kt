@@ -43,7 +43,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import coil.compose.AsyncImage
+import coil3.compose.AsyncImage
 import com.designprototype.workshop.ui.LocalAppPreferences
 import com.designprototype.workshop.ui.Text
 import com.designprototype.workshop.ui.field

@@ -299,7 +299,7 @@ class DesignWorkshopViewersTest {
         // that search.", so "hidden from you" and "nobody matched" became one sentence again, which is
         // the defect this whole screen was fixed for.
         val expected =
-            "Some eligible accounts could not be listed, and no search can reach them — the server log says why."
+            "Some eligible accounts could not be listed, and searching will not bring them up. Try again later."
 
         val searched = dwViewerOfferNotice(
             DwEligibleViewers(users = emptyList(), truncated = true, search = "Meher")
@@ -602,7 +602,7 @@ class DesignWorkshopViewersTest {
 
         // And with no sentence from the server at all, it still says it was a refusal.
         assertEquals(
-            "The repository refused this. Nothing was changed.",
+            "This was not allowed. Nothing was changed.",
             dwViewerFailureMessage(403, null, DwViewerAttempt.SAVE, readerIsAdmin = true)
         )
     }
@@ -613,7 +613,7 @@ class DesignWorkshopViewersTest {
             val message = dwViewerFailureMessage(status, "no", DwViewerAttempt.SAVE, readerIsAdmin = true)
             assertFalse(
                 "HTTP $status must not send an admin looking for signal",
-                message.contains("could not reach")
+                message.contains("Could not connect")
             )
         }
     }
@@ -629,21 +629,21 @@ class DesignWorkshopViewersTest {
         // revocation did not happen when it did is the worst sentence this screen could print.
         val save = dwViewerFailureMessage(503, null, DwViewerAttempt.SAVE, readerIsAdmin = true)
         assertFalse(save.contains("Nothing was changed"))
-        assertTrue(save.contains("may have landed"))
+        assertTrue(save.contains("may have been saved"))
     }
 
     @Test
     fun `no answer at all says the app cannot do this offline, and does not guess at a save`() {
         val read = dwViewerFailureMessage(null, null, DwViewerAttempt.READ, readerIsAdmin = true)
-        assertTrue(read.contains("could not reach the repository"))
+        assertTrue(read.contains("Could not connect"))
         // The one capability in this app that a courtyard defeats, said as such rather than as a
         // generic failure — every other design-workshop screen works with no signal at all.
-        assertTrue(read.contains("cannot be done offline"))
+        assertTrue(read.contains("needs a connection"))
         assertTrue(read.contains("Nothing has been changed."))
 
         val save = dwViewerFailureMessage(null, null, DwViewerAttempt.SAVE, readerIsAdmin = true)
         assertFalse(save.contains("Nothing has been changed."))
-        assertTrue(save.contains("may still have landed"))
+        assertTrue(save.contains("may already have been saved"))
     }
 
     @Test

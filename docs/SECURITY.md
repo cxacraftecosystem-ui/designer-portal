@@ -159,7 +159,9 @@ call this API as the signed-in user". Keep `BACKEND_CORS_ORIGINS` set to the exa
   APIs that read it directly.
 
 Developing against a LAN backend from a real phone: add your machine's private IP as an extra
-`<domain>` **temporarily** and do not commit it.
+`<domain>` **temporarily** and do not commit it. Use a debug build and grant "Nearby devices" when it
+asks: on Android 17 the app's traffic to the local network is blocked until `ACCESS_LOCAL_NETWORK` is
+granted, and only `android/app/src/debug/AndroidManifest.xml` declares it (since 2026-10-09).
 
 ---
 
@@ -705,17 +707,39 @@ no role check, because the link is the whole authority.
   screen (`credential_links.CopyLinkDelivery`) and hands it over. The server's log lines carry account
   and link ids, never the link or an address. The link's origin is the backend's
   `NEXT_PUBLIC_APP_URL`, which [ENVIRONMENT.md](ENVIRONMENT.md) documents.
-- **The check carries the token in its URL, and only the API's own log is cleaned of it**
-  (2026-10-09). Both clients ask `GET /api/auth/set-password?token=…`, and uvicorn's access log used to
-  write that line, token and all, into the service's journal — which a deploy whose health check fails
-  prints into its Actions log. `AccessLogRedaction` in `backend/app/main.py`, attached to the
-  `uvicorn.access` logger when the module is imported, now writes the value of `token` — and of
+- **The web keeps the token off every request line it sends, and out of the address bar**
+  (2026-10-09). `POST /api/auth/set-password/check` takes `{"token": …}` and answers exactly what
+  `GET /api/auth/set-password?token=…` answers — the same verdict, the same three fields, nothing
+  about the account, no authentication, and the same general rate limit. The web asks the POST
+  (`checkPasswordLink` in `frontend/lib/signIn.ts`) and falls back to the GET only on a 404 or 405,
+  which is what an API older than the POST answers. `/set-password` reads the token from a
+  `#token=` fragment first and the query second, keeps it in the page's state, and replaces the
+  address with one that carries neither before it checks anything, so it is not left in the address
+  bar, a copied address, a bookmark or the entry Back returns to.
+- **What still carries the token on a request line** ([OPEN_FINDINGS.md](OPEN_FINDINGS.md)). The
+  published handset builds, 0.0.6 to 0.0.15, check with the GET, so the GET stays for them, and its
+  token reaches anything in front of the API that logs request lines: the box's nginx keeps Ubuntu's
+  default access log, and CloudFront would if its logging were switched on. `AccessLogRedaction` in
+  `backend/app/main.py`, attached to the `uvicorn.access` logger when the module is imported, keeps it
+  out of uvicorn's own line, which used to write it into the service's journal — and a deploy whose
+  health check fails prints that journal into its Actions log. It writes the value of `token` — and of
   `access_token`, `id_token`, `refresh_token`, `code`, `key`, `password` and `secret`, in any letter
-  case — as `[redacted]`. Anything in front of the API that logs the request line still records it:
-  the box's nginx keeps Ubuntu's default access log, and CloudFront would if its logging were switched
-  on. The complete fix moves the token out of the URL, into a POST body or a header, in the next web
-  and Android release; until then the GET stays, because the builds in the field call it
-  ([OPEN_FINDINGS.md](OPEN_FINDINGS.md)).
+  case — as `[redacted]`. And every link is still issued as `?token=` (`credential_links.link_for`),
+  because the shipped handsets read the token only from the query, so opening one still sends the token
+  to the web host — in the request for the page and as the `Referer` of the page's own stylesheets,
+  scripts and fonts, all requested before its script can rewrite the address. Moving `link_for` to
+  `#token=` needs no web release; it waits for an Android release that reads both forms to replace the
+  builds that read only the query. Neither form keeps the token out of the browser's history: Chromium
+  records the address a link was opened with, `#token=` included, and the page's `replaceState` adds
+  the clean address without removing that visit (measured 2026-10-09). Redeeming the link is what
+  retires the token.
+  The Android source took its half the same day: it asks `POST /api/auth/set-password/check` with the
+  token in a JSON body, uses the GET only when that POST is answered 404 or 405 (a server without the
+  route), and reads a link's token from its fragment as well as its query — in no published build as
+  of 2026-10-09; the next build published after 0.0.15 is the first to carry it. The production API
+  has answered that POST since `main` deployed the route on 2026-10-09 (measured that day: a token
+  that is not one is answered `200` with `"valid": false` and the reason `malformed`), so that build's
+  checks go out in a body, and its GET is left for a server from before the route.
 
 ### 3.6 Sessions are bound to the password they were opened with (2026-10-09)
 

@@ -63,7 +63,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import coil.compose.AsyncImage
+import coil3.compose.AsyncImage
 import com.designprototype.workshop.data.FieldDto
 import com.designprototype.workshop.report.Align
 import com.designprototype.workshop.report.BlockKind
@@ -658,7 +658,12 @@ fun RichTextEditor(
                     index = index,
                     ordinal = numbers.getOrNull(index),
                     enabled = enabled,
-                    focusRequester = focusRequesters.getOrPut(index) { FocusRequester() },
+                    // Inside `remember`, not merely inside the remembered map: Compose 1.12 marks
+                    // `FocusRequester()` @RememberInComposition, and lint refuses one built in the
+                    // composition body even when the map that keeps it outlives the pass.
+                    focusRequester = remember(index) {
+                        focusRequesters.getOrPut(index) { FocusRequester() }
+                    },
                     fieldValues = fieldValues,
                     caret = if (selection.focus.block == index) selection.focus.offset else null,
                     // Resolved HERE rather than inside the row, because the resolver is an index of
@@ -1024,8 +1029,7 @@ private fun InlinePhotograph(
                         fontWeight = FontWeight.Medium,
                     )
                     Text(
-                        "The picture is not stored on this device, so a report exported here " +
-                            "leaves it out. It is in the report generated on the server.",
+                        "This picture is held in the online workshop record.",
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )

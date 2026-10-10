@@ -689,16 +689,19 @@ class DwAsrRuntimeTest {
     // ---------------------------------------------------------------------------------------
 
     @Test
-    fun `the engine sizes are the ones measured off the packaged APK, per ABI`() {
+    fun `the engine sizes are the shipped engine's own library bytes, per ABI`() {
         /*
          * QUOTED, NOT INVENTED. docs/ASR-RUNTIME-MEASUREMENT.md, "the delta per ABI, off the APKs'
-         * central directories", row A → row E (the static-linked AAR, that document's recommendation
-         * 2): arm64-v8a 11,074,640 → 34,721,464 and armeabi-v7a 6,789,192 → 22,941,324. Every `lib/`
-         * entry there is STORED at minSdk 26 with extractNativeLibs="false", so these are the bytes on
-         * the phone as well as in the archive.
+         * central directories", row A → row E (the static-linked AAR at 1.13.5, that document's
+         * recommendation 2): arm64-v8a 11,074,640 → 34,721,464 and armeabi-v7a 6,789,192 →
+         * 22,941,324. Every `lib/` entry there is STORED at minSdk 26 with extractNativeLibs="false",
+         * so those deltas were the bytes on the phone — and they equalled the 1.13.5 AAR's own `jni/`
+         * entries to the byte. The APK has carried 1.13.8 since 2026-10-09, and the same section of
+         * that document records its entries, which is what the constants follow now: a size printed
+         * beside a download has to be the engine that ships, not the one that used to.
          */
-        assertEquals(34_721_464L - 11_074_640L, DW_ASR_ENGINE_BYTES_ARM64)
-        assertEquals(22_941_324L - 6_789_192L, DW_ASR_ENGINE_BYTES_ARM32)
+        assertEquals(24_169_352L, DW_ASR_ENGINE_BYTES_ARM64)
+        assertEquals(16_437_284L, DW_ASR_ENGINE_BYTES_ARM32)
         // And they are different numbers on the screen, which is the reason this is per-ABI at all.
         assertEquals("24 MB", dwBytesLabel(DW_ASR_ENGINE_BYTES_ARM64))
         assertEquals("16 MB", dwBytesLabel(DW_ASR_ENGINE_BYTES_ARM32))

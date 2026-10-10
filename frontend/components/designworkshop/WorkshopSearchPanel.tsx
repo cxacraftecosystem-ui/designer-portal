@@ -84,7 +84,7 @@ function Hit({ workshopId, hit }: { workshopId: string; hit: WorkshopSearchHit }
               <span aria-hidden>·</span>
               {/* The row, titled exactly as `CollectionTable` titles it, so the designer recognises
                   what they will land on rather than being shown a second name for it. */}
-              <span className="max-w-[22rem] truncate">{hit.recordTitle}</span>
+              <span className="max-w-88 truncate">{hit.recordTitle}</span>
             </>
           ) : null}
           <span aria-hidden>·</span>

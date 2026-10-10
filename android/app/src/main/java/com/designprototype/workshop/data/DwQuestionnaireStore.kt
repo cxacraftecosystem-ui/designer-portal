@@ -554,9 +554,8 @@ fun dwQuestionnaireWarnings(cache: DwQuestionnaireCache?): List<String> {
         val names = unread.take(3).joinToString(", ") { it.title.ifBlank { it.questionnaireId } }
         val more = if (unread.size > 3) "…" else ""
         said += "${unread.size} questionnaire(s) attached to this workshop are named in the annexure " +
-            "without their answers, because this device has no copy of them ($names$more). Open the " +
-            "questionnaire on this phone once while you have a connection and export again; the " +
-            "office's copy of this report carries them either way."
+            "without their answers ($names$more). Open the questionnaire on this phone once while " +
+            "you have a connection, then export again to include them."
     }
     return said
 }

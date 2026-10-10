@@ -130,7 +130,7 @@ export function GuideRail({
               keeps it usable on a very short window, where clipping to almost nothing would be
               worse than letting the panel run past the fold.
             */}
-            <ol className="grid max-h-[calc(100vh-19rem)] min-h-[12rem] gap-0.5 overflow-y-auto pr-1">
+            <ol className="grid max-h-[calc(100vh-19rem)] min-h-48 gap-0.5 overflow-y-auto pr-1">
               {steps.map((step, index) => {
                 const isActive = index === activeIndex;
                 const isPast = index < activeIndex;

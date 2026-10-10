@@ -27,7 +27,7 @@ Enums: `UserRole`, `AuthProvider`, `RecordStatus`, `WorkshopType`, `MediaType`, 
 
 ## API surface
 
-**350 operations** in the working tree — 173 GET, 107 POST, 28 DELETE,
+**351 operations** in the working tree — 173 GET, 108 POST, 28 DELETE,
 24 PATCH, 18 PUT. 2 of them (`/health`, `/health/ready`) are declared
 on the app rather than on a router; the rest are spread across `backend/app/api/routes/`:
 
@@ -45,9 +45,9 @@ on the app rather than on a router; the rest are spread across `backend/app/api/
 | `annual_plan.py` | 10 |
 | `designers.py` | 10 |
 | `tasks.py` | 10 |
+| `auth.py` | 9 |
 | `feedback.py` | 9 |
 | `ministry_dashboard.py` | 9 |
-| `auth.py` | 8 |
 | `tools.py` | 8 |
 | `artisans.py` | 7 |
 | `design_workshop_access.py` | 7 |
@@ -123,10 +123,10 @@ no key is skipped wherever it sits.
 
 | Surface | Files | Cases | Runner |
 |---|---|---|---|
-| Backend unit (`backend/tests/`) | 233 | 4913 `def test_` | `python -m pytest -rf --durations=15` from `backend/` |
-| Web end-to-end (`frontend/e2e/`) | 209 | 2649 `test(` | Playwright, `frontend/playwright.config.ts` |
-| Android unit (`android/app/src/test/`) | 239 | 3203 `@Test` | `./gradlew :app:testDebugUnitTest` from `android/` |
-| Android instrumented (`android/app/src/androidTest/`) | 8 | 24 `@Test` | needs a device; not run in CI |
+| Backend unit (`backend/tests/`) | 233 | 4918 `def test_` | `python -m pytest -rf --durations=15` from `backend/` |
+| Web end-to-end (`frontend/e2e/`) | 211 | 2662 `test(` | Playwright, `frontend/playwright.config.ts` |
+| Android unit (`android/app/src/test/`) | 241 | 3231 `@Test` | `./gradlew :app:testDebugUnitTest` from `android/` |
+| Android instrumented (`android/app/src/androidTest/`) | 8 | 24 `@Test` | needs a device; on demand only (`.github/workflows/android-emulator.yml`), never a gate |
 
 The backend case count is `def test_` occurrences; pytest reports a larger number because
 parametrised cases expand.
@@ -151,11 +151,11 @@ and this one asserted an absence it had never looked for.
 
 | Area | Tracked files | Tracked lines | Tree files | Tree lines |
 |---|---|---|---|---|
-| `backend/app` | 206 | 157,209 | 206 | 157,209 |
-| `frontend/app` | 95 | 54,764 | 95 | 54,764 |
-| `frontend/components` | 302 | 130,947 | 302 | 130,947 |
-| `frontend/lib` | 126 | 67,681 | 126 | 67,681 |
-| `android/app/src/main/java` | 264 | 230,112 | 264 | 230,112 |
+| `backend/app` | 206 | 157,258 | 206 | 157,258 |
+| `frontend/app` | 95 | 54,879 | 95 | 54,879 |
+| `frontend/components` | 302 | 130,960 | 302 | 130,960 |
+| `frontend/lib` | 126 | 67,738 | 126 | 67,738 |
+| `android/app/src/main/java` | 265 | 230,181 | 265 | 230,181 |
 
 Two columns because the two numbers get quoted interchangeably and disagree by however much work is
 uncommitted. **Tracked** is `git ls-files`, which is the figure to use in a write-up — it is

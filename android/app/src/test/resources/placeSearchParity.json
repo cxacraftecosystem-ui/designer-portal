@@ -1133,22 +1133,22 @@
     {
       "name": "403",
       "status": 403,
-      "expectedMessage": "The place search refused this request: this build's map key may be missing, expired or out of quota. Nothing is wrong with what you typed, and an administrator can check the key."
+      "expectedMessage": "Place search is not available right now. Move the map or type the coordinates."
     },
     {
       "name": "401",
       "status": 401,
-      "expectedMessage": "The place search refused this request: this build's map key may be missing, expired or out of quota. Nothing is wrong with what you typed, and an administrator can check the key."
+      "expectedMessage": "Place search is not available right now. Move the map or type the coordinates."
     },
     {
       "name": "400",
       "status": 400,
-      "expectedMessage": "The place search refused this request: this build's map key may be missing, expired or out of quota. Nothing is wrong with what you typed, and an administrator can check the key."
+      "expectedMessage": "Place search is not available right now. Move the map or type the coordinates."
     },
     {
       "name": "404",
       "status": 404,
-      "expectedMessage": "The place search refused this request: this build's map key may be missing, expired or out of quota. Nothing is wrong with what you typed, and an administrator can check the key."
+      "expectedMessage": "Place search is not available right now. Move the map or type the coordinates."
     }
   ]
 }

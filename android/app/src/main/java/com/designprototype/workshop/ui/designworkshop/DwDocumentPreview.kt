@@ -44,7 +44,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.Image
 import androidx.core.content.FileProvider
-import coil.compose.AsyncImage
+import coil3.compose.AsyncImage
 import com.designprototype.workshop.ui.Text
 import com.designprototype.workshop.ui.field
 import kotlinx.coroutines.Dispatchers
@@ -797,9 +797,8 @@ internal fun DwDocumentPreview(
             ) {
                 if (openFailed) {
                     Text(
-                        "Nothing installed on this device offered to open it, so the file was not " +
-                            "handed over. Install a document viewer, or open the $noun on the web " +
-                            "portal.",
+                        "No app on this phone can open this file. Install a document viewer, " +
+                            "then try again.",
                         color = MaterialTheme.field.muted,
                         fontSize = 11.sp,
                         lineHeight = 15.sp

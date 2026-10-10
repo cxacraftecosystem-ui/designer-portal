@@ -314,15 +314,15 @@ const DC_HANDICRAFTS = {
  * checked only the emblem — which is the easy mistake here, because the emblem is the half that
  * looks like the logo.
  *
- * The plate is `bg-logo-cream` — a REAL TOKEN (`tailwind.config.ts:90`, "Brand-native logo colors
+ * The plate is `bg-logo-cream` — a REAL TOKEN (`tailwind.config.ts:339`, "Brand-native logo colors
  * (Android launcher icon) — never re-themed"), the same one the band below uses and the same
  * `#FAF9F5` that `WorkshopLogo` paints into its own tile 24px away in this very row. So it is not
  * an exception to "never hardcode a neutral" (§1.2); it is the one ladder in the config whose whole
  * purpose is to NOT invert, and naming it is what makes that legible.
  *
  * ⚠ "BOTH THEMES" IS ONE BACKGROUND HERE, WHICH IS WHY THERE IS NO `dark:` ANYWHERE BELOW. The
- * purple ramp is literal OKLCH and never inverts (`tailwind.config.ts:18` — "The purple and gold
- * ramps stay literal — brand colour does not invert"), so this band is `#2F0D4B` under
+ * purple ramp is literal OKLCH and never inverts (`tailwind.config.ts:37` — "The purple, gold and
+ * ministry ramps stay literal — brand colour does not invert"), so this band is `#2F0D4B` under
  * `data-theme="light"` and under `data-theme="dark"` alike. Every contrast figure above is
  * therefore the figure in BOTH themes rather than an average of two, and a `dark:`-conditional
  * plate here would be theming machinery that can never fire.
@@ -375,8 +375,8 @@ const DC_HANDICRAFTS = {
  * gradient behind the row — that layer drifts continuously, so the two captures caught it a
  * fraction of a frame apart. Nothing structural differs at any width below `md`.
  *
- * They are also scaled rather than fixed (`h-5`→`h-7` for the wordmark, `h-[2.625rem]`→
- * `h-[3.375rem]` for the seal, stepping up at `lg`), so the first width that shows them is the width
+ * They are also scaled rather than fixed (`h-5`→`h-7` for the wordmark, `h-10.5`→
+ * `h-13.5` for the seal, stepping up at `lg`), so the first width that shows them is the width
  * at which they are smallest
  * — the brief's "make the marks scale down rather than moving any existing element", carried as far
  * as it goes before the row has no room left to give at all. This is the same
@@ -394,15 +394,17 @@ const DC_HANDICRAFTS = {
  * ⚠ THE MASTHEAD PAIR NO LONGER HOLDS THAT RATIO, BY INSTRUCTION, AND THE PARAGRAPH ABOVE IS LEFT
  * STANDING SO THE NEXT READER KNOWS WHAT WAS SPENT. On 2026-08-31 the owner asked for the IIT seal
  * 50% larger in the hero — and for the IIT seal only, in both this application and the CxA portal.
- * 1.5 × `h-7` is 2.625rem and 1.5 × `h-9` is 3.375rem, neither of which is a rung on Tailwind's
- * scale (2.5, 2.75, 3, 3.5 …), so both are written as literal arbitrary values — the only form the
- * class scanner can see, and the same reason `aspect-[268/300]` is spelled out below.
+ * 1.5 × `h-7` is 2.625rem and 1.5 × `h-9` is 3.375rem, neither of which was a rung on Tailwind 3's
+ * scale (2.5, 2.75, 3, 3.5 …), so both were written as arbitrary values. Tailwind 4 reads any
+ * quarter-rem step as a spacing value, so since 2026-10-09 they are `h-10.5` and `h-13.5`, still
+ * written out in full — the only form the class scanner can see, and the same reason
+ * `aspect-268/300` is spelled out below.
  *
  * The mass equalisation is therefore GONE from the masthead: the DC wordmark stayed where it was, so
  * the pair now reads 0.48 at `md` and 0.52 at `lg` instead of 0.71 and 0.78, and the seal is the
  * visually dominant mark in the row rather than its partner. That is the requested change, not a
  * regression to quietly repair — but if the balance is ever asked for back, the numbers to restore
- * are in the sentence above, and raising the DC mark to `h-[2.625rem]`/`h-[3.375rem]` × 0.75 is the
+ * are in the sentence above, and raising the DC mark to `h-10.5`/`h-13.5` × 0.75 is the
  * arithmetic that would do it without shrinking the seal again.
  *
  * ⚠ AND THE SEAL IS NOW THE TALLEST THING IN THE MASTHEAD ROW, WHICH MAKES THE ROW TALLER. The
@@ -425,9 +427,9 @@ const DC_HANDICRAFTS = {
  * reason as below: one name per link, announced once. So the image keeps `alt=""`, and the seal's
  * masked box is `aria-hidden` because a `<span>` painted through a mask has nothing to announce.
  *
- * Neither can shift the layout as it loads. The seal's box is `h-[2.625rem] aspect-[268/300]` — CSS,
+ * Neither can shift the layout as it loads. The seal's box is `h-10.5 aspect-268/300` — CSS,
  * resolved before any file is fetched — and the DC `<img>` carries its intrinsic `width`/`height`
- * so the browser reserves its box from that ratio. (`aspect-[268/300]` is the pair declared above,
+ * so the browser reserves its box from that ratio. (`aspect-268/300` is the pair declared above,
  * rounded off the true `267.538 × 299.737`. The 0.08% error is safe because `mask-size: contain`
  * letterboxes the mark inside its box: the error becomes a 0.02px sliver of dead space and can
  * never distort the seal. It is spelled out as a literal because Tailwind scans for whole class
@@ -651,7 +653,7 @@ export default function HeroLanding({ census }: { census?: CorpusCensus }) {
       {/* ── Hero ─────────────────────────────────────────────────────────── */}
       <section
         ref={rootRef}
-        className="relative isolate flex min-h-[100svh] flex-col overflow-hidden bg-purple-950"
+        className="relative isolate flex min-h-svh flex-col overflow-hidden bg-purple-950"
         aria-label="Design Prototype Workshop — capture to report, offline"
       >
         {/* Mesh background: two purple orbs + one faint gold, plus fine grain. */}
@@ -790,7 +792,7 @@ export default function HeroLanding({ census }: { census?: CorpusCensus }) {
               rel="noreferrer"
               className="hidden shrink-0 rounded-md transition hover:-translate-y-0.5 active:translate-y-0 md:flex"
             >
-              <span aria-hidden className="block aspect-[268/300] h-[2.625rem] lg:h-[3.375rem]" style={SEAL_MASK_STYLE} />
+              <span aria-hidden className="block aspect-268/300 h-10.5 lg:h-13.5" style={SEAL_MASK_STYLE} />
               <span className="sr-only">
                 {IIT_KHARAGPUR.name} — iitkgp.ac.in (opens in a new tab)
               </span>
@@ -807,10 +809,13 @@ export default function HeroLanding({ census }: { census?: CorpusCensus }) {
           <div className="grid items-center gap-14 lg:grid-cols-[1.05fr_0.95fr] lg:gap-10">
             {/* Copy */}
             <div className="max-w-2xl">
-              <motion.p {...heroEntrance(reduce, 0.05, 0.5, { y: 18 })} className="eyebrow mb-5 !text-gold-300">
+              <motion.p {...heroEntrance(reduce, 0.05, 0.5, { y: 18 })} className="eyebrow mb-5 text-gold-300!">
                 Living craft documentation
               </motion.p>
-              <h1 className="font-display text-4xl font-extrabold leading-[1.05] tracking-tight text-white sm:text-5xl lg:text-6xl">
+              {/* `sm:leading-none` restates what the headline has always rendered from `sm` up. Under
+                  Tailwind 3 the breakpoint sizes' own line-height (1) beat `leading-[1.05]`; Tailwind 4
+                  keeps an explicit leading at every size, which made the headline 5% taller. */}
+              <h1 className="font-display text-4xl font-extrabold leading-[1.05] tracking-tight text-white sm:text-5xl sm:leading-none lg:text-6xl">
                 {HEADLINE.map((line, index) => (
                   // The mask: each line flies up out of its own overflow-hidden slot.
                   <span key={line.text} className="block overflow-hidden pb-[0.08em]">
@@ -937,7 +942,7 @@ export default function HeroLanding({ census }: { census?: CorpusCensus }) {
                     Illustrative
                   </span>
                 </div>
-                <div className="space-y-3 rounded-md bg-white/[0.06] p-4 text-sm leading-relaxed text-white/80">
+                <div className="space-y-3 rounded-md bg-white/6 p-4 text-sm leading-relaxed text-white/80">
                   <p>
                     <strong className="text-gold-200">Interviewer:</strong> Each question from the
                     questionnaire, in the order it was asked.

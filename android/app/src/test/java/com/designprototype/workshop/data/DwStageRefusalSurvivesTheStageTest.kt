@@ -240,7 +240,7 @@ class DwStageRefusalSurvivesTheStageTest {
         // who came back on the app's own instruction is looking at what the repository said THEN.
         assertTrue(
             report.heading,
-            report.heading.contains("Recorded when this stage was last saved to the repository, at 2026-08-13T00:31:00Z.")
+            report.heading.contains("Recorded when this stage was last saved online, at 2026-08-13T00:31:00Z.")
         )
     }
 
@@ -319,22 +319,22 @@ class DwStageRefusalSurvivesTheStageTest {
 
         assertFalse(
             "nothing has been measured yet, so nothing is promised:\n${decoded.heading}",
-            decoded.heading.contains("kept what it already held")
+            decoded.heading.contains("the earlier answer was kept")
         )
 
         val held = dwHoldingsFrom(
             decoded, StageBucketDto(singleton = buildJsonObject { put("totalCost", 6500) }),
         )
-        assertTrue(held.heading, held.heading.contains("and kept what it already held for it"))
+        assertTrue(held.heading, held.heading.contains(", and the earlier answer was kept"))
 
         val empty = dwHoldingsFrom(decoded, StageBucketDto())
         assertFalse(
             "the read came back silent, so the promise is withdrawn:\n${empty.heading}",
-            empty.heading.contains("kept what it already held")
+            empty.heading.contains("the earlier answer was kept")
         )
         assertTrue(
             "and it says so, because a designer told their answer is safe will not go looking",
-            empty.heading.contains("holds no previous answer under it")
+            empty.heading.contains("there is no earlier answer for it")
         )
     }
 

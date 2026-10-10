@@ -61,8 +61,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
-import coil.compose.AsyncImage
-import coil.request.ImageRequest
+import coil3.compose.AsyncImage
+import coil3.request.ImageRequest
 import com.designprototype.workshop.data.AttachedImage
 import com.designprototype.workshop.data.DW_DEFAULT_MAX_ITEMS
 import com.designprototype.workshop.data.DwFieldType
@@ -1099,7 +1099,7 @@ internal fun DwMediaCaptureCard(
                     // route every other file takes.
                     logScope.launch {
                         WorkshopSyncEngine.retryOneFile(context, media.workshopId, id)
-                        onMessage("Queued again — it will upload the next time there is a connection.")
+                        onMessage("This file will upload the next time there is a connection.")
                     }
                 },
             )
@@ -1115,37 +1115,20 @@ internal fun DwMediaCaptureCard(
               the wrong description under a picture, permanently, in a file already delivered."* The
               same argument, applied to the control that produces one.
 
-              A DESCRIPTOR THIS DEVICE CANNOT RESOLVE GETS A SENTENCE AND NOT SILENCE, AND THERE ARE
-              TWO WAYS TO BE ONE.
+              A DESCRIPTOR THIS DEVICE CANNOT RESOLVE GETS NO CONTROL, AND THERE ARE TWO WAYS TO BE ONE.
 
               `item` is null when the bytes have gone missing, which the row above already says. It is
               ALSO null for a file this phone never imported: `media.resolve` reads `StageScreen`'s
               `mediaIndex`, which is `draft?.media.orEmpty().associateBy { it.id }` — LOCAL descriptors
               only — so a photograph attached in the browser answers null here even though the server
-              certainly holds it. That was the second cause, this comment claimed the first was the
-              only one, and the consequence was the worst-shaped one available: the verbs were silently
-              missing on exactly the files a verb could certainly have run over, with no control and no
-              sentence saying why. `RichTextEditor`'s comment on the same resolver had already recorded
-              the case — *"a picture placed on the web carries a server id and answers null, which is a
-              different thing to draw and not an error."*
-
-              WHICH OF THE TWO IT IS CANNOT BE TOLD APART HERE, so the sentence names both; see
-              [DW_MEDIA_VERBS_NEED_THE_FILE_HERE], which also records what the fuller repair would be.
-              It is drawn only for a field type whose files could carry a verb at all
-              ([dwMediaFieldMayCarryVerbs]) — a FILE field's PDF gets no control and no sentence when it
-              IS resolvable, and an unresolvable one must not acquire an explanation the ordinary case
-              does not have. [DwMediaAiVerbsRow] applies the same rule from the bytes' own `mediaType`;
-              see the note on `dwMediaVerbsFor`.
+              certainly holds it. Offering the verbs on such a file needs the pull to surface a
+              SERVER-ONLY descriptor so `remoteMediaId` is known for a file this device never imported
+              (a data-lane change: every reader of `DraftMedia.relativePath`, the report writer and the
+              uploader among them, would have to tolerate one). The tile draws no verb row and no
+              sentence about the missing one; the gap is recorded in docs/OPEN_FINDINGS.md.
             */
             if (item != null) {
                 DwMediaAiVerbsRow(item = item, enabled = enabled)
-            } else if (dwMediaFieldMayCarryVerbs(type)) {
-                Text(
-                    DW_MEDIA_VERBS_NEED_THE_FILE_HERE,
-                    color = MaterialTheme.field.muted,
-                    fontSize = 11.sp,
-                    lineHeight = 16.sp,
-                )
             }
         }
 
@@ -1236,7 +1219,7 @@ internal fun dwAttachmentStatus(
             // A missing file is REPORTED, never quietly dropped from the list. The descriptor is
             // the only surviving record that the photograph existed at all, and a store that
             // silently forgot it would destroy the caption along with it.
-            line = "The bytes for this attachment are no longer on this device.",
+            line = "This file is no longer on this device.",
             tone = DwAttachmentTone.WARNING,
             percent = null,
             // Nothing to send. A Try again over an absent file is a button that can only fail.
@@ -1271,13 +1254,13 @@ internal fun dwAttachmentStatus(
             canRetry = state.permanent,
         )
         DwUploadState.Sent -> DwAttachmentStatus(
-            line = "$what · backed up to the server",
+            line = "$what · saved online",
             tone = DwAttachmentTone.NEUTRAL,
             percent = null,
             canRetry = false,
         )
         null -> if (backedUp) {
-            DwAttachmentStatus("$what · backed up to the server", DwAttachmentTone.NEUTRAL, null, false)
+            DwAttachmentStatus("$what · saved online", DwAttachmentTone.NEUTRAL, null, false)
         } else {
             // NOT a warning, and the wording is careful. This is the correct and expected state of
             // every capture in a fortnight-long workshop, and colouring it red would train a
@@ -1392,10 +1375,19 @@ private fun DwAttachmentRow(
      * `DwMediaBridge`, carried through `FieldRenderer` and `StageScreen` to reach every card that
      * draws an attachment, and each of those hops is a place for one gallery's readings to end up
      * under another's.
+     *
+     * ── AND WHY THE FIRST VALUE IS READ INSIDE `remember` ─────────────────────────────────────────
+     *
+     * Seeding from the store's current entry keeps the first frame from drawing "nothing reported"
+     * for a row that is half-way through sending. It is read once per row, inside `remember`: a
+     * `StateFlow.value` read in the composition body is not observed and is re-read on every pass
+     * (lint: StateFlowValueCalledInComposition), and the collection is what observes it anyway.
      */
-    val uploadState by remember(mediaId) {
+    val uploadUpdates = remember(mediaId) {
         DwMediaUploadProgress.states.map { it[mediaId] }.distinctUntilChanged()
-    }.collectAsState(initial = DwMediaUploadProgress.states.value[mediaId])
+    }
+    val uploadSeed = remember(mediaId) { DwMediaUploadProgress.states.value[mediaId] }
+    val uploadState by uploadUpdates.collectAsState(initial = uploadSeed)
     val fileUri = remember(item?.absolutePath) { item?.let { Uri.fromFile(File(it.absolutePath)) } }
     val exists = remember(item?.absolutePath) { item?.let { File(it.absolutePath).exists() } ?: false }
 

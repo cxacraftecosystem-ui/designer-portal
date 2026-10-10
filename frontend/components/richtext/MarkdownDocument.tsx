@@ -165,11 +165,11 @@ export function MarkdownDocument({
             done with it. `ml-auto` on the group rather than `justify-between` on the row, because
             the row has no children at all on the surfaces that pass no flag. */}
         <div className="ml-auto flex flex-wrap items-center gap-2">
-          <button type="button" className="field-button-secondary !min-h-8 !px-2.5 !py-1 text-xs" onClick={copy}>
+          <button type="button" className="field-button-secondary min-h-8! px-2.5! py-1! text-xs" onClick={copy}>
             {copied ? <Check className="h-3.5 w-3.5" aria-hidden /> : <Copy className="h-3.5 w-3.5" aria-hidden />}
             {copied ? "Copied" : "Copy"}
           </button>
-          <button type="button" className="field-button-secondary !min-h-8 !px-2.5 !py-1 text-xs" onClick={save}>
+          <button type="button" className="field-button-secondary min-h-8! px-2.5! py-1! text-xs" onClick={save}>
             <Download className="h-3.5 w-3.5" aria-hidden />
             Download
           </button>

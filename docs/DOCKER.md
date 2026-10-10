@@ -219,7 +219,10 @@ dead is one whose logs you read.
 
 ### Frontend
 
-Three stages: `deps` (`npm ci` against the lockfile alone), `builder`, `runtime`.
+Three stages on `node:24-alpine` (the major `engines.node` in `frontend/package.json` names): `deps`
+(npm 12, then `npm ci` against the lockfile alone), `builder`, `runtime`. npm 12 is installed over the
+image's own npm 11 because it is what every workflow builds with, and it runs a dependency's install
+script only when `allowScripts` in `frontend/package.json` approves it; npm 11 would run them all.
 
 `output: "standalone"` is switched on **in the Dockerfile**, not in `next.config.ts`. Vercel's
 build errors out when it is set, and Vercel is the real deployment target — so the container turns

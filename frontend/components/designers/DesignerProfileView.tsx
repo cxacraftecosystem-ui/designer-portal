@@ -145,7 +145,7 @@ function Row({ label, children }: { label: string; children?: string | null }) {
     <div className="min-w-0">
       <dt className="field-label">{label}</dt>
       <dd className="mt-1 text-sm leading-6 text-ink-900">
-        {children && children.trim() ? <span className="break-words">{children}</span> : <Blank />}
+        {children && children.trim() ? <span className="wrap-break-word">{children}</span> : <Blank />}
       </dd>
     </div>
   );
@@ -207,7 +207,7 @@ function FieldValue({ field, profile }: { field: DesignerProfileField; profile: 
   // reading a designer's page can legitimately get a row with a filename and no url.
   // `DocumentPreview` says so in those words rather than drawing an empty frame.
   if (field === "cvMediaId") {
-    return <DocumentPreview mediaId={typeof raw === "string" ? raw : null} noun="CV" className="h-[26rem]" />;
+    return <DocumentPreview mediaId={typeof raw === "string" ? raw : null} noun="CV" className="h-104" />;
   }
 
   /*
@@ -254,7 +254,7 @@ function FieldValue({ field, profile }: { field: DesignerProfileField; profile: 
     exactly as it did yesterday — which is the case that matters, since it is every live row.
   */
   if (field === "addressLine") {
-    return <p className="whitespace-pre-line break-words">{plainFromStoredRichText(String(raw))}</p>;
+    return <p className="whitespace-pre-line wrap-break-word">{plainFromStoredRichText(String(raw))}</p>;
   }
 
   if (field === "website") {
@@ -264,7 +264,7 @@ function FieldValue({ field, profile }: { field: DesignerProfileField; profile: 
         href={href}
         target="_blank"
         rel="noreferrer"
-        className="break-words text-purple-700 underline-offset-2 hover:underline"
+        className="wrap-break-word text-purple-700 underline-offset-2 hover:underline"
       >
         {String(raw)}
       </a>
@@ -273,13 +273,13 @@ function FieldValue({ field, profile }: { field: DesignerProfileField; profile: 
 
   if (field === "email") {
     return (
-      <a href={`mailto:${String(raw)}`} className="break-words text-purple-700 underline-offset-2 hover:underline">
+      <a href={`mailto:${String(raw)}`} className="wrap-break-word text-purple-700 underline-offset-2 hover:underline">
         {String(raw)}
       </a>
     );
   }
 
-  return <span className="break-words">{String(raw)}</span>;
+  return <span className="wrap-break-word">{String(raw)}</span>;
 }
 
 /**

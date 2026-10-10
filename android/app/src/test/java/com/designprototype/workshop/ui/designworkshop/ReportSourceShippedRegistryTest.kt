@@ -526,7 +526,7 @@ class ReportSourceShippedRegistryTest {
         assertNotNull(notOnServer)
         assertNotNull(readFailed)
         assertFalse("the two states must not share a sentence", notOnServer == readFailed)
-        assertTrue(notOnServer!!.contains("not been created on the server"))
+        assertTrue(notOnServer!!.contains("has not been uploaded yet"))
     }
 
     @Test
@@ -612,7 +612,7 @@ class ReportSourceShippedRegistryTest {
         val footers = coverOf(source).footerLines
         assertTrue(
             "the file must say what the screen said: $footers",
-            footers.any { it.contains("could not be read from the server") },
+            footers.any { it.contains("prepared without a connection") },
         )
     }
 
@@ -622,7 +622,7 @@ class ReportSourceShippedRegistryTest {
         assertFalse(source.serverCopyUnread)
         assertTrue(
             "a whole file must not carry a caveat — a provenance line nobody believes is worse than none",
-            coverOf(source).footerLines.none { it.contains("could not be read from the server") },
+            coverOf(source).footerLines.none { it.contains("prepared without a connection") },
         )
     }
 
@@ -642,7 +642,7 @@ class ReportSourceShippedRegistryTest {
         val source = sourceFor(onDevice, remoteId = null, answer = null)
         assertFalse("nothing on the server means nothing missing", source.serverCopyUnread)
         assertNotNull("the designer is still told to send it up", source.deviceOnlyNote)
-        assertTrue(coverOf(source).footerLines.none { it.contains("could not be read from the server") })
+        assertTrue(coverOf(source).footerLines.none { it.contains("prepared without a connection") })
     }
 
     // ── 5. TWO EXPORTS OF UNCHANGED DATA ARE THE SAME FILE ───────────────────────────────────────

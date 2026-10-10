@@ -79,6 +79,29 @@ interface WorkshopRepositoryApi {
      * Is this link still good? UNAUTHENTICATED, because the person holding one cannot sign in — that
      * is the whole point of holding it. [ApiClient] adds no bearer header when the store is empty,
      * so this works from a signed-out handset with no special client.
+     *
+     * THE TOKEN TRAVELS IN THE BODY WHEREVER THIS ROUTE EXISTS. A request line is written down by
+     * whatever sits in front of the API and logs it — the box's nginx first, CloudFront's logging if
+     * it is ever switched on (the API's own journal has blanked the value since 2026-10-09, which
+     * reaches none of those) — and the token is the link's whole authority until it is used or
+     * expires. None of them logs a body. The answer is the GET's, field for field: `{"valid",
+     * "reason", "purpose"}` in [PasswordLinkCheckDto]. See docs/OPEN_FINDINGS.md for the finding this
+     * closes the handset's half of.
+     *
+     * DEPLOYED SINCE 2026-10-09: `check_set_password_token_in_body` in `backend/app/api/routes/auth.py`
+     * on main, and the production API answered it that day. A server older than this route answers it
+     * 404 (or 405); `WorkshopRepository.checkPasswordLink` then asks [checkPasswordLink] instead, so
+     * the handset works against both.
+     */
+    @POST("auth/set-password/check")
+    suspend fun checkPasswordLinkInBody(@Body body: PasswordLinkCheckRequest): PasswordLinkCheckDto
+
+    /**
+     * The same question asked the old way, with the token in the QUERY STRING: the only form a
+     * server older than [checkPasswordLinkInBody] understands, and the form builds up to 0.0.15
+     * still send. `WorkshopRepository.checkPasswordLink` asks it ONLY after the POST was answered
+     * 404 or 405 — never as a retry after a failure that says nothing about the route — because
+     * this is the request that leaves the token in a log line.
      */
     @GET("auth/set-password")
     suspend fun checkPasswordLink(@Query("token") token: String): PasswordLinkCheckDto
@@ -1658,7 +1681,7 @@ interface WorkshopRepositoryApi {
     //
     // AND NONE OF THEM IS AUTO-RETRIED, which is [ApiClient.isSafelyRetriable]'s doing and is worth
     // knowing rather than discovering: a POST is retried only when its path is one of the four
-    // side-effect-free upload-setup calls, and these are not among them. A 504 from CloudFront over a
+    // side-effect-free upload-setup calls or the set-password link check, and these are not among them. A 504 from CloudFront over a
     // verb that the origin actually ran would otherwise spend a second run of the allowance and store a
     // second layer saying the same thing.
     //

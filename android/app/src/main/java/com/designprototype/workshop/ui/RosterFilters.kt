@@ -943,12 +943,11 @@ fun roleMatchCutNotice(truncated: Boolean?, limit: Int? = ROLE_MATCH_READ_LIMIT)
     val bound = if (limit != null && limit > 0) {
         "more than $limit accounts"
     } else {
-        "more accounts than this filter reads in one pass"
+        "too many accounts"
     }
-    return "Some designers holding the selected tiers are missing from this list. Matching a tier " +
-        "means reading the accounts that hold it, and $bound do — the ones past that point were " +
-        "not read, so their roster rows cannot appear on any page of this filter. Choosing fewer " +
-        "tiers reads fewer accounts and gives a complete answer."
+    return "Some designers holding the selected tiers are missing and will not appear on any " +
+        "page of this filter, because $bound hold those tiers. Choose fewer tiers for a " +
+        "complete list."
 }
 
 /**
@@ -968,9 +967,9 @@ fun roleMatchCutNotice(truncated: Boolean?, limit: Int? = ROLE_MATCH_READ_LIMIT)
  */
 fun accessRoleCutNotice(truncated: Boolean?): String? {
     if (truncated != true) return null
-    return "The server could not match the chosen tiers completely, so some entries are missing " +
-        "from every page of this filter — not only from this one. Choosing fewer tiers narrows " +
-        "what has to be matched and gives a complete answer; clearing the tier filter lists everyone."
+    return "Not every entry for the chosen tiers could be listed, so some are missing from every " +
+        "page of this filter — not only from this one. Choose fewer tiers for a complete list, or " +
+        "clear the tier filter to list everyone."
 }
 
 /**
@@ -994,11 +993,11 @@ fun institutionCutNotice(truncated: Boolean?, offered: Int): String? {
     if (truncated != true) return null
     if (offered <= 0) {
         return "There are more institutions than this list can hold, so some cannot be ticked here. " +
-            "Type the institution into the search box above instead — it is searched on the server."
+            "Type the institution into the search box above instead — the search covers the whole roster."
     }
     return "Only the first $offered institutions are offered here and there are more, so an " +
         "institution past that point cannot be ticked. Type its name into the search box above " +
-        "instead — it is searched on the server, over the whole roster."
+        "instead — the search covers the whole roster."
 }
 
 /**
@@ -1041,10 +1040,8 @@ fun institutionCutNotice(truncated: Boolean?, offered: Int): String? {
  */
 fun rosterFilterGrammarNotice(understood: Boolean?, sent: List<String>): String? {
     if (understood != false || sent.isEmpty()) return null
-    return "This server has not been updated to filter or order the roster, so the " +
-        "${namedControls(sent)} you set were not applied — the list below is the whole roster in " +
-        "its usual order, not the answer to what you asked. Nothing is missing from it. Read it as " +
-        "unfiltered, or ask for the server to be updated."
+    return "The ${namedControls(sent)} you set could not be applied, so the list below is the " +
+        "whole roster in its usual order. Nothing is missing from it; read it as unfiltered."
 }
 
 /**
@@ -1066,9 +1063,8 @@ fun rosterFilterGrammarNotice(understood: Boolean?, sent: List<String>): String?
  */
 fun rosterFilterRefusalHint(understood: Boolean?, sent: List<String>): String? {
     if (understood == true || sent.isEmpty()) return null
-    return "If this server has not been updated for the roster filters, the ${namedControls(sent)} " +
-        "you set are what it refused rather than anything about the people on the list. Clearing " +
-        "them lists everybody again."
+    return "The ${namedControls(sent)} you set may be why the list did not load. Clearing them " +
+        "lists everybody again."
 }
 
 /** "standing", "standing and roles", "standing, roles and order" — one comma rule, said once. */

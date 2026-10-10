@@ -230,6 +230,29 @@ data class DwTransferReadout(
  * millisecond), while the PERCENTAGE and the ETA are about the whole file — because that is the thing
  * the designer is waiting for. Conflating those two is how a resumed download shows "100%" the moment
  * it starts.
+ *
+ * ── THE RATE STARTS AT THE FIRST BYTE; THE STALL CLOCK STARTS WHEN THE TRANSFER OPENS ────────
+ *
+ * Two clocks, and running both off one origin printed **"3 kB/s · about 6 hr 50 min left"** for a
+ * 71 MB fetch that was arriving at over a megabyte a second. The fetch opens this meter the moment the
+ * response HEADERS arrive and records a zero there; the host `DwAsrModelTransferProbeTest` fetches
+ * from then waited about three seconds before the first byte of the body. With that zero as the
+ * window's origin, the first 8,192-byte reading was divided by three seconds of a server thinking, and
+ * the remainder was projected over hours (API 37 emulator, android-emulator.yml run 37939404066,
+ * 2026-10-09). The time to the first byte is latency, not throughput.
+ *
+ * So **a zero observed before anything has moved does not enter the window.** The window's origin is
+ * the first observation that carries bytes, and the rate is what moved AFTER it over the time AFTER
+ * it — exact however late that observation lands, because the bytes it carried count as already
+ * there. Until a second of body has arrived ([DW_RATE_MIN_WINDOW_MILLIS]) the readout says
+ * "measuring…", which is the truth. A phase the tick feeds (hashing, unpacking) follows the same
+ * rule: its first tick that counted bytes is the origin, so it prints a speed one tick later than it
+ * did when its opening zero was the origin.
+ *
+ * **THE STALL CLOCK IS DELIBERATELY THE OTHER WAY ROUND.** It runs from the last observation of any
+ * kind, the zero at the headers included, so a server that answers and then sends nothing reads as
+ * stalled [DW_RATE_STALL_MILLIS] after it answered. A first byte that never comes is the stall a
+ * designer most needs to be told about, and moving it to the first byte would have hidden exactly that.
  */
 class DwTransferMeter(
     /** The whole file's length, or null when the server never said. */
@@ -245,7 +268,8 @@ class DwTransferMeter(
     }
 
     /**
-     * (clock, bytes-this-attempt-has-moved) pairs inside the window, oldest first.
+     * (clock, bytes-this-attempt-has-moved) pairs inside the window, oldest first. **Empty until the
+     * first byte moves** — see "THE RATE STARTS AT THE FIRST BYTE" in the class doc.
      *
      * An `ArrayDeque` because the only two operations are "drop from the front once it is out of the
      * window" and "add to the back", and a list would make the drop O(n) on every 64 KiB buffer.
@@ -278,7 +302,12 @@ class DwTransferMeter(
     fun observe(movedThisAttempt: Long, atMillis: Long): DwTransferReadout {
         require(movedThisAttempt >= 0L) { "A byte count moved is never negative." }
         lastBytes = movedThisAttempt
+        // The stall clock: every observation, the opening zero at the headers included.
         lastAtMillis = atMillis
+        // The rate window: nothing until the first byte has moved. The zero a fetch records when its
+        // headers arrive would otherwise be the origin, and the server's time to its first byte would
+        // be divided into the first reading — see the class doc.
+        if (samples.isEmpty() && movedThisAttempt == 0L) return readAt(atMillis)
         samples.addLast(atMillis to movedThisAttempt)
         // Anything older than the window is no longer evidence about the connection as it is now.
         while (samples.size > 2 && atMillis - samples.first().first > windowMillis) {

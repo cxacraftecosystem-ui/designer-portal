@@ -81,7 +81,7 @@ test("the dock card carries its own ceiling, so its top edge cannot leave the sc
 
 test("the fixed wrapper keeps the rung and the geometry the z-ladder was measured against", () => {
   // Paired with overlay-layering-unit.spec.ts, which asserts this same string against the nav
-  // sheet's scrim at z-[90]. The fix for the height is inside the card; the wrapper does not move.
+  // sheet's scrim at z-90. The fix for the height is inside the card; the wrapper does not move.
   expect(read(TRAY)).toContain('className="pointer-events-none fixed inset-x-0 bottom-0 z-40 px-4 pt-3"');
 });
 
@@ -144,7 +144,7 @@ test("min-w-0 runs the whole way down the card, root included", () => {
   // Root, thumbnail, text column, and both rows inside the text column. Any one of these missing
   // re-exports an intrinsic width to the grid track above and the card overhangs its neighbour.
   expect(tile).toContain('className="flex min-w-0 cursor-pointer');
-  expect(tile).toContain("aspect-[4/3] min-w-0 flex-[1_1_6rem]");
+  expect(tile).toContain("aspect-4/3 min-w-0 flex-[1_1_6rem]");
   expect(tile).toContain('<div className="grid min-w-0 flex-[999_1_8rem] gap-2">');
   expect(tile).toContain('<div className="flex min-w-0 items-start gap-2">');
   expect(tile).toContain('<div className="flex min-w-0 items-center justify-between gap-2">');
