@@ -869,7 +869,8 @@ def test_the_queue_will_not_be_asked_to_write_a_dimension_nobody_saw(api):
     assert outcome.status_code == 422
     assert "can't be requested with the upload" in outcome.detail
     assert_sentence(outcome.detail)
-    assert "analyze-measurement" in outcome.detail, "the refusal must name the supported route"
+    assert "use Measure" in outcome.detail, "the refusal must name the supported way to measure"
+    assert "analyze-measurement" not in outcome.detail, "never a route a person cannot use"
 
 
 def test_a_transcription_request_is_untouched(api):

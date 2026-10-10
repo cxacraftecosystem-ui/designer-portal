@@ -806,7 +806,7 @@ async def mint_dataset_token(payload: LoginRequest) -> dict[str, Any]:
     if not is_admin(user):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin access required to issue a dataset token.",
+            detail="Only admins can issue a dataset download link.",
         )
     # AFTER the credential, so this cannot tell an unauthenticated caller whether an address exists;
     # before the mint, so a barred account leaves with a refusal instead of a token. See the
