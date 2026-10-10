@@ -20,6 +20,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -35,11 +36,20 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.designprototype.workshop.data.DW_TIER2_MAX_PASSAGE_CHARS
+import com.designprototype.workshop.data.DW_TIER2_WORKING_SENTENCE
 import com.designprototype.workshop.data.DW_VERB_MAX_LANGUAGE_CHARS
 import com.designprototype.workshop.data.DW_VERB_MAX_TEXT_CHARS
 import com.designprototype.workshop.data.DW_VERBS_NOTHING_SELECTED
 import com.designprototype.workshop.data.DW_VERBS_WORKSHOP_NOT_ON_SERVER
 import com.designprototype.workshop.data.DwAiVerbResultDto
+import com.designprototype.workshop.data.DwModelPlan
+import com.designprototype.workshop.data.DwTier2FailureStore
+import com.designprototype.workshop.data.DwTier2LoadFailed
+import com.designprototype.workshop.data.dwProbeDevice
+import com.designprototype.workshop.data.dwTier2ModelToRun
+import com.designprototype.workshop.data.dwTier2RunRefusal
+import com.designprototype.workshop.data.dwTier2VerbNote
 import com.designprototype.workshop.data.DwVerbGate
 import com.designprototype.workshop.data.DwVerbSource
 import com.designprototype.workshop.data.dwTranslationTargetRefusal
@@ -48,7 +58,9 @@ import com.designprototype.workshop.data.dwVerbPassageTooLong
 // The two-typeface `Text`, shadowing androidx.compose.material3.Text — see FieldText.kt.
 import com.designprototype.workshop.ui.Text
 import com.designprototype.workshop.ui.field
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * PROOFREAD, WRITE OUT, TRANSLATE — under the prose field, scoped to the paragraph the caret is in.
@@ -169,6 +181,23 @@ internal fun DwAiVerbsPanel(
     var target by remember { mutableStateOf<String?>(null) }
 
     /*
+     * TIER 2: THE LANGUAGE MODEL ON THIS PHONE, WHEN THERE IS ONE.
+     *
+     * Read off the disk each time the card opens (verification markers, not a re-hash) together with
+     * the load failures recorded on this handset, so a model that would not load here is never tried
+     * again. [dwTier2ModelToRun] picks the smallest verified model; null means every verb takes the
+     * cloud path it always took.
+     */
+    var deviceModel by remember { mutableStateOf<DwModelPlan?>(null) }
+    var runningOnDevice by remember { mutableStateOf(false) }
+    LaunchedEffect(open) {
+        if (!open) return@LaunchedEffect
+        deviceModel = withContext(Dispatchers.IO) {
+            dwTier2ModelToRun(dwTier2InstalledIds(context), DwTier2FailureStore.read(context))
+        }
+    }
+
+    /*
       THE GATE IS EVALUATED WHERE THE CARD IS DRAWN, NOT AT THE TOP OF THIS COMPOSABLE.
 
       `surface.gate(context)` reaches `ConnectivityManager` through `getSystemService`, so it is called
@@ -193,7 +222,7 @@ internal fun DwAiVerbsPanel(
             ) {
                 CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
                 Text(
-                    "Working on the passage on the server…",
+                    if (runningOnDevice) DW_TIER2_WORKING_SENTENCE else "Working on the passage on the server…",
                     color = MaterialTheme.field.muted,
                     fontSize = 12.sp,
                 )
@@ -267,6 +296,50 @@ internal fun DwAiVerbsPanel(
                 }
                 running = true
                 scope.launch {
+                    /*
+                     * ON THE PHONE FIRST, WHEN IT MAY RUN THERE — and the cloud verb, unchanged, when it
+                     * may not or when the run fails. `dwTier2RunRefusal` is the design's own window: a
+                     * verified model, a passage inside the measured envelope, nothing capturing (a
+                     * press on this card means the camera and the recorder are closed) and a phone
+                     * that is not already hot. A model that would not load is recorded and not tried
+                     * again on this handset.
+                     */
+                    val model = deviceModel
+                    val tier2Verb = dwTier2VerbFor(verb)
+                    if (model != null && tier2Verb != null) {
+                        val thermal = withContext(Dispatchers.IO) { dwProbeDevice(context).thermal }
+                        if (dwTier2RunRefusal(tier2Verb, passage.length, model, false, thermal) == null) {
+                            runningOnDevice = true
+                            val outcome = runCatching {
+                                dwRunVerbOnDevice(
+                                    context, repository, workshopId, model, tier2Verb, passage, targetLanguage,
+                                )
+                            }
+                            runningOnDevice = false
+                            val failure = outcome.exceptionOrNull()
+                            if (failure is DwTier2LoadFailed) {
+                                DwTier2FailureStore.record(context, failure.model, failure.detail)
+                                deviceModel = null
+                            }
+                            val answer = outcome.getOrNull()
+                            if (answer != null) {
+                                sent = passage
+                                result = answer
+                                target = null
+                                open = false
+                                running = false
+                                runs += 1
+                                return@launch
+                            }
+                        }
+                    }
+                    if (gate !is DwVerbGate.Ready) {
+                        // The phone could not do it and the cloud path is not open to this workshop
+                        // right now: say the cloud gate's own sentence, which names the next move.
+                        problem = (gate as? DwVerbGate.Refused)?.sentence
+                        running = false
+                        return@launch
+                    }
                     runCatching {
                         when (verb) {
                             "PROOFREAD" -> repository.designWorkshopProofread(
@@ -332,7 +405,46 @@ internal fun DwAiVerbsPanel(
                         */
                         DwVerbGate.StillReading -> Unit
 
-                        is DwVerbGate.Refused -> DwVerbRefusal(gate.sentence)
+                        /*
+                         * THE CLOUD GATE REFUSED — consent, the daily allowance — AND THE PHONE CAN
+                         * STILL DO IT. Neither gate applies to a model on the phone (nothing leaves it
+                         * for a third party and nothing is spent at a provider), so proofreading and
+                         * translating are offered here, and only those two.
+                         */
+                        is DwVerbGate.Refused -> {
+                            val model = deviceModel
+                            if (model == null || !dwTier2CanRecord(context, surface.serverWorkshopId)) {
+                                DwVerbRefusal(gate.sentence)
+                            } else if (passageChars == 0 || passageChars > DW_TIER2_MAX_PASSAGE_CHARS) {
+                                DwVerbRefusal(gate.sentence)
+                            } else {
+                                Text(
+                                    "“$passagePreview”",
+                                    color = MaterialTheme.field.body,
+                                    fontSize = 12.sp,
+                                    lineHeight = 17.sp,
+                                    maxLines = 3,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                if (target == null) {
+                                    DwVerbChoice("Proofread this passage") { start("PROOFREAD") }
+                                    DwVerbChoice("Translate this passage") { target = "" }
+                                } else {
+                                    DwVerbTranslateStep(
+                                        value = target.orEmpty(),
+                                        onValue = { target = it },
+                                        onCancel = { target = null },
+                                        onTranslate = { start("TRANSLATE", it) },
+                                    )
+                                }
+                                Text(
+                                    dwTier2VerbNote(model),
+                                    color = MaterialTheme.field.muted,
+                                    fontSize = 11.sp,
+                                    lineHeight = 16.sp,
+                                )
+                            }
+                        }
 
                         DwVerbGate.Ready -> {
                             /*
@@ -392,6 +504,16 @@ internal fun DwAiVerbsPanel(
                                         onCancel = { target = null },
                                         onTranslate = { start("TRANSLATE", it) },
                                     )
+                                }
+                                deviceModel?.let { model ->
+                                    if (passageChars <= DW_TIER2_MAX_PASSAGE_CHARS) {
+                                        Text(
+                                            dwTier2VerbNote(model),
+                                            color = MaterialTheme.field.muted,
+                                            fontSize = 11.sp,
+                                            lineHeight = 16.sp,
+                                        )
+                                    }
                                 }
                                 dwAiVerbCountdownLine(surface.cap.remaining, surface.today)?.let {
                                     Text(

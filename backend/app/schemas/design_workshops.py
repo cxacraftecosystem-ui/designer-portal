@@ -881,6 +881,43 @@ class AiTranslateIn(APIModel):
         return _require_exactly_one_source(self, verb="translate")
 
 
+class AiOnDeviceLayerIn(APIModel):
+    """A layer a model ON THE HANDSET produced. **The body the Android app's `dwTier2LayerBody` sends.**
+
+    ``text`` IS WHAT THE MODEL WROTE, not a passage to work on — the opposite of ``AiProofreadIn``'s
+    ``text``. Nothing on this route runs a model, so the field cannot be mistaken for input: the route
+    records it and calls no provider (a test asserts that). ``sourceText`` is the passage the handset
+    gave the model, kept on the row so a reviewer can see what it was asked.
+
+    WHAT IS NOT HERE, AND WHY: no ``tier`` (the route fixes TIER_2), no ``accepted`` (acceptance stays a
+    separate act by a person), no stage or field key (a layer stands beside the designer's words), and
+    no consent token or allowance (a model on the phone sends nothing off it and spends nothing at a
+    provider — the repository owner's own scoping of the daily cap).
+    """
+
+    kind: Annotated[str, Field(pattern="^(PROOFREAD|TRANSLATION)$")]
+    text: str = Field(min_length=1, max_length=MAX_VERB_TEXT_CHARS)
+    provider: Annotated[str, Field(pattern="^litert-lm$")]
+    modelId: str = Field(min_length=1, max_length=120)
+    modelVersion: str = Field(min_length=1, max_length=120)
+    language: str = Field(min_length=1, max_length=40)
+    producedAt: str = Field(min_length=1, max_length=40)
+    sourceText: str = Field(min_length=1, max_length=MAX_VERB_TEXT_CHARS)
+
+    @model_validator(mode="after")
+    def _a_real_moment_and_a_pinned_model(self) -> "AiOnDeviceLayerIn":
+        """Refuse an unparseable time and a model nobody pinned, before any gate is read."""
+        try:
+            datetime.fromisoformat(str(self.producedAt))
+        except ValueError:
+            raise ValueError(
+                "producedAt must be an ISO-8601 moment such as 2026-03-04T11:20:00+05:30."
+            ) from None
+        if not self.text.strip() or not self.sourceText.strip():
+            raise ValueError("A layer needs words, and the passage it was made from.")
+        return self
+
+
 class AiMediaVerbIn(APIModel):
     """A recording or photograph for a media verb. Caption and subtitles take this.
 

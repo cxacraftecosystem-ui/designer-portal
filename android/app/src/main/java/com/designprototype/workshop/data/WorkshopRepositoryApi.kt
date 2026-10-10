@@ -1696,6 +1696,15 @@ interface WorkshopRepositoryApi {
         @Body body: DwProofreadBody
     ): DwAiVerbResultDto
 
+    // A LAYER A MODEL ON THIS PHONE PRODUCED (Tier 2). The body is `dwTier2LayerBody`'s map — the
+    // contract `DwTier2LayerTest` pins and `AiOnDeviceLayerIn` mirrors. Nothing here runs a model and
+    // neither money gate stands in front of it: the run happened on the phone and spent nothing.
+    @POST("design-workshops/{id}/ai-layers/on-device")
+    suspend fun designWorkshopOnDeviceLayer(
+        @Path("id") id: String,
+        @Body body: Map<String, String>
+    ): DwAiVerbResultDto
+
     // NO `sourceLayerId` ON THIS BODY AND THERE MUST NEVER BE ONE. `AiExpandIn` has no such field so
     // that a client cannot even ask: an expansion invents sentences, and run over an artisan's
     // transcript it would put invented words in a named person's mouth in a document a ministry

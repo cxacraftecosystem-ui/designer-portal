@@ -646,6 +646,17 @@ dependencies {
      */
     implementation(":sherpa-onnx-static-link-onnxruntime-1.13.8@aar")
 
+    /*
+     * TIER 2 — THE ON-DEVICE LANGUAGE MODEL RUNTIME. Google's LiteRT-LM, from Google's Maven (no
+     * vendoring, unlike sherpa-onnx). 0.18.0 is the newest release in `maven-metadata.xml` on
+     * 2026-10-10; its classes carry Kotlin metadata 2.4, which this project's 2.4.21 compiler reads.
+     * The AAR carries `liblitertlm_jni.so` for arm64-v8a and x86_64 only — so a 32-bit handset gets
+     * no Tier 2 row at all (`DwModelPlan.abi`), and the x86_64 emulator can load the runtime. The
+     * model itself is NOT in the APK: it is fetched on demand and verified against a pinned SHA-256
+     * (`DW_TIER2_ARTIFACTS`). See docs/TIER2-LANGUAGE-MODEL-MEASUREMENT.md.
+     */
+    implementation("com.google.ai.edge.litertlm:litertlm-android:0.18.0")
+
     /**
      * READING a QR code — off the camera, and off a screenshot somebody was sent.
      *

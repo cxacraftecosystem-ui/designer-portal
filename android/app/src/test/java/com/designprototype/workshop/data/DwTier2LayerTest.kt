@@ -355,26 +355,43 @@ class DwTier2LayerTest {
     }
 
     // -----------------------------------------------------------------------------------------
-    // What actually stops this working today
+    // The write path exists, and the body is the one the route takes
     // -----------------------------------------------------------------------------------------
 
     @Test
-    fun `the blocker today is the runtime, and behind it a route nobody has written`() {
+    fun `nothing blocks a device layer now: the runtime is in the APK and the route exists`() {
+        assertNull(dwTier2WriteBlocker())
+        assertTrue(DW_TIER2_DEVICE_LAYER_ROUTE_EXISTS)
+        assertEquals("on-device", DW_TIER2_LAYER_ROUTE_SEGMENT)
+        assertEquals(DwTier2WriteBlocker.NO_RUNTIME_IN_THIS_BUILD, dwTier2WriteBlocker(runtimePresent = false))
         assertEquals(
-            DwTier2WriteBlocker.NO_RUNTIME_IN_THIS_BUILD,
-            dwTier2WriteBlocker()
-        )
-        assertEquals(
-            "with a runtime there is still nowhere to send it — every verb route on the server fixes " +
-                "TIER_3 and the registration body refuses a text field",
             DwTier2WriteBlocker.NO_ROUTE_THAT_ACCEPTS_A_DEVICE_LAYER,
-            dwTier2WriteBlocker(runtimePresent = true)
+            dwTier2WriteBlocker(runtimePresent = true, routeExists = false)
         )
-        assertNull(dwTier2WriteBlocker(runtimePresent = true, routeExists = true))
-        assertFalse(DW_TIER2_DEVICE_LAYER_ROUTE_EXISTS)
+    }
+
+    @Test
+    fun `a supplied-text run sends exactly the keys AiOnDeviceLayerIn declares`() {
+        val body = dwTier2LayerBody(
+            draft.copy(
+                source = DwTier2Source.SuppliedText("the dabu paist"),
+                provenance = provenance.copy(provider = DW_TIER2_PROVIDER, modelVersion = DW_TIER2_RUNTIME_VERSION),
+            )
+        )
+        assertEquals(
+            setOf("kind", "text", "provider", "modelId", "modelVersion", "language", "producedAt", "sourceText"),
+            body.keys
+        )
+        assertEquals("litert-lm", body["provider"])
+    }
+
+    @Test
+    fun `the runtime version recorded on a layer is the AAR the build names`() {
+        val gradle = java.io.File("build.gradle.kts").readText()
+        val version = DW_TIER2_RUNTIME_VERSION.removePrefix("litertlm-android ")
         assertTrue(
-            "and the sentence says whose problem it is, so nobody reads it as the phone's fault",
-            DW_TIER2_NO_WRITE_PATH_SENTENCE.contains("not a limitation of the phone")
+            "app/build.gradle.kts must depend on litertlm-android:$version, the version every layer records",
+            gradle.contains("com.google.ai.edge.litertlm:litertlm-android:$version")
         )
     }
 

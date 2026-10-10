@@ -432,6 +432,85 @@ def translate(
     )
 
 
+#: The language models a handset may name as the producer of a TIER_2 layer. **A closed list, and the
+#: same two files the Android app pins by size and SHA-256** (`DW_TIER2_ARTIFACTS` in
+#: `android/.../data/DwTier2Models.kt`). A model id outside it is refused rather than recorded: the
+#: provenance column exists so a reviewer can trace a passage to an artifact, and an id nobody pinned
+#: traces to nothing.
+ON_DEVICE_MODEL_IDS: frozenset[str] = frozenset(
+    {"gemma-4-E2B-it.litertlm", "gemma-4-E4B-it.litertlm"}
+)
+
+#: The runtime that runs them on the handset — Google's LiteRT-LM. Recorded as the layer's provider.
+ON_DEVICE_PROVIDER = "litert-lm"
+
+#: What a handset may record. PROOFREAD and TRANSLATION are the two text verbs the Tier 2 plan ships
+#: first (docs/TIER2-LANGUAGE-MODEL-MEASUREMENT.md §6); EXPANDED is "ship it last" and CAPTION needs
+#: the vision backend, so neither is accepted from a device yet.
+ON_DEVICE_KINDS: frozenset[LayerKind] = frozenset({LayerKind.PROOFREAD, LayerKind.TRANSLATION})
+
+
+def on_device(
+    *,
+    workshop_id: str,
+    kind: LayerKind,
+    text: str,
+    source_text: str,
+    model_id: str,
+    model_version: str,
+    language: str,
+    produced_at: datetime | None,
+    created_by_id: str | None = None,
+) -> LayerWritePlan:
+    """Plan a layer a model ON THE HANDSET produced. **The tier is TIER_2 and is not the caller's.**
+
+    The handset ran the verb itself — nothing left the phone, no provider was paid — and now records
+    the words it produced, with the passage it was given, so the layer stands beside the designer's
+    own writing exactly as a cloud layer does: inert until a person accepts it (rule 3 is untouched;
+    nothing here sets an acceptance column), and never an edit of a stage field (the same planners,
+    so the same ``WRITABLE_TABLES``).
+
+    It goes through :func:`proofread` and :func:`translate` rather than around them, so the layer law,
+    the content check and the language rules are the ones every cloud layer meets. The answer handed
+    to them is the device's text, shaped as a completed answer.
+
+    For a TRANSLATION, ``language`` is the language written INTO, and the language of the passage is
+    recorded as :data:`~app.services.ai_layers.UNRECORDED` — the handset does not detect it, and the
+    rule on this column is that a value nobody observed is said in that word rather than guessed.
+    """
+    if kind not in ON_DEVICE_KINDS:
+        raise VerbError(f"A {kind.value} layer is not accepted from a handset.")
+    if model_id not in ON_DEVICE_MODEL_IDS:
+        raise VerbError("That model is not one this app runs on a handset.")
+    run = VerbRun(
+        tier=AiTier.TIER_2,
+        provider=ON_DEVICE_PROVIDER,
+        model_id=model_id,
+        produced_at=produced_at,
+        model_version=model_version,
+    )
+    answer = {"status": "COMPLETED", "text": text}
+    source = LayerSource.supplied_text(source_text)
+    if kind is LayerKind.TRANSLATION:
+        return translate(
+            workshop_id=workshop_id,
+            source=source,
+            answer=answer,
+            run=run,
+            source_language=ai_layers.UNRECORDED,
+            target_language=language,
+            created_by_id=created_by_id,
+        )
+    return proofread(
+        workshop_id=workshop_id,
+        source=source,
+        answer=answer,
+        run=run,
+        language=language,
+        created_by_id=created_by_id,
+    )
+
+
 def caption(
     *,
     workshop_id: str,
