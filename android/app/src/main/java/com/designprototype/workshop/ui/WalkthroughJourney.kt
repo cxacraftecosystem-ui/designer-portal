@@ -880,14 +880,15 @@ private val WALKTHROUGH_INSPECTOR_FIELDS: Map<String, List<String>> = mapOf(
     "inspection-list" to listOf(
         "Search — by title, craft, cluster or workshop code, across your assignments only",
         "Each row: the workshop's title, its code, craft and cluster, its dates and its status",
-        "Nothing else — there is no filter by designer, district or date on this list",
+        "Filters — status, submission round, state, type of workshop, and the days it started between; each narrows your assignments and none can add one, and Clear filters puts them all back",
     ),
     "inspection-read" to listOf(
         "Dates, Designer, Venue — as stage 1 recorded them",
         "Required fields answered — a percentage across every stage",
         "Each stage, numbered and titled, with its own required-field count",
         "Under each value: who wrote it, and where it was copied from",
-        "Media fields, as a count — “3 files recorded here”",
+        "Files — every photograph, recording and attachment filed with the workshop, and under each media field the files it holds",
+        "Under a stage: the answers to the workshop's own questions, with the questions they answer",
     ),
     "inspection-feedback" to listOf(
         "What should be corrected?",

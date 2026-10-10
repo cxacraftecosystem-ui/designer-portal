@@ -85,6 +85,7 @@
 
 import { ApiError, apiFetch, buildQuery } from "@/lib/api";
 import { fetchFile } from "@/lib/fileDownload";
+import type { DwCustomDefinition } from "@/lib/customSections";
 import { designerCreateFields } from "@/lib/designWorkshops";
 import type { DwStageCompleteness, DwStageData, DwSummary } from "@/lib/designWorkshops";
 import { listDesignWorkshopInspectors, type DwInspector } from "@/lib/designWorkshopInspections";
@@ -252,6 +253,8 @@ export type DwOversightDetail = DwSummary & {
   /** A second string, never folded into the one above: the registry's version and the workshop's
    *  own custom-section version move independently. */
   customSchemaVersion?: string;
+  /** The workshop's own questions, as `GET /design-workshops/{id}/custom-sections` serves them. */
+  customSections?: DwCustomDefinition;
   /** Who supervises this workshop, so the officer reading it can see the other capacity. */
   oversight?: DwOversightAssignment[];
   /**

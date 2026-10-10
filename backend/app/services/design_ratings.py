@@ -592,6 +592,92 @@ def pool_visible(
 
 
 # --------------------------------------------------------------------------------------
+# The pool directory: which workshops have opened a piece to the pool (sweep item F8)
+# --------------------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class PoolWorkshop:
+    """One workshop holding at least one piece opened to the pool, and how many of each kind.
+
+    NOTHING ELSE ABOUT THE WORKSHOP AND NOTHING ELSE OFF ANY STAGE ROW. The title and the dates are
+    licensed by the act of opening a piece to "designers outside the workshop" — the registry's own
+    wording of :data:`POOL_OPENS_WHEN_FIELD`; the counts are of rows a stranger may already read in
+    the round. Not ``workshop_summary``: its craft, cluster, code and status would turn the pool into
+    a directory of the ministry's archive. And not the gate's VALUE — the day a piece was opened is
+    read as a gate and never served, the same fence :func:`load_subject` keeps.
+    """
+
+    workshop_id: str
+    title: str
+    start_date: datetime | None
+    end_date: datetime | None
+    open_counts: dict[str, int]
+
+
+async def pool_directory(*, search: str | None = None) -> list[PoolWorkshop]:
+    """Every workshop with a piece opened to the pool, most recently run first.
+
+    THE SAME GATE THE ROUND APPLIES TO A STRANGER, applied across the archive: a non-deleted
+    ``sketch`` or ``prototype`` row whose :func:`pool_is_open` is true, in a workshop that is not
+    soft-deleted. So every workshop listed is one whose POOL round answers 200 to any design-workshop
+    role, and a workshop with nothing open is absent — which is what keeps this from being the
+    enumeration oracle :func:`pool_visible` refuses to be: it names only workshops that published.
+
+    COST, AS ``design-review/page.tsx`` PREDICTED: no migration and no promoted column, so the gate is
+    evaluated in Python over the rateable rows of the archive. The read grows with the number of
+    sketches and prototypes rather than the number opened; a JSONB expression index is the escape
+    hatch if that ever matters.
+    """
+    rows = await db.dwstageentry.find_many(
+        where={"entityKey": {"in": sorted(RATEABLE_ENTITIES)}, "deletedAt": None},
+    )
+    counts: dict[str, dict[str, int]] = {}
+    for row in rows:
+        if not pool_is_open(getattr(row, "data", None)):
+            continue
+        per_kind = counts.setdefault(row.designWorkshopId, dict.fromkeys(RATEABLE_ENTITIES, 0))
+        per_kind[row.entityKey] = per_kind.get(row.entityKey, 0) + 1
+    if not counts:
+        return []
+    where: dict[str, Any] = {"id": {"in": sorted(counts)}, "deletedAt": None}
+    term = (search or "").strip()
+    if term:
+        from app.services.records import contains  # local: records is heavy and this is one route
+
+        where["title"] = contains(term)
+    workshops = await db.designworkshop.find_many(where=where)
+    listed = [
+        PoolWorkshop(
+            workshop_id=workshop.id,
+            title=(workshop.title or "").strip(),
+            start_date=getattr(workshop, "startDate", None),
+            end_date=getattr(workshop, "endDate", None),
+            open_counts=dict(sorted(counts[workshop.id].items())),
+        )
+        for workshop in workshops
+    ]
+    # Most recently run first; a workshop with no stage-1 date yet after every dated one, by title.
+    listed.sort(key=lambda item: item.title.lower())
+    listed.sort(
+        key=lambda item: item.start_date.timestamp() if item.start_date else float("-inf"),
+        reverse=True,
+    )
+    return listed
+
+
+def pool_workshop_payload(item: PoolWorkshop) -> dict[str, Any]:
+    """The wire shape of one directory row. Exactly the five facts :class:`PoolWorkshop` holds."""
+    return {
+        "workshopId": item.workshop_id,
+        "title": item.title,
+        "startDate": _iso(item.start_date),
+        "endDate": _iso(item.end_date),
+        "openCounts": item.open_counts,
+    }
+
+
+# --------------------------------------------------------------------------------------
 # The permission rule
 # --------------------------------------------------------------------------------------
 

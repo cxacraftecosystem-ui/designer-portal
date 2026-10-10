@@ -89,35 +89,17 @@
  * stranger's id, so there is nothing for a pre-flight check to protect and a check would only be a
  * second refusal standing in front of the API's own.
  *
- * ── THE ENDPOINT THIS PAGE STILL DOES NOT HAVE, NAMED RATHER THAN HALF-BUILT ────────────────────
+ * ── WAY IN ZERO: THE POOL DIRECTORY (sweep item F8, 2026-10-10) ───────────────────────────────
  *
- * `GET /design-ratings/workshops` — the workshops holding at least one piece opened to the pool.
- * Without it there is no honest chooser for this page's actual audience, and what is above is the
- * interim: a shortcut over the wrong-but-listable set, labelled as such.
- *
- *   * ON THE RATINGS ROUTER, so it inherits the POOL gate (`can_run_design_workshops` plus
- *     `get_current_user`) and not the workshop gate. Putting it under `/design-workshops` would put
- *     the pool's set behind `visible_to_clause`, which is the whole thing this page exists around.
- *   * PAYLOAD: title, date, and per-entity open counts. NOTHING ELSE — specifically not
- *     `workshop_summary`, which carries `craftName`, `clusterName`, `workshopCode` and `status`, and
- *     shipping it would turn a rating round into a directory of the ministry's archive.
- *   * WHY DISCLOSING THE TITLE IS ALLOWED AT ALL, since `GET /design-ratings/rounds/{round}` today
- *     deliberately answers with `{workshopId, entityKey, round, items}` and no title: the registry's
- *     own declaration of the field is the licence. `POOL_OPENS_WHEN_FIELD` reads "The day this
- *     prototype was declared finished **and opened to designers outside the workshop**." Setting
- *     that date is an act of publication by the workshop's own designers. The enumeration-oracle
- *     rule `pool_visible` enforces — "A caller left with nothing must be given the same 404 a
- *     missing workshop gets, or this route becomes an oracle for which workshop ids exist" — is
- *     about workshops with nothing open, and those are excluded from such a list by construction.
- *   * COST, MEASURED: no migration. It is the shape `/analytics/design-workshops` already reads, and
- *     `@@index([entityKey])` on `DwStageEntry` was added for that cross-workshop read. The honest
- *     caveat is that `peerRoundClosedAt` lives inside `DwStageEntry.data` (`Json`) rather than in a
- *     promoted column, so the discard happens in Python and the read grows with the number of
- *     sketches and prototypes in the archive rather than the number opened. A JSONB expression index
- *     is the escape hatch if that ever matters; it should not be pre-built.
- *
- * Until it exists, the sentence beside the box still says browsing the archive has no answer yet —
- * because it does not, and a dropdown over a different set is not that answer.
+ * `GET /design-ratings/workshops` lists the workshops holding at least one piece opened to the pool,
+ * which is the set this page's audience actually reviews. It is ON THE RATINGS ROUTER, behind the
+ * POOL gate (`can_run_design_workshops`, answered with the router's one 404) and not behind
+ * `visible_to_clause`, and each row carries the title, the dates and how many pieces of each kind are
+ * open — never `workshop_summary`'s craft, cluster, code or status, and never the day a piece was
+ * opened. Every row it lists is a round that answers this reader, because the directory applies the
+ * same per-piece gate `pool_visible` applies to a stranger. It is drawn first, above the shortcut and
+ * the box, which both stay: the shortcut for a member's or an admin's own workshops, the box for a
+ * link somebody sent.
  *
  * ── WHAT A STRANGER IS TOLD ─────────────────────────────────────────────────────────────────────
  *
@@ -157,8 +139,8 @@
  * `dashboard/page.tsx` already records "Design review — web-only outright. There is no ratings code
  * anywhere under `android/app/src/main`". The dropdown does not change that verdict, but it does add
  * a second affordance the handset lacks — the handset has neither this box nor a chooser — so it is
- * stated here rather than left implicit. If `GET /design-ratings/workshops` is ever built, that
- * route name belongs in the dashboard's parity note beside the rest.
+ * stated here rather than left implicit. The pool directory (`GET /design-ratings/workshops`) is
+ * web-only too, for the same reason.
  */
 
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
@@ -184,6 +166,9 @@ import { listDesignWorkshops, type DwSummary } from "@/lib/designWorkshops";
 */
 import { isUnreachable } from "@/lib/failureTriage";
 import { canRunDesignWorkshops, roleLabel } from "@/lib/permissions";
+import { listPoolWorkshops, poolCountsLabel, poolFirstKind, type PoolWorkshop } from "@/lib/poolDirectory";
+import { formatDate } from "@/lib/format";
+import type { PageResult } from "@/lib/types";
 import {
   designWorkshopOptions,
   UNTITLED_WORKSHOP,
@@ -354,6 +339,45 @@ function DesignReview() {
   const [attempt, setAttempt] = useState(0);
 
   const allowed = canRunDesignWorkshops(user);
+
+  /*
+    THE POOL DIRECTORY'S OWN STATE — `null` is "not answered yet", a page is the answer. Its search
+    is its own box: it searches the workshops OPEN TO THE POOL, which is a different set from the
+    shortcut's, and one box over two sets is how the smaller one looks broken.
+  */
+  const [pool, setPool] = useState<PageResult<PoolWorkshop> | null>(null);
+  const [poolPage, setPoolPage] = useState(1);
+  const [poolQuery, setPoolQuery] = useState("");
+  const [poolFailure, setPoolFailure] = useState<string | null>(null);
+  const [poolAttempt, setPoolAttempt] = useState(0);
+
+  useEffect(() => {
+    if (!allowed) return;
+    let cancelled = false;
+    const timer = window.setTimeout(
+      () => {
+        listPoolWorkshops({ page: poolPage, pageSize: 10, search: poolQuery })
+          .then((result) => {
+            if (cancelled) return;
+            setPool(result);
+            setPoolFailure(null);
+          })
+          .catch((error) => {
+            if (cancelled) return;
+            setPoolFailure(
+              isUnreachable(error)
+                ? "The workshops open to the pool could not be loaded — check the connection and try again."
+                : "The workshops open to the pool could not be loaded. Try again."
+            );
+          });
+      },
+      poolQuery.trim() ? SEARCH_DEBOUNCE_MS : 0
+    );
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [allowed, poolPage, poolQuery, poolAttempt]);
 
   useEffect(() => {
     /*
@@ -681,6 +705,104 @@ function DesignReview() {
         icon={<Globe2 className="h-5 w-5" aria-hidden />}
       />
 
+      <section className="panel mb-5 grid gap-3 p-4" aria-labelledby="design-review-pool-heading">
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <h2 id="design-review-pool-heading" className="font-display text-base font-bold tracking-tight text-ink-900">
+            Workshops open to the pool
+          </h2>
+          {pool ? (
+            <span className="text-xs text-ink-500">
+              {pool.total} workshop{pool.total === 1 ? "" : "s"}
+            </span>
+          ) : null}
+        </div>
+        <p className="max-w-3xl text-sm leading-6 text-ink-muted">
+          Every workshop that has declared at least one sketch or prototype finished and opened it to designers outside
+          the workshop. Choose one to read and rate what it has opened.
+        </p>
+        <input
+          className="field-input max-w-md"
+          type="search"
+          value={poolQuery}
+          onChange={(event) => {
+            setPoolQuery(event.target.value.slice(0, 120));
+            setPoolPage(1);
+          }}
+          placeholder="Search these workshops by title"
+          aria-label="Search the workshops open to the pool"
+        />
+        {poolFailure ? (
+          <div className="rounded-md border border-line-200 bg-field-100 px-3 py-2" aria-live="polite">
+            <p className="text-xs leading-5 text-ink-700">{poolFailure}</p>
+            <button type="button" className="field-button-secondary mt-2" onClick={() => setPoolAttempt((n) => n + 1)}>
+              Try again
+            </button>
+          </div>
+        ) : pool === null ? (
+          <p className="text-xs text-ink-500" aria-live="polite">
+            Looking for the workshops open to the pool…
+          </p>
+        ) : pool.items.length === 0 ? (
+          <p className="text-sm text-ink-700" aria-live="polite">
+            {poolQuery.trim()
+              ? `No workshop open to the pool matches “${poolQuery.trim()}”.`
+              : "No workshop has opened a sketch or a prototype to the pool yet."}
+          </p>
+        ) : (
+          <ul className="grid gap-2 sm:grid-cols-2">
+            {pool.items.map((item) => {
+              const active = item.workshopId === workshopId;
+              return (
+                <li key={item.workshopId}>
+                  <button
+                    type="button"
+                    aria-pressed={active}
+                    onClick={() => {
+                      setEntityKey(poolFirstKind(item.openCounts));
+                      router.push(hrefFor(item.workshopId), { scroll: false });
+                    }}
+                    className={
+                      active
+                        ? "grid w-full gap-0.5 rounded-md border border-purple-700 bg-purple-50 px-3 py-2 text-left"
+                        : "grid w-full gap-0.5 rounded-md border border-line-200 bg-card px-3 py-2 text-left hover:border-purple-300 hover:bg-purple-50"
+                    }
+                  >
+                    <span className="truncate text-sm font-medium text-ink-900">{item.title || UNTITLED_WORKSHOP}</span>
+                    <span className="text-xs text-ink-500">
+                      {poolCountsLabel(item.openCounts)}
+                      {item.startDate ? ` · ${formatDate(item.startDate)}` : ""}
+                      {item.endDate ? ` – ${formatDate(item.endDate)}` : ""}
+                      {active ? " · reading now" : ""}
+                    </span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+        {pool && pool.pages > 1 ? (
+          <div className="flex items-center gap-2 text-xs text-ink-500">
+            <button
+              type="button"
+              className="field-button-secondary"
+              disabled={poolPage <= 1}
+              onClick={() => setPoolPage((n) => Math.max(1, n - 1))}
+            >
+              Previous
+            </button>
+            Page {pool.page} of {pool.pages}
+            <button
+              type="button"
+              className="field-button-secondary"
+              disabled={poolPage >= pool.pages}
+              onClick={() => setPoolPage((n) => n + 1)}
+            >
+              Next
+            </button>
+          </div>
+        ) : null}
+      </section>
+
       <section className="panel mb-5 grid gap-5 p-4">
         {/*
           ── WAY IN ONE: A SHORTCUT OVER THE WORKSHOPS THIS ACCOUNT ALREADY HOLDS ─────────────────
@@ -795,12 +917,11 @@ function DesignReview() {
             advanceOnSelect={false}
           />
           <p id="design-review-scope" className="max-w-3xl text-sm leading-6 text-ink-muted">
-            <span className="font-medium text-ink-700">This is a shortcut, not a list of what is open to the pool.</span>{" "}
+            <span className="font-medium text-ink-700">This is a shortcut to your own workshops.</span>{" "}
             It holds the design workshops <em>this account can already open</em> — the ones you created, the ones an
-            admin granted you, and every workshop on the platform if you are an admin. The pool round is wider than that by design: any
-            workshop can declare a piece finished and open it to designers outside it, and nothing lists those
-            workshops, so they reach you as a link or an id in the box below. A workshop missing from this list is not
-            a workshop you cannot read.
+            admin granted you, and every workshop on the platform if you are an admin. The workshops other designers
+            have opened to the pool are listed above, under Workshops open to the pool. A workshop missing from this
+            list is not a workshop you cannot read.
           </p>
           <p className="max-w-3xl text-xs leading-5 text-ink-500">
             And for a workshop you are a member of, the pool round holds the same pieces its own Review tab lists —
@@ -923,9 +1044,8 @@ function DesignReview() {
           </label>
           <p id="design-review-why" className="max-w-3xl text-sm leading-6 text-ink-muted">
             The round is read one workshop at a time, because the ranking it shows is that workshop&apos;s own row order
-            and there is no such thing as a place across two workshops. What does not exist yet is a list of every
-            workshop that has opened a piece to the pool — so browsing the whole archive is still a different question
-            with no answer, and a piece made outside your own workshops reaches you as a link its designers sent you.
+            and there is no such thing as a place across two workshops. Use this box for a link or an id somebody sent
+            you; every workshop open to the pool is also listed at the top of this page.
           </p>
           <div>
             <button type="submit" className="field-button" disabled={!typed.trim()}>
@@ -1038,8 +1158,8 @@ function DesignReview() {
         </>
       ) : (
         <p className="panel px-4 py-6 text-center text-sm text-ink-muted">
-          Nothing is open yet. Choose one of your own workshops above, or paste the link a workshop&apos;s designers
-          sent you, to read its finished sketches and prototypes.
+          Nothing is open yet. Choose a workshop open to the pool or one of your own workshops above, or paste the
+          link a workshop&apos;s designers sent you, to read its finished sketches and prototypes.
         </p>
       )}
     </div>

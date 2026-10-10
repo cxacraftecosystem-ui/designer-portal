@@ -1,9 +1,16 @@
 # Open findings
 
-**Status: 31 open, 1 decision recorded and 1 deferral, 100 closed.** Every count re-counted by
+**Status: 31 open, 1 decision recorded and 1 deferral, 103 closed.** Every count re-counted by
 heading on 2026-10-10 (15 + 18 opened by the Android copy sweep that day, less the 2 of those closed
 the same day); earlier counts on 2026-10-09; the entries closed on 2026-10-09 were checked against the tree that day, and
 the older closed sections were last re-checked on 2026-09-03.
+
+**Three missing features named by the customer-copy sweep were built on 2026-10-10, and recorded
+closed.** The sweep found screens explaining, to the people using them, features that did not exist:
+inspectors and directorate monitors could not see a workshop's files or the wording of its own
+questions, the inspection list had no filters, and Design review had no list of the workshops open to
+the pool. The web side had no open entry, so the open count does not move; the two handset entries for the
+same screens stay open. Counted by heading: still 31 open, and 100 + 3 = 103 closed.
 
 **Three Android gaps were closed on 2026-10-10 by building them**: correction suggestions on the
 handset, its own review queue, and inspections that work without signal. Two of them had been opened
@@ -867,6 +874,53 @@ client ID is configured for that client; there is no badge and no disabled place
 `frontend/e2e/oidc-sign-in-unit.spec.ts` and
 `android/app/src/test/java/com/designprototype/workshop/data/OidcSignInTest.kt`. Live once the owner
 registers the two apps and sets the values [ENVIRONMENT.md](ENVIRONMENT.md) lists.
+
+---
+
+## Closed on 2026-10-10
+
+Built on `feature/inspect` from the customer-copy sweep's items F5, F13 and F8. Each entry names the
+test that fails without it.
+
+### [MEDIUM] Inspectors and directorate monitors could not see a workshop's photographs, recordings, attachments or the wording of its own questions (backend, frontend) — **CLOSED 2026-10-10**
+
+Both read-only surfaces — `/design-workshop-inspections/[id]` and `/officers/monitored/[id]` — counted
+each media field's files and the answers to the workshop's own questions, and told the reader the
+read did not carry them. An inspector deciding whether to send a report back could not look at the
+photograph the note would be about.
+
+Each surface now has a second GET behind its own read-only loader —
+`GET /api/design-workshop-inspections/{id}/media` and
+`GET /api/design-workshop-oversight/assigned/{id}/media` — served by
+`backend/app/services/design_workshop_reader_media.py` through `records.public_encode` with the
+workshop half naming that one workshop and `signed_only=True`: only files tagged to the workshop, every
+URL a short-lived signature whatever `MEDIA_PRESIGNED_READS` says, no `objectKey` or `publicUrl`, no
+write. Both workshop reads carry `customSections`. The web draws both with
+`frontend/components/designworkshop/ReaderWorkshopMedia.tsx`. Pinned per role, admitted and refused —
+an inspector of another workshop, a post holder not posted to it, and the roles neither surface
+admits — by `backend/tests/test_reader_media_and_pool_directory.py`, and on the web by
+`frontend/e2e/workshop-reader-media-unit.spec.ts`. The handset's inspection screen is not changed by
+this entry.
+
+### [LOW] The inspection list had a search box and no filters (backend, frontend) — **CLOSED 2026-10-10**
+
+`GET /api/design-workshop-inspections` now takes `statusFilter`, `round`, `state`, `workshopKind`,
+`dateFrom` and `dateTo`, AND-composed beside the inspection scope by
+`backend/app/services/reader_list_filters.py`, so no filter can list a workshop the inspector holds no
+row on; the web list draws them. Pinned by
+`test_each_filter_narrows_the_inspectors_own_rows` and
+`test_no_filter_reaches_a_workshop_the_inspector_holds_no_row_on`.
+
+### [LOW] Design review had no list of the workshops that had opened a piece to the pool (backend, frontend) — **CLOSED 2026-10-10**
+
+The page told pool reviewers that browsing the workshops open to the pool "is still a different
+question with no answer". `GET /api/design-ratings/workshops` now lists them — behind the POOL round's
+own gate, answered 404 to anybody else, with the title, the dates and the open counts per kind and no
+other workshop or stage field — and `/design-review` draws it first. Pinned by
+`test_the_pool_reviewers_see_only_workshops_that_opened_a_piece`,
+`test_the_pool_directory_is_refused_to_everybody_the_pool_round_refuses` and, for the stage-entry fence,
+`test_the_pool_directory_takes_the_gate_and_serves_no_stage_field` in
+`backend/tests/test_entry_provenance_readers.py`.
 
 ---
 

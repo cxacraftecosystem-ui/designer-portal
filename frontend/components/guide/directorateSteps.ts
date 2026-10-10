@@ -389,12 +389,13 @@ export const DIRECTORATE_STEPS: GuideStep[] = [
       "Venue",
       "Required fields answered — a percentage across every stage",
       "Who supervises this workshop",
-      "All 22 stages, read-only, with who wrote each field"
+      "Files — the workshop's photographs, recordings and attachments",
+      "All 22 stages, read-only, with who wrote each field and the answers to the workshop's own questions"
     ],
     watch: [
       "AN ADMIN CAN HAVE ROWS HERE TOO, NAMED BY SOMEBODY ELSE. A Ministry Admin, an admin or the master admin can be named a workshop's Assistant Director or Regional Director by somebody else, and then reads it here exactly as an officer does — scoped to the workshops they were named on, never every workshop. Until somebody names them this screen says they hold no posts.",
       "AN EMPTY PAGE IS A REAL ANSWER AND THE SCREEN SAYS WHICH KIND IT IS. Nothing assigned reads “You do not hold any … posts”, naming the post or posts you may hold; a list that could not be read says so instead and keeps whatever was already on screen — because a correct empty state and a silent failure look identical, and there is no other surface here to cross-check against.",
-      "PHOTOGRAPHS, RECORDINGS AND ATTACHMENTS ARE COUNTED, NOT SHOWN — “3 files recorded here”. An empty gallery would look like a file that failed to load, which is not what happened.",
+      "YOU CAN SEE AND HEAR THE FILES, AND CHANGE NONE OF THEM. Photographs, recordings, videos and attachments open here and under each media field; there is no upload, replace or delete control. The links stop working a few minutes after the page loads — Refresh files renews them.",
       "THERE IS NO SAVE, NO SUBMIT AND NO DELETE ON THIS PAGE, and none of them is missing: there is no route behind it that would accept one. If a stage is wrong, the people who can change it are its designers."
     ]
   }
