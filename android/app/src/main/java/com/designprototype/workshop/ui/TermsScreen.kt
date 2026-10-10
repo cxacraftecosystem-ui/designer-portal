@@ -142,7 +142,7 @@ val TERMS_CLAUSES: List<TermsClause> = listOf(
         "Offline use",
         "The Android app holds work on the device when there is no signal and sends it when there " +
             "is. Work held on a device is your responsibility until it has sent — do not uninstall " +
-            "the app or clear its data while the outbox has entries in it."
+            "the app or clear its data while anything is still waiting to upload."
     ),
     TermsClause(
         7,

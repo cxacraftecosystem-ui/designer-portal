@@ -836,7 +836,7 @@ private enum class DashGroup(
     ),
     ADMIN(
         "Admin",
-        "Who may do what, and how this deployment is configured."
+        "Who may do what, and how the app is set up."
     )
 }
 

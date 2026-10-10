@@ -1334,7 +1334,7 @@ export const GUIDE_STEPS: GuideStep[] = [
       "Reference pickers — choose the artisan, craft, product, tool, process or questionnaire sitting you documented in the steps above",
       "“Create a new …” inside a picker, when the record is missing and you are mid-stage",
       "Photographs, sketches and measurements per stage",
-      "Choose a photograph already in the repository, instead of uploading it a second time",
+      "Choose a photograph you have already uploaded, instead of uploading it a second time",
       "Photograph galleries that say how many are wanted, with a bar counting what you hold",
       "A microphone on every narrative box",
       "This stage in the document — the report’s own pages, beside the form",

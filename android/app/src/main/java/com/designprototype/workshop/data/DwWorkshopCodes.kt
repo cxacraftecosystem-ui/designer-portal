@@ -490,7 +490,7 @@ fun encodeWorkshopCode(recordType: String, id: String?): DwEncodeResult {
             DwEncodeRefusal.ID_IS_DEVICE_LOCAL,
             "This workshop exists only on this device, so there is nothing for anybody else to scan " +
                 "yet — a code for it would open nothing on their phone. It gets a shareable code once " +
-                "it has reached the server: connect this device, let it sync, and print the code then."
+                "it has uploaded: connect this device, let it sync, and print the code then."
         )
     }
 

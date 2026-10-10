@@ -784,16 +784,16 @@ private val WALKTHROUGH_FIELDS: Map<String, List<String>> = mapOf(
         "Download question set, or Download .xlsx",
     ),
     "design-workshop-stages" to listOf(
-        "Basic fields — what “Save and check required fields” refuses this one stage without",
+        "Basic fields — the ones “Save and check required fields” checks",
         "Standard and Advanced fields — depth, never a blocker",
         "Reference pickers — choose the artisan, craft, product, tool, process or questionnaire sitting you documented in the steps above",
         "“Create a new …” inside a picker, when the record is missing and you are mid-stage",
         "Photographs, sketches and measurements per stage",
-        "Choose a photograph already in the repository, instead of uploading it a second time",
+        "Choose a photograph you have already uploaded, instead of uploading it a second time",
         "Photograph galleries that say how many are wanted, with a bar counting what you hold",
         "A microphone on every narrative box",
         "This stage in the document — the report’s own pages, beside the form",
-        "Your own sections and questions, added to the workshop with no deployment",
+        "Your own sections and questions, added to the workshop",
     ),
     "design-workshop-sketches" to listOf(
         "Which workshop",
@@ -819,8 +819,8 @@ private val WALKTHROUGH_FIELDS: Map<String, List<String>> = mapOf(
     ),
     "design-workshop-readiness" to listOf(
         "Unfilled Basic fields — what a stage check is waiting for",
-        "Report checks — they change the delivered file without refusing it",
-        "Standard and Advanced gaps — counts, behind a disclosure",
+        "Report checks — notes on the finished file, never a block",
+        "Standard and Advanced gaps — counts you can expand",
         "A link straight into the stage that holds each gap",
     ),
     "design-workshop-report" to listOf(
@@ -880,7 +880,6 @@ private val WALKTHROUGH_INSPECTOR_FIELDS: Map<String, List<String>> = mapOf(
     "inspection-list" to listOf(
         "Search — by title, craft, cluster or workshop code, across your assignments only",
         "Each row: the workshop's title, its code, craft and cluster, its dates and its status",
-        "Nothing else — there is no filter by designer, district or date on this list",
     ),
     "inspection-read" to listOf(
         "Dates, Designer, Venue — as stage 1 recorded them",
@@ -899,7 +898,6 @@ private val WALKTHROUGH_INSPECTOR_FIELDS: Map<String, List<String>> = mapOf(
         "The queue, newest first, with the record's type, title and who submitted it",
         "Approve · Reject · Send for revision",
         "A comment — mandatory on Send for revision",
-        "Edit — offered on the row, and see the caution below before you use it",
     ),
 )
 
