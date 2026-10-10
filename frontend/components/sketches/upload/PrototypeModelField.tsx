@@ -27,36 +27,23 @@
  *      sanction order at stage 1 and the .docx the officer received did not mention that a sanction
  *      order existed."
  *
- * That is now fixed as far as it can be, and the fix is a sentence: a FILE field prints
- * `"1 document attached"` — a count and a noun, deliberately not even a filename, because the module
- * is also the on-device report builder and may not query for one.
+ * That is now fixed as far as it can be, and the fix is a sentence: a FILE field prints a count and
+ * a noun, and the prototype's `modelFile` prints its own noun — `"1 3D model attached"` — followed,
+ * when the row has turntable frames, by a pointer to them (`report_builder.MODEL_3D_FIELD_KEYS`).
  *
  * So: **`turntablePhotos` is an IMAGE_LIST and reaches the printed page as pictures. `modelFile` is a
- * FILE and reaches it as the words "1 document attached" — and no viewer built into this application
- * can change that**, because the constraint is in the document generator, not in the browser. A
- * designer who uploads only a .glb has, from the officer's point of view, uploaded nothing they can
- * see. That is worth one paragraph on screen at the moment they are choosing, and it is the reason
- * this panel exists at all rather than a bare file input.
+ * FILE and reaches it as words**, because paper cannot turn a model. A designer who uploads only a
+ * .glb has, from the officer's point of view, uploaded a named file and no picture. That is worth one
+ * paragraph on screen at the moment they are choosing.
  *
  * ────────────────────────────────────────────────────────────────────────────
- * WHY THERE IS NO IN-BROWSER VIEWER IN THIS WAVE
+ * THE VIEWER
  * ────────────────────────────────────────────────────────────────────────────
  *
- * Not because it would be hard, and not because it is unwanted — but this is the honest accounting:
- *
- *  - `frontend/package.json` has 29 dependencies and **none of them can render a 3D model** (checked
- *    for three, babylon, model-viewer, gltf and webgl on 2026-08-22). A viewer therefore means a new
- *    dependency, and `package.json` is not this unit's file to change.
- *  - The unit's own brief permits a viewer only against a **real measured gzipped cost**. A figure
- *    cannot be measured for a library that has not been installed, and this repository's rule is that
- *    a number is quoted only by whoever ran the command that produced it. Quoting three.js's
- *    advertised size here would be exactly the fabricated citation the last audit wave was full of.
- *  - And it would buy less than it appears to. A viewer helps the designer standing at this screen; it
- *    does nothing for the officer reading the .docx, who is the person the turntable is for.
- *
- * So this wave makes the model file **uploadable and retrievable** — which is what makes it useful to
- * the next designer, who opens it in the CAD tool they already have — and spends its screen space on
- * getting the turntable filled in. If a viewer is added later, dynamic-import it, and measure it.
+ * A stored model is drawn by `components/media/ModelViewer.tsx` wherever its FILE field is shown
+ * (`DocumentPreview` picks it by `lib/modelFormats.modelFormatOf`), and the handset draws the same
+ * `lib/modelViewerCore.ts` in a WebView. three.js is dynamic-imported on the press that shows a model,
+ * so no other page pays for it.
  *
  * ════════════════════════════════════════════════════════════════════════════
  * WHAT CAME ACROSS FROM THE SKETCHES HALF ON 2026-08-29, AND WHAT DID NOT
@@ -436,11 +423,11 @@ export function PrototypeModelField({
               edit; moving the paragraph, which is what happened, is not one.
             */}
             <p className="mt-0.5 text-xs leading-5 text-ink-500">
-              The ministry document places image fields as pictures and prints every other kind of attachment
-              as a count — a 3D model appears in it as the words “1 document attached”, and no viewer built
-              into this application can change that, because the limit is in the document generator rather
-              than in the browser. A turn of photographs is the only form of this prototype that reaches the
-              printed page.
+              The ministry document places image fields as pictures and names every other kind of attachment —
+              a 3D model appears in it as the words “1 3D model attached”, beside these photographs when there
+              are any. The model itself can be turned on its stage here and on the handset, but paper cannot
+              turn it, so a turn of photographs is the only form of this prototype that reaches the printed
+              page as pictures.
             </p>
           </div>
         </div>

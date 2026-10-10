@@ -37,6 +37,7 @@ import { Printer, QrCode } from "lucide-react";
 
 import { PageHeader } from "@/components/PageHeader";
 import { ResolvedRecordRow } from "@/components/RecordCodeScanPanel";
+import { JoinCardsPanel } from "@/components/designworkshop/JoinCardsPanel";
 import { WorkshopCodeScanner, type ScanResolution } from "@/components/designworkshop/WorkshopCodeScanner";
 import { WorkshopCodeSheet, type WorkshopCodeCard } from "@/components/designworkshop/WorkshopCodeSheet";
 import {
@@ -289,7 +290,7 @@ export default function WorkshopCodesPage({ params }: { params: Promise<{ id: st
     <>
       <PageHeader
         title="Cards & tags"
-        description="Printable codes for the artisans on this workshop's roster and for every prototype in it, and a scanner that reads one back. A scan is what stops two days of work being attached to the wrong prototype."
+        description="Join cards that put a colleague on this workshop, printable codes for the artisans on its roster and for every prototype in it, and a scanner that reads one back. A scan is what stops two days of work being attached to the wrong prototype."
         icon={<QrCode className="h-5 w-5" aria-hidden />}
         actions={
           <>
@@ -316,6 +317,17 @@ export default function WorkshopCodesPage({ params }: { params: Promise<{ id: st
           same; anything recorded on another device is not here yet.
         </div>
       ) : null}
+
+      {/* JOIN CARDS FIRST: printed one at a time, on demand, for the person in front of you — the
+          sheet below is the tags and cards that NAME records, which confer nothing. A device-only
+          draft has no shared workshop to print a key for, and the panel says so. */}
+      <div className="mb-5">
+        <JoinCardsPanel
+          workshopId={draft?.remoteId ?? id}
+          workshopTitle={draft?.header.title || "Design workshop"}
+          shareable={!isLocalWorkshopId(id) || Boolean(draft?.remoteId)}
+        />
+      </div>
 
       <div className="mb-5 flex flex-wrap gap-2" role="group" aria-label="What to print">
         {(["prototype", "artisan"] as WorkshopRecordType[]).map((option) => (

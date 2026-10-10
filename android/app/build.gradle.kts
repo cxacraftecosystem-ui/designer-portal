@@ -561,6 +561,12 @@ dependencies {
     implementation("androidx.media3:media3-exoplayer:1.11.1")
     implementation("androidx.media3:media3-ui:1.11.1")
 
+    // The 3D model viewer: a WebView drawing the web's own viewer (assets/model-viewer, built from
+    // frontend/lib/modelViewerCore.ts). WebViewAssetLoader serves the page and the downloaded model
+    // from an https origin inside the app, so the page's fetch of the model works and nothing in it
+    // is loaded from the network. See ui/designworkshop/DwModelViewer.kt.
+    implementation("androidx.webkit:webkit:1.17.1")
+
     /**
      * On-device text recognition, so an identity card can be read with NO CONNECTION.
      *

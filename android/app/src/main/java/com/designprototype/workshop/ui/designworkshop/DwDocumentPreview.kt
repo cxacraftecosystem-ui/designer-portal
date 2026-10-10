@@ -159,6 +159,12 @@ private sealed interface DocState {
         val reason: String,
         override val onDevice: File? = null,
     ) : DocState
+
+    /** A 3D model, turned by [DwModelViewer] — the web's own viewer — once somebody asks for it. */
+    data class Model(
+        val format: String,
+        override val onDevice: File? = null,
+    ) : DocState
 }
 
 /**
@@ -231,7 +237,7 @@ internal fun dwWithheldFileNote(noun: String): String =
  */
 internal fun dwUndrawnDocumentNote(noun: String, openableHere: Boolean): String =
     if (openableHere) {
-        "Stored and downloadable. Only a PDF can be shown inside the app, so this one opens " +
+        "Stored and downloadable. A PDF or a 3D model is shown inside the app; this one opens " +
             "in whatever program handles it on your device."
     } else {
         dwWithheldFileNote(noun)
@@ -620,6 +626,11 @@ internal fun DwDocumentPreview(
                 else DocState.NotDrawn(dwWithheldFileNote(noun))
             }
 
+            // A 3D MODEL IS DRAWN, NOT ONLY LISTED — and nothing is fetched for it until the viewer's
+            // own button is pressed, because a model can be hundreds of megabytes on field data.
+            dwModelFormatOf(name, mimeType) != null ->
+                state = DocState.Model(dwModelFormatOf(name, mimeType)!!, onDevice = localFile)
+
             looksLikePdf(name, mimeType) -> {
                 // KEYED ON `mediaId` AND NOT ON `name`: see [dwDocCacheName]. `mediaId` is non-blank
                 // wherever this line runs — the first branch of this `when` has already answered the
@@ -666,7 +677,15 @@ internal fun DwDocumentPreview(
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
-        Box(
+        val model = state as? DocState.Model
+        if (model != null) {
+            DwModelViewer(
+                format = model.format,
+                displayName = displayName ?: localFile?.name ?: noun,
+                localFile = localFile,
+                fetch = remoteUrl?.let { url -> suspend { cacheRemote(context, mediaId, url) } },
+            )
+        } else Box(
             contentAlignment = Alignment.Center,
             modifier = Modifier
                 .fillMaxWidth()
@@ -687,6 +706,8 @@ internal fun DwDocumentPreview(
                     contentScale = ContentScale.Fit,
                     modifier = Modifier.fillMaxSize().padding(6.dp)
                 )
+                // Drawn above, in place of this box.
+                is DocState.Model -> Unit
                 is DocState.NotDrawn -> Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp),

@@ -65,7 +65,9 @@
 import { useEffect, useState } from "react";
 import { Download, FileText, FileWarning } from "lucide-react";
 
+import { ModelViewer } from "@/components/media/ModelViewer";
 import { apiFetch } from "@/lib/api";
+import { modelFormatOf } from "@/lib/modelFormats";
 import type { MediaFile } from "@/lib/types";
 
 /**
@@ -214,12 +216,30 @@ export function DocumentPreview({
     );
   }
 
+  // A 3D MODEL IS DRAWN, NOT ONLY LISTED: the viewer turns it in the page, and the named row under it
+  // is still there for whoever wants the file itself in a 3D program.
+  const modelFormat = modelFormatOf(file.originalFilename, file.mimeType);
+  if (modelFormat) {
+    return (
+      <div className="grid gap-2">
+        <ModelViewer
+          url={file.url}
+          format={modelFormat}
+          fileName={file.originalFilename}
+          sizeLabel={readableSize(file.sizeBytes) || undefined}
+          className={className}
+        />
+        <FileRow file={file} />
+      </div>
+    );
+  }
+
   if (!isRenderablePdf(file)) {
     return (
       <div className="grid gap-2">
         <FileRow file={file} />
         <p className="text-xs leading-5 text-ink-500">
-          Stored and downloadable. Only a PDF can be shown inside the app, so this one opens in
+          Stored and downloadable. A PDF or a 3D model is shown inside the app; this one opens in
           whatever program handles it on your device.
         </p>
       </div>

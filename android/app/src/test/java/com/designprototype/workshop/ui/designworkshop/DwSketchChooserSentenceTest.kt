@@ -330,7 +330,7 @@ class DwSketchChooserSentenceTest {
      *
      * `DW_PROTOTYPE_3D_IN_THE_REPORT` makes one claim about a file this application does not
      * generate: a 3D model attached on stage 13 appears in the ministry .docx as the words
-     * "1 document attached". That is `report_builder.format_value`'s output, and the sentence is
+     * "1 3D model attached". That is `report_builder.format_value`'s output, and the sentence is
      * worth nothing unless it is exactly right — a designer who reads it as "the model is printed"
      * hands over a document a reviewer cannot see the prototype in, and one who reads it as "the
      * file is carried" hands over a document the file is not inside.
@@ -338,7 +338,7 @@ class DwSketchChooserSentenceTest {
      * So the literal is pinned, and so are the two things the sentence must never come to say. The
      * strings themselves are `report_builder.py`'s; TRUE AS OF 2026-08-27, re-check with:
      *
-     *     grep -n "document attached" backend/app/services/report_builder.py
+     *     grep -n "3D model" backend/app/services/report_builder.py
      *
      * A KOTLIN TEST CANNOT CHECK THE PYTHON, and that is the limit of this one. It pins that THIS
      * COPY of the claim still contains the words the generator writes; it cannot pin that the
@@ -354,7 +354,7 @@ class DwSketchChooserSentenceTest {
     fun `the prototype sentence names the exact words the document generator writes`() {
         assertTrue(
             "the .docx says this and the sentence must quote it",
-            DW_PROTOTYPE_3D_IN_THE_REPORT.contains("1 document attached"),
+            DW_PROTOTYPE_3D_IN_THE_REPORT.contains("1 3D model attached"),
         )
         // NEVER "printed", "shown", "drawn" or "included" ABOUT THE MODEL. `_images` places IMAGE and
         // IMAGE_LIST fields only; no writer in this product can draw a mesh.

@@ -1,8 +1,14 @@
 # Open findings
 
-**Status: 15 open, 1 decision recorded and 1 deferral, 95 closed.** Every count re-counted by
-heading on 2026-10-09; the entries closed on 2026-10-09 were checked against the tree that day, and
-the older closed sections were last re-checked on 2026-09-03.
+**Status: 15 open, 1 decision recorded and 1 deferral, 97 closed.** Every count re-counted by
+heading on 2026-10-10; the entries closed on 2026-10-09 and 2026-10-10 were checked against the tree
+on the day they were closed, and the older closed sections were last re-checked on 2026-09-03.
+
+**Two missing features named on screen were built on 2026-10-10, and each closed a heading.** Join
+cards can now be printed, listed, cancelled and redeemed on the web, and a stored 3D model is turned
+in 3D on both clients while the report names it as a model. Neither was recorded open before — the
+screens themselves said the features were missing — so the open count does not move. Counted by
+heading: 15 open, and 95 + 2 = 97 closed.
 
 **Moving a set-password link's token off the web's request lines narrowed one entry the same day,
 and moved neither number.** The web now checks a link with `POST /api/auth/set-password/check`, the
@@ -638,6 +644,48 @@ not one is answered `200` with `"valid": false` and the reason `malformed`), so 
 new build goes out in a body. The entry stays open until that build has replaced the shipped ones,
 0.0.6 to 0.0.15, which still ask with the GET and read only the query; `link_for`'s switch waits on
 the same, and neither form closes the browser's history.
+
+---
+
+## Closed on 2026-10-10
+
+### [MEDIUM] Join cards could be printed and scanned only on the handset; the web read a genuine card as "update the app" (frontend) — **CLOSED 2026-10-10**
+
+The four join-card routes (`backend/app/api/routes/design_workshop_access.py`) had one client, the
+handset's `ui/DwJoinCard.kt`. The web had no screen to print a card, and its scanner fed every code to
+`decodeWorkshopCode`, whose version gate answered a `DPW2:J:` card with "printed by a newer version of
+the app … Update the app" — the dead end the handset closed for itself. The walkthrough said so: "there
+is no join card on the web".
+
+Closed by `frontend/lib/joinCards.ts` (the decoder, ported from `decode_join_code` to the canonical
+string, plus the four calls and the card-state wording), `components/designworkshop/JoinCardsPanel.tsx`
+on *Cards & tags* (print a card, show it once with its QR and printable characters, print it on its
+own sheet, list and cancel; an administrator alone is offered a card for several people and its number
+of days), and `WorkshopCodeScanner`, which now sends a string carrying the `J` letter to the join
+parser before the record parser's version gate and redeems it — on *Scan a code*, *Cards & tags* and
+every other scanner. Every rule stays the server's: single use and the three-outstanding cap for a
+non-admin, expiry and the sync grace, the provisional foothold, a post holder refused from printing.
+The browser keeps no card: with no connection nothing is spent and the person is told to scan it again.
+Pinned by `frontend/e2e/join-cards-unit.spec.ts`.
+
+### [MEDIUM] A 3D model had no viewer in either client, and the report printed it as "1 document attached" (frontend, android, backend) — **CLOSED 2026-10-10**
+
+The prototype's `modelFile` was stored and downloadable and nothing drew it; the report's
+`format_value` gave every FILE field the noun "document", so the officer's copy read "3D model: 1
+document attached"; and both clients said on screen that no viewer could exist.
+
+Closed by `frontend/lib/modelViewerCore.ts` — three.js with its own loaders for GLB, glTF, STL, OBJ,
+PLY, 3MF, FBX and USDZ — mounted on the web by `components/media/ModelViewer.tsx` wherever
+`DocumentPreview` shows a FILE field holding a model, and on the handset by
+`ui/designworkshop/DwModelViewer.kt`, a WebView hosting the same module bundled into
+`assets/model-viewer/viewer.js` by `frontend/scripts/build-android-model-viewer.mjs`. Nothing is
+downloaded until *Show in 3D* is pressed. The report names the attachment through
+`report_builder.MODEL_3D_FIELD_KEYS` — "1 3D model attached" — and adds the number of “360° capture”
+photographs on the same row, which are the pictures the document does place; Android's `displayValue`
+and `dwModelPreviewNote` print the same line. Pinned by `backend/tests/test_report_attachments.py`,
+`ReportEntityParityTest` and `DwModelViewerTest` on the handset, and
+`frontend/e2e/model-viewer-unit.spec.ts`, which also fails when the handset's bundle is older than the
+viewer's sources.
 
 ---
 

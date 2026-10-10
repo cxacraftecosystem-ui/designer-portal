@@ -533,9 +533,12 @@ browser off the local draft for the same reason.
 
 **A join card is a different code doing a different job.** One person creates the workshop and the
 others scan a card to join **the same one**, which is what stops a team ending the fortnight with
-four parallel workshops nobody can merge. It is minted and scanned **on the handset** — there is no
-join-card screen on the web — and a card is good for one person unless an admin makes it good for
-more. A late-comer whose card was already spent is not turned away: the ask is filed for an admin to
+four parallel workshops nobody can merge. It is printed from **Join cards** on this screen or on
+the handset, and scanned wherever codes are scanned — **Scan a code**, this screen, or the handset.
+A card is good for one person unless an admin makes it good for more (on the web an admin chooses
+how many people, and for how many days); a card is shown once, and only its last four characters
+are kept, so print or write it down before leaving the screen. Scanning one needs a connection: a
+card is checked against the workshop before anybody is let in. A late-comer whose card was already spent is not turned away: the ask is filed for an admin to
 decide, so their work is not orphaned while they wait.
 
 ### Step D — Build your own questionnaire
@@ -626,9 +629,11 @@ capture** and **3D model** on a prototype.
   is the arithmetic, `components/designworkshop/SketchRectifyField.tsx` the panel, mounted from
   `FieldInput.tsx` wherever `stageFieldRoles.offersSketchRectify` matches; the handset twin is
   `ui/designworkshop/DwSketchRectifyField.kt`.
-- **A 3D model file is stored and downloadable, and nothing in either client draws it.** *360°
-  capture* is the view a reviewer actually sees and the one the report prints; a model file prints as
-  the words "1 document attached".
+- **A 3D model file is turned in 3D wherever its field is shown**, on the web and on the handset
+  (GLB, glTF, STL, OBJ, PLY, 3MF, FBX and USDZ), and stays downloadable. Nothing is downloaded until
+  you press *Show in 3D*. *360° capture* is the view a reviewer actually sees and the one the report
+  prints as pictures; the model itself prints as the words "1 3D model attached", with the number of
+  capture photographs beside it.
 - **Set-aside sketches count.** Stage 11 exists to record the designs that were never prototyped,
   and they are rateable in both rounds — a wider pool picking one up is the reason to write them
   down at all.

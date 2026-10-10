@@ -3624,6 +3624,7 @@ private fun renderEntity(
         if (field.reportRole == "HIDDEN" || !match(field.reportRole)) return@mapNotNull null
         if (field.captionFor.isNotBlank()) return@mapNotNull null   // placed with their image
         val text = displayValue(field, values[field.key], refs)
+            .let { if (it.isNotBlank()) it + dwModelPreviewNote(field, values) else it }
         when {
             text.isNotBlank() -> field to text
             field.required && options.showEmptyNote -> field to NOT_RECORDED
@@ -4117,6 +4118,25 @@ private fun tableColumns(fields: List<FieldDto>): List<TableColumn> {
  * `format_value`. It is invisible today because no METRIC field in the registry declares a unit;
  * reproduced rather than tidied away, because the point of this file is that the two copies agree.
  */
+/**
+ * FILE fields that hold a 3D model, each mapped to the IMAGE_LIST on the same row that pictures it and
+ * that list's label. `report_builder.MODEL_3D_FIELD_KEYS`, ported; the two must print the same line.
+ */
+internal val DW_MODEL_3D_FIELD_KEYS: Map<String, Pair<String, String>> =
+    mapOf("modelFile" to ("turntablePhotos" to "360° capture"))
+
+/**
+ * The pointer from a 3D model to its photographs on the same row, or "" when there are none.
+ * `report_builder.model_preview_note`, ported: a model cannot be printed, its turntable frames are.
+ */
+internal fun dwModelPreviewNote(field: FieldDto, row: Map<String, JsonElement>): String {
+    if (DwFieldType.of(field.type) != DwFieldType.FILE) return ""
+    val (previewKey, previewLabel) = DW_MODEL_3D_FIELD_KEYS[field.key] ?: return ""
+    val frames = DwValues.list(row[previewKey]).size
+    if (frames == 0) return ""
+    return "; $frames photograph${if (frames == 1) "" else "s"} of it under “$previewLabel”"
+}
+
 private fun displayValue(field: FieldDto, value: JsonElement?, refs: DwRefLabels): String {
     if (!DwValues.isFilled(value)) return ""
     val type = DwFieldType.of(field.type)
@@ -4211,6 +4231,9 @@ private fun displayValue(field: FieldDto, value: JsonElement?, refs: DwRefLabels
             val count = DwValues.list(value).size
             if (count == 0) {
                 ""
+            } else if (type == DwFieldType.FILE && field.key in DW_MODEL_3D_FIELD_KEYS) {
+                // A 3D MODEL IS NAMED AS ONE — `format_value`'s branch, in its words.
+                "$count 3D model${if (count == 1) "" else "s"} attached"
             } else {
                 val singular = when (type) {
                     DwFieldType.AUDIO -> "recording"
