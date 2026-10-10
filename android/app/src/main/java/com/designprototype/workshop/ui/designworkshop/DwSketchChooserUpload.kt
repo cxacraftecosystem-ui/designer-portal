@@ -1225,12 +1225,12 @@ internal const val DW_SKETCH_CHOOSER_PROTOTYPE_ELSEWHERE: String =
 
 /** COULD NOT READ THE STAGE, with no signal. The offline half of the split. */
 internal const val DW_SKETCH_CHOOSER_STAGE_OFFLINE: String =
-    "No connection, so the repository's copy of this stage could not be read — a list that could " +
-        "not be asked for, not a list with nothing in it."
+    "No connection, so this stage could not be loaded — a list that could not be asked for, not " +
+        "a list with nothing in it."
 
 /** COULD NOT READ THE STAGE, and the repository said why. The fallback for when it did not. */
 internal const val DW_SKETCH_CHOOSER_STAGE_REFUSED: String =
-    "The repository's copy of this stage could not be read."
+    "This stage could not be loaded."
 
 /**
  * WHY THE CONTROLS ARE OFF WHILE THE READ HAS NOT LANDED — the honest half of the refusal.
@@ -1241,21 +1241,18 @@ internal const val DW_SKETCH_CHOOSER_STAGE_REFUSED: String =
  * a file to a row it has not read would be writing over a collection it cannot vouch for.
  */
 internal const val DW_SKETCH_CHOOSER_STALE: String =
-    "Adding to a row is off until that read lands: this phone would be writing into a collection it " +
-        "has not seen, and a workshop's other sketches may not be on it. Nothing has been lost — the " +
-        "rows below are what this device holds, and the stage form opens with what it has."
+    "Adding is off until this stage has loaded, because other sketches in this workshop may not " +
+        "be on this phone yet. Nothing has been lost — the rows below are what this phone holds, " +
+        "and the stage form opens with what it has."
 
 /** The registry does not declare this entity at all. A schema mismatch and not a permission. */
 internal const val DW_SKETCH_CHOOSER_NO_STAGE: String =
-    "This build's field registry does not declare the stage this belongs to, so nothing can be " +
-        "added or attached from here. That is a schema mismatch rather than a permission — open the " +
-        "workshop once with a connection, which is what refreshes the registry."
+    "Nothing can be added or attached here yet. Open the workshop once with a connection; if " +
+        "this stays, update the app."
 
 /** The stage exists but the four media fields do not. The web's sentence, in the handset's words. */
 internal const val DW_SKETCH_CHOOSER_NO_MEDIA_FIELDS: String =
-    "This build's field registry does not declare the image, line-art and 3D-model fields this tab " +
-        "attaches into, so files cannot be added from here. Open the stage form, which renders " +
-        "whatever the registry does declare."
+    "Files cannot be added from this tab for this workshop. Open the stage form to add them."
 
 /** The row write failed on the device. Said in place, beside the button that asked for it. */
 internal const val DW_SKETCH_CHOOSER_ROW_NOT_ADDED: String =

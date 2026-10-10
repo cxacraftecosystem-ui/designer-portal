@@ -1332,12 +1332,14 @@ class ReportTemplateDocumentTest {
         )
         val printed = printedText(document)
         assertTrue(
-            "the file does not say it was made on a handset:\n$printed",
-            printed.contains("Generated on a handset in the field on 04 Mar 2026"),
+            "the file does not say it was made in the field:\n$printed",
+            printed.contains("Generated in the field on 04 Mar 2026"),
         )
-        assertTrue(
-            "it must name what the office's copy carries and this one does not:\n$printed",
-            printed.contains("also carries the transcripts of the recordings"),
+        // A document handed to an officer does not narrate a section it lacks (2026-10-10), even
+        // when the designer asked for transcripts.
+        assertFalse(
+            "the cover line narrates a section this copy does not carry:\n$printed",
+            printed.contains("transcripts of the recordings"),
         )
         // And it shortens by itself: with nothing outstanding it states only where the file was made.
         val nothingOutstanding = build(annexureSchema(), annexureDraft(emptyMap()))

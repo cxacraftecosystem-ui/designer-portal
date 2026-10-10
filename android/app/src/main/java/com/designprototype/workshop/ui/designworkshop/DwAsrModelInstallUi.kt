@@ -824,7 +824,7 @@ internal class DwAsrModelController(
                 else -> {
                     val artifact = dwAsrModelArtifactFor(pinned.modelId, artifacts)
                     if (artifact == null) {
-                        failed(pinned, "This app pins no download for ${pinned.modelId}.")
+                        failed(pinned, "There is nothing to download for this model.")
                     } else {
                         downloadAndInstall(pinned, artifact)
                     }
@@ -1045,9 +1045,8 @@ internal class DwAsrModelController(
                 if (dwIsDiskFull(error.message)) {
                     dwTransferDiskFullSentence(DwTransferPhase.COPYING)
                 } else {
-                    "The model could not be copied onto this phone: " +
-                        "${error.message ?: "the copy failed"}. Nothing has been installed and " +
-                        "nothing has been kept."
+                    "The model could not be copied onto this phone. Nothing has been installed " +
+                        "and nothing has been kept."
                 },
             )
         }
@@ -1102,9 +1101,8 @@ internal class DwAsrModelController(
         if (!artifact.container.readableInThisBuild) {
             return failed(
                 model,
-                "This app cannot open a ${artifact.container.extension} archive, so there is no " +
-                    "point spending ${artifact.downloadBytes} bytes fetching one. Nothing was " +
-                    "fetched. The model can be put on this phone with a cable instead.",
+                "The speech model cannot be downloaded to this phone right now. Nothing was " +
+                    "fetched.",
             )
         }
         val incoming = File(File(context.filesDir, DW_ASR_MODEL_DIR), DW_ASR_MODEL_INCOMING)
@@ -1172,10 +1170,8 @@ internal class DwAsrModelController(
                         val entry = zip.getEntry(pinned.fileName)
                             ?: return@withContext failedAfterCleanUp(
                                 model, container, target,
-                                "What arrived does not contain ${pinned.fileName}, which this app " +
-                                    "needs, so nothing has been installed. The file being served is " +
-                                    "not the file this app expects — tell whoever administers this " +
-                                    "deployment.",
+                                "What arrived was not the expected file, so nothing has been " +
+                                    "installed. Try again later.",
                             )
                         val out = File(target, pinned.fileName)
                         zip.getInputStream(entry).use { input ->
@@ -1259,11 +1255,10 @@ internal class DwAsrModelController(
                     dwIsDiskFull(error.message) ->
                         dwTransferDiskFullSentence(DwTransferPhase.FETCHING)
                     kept > 0L ->
-                        "The download stopped: ${error.message ?: "the connection failed"}. " +
+                        "The download stopped: ${dwModelStopReason(error)}. " +
                             "${dwBytesLabel(kept)} is kept on this phone — Resume carries on from there."
                     else ->
-                        "The download stopped: ${error.message ?: "the connection failed"}. " +
-                            "Nothing was kept."
+                        "The download stopped: ${dwModelStopReason(error)}. Nothing was kept."
                 },
             )
         }
@@ -1438,11 +1433,11 @@ internal class DwAsrModelController(
                      * tapping Resume carries on from the prefix rather than re-spending it.
                      */
                     error is DwAsrEndpointSignedOut && kept > 0L ->
-                        "This phone was signed out of the deployment while the model was arriving. " +
+                        "You were signed out while the model was downloading. " +
                             "${dwBytesLabel(kept)} is kept on this phone — sign in again and " +
                             "Resume carries on from there."
                     error is DwAsrEndpointSignedOut ->
-                        "This phone was signed out of the deployment, so nothing could be fetched. " +
+                        "You were signed out, so nothing could be downloaded. " +
                             "Sign in again and try once more."
                     dwIsDiskFull(error.message) && kept > 0L ->
                         "${dwTransferDiskFullSentence(DwTransferPhase.FETCHING)} " +
@@ -1450,11 +1445,10 @@ internal class DwAsrModelController(
                     dwIsDiskFull(error.message) ->
                         dwTransferDiskFullSentence(DwTransferPhase.FETCHING)
                     kept > 0L ->
-                        "The download stopped: ${error.message ?: "the connection failed"}. " +
+                        "The download stopped: ${dwModelStopReason(error)}. " +
                             "${dwBytesLabel(kept)} is kept on this phone — Resume carries on from there."
                     else ->
-                        "The download stopped: ${error.message ?: "the connection failed"}. " +
-                            "Nothing was kept."
+                        "The download stopped: ${dwModelStopReason(error)}. Nothing was kept."
                 },
             )
         }
@@ -1504,7 +1498,7 @@ internal class DwAsrModelController(
             // than a status code. See the failure arm in [downloadFromEndpoint].
             if (response.code == 401) throw DwAsrEndpointSignedOut()
             if (!response.isSuccessful) {
-                throw IllegalStateException("the server answered HTTP ${response.code}")
+                throw IllegalStateException("the file was not available")
             }
             if (startFrom > 0L) {
                 val honoured = dwRangeHonoured(
@@ -1516,7 +1510,7 @@ internal class DwAsrModelController(
                 // as one — the word "resuming" is never used for a fetch that is not resuming.
                 if (!honoured) startFrom = 0L
             }
-            val body = response.body ?: throw IllegalStateException("the server sent no file")
+            val body = response.body ?: throw IllegalStateException("no file arrived")
 
             var written = 0L
             body.byteStream().use { input ->
@@ -1533,11 +1527,7 @@ internal class DwAsrModelController(
                         // fieldwork, and the digest check comes after the write so it would never be
                         // reached to notice.
                         if (startFrom + written > pinned.bytes) {
-                            throw IllegalStateException(
-                                "the server sent more than the ${pinned.bytes} bytes this app " +
-                                    "expects for ${pinned.fileName}, which means it is not serving " +
-                                    "the file this app pins"
-                            )
+                            throw IllegalStateException("what arrived was not the expected file")
                         }
                         output.write(buffer, 0, read)
                         onMoved(written)
@@ -1547,9 +1537,7 @@ internal class DwAsrModelController(
                 }
             }
             if (startFrom + written != pinned.bytes) {
-                throw IllegalStateException(
-                    "${pinned.fileName} stopped after ${startFrom + written} of ${pinned.bytes} bytes"
-                )
+                throw IllegalStateException("the connection closed before the whole file arrived")
             }
             return written
         }
@@ -1588,7 +1576,7 @@ internal class DwAsrModelController(
         if (startFrom > 0L) builder.header("Range", "bytes=$startFrom-")
         client.newCall(builder.build()).execute().use { response ->
             if (!response.isSuccessful) {
-                throw IllegalStateException("the server answered HTTP ${response.code}")
+                throw IllegalStateException("the file was not available")
             }
             /*
              * ── STEP 2: DID IT ACTUALLY HONOUR THE RANGE? ────────────────────────────────────────
@@ -1608,7 +1596,7 @@ internal class DwAsrModelController(
                 )
                 if (!honoured) startFrom = 0L
             }
-            val body = response.body ?: throw IllegalStateException("the server sent no file")
+            val body = response.body ?: throw IllegalStateException("no file arrived")
 
             startMeter(DwTransferPhase.FETCHING, artifact.downloadBytes, resumedFrom = startFrom)
             var written = 0L
@@ -1623,10 +1611,7 @@ internal class DwAsrModelController(
                         if (read <= 0) break
                         written += read
                         if (startFrom + written > artifact.downloadBytes) {
-                            throw IllegalStateException(
-                                "the server sent more than the ${artifact.downloadBytes} bytes this " +
-                                    "app expects, which means it is not serving the file this app pins"
-                            )
+                            throw IllegalStateException("what arrived was not the expected file")
                         }
                         output.write(buffer, 0, read)
                         // WHAT THIS ATTEMPT WILL MOVE, not what the file is. `written` counts this
@@ -1641,10 +1626,7 @@ internal class DwAsrModelController(
                 }
             }
             if (startFrom + written != artifact.downloadBytes) {
-                throw IllegalStateException(
-                    "the download stopped after ${startFrom + written} of " +
-                        "${artifact.downloadBytes} bytes"
-                )
+                throw IllegalStateException("the connection closed before the whole file arrived")
             }
         }
     }
@@ -1849,7 +1831,15 @@ internal class DwAsrModelController(
  * somebody rewords the generic sentence. It is a failure that KEEPS the part-files: the bytes that
  * arrived are good, and a fresh sign-in resumes from them rather than re-spending 365 MB.
  */
-private class DwAsrEndpointSignedOut : IllegalStateException("the deployment rejected this session")
+private class DwAsrEndpointSignedOut : IllegalStateException("you were signed out")
+
+/**
+ * Why a model download stopped, in words a designer can read: the reason this file threw itself
+ * (always a plain clause), or "the connection dropped" for anything the platform threw, whose own
+ * message is a developer's.
+ */
+private fun dwModelStopReason(error: Throwable): String =
+    (error as? IllegalStateException)?.message ?: "the connection dropped"
 
 /** How many bytes are read at a time. 64 KiB, as everywhere else in this app. */
 private const val DW_ASR_MODEL_BUFFER = 64 * 1024
@@ -1960,6 +1950,15 @@ internal fun DwAsrModelBody(
             controller.pausedSource,
         )
 
+        // NOTHING TO OFFER, SO NOTHING IS DRAWN. With no copy on this phone and no download it can
+        // use, this section could only say that the model cannot be installed; it appears as soon as
+        // there is something to do (a download, a copy on the phone, an install, a resume).
+        if (offer == DwAsrModelOffer.CONTAINER_NOT_READABLE_IN_THIS_BUILD ||
+            offer == DwAsrModelOffer.NOTHING_PINNED
+        ) {
+            return@Column
+        }
+
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -2008,8 +2007,8 @@ internal fun DwAsrModelBody(
             controller.manifestVerdict == DwAsrManifestVerdict.DISAGREES_ON_SIZE
         ) {
             Text(
-                "This deployment is offering a different file under the name this app expects, so " +
-                    "nothing was fetched. Tell whoever administers it.",
+                "The speech model available online is not the expected file, so nothing was " +
+                    "downloaded. Ask an administrator.",
                 color = MaterialTheme.field.warning,
                 fontSize = 12.sp,
             )

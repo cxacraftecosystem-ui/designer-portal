@@ -529,10 +529,9 @@ const val DW_REPORT_HISTORY_OFFLINE =
  * believing an export log is complete when it is not.
  */
 const val DW_REPORT_HISTORY_LOCAL_ONLY =
-    "This workshop has not reached the repository yet, so there is no export log to read. A report " +
-        "you generate now is still made on this phone and is still yours — but it is recorded in " +
-        "the log only once the workshop has been sent, so anything generated before then will not " +
-        "be listed here. Send the workshop from the workshop list first."
+    "This workshop has not been uploaded yet, so it has no report history. A report you generate " +
+        "now is still made on this phone and is still yours; reports are listed here once the " +
+        "workshop has been uploaded. Upload the workshop from the workshop list first."
 
 /** `page.tsx`'s `EmptyState`, for a synced workshop nobody has generated a file from yet. */
 const val DW_REPORT_HISTORY_EMPTY_TITLE = "No report has been generated yet"
@@ -671,9 +670,9 @@ fun dwFileFacts(diff: DwReportDiff, templateName: (String) -> String): List<Stri
             "contains, so the documents can differ even where the data did not."
     }
     if (diff.schemaVersionChanged) {
-        facts += "The field registry itself moved between these two files, so a field may have been " +
-            "added, removed or retyped. Row counts remain comparable; the shape of what a row holds " +
-            "may not be."
+        facts += "The form layout changed between these two files, so a field may have been " +
+            "added, removed or changed. Entry counts remain comparable; what an entry holds may " +
+            "not be."
     }
     val pages = diff.pageDelta
     if (pages != null && pages != 0) {
@@ -710,9 +709,9 @@ fun dwDiffLimits(diff: DwReportDiff, history: DwReportHistoryDto): List<String> 
             "caption — are not covered. They live outside the workshop and carry their own timestamps.",
     )
     if (diff.deviceClockInvolved) {
-        limits += "One of these files was made on a phone with no network, so its timestamp is that " +
-            "device’s clock while the stage edits are timed by the repository’s. If the handset’s " +
-            "clock was wrong, this window is wrong by the same amount."
+        limits += "One of these files was made on a phone with no network, so its time comes from " +
+            "that phone’s clock while the stage edits are timed online. If the phone’s clock was " +
+            "wrong, this window is wrong by the same amount."
     }
     if (!diff.timelineComplete) {
         limits += "The stage timeline was capped, so rows are missing from the evidence and no stage " +
@@ -796,8 +795,8 @@ fun dwReportHistoryFailure(unreachable: Boolean, status: Int?, served: String?):
     // `load_workshop_or_404` answers 404 rather than 403 so an id is not confirmed to somebody
     // entitled to know nothing about it — so this arm covers both "gone" and "not yours", and says
     // the half that is actionable without asserting the half that is not.
-    status == 404 -> "This workshop is not on the repository, so it has no export log. Nothing has " +
-        "been deleted from this phone."
+    status == 404 -> "This workshop is not available online, so it has no report history. Nothing " +
+        "has been deleted from this phone."
     status == 403 -> served ?: "This account may not read this workshop’s report history."
     else -> served ?: "The report history could not be read just now. Nothing you have captured is " +
         "affected — this screen only reads."

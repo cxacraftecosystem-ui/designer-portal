@@ -818,9 +818,8 @@ internal fun DwDocumentPreview(
             ) {
                 if (openFailed) {
                     Text(
-                        "Nothing installed on this device offered to open it, so the file was not " +
-                            "handed over. Install a document viewer, or open the $noun on the web " +
-                            "portal.",
+                        "No app on this phone can open this file. Install a document viewer, " +
+                            "then try again.",
                         color = MaterialTheme.field.muted,
                         fontSize = 11.sp,
                         lineHeight = 15.sp

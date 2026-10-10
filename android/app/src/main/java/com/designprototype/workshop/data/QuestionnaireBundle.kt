@@ -378,8 +378,8 @@ fun readQuestionnaireBundle(bytes: ByteArray?): QuestionnaireBundleRead {
         // likely to be up to date, so it is the one that meets the newer file.
         return QuestionnaireBundleRead.Refused(
             QuestionnaireBundleRefusal.NEWER_VERSION,
-            "That questionnaire was made by a newer version of this app, so this one cannot read it " +
-                "safely. Update the app, or ask them to send the question set as a spreadsheet instead."
+            "Update the app to open this questionnaire, or ask them to send the question set as a " +
+                "spreadsheet instead."
         )
     }
     if (bundle.sections.none { it.questions.isNotEmpty() }) {
@@ -534,7 +534,7 @@ fun readQuestionnaireHandoffCode(input: String?): QuestionnaireHandoffRead {
     // be reported as damage for the wrong reason.
     if (versionText.toDouble() != QUESTIONNAIRE_HANDOFF_CODE_VERSION.toDouble()) {
         return QuestionnaireHandoffRead.Refused(
-            "That check code was made by a version of this app this one does not read. Update the app."
+            "Update the app to read this check code."
         )
     }
     val digest = buildString(parts[2].length) {

@@ -1317,9 +1317,8 @@ private fun DwSketchTraceOpen(
         if (missing.isNotEmpty()) {
             DwPanelNote(
                 warning = true,
-                text = "${missing.size} of this app's ${DW_TRACE_PARAM_COUNT} settings were not offered " +
-                    "by the tracing engine on this device and are not shown: ${missing.joinToString(", ")}. " +
-                    "The trace still runs; this app and the engine are a version apart.",
+                text = "${missing.size} of the ${DW_TRACE_PARAM_COUNT} tracing settings are not shown " +
+                    "on this phone. The trace still runs; update the app to see them.",
             )
         }
 
@@ -1465,8 +1464,7 @@ private fun DwSketchTraceOpen(
             // AN UNMEASURED CEILING IS A GUESS, AND IT SAYS SO. docs/DEVICE-TIER-MEASUREMENT.md's rule:
             // what has and has not been weighed is written down where it is used.
             Text(
-                "No timing has been measured on this model of phone yet, so the limits above are " +
-                    "cautious estimates rather than readings.",
+                "The limits above are cautious estimates for this model of phone.",
                 color = MaterialTheme.field.muted,
                 fontSize = 11.sp,
                 lineHeight = 16.sp,
@@ -1897,10 +1895,8 @@ private fun DwTraceAdvancedSection(
             */
             DwPanelLabel("The other settings")
             Text(
-                "None of this app's other $DW_TRACE_ADVANCED_COUNT settings were offered by the " +
-                    "tracing engine on this device, so there is nothing behind this section. The " +
-                    "trace still runs on the settings above; this app and the engine are a version " +
-                    "apart.",
+                "The other $DW_TRACE_ADVANCED_COUNT settings are not shown on this phone. The trace " +
+                    "still runs on the settings above; update the app to see them.",
                 color = MaterialTheme.field.muted,
                 fontSize = 11.sp,
                 lineHeight = 16.sp,
@@ -1992,16 +1988,8 @@ private fun DwTraceAdvancedSection(
                 )
             }
         }
-        DW_TRACE_CUT.forEach { (key, why) ->
-            // The cut list is DRAWN, not merely commented. Somebody looking for the thinning
-            // control needs to find the answer where they looked for the control.
-            Text(
-                "“$key” is deliberately not offered here. $why",
-                color = MaterialTheme.field.muted,
-                fontSize = 11.sp,
-                lineHeight = 16.sp,
-            )
-        }
+        // DW_TRACE_CUT is no longer drawn: a note naming a setting key and arguing why it is not
+        // offered is developer copy (2026-10-10). The register itself stays, for the parity tests.
     }
 }
 

@@ -1029,8 +1029,7 @@ private fun InlinePhotograph(
                         fontWeight = FontWeight.Medium,
                     )
                     Text(
-                        "The picture is not stored on this device, so a report exported here " +
-                            "leaves it out. It is in the report generated on the server.",
+                        "This picture is held in the online workshop record.",
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )

@@ -330,12 +330,12 @@ class DwDeviceTierTest {
             }
         val sentence = dwTierRefusalSentence(DwAiTier.TIER_2, DwTierRefusal.NO_RUNTIME_IN_THIS_BUILD)
         assertTrue(
-            "it must say the absence is this app's and not the screen's",
-            sentence.contains("work that has not been built")
+            "it must say where the work is done instead of blaming the phone",
+            sentence.contains("online")
         )
         assertTrue(
             "it must say the work still happens, or it reads as a capability lost",
-            sentence.contains("server")
+            sentence.contains("whenever there is signal")
         )
     }
 
@@ -393,7 +393,7 @@ class DwDeviceTierTest {
         }
         assertTrue(
             dwTierRefusalSentence(DwAiTier.TIER_1, DwTierRefusal.NO_RUNTIME_IN_THIS_BUILD)
-                .contains("not been built")
+                .contains("speech engine")
         )
     }
 
@@ -417,7 +417,7 @@ class DwDeviceTierTest {
             "Tier 1's absence is not Tier 2's absence, and one sentence cannot say both",
             tier1 != tier2
         )
-        assertTrue("it has to say WHOSE engine is missing", tier1.contains("of its own"))
+        assertTrue("it has to say WHOSE engine is missing", tier1.contains("own speech engine"))
         assertTrue(
             "and it has to name the offline dictation that exists, rather than denying it",
             tier1.contains("dictation")
@@ -1130,7 +1130,7 @@ class DwDeviceTierTest {
         val note = DwLoadFailureNote(DwAiTier.TIER_2, "not-a-real-model", 2048, "OOM")
         val online = dwFallbackAfterLoadFailure(note, DwConnection.METERED)
         assertEquals(DwAiTier.TIER_3, online.goesTo)
-        assertTrue(online.sentence.contains("server"))
+        assertTrue(online.sentence.contains("online"))
         assertTrue("the cap belongs in the sentence too", online.sentence.contains("2048"))
     }
 
@@ -1342,6 +1342,6 @@ class DwDeviceTierTest {
         assertEquals(1, DwAiTier.TIER_1.number)
         assertEquals(3, DwAiTier.TIER_3.number)
         assertEquals("on this phone", DwAiTier.TIER_2.where)
-        assertEquals("on the server", DwAiTier.TIER_3.where)
+        assertEquals("online", DwAiTier.TIER_3.where)
     }
 }

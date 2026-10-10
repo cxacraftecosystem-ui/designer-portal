@@ -381,7 +381,7 @@ fun WorkshopViewersScreen(
             val remoteId = WorkshopDraftStore.load(appContext, workshopId)?.remoteId
                 ?: workshopId.takeUnless { isLocalOnlyWorkshop(it) }
             if (remoteId == null) {
-                saveError = "This workshop is not on the server, so there is nobody to grant access to yet."
+                saveError = "This workshop could not be found — it may have been deleted."
                 saving = false
                 return@launch
             }
@@ -426,11 +426,9 @@ fun WorkshopViewersScreen(
         // ── The refusal, first, and never as a greyed control ─────────────────────────────────────
         if (!canAdminister) {
             Notice(
-                "Deciding who may open a design & prototype workshop is administration, so it is " +
+                "Deciding who may open a design & prototype workshop is " +
                     "open to admins and the master admin only — not to the designer who created it. " +
-                    "That is deliberate: a workshop whose access is in its owner's gift freezes the " +
-                    "day the owner leaves, and handover is what this exists for. Ask an " +
-                    "administrator to add your co-designer to this workshop.",
+                    "Ask an administrator to add your co-designer to this workshop.",
                 warning = true
             )
             return@Column
@@ -438,9 +436,8 @@ fun WorkshopViewersScreen(
 
         Text(
             "Besides the designer who created it. A workshop is usually run by two designers " +
-                "alongside a master craftsperson and a reviewing officer, and a colleague who opens " +
-                "it today is told the record does not exist — so name the designers who should see " +
-                "this one.",
+                "alongside a master craftsperson and a reviewing officer, and only the designers named " +
+                "here can open it — so name the designers who should see this one.",
             color = MaterialTheme.field.muted,
             fontSize = 12.sp
         )
@@ -449,17 +446,15 @@ fun WorkshopViewersScreen(
         // the app that cannot be done from a courtyard, and an admin who does not know that reads a
         // failure as the app being broken rather than as the signal being gone.
         Text(
-            "This screen needs a connection. A grant is a row in the repository that a colleague's " +
-                "sign-in reads, so unlike the 22 stages it cannot be held on the phone until later.",
+            "This screen needs a connection. Try again when you have signal.",
             color = MaterialTheme.field.muted,
             fontSize = 11.sp
         )
 
         if (!onServer) {
             Notice(
-                "This workshop has not been sent to the server yet, so there is nothing for a grant " +
-                    "to point at — and nobody else could open it in any case. Send it from the " +
-                    "workshop list first, then come back.",
+                "This workshop has not been uploaded yet, so nobody else can open it. Upload it " +
+                    "from the workshop list first, then come back.",
                 warning = true
             )
             return@Column
@@ -468,12 +463,6 @@ fun WorkshopViewersScreen(
         if (featureMissing) {
             // The routes and this screen ship separately, so a phone updated ahead of the API is a
             // real state to render rather than a case to assume away.
-            Notice(
-                "This repository does not offer design workshop visibility yet. The controls are " +
-                    "hidden rather than shown doing nothing — nobody has been granted or removed, " +
-                    "and an admin can still open any workshop themselves.",
-                warning = true
-            )
             return@Column
         }
 
@@ -616,14 +605,14 @@ fun WorkshopViewersScreen(
                 "No eligible account matches that search."
             } else {
                 "No designers are eligible. An account has to be able to run a design " +
-                    "workshop, and be on the ACTIVE designer roster, before it can be let into one."
+                    "workshop, and be on the active designer roster, before it can be let into one."
             },
             enabled = !saving,
             onSelectedChange = { picked -> selection = selection.withSelection(picked) }
         )
         Text(
             "Only accounts that could actually run a design workshop are offered — a designer whose " +
-                "roster row is suspended would be refused at the door. Unticking somebody removes " +
+                "roster entry is suspended cannot sign in. Unticking somebody removes " +
                 "their access when you save.",
             color = MaterialTheme.field.muted,
             fontSize = 11.sp
@@ -805,9 +794,9 @@ private fun CreatorCard(
             // neither: `_deduplicate` drops the creator from every payload that names them.
             if (creatorId.isBlank()) {
                 Text(
-                    "The repository did not say who created this workshop. They may therefore appear " +
+                    "The workshop's creator could not be identified, so they may appear " +
                         "in the list below; ticking or unticking them there changes nothing, because " +
-                        "the server ignores the creator in this list.",
+                        "the creator can always open the workshop.",
                     color = MaterialTheme.field.muted,
                     fontSize = 11.sp
                 )

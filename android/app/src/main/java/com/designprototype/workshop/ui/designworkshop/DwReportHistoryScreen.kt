@@ -608,7 +608,7 @@ private fun DwExportCard(
                 // Where the file came from is a fact about the archive, not trivia: a file a phone
                 // made offline exists on exactly one device until somebody copies it off.
                 DwHistoryChip(
-                    if (record.generatedOnDevice) "Made on a phone, offline" else "Made by the repository",
+                    if (record.generatedOnDevice) "Made on a phone, offline" else "Made online",
                     tone = if (record.generatedOnDevice) DwChipTone.Warn else DwChipTone.Neutral,
                 )
             }
@@ -669,8 +669,7 @@ private fun DwChecksum(value: String?, onDevice: Boolean) {
         Text(
             "No checksum recorded — this file cannot be matched to a copy by its contents." +
                 if (onDevice) {
-                    " A report this phone generates does send one, so a row without it was made by " +
-                        "a build that predates that."
+                    " It was made with an earlier version of the app."
                 } else {
                     ""
                 },

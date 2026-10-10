@@ -130,13 +130,12 @@ internal val DW_TRACE_SUBJECT_DIVERGENCE_NOTES: Map<String, String> = linkedMapO
     "wood-carving" to DW_TRACE_SPLIT_CARVING_NOTE,
     "stone-carving" to DW_TRACE_SPLIT_CARVING_NOTE,
     "metalwork" to
-        "The portal has no metalwork material at all, so this choice exists only on the handset.",
+        "Tuned for engraved and embossed metal.",
 )
 
 /** Shared by the two halves of the portal's single `carving` row. Declared once so it reads once. */
 private const val DW_TRACE_SPLIT_CARVING_NOTE: String =
-    "The portal carries wood and stone as one “Wood & stone carving” material, so a laptop cannot " +
-        "tell which of the two was chosen here."
+    "Wood carving and stone carving each have their own settings."
 
 /* ────────────────────────────────────────────────────────────────────────────
  * The tables
@@ -359,9 +358,7 @@ internal fun dwTraceKotlinNoSuchStyleSentence(styleId: String): String =
 internal fun dwTraceKotlinNoSuchSubjectSentence(subjectId: String): String {
     val bare = "There is no subject called \"${subjectId.trim()}\"."
     if (subjectId.trim() !in DW_TRACE_SUBJECTS_ONLY_ON_THE_PORTAL) return bare
-    return bare + " The portal's list has ten materials and this engine's has twelve: “Wood & stone " +
-        "carving” is split into “Wood carving” and “Stone carving”, and “Metalwork” is added. Choose " +
-        "one of those."
+    return bare + " Choose “Wood carving” or “Stone carving”."
 }
 
 /* ────────────────────────────────────────────────────────────────────────────

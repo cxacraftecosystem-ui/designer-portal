@@ -365,7 +365,7 @@ private fun CostFindingsCard(workshopId: String, rows: Map<String, List<DwDataRo
     ) {
         if (anyUnsynced) {
             Advisory(
-                "$unsyncedSheets of ${sheets.size} cost sheet(s) have not reached the server yet, " +
+                "$unsyncedSheets of ${sheets.size} cost sheet(s) are still waiting to upload, " +
                     "so lines entered against them cannot name their sheet and are in no subtotal " +
                     "below. Nothing is lost and nothing needs re-entering — the sheets are on this " +
                     "screen and the check completes itself once the workshop has synced.",

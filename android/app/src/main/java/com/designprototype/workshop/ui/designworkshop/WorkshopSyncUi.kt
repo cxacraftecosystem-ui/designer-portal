@@ -207,7 +207,7 @@ internal fun WorkshopSyncActions(
                 OutlinedButton(onClick = onRetry, enabled = !busy) {
                     Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(15.dp))
                     Spacer(Modifier.width(6.dp))
-                    Text(if (status.remoteId == null) "Send to server" else "Try again now")
+                    Text(if (status.remoteId == null) "Upload" else "Try again now")
                 }
             }
             Spacer(Modifier.weight(1f))
