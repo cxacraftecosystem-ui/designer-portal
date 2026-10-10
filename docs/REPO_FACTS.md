@@ -124,7 +124,7 @@ no key is skipped wherever it sits.
 | Surface | Files | Cases | Runner |
 |---|---|---|---|
 | Backend unit (`backend/tests/`) | 227 | 4894 `def test_` | `python -m pytest -rf --durations=15` from `backend/` |
-| Web end-to-end (`frontend/e2e/`) | 211 | 2662 `test(` | Playwright, `frontend/playwright.config.ts` |
+| Web end-to-end (`frontend/e2e/`) | 211 | 2664 `test(` | Playwright, `frontend/playwright.config.ts` |
 | Android unit (`android/app/src/test/`) | 243 | 3265 `@Test` | `./gradlew :app:testDebugUnitTest` from `android/` |
 | Android instrumented (`android/app/src/androidTest/`) | 8 | 24 `@Test` | needs a device; on demand only (`.github/workflows/android-emulator.yml`), never a gate |
 
@@ -151,11 +151,11 @@ and this one asserted an absence it had never looked for.
 
 | Area | Tracked files | Tracked lines | Tree files | Tree lines |
 |---|---|---|---|---|
-| `backend/app` | 206 | 157,137 | 206 | 157,137 |
-| `frontend/app` | 95 | 54,879 | 95 | 54,879 |
-| `frontend/components` | 302 | 130,944 | 302 | 130,944 |
-| `frontend/lib` | 126 | 67,738 | 126 | 67,738 |
-| `android/app/src/main/java` | 268 | 231,652 | 268 | 231,652 |
+| `backend/app` | 206 | 156,895 | 206 | 156,895 |
+| `frontend/app` | 95 | 54,683 | 95 | 54,683 |
+| `frontend/components` | 302 | 130,777 | 302 | 130,777 |
+| `frontend/lib` | 126 | 67,683 | 126 | 67,683 |
+| `android/app/src/main/java` | 268 | 231,650 | 268 | 231,650 |
 
 Two columns because the two numbers get quoted interchangeably and disagree by however much work is
 uncommitted. **Tracked** is `git ls-files`, which is the figure to use in a write-up — it is
