@@ -1639,6 +1639,29 @@ installation's privileged-account directory (§4.7).
 
 ---
 
+### 4.4.6 Join cards — one rule set, both clients (web since 2026-10-10)
+
+A join card (`DPW2:J:<workshop>.<secret>:<check>`) is a printed key: redeeming it is the same act as
+an administrator adding somebody to the viewers, through the same eligibility rule. Every rule lives
+in `backend/app/services/design_workshop_grants.py`; the handset (`ui/DwJoinCard.kt`) and the web
+(`frontend/lib/joinCards.ts`, `JoinCardsPanel` on *Cards & tags*, and every code scanner) are clients
+of it and re-decide nothing.
+
+| Act | Who | Route |
+|---|---|---|
+| Print a card for one person | ADMIN and MASTER_ADMIN, the workshop's creator, and a designer on its viewers — anybody else gets the ordinary 404; an administrator holding a post on it is refused (§4.8 rule 5); a non-admin has at most three unused cards outstanding | `POST /api/design-workshop-access/grants` |
+| Print a card for several people, or for any number, or choose its days (1–120, default 14) | ADMIN and MASTER_ADMIN only — the web offers these fields to them alone, and the server refuses them to anybody else | the same |
+| List a workshop's cards (never the secret — only its last four characters) | the same three, post holders among them included | `GET /api/design-workshop-access/grants/{workshopId}` |
+| Cancel a card (stops it admitting anybody further; removes nobody it already admitted) | the same three | `POST /api/design-workshop-access/grants/{id}/revoke` |
+| Redeem a card | any signed-in account | `POST /api/design-workshop-access/redemptions` |
+
+A redemption answers FULL, ALREADY_A_MEMBER or PROVISIONAL (a spent card, an ineligible account, or a
+card that lapsed within the 30-day sync grace: the scan is filed for an administrator and nothing the
+person records is lost). An unknown, cancelled or long-expired card is one 403 sentence for all three.
+Both clients show the server's sentence as given, and neither treats a card as admission offline: the
+handset writes an offline scan to its own queue, while the browser keeps nothing — a live key in browser
+storage outlives the tab — and asks for the card to be scanned again online.
+
 ## 4.5 The inspector scope — the fifth access system, and the only read-only one
 
 > **TWO WRITES SHIPPED FOR THIS TIER ON 2026-09-13, AND THEY ARE ON THIS ROUTER. THE PARAGRAPH

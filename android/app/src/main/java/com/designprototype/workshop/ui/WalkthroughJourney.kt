@@ -772,6 +772,7 @@ private val WALKTHROUGH_FIELDS: Map<String, List<String>> = mapOf(
         "Prototype tags — one per prototype",
         "Print sheet, sized for a home printer",
         "Scan a code back — camera, an uploaded picture, a dropped or pasted picture, or typed",
+        "Join cards — print one for a colleague joining this workshop, and cancel the ones nobody needs",
     ),
     "design-workshop-questionnaires" to listOf(
         "Download the pro-forma",

@@ -29,10 +29,12 @@ count and the kind and stops there, which is the whole of what the stage entry i
 
 import app.services.stage_definitions  # noqa: F401  - installs the registry
 from app.services.report_builder import (
+    MODEL_3D_FIELD_KEYS,
     ReportBuilder,
     WorkshopData,
     build_report,
     format_value,
+    model_preview_note,
 )
 from app.services.report_model import ImageRef, ReportMeta
 from app.services.report_templates import template
@@ -269,3 +271,75 @@ def test_no_media_field_is_left_with_a_role_that_prints_nothing_for_it():
         f"the registry declares {checked} non-image media fields; this census was written against "
         f"seventeen and a shrinking count means fields were removed rather than covered"
     )
+
+
+# --------------------------------------------------------------------------------------
+# 3D models
+# --------------------------------------------------------------------------------------
+
+
+def test_a_3d_model_is_named_as_a_model_and_not_as_a_document():
+    """ "1 document attached" under "3D model" told an officer a paper had been filed where a model
+    had. Android's ``displayValue`` prints the same words; ``ReportEntityParityTest`` holds it."""
+    spec = _field("PROTOTYPE_DEVELOPMENT", "prototype", "modelFile")
+    assert spec.type is FieldType.FILE
+    assert format_value(spec, "media-1") == "1 3D model attached"
+    assert format_value(spec, ["media-1", "media-2"]) == "2 3D models attached"
+    # Every other FILE field keeps its noun.
+    other = _field("PROTOTYPE_DEVELOPMENT", "prototype", "measurementSheet")
+    assert format_value(other, "media-1") == "1 document attached"
+
+
+def test_the_model_table_names_real_fields_with_their_registry_labels():
+    """The map is keyed by field key and carries the preview field's LABEL, which is printed. A
+    renamed field or relabelled gallery must fail here rather than print a heading nobody can find."""
+    prototype = _entity("PROTOTYPE_DEVELOPMENT", "prototype")
+    for model_key, (preview_key, preview_label) in MODEL_3D_FIELD_KEYS.items():
+        model = prototype.field(model_key)
+        preview = prototype.field(preview_key)
+        assert model is not None and model.type is FieldType.FILE
+        assert preview is not None and preview.type is FieldType.IMAGE_LIST
+        assert preview.label == preview_label
+
+
+def test_a_model_points_at_its_photographs_only_when_there_are_some():
+    spec = _field("PROTOTYPE_DEVELOPMENT", "prototype", "modelFile")
+    assert model_preview_note(spec, {"modelFile": "m1"}) == ""
+    assert model_preview_note(spec, {"modelFile": "m1", "turntablePhotos": []}) == ""
+    assert model_preview_note(spec, {"modelFile": "m1", "turntablePhotos": ["a"]}) == (
+        "; 1 photograph of it under “360° capture”"
+    )
+    assert model_preview_note(spec, {"modelFile": "m1", "turntablePhotos": ["a", "b"]}) == (
+        "; 2 photographs of it under “360° capture”"
+    )
+    # Not a model field: never a pointer, whatever the row holds.
+    sheet = _field("PROTOTYPE_DEVELOPMENT", "prototype", "measurementSheet")
+    assert model_preview_note(sheet, {"measurementSheet": "x", "turntablePhotos": ["a"]}) == ""
+
+
+def test_the_generated_report_describes_a_prototype_model_and_its_turntable():
+    """End to end: the line a reader finds in the document, not just the function's string."""
+    document, _warnings = build_report(
+        WorkshopData(
+            workshop_id="w1",
+            title="Workshop",
+            collections={
+                "PROTOTYPE_DEVELOPMENT": {
+                    "prototype": [
+                        {
+                            "_entryId": "p1",
+                            "prototypeCode": "P-01",
+                            "modelFile": "media-model",
+                            "turntablePhotos": ["f1", "f2", "f3"],
+                        }
+                    ]
+                }
+            },
+        ),
+        "DETAILED_TECHNICAL",
+        _resolver,
+        meta=ReportMeta(title="Workshop", subtitle="Cluster", generated_at="2026-10-10T00:00:00Z"),
+    )
+    printed = _text(document)
+    assert "1 3D model attached; 3 photographs of it under “360° capture”" in printed
+    assert "document attached" not in printed

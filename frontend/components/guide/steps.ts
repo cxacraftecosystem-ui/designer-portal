@@ -1241,13 +1241,14 @@ export const GUIDE_STEPS: GuideStep[] = [
       "Artisan cards — one per roster entry",
       "Prototype tags — one per prototype",
       "Print sheet, sized for a home printer",
-      "Scan a code back — camera, an uploaded picture, a dropped or pasted picture, or typed"
+      "Scan a code back — camera, an uploaded picture, a dropped or pasted picture, or typed",
+      "Join cards — print one for a colleague joining this workshop, and cancel the ones nobody needs"
     ],
     watch: [
       "Print them at the START of the fortnight, before the prototypes exist in numbers. A tag tied on afterwards is a tag tied on from memory.",
       "The codes are on the stage index too — you do not need this screen to scan one. Scan a code, further up this guide, opens whatever record a card or a tag names from anywhere in the app; this screen is the one that still resolves its own workshop’s codes with no signal.",
       "The sheet prints from the browser off the local draft, and the code is decoded in the browser as well, so both halves work with no signal.",
-      "A JOIN CARD is a different code doing a different job: one person creates the workshop and the others scan a card to join THE SAME one, which is what stops a team ending the fortnight with four parallel workshops. It is minted and scanned on the handset — there is no join card on the web — and a card is good for one person unless an admin makes it good for more. A late-comer whose card was already spent is not turned away: the ask is filed for an admin to decide, so their work is not orphaned while they wait."
+      "A JOIN CARD is a different code doing a different job: one person creates the workshop and the others scan a card to join THE SAME one, which is what stops a team ending the fortnight with four parallel workshops. Print one on this screen or on the handset; it is scanned wherever codes are scanned — Scan a code, this screen, or the handset — and a card is good for one person unless an admin makes it good for more. A late-comer whose card was already spent is not turned away: the ask is filed for an admin to decide, so their work is not orphaned while they wait."
     ]
   },
   {
@@ -1388,7 +1389,7 @@ export const GUIDE_STEPS: GuideStep[] = [
       // for four draggable corners on THIS screen and does not find them concludes the guide lies.
       // Do not move this bullet onto this screen's own controls without moving the mount first.
       "Straightening a photographed sheet into a plate is a second panel and it is on the stage 11 form, not here: drag the four corners of the sheet on the photograph, and a local threshold turns it into black line on white paper. It writes the plate into the same “Line art / vector file” slot this screen fills — a new file, never over your photograph — and every step of it is arithmetic on the device, so it works where the sketch was drawn.",
-      "A 3D model file is stored and downloadable and nothing in either client draws it. “360° capture” is the view a reviewer actually sees and the one the report prints; a model file prints as the words “1 document attached”.",
+      "A 3D model file is turned in 3D on its stage, on the web and on the handset, and stays downloadable. “360° capture” is the view a reviewer actually sees and the one the report prints as pictures; the model itself prints as the words “1 3D model attached”, with the number of capture photographs beside it.",
       "The comparator has four views, and they are the handset’s own chips by name: Drawing, Wipe, Photograph and Difference. The wipe is the one you reach for; Difference is the one you reach for when the wipe has left you unsure, and it is the only one that costs a third plate to draw.",
       "The download offers five formats and only two of them can be attached to the record. SVG and PNG are what “Attach as” takes; PDF, EPS and DXF are take-away files — a print shop that will not accept an SVG accepts EPS, a laser cutter or CNC controller reads DXF R12 and nothing newer, and a PDF opens on any machine you could mail it to. A DOWNLOAD NEVER REACHES THE RECORD AT ALL, so which format you pick changes what you are holding and never what the officer reads.",
       "Set-aside sketches count. Stage 11 exists to record the designs that were never prototyped, and they are rateable in both rounds — a wider pool picking one up is the reason to write them down.",

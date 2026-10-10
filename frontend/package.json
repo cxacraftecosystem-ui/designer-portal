@@ -21,6 +21,7 @@
     "@types/node": "^26.6.4",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
+    "@types/three": "^0.186.0",
     "class-variance-authority": "^0.7.1",
     "date-fns": "^4.4.0",
     "docx": "^9.9.0",
@@ -36,7 +37,8 @@
     "react-day-picker": "^10.0.2",
     "react-dom": "^19.3.0",
     "react-markdown": "^10.1.0",
-    "remark-gfm": "^4.0.1"
+    "remark-gfm": "^4.0.1",
+    "three": "^0.186.1"
   },
   "devDependencies": {
     "@playwright/test": "^1.64.0",

@@ -70,9 +70,19 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { AlertTriangle, Camera, ClipboardPaste, ImageUp, Keyboard, Loader2, ScanLine, Square } from "lucide-react";
 
 import { decodeQrFromFile, decodeQrFromVideoFrame, type QrImageRefusal } from "@/lib/qrImageDecode";
+import {
+  JOIN_CARD_REDEEM_OFFLINE_MESSAGE,
+  decodeJoinCard,
+  joinCardFailure,
+  joinOutcomeIsMembership,
+  joinOutcomeSentence,
+  looksLikeJoinCard,
+  redeemJoinCard
+} from "@/lib/joinCards";
 import { decodeWorkshopCode, type WorkshopCodeRef } from "@/lib/workshopCodes";
 
 /**
@@ -122,8 +132,11 @@ const FRAME_INTERVAL_MS = 220;
 export function WorkshopCodeScanner({
   resolve,
   onResolved,
+  onJoined,
   description
 }: {
+  /** Fired when a join card put this account on a workshop (not for a provisional foothold). */
+  onJoined?: (workshopId: string) => void;
   /** Turn a decoded reference into an answer. Called for every route, camera and keyboard alike. */
   resolve: (ref: WorkshopCodeRef) => Promise<ScanResolution>;
   /** Fired only for a reference the host resolved, so a caller can navigate or select a row. */
@@ -133,7 +146,15 @@ export function WorkshopCodeScanner({
   const [scanning, setScanning] = useState(false);
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
-  const [outcome, setOutcome] = useState<{ tone: "found" | "refused"; text: string; detail?: string } | null>(null);
+  const [outcome, setOutcome] = useState<{
+    tone: "found" | "refused";
+    text: string;
+    detail?: string;
+    /** Replaces "Found: " — a join card is not a record that was found. */
+    lead?: string;
+    href?: string;
+    hrefLabel?: string;
+  } | null>(null);
   const [typed, setTyped] = useState("");
   const [dragging, setDragging] = useState(false);
 
@@ -203,9 +224,56 @@ export function WorkshopCodeScanner({
     [resolve, onResolved]
   );
 
+  /**
+   * A JOIN CARD, presented to the redemption. `lib/joinCards.ts` carries the rules; this only says
+   * what came back. The typed box is cleared first, because what is in it is a live key.
+   */
+  const handleJoinCard = useCallback(
+    async (raw: string) => {
+      setTyped("");
+      const card = decodeJoinCard(raw);
+      if (!card.ok) {
+        setOutcome({ tone: "refused", text: card.message });
+        return;
+      }
+      setBusy(true);
+      setOutcome({ tone: "found", lead: "", text: "That is a join card. Putting you on the workshop…" });
+      try {
+        const answer = await redeemJoinCard(card.code);
+        const member = joinOutcomeIsMembership(answer.outcome);
+        const workshopId = answer.workshopId || card.workshopId;
+        setOutcome(
+          member
+            ? {
+                tone: "found",
+                lead: "",
+                text: joinOutcomeSentence(answer),
+                href: `/design-workshops/${encodeURIComponent(workshopId)}`,
+                hrefLabel: "Open the workshop"
+              }
+            : // PROVISIONAL IS NOT MEMBERSHIP and is drawn in the warning tone, with no link to a
+              // workshop this account cannot open yet.
+              { tone: "refused", text: joinOutcomeSentence(answer) }
+        );
+        if (member) onJoined?.(workshopId);
+      } catch (error) {
+        setOutcome({ tone: "refused", text: joinCardFailure(error, JOIN_CARD_REDEEM_OFFLINE_MESSAGE).message });
+      } finally {
+        setBusy(false);
+      }
+    },
+    [onJoined]
+  );
+
   /** One decoded string, from any route, taken as far as it can honestly go. */
   const handleRawValue = useCallback(
     async (raw: string) => {
+      // A JOIN CARD IS ANSWERED BY ITS OWN PARSER, BEFORE THE RECORD PARSER'S VERSION GATE — which
+      // would otherwise tell somebody holding a genuine card to update an app that has no update.
+      if (looksLikeJoinCard(raw)) {
+        await handleJoinCard(raw);
+        return;
+      }
       const decoded = decodeWorkshopCode(raw);
       if (!decoded.ok) {
         setOutcome({ tone: "refused", text: decoded.message });
@@ -213,7 +281,7 @@ export function WorkshopCodeScanner({
       }
       await handleReference(decoded.ref);
     },
-    [handleReference]
+    [handleReference, handleJoinCard]
   );
 
   /**
@@ -560,7 +628,7 @@ export function WorkshopCodeScanner({
         </div>
         <p className="text-xs leading-5 text-ink-500">
           Spaces and capitals do not matter. The four characters at the end are a check — if they do not match, the app will
-          say so rather than open the wrong record.
+          say so rather than open the wrong record. A join card typed here puts you on its workshop.
         </p>
       </div>
 
@@ -579,9 +647,14 @@ export function WorkshopCodeScanner({
             }
             data-testid="workshop-code-outcome"
           >
-            <span className="font-medium">{outcome.tone === "found" ? "Found: " : ""}</span>
+            <span className="font-medium">{outcome.lead ?? (outcome.tone === "found" ? "Found: " : "")}</span>
             {outcome.text}
             {outcome.detail ? <span className="block text-xs text-ink-500">{outcome.detail}</span> : null}
+            {outcome.href ? (
+              <Link href={outcome.href} className="mt-1 block text-sm font-medium underline">
+                {outcome.hrefLabel ?? "Open"}
+              </Link>
+            ) : null}
           </p>
         ) : null}
       </div>

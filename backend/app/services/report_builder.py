@@ -321,6 +321,26 @@ def _looks_like_an_id(text: str) -> bool:
     return bool(_OPAQUE_ID.match(text.strip()))
 
 
+#: FILE fields that hold a 3D MODEL, each mapped to the IMAGE_LIST on the same row that pictures it
+#: and that list's registry label. The report names the attachment as a model and, when the row has
+#: photographs of it, says how many and under which heading — a model cannot be printed, but its
+#: turntable frames are, and the reader is pointed at them. Mirrored by Android's
+#: ``DW_MODEL_3D_FIELD_KEYS`` in ``ReportScreen.kt``; ``tests/test_report_attachments.py`` holds the
+#: key and the label to the registry.
+MODEL_3D_FIELD_KEYS: dict[str, tuple[str, str]] = {"modelFile": ("turntablePhotos", "360° capture")}
+
+
+def model_preview_note(spec: FieldSpec, row: dict[str, Any]) -> str:
+    """The pointer from a 3D model to its photographs on the same row, or "" when there are none."""
+    preview = MODEL_3D_FIELD_KEYS.get(spec.key) if spec.type is FieldType.FILE else None
+    if preview is None:
+        return ""
+    frames = len(_media_ids(row.get(preview[0])))
+    if not frames:
+        return ""
+    return f"; {frames} photograph{'' if frames == 1 else 's'} of it under “{preview[1]}”"
+
+
 def format_value(spec: FieldSpec, value: Any) -> str:
     """Render one stored value as the report should print it."""
     if value is None or value == "" or value == []:
@@ -424,6 +444,12 @@ def format_value(spec: FieldSpec, value: Any) -> str:
         count = len(_media_ids(value))
         if not count:
             return ""
+        # A 3D MODEL IS NAMED AS ONE. "1 document attached" under "3D model" told an officer a
+        # paper had been filed where a model had; the noun is the field's, decided by its key in
+        # :data:`MODEL_3D_FIELD_KEYS`, because the stored value is a media id and this module may
+        # not look the file up. Android's ``displayValue`` carries the same branch.
+        if t is FieldType.FILE and spec.key in MODEL_3D_FIELD_KEYS:
+            return f"{count} 3D model{'' if count == 1 else 's'} attached"
         singular, plural = {
             FieldType.AUDIO: ("recording", "recordings"),
             FieldType.VIDEO: ("video", "videos"),
@@ -1298,6 +1324,8 @@ class ReportBuilder:
             return ", ".join(printed)
 
         text = format_value(spec, row.get(spec.key))
+        if text:
+            text += model_preview_note(spec, row)
         # THE SAME RULE, FOR A FIELD THAT IS NOT A REF BUT HOLDS AN ID ANYWAY.
         #
         # The guard above was written for REF and stopped there, so it missed the case that reaches
