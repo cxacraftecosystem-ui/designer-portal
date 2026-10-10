@@ -157,7 +157,7 @@ class UsageConsentCopyTest {
         // which somebody accepted without ever seeing it. Nothing can diff two repositories from
         // here, so what is pinned is the load-bearing clause of each of the two that a well-meaning
         // editor is most likely to "improve": the one about regulated identity numbers, and the one
-        // about work still sitting in an outbox.
+        // about work still waiting to upload.
         val identity = TERMS_CLAUSES.first { it.number == 4 }
         assertEquals("Identity numbers", identity.title)
         assertTrue(identity.body.contains("Aadhaar and Pehchan card numbers are stored masked"))
@@ -166,7 +166,7 @@ class UsageConsentCopyTest {
         val offline = TERMS_CLAUSES.first { it.number == 6 }
         assertEquals("Offline use", offline.title)
         assertTrue(offline.body.contains("do not uninstall the app or clear its data"))
-        assertTrue(offline.body.contains("outbox"))
+        assertTrue(offline.body.contains("waiting to upload"))
 
         // Clause 9 is the one that makes the version column mean something to a reader.
         val changes = TERMS_CLAUSES.first { it.number == 9 }
