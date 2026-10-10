@@ -131,7 +131,7 @@ class DwFoldHonoursDeletedRowTest {
         assertEquals(1, fold.declinedRowCount)
         assertFalse("a fold that declined a row has changed something the designer can see", fold.isNothingNew)
         val notice = fold.notice!!
-        assertTrue(notice, notice.contains("NOT come back"))
+        assertTrue(notice, notice.contains("not come back"))
         assertFalse(
             "this is the designer's own deletion holding, not the collateral warning:\n$notice",
             notice.contains("You had deleted everything in"),

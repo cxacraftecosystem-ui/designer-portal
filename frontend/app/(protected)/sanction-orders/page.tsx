@@ -48,7 +48,7 @@
  *
  * ══ NOTHING IS EMAILED. THE OFFICER IS THE TRANSPORT, AND THIS SCREEN SAYS SO ══════════════════
  *
- * There is no mailer in this product. The sign-in link comes back once, in the response to the
+ * The sanction register does not e-mail. The sign-in link comes back once, in the response to the
  * create, and nothing anywhere can show it again — the server stores only a SHA-256 digest. So the
  * panel below offers the link to copy and a prewritten message to paste, and it says in words that
  * nothing has been sent. An officer who records ten sanctions and copies none has ten designers who

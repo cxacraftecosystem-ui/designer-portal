@@ -197,8 +197,7 @@ internal fun ReuseQuestionnaireDialog(
                     }
                 } else {
                     Text(
-                        "Only workshops this account can already open are listed. The server refuses " +
-                            "a workshop it has not shown you.",
+                        "Only workshops this account can already open are listed.",
                         color = MaterialTheme.field.muted,
                         fontSize = 11.sp,
                         lineHeight = 16.sp,

@@ -377,9 +377,9 @@ class ApiKeysState internal constructor(
                     hide(row.key)
                     confirmingClear = null
                     notice = if (row.source == SOURCE_ENVIRONMENT) {
-                        "${row.label} override cleared — the deployed environment value applies again."
+                        "${row.label}: the saved value is removed and the default value applies again."
                     } else {
-                        "${row.label} override cleared — there is no value for this key anywhere now."
+                        "${row.label}: the saved value is removed. This key now has no value."
                     }
                 }
                 .onFailure { error = it.apiErrorMessage("Unable to clear that override") }
@@ -536,7 +536,7 @@ fun ApiKeysScreen(
         }
 
         Text(
-            "Every key the repository can be configured with. Test one to check it against the " +
+            "Every key the portal can use. Test one to check it with the " +
                 "provider before a field team depends on it.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -586,8 +586,7 @@ private fun ApiKeysLiveBanner() {
             color = MaterialTheme.colorScheme.onPrimaryContainer
         )
         Text(
-            "A key stored here overrides the deployed environment on the very next provider call — " +
-                "the API and the transcription queue both pick it up without a restart or a redeploy. " +
+            "A key saved here replaces the default straight away, for every feature that uses it. " +
                 "Values are encrypted at rest, are never written to logs, and revealing one is " +
                 "recorded against your account.",
             style = MaterialTheme.typography.bodySmall,
@@ -628,8 +627,7 @@ private fun ApiKeysRestrictedCard() {
                 "The key VALUES are limited to the master admin account. Ordinary admins manage " +
                     "people and records; handing out live provider credentials stays with the " +
                     "single master admin. The provider ranking above is yours — you can reorder the " +
-                    "engines and ask each provider whether its key works, which is a verdict rather " +
-                    "than a credential.",
+                    "engines and test whether each provider's key works.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -928,7 +926,7 @@ private fun ApiKeyEditPanel(secret: ManagedSecretDto, state: ApiKeysState, busy:
             modifier = Modifier.fillMaxWidth()
         )
         Text(
-            "Saving replaces the value for the whole repository at once, effective immediately.",
+            "Saving replaces the value for everyone at once, effective immediately.",
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onPrimaryContainer
         )
@@ -972,9 +970,8 @@ private fun ApiKeyClearPanel(secret: ManagedSecretDto, state: ApiKeysState, busy
             color = MaterialTheme.colorScheme.onErrorContainer
         )
         Text(
-            "The saved override is deleted and the deployed environment value applies again from " +
-                "the next call. If the environment has no value for this key, the features that " +
-                "need it stop working.",
+            "The saved value is deleted and the default value applies again. If there is no " +
+                "default for this key, the features that need it stop working.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onErrorContainer
         )
@@ -1090,9 +1087,9 @@ private fun ApiKeyStatusBadge(status: String) {
 // ---------------------------------------------------------------------------------------------
 
 private fun apiKeySourceHelp(source: String): String = when (source) {
-    SOURCE_DATABASE -> "Saved here — this value overrides the deployed environment."
-    SOURCE_ENVIRONMENT -> "Coming from the deployed environment. Saving here overrides it."
-    else -> "No value anywhere — the features that need it are switched off."
+    SOURCE_DATABASE -> "Saved here — this value replaces the default."
+    SOURCE_ENVIRONMENT -> "Using the default value. Saving here replaces it."
+    else -> "No value — the features that need it are switched off."
 }
 
 /**

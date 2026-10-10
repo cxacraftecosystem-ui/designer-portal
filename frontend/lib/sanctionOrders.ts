@@ -56,8 +56,8 @@
  *
  * ── NOTHING IS EMAILED, AND THE SCREEN MUST NOT IMPLY OTHERWISE ─────────────────────────────────
  *
- * There is no mailer in this product. `credential_links.delivery()` hard-returns `CopyLinkDelivery`,
- * which logs one line WITHOUT the link and answers `"COPY_LINK"`. The sign-in link comes back in
+ * The sanction register does not e-mail. Its links are issued with the default delivery,
+ * `CopyLinkDelivery`, which logs one line WITHOUT the link and answers `"COPY_LINK"`. The sign-in link comes back in
  * the 201 body ONCE — the table stores only a SHA-256 digest, so nothing can show it again — and
  * the officer is the transport. {@link sanctionMessageFor} is the prewritten message they paste
  * into WhatsApp or their own mail client, so that the transport is a paste rather than a
@@ -167,7 +167,7 @@ export type SanctionOrderCredentialLink = {
   link: string;
   expiresAt: string;
   purpose: "INVITE" | "RESET";
-  /** `"COPY_LINK"` today, always. There is no mailer — see the module header. */
+  /** `"COPY_LINK"`, always: the register does not e-mail — see the module header. */
   deliveredBy: string;
 };
 
@@ -295,7 +295,7 @@ export function formatSanctionAmount(amount: string | null | undefined): string 
 /**
  * THE PREWRITTEN MESSAGE, worded once, here.
  *
- * The officer is the transport — there is no mailer — so the smallest honest thing this product can
+ * The officer is the transport — the register does not e-mail — so the smallest honest thing this product can
  * do is hand them a sentence to paste rather than asking them to compose one at nine in the
  * morning, fifteen times. It names four things on purpose:
  *

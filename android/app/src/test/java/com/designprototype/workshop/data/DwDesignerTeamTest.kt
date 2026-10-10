@@ -384,7 +384,7 @@ class DwDesignerTeamTest {
         assertNotEquals(offline, searched)
         assertNotEquals(searched, cut)
         assertNotEquals(offline, cut)
-        assertTrue(offline.contains("could not be reached"))
+        assertTrue(offline.contains("Could not connect"))
         assertTrue("it must name the box, which this dialog covers", searched.contains("search box"))
         assertTrue(cut.contains("more workshops than this screen could read"))
     }
@@ -410,10 +410,10 @@ class DwDesignerTeamTest {
     @Test
     fun `only the offline caveat explains the held move, and it says the wait is free`() {
         val offline = dwAdoptCandidateNotice(offline = true, searched = false, listTruncated = false)!!
-        assertTrue("it must say the move is held", offline.contains("Moving waits for signal"))
+        assertTrue("it must say the move is held", offline.contains("Moving waits for a connection"))
         assertTrue(
             "and that nothing was going anywhere before signal in any case",
-            offline.contains("nothing would be sent before then anyway"),
+            offline.contains("nothing is sent before then"),
         )
 
         for (live in listOf(
@@ -422,7 +422,7 @@ class DwDesignerTeamTest {
         )) {
             assertFalse(
                 "the button is live in this state; do not tell them to wait for signal",
-                live.contains("waits for signal"),
+                live.contains("waits for a connection"),
             )
         }
     }
@@ -459,7 +459,7 @@ class DwDesignerTeamTest {
         assertTrue("it must not read as 'no workshops exist'", online.contains("named on it"))
         assertTrue("the second door", online.contains("join card"))
         assertTrue(online.contains("Nothing on this phone is at risk"))
-        assertTrue(offline.contains("could not be reached"))
+        assertTrue(offline.contains("could not connect"))
         assertFalse(
             "with nothing read, this must make no claim about who is named on what",
             offline.contains("named on it"),

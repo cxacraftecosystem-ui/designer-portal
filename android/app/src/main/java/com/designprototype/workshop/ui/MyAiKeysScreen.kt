@@ -143,7 +143,7 @@ fun MyAiKeysScreen(
                         Spacer(Modifier.height(8.dp))
                         Text(
                             "Leave this empty and everything works exactly as it does now, on the " +
-                                "key this server is set up with. Your key is stored encrypted, is " +
+                                "organisation's own keys. Your key is stored encrypted, is " +
                                 "used only for work you personally ask for, and is never shown to " +
                                 "anyone — including administrators.",
                             style = MaterialTheme.typography.bodySmall,
@@ -301,8 +301,8 @@ private fun ProviderKeyCard(
             if (state.unreadable) {
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    "This key can no longer be decrypted — the server's encryption key changed " +
-                        "after it was saved. Paste it again to fix it. Nothing is using it meanwhile.",
+                    "This key can no longer be read. Paste it again to fix it. Nothing is using it " +
+                        "meanwhile.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.error
                 )
@@ -423,8 +423,8 @@ private fun ProviderKeyCard(
                 Spacer(Modifier.height(6.dp))
                 Text(
                     "${provider.label} cannot transcribe audio — none of its models accepts a " +
-                        "sound file — so recordings keep using whatever this server is set up " +
-                        "with, whatever you save here.",
+                        "sound file — so recordings keep using the organisation's own transcription, " +
+                        "whatever you save here.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

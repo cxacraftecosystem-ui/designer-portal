@@ -308,11 +308,11 @@ class ReportQuestionnaireAnnexureTest {
         assertTrue("the questionnaire must be named: $text", text.contains("Loom census"))
         assertTrue(
             "the file must say the answers are absent from THIS copy rather than absent: $text",
-            text.contains("this device holds no copy of the answers"),
+            text.contains("are not printed below"),
         )
         assertTrue(
-            "and must point at the copy that does have them: $text",
-            text.contains("the office's copy of this report carries them"),
+            "and must point at the record that does have them: $text",
+            text.contains("Their answers are in the online workshop record"),
         )
         // No index table and no per-questionnaire heading: there is nothing answered to index, and a
         // numbered heading over nothing is what makes a report look corrupt.
@@ -343,12 +343,12 @@ class ReportQuestionnaireAnnexureTest {
         assertTrue("the annexure still prints: $text", text.contains("Padma Meher"))
         assertTrue(
             "and it must not imply it has the whole set: $text",
-            text.contains("has not read the full list of questionnaires"),
+            text.contains("Other questionnaires may also be attached to this workshop"),
         )
         // A complete one says nothing of the kind — the note must not become noise on every report.
         assertFalse(
             annexureBlocks(cacheOf(item)).joinToString("\n", transform = ::describe)
-                .contains("has not read the full list"),
+                .contains("may also be attached"),
         )
     }
 
@@ -364,7 +364,7 @@ class ReportQuestionnaireAnnexureTest {
         assertTrue("the date must be in the file: $text", text.contains("2026-03-01"))
         assertTrue(
             "and must say what a later sitting means for this copy: $text",
-            text.contains("is in the office's copy of this report and not in this one"),
+            text.contains("recorded after that date is in the online workshop record"),
         )
     }
 

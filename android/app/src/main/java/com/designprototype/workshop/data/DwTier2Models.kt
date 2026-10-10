@@ -372,10 +372,10 @@ fun dwTier2InstallMayBeOffered(
 // The words. Terse: name, size, memory, verdict, one action
 // ---------------------------------------------------------------------------------------------
 
-/** The one line above the Tier 2 list. Says what the models are for, and that nothing downloads by itself. */
+/** The one line above the Tier 2 list: what the models are for, and that nothing downloads by itself. */
 const val DW_TIER2_LIST_INTRO: String =
-    "Language models that run on this phone, for proofreading and translating what is already " +
-        "written. Nothing is downloaded unless you ask for it."
+    "Language models, for tidying and translating what is already written. Each shows its " +
+        "download size and what this phone makes of it. Nothing is downloaded unless you ask for it."
 
 /**
  * One judged row, in one sentence: **what it costs, whose figure that is, and what this phone makes
@@ -402,14 +402,19 @@ fun dwTier2RowSentence(choice: DwModelChoice, measurement: DwDeviceMeasurement):
     val plan = choice.plan
     /*
      * WORD COUNT IS A CONSTRAINT ON THIS FUNCTION AND NOT AN AESTHETIC. `DwTier2ModelsTest` fails the
-     * build over 60 words for a single-note row. The size, the memory figure the verdict was computed
-     * from, and this phone's verdict — nothing about who measured what, which is in the catalogue for
-     * whoever chooses which model to ship.
+     * build over 80 words for a single-note row: the size, the memory figure the verdict was computed
+     * from and whose figure it is, and this phone's verdict.
      */
     append(dwBytesLabel(plan.onDiskBytes))
     append(" to download. It needs about ")
     append(dwBytesLabel(plan.peakRssBytes))
-    append(" of memory while it runs. ")
+    append(" of memory while it runs (Google's published figure, from a Galaxy S26 Ultra).")
+    dwTier2GpuClaimBytes(plan.modelId)?.let { gpu ->
+        append(" Google also publish ")
+        append(dwBytesLabel(gpu))
+        append(" for the graphics backend; the larger figure is used here.")
+    }
+    append(" ")
     append(dwTier2FitClause(choice, measurement))
 }
 
@@ -462,10 +467,10 @@ private fun dwTier2NoteClause(
         "the file is larger than the free storage, so the download could not finish."
 
     DwFitNote.NO_BUILD_FOR_THIS_PROCESSOR ->
-        "there is no build of the runtime for this phone's processor (it is ${choice.plan.abi} only)."
+        "it does not run on this phone's processor (it needs ${choice.plan.abi})."
 
     DwFitNote.LOAD_FAILED_HERE_BEFORE ->
-        "it was tried on this phone and would not load."
+        "it was tried on this phone and would not load, so it will not be tried here again."
 
     DwFitNote.PROCESSOR_UNMEASURED -> "this phone would not say what processor it has."
     DwFitNote.TOTAL_MEMORY_UNMEASURED -> "this phone would not say how much memory it has."

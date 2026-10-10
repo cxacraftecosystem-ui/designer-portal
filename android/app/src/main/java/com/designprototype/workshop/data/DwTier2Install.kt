@@ -323,8 +323,8 @@ fun dwTier2VerbNote(model: DwModelPlan): String =
 fun dwTier2TierLine(offer: DwTierOffer, installed: Set<String>, catalogue: List<DwModelPlan> = DW_TIER2_PLANS): String? {
     val running = catalogue.filter { it.modelId in installed }.minByOrNull { it.peakRssBytes }
     if (running != null) {
-        return "Tier ${DwAiTier.TIER_2.number} runs ${running.modelId} on this phone, for proofreading " +
-            "and translating what is already written."
+        return "On-device AI: ${running.modelId} runs on this phone, for proofreading and " +
+            "translating what is already written."
     }
     return if (offer is DwTierOffer.Available) dwTierOfferSentence(DwAiTier.TIER_2, offer) else null
 }

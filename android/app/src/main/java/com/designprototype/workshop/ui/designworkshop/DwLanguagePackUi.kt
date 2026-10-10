@@ -375,7 +375,7 @@ internal class DwLanguagePackController(
             // good list and replace nineteen honest rows with nineteen "unknown"s.
             answer != null -> {
                 val code = (answer.exceptionOrNull() as? DwPackCheckFailure)?.code
-                cannotAsk = "This phone would not say which language packs it has (code $code). " +
+                cannotAsk = "This phone would not say which language packs it has. " +
                     "Dictation still works and still says when a language is missing."
             }
             else -> {
@@ -522,7 +522,7 @@ internal class DwLanguagePackController(
 
             override fun onError(error: Int) {
                 requests[tag] = DwPackRequestNote(
-                    "$label could not be fetched (code $error). Check the connection and try again, " +
+                    "$label could not be fetched. Check the connection and try again, " +
                         "or add it in the phone's own speech or keyboard settings.",
                     failed = true,
                 )

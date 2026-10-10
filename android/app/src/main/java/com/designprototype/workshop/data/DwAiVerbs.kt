@@ -1085,8 +1085,8 @@ fun dwVerbLanguageRefusal(raw: String?, what: String): String? {
     val token = raw?.trim().orEmpty()
     if (token.isEmpty()) return null
     if (DW_VERB_LANGUAGE_TOKEN.matches(token)) return null
-    return "“${token.take(DW_VERB_MAX_LANGUAGE_CHARS)}” is not a language name this server can use " +
-        "for $what. Send the language as a name or a code — “Odia”, “or”, “Hindi”, “multi” — of at " +
+    return "“${token.take(DW_VERB_MAX_LANGUAGE_CHARS)}” cannot be used as a language name for " +
+        "$what. Type the language as a name or a code — “Odia”, “or”, “Hindi”, “multi” — of at " +
         "most $DW_VERB_MAX_LANGUAGE_CHARS characters, with no punctuation."
 }
 
@@ -1127,8 +1127,8 @@ fun dwVerbLanguageRefusal(raw: String?, what: String): String? {
 
 /** Nothing is selected, so there is nothing to send. */
 const val DW_VERBS_NOTHING_SELECTED: String =
-    "Select the words you want worked on first. These run over a passage rather than over the whole " +
-        "field, so what is selected is what is sent — and is what the layer records as its source."
+    "Select the words you want worked on first. Only what you select is sent, and it is kept with " +
+        "the result as its source."
 
 /**
  * The selection is longer than the server will accept as evidence for one layer.
@@ -1147,10 +1147,8 @@ const val DW_VERBS_NOTHING_SELECTED: String =
  * because the alternative is a reader believing the two clients print the same string here.
  */
 fun dwVerbPassageTooLong(chars: Int): String =
-    "That selection is ${groupIndian(chars.toString())} characters and at most " +
-        "${groupIndian(DW_VERB_MAX_TEXT_CHARS.toString())} can be sent. This is a bound on the " +
-        "EVIDENCE rather than on the verb: a proofread of the first ten pages of a twelve-page note, " +
-        "recorded as a proofread of the note, is a layer whose source is not what it says. Select a " +
+    "That selection is ${groupIndian(chars.toString())} characters, and at most " +
+        "${groupIndian(DW_VERB_MAX_TEXT_CHARS.toString())} can be sent at once. Select a " +
         "shorter passage."
 
 /**
@@ -1164,10 +1162,8 @@ fun dwVerbPassageTooLong(chars: Int): String =
  * perfectly safe: the words are in the draft in `filesDir` and are untouched.
  */
 const val DW_VERBS_NEED_A_CONNECTION: String =
-    "These run on the server, so they need a connection. Nothing has been queued for later — a run " +
-        "spends real provider credit and counts against today's allowance, so one replayed in three " +
-        "days' time would be charged against a day you are not having. Your words are on this phone " +
-        "and are untouched; reconnect and select the passage again."
+    "These need a connection. Nothing has been queued to run later. Your words are on this phone " +
+        "and are untouched — connect and try again."
 
 /**
  * The workshop has not been cleared to send anything, so no verb can run.
@@ -1202,8 +1198,8 @@ fun dwVerbConsentRefusal(consent: DwTier3Consent): String = when (consent) {
 
 /** A photograph the server has never seen cannot be described by a model running on the server. */
 const val DW_VERBS_MEDIA_NOT_UPLOADED: String =
-    "This file has not reached the server yet, so there is nothing to send — the verb runs on the " +
-        "server's copy. It goes up with the next sync, and you can describe it then."
+    "This file is still waiting to upload. Once it uploads with the next sync, you can use these " +
+        "on it."
 
 /**
  * **THE WORKSHOP ITSELF HAS NEVER REACHED THE SERVER**, so no verb has a record to run over.
@@ -1220,11 +1216,8 @@ const val DW_VERBS_MEDIA_NOT_UPLOADED: String =
  * The verbs would have walked through it a lane later.
  */
 const val DW_VERBS_WORKSHOP_NOT_ON_SERVER: String =
-    "This workshop is still only on this phone, so there is nothing for a model to read — these run " +
-        "on the server's copy and the server has never seen this one. It goes up with the next sync " +
-        "and they become available then. Nothing you have written is at risk: it is in the draft " +
-        "here, and no run has been queued, because a run spends provider credit against the day it " +
-        "is made."
+    "This workshop is still only on this phone. These become available once it uploads with the " +
+        "next sync. Nothing you have written is at risk — it is saved on this phone."
 
 /**
  * Today's ceiling in this client's words — **the fallback, used only when the server supplied none.**
@@ -1249,27 +1242,8 @@ const val DW_AI_VERBS_SPENT: String =
  * data out of a designer's own bundle, per recording.
  */
 const val DW_SUBTITLES_SECOND_UPLOAD_NOTE: String =
-    "Subtitling sends this recording to a transcription engine again. The timings are the whole " +
-        "point of it and nothing already stored has them, so even a recording this workshop has " +
-        "already transcribed has to go up a second time — which costs an upload, your mobile data, " +
-        "and one run of today's allowance."
-
-/**
- * **THE ONE VERB THAT NEVER RUNS ON A DESIGNER'S OWN KEY**, said out loud because no client can tell.
- *
- * Four of the five verbs pass `user_id=current_user.id` into the key resolver, which hands back the
- * designer's own key when they have one that can do the task and falls back to the deployment's
- * otherwise — so bring-your-own-key is invisible and needs no branch. `subtitle_ai_layer` is
- * different: it calls `ai.transcribe_timed_bytes(content, filename, mime, get_settings())`, and that
- * function's signature HAS NO `user_id` PARAMETER AT ALL. A backend asymmetry rather than a client
- * one, and nothing here changes it — but a designer who supplied a key expecting to pay for their own
- * work is silently on the organisation's bill for this verb alone.
- */
-const val DW_SUBTITLES_DEPLOYMENT_KEY_NOTE: String =
-    "Subtitles always run on this server's own transcription key, even if you have supplied one of " +
-        "your own — the other four verbs use yours when you have one. That is a limitation of the " +
-        "server rather than a choice made here, and it means the cost of this run falls on the " +
-        "organisation."
+    "Subtitling uploads this recording again to work out the timings, even if it has already been " +
+        "transcribed. It uses your mobile data and one run of today's allowance."
 
 // ---------------------------------------------------------------------------------------------
 // Reading a stored cue list

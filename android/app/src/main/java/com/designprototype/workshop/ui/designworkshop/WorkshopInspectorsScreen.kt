@@ -334,7 +334,7 @@ fun WorkshopInspectorsScreen(
             val remoteId = WorkshopDraftStore.load(appContext, workshopId)?.remoteId
                 ?: workshopId.takeUnless { isLocalOnlyWorkshop(it) }
             if (remoteId == null) {
-                saveError = "This workshop is not on the server, so there is nothing to inspect yet."
+                saveError = "This workshop could not be found — it may have been deleted."
                 saving = false
                 return@launch
             }
@@ -380,9 +380,8 @@ fun WorkshopInspectorsScreen(
         if (!canAdminister) {
             InspectionNotice(
                 "Only an administrator decides who inspects a design & prototype workshop — not the " +
-                    "designer who created it, and not the designers who run it. That is the point of " +
-                    "the tier rather than a workflow preference: an independent review whose reviewer " +
-                    "was chosen by the people being reviewed is not a review. Ask an administrator.",
+                    "designer who created it, and not the designers who run it, so the review stays " +
+                    "independent. Ask an administrator.",
                 warning = true
             )
             return@Column
@@ -410,18 +409,15 @@ fun WorkshopInspectorsScreen(
         // Said before anything is attempted, not only when it fails. An admin who does not know this
         // reads a failure as the app being broken rather than as the signal being gone.
         Text(
-            "This screen needs a connection. An assignment is a row in the repository that an " +
-                "inspector's sign-in reads, so unlike the 22 stages it cannot be held on the phone " +
-                "until later.",
+            "This screen needs a connection. Try again when you have signal.",
             color = MaterialTheme.field.muted,
             fontSize = 11.sp
         )
 
         if (!onServer) {
             InspectionNotice(
-                "This workshop has not been sent to the server yet, so there is nothing to inspect " +
-                    "— and nobody else could open it in any case. Send it from the workshop list " +
-                    "first, then come back.",
+                "This workshop has not been uploaded yet, so nobody else can open it. Upload it " +
+                    "from the workshop list first, then come back.",
                 warning = true
             )
             return@Column
@@ -430,12 +426,6 @@ fun WorkshopInspectorsScreen(
         if (featureMissing) {
             // The routes and this screen ship separately, so a phone updated ahead of the API is a
             // real state to render rather than a case to assume away.
-            InspectionNotice(
-                "This repository does not offer design workshop inspections yet. The controls below " +
-                    "are hidden rather than shown doing nothing — nobody has been assigned or " +
-                    "unassigned, and every workshop is unaffected.",
-                warning = true
-            )
             return@Column
         }
 
@@ -559,9 +549,7 @@ fun WorkshopInspectorsScreen(
         // unfiltered, so the sentence follows the list (the web panel's hint, word for word).
         Text(
             "Inspector / Reviewer accounts are offered, and so are Ministry Admin, admin and master " +
-                "admin accounts — never you — and only those the platform access list still admits: " +
-                "assigning somebody who cannot sign in would leave this screen saying they are " +
-                "inspecting while they are shown a refusal at the door. Somebody who worked on this " +
+                "admin accounts — never you — and only those who can still sign in. Somebody who worked on this " +
                 "workshop, or who is its Assistant Director or Regional Director, is refused when " +
                 "you save, with the reason. Unticking somebody ends their inspection when you save. " +
                 "At most $DW_INSPECTOR_LIMIT accounts.",
@@ -579,9 +567,7 @@ fun WorkshopInspectorsScreen(
         // inspection by any route other than a row in this table, so this sentence may say so flatly.
         if (served.isEmpty()) {
             Text(
-                "This workshop is not under inspection. Nobody has been assigned to review it — and " +
-                    "unlike the designers who can see it, there is nobody holding an inspection some " +
-                    "other way.",
+                "This workshop is not under inspection. Nobody has been assigned to review it.",
                 color = MaterialTheme.field.muted,
                 fontSize = 13.sp
             )

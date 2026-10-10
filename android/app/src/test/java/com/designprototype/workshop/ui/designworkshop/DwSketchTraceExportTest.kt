@@ -898,9 +898,9 @@ class DwSketchTraceExportTest {
      */
     @Test
     fun `both refusals name a remedy`() {
-        // No exporter: the SVG still works, and the portal can write the rest.
+        // No exporter: the SVG and the picture still work.
         assertTrue(DW_TRACE_NO_EXPORTER_SENTENCE.contains("SVG"))
-        assertTrue(DW_TRACE_NO_EXPORTER_SENTENCE.contains("portal"))
+        assertTrue(DW_TRACE_NO_EXPORTER_SENTENCE.contains("picture"))
         // A preview: trace it again at full size.
         assertTrue(DW_TRACE_EXPORT_PREVIEW_SENTENCE.contains("full size"))
     }

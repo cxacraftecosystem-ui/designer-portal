@@ -85,14 +85,14 @@ class DwUnsentDeletionTest {
     @Test
     fun `the row says what is outstanding rather than falling through to a blank sentence`() {
         val summary = status(unsentDeletions = 1).summary
-        assertEquals("1 stage with a deletion not sent — the rest is backed up", summary)
+        assertEquals("1 stage with a deletion not sent — the rest is saved online", summary)
         assertFalse("nothing here is waiting for a connection to carry it", summary.contains("waiting to upload"))
     }
 
     @Test
     fun `two stages holding deletions are not called one`() {
         assertEquals(
-            "2 stages with a deletion not sent — the rest is backed up",
+            "2 stages with a deletion not sent — the rest is saved online",
             status(unsentDeletions = 2).summary,
         )
     }
@@ -106,7 +106,7 @@ class DwUnsentDeletionTest {
     @Test
     fun `a refusal and a deletion each get their own clause in the row`() {
         assertEquals(
-            "2 answers refused, 1 stage with a deletion not sent — the rest is backed up",
+            "2 answers not accepted, 1 stage with a deletion not sent — the rest is saved online",
             status(refusedAnswers = 2, unsentDeletions = 1).summary,
         )
     }
@@ -154,17 +154,17 @@ class DwUnsentDeletionTest {
         )
         assertTrue(
             "it has to say a sync cannot do this:\n${banner.detail}",
-            banner.detail.contains("a sync will NOT move it"),
+            banner.detail.contains("syncing alone will not send it"),
         )
         assertTrue(
-            "and name the one action that can — a READ, which only the stage screen makes",
-            banner.detail.contains("has to READ that stage once"),
+            "and name the one action that can — opening the stage, which only the stage screen does",
+            banner.detail.contains("1 stage has a deletion that has not been sent"),
         )
         assertTrue(
             banner.detail,
             banner.detail.contains("Open the workshop, then the stage, with a connection"),
         )
-        assertTrue("and where the rest of the work is", banner.detail.contains("Everything else is on the server"))
+        assertTrue("and where the rest of the work is", banner.detail.contains("Everything else is saved online"))
     }
 
     @Test
@@ -174,9 +174,9 @@ class DwUnsentDeletionTest {
             failures = 0, refusedAnswers = 0, unsentDeletions = 2,
         )!!
         assertEquals("2 stages with a deletion not sent", banner.headline)
-        assertTrue(banner.detail, banner.detail.contains("hold row deletions"))
-        assertTrue(banner.detail, banner.detail.contains("a sync will NOT move them"))
-        assertTrue(banner.detail, banner.detail.contains("has to READ those stages once"))
+        assertTrue(banner.detail, banner.detail.contains("have deletions that have not been sent"))
+        assertTrue(banner.detail, banner.detail.contains("syncing alone will not send them"))
+        assertTrue(banner.detail, banner.detail.contains("then those stages, with a connection"))
     }
 
     /**
@@ -196,7 +196,7 @@ class DwUnsentDeletionTest {
             banner.detail,
             banner.detail.contains("the stages and files above upload whenever there is a connection"),
         )
-        assertTrue(banner.detail, banner.detail.contains("a sync will NOT move it"))
+        assertTrue(banner.detail, banner.detail.contains("syncing alone will not send it"))
     }
 
     /**
@@ -210,7 +210,7 @@ class DwUnsentDeletionTest {
             workshops = 1, stages = 0, files = 0, bytesText = "0 B",
             failures = 0, refusedAnswers = 2, unsentDeletions = 1,
         )!!
-        assertEquals("2 answers refused · 1 stage with a deletion not sent", banner.headline)
+        assertEquals("2 answers not accepted · 1 stage with a deletion not sent", banner.headline)
         assertFalse(banner.waiting)
         assertTrue(
             "the refusal's remedy",

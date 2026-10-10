@@ -7,7 +7,6 @@ import com.designprototype.workshop.data.DwAiVerbCapRefused
 import com.designprototype.workshop.data.DwAiVerbCapView
 import com.designprototype.workshop.data.DwAiVerbNotConfigured
 import com.designprototype.workshop.data.DwAiVerbRefused
-import com.designprototype.workshop.data.DwFieldType
 import com.designprototype.workshop.data.dwAiIsUnrecorded
 import com.designprototype.workshop.report.RichDoc
 import java.io.IOException
@@ -152,9 +151,8 @@ internal fun dwVerbPassagePreview(passage: String): String {
  * not a second opinion about the rule.
  */
 internal const val DW_NO_PARAGRAPH_TO_WORK_ON: String =
-    "Put the caret in the paragraph you want worked on, or select part of one. These run over a " +
-        "passage rather than over the whole field, so what is sent is what the layer records as its " +
-        "source — a later reader sees exactly this passage quoted as the evidence."
+    "Put the cursor in the paragraph you want worked on, or select part of one. Only that passage " +
+        "is sent, and it is kept with the result as its source."
 
 // -------------------------------------------------------------------------------------------------
 // Which verb a file admits
@@ -197,65 +195,6 @@ internal fun dwMediaVerbsFor(mediaType: String?): Set<String> {
     if (stored.endsWith("AUDIO") || stored.endsWith("VIDEO")) verbs += MEDIA_VERB_SUBTITLES
     return verbs
 }
-
-/**
- * Could a file attached to a field of THIS TYPE be offered a media verb at all?
- *
- * **THE FIELD'S DECLARATION, FOR THE CASE WHERE THE FILE'S OWN `mediaType` IS NOT KNOWN.**
- * [DwFieldType] is what the registry declares; `DraftMedia.mediaType` is measured from bytes this device holds. When
- * a descriptor cannot be resolved — a photograph attached in the browser, or bytes that have gone
- * missing — there are no bytes to measure and [dwMediaVerbsFor] has nothing to answer from, so the
- * tile has to decide from the field whether to explain the missing control or to say nothing.
- *
- * IMAGE, IMAGE_LIST, AUDIO and VIDEO fields hold exactly the three media types a verb exists for.
- * **FILE IS DELIBERATELY FALSE**, and it is the interesting one: a FILE field holds the scanned
- * sanction order, and `dwMediaVerbsFor` answers PDF and DOCUMENT with nothing at all *"which is the
- * one place this feature stays silent on purpose"*. Explaining an absent control there would advertise
- * a capability that does not exist for that field even when the bytes are present — so an
- * unresolvable FILE tile keeps that silence rather than acquiring a sentence the resolvable one does
- * not have. The cost, stated: a designer who photographed a certificate INTO a FILE field on another
- * device gets no sentence about the missing caption control. Naming the field type is a declaration;
- * guessing the type of bytes this phone does not hold is not.
- *
- * `else` RATHER THAN TWENTY-THREE SPELLED-OUT ARMS, and the direction is why that is safe here: a
- * media type added to [DwFieldType] later answers FALSE, so it draws no sentence until somebody adds
- * it — silence, which is this feature's own floor, and never a sentence about a capability that does
- * not exist. The opposite default would advertise one.
- */
-internal fun dwMediaFieldMayCarryVerbs(type: DwFieldType): Boolean = when (type) {
-    DwFieldType.IMAGE, DwFieldType.IMAGE_LIST, DwFieldType.AUDIO, DwFieldType.VIDEO -> true
-    else -> false
-}
-
-/**
- * WHY THERE IS NO CAPTION OR SUBTITLE CONTROL UNDER A TILE THIS PHONE CANNOT OPEN.
- *
- * ── THE SILENCE THIS REPLACES, AND THE CASE THAT MADE IT WORTH REPLACING ────────────────────────
- *
- * `DwMediaCaptureCard` draws the row as `item?.let { DwMediaAiVerbsRow(…) }`, so an unresolvable
- * descriptor got a tile with no control and no sentence. **The comment there named only one cause —
- * bytes gone missing — and the second one is the case where the server CERTAINLY holds the file: a
- * photograph attached from the browser.** `mediaIndex` in `StageScreen` is
- * `draft?.media.orEmpty().associateBy { it.id }`, LOCAL descriptors only, and `DraftMedia` is a local
- * file record (`relativePath`, `sha256` of the copy on this disk) — so a web upload resolves to null
- * here even though it has a `remoteMediaId` on the server and is the one file a verb could certainly
- * run over. `RichTextEditor`'s comment on the same resolver already records the shape: *"a picture
- * placed on the web carries a server id and answers null, which is a different thing to draw and not
- * an error."*
- *
- * So the tile now names BOTH causes — it cannot tell them apart from here — and says what to do. A
- * sentence rather than silence is the minimum; the fuller repair is for the bridge to surface a
- * SERVER-ONLY descriptor so `remoteMediaId` is known for a file this device never imported, which is
- * a data-lane change (the pull would have to write descriptors with no local bytes, and every reader of
- * `DraftMedia.relativePath` — the report writer and the uploader among them — would have to be shown
- * to tolerate one) and is handed off rather than guessed at here.
- */
-internal const val DW_MEDIA_VERBS_NEED_THE_FILE_HERE: String =
-    "There is no “Ask AI about this file” here because this phone has no record of this attachment. " +
-        "This app knows only the files that were imported on this device, so one attached in the " +
-        "browser or on another handset cannot be named to the server from here — and bytes that have " +
-        "gone missing leave the same gap. Describing it and subtitling it are both offered on the " +
-        "web, on the workshop's own copy of this file."
 
 // -------------------------------------------------------------------------------------------------
 // The two sentences these surfaces compose
@@ -316,21 +255,18 @@ internal fun dwAiVerbCountdownLine(remaining: Int?, day: String?): String? {
  */
 internal fun dwAiVerbAllowanceNote(cap: DwAiVerbCapView): String? = when {
     !cap.told ->
-        // THE MISSING PRE-FLIGHT, STATED RATHER THAN GUESSED AT. `ai_verb_cap.allowance_payload` rides
-        // on the 201 and on the 429 and nowhere else; there is no route that answers "what is my
-        // allowance" (checked against `backend/app/api/routes/` rather than assumed). So until a run
-        // has gone past on this phone today there is no number, and nothing here can say whether the
-        // ceiling is near, far or absent.
-        "How many runs are left today is not known until one goes through — this server has no way " +
-            "to be asked without running something. If the allowance is already used up, the " +
-            "refusal will say so and nothing will have been spent finding out."
+        // NOTHING TO SAY UNTIL A RUN HAS GONE PAST TODAY. `ai_verb_cap.allowance_payload` rides on the
+        // 201 and on the 429 and nowhere else; there is no route that answers "what is my allowance"
+        // (checked against `backend/app/api/routes/` rather than assumed), so there is no number to
+        // show. A run that meets a spent allowance is refused in the allowance's own words, and the
+        // missing pre-flight is recorded in docs/OPEN_FINDINGS.md rather than narrated here.
+        null
 
     cap.limit == null && cap.remaining == null ->
         // TOLD, AND TOLD THERE IS NO CEILING. A statement about the DEPLOYMENT rather than about this
         // designer's afternoon, which is why it does not decay: it is read off a row this phone
         // accepted for today, and `dwAiVerbCapView` answers "not told" for any other day.
-        "This server sets no daily ceiling on these runs, so there is no count to watch. Dictation " +
-            "has its own separate allowance either way."
+        "There is no daily limit on these runs. Dictation has its own separate allowance."
 
     // A number is known. The countdown says it where it is worth saying — see [dwAiVerbCountdownLine],
     // which stays silent well above the ceiling rather than nagging from run one.
@@ -358,21 +294,20 @@ internal fun dwAiVerbAllowanceNote(cap: DwAiVerbCapView): String? = when {
  *    client that turned a decoding bug into "the model declined" would send a designer off to
  *    rewrite a perfectly good note.
  *
- * **A REFUSAL WHOSE BODY CARRIED NO SENTENCE NAMES THE STATUS AND SAYS WHAT WAS NOT WRITTEN.** It is
- * the one place a code reaches a designer, and the alternative is worse: `DwAiVerbRefused`'s own KDoc
- * records that a 409 rewritten by something in between carries no detail, and a bare "the server said
- * no" would leave somebody unable to tell a lost proxy body from a real refusal of their work.
+ * **A REFUSAL WHOSE BODY CARRIED NO SENTENCE SAYS WHAT WAS NOT WRITTEN AND WHAT TO DO.** No status
+ * code reaches a designer: `DwAiVerbRefused`'s own KDoc records that a 409 rewritten by something in
+ * between carries no detail, and the code would tell a designer nothing they could act on.
  */
 internal fun dwAiVerbProblem(error: Throwable): String = when (error) {
     is DwAiVerbNotConfigured -> error.detail
     is DwAiVerbCapRefused -> error.detail ?: DW_AI_VERBS_SPENT
     is DwAiVerbRefused -> error.detail
-        ?: "The server refused this run and sent no reason with it (HTTP ${error.status}). Nothing " +
-        "was written to this workshop and nothing was changed in your draft. Try once more, and tell " +
-        "whoever administers the server if it keeps happening."
+        ?: "This could not be done. Nothing was written to this workshop and your draft is " +
+        "unchanged. Try again, and ask an administrator if it keeps happening."
     is IOException -> DW_VERBS_NEED_A_CONNECTION
-    else -> error.message?.takeIf { it.isNotBlank() }
-        ?: "Something went wrong on the way to the server. Nothing was written to this workshop."
+    // NOT `error.message`: anything that reaches this arm is a fault nobody wrote a sentence for — a
+    // decoding error, or `dwVerbWorkshopId`'s `require`, whose message is for whoever reads a crash.
+    else -> "Something went wrong. Nothing was written to this workshop. Try again."
 }
 
 // -------------------------------------------------------------------------------------------------
@@ -406,15 +341,14 @@ private val DW_LAYER_KIND_LABELS: Map<String, String> = mapOf(
 /**
  * A kind's heading.
  *
- * A kind this build has never heard of degrades to an honest note carrying the SERVER'S OWN WORD and
- * never to a blank — a deployment can be a release behind, which the server allows for by name in
- * `_verb_layer_kind`. The row still shows its tier, its model and its acceptance, none of which needs
- * the kind to be understood.
+ * A kind this app does not know degrades to a plain heading and never to a blank, and never to the
+ * stored token either — a raw enum is a code, not a heading. The row still shows where it ran, its
+ * model and its acceptance, none of which needs the kind to be understood.
  */
 internal fun dwLayerKindLabel(kind: String?): String {
     DW_LAYER_KIND_LABELS[kind.orEmpty()]?.let { return it }
     return if (!kind.isNullOrBlank()) {
-        "A layer kind this screen does not know ($kind)"
+        "AI result"
     } else {
         "A layer with no kind recorded"
     }
@@ -477,27 +411,26 @@ internal fun dwTierLabel(tier: String?): String = when (tier) {
     "TIER_1" -> "On the handset"
     "TIER_2" -> "On the handset, small model"
     "TIER_3" -> "In the cloud"
-    null, "" -> "Tier not recorded"
-    else -> "An unfamiliar tier ($tier)"
+    null, "" -> "Where it ran was not recorded"
+    else -> "Where it ran is not shown"
 }
 
 internal fun dwTierSentence(tier: String?): String = when (tier) {
     "TIER_1" ->
-        "Produced by a model running on the device itself. This is the only tier that works in a " +
-            "courtyard with no signal, and the material never left the handset."
+        "Produced by a model running on the device itself. It works with no signal, and the " +
+            "material never left the handset."
 
     "TIER_2" ->
         "Produced by a small language model running on the handset. Nothing left the device, and " +
             "what a given handset can run depends on the handset."
 
     "TIER_3" ->
-        "Produced by a provider in the cloud. This is the only tier that carries the craft " +
-            "vocabulary — the list that stops “dabu” being written as “double” — and the material " +
-            "left the device to reach it."
+        "Produced by a provider in the cloud, using the craft vocabulary — the list that stops " +
+            "“dabu” being written as “double”. The material left the device to reach it."
 
-    else ->
-        "This server recorded a tier this screen does not know, so where the model ran cannot be " +
-            "stated in words here. The stored value is shown as it was sent."
+    null, "" -> "Where the model ran was not recorded with this result."
+
+    else -> "Update the app to see where this was produced."
 }
 
 /**

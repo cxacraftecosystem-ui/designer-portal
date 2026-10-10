@@ -57,7 +57,7 @@ class DwAttachmentStatusTest {
     /** The durable id is what says the server has it, and nothing else is allowed to. */
     @Test
     fun anAcknowledgedFileSaysSo() {
-        assertEquals("image · 2.1 MB · backed up to the server", status(backedUp = true).line)
+        assertEquals("image · 2.1 MB · saved online", status(backedUp = true).line)
         assertEquals(DwAttachmentTone.NEUTRAL, status(backedUp = true).tone)
     }
 
@@ -119,7 +119,7 @@ class DwAttachmentStatusTest {
             backedUp = true,
             state = DwUploadState.Sending(sent = 1, total = 2, atElapsedRealtime = 0L),
         )
-        assertEquals("The bytes for this attachment are no longer on this device.", s.line)
+        assertEquals("This file is no longer on this device.", s.line)
         assertEquals(DwAttachmentTone.WARNING, s.tone)
         assertFalse(s.canRetry)
         assertEquals(null, s.percent)
@@ -144,7 +144,7 @@ class DwAttachmentStatusTest {
     @Test
     fun sentIsReportedWithoutTheStoredIdHavingArrivedYet() {
         val s = status(backedUp = false, state = DwUploadState.Sent)
-        assertEquals("image · 2.1 MB · backed up to the server", s.line)
+        assertEquals("image · 2.1 MB · saved online", s.line)
         assertEquals(DwAttachmentTone.NEUTRAL, s.tone)
     }
 

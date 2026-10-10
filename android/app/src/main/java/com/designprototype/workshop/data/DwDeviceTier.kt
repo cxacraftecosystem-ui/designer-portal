@@ -193,7 +193,7 @@ enum class DwAiTier {
     val where: String
         get() = when (this) {
             TIER_1, TIER_2 -> "on this phone"
-            TIER_3 -> "on the server"
+            TIER_3 -> "online"
         }
 }
 
@@ -2156,15 +2156,14 @@ fun dwFallbackAfterLoadFailure(
         // go, goes there — and it needs signal.
         connection != DwConnection.NONE -> DwTierFallback(
             goesTo = DwAiTier.TIER_3,
-            sentence = "$opening The job has gone to the server instead, so the result will be as " +
-                "usual — it just needed the connection. The failure has been noted against this " +
-                "handset and will not be retried on it.",
+            sentence = "$opening The job has been done online instead, so the result is as usual. " +
+                "It will not be tried on this phone again.",
         )
         else -> DwTierFallback(
             goesTo = null,
-            sentence = "$opening There is no connection to send the job to the server instead. " +
-                "Nothing has been lost — the recording and the draft are saved on the phone, and " +
-                "the job will run when there is signal.",
+            sentence = "$opening There is no connection to do it online instead. Nothing has been " +
+                "lost — the recording and the draft are saved on the phone, and the job will run " +
+                "when there is signal.",
         )
     }
 }
@@ -2269,7 +2268,7 @@ fun dwDeviceReadoutSentence(measurement: DwDeviceMeasurement): String = buildStr
  */
 fun dwModelSpeedClause(plan: DwModelPlan): String {
     val band = plan.realTimeFactor
-        ?: return " Nobody has timed it on a phone, so this app will not guess at the wait."
+        ?: return " How long it takes depends on the length of the recording."
     /*
      * 78 WORDS BECAME 16, AND THE ONLY NUMBER A DESIGNER ACTS ON IS STILL IN IT.
      *
@@ -2335,7 +2334,7 @@ fun dwModelBackgroundingClause(plan: DwModelPlan): String = when (plan.survivesB
  */
 fun dwModelAccuracyClause(plan: DwModelPlan, labels: Map<String, String>): String {
     if (plan.accuracy.isEmpty()) {
-        return " No language has been checked on it yet."
+        return " It is not used for any dictation language."
     }
     fun name(tag: String): String =
         labels[tag] ?: labels.keys.firstOrNull { dwTagCovers(tag, it) }?.let { labels[it] } ?: tag
@@ -2356,7 +2355,7 @@ fun dwModelAccuracyClause(plan: DwModelPlan, labels: Map<String, String>): Strin
             append(rejected.joinToString(", ") { name(it.tag) })
             append(".")
         }
-        if (plan.unmeasuredLanguagesNote != null) append(" Other languages have not been checked.")
+        if (plan.unmeasuredLanguagesNote != null) append(" Not used for other languages.")
     }
 }
 
@@ -2429,11 +2428,12 @@ fun dwTierOfferSentence(tier: DwAiTier, offer: DwTierOffer): String = when (offe
      * about the model, and it is the difference between "install it" and "this will be tight".
      */
     is DwTierOffer.Available -> buildString {
-        append("Tier ${tier.number} would run ")
-        append(offer.plan.modelId)
-        append(" ")
-        append(tier.where)
+        append(dwTierName(tier))
         append(": ")
+        append(offer.plan.modelId)
+        append(" would run ")
+        append(tier.where)
+        append(" — ")
         append(dwBytesLabel(offer.plan.onDiskBytes))
         append(" to download, and this phone would have ")
         append(dwBytesLabel(offer.headroomBytes))
@@ -2473,11 +2473,10 @@ fun dwTierRefusalSentence(tier: DwAiTier, refusal: DwTierRefusal): String = when
      */
     DwTierRefusal.NO_MEASURED_MODEL -> when (tier) {
         DwAiTier.TIER_1 ->
-            "No speech model is ready for this app's own engine yet, so there is nothing to " +
-                "install here."
+            "There is no speech model to install on this phone, so there is nothing to do here."
 
         DwAiTier.TIER_2, DwAiTier.TIER_3 ->
-            "No Tier ${tier.number} model fits this phone, so there is nothing to install here."
+            "No AI model is offered for this phone, so there is nothing to install here."
     }
 
     /*
@@ -2519,14 +2518,14 @@ fun dwTierRefusalSentence(tier: DwAiTier, refusal: DwTierRefusal): String = when
          * above is disabled rather than switched off — the card says that itself.
          */
         DwAiTier.TIER_1 ->
-            "The offline dictation above is Android's own and works with no signal; everything " +
-                "else carries on online when there is signal."
+            "This app's own speech engine is not on this phone. The offline dictation above is " +
+                "Android's own and still works, and other languages are written online when there " +
+                "is signal."
 
         // Reached only by a build without the LiteRT-LM runtime, which no production build is. Said
         // as what the phone does instead, not as an account of the app's own construction.
         DwAiTier.TIER_2, DwAiTier.TIER_3 ->
-            "Tier ${tier.number} does not run on this phone; this work carries on online when there " +
-                "is signal."
+            "This phone sends this work online, and it is done whenever there is signal."
     }
 
     /*
@@ -2541,12 +2540,12 @@ fun dwTierRefusalSentence(tier: DwAiTier, refusal: DwTierRefusal): String = when
      */
     DwTierRefusal.RUNTIME_NOT_INSTALLED -> when (tier) {
         DwAiTier.TIER_1 ->
-            "This app's own speech engine is not on this phone yet. It is an optional download, " +
-                "offered on the card above; until then dictation works exactly as it does today. " +
-                "Nothing is fetched unless you ask for it."
+            "The speech engine is an optional download, offered on the card above. Until it is " +
+                "installed, dictation works as usual. Nothing is fetched unless you ask for it."
 
         DwAiTier.TIER_2, DwAiTier.TIER_3 ->
-            "Tier ${tier.number} runs once one of the language models below is on this phone."
+            "This runs once one of the language models below is downloaded to this phone, and " +
+                "nothing is fetched without asking you."
     }
 
     /*
@@ -2556,40 +2555,41 @@ fun dwTierRefusalSentence(tier: DwAiTier, refusal: DwTierRefusal): String = when
      */
     DwTierRefusal.RUNTIME_UNMEASURED -> when (tier) {
         DwAiTier.TIER_1 ->
-            "This app could not check whether its speech engine is installed, so it will not guess " +
-                "either way. Tap “Check again”. Dictation is unaffected."
+            "This phone could not check whether the speech engine is installed. Tap “Check " +
+                "again”. Dictation is unaffected."
 
         DwAiTier.TIER_2, DwAiTier.TIER_3 ->
-            "This app could not check which language models are on this phone. Tap “Check again”."
+            "This phone could not finish checking for this. Tap “Check again”; dictation and " +
+                "saving are unaffected."
     }
 
     DwTierRefusal.DEVICE_TOO_SMALL ->
-        "This phone does not have the memory to run a model ${tier.where}, and no setting changes " +
-            "that. Everything carries on through the server when there is signal."
+        "This phone does not have enough memory to run the ${dwTierModelNoun(tier)}, and no " +
+            "setting changes that. Everything still works online whenever there is signal."
 
     DwTierRefusal.NOT_ENOUGH_FREE_RAM_NOW ->
-        "This phone has the memory for Tier ${tier.number} but not enough free right now. Close " +
-            "the apps you are not using and tap “Check again”."
+        "This phone has enough memory for the ${dwTierModelNoun(tier)}, but not enough is free " +
+            "right now. Close the apps you are not using and tap “Check again”."
 
     DwTierRefusal.NOT_ENOUGH_FREE_STORAGE ->
-        "There is not enough free storage on this phone for a Tier ${tier.number} model. Free some " +
-            "space and check again; the size is shown before anything is fetched."
+        "There is not enough free storage on this phone for the ${dwTierModelNoun(tier)}. Free " +
+            "some space and check again; the size is shown before anything is fetched."
 
     DwTierRefusal.ABI_NOT_BUILT_FOR ->
-        "There is no build of the Tier ${tier.number} engine for this phone's processor. Nothing " +
-            "on this screen can change that; the server does this work when there is signal."
+        "The ${dwTierModelNoun(tier)} does not run on this phone's processor, and no setting " +
+            "changes that. This work is done online whenever there is signal."
 
     DwTierRefusal.FREE_RAM_UNMEASURED ->
-        "This phone would not say how much memory is free, so this app will not start a Tier " +
-            "${tier.number} model on a guess and risk losing the job halfway. Tap “Check again”."
+        "This phone would not say how much memory is free, so the ${dwTierModelNoun(tier)} " +
+            "will not be started on a guess. Tap “Check again”."
 
     DwTierRefusal.FREE_STORAGE_UNMEASURED ->
         "This phone would not say how much storage is free, so nothing this size will be fetched " +
             "on a guess. Tap “Check again”."
 
     DwTierRefusal.ABI_UNMEASURED ->
-        "This phone would not say what processor it has, so which build of the Tier ${tier.number} " +
-            "engine it needs is unknown. Tap “Check again”."
+        "This phone would not say what processor it has, so the right download for it cannot " +
+            "be chosen. Tap “Check again”."
 
     /*
      * The citation came off here too — see the note on NO_MEASURED_MODEL above. "That failure is worth
@@ -2597,8 +2597,21 @@ fun dwTierRefusalSentence(tier: DwAiTier, refusal: DwTierRefusal): String = when
      * report it is a thing this app should already know, not a filename to hand them.
      */
     DwTierRefusal.LOAD_FAILED_HERE_BEFORE ->
-        "A Tier ${tier.number} model was tried on this phone and would not load. It will not be " +
-            "tried again here, and the failure is worth reporting."
+        "The ${dwTierModelNoun(tier)} was tried on this phone and would not load, so it will not " +
+            "be tried here again. This work is done online whenever there is signal."
+}
+
+/** What a designer calls the work a tier does, at the start of a sentence. Never "Tier N". */
+private fun dwTierName(tier: DwAiTier): String = when (tier) {
+    DwAiTier.TIER_1 -> "Offline speech"
+    DwAiTier.TIER_2 -> "On-device AI"
+    DwAiTier.TIER_3 -> "Online AI"
+}
+
+/** The model a tier would run, for the middle of a sentence. */
+private fun dwTierModelNoun(tier: DwAiTier): String = when (tier) {
+    DwAiTier.TIER_1 -> "speech model"
+    DwAiTier.TIER_2, DwAiTier.TIER_3 -> "AI model"
 }
 
 /** What Tier 3 — the server chain that has always run — can do at this moment. */
@@ -2610,11 +2623,11 @@ fun dwTier3Sentence(connection: DwConnection): String = when (connection) {
     // here that answers a question a designer actually asks — why send it to the server at all —
     // and it answers it with a word off their own worksheet rather than an argument.
     DwConnection.METERED ->
-        "On mobile data. Transcription runs on the server, where the craft word list lives — that " +
-            "is why it writes “dabu” and not “double”."
+        "On mobile data. Recordings are transcribed online with the craft word list, so it " +
+            "writes “dabu” and not “double”."
     DwConnection.UNMETERED ->
-        "On Wi-Fi. Transcription runs on the server, where the craft word list lives — that is why " +
-            "it writes “dabu” and not “double”."
+        "On Wi-Fi. Recordings are transcribed online with the craft word list, so it writes " +
+            "“dabu” and not “double”."
 }
 
 // ---------------------------------------------------------------------------------------------

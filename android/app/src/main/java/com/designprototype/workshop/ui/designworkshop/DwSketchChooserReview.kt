@@ -505,8 +505,8 @@ private fun DwChooserPeerRound(
                             "workshop's designers and an admin can change."
 
                     stageSpec == null ->
-                        "This arrangement cannot be changed from here: this phone has no field " +
-                            "registry for the stage these pieces live in."
+                        "This arrangement cannot be changed from here yet. Open the workshop " +
+                            "once with a connection."
 
                     else ->
                         "The pieces are here but the rows they are arranged in are not: this phone " +
@@ -659,8 +659,8 @@ internal const val DW_SKETCH_CHOOSER_ARRANGEMENT_NOT_SAVED: String =
 
 /** No registry for the stage the pieces live in, so there is nothing to write an order into. */
 internal const val DW_SKETCH_CHOOSER_NO_REGISTRY_FOR_ORDER: String =
-    "This arrangement has not been saved: this phone has no field registry for the stage these " +
-        "pieces live in. Open the workshop once with a connection."
+    "This arrangement has not been saved. Open the workshop once with a connection, then try " +
+        "again."
 
 /**
  * WHERE THE STARS ARE, said on the tab that does not have them.

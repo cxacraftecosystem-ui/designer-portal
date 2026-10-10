@@ -241,6 +241,10 @@ class DwTier2ModelsTest {
             val sentence = dwTier2RowSentence(choice, fleetHandset)
             assertTrue("the size is stated before the tap", sentence.contains("to download"))
             assertTrue("and the memory it needs", sentence.contains("of memory while it runs"))
+            assertTrue(
+                "the memory figure must be attributed in the same breath",
+                sentence.contains("Google's") && sentence.contains("S26 Ultra")
+            )
             assertFalse(
                 "a language model does not transcribe, and a row that says it does teaches a " +
                     "designer to expect dictation from it",
@@ -250,21 +254,21 @@ class DwTier2ModelsTest {
                 assertFalse("a row may not narrate what is missing: “$it” in $sentence", sentence.contains(it))
             }
             assertTrue(
-                "a row sentence is ${sentence.split(Regex("\\s+")).size} words; over 60 is an essay",
-                sentence.split(Regex("\\s+")).size <= 60
+                "a row sentence is ${sentence.split(Regex("\\s+")).size} words; over 80 is an essay",
+                sentence.split(Regex("\\s+")).size <= 80
             )
         }
     }
 
     @Test
     fun `the list opens with what the models are for and that nothing downloads by itself`() {
-        assertTrue(DW_TIER2_LIST_INTRO.contains("proofreading and translating"))
+        assertTrue(DW_TIER2_LIST_INTRO.contains("Language models"))
+        assertTrue(DW_TIER2_LIST_INTRO.contains("translating"))
         assertTrue(DW_TIER2_LIST_INTRO.contains("unless you ask"))
         listOf("no runtime", "not built", "yet", "nobody").forEach {
             assertFalse(DW_TIER2_LIST_INTRO.contains(it))
         }
     }
-
     // -----------------------------------------------------------------------------------------
     // Sideloading goes through the same check as a download
     // -----------------------------------------------------------------------------------------

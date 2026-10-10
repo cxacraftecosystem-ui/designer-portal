@@ -803,8 +803,7 @@ private fun UnfiledCard(rows: List<ConsolidatedAnswerDto>) {
                 color = MaterialTheme.colorScheme.onSurface
             )
             Text(
-                "Recorded against this artisan's interviews but carrying no section in their filename or " +
-                    "metadata. Listed here rather than dropped.",
+                "Recorded in this artisan's interviews without a section.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )

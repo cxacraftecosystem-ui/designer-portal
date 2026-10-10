@@ -222,7 +222,7 @@ internal fun DwAiVerbsPanel(
             ) {
                 CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
                 Text(
-                    if (runningOnDevice) DW_TIER2_WORKING_SENTENCE else "Working on the passage on the server…",
+                    if (runningOnDevice) DW_TIER2_WORKING_SENTENCE else "Working on the passage…",
                     color = MaterialTheme.field.muted,
                     fontSize = 12.sp,
                 )
@@ -640,9 +640,8 @@ private fun DwVerbTranslateStep(
         // this fleet works in nineteen languages and several of them have no code at all, so a list
         // would refuse the exact languages this system exists to record.
         Text(
-            "A name or a code — “Odia”, “or”, “English”. There is no list to choose from on " +
-                "purpose: several of the languages in these recordings have no code at all. The " +
-                "original stays exactly where it is; a translation stands beside it.",
+            "Type a language name or code — “Odia”, “or”, “English”. The original stays exactly " +
+                "where it is; the translation stands beside it.",
             color = MaterialTheme.field.muted,
             fontSize = 11.sp,
             lineHeight = 16.sp,
