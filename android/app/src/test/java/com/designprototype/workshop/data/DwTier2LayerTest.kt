@@ -359,7 +359,7 @@ class DwTier2LayerTest {
     // -----------------------------------------------------------------------------------------
 
     @Test
-    fun `nothing blocks a device layer now: the runtime is in the APK and the route exists`() {
+    fun `nothing blocks a device layer now, because the runtime is in the APK and the route exists`() {
         assertNull(dwTier2WriteBlocker())
         assertTrue(DW_TIER2_DEVICE_LAYER_ROUTE_EXISTS)
         assertEquals("on-device", DW_TIER2_LAYER_ROUTE_SEGMENT)
