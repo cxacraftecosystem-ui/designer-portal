@@ -601,7 +601,7 @@ internal fun DwDictationButton(
                         return
                     }
                     else ->
-                        "Dictation stopped unexpectedly (code $error). Type the answer in, or try again."
+                        "Dictation stopped unexpectedly. Type the answer in, or try again."
                 }
                 release()
                 currentError(message)
@@ -1155,11 +1155,9 @@ internal fun DwDictationButton(
                     DwAsrModelRun.recordRefusal(tag)
                     release()
                     currentError(
-                        "This phone's own speech model would not run just now: ${outcome.detail}. " +
-                            "Nothing was sent anywhere and nothing was recorded. Tap the microphone " +
-                            "again and dictation will use whatever else this phone has. This is " +
-                            "worth reporting — the model was measured as working on this handset, so " +
-                            "it refusing here is a fault in this app rather than anything you did."
+                        "The speech model on this phone could not run just now. Nothing was sent " +
+                            "anywhere and nothing was recorded. Tap the microphone again and " +
+                            "dictation will use whatever else this phone has."
                     )
                 }
             }
@@ -1739,6 +1737,5 @@ internal fun dictatable(type: com.designprototype.workshop.data.DwFieldType): Bo
 internal fun dictationUnavailableNote(context: Context): String? = when {
     runCatching { SpeechRecognizer.isRecognitionAvailable(context) }.getOrDefault(false) -> null
     DwDictationRun.repository() != null -> null
-    else -> "This phone has no speech recogniser installed and this app has no server to send a " +
-        "recording to, so there is no dictation here. Type the answer in."
+    else -> "Dictation is not available on this phone right now. Type the answer in."
 }

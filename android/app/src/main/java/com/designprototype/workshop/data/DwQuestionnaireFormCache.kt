@@ -259,7 +259,6 @@ fun cachedQuestionnaireNotice(cachedAt: String?, version: Int): String {
     // five and a half hours wrong.
     val whenPart = readableStamp(cachedAt)?.let { " on $it" }.orEmpty()
     return "You are reading the copy this phone downloaded$whenPart (version $version). You can read " +
-        "it and check what has already been recorded. ANSWERS CANNOT BE SAVED without a connection: " +
-        "whether a question may still be answered is something only the server knows, so this app " +
-        "will not record an answer it might have to attach to different wording later."
+        "it and check what has already been recorded. ANSWERS CANNOT BE SAVED without a connection, " +
+        "so that every answer is recorded against the latest wording of its question."
 }

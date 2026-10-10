@@ -1167,8 +1167,8 @@ private suspend fun dwConfirmIntake(
         append("$attached photograph${if (attached == 1) "" else "s"} attached on this device")
         append(" across $stageCount stage${if (stageCount == 1) "" else "s"}. ")
         append(
-            "They upload themselves when this phone next has a connection, and the copy here is kept " +
-                "until the server confirms each one."
+            "They upload when this phone next has a connection, and the copy here is kept until " +
+                "each one has uploaded."
         )
         // STATED, ALWAYS. A confirmation that quietly held fewer photographs than it copied is the
         // silent-emptiness failure this repository keeps hitting.

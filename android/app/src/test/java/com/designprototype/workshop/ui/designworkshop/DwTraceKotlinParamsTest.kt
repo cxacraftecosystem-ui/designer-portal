@@ -511,7 +511,7 @@ class DwTraceKotlinParamsTest {
             assertTrue("$key accepted a $value", failure is DwTraceHostFailure)
             assertTrue(
                 "the refusal must name the key it is about, and it said: ${failure?.message}",
-                failure?.message.orEmpty().contains(key),
+                (failure as DwTraceHostFailure).detail.contains(key),
             )
         }
     }

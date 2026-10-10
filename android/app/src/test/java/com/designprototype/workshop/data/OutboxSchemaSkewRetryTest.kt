@@ -158,11 +158,11 @@ class OutboxSchemaSkewRetryTest {
         val said = http(422, extraForbidden).apiRefusal("fallback").message
         val sentence = skewSentence("What this copy of the app sent for this record", said)
 
-        assertTrue(sentence.contains("Extra inputs are not permitted"))
+        assertTrue(sentence.contains("could not be saved because the app needs an update"))
         assertTrue("nothing in it asks the researcher to correct anything", sentence.contains("Nothing you typed is wrong"))
         assertTrue(
             "and it promises exactly what the retry policy now keeps",
-            sentence.contains("it will be sent by itself the next time you open the app after either has been updated")
+            sentence.contains("it will be sent by itself the next time you open the app after an update")
         )
     }
 }

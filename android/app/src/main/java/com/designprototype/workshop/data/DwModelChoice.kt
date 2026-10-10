@@ -611,7 +611,7 @@ private fun dwFitNoteClause(
             "than that, so the download could not finish."
 
     DwFitNote.NO_BUILD_FOR_THIS_PROCESSOR ->
-        "There is no build of it for this phone's processor (it was built for ${choice.plan.abi})."
+        "It does not run on this phone's processor (it needs ${choice.plan.abi})."
 
     /*
      * THE CITATION CAME OFF HERE ON 2026-08-16, AND IT WAS THE LAST ONE LIVE ON A SCREEN.
@@ -624,8 +624,7 @@ private fun dwFitNoteClause(
      * now walks the fit notes too, so the next one cannot hide in the same blind spot.
      */
     DwFitNote.LOAD_FAILED_HERE_BEFORE ->
-        "It was tried on this phone and would not load. It will not be tried again here, and the " +
-            "failure is worth reporting."
+        "It was tried on this phone and would not load, so it will not be tried here again."
 
     DwFitNote.PROCESSOR_UNMEASURED ->
         "This phone would not say what kind of processor it has."
@@ -701,7 +700,7 @@ fun dwModelChoiceIntroSentence(choices: List<DwModelChoice>): String? {
     val unmeasured = choices.count { it.fit == DwModelFit.UNMEASURED }
     val offerable = comfortable + tight
     return buildString {
-        append("What this phone can run, from the models that have actually been measured. ")
+        append("What this phone can run. ")
         append(
             when {
                 comfortable > 0 && tight > 0 ->
@@ -804,9 +803,8 @@ fun dwModelChoiceIntroSentence(choices: List<DwModelChoice>): String? {
  */
 fun dwModelLanguagesSentence(plan: DwModelPlan, labels: Map<String, String>): String {
     val languages = plan.languages
-        ?: return "Which of this app's dictation languages ${plan.modelId} can actually hear is " +
-            "unmeasured — nobody has checked it against them. It is not counted as covering any of " +
-            "them, because an unchecked model is not evidence."
+        ?: return "${plan.modelId} is not used for any of this app's dictation languages: the " +
+            "languages it hears are not listed."
     val served = labels.keys.filter { tag -> dwModelServesLanguage(plan, tag) }
     if (served.isEmpty()) {
         // The two ways of serving none are kept apart, because they are not the same news to

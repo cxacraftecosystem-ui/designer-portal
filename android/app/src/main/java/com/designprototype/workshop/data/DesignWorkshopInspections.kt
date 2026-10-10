@@ -534,10 +534,10 @@ fun dwInspectionFailureMessage(
     val unknownOutcome = attempt == DwInspectionAttempt.SAVE
     return when {
         status == null ->
-            "This phone could not get through just now. " +
+            "Could not connect. " +
                 if (unknownOutcome) {
-                    "The request may still have landed — open this screen again on a connection to " +
-                        "see who is inspecting this workshop before you save anything else."
+                    "Your change may already have been saved — open this screen again with a " +
+                        "connection to check who is inspecting this workshop before you change anything else."
                 } else {
                     "Nothing has been changed."
                 }
@@ -550,10 +550,9 @@ fun dwInspectionFailureMessage(
         // where the other one is; the clause after says that this is a rule rather than a fault.
         status == 403 ->
             said.asInspectionSentence() +
-                "The inspection surface and the screen that appoints inspectors are two different " +
-                "doors: a workshop under inspection is read by the accounts appointed to inspect it, " +
-                "and a Ministry Admin, an admin or the master admin decides who inspects what. " +
-                "Neither is a fault. Nothing was changed."
+                "A workshop under inspection is read by the accounts appointed to inspect it, and a " +
+                "Ministry Admin, an admin or the master admin decides who inspects what. " +
+                "Nothing was changed."
 
         status == 404 ->
             said.asInspectionSentence() +
@@ -565,17 +564,17 @@ fun dwInspectionFailureMessage(
         // several sentences naming several people. Repeating either half would be this screen
         // talking over the one message written for exactly this moment.
         status == 422 ->
-            "The repository would not accept this. " +
+            "This could not be saved. " +
                 (said ?: "One of the accounts named cannot be assigned this inspection. Nothing was changed.")
 
         status >= 500 ->
-            (said ?: "The repository had a problem answering.") +
+            (said ?: "Something went wrong.") +
                 " This is not a connection problem. " +
                 if (unknownOutcome) {
-                    "Part of the change may have landed — open this screen again to see who is " +
+                    "Part of the change may have been saved — open this screen again to see who is " +
                         "inspecting this workshop."
                 } else {
-                    "Nothing was changed; it is worth trying again in a moment."
+                    "Nothing was changed. Try again in a moment."
                 }
 
         else -> said ?: "That did not go through."
@@ -910,7 +909,7 @@ fun dwInspectionFieldReading(
             // NEVER the raw id as a fallback. A cuid asks an inspector to recognise a record they
             // cannot possibly recognise, and on this surface there is no picker to open and check it
             // against.
-            DwInspectionReading.Text(named.ifEmpty { "A linked record this read cannot name" })
+            DwInspectionReading.Text(named.ifEmpty { "A linked record" })
         }
 
         else -> {

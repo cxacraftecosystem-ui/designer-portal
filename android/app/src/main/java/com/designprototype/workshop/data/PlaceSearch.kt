@@ -414,7 +414,7 @@ fun describePlaceSearchFailure(error: Throwable): String {
         status >= 500 || status == 429 ->
             "The place search is not answering just now — this is the service, not your connection. Try again in a moment."
         else ->
-            "The place search refused this request: this build's map key may be missing, expired or out of quota. Nothing is wrong with what you typed, and an administrator can check the key."
+            "Place search is not available right now. Move the map or type the coordinates."
     }
 }
 
@@ -476,7 +476,7 @@ suspend fun searchPlaces(
     if (!placeSearchAvailable(key)) {
         // Not reachable from the UI, which hides the box without a key — but throwing here means a
         // future caller that forgets the check fails loudly instead of searching against `key=`.
-        throw PlaceSearchException(503, "This build has no map key, so places cannot be looked up.")
+        throw PlaceSearchException(503, "Place search is not available right now.")
     }
     val request = Request.Builder().url(placeSearchUrl(query, key, placeSearchBias(proximity))).get().build()
 

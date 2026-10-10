@@ -716,8 +716,8 @@ internal fun DwIdentityCardControl(
                                         "another photograph in better light with no glare across the " +
                                         "digits, or type the number in."
                                 } else {
-                                    "No number could be read from that photograph, by this phone or by " +
-                                        "the server. Fill the frame with the card, hold it flat and try " +
+                                    "No number could be read from that photograph. " +
+                                        "Fill the frame with the card, hold it flat and try " +
                                         "again — or type the number in."
                                 }
                             }
@@ -740,12 +740,11 @@ internal fun DwIdentityCardControl(
                             // the only reader" — say what actually happened rather than implying the
                             // card is unreadable.
                             "This phone could not read that card, and the connection dropped before " +
-                                "the server could be asked. Type the number in, or try again where " +
+                                "it could be read online. Type the number in, or try again where " +
                                 "there is signal."
                         } else {
                             error.apiErrorMessage(
-                                "This phone could not read that card and the server could not either. " +
-                                    "Type the number in instead."
+                                "That card could not be read. Type the number in instead."
                             )
                         }
                     )
@@ -923,17 +922,17 @@ internal fun DwIdentityCardControl(
                 // The disabled reason, in the disabled state, where the disabled control is. A greyed
                 // button with the explanation elsewhere is a button people tap repeatedly.
                 !readableOnDevice && !online ->
-                    "Reading a Pehchan card needs a connection — this phone reads Aadhaar numbers " +
-                        "only. Type the number in; photograph the card with the camera app and you " +
+                    "Reading a Pehchan card needs a connection. " +
+                        "Type the number in; photograph the card with the camera app and you " +
                         "can check it here later."
                 !readableOnDevice ->
                     "Photograph the card, or pick a photograph of it already on this phone, and the " +
-                        "number is read off it on the server. You confirm it before anything is " +
+                        "number is read from it online. You confirm it before anything is " +
                         "filled in." + notKeptSuffix(canKeep)
                 online ->
                     "Photograph the card, or pick a photograph of it already on this phone. The " +
-                        "number is read on this phone; if it cannot be read here, the server is asked " +
-                        "as well. You confirm it before anything is filled in, and you are told which " +
+                        "number is read on this phone; if it cannot be read here, it is read online " +
+                        "instead. You confirm it before anything is filled in, and you are told which " +
                         "one read it." + notKeptSuffix(canKeep)
                 else ->
                     "This works with no connection — the number is read on this phone. You confirm it " +
@@ -958,7 +957,7 @@ internal fun DwIdentityCardControl(
         // [photographWasNotStored] for why an absent key is silence rather than reassurance.
         if (serverConfirmedDiscard) {
             Text(
-                "The server confirmed it kept nothing: the photograph was read and discarded.",
+                "Nothing was kept: the photograph was read and discarded.",
                 color = MaterialTheme.field.muted,
                 fontSize = 11.sp
             )
@@ -1012,8 +1011,8 @@ internal fun DwIdentityCardControl(
             }
             if (unconfirmedByServer) {
                 Text(
-                    "The server marked this reading as not needing confirmation. This app confirms " +
-                        "it anyway — an identity number is never written without a person checking it.",
+                    "Check this reading against the card — an identity number is never saved " +
+                        "without a person checking it.",
                     color = MaterialTheme.colorScheme.error,
                     fontSize = 11.sp
                 )
@@ -1052,7 +1051,7 @@ internal fun DwIdentityCardControl(
                             // model on a mid-range handset or a large vision model produced them.
                             when (choice.source) {
                                 DwIdentitySource.ON_DEVICE -> "read on this phone"
-                                DwIdentitySource.SERVER -> "read by the server"
+                                DwIdentitySource.SERVER -> "read online"
                             },
                             // Words, not a percentage. "82%" invites a designer to treat 82 as good
                             // enough and skip the check, which is the one behaviour this panel exists
@@ -1094,18 +1093,18 @@ internal fun nothingFoundOffline(
     // The card WAS found and misread — better light, no glare. Distinct from "not found".
     rejected > 0 ->
         "$rejected number(s) were read off that card and every one failed its checksum, so at least " +
-            "one digit was wrong in each. There is no connection to check them against the server, " +
-            "so: another photograph in better light with no glare across the digits, or type the " +
+            "one digit was wrong in each. There is no connection to read it online, so take " +
+            "another photograph in better light with no glare across the digits, or type the " +
             "number in."
     // Nothing found at all — fill the frame. Says the server was NOT asked, so a designer who moves
     // into signal knows there is something left to try rather than concluding the card is unreadable.
     kind == DwIdentityKind.PEHCHAN || kind == DwIdentityKind.ANY ->
         "No Aadhaar number could be read from that photograph on this phone, and there is no " +
-            "connection to ask the server. Fill the frame with the card and hold it flat, or type " +
+            "connection to read it online. Fill the frame with the card and hold it flat, or type " +
             "the number in — a Pehchan card can only be read with a connection."
     else ->
         "No number could be read from that photograph on this phone, and there is no connection to " +
-            "ask the server. Fill the frame with the card, hold it flat and try again — or type the " +
+            "read it online. Fill the frame with the card, hold it flat and try again — or type the " +
             "number in."
 }
 

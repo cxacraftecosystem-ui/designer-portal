@@ -249,19 +249,15 @@ internal val walkthroughJourney: List<WalkStep> = listOf(
         icon = Icons.Filled.Groups,
         destination = NavDestination.RECORD_WORKSHOP,
         body = "Open the workshop you are documenting under — or create it — before you " +
-            "record anything else. Every record is scoped to a workshop: products, tools and " +
-            "interviews all carry one, and View Data will file the whole repository under the " +
-            "workshop each record was made in. The form asks for the title, the " +
-            "craft, where and when, and who was there. Watch out: create it before you leave for " +
-            "the field. It is the container everything else drops into, and a record made with " +
-            "nowhere to drop is a record somebody has to re-file by hand later. And this form, " +
-            "like every capture screen after it, asks WHERE twice in two controls that read as " +
-            "one. \"Captured coordinates\" fills itself and is provenance — where this handset " +
-            "was standing when the record was typed — while the village, district and pincode " +
-            "you type yourself are where the workshop or the artisan actually is. They are not the " +
-            "same place and the second is the one research reads: leaving it to the fix has " +
-            "already put artisans from Rajasthan in West Bengal on the live database, because the " +
-            "coordinates were never wrong. They were a true reading of the desk.",
+            "record anything else. Every record belongs to a workshop: products, tools and " +
+            "interviews all carry one, and View Data files every record under the workshop it " +
+            "was made in. The form asks for the title, the craft, where and when, and who was " +
+            "there. Watch out: create it before you leave for the field, so every record you make " +
+            "has a workshop to go into. And this form, like every capture screen after it, asks " +
+            "WHERE in two ways. \"Captured coordinates\" fills itself with where this phone was " +
+            "when the record was typed, while the village, district and pincode you type are " +
+            "where the workshop or the artisan actually is. Always type the place yourself: it is " +
+            "the one research reads, and a reading taken at a desk is not an artisan's address.",
     ),
     WalkStep(
         id = "craft",
@@ -269,14 +265,12 @@ internal val walkthroughJourney: List<WalkStep> = listOf(
         icon = Icons.Filled.Brush,
         destination = NavDestination.ADD_CRAFT,
         body = "Add the craft being documented so artisans, products and tools have something to " +
-            "hang off. Craft is the shared vocabulary of the repository — artisans link to " +
-            "one, products and tools inherit the name from it, and View Data groups a workshop's " +
-            "contents by it — so adding it once keeps the spelling the same across everybody's " +
-            "records. Watch out: search the list before you add. A near-duplicate spelling does not " +
-            "fail; it quietly splits one craft into two, and nothing downstream can tell them apart " +
-            "afterwards. If \"Add craft\" is not in your menu, your account does not manage crafts " +
-            "and somebody who does will have to add it — this app hides a row it would be " +
-            "refused rather than showing it greyed out.",
+            "link to. Craft names are shared by every record — artisans link to one, products " +
+            "and tools take the name from it, and View Data groups a workshop's contents by it — " +
+            "so adding it once keeps the spelling the same across everybody's records. Watch out: " +
+            "search the list before you add. A near-duplicate spelling quietly splits one craft " +
+            "into two, and nothing later can tell them apart. If \"Add craft\" is not in your " +
+            "menu, your account does not manage crafts; ask somebody who does to add it.",
     ),
     WalkStep(
         id = "artisan",
@@ -301,16 +295,14 @@ internal val walkthroughJourney: List<WalkStep> = listOf(
             "photographs. This is where the craft becomes comparable across regions: dimensions, " +
             "cost of making, selling price and demand are the figures a researcher can actually put " +
             "side by side. Once there is a photograph on the record, two controls will take a " +
-            "dimension off it rather than off a tape, and the form offers them in the order you " +
-            "should reach for them: \"Measure from a photograph\" has you mark the object against " +
-            "something of a known length in the same frame — a grid square will do — and " +
-            "works the answer out on this handset, so it costs nothing, needs no signal, and can be " +
-            "re-derived later from the marks that produced it. \"Document using grid\" below it " +
-            "sends the picture to a model that ESTIMATES the number instead: it needs a connection, " +
-            "it bills per use, and nobody can check it afterwards. Either way the photograph stays " +
-            "as evidence and the form records beside each number how it was arrived at. Watch out: " +
-            "pick the linked craft first. The artisan dropdown stays disabled until you do, and " +
-            "then lists only that craft's artisans — which is the check, not an obstacle.",
+            "dimension off it instead of off a tape, in the order you should reach for them: " +
+            "\"Measure from a photograph\" has you mark the object against something of a known " +
+            "length in the same frame — a grid square will do — and works the answer out on " +
+            "this phone, with no signal needed, from marks you can check later. \"Document using " +
+            "grid\" below it ESTIMATES the number online instead, so it needs a connection. " +
+            "Either way the photograph stays as evidence and the form records beside each number " +
+            "how it was arrived at. Watch out: pick the linked craft first. The artisan dropdown " +
+            "stays disabled until you do, and then lists only that craft's artisans.",
     ),
     WalkStep(
         id = "process",
@@ -349,13 +341,12 @@ internal val walkthroughJourney: List<WalkStep> = listOf(
         destination = NavDestination.TAKE_INTERVIEW,
         body = "Sit down with the artisan and work through the interview sections, recording each " +
             "answer as audio. This is the artisan speaking in their own voice and their own " +
-            "language; the recording is transcribed on the server once it arrives, so you get both " +
-            "the tape and searchable text without typing through the conversation. The language box " +
-            "is a dropdown from a fixed list rather than free text, which is what stops the same " +
-            "language reaching the dataset under three spellings. Watch out: there is one interview " +
-            "per exact set of artisans. If an entry already exists for that set, saving ADDS your " +
-            "answers to it rather than creating a second one — that is correct behaviour and " +
-            "not a lost record.",
+            "language; the recording is transcribed once it is uploaded, so you get both the tape " +
+            "and searchable text without typing through the conversation. The language box is a " +
+            "dropdown from a fixed list, which stops the same language reaching the dataset under " +
+            "three spellings. Watch out: there is one interview per exact set of artisans. If an " +
+            "entry already exists for that set, saving ADDS your answers to it instead of creating " +
+            "a second one — nothing has been lost.",
     ),
     WalkStep(
         id = "media",
@@ -364,12 +355,11 @@ internal val walkthroughJourney: List<WalkStep> = listOf(
         destination = NavDestination.UPLOAD_MEDIA,
         body = "Upload the photographs, video, audio and files that belong to no single record. " +
             "Field work produces context no form has a slot for — the road into the village, " +
-            "the market, an unplanned conversation — and this is what keeps that material " +
-            "inside the repository instead of on a handset that gets wiped or handed on. The " +
-            "caption box has a microphone. Watch out: upload stays disabled until you pick a linked " +
-            "record type. If the file genuinely belongs to nothing in particular, pick " +
-            "\"Miscellaneous Media\" and leave the entry blank — that is the answer, not a way " +
-            "round the control.",
+            "the market, an unplanned conversation — and this keeps that material with the " +
+            "workshop's records instead of on a phone that gets wiped or handed on. The caption " +
+            "box has a microphone. Watch out: upload stays disabled until you pick a linked record " +
+            "type. If the file belongs to nothing in particular, pick \"Miscellaneous Media\" and " +
+            "leave the entry blank.",
     ),
     WalkStep(
         id = "review",
@@ -379,25 +369,24 @@ internal val walkthroughJourney: List<WalkStep> = listOf(
         body = "Everything you submit goes for review and comes back Approved, Rejected or Sent for " +
             "revision. Review is what turns a pile of field notes into a dataset somebody can cite, " +
             "and it means you are never the last check on your own work. If you review other " +
-            "people's records, Review opens the queue of submissions waiting on a decision, where " +
-            "you approve, fix in place with Edit, send for revision or reject. Watch out: below Professor the status is locked and " +
-            "everything you create is submitted as Pending. That is normal and not an error. A " +
-            "record sent back for revision always carries comments explaining why — read them, " +
-            "fix the record, and saving resubmits it.",
+            "people's records, Review opens the queue of submissions waiting on a decision. Watch " +
+            "out: below Professor the status is locked and everything you create is submitted as " +
+            "Pending. That is normal. A record sent back for revision always carries comments " +
+            "explaining why — read them, fix the record, and saving resubmits it.",
     ),
     WalkStep(
         id = "view-data",
         title = "View Data · Browse records",
         icon = Icons.Filled.Storage,
         destination = NavDestination.VIEW_DATA,
-        body = "Read the whole repository as a directory tree and take a subtree away as a " +
-            "spreadsheet. This is where documentation stops being data entry and starts being " +
-            "research material: the same records filed three ways — by workshop, by whoever " +
-            "uploaded them, and by kind of file — previewable in place. Pick a folder and use " +
-            "the breadcrumb to climb back out; the tree loads as you open it. Watch out: taking the " +
-            "dataset out is a granted permission, so if \"View Data\" is not in your menu that is " +
-            "the reason. Reading the records themselves is open to every signed-in account — " +
-            "use Browse records instead, and nothing is hidden from you.",
+        body = "Browse every record as a folder tree and download any folder as a spreadsheet. " +
+            "This is where documentation stops being data entry and starts being research " +
+            "material: the same records filed three ways — by workshop, by whoever uploaded them, " +
+            "and by kind of file — with a preview in place. Pick a folder and use the breadcrumb " +
+            "to climb back out; the tree loads as you open it. Watch out: downloading the dataset " +
+            "is a permission an administrator grants, so if \"View Data\" is not in your menu, " +
+            "that is the reason. Every signed-in account can read the records themselves through " +
+            "Browse records.",
     ),
     WalkStep(
         id = "scan",
@@ -405,14 +394,12 @@ internal val walkthroughJourney: List<WalkStep> = listOf(
         icon = Icons.Filled.QrCodeScanner,
         destination = NavDestination.SCAN_CODE,
         body = "Point the camera at a printed card or a tag and open the record it names, or read " +
-            "the code out of a picture somebody sent you, or type it. It is here as its own " +
-            "destination because it used to take three deliberate taps through a screen named after " +
-            "reading a list, and the one control whose entire purpose is to save typing was the one " +
-            "you had to go looking for. Watch out: this door is repository-wide and knows nothing " +
-            "about which workshop you are standing in. To resolve a prototype tag with no signal, " +
-            "use that workshop's own Cards & tags screen, which reads its codes off this handset " +
-            "first; and inside a stage form the reference picker takes a scan to LINK a record to " +
-            "what you are filling in rather than to open it.",
+            "the code out of a picture somebody sent you, or type it. It sits in the menu on its " +
+            "own because a scan is the quickest way to a record in the field. Watch out: this " +
+            "screen looks across every workshop and does not know which one you are standing in. " +
+            "To read a prototype tag with no signal, use that workshop's own Cards & tags screen, " +
+            "which reads its codes from this phone; and inside a stage form, the reference picker " +
+            "uses a scan to LINK a record to what you are filling in rather than to open it.",
     ),
     WalkStep(
         id = "designer-profile",
@@ -420,22 +407,18 @@ internal val walkthroughJourney: List<WalkStep> = listOf(
         icon = Icons.Filled.Badge,
         destination = NavDestination.DESIGNER_PROFILE,
         body = "Your own standing details in one place — name, institution, qualification, " +
-            "empanelment, photograph, signature and CV — rather than typed into a stage form " +
-            "every time. A new design workshop's stage 1 and stage 3 START PRE-FILLED FROM THIS " +
-            "PAGE, and what they receive is a COPY: a report records who ran a workshop at the " +
-            "time, so moving institution next year must not rewrite a report already submitted. " +
-            "Four of the twenty-one are required — name, qualification, phone and email — " +
-            "because they are what a report is submitted under and how the person who signed it is " +
-            "reached. Watch out: a workshop already under way keeps what it was created with. " +
-            "Correcting something here never reaches back into it; stage 1 and stage 3 of that " +
-            "workshop are where its own copy is edited. Your reports NAME your CV rather than " +
-            "carrying it, so send the file alongside the report. This step and the eight below it " +
-            "are designer ground — this page, Design workshops, and everything filed under a " +
-            "workshop — and every one of those menu rows is ABSENT rather than greyed out for an " +
-            "account that is not a designer, an admin or the master admin, because this app hides a " +
-            "row it would refuse. So a missing row is not a menu that failed to load: read on to " +
-            "learn the process, and ask an administrator to empanel you rather than hunting for " +
-            "rows that were never drawn.",
+            "empanelment, photograph, signature and CV — so you do not type them into a stage " +
+            "form every time. A new design workshop's stage 1 and stage 3 START PRE-FILLED FROM " +
+            "THIS PAGE, and what they receive is a COPY: a report records who ran a workshop at " +
+            "the time, so moving institution next year does not rewrite a report already " +
+            "submitted. Four of the twenty-one fields are required — name, qualification, phone " +
+            "and email — because they are what a report is submitted under and how the person who " +
+            "signed it is reached. Watch out: a workshop already under way keeps what it was " +
+            "created with. Correcting something here does not change it; edit that workshop's own " +
+            "copy in its stage 1 and stage 3. Send your CV file along with the report, which lists " +
+            "it by name. This step and the eight after it are for designers, admins and the master " +
+            "admin. If those menu rows are not shown to you, read on to learn the process, and ask " +
+            "an administrator to empanel you as a designer.",
     ),
     WalkStep(
         id = "design-workshop",
@@ -451,11 +434,11 @@ internal val walkthroughJourney: List<WalkStep> = listOf(
             "and never who may read it. A designer does not start a workshop: an admin creates it " +
             "and adds you, so an empty list is the ordinary state for a newly empanelled designer " +
             "and the screen says who to ask. It opens and fills with no signal, and every stage " +
-            "saves itself into a draft on this handset as you go, which is what makes a fortnight " +
-            "of fieldwork survivable. Watch out: link it to a recorded Workshop early. The " +
+            "saves itself into a draft on this phone as you go, so a fortnight of fieldwork is " +
+            "safe between connections. Watch out: link it to a recorded Workshop early. The " +
             "reference pickers inside the stages are narrowed to that workshop's artisans, products " +
-            "and tools; an unlinked workshop offers you the whole repository instead, which is " +
-            "where the wrong artisan gets picked.",
+            "and tools; an unlinked workshop offers you every record in the portal instead, which " +
+            "is where the wrong artisan gets picked.",
     ),
     WalkStep(
         id = "design-workshop-codes",
@@ -490,11 +473,11 @@ internal val walkthroughJourney: List<WalkStep> = listOf(
             "copies the form to another workshop — its sections and its live questions, never " +
             "anybody's answers — so next season starts from last season's instrument instead " +
             "of from a blank " +
-            "page. You can also hand a form straight to a colleague's handset as a bundle, over a " +
-            "QR code, the share sheet or Bluetooth, with no server in the middle. Watch out: a form " +
-            "OPENS with no signal, and creating one banks through the outbox, but ANSWERING one " +
-            "offline is refused on purpose — a queued sitting would replace whatever the " +
-            "server holds for it. Take those answers on the standard interview or wait for a bar.",
+            "page. You can also hand a form straight to a colleague's phone as a bundle, over a " +
+            "QR code, the share sheet or Bluetooth. Watch out: a form OPENS with no signal, and a " +
+            "new one waits on this phone until it can upload, but ANSWERING one needs a " +
+            "connection. With no signal, take those answers on the standard interview, or wait " +
+            "until you have a connection.",
     ),
     WalkStep(
         id = "design-workshop-stages",
@@ -502,9 +485,9 @@ internal val walkthroughJourney: List<WalkStep> = listOf(
         icon = Icons.Filled.Layers,
         destination = NavDestination.DESIGN_WORKSHOPS,
         body = "Work down the stage index. Every section of the printed report is one of these " +
-            "stages, and the phone and the laptop draw the same boxes in the same order because " +
-            "both read the same registry from the server — so a stage half-filled in the " +
-            "village is the stage you finish on a laptop that evening. Each stage takes its basic " +
+            "stages, and the phone and the laptop show the same boxes in the same order, so a " +
+            "stage half-filled in the village is the stage you finish on a laptop that evening. " +
+            "Each stage takes its basic " +
             "fields, its deeper ones, its photographs and its own sections if you added any, and " +
             "every narrative box has a microphone. A reference picker is how you point a stage at " +
             "the artisan, product, tool or process you recorded in the earlier steps. WATCH OUT, " +
@@ -530,18 +513,11 @@ internal val walkthroughJourney: List<WalkStep> = listOf(
             "two rating rounds — this workshop's own designers on each other's work. Photograph " +
             "a drawing and the tracer turns it into line art on this device, and you can save the " +
             "result as SVG, PNG, PDF, EPS or DXF for a print shop or a cutting machine. Watch out: " +
-            "the crop and the sharpening feed the TRACE and nothing else — they cannot " +
-            "re-encode your photograph, so the original file stays the artifact. Set-aside sketches " +
-            "count: the designs that were never prototyped are worth recording and are rateable in " +
-            "both rounds, because a wider pool picking one up later is the whole reason to write " +
-            "them down. This screen opens for designers, admins and the master admin, and WITHOUT " +
-            "THAT ACCESS THE SCREEN ITSELF WILL NOT SAY SO — unlike Design review below, which " +
-            "states the tier in as many words before it asks the repository anything, this one " +
-            "takes no account at all: it asks for your design workshops and draws whatever comes " +
-            "back, so a refusal arrives looking like a list that could not be fetched, and with no " +
-            "signal it arrives blaming the network. If the list never comes and you are not " +
-            "empanelled as a designer, that is the reason, and an administrator is who fixes it — " +
-            "not a better bar of signal.",
+            "the crop and the sharpening shape the TRACE only — your photograph is kept exactly " +
+            "as you took it. Record set-aside sketches too: designs that were never prototyped " +
+            "can be rated in both rounds, and a wider pool may pick one up later. This screen is " +
+            "for designers, admins and the master admin; any other account is told so when it " +
+            "opens, and an administrator can give designer access.",
     ),
     WalkStep(
         id = "design-review",
@@ -553,37 +529,33 @@ internal val walkthroughJourney: List<WalkStep> = listOf(
             "a workshop's own designers rate each other on the Review tab of the step above, and " +
             "then the wider pool ranks the pieces a finished workshop has produced — including " +
             "workshops the reviewer was never added to, which is the whole difference between the " +
-            "two levels. There are two ways in and they are not two spellings of one control: the " +
-            "dropdown lists workshops you can open yourself, and the box beside it takes any " +
-            "workshop's link or id, because the pool round is by design about work you were never " +
-            "part of. Watch out: a piece reaches the pool only once its peer round has been closed " +
-            "on it, so an empty round usually means \"not yet\" rather than \"nothing here\", and " +
-            "the screen says which. The comment and the suggestion are two boxes on purpose — " +
-            "what you would change is the half a maker acts on, and it is unfindable buried inside " +
-            "a paragraph of assessment. This screen opens for designers, admins and the master " +
-            "admin; without that access you can still learn the process here, but the screen will " +
-            "tell you designer access is required.",
+            "two levels. There are two ways in: the dropdown lists workshops you can open yourself, " +
+            "and the box beside it takes any workshop's link or id, because the pool round is " +
+            "about work you were not part of. Watch out: a piece reaches the pool only once its " +
+            "peer round has been closed on it, so an empty round usually means the peer round is " +
+            "still open, and the screen says which. Keep the comment and the suggestion in their " +
+            "own boxes — what you would change is the part a maker acts on, and it is easy to " +
+            "miss inside a paragraph of assessment. This screen opens for designers, admins and " +
+            "the master admin; without that access you can still learn the process here, and the " +
+            "screen will tell you designer access is required.",
     ),
     WalkStep(
         id = "design-workshop-readiness",
         title = "Readiness · What is still outstanding",
         icon = Icons.AutoMirrored.Filled.Assignment,
         destination = NavDestination.DESIGN_WORKSHOPS,
-        body = "The alternative is opening all twenty-two stages on the last afternoon to find the " +
-            "four empty required fields, in three of them, that you meant to come back to. ON THIS " +
-            "HANDSET READINESS IS NOT A SEPARATE SCREEN — the web has a page of its own, and " +
-            "here it is the stage index itself, which is arguably the better place for it. Each row " +
-            "carries a bar, a percentage, and either how many of its required fields are filled or " +
-            "the words \"nothing required here\" so a stage that is complete by construction cannot " +
-            "be mistaken for one you finished. A stage with gaps expands into the list of exactly " +
-            "what is missing, by field name, and every line taps straight through to that box; the " +
-            "stage form's own header repeats the figure while you are inside it. Watch out: " +
-            "NOTHING ON THIS HANDSET REFUSES YOU BECAUSE A REQUIRED FIELD IS EMPTY. A stage writes " +
-            "itself to the device as you type and syncs without asserting that check, and it is " +
-            "built that way on purpose — a stage you were halfway through would otherwise " +
-            "quietly stop syncing for the rest of the day. The figure is a plan and not a gate: it " +
-            "is there so that a thin stage is a decision you made rather than something you missed. " +
-            "Use the index on the first afternoon as well as the last.",
+        body = "See what is still outstanding before the last afternoon, instead of opening all " +
+            "twenty-two stages to find the four empty required fields you meant to come back to. " +
+            "On this phone, readiness is shown on the stage index itself. Each row carries a bar, " +
+            "a percentage, and either how many of its required fields are filled or the words " +
+            "\"nothing required here\", so a stage that needs nothing cannot be mistaken for one " +
+            "you finished. A stage with gaps expands into the list of exactly what is missing, by " +
+            "field name, and every line taps straight through to that box; the stage form's own " +
+            "header repeats the figure while you are inside it. Watch out: an empty required field " +
+            "never stops a stage saving or syncing, so a half-finished stage keeps everything you " +
+            "have typed. The figure is a plan: it is there so that a thin stage is a decision you " +
+            "made and not something you missed. Use the index on the first afternoon as well as " +
+            "the last.",
     ),
     WalkStep(
         id = "design-workshop-report",
@@ -592,20 +564,14 @@ internal val walkthroughJourney: List<WalkStep> = listOf(
         destination = NavDestination.DESIGN_WORKSHOPS,
         body = "Open a workshop and press \"Generate the report\". Choose the template and the " +
             "accent colour, read the document back as real pages or as continuous reading, and " +
-            "export the .docx or the .pdf. IT IS BUILT ON THIS DEVICE, from what has been saved " +
-            "here, by the same document model the server's writers consume — so a report can " +
-            "be produced in a courtyard with no signal at all, and what you read is what is " +
-            "generated rather than an approximation of it. Two annexures a handset cannot draw are " +
-            "named on the file itself rather than silently missing: transcripts, which are produced " +
-            "after the audio reaches the server, and machine-assisted text. Questionnaire answers " +
-            "are drawn here too, but only once this handset has opened that workshop's " +
-            "questionnaire list at least once with a connection — until then the file says so. " +
-            "Watch out: a warning never stops a file being produced, and never travels inside the " +
-            "document either — an officer opening the .docx next month must not find a note " +
-            "about what was missing on the day, which is also why the export screen is the only " +
-            "place those warnings can be read. The preview is read-only on purpose: to correct " +
-            "something it shows, open the stage it came from, because the printed value is that " +
-            "stage entry's own frozen copy.",
+            "export the .docx or the .pdf. The report is built on this phone from what is saved " +
+            "here, so it can be produced in a courtyard with no signal at all, and what you read " +
+            "in the preview is exactly what is exported. Questionnaire answers are included once " +
+            "this phone has opened that workshop's questionnaire list with a connection. Watch " +
+            "out: read the notes on the export screen before you send the file; they never stop a " +
+            "file being produced and they are never printed inside it. To correct something the " +
+            "preview shows, open the stage it came from — the report prints what that stage " +
+            "saved.",
     ),
     WalkStep(
         id = "design-workshop-history",
@@ -616,47 +582,39 @@ internal val walkthroughJourney: List<WalkStep> = listOf(
             "with no signal — with its checksum, its size, its page count, its template, when " +
             "it was made and by whom, and a comparison between any two of them. A report submitted " +
             "to a ministry comes back for revision three or four times, and \"did you update the " +
-            "cost sheet before you resubmitted?\" needs an answer that is evidence rather than " +
-            "memory. Watch out: nothing here can be tidied up, and that is the point — the " +
-            "checksum is what makes the record evidence, and evidence that can be edited is not " +
-            "evidence. The comparison is between two generated FILES; for who changed a particular " +
-            "value and when, open the workshop's Authorship & divergence screen instead. This one " +
-            "needs a connection, because it lists files made on other devices by other people, so " +
-            "unlike your stages it is not kept on this handset; and a workshop that has not reached " +
-            "the repository yet has no history at all, which costs you nothing you have captured.",
+            "cost sheet before you resubmitted?\" needs an answer that is evidence and not " +
+            "memory. Watch out: entries here cannot be edited or deleted — the checksum is what " +
+            "makes each one evidence. The comparison is between two generated FILES; for who " +
+            "changed a particular value and when, open the workshop's Authorship & divergence " +
+            "screen instead. This screen needs a connection, because it lists files made on other " +
+            "phones by other people, and a workshop shows its history once it has been uploaded.",
     ),
     WalkStep(
         id = "design-workshop-inspection",
         title = "Workshops to inspect · The other side of it",
         icon = Icons.Filled.FindInPage,
         destination = NavDestination.DESIGN_WORKSHOP_INSPECTIONS,
-        body = "If your account is an Inspector / Reviewer, this is your whole surface: the design " +
-            "& prototype workshops an admin has assigned you, read-only, with the provenance of " +
-            "each field beside it so you can see what was captured, when, and by whom. It is a " +
-            "narrow door on purpose — an inspector is not a member of the workshop and cannot " +
-            "write to a single one of its stages, which is exactly why the assignment exists " +
-            "instead of a wider permission. Watch out: THIS ROW IS FOR INSPECTORS AND NOBODY ELSE. " +
-            "An admin and even the master admin are refused it by name; what an admin gets instead " +
-            "is the appointment screen off a workshop's own index, one workshop at a time. The " +
-            "screen needs a connection: an inspection is read from the repository each time and " +
-            "nothing about it is kept on this handset.",
+        body = "If your account is an Inspector / Reviewer, this is your screen: the design " +
+            "& prototype workshops an admin has assigned you, read-only, with who captured each " +
+            "field, and when, beside it, and a box for correction suggestions. An inspector reads " +
+            "a workshop without being a member of it, so none of its stages can be changed from " +
+            "here. Watch out: this row is for Inspector / Reviewer accounts. Admins appoint " +
+            "inspectors from a workshop's own index instead, one workshop at a time. Without " +
+            "signal the screen shows the copy last read on this phone, with the day it was saved.",
     ),
     WalkStep(
         id = "offline",
         title = "No signal · What still works",
         icon = Icons.Filled.CloudOff,
-        body = "Most of a fortnight happens where there is no bar of signal, and this app is built " +
-            "for that rather than apologising for it. A design workshop opens and fills with no " +
-            "connection and every stage saves into a draft on this handset as you go. Records you " +
-            "create are queued and sent when a connection returns — the strip at the top of " +
-            "the app says how many are waiting, and tapping it opens the tray, which lists anything " +
-            "the server refused with its own reason and lets you retry one or all of them. Code " +
-            "cards print, tags decode and the report generates, all on the device. WATCH OUT, " +
-            "BECAUSE THIS ONE COSTS SOMEBODY ELSE'S WORK: a queued CORRECTION to an existing record " +
-            "replaces that record whole. If a colleague edited it while you were out of signal, " +
-            "their change is overwritten field for field when yours drains, and nobody is told. " +
-            "Correct a record while you have a connection where you can, and if you cannot, say so " +
-            "to whoever else is working on it.",
+        body = "Most of a fortnight happens where there is no bar of signal, and the app keeps " +
+            "working there. A design workshop opens and fills with no connection, and every stage " +
+            "saves into a draft on this phone as you go. Records you create wait on this phone and " +
+            "upload when a connection returns — the strip at the top of the app says how many " +
+            "are waiting, and tapping it opens the tray, which lists anything that could not be " +
+            "saved, with the reason, and lets you retry one or all of them. Code cards print, tags " +
+            "decode and the report generates, all on the phone. Watch out: correct an existing " +
+            "record while you have a connection where you can, and when a colleague is working on " +
+            "the same record, agree between you who edits it.",
     ),
 )
 
@@ -677,14 +635,13 @@ private val walkthroughIntro = WalkStep(
     id = "intro",
     title = "The order the work happens in",
     icon = Icons.Filled.Explore,
-    body = "${walkthroughJourney.size} steps, in this order — the repository records first, " +
-        "then the design & prototype workshop those records feed. It is the same journey the " +
-        "Walkthrough teaches on the web, so a colleague working on a laptop is reading what you " +
-        "are reading. The order is the thing worth learning: get it wrong and the pickers inside " +
-        "the later screens have nothing to offer you, which costs a return trip rather than five " +
-        "minutes. Work down it once and you should not need this again. You can leave at any " +
-        "point, and you can reopen this from the menu without losing whatever form you are in the " +
-        "middle of.",
+    body = "${walkthroughJourney.size} steps, in this order — the field records first, then " +
+        "the design & prototype workshop those records feed. The web portal teaches the same " +
+        "journey, so a colleague working on a laptop is reading what you are reading. The order " +
+        "is the thing worth learning: the pickers inside the later screens offer what you " +
+        "recorded in the earlier ones, so following it saves a return trip. Work down it once and " +
+        "you should not need this again. You can leave at any point, and you can reopen this from " +
+        "the menu without losing whatever form you are in the middle of.",
 )
 
 /**
@@ -704,9 +661,8 @@ private val walkthroughOutro = WalkStep(
         "has its dimensions and its costs. Every process has its steps in order and the steps have " +
         "video. Every tool has a material, a maker and a replacement cost. The interview has no " +
         "unexplained gaps. Anything you shot that has no home is in Miscellaneous Media. Every " +
-        "prototype is tagged. And before the signal goes for good: open the top strip and check " +
-        "the queue is empty, because a record still waiting on this handset is a record the " +
-        "repository has never seen.",
+        "prototype is tagged. And before the signal goes for good: open the strip at the top and " +
+        "check that nothing is still waiting to upload.",
 )
 
 /**
@@ -894,28 +850,18 @@ internal val walkthroughInspectorJourney: List<WalkStep> = listOf(
         icon = Icons.Filled.FindInPage,
         destination = NavDestination.DESIGN_WORKSHOP_INSPECTIONS,
         body = "Open the design & prototype workshops an admin has assigned you, and work down " +
-            "them one at a time. An inspection is scoped one workshop at a time, by a row an admin " +
-            "creates, and that scoping is the whole design rather than a limitation of it: the " +
-            "alternative — an inspector who can read every workshop in the archive — would be a " +
-            "second full read of the repository and a second place to look when somebody has " +
-            "access they should not. The screen is a search box over your own assignments and then " +
-            "a card per workshop carrying its title, craft, cluster, place, code, status and " +
-            "dates, with the word \"Read-only\" printed on every one of them; the count above the " +
-            "list is the server's own total rather than the length of the page you are looking at, " +
-            "and the pager moves twenty at a time. Watch out: THIS SURFACE BELONGS TO THE " +
-            "INSPECTOR / REVIEWER TIER AND IS A SET WITH EXACTLY ONE MEMBER, not \"Inspector and " +
-            "above\" — an admin is refused it by name, so is the master admin, and so is a " +
-            "professor, which makes it the only row in this menu a master admin cannot reach. You " +
-            "cannot ask for an assignment or give yourself one either: an admin makes them one " +
-            "workshop at a time from that workshop's own stage index, which is a screen this " +
-            "account cannot open. Without signal the screen shows the list this phone last saw, " +
-            "with the day it was saved printed above it, and a workshop whose assignment has ended " +
-            "is dropped from that copy the next time it is opened with signal. And an empty list is " +
-            "a real answer: the page says \"No workshop is " +
-            "assigned to you\" and tells you in as many words that it is hiding nothing, a search " +
-            "that matched nothing says so differently, and a load that failed keeps whatever rows " +
-            "were already on screen and puts the failure above them — so a correct empty state and " +
-            "a dropped connection never read as the same thing.",
+            "them one at a time. Each assignment covers one workshop and is made by an admin, so " +
+            "you see exactly the workshops you are asked to inspect. The screen is a search box " +
+            "over your own assignments and then a card per workshop carrying its title, craft, " +
+            "cluster, place, code, status and dates, with the word \"Read-only\" printed on every " +
+            "one of them; the count above the list is the full total, and the pager moves twenty " +
+            "at a time. Watch out: this screen is for Inspector / Reviewer accounts only, and an " +
+            "assignment comes from an admin — they make one from that workshop's own stage index. " +
+            "Without signal the screen shows the list this phone last saw, with the day it was " +
+            "saved above it; an assignment that has ended drops off the next time the list loads " +
+            "with signal. An empty list is a real answer: the page says \"No workshop is " +
+            "assigned to you\", a search that matched nothing says so differently, and a load that " +
+            "failed keeps whatever rows were already on screen and shows the problem above them.",
     ),
     WalkStep(
         id = "inspection-read",
@@ -925,39 +871,20 @@ internal val walkthroughInspectorJourney: List<WalkStep> = listOf(
         body = "Tap a card in that list and read the workshop back, stage by stage, as the " +
             "designers recorded it. A report that reaches a Development Commissioner's office is " +
             "read by somebody who did not run the fortnight, and \"who wrote this field, and " +
-            "when\" is most of what that reading is for — so this screen draws the same authorship " +
-            "sentence under every value that the designer's own stage form draws under every box, " +
-            "from the same stamp, because an inspector and the designer being inspected must never " +
-            "be reading two different accounts of who did what. The walk is over the twenty-two " +
-            "stages the registry declares and NOT over the stages somebody happens to have " +
-            "touched: an empty stage is a finding on an inspection screen rather than a row to " +
-            "omit, so a stage nobody started renders as a stage nobody started, and one the source " +
-            "document marks as legitimately skippable says so beside its own count. Each stage " +
-            "prints the server's own \"n of m required fields answered\", each record card lists " +
-            "the values that exist, and the fields nobody answered are counted underneath instead " +
-            "of drawn as forty empty rows. THERE IS NO SINGLE FIGURE FOR THE WORKSHOP AS A " +
-            "WHOLE ON THIS HANDSET — the browser prints one and this screen counts stage by " +
-            "stage — and that is deliberate rather than missing: a second arithmetic over one " +
-            "workshop is how a designer and their inspector come to disagree about what is " +
-            "outstanding. Watch out: READ-ONLY HERE IS STRUCTURAL AND NOT A " +
-            "SETTING. There is no stage form on this screen, no Save and no delete, and none of " +
-            "them is missing — every stage-editing route stands behind a loader that refuses " +
-            "anybody outside the design-workshop write set before it looks at the row, and an " +
-            "inspector is outside it by construction, so an affordance here would be a 404 waiting " +
-            "to be found by somebody who would reasonably conclude the app is broken. " +
-            "PHOTOGRAPHS, RECORDINGS AND ATTACHMENTS ARE COUNTED AND NOT CARRIED: a media field " +
-            "says how many files are recorded there and that an inspection read does not carry " +
-            "them, which is deliberate, because an empty gallery would read as a file that failed " +
-            "to load — and it means a judgement that turns on seeing a photograph is one this " +
-            "screen cannot settle. A completeness figure is arithmetic and not a verdict: a stage " +
+            "when\" is most of what that reading is for — so this screen shows the same " +
+            "authorship note under every value that the designer's own stage form shows under " +
+            "every box, and an inspector and the designer being inspected always read the same " +
+            "account of who did what. All twenty-two stages are listed, including the ones nobody " +
+            "has started, so an empty stage shows up as a finding; a stage the report allows to be " +
+            "skipped says so beside its own count. Each stage shows \"n of m required fields " +
+            "answered\", each record card lists the values that exist, and the fields nobody " +
+            "answered are counted underneath instead of drawn as forty empty rows. Without signal " +
+            "the screen opens the copy of the workshop kept on this phone and shows the day it was " +
+            "saved. Watch out: this screen is read-only — an inspector reads a workshop and the " +
+            "designers change it. A completeness figure is arithmetic and not a verdict: a stage " +
             "can answer every required field and still be wrong. A value that came from an " +
             "artisan, product or tool record is a COPY taken when the stage was saved, so the " +
-            "record may have been corrected since and this stage would not have changed. And " +
-            "answers to questions a workshop's own designer added are counted and not shown, " +
-            "because the questions themselves are read through a route an inspection does not " +
-            "reach, and answers without their questions are not evidence of anything. Without " +
-            "signal the screen opens the copy of the workshop this phone kept the last time you " +
-            "read it, and says on its first line which day that was.",
+            "record may have been corrected since without this stage changing.",
     ),
     WalkStep(
         id = "inspection-feedback",
@@ -965,48 +892,40 @@ internal val walkthroughInspectorJourney: List<WalkStep> = listOf(
         icon = Icons.Filled.RateReview,
         destination = NavDestination.DESIGN_WORKSHOP_INSPECTIONS,
         body = "Say what should be corrected, in the panel above the stages of the workshop you " +
-            "are reading. An inspection that ends in a verdict nobody can read is not a review: " +
-            "your note is recorded against this submission round under your name, and one of two " +
-            "buttons decides whether the report stays where it is or goes back. The panel lists " +
-            "every suggestion already on the record, round by round, with who filed it and which " +
-            "stage it is about, so you can read what colleagues asked for before asking again. " +
-            "Then \"What should be corrected?\", \"Which stage is it about?\" — the report as a " +
-            "whole, or one named stage — and the two buttons. Watch out: THE TWO BUTTONS DO " +
-            "DIFFERENT THINGS AND ONLY ONE OF THEM MOVES ANYTHING. \"File a suggestion\" records " +
-            "your note and leaves the report where it is; \"Send the report back\" records it AND " +
-            "moves the report to Needs revision, which is what puts it on its designers' desks, " +
-            "and it asks you to confirm. Neither can be edited or withdrawn once it is on the " +
-            "record. The box is closed until the report is handed in. WITHOUT SIGNAL YOUR NOTE IS " +
-            "KEPT ON THIS PHONE and listed under the register as waiting; when the phone is back " +
-            "online the report is read again first, and the note goes only if it is still the " +
-            "round you read. If the report has moved on — handed in again, withdrawn or approved " +
-            "— the note is held with the reason printed under it and nothing is lost: file it " +
-            "against the current round, put it back in the box, or discard it yourself.",
+            "are reading. Your note is recorded against this submission round under your name. The " +
+            "panel lists every suggestion already on the record, round by round, with who filed it " +
+            "and which stage it is about, so you can read what colleagues asked for before asking " +
+            "again. Then \"What should be corrected?\", \"Which stage is it about?\" — the report " +
+            "as a whole, or one named stage — and the two buttons. Watch out: the two buttons do " +
+            "different things. \"File a suggestion\" records your note and leaves the report where " +
+            "it is; \"Send the report back\" records it and moves the report to Needs revision, " +
+            "which puts it on its designers' desks, and it asks you to confirm first. Neither can " +
+            "be edited or withdrawn once it is on the record, and the box opens only once the " +
+            "report has been handed in. Without signal your note is kept on this phone and listed " +
+            "as waiting. When you are back online the report is checked again first, and the note " +
+            "goes only if the report is still the round you read. If the report has moved on — " +
+            "handed in again, withdrawn or approved — the note waits with the reason under it and " +
+            "nothing is lost: file it against the current round, put it back in the box, or " +
+            "discard it yourself.",
     ),
     WalkStep(
         id = "inspection-review-queue",
         title = "Review · Work the queue",
         icon = Icons.Filled.Visibility,
         destination = NavDestination.REVIEW,
-        body = "Open Review and start with the workshops waiting for your decision: the reports " +
-            "you were appointed to inspect that have been handed in, with the ones sent back and " +
-            "waiting for their designers listed under them, and a line on any note of yours still " +
-            "on this phone. Below that is the repository-wide queue of records waiting on a " +
-            "decision, which is the other half of the tier's own name — artisans, products, " +
-            "processes, tools and interviews submitted by anybody ranked below you, waiting to be " +
-            "approved, rejected or sent back for revision — and it is the one place in this " +
-            "product where the tier's RANK buys something rather than its set membership, because " +
-            "at 37 you outrank a designer and a designer's records reach your queue. Watch out: " +
-            "THE RECORD QUEUE IS NOT THE INSPECTION SURFACE AND IS " +
-            "NOT GATED LIKE IT. Review opens for Field Contributor and above — everybody with " +
-            "somebody ranked below them — so the people working beside you in the queue are not " +
-            "inspectors; what your tier changes is WHOSE records you see. You review strictly " +
-            "below you and never across: a record submitted by another Inspector / Reviewer is not " +
-            "yours to decide, and neither is one from a professor or a directorate post. And " +
-            "reviewing a record and rewriting one are two different ladders — editing somebody " +
-            "else's record is Professor and above, and 37 is below 40, so the server refuses your " +
-            "edit even where a control offers it. Send it back with what to fix and let the person " +
-            "who recorded it correct it, which is what the rule is for.",
+        body = "Start with the workshops waiting for your decision: the reports you were " +
+            "appointed to inspect that have been handed in, with the ones sent back to their " +
+            "designers listed under them, and a line on any note of yours still waiting on this " +
+            "phone. Below that is the queue of records waiting on a decision, the other half of " +
+            "the Inspector / Reviewer role — artisans, products, processes, tools and interviews " +
+            "submitted by people in the roles below yours, Designers among them, waiting to be " +
+            "approved, rejected or sent back for revision. Watch out: Review is open to Field " +
+            "Contributor and above, so the people working the queue beside you are not all " +
+            "inspectors; what your role decides is WHOSE records you see. You review records from " +
+            "roles below yours and never across: a record from another Inspector / Reviewer is not " +
+            "yours to decide, and neither is one from a Professor or a directorate post. Changing " +
+            "somebody else's record is for Professor and above, so send it back with what to fix " +
+            "and let the person who recorded it correct it.",
     ),
 )
 
@@ -1025,17 +944,14 @@ private val walkthroughInspectorIntro = WalkStep(
     title = "What an inspection is, in order",
     icon = Icons.Filled.Explore,
     body = "${walkthroughInspectorJourney.size} steps, in the order an inspection happens — the " +
-        "list you were given, the workshop you read, what you say about it, and the review queue " +
-        "your tier opens. " +
-        "Your surface is not the designer's with the buttons removed: it is a different tree, " +
-        "behind a different gate, reached through an assignment an admin makes one workshop at a " +
-        "time. You cannot run a design & prototype workshop, and that is the point of the tier " +
-        "rather than a limitation of it — an inspector who could fill in a stage would be " +
-        "reviewing their own work, and the server refuses to start if the two sets ever overlap. " +
-        "This is the deck that opens for an Inspector / Reviewer account; the designer's " +
-        "walkthrough is still here in full, and the button under this card switches to it. You can " +
-        "leave at any point, and you can reopen this from the menu without losing whatever form " +
-        "you are in the middle of.",
+        "list you were given, the workshop you read, what you say about it, and the review " +
+        "queue your role opens. " +
+        "Every inspection starts with an assignment an admin makes, one workshop at a time. " +
+        "Inspectors read design & prototype workshops and do not fill them in, so nobody ever " +
+        "inspects their own work. This is the walkthrough that opens for an Inspector / Reviewer " +
+        "account; the designer's walkthrough is here in full too, and the button under this card " +
+        "switches to it. You can leave at any point, and you can reopen this from the menu " +
+        "without losing whatever form you are in the middle of.",
 )
 
 /**
@@ -1047,20 +963,18 @@ private val walkthroughInspectorIntro = WalkStep(
  */
 private val walkthroughInspectorOutro = WalkStep(
     id = "before-you-send-it-back",
-    title = "Before you send a report back",
+    title = "Before you finish an inspection",
     icon = Icons.Filled.CheckCircle,
-    body = "Before you press either button: your note says what is wrong AND what it should say, " +
-        "because the designers read it exactly as written with no conversation attached. You " +
-        "picked the right stage, or chose the report as a whole on purpose rather than by leaving " +
-        "the choice alone. You read the suggestions already on the record, so you are not asking " +
-        "for something a colleague asked for last round. You pressed the button you meant — " +
-        "filing a suggestion leaves the report where it is, and only sending it back puts it on " +
-        "the designers' desks. You are not deciding on a photograph you could not see, because " +
-        "media is counted on an inspection read and never carried. A value that looks wrong may " +
-        "be a copy taken when the stage was saved, so the record it came from may have been " +
-        "corrected since without the stage changing. And if you wrote it without signal, check " +
-        "the panel when you are back online: a note the report moved on from is held there with " +
-        "the reason, waiting for you, not sent.",
+    body = "You read every stage, including the ones nobody started — an empty stage is a " +
+        "finding too. Your note says what is wrong AND what it should say, because the designers " +
+        "act on a correction exactly as it is written. You picked the right stage, or chose the " +
+        "report as a whole on purpose. You read the suggestions already on the record, so you are " +
+        "not asking again for something a colleague already asked for. You pressed the button you " +
+        "meant — filing a suggestion leaves the report where it is, and only sending it back puts " +
+        "it on the designers' desks. You checked whether a value that looks wrong is a copy taken " +
+        "when the stage was saved, because the record it came from may have been corrected since " +
+        "without the stage changing. And if you wrote without signal, look at the panel once you " +
+        "are back online: a note the report has moved on from waits there with the reason, unsent.",
 )
 
 /**

@@ -195,10 +195,10 @@ fun InspectionListScreen(
         // ── The refusal, and it is the one refusal in this app an ADMIN also meets ───────────────
         if (!mayInspect) {
             InspectionNotice(
-                "The inspection surface belongs to the Inspector / Reviewer tier, and is scoped to " +
-                    "the workshops an admin has assigned to that account. Designers and admins read " +
-                    "design & prototype workshops on Design workshops instead; an admin chooses who " +
-                    "inspects a workshop from that workshop's own stage index.",
+                "Workshops to inspect is for Inspector / Reviewer accounts, and shows the workshops " +
+                    "an admin has assigned to you. Designers and admins open design & prototype " +
+                    "workshops from Design workshops; an admin chooses who inspects a workshop from " +
+                    "that workshop's own stage index.",
                 warning = true
             )
             return@Column
@@ -285,8 +285,7 @@ fun InspectionListScreen(
                     fontSize = 16.sp
                 )
                 Text(
-                    "This searches only the workshops assigned to you, which is the whole of what " +
-                        "you can read here. Clear the search to see them all.",
+                    "This searches only the workshops assigned to you. Clear the search to see them all.",
                     color = MaterialTheme.field.muted,
                     fontSize = 13.sp
                 )
@@ -301,8 +300,7 @@ fun InspectionListScreen(
                 )
                 Text(
                     "An admin assigns inspections one workshop at a time, from that workshop's own " +
-                        "stage index. Until they have, there is nothing here to read — this screen " +
-                        "is not hiding anything from you, and nothing failed to load.",
+                        "stage index. Workshops assigned to you will appear here.",
                     color = MaterialTheme.field.muted,
                     fontSize = 13.sp
                 )

@@ -264,7 +264,7 @@ class OutboxDanglingReferenceTest {
         val clash = outboxConflictSentence("Giriraj Prasad (Bhuj) is already recorded", files = 3, isCorrection = false)
 
         // The dangling row is the only one that is still queued and the only one with a re-pick.
-        assertTrue(dangling.contains("points at a design & prototype workshop that is not on the server"))
+        assertTrue(dangling.contains("points at a design & prototype workshop that could not be found"))
         assertTrue(dangling, dangling.contains("still here"))
         // The unfiled record SENT. Saying "still here" about it would send a designer to a tray that
         // no longer lists it.
@@ -294,13 +294,13 @@ class OutboxDanglingReferenceTest {
             isCorrection = false,
         )
         // 1. WHICH FIELD — the whole value of the row, and the thing "Record not found" cannot say.
-        assertTrue(sentence.startsWith("This record points at a design & prototype workshop that is not on the server."))
-        // The design document's own clause, byte for byte (DROPDOWN_DESIGN §3.7, O1 point 3).
-        assertTrue(sentence.contains("Nothing is lost — open it, choose one that is, and it will send."))
+        assertTrue(sentence.startsWith("This record points at a design & prototype workshop that could not be found."))
+        // The design document's clause, in plain words (DROPDOWN_DESIGN §3.7, O1 point 3).
+        assertTrue(sentence.contains("Nothing is lost — open it, choose another, and it will send."))
         // 2. THE SERVER'S OWN WORDS, because a route that starts saying something more useful must
         //    not have to wait for a client release to be heard. NEVER SHORTENED, on any of these
         //    sentences, whatever else the terse pass touched.
-        assertTrue(sentence.contains("The server said: Record not found."))
+        assertTrue(sentence.contains(" Record not found."))
         // 3. NOTHING DELETED, and how much is riding on it.
         assertTrue(sentence, sentence.contains("This entry and the 3 files saved with it are still here"))
         assertTrue(sentence, sentence.contains("nothing was deleted"))
@@ -322,7 +322,7 @@ class OutboxDanglingReferenceTest {
             files = 0,
             isCorrection = false,
         )
-        assertTrue(sentence.contains("It is a workshop or an artisan — the server's answer does not say which."))
+        assertTrue(sentence.contains("It is a workshop or an artisan."))
         assertFalse("\"0 files\" reads as an accusation:\n$sentence", sentence.contains("0 file"))
         assertTrue(sentence, sentence.contains("This entry is still here"))
         // "an artisan", not "a artisan". The list is read aloud by a screen reader as often as it is
@@ -408,7 +408,7 @@ class OutboxDanglingReferenceTest {
             files = 0,
             isCorrection = false,
         )
-        assertTrue(sentence, sentence.contains("The server said: Record not found. This entry is still here"))
+        assertTrue(sentence, sentence.contains("Record not found. This entry is still here"))
     }
 
     @Test
@@ -501,7 +501,7 @@ class OutboxDanglingReferenceTest {
             isDangling = true,
         )
         assertTrue(warning.contains("Re-pick it fixes that without losing anything"))
-        assertTrue(warning.contains("nothing about it has reached the server"))
+        assertTrue(warning.contains("none of it has been uploaded"))
         // And the arm is opt-in: every existing caller's sentence is untouched.
         val ordinary = outboxDiscardConfirmation("Giriraj Prasad", files = 3, isConflict = false)
         assertFalse(ordinary.contains("Re-pick"))

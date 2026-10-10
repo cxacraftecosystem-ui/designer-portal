@@ -221,8 +221,8 @@ suspend fun lookUpRecordCode(repository: WorkshopRepository, ref: DwWorkshopCode
         RecordCodeOutcome.Refused(unresolvedWorkshopCodeMessage(ref.recordType))
     } catch (e: Exception) {
         RecordCodeOutcome.Refused(
-            "There is no connection, so the repository could not be asked about that code. Try again when there " +
-                "is signal — the code itself checked out, so the card is fine."
+            "No connection, so that code could not be looked up. Try again when there " +
+                "is signal — the code itself is valid, so the card is fine."
         )
     }
 }

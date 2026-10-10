@@ -141,11 +141,11 @@ class ReportRecordingPlaceTest {
             "the coordinate is missing, so the line cannot be audited:\n$printed",
             printed.contains("(21.18540, 83.58750)"),
         )
-        // The one line in this document the SERVER cannot reproduce, so it says so itself. A reader
-        // holding both copies has no access to the source comment that explains the difference.
+        // The line is the place and nothing else: a document handed to an officer does not narrate
+        // which copy carries what (2026-10-10).
         assertTrue(
-            "nothing in the line admits the office's copy lacks it:\n$printed",
-            printed.contains("the office's copy of this report does not carry this line"),
+            "the provenance line must end at the coordinate:\n$printed",
+            printed.contains("Recorded at Barpali, Bargarh, Odisha (21.18540, 83.58750)."),
         )
     }
 

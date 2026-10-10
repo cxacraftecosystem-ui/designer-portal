@@ -166,10 +166,8 @@ fun recordDictationNothingLeftSentence(conditions: DwDictationConditions): Strin
          * It names no retry, because the engine has already been asked in this run.
          */
         !conditions.online && conditions.appModelRefusedLanguage ->
-            "This app's own speech model is on this phone and would not take $label just now, and " +
-                "there is no connection. Type the answer in. This is worth reporting: the model " +
-                "was measured as serving $label, so it refusing it here is a fault in this app " +
-                "rather than anything you did."
+            "Dictation in $label could not start on this phone, and there is no connection to " +
+                "fall back on. Type the answer in, or dictate it when you have signal."
 
         /*
          * No signal, the phone has an offline engine, and a pack for this language can ACTUALLY be
