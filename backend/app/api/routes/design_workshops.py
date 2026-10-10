@@ -149,6 +149,7 @@ from app.core.deps import (
 # `app/services` because it touches no database — see that module's header — which is what lets the
 # stage save import it too, so the two writers of that transition cannot disagree about what it
 # writes.
+from app.schemas import design_workshop_approvals as design_workshop_approvals_schema
 from app.schemas import design_workshop_review_loop
 from app.schemas.design_workshops import (
     DESIGN_WORKSHOP_STATUSES,
@@ -173,6 +174,7 @@ from app.services import (
     ai_layers,
     ai_verb_cap,
     ai_verbs,
+    design_workshop_approvals,
     design_workshop_posts,
     dictation_cap,
     dictation_consent,
@@ -238,6 +240,7 @@ from app.services.identity_ocr import (
     with_retention,
 )
 from app.services.market_analysis import analyse, market_findings_payload
+from app.services.report_builder import sign_off_lines
 from app.services.pagination import normalize_pagination, page_payload
 from app.services.records import (
     contains,
@@ -427,6 +430,25 @@ _DECISION_HAS_ITS_OWN_ROUTE = (
     "be manufactured"
 )
 
+#: The approving authority's sign-off (2026-10-10). Said without a route on purpose: approving a
+#: report and handing it on are the Ministry Admin's acts, on Reports to approve.
+_SIGN_OFF_HAS_ITS_OWN_SCREEN = (
+    "who approved this report, in which round and when, and who handed it on, to which office and "
+    "with which file, are recorded by the Ministry Admin's own decisions on Reports to approve, each "
+    "with an audit entry written in the same transaction. A sign-off that could be set from a header "
+    "edit would be a sign-off that could be manufactured"
+)
+
+_SIGN_OFF_READ_BACK = (
+    "read back for the single-record read and not a stored column: the names and role resolve "
+    "approvedById and handedOnById, and decisions is the audit log of this report"
+)
+
+_HAND_IN_IS_COUNTED = (
+    "when the report was last handed in is stamped by the server on every entry into "
+    "Pre-submission, together with the round counter"
+)
+
 
 #: Every key this endpoint refuses BY NAME, with the sentence the client is told.
 #:
@@ -516,6 +538,22 @@ _NEVER_PATCHABLE: dict[str, str] = {
     "reviewNotes": _DECISION_HAS_ITS_OWN_ROUTE,
     "reviewedById": _DECISION_HAS_ITS_OWN_ROUTE,
     "reviewedAt": _DECISION_HAS_ITS_OWN_ROUTE,
+    # ── THE SANCTIONING AUTHORITY'S SIGN-OFF (2026-10-09) ────────────────────────────────────────
+    # Named here in the SAME COMMIT as the four keys `workshop_summary` gained, for the reason the
+    # paragraph above gives; the two names are the single read's, refused for
+    # `dictationConsentByName`'s reason.
+    "approvedById": _SIGN_OFF_HAS_ITS_OWN_SCREEN,
+    "approvedAt": _SIGN_OFF_HAS_ITS_OWN_SCREEN,
+    "approvedRound": _SIGN_OFF_HAS_ITS_OWN_SCREEN,
+    "handedOnById": _SIGN_OFF_HAS_ITS_OWN_SCREEN,
+    "handedOnAt": _SIGN_OFF_HAS_ITS_OWN_SCREEN,
+    "handedOnTo": _SIGN_OFF_HAS_ITS_OWN_SCREEN,
+    "handedOnExportId": _SIGN_OFF_HAS_ITS_OWN_SCREEN,
+    "lastHandedInAt": _HAND_IN_IS_COUNTED,
+    "approvedByName": _SIGN_OFF_READ_BACK,
+    "approvedByRole": _SIGN_OFF_READ_BACK,
+    "handedOnByName": _SIGN_OFF_READ_BACK,
+    "decisions": _SIGN_OFF_READ_BACK,
     "submissionRound": (
         "the submission count goes up automatically each time the report is handed in for "
         "inspection"
@@ -1597,7 +1635,7 @@ async def record_dictation_consent(
     the artisan's answer is the ordinary work of the designer sitting with them.
     """
     _require_designer(current_user)
-    await load_workshop_or_404(workshop_id, current_user, for_edit=True)
+    await load_workshop_or_404(workshop_id, current_user, for_edit=True, allow_when_frozen=True)
     try:
         plans = dictation_consent.decision_plans(
             workshop_id=workshop_id,
@@ -2185,6 +2223,14 @@ async def get_design_workshop(
     summary["dictationConsentByName"] = await dictation_consent.actor_name(
         getattr(record, "dictationConsentById", None)
     )
+    # WHO APPROVED IT AND WHO HANDED IT ON, AS NAMES — the single read only, for the rule the line
+    # above follows. Both None until the sanctioning authority acts; both pointers are SetNull, so a
+    # None beside an id means "somebody no longer on record", never a guess.
+    summary.update(await design_workshop_approvals.approval_names(record))
+    # WHAT HAS BEEN DECIDED ON THIS REPORT, newest first — approvals, send-backs, a withdrawn
+    # approval, the hand-on — read back off `ReviewLog` for the designer, who otherwise sees only a
+    # status chip. The single read only, by the same rule.
+    summary["decisions"] = await design_workshop_approvals.decision_history(record.id)
     # ── WHAT WAS SENT BACK, AND BY WHOM ──────────────────────────────────────────────────────────
     #
     # THE DESIGNER'S HALF OF THE PRE-SUBMISSION LOOP. `reviewNotes` on the header is the LATEST
@@ -2504,7 +2550,16 @@ async def update_design_workshop(
     # the write so that a refused move writes nothing at all.
     if "status" in data:
         current_status = str(getattr(record, "status", "") or "")
-        refusal = design_workshop_review_loop.transition_refusal(current_status, str(data["status"]))
+        # A HANDED-ON REPORT LOSES EVERY HEADER EDGE (2026-10-10), asked of the ROW before the graph:
+        # the graph alone cannot tell a SUBMITTED row the approving authority handed on from one that
+        # carries the word's old meaning. The loader's freeze already refuses such a row before this
+        # line; this is the rule stated where the edges are, so a door that loads without the freeze
+        # cannot reopen it. See the paragraph above `LEGAL_TRANSITIONS`.
+        refusal = design_workshop_review_loop.handed_on_refusal(
+            current_status,
+            str(data["status"]),
+            handed_on=getattr(record, "handedOnAt", None) is not None,
+        ) or design_workshop_review_loop.transition_refusal(current_status, str(data["status"]))
         if refusal:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=refusal)
         # THE ROUND COUNTER MOVES WITH THE STATUS, IN ONE STATEMENT, AND THE DICT IS NOT BUILT HERE.
@@ -2536,7 +2591,29 @@ async def update_design_workshop(
     # nothing. A link being CLEARED needs no lookup either — there is no row to find.
     if data.get("workshopId") is not None:
         await _assert_linked_workshop_exists(data["workshopId"])
-    updated = await db.designworkshop.update(where={"id": workshop_id}, data=data)
+    # PREDICATED ON NOT FROZEN (2026-10-10), the stage save's rule: an approval that committed after
+    # the loader's read must not be edited under. Zero rows is that approval, and the answer is the
+    # frozen sentence — nothing is written. One extra read for the response, which an `update` by id
+    # used to hand back for free.
+    # The link column is a foreign key, which a guarded `update_many` does not take; it rides an
+    # `update` by id in the same transaction, after the guard has held the row.
+    link = {k: data.pop(k) for k in ("workshopId",) if k in data}
+    async with db.tx() as tx:
+        written = await tx.designworkshop.update_many(
+            where={"id": workshop_id, "NOT": dict(design_workshop_approvals_schema.FROZEN_WHERE)},
+            data=data or {"schemaVersion": record.schemaVersion},
+        )
+        if written == 1 and link:
+            await tx.designworkshop.update(where={"id": workshop_id}, data=link)
+    updated = await db.designworkshop.find_unique(where={"id": workshop_id})
+    if written != 1:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=design_workshop_approvals_schema.frozen_refusal(
+                getattr(updated, "status", None), getattr(updated, "handedOnAt", None)
+            )
+            or design_workshop_approvals_schema.FROZEN_APPROVED,
+        )
     return workshop_summary(updated)
 
 
@@ -5005,7 +5082,12 @@ async def record_device_export(
     ``record=true`` already writes the same row for them on the server-rendered path.
     """
     await load_workshop_or_404(
-        workshop_id, current_user, for_edit=True, barred_to_post_holders=False
+        workshop_id,
+        current_user,
+        for_edit=True,
+        barred_to_post_holders=False,
+        # An approved or handed-on report's file must still be recordable: the office receives it.
+        allow_when_frozen=True,
     )
     fmt = payload.format.upper()
     if fmt not in _MIME:
@@ -5500,6 +5582,19 @@ async def _report_inputs(
     """
     entries = await entry_rows(workshop_id)
     data = assemble_workshop_data(record, entries)
+    # THE SIGN-OFF LINES (2026-10-10): who approved the report and where it went, printed under the
+    # Certification signatures. One name lookup, and none for a report nobody has approved.
+    if getattr(record, "approvedAt", None) is not None:
+        names = await design_workshop_approvals.approval_names(record)
+        data.sign_off_lines = sign_off_lines(
+            approved_at=record.approvedAt,
+            approved_by_name=names.get("approvedByName"),
+            approver_role_label=design_workshop_approvals_schema.role_label(
+                names.get("approvedByRole")
+            ),
+            handed_on_at=getattr(record, "handedOnAt", None),
+            handed_on_to=getattr(record, "handedOnTo", None),
+        )
     # THE REPORT IS A READER TOO, and it resolves the overlay like every other one. It costs at
     # most one query for the whole document (none at all for a workshop with no attributed field),
     # and it is awaited HERE, before the three waves below, rather than inside them: the waves are

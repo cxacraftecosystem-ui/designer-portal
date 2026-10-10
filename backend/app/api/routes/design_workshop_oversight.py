@@ -94,7 +94,11 @@ from app.schemas.design_workshop_oversight import (
     DesignWorkshopOversightCreateIn,
     DesignWorkshopOversightIn,
 )
-from app.services import design_workshop_oversight as oversight, design_workshop_posts as posts
+from app.services import (
+    design_workshop_approvals,
+    design_workshop_oversight as oversight,
+    design_workshop_posts as posts,
+)
 from app.services.artisan_import import import_artisans
 from app.services.artisan_xlsx import (
     ArtisanDefaults,
@@ -636,6 +640,10 @@ async def read_overseen_workshop(
     summary["customSchemaVersion"] = definition.version
     summary["customSections"] = definition_payload(definition)
     summary["oversight"] = await oversight.oversight_rows(workshop_id)
+    # WHO SIGNED IT OFF, as names (2026-10-09): a supervisor reading a report that has been approved
+    # or handed on is owed who did it. One query, and none until somebody has.
+    summary.update(await design_workshop_approvals.approval_names(record))
+    summary["decisions"] = await design_workshop_approvals.decision_history(workshop_id)
     # SAID ON THE WIRE RATHER THAN INFERRED FROM THE URL, because both clients will eventually
     # render this payload through the same screen as the designer's read, and a screen that cannot
     # tell the two apart will offer a Save button that the API answers 404 to. One boolean is

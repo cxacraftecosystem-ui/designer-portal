@@ -71,6 +71,7 @@ import com.designprototype.workshop.data.DW_REPORT_HISTORY_TITLE
 import com.designprototype.workshop.data.DraftConsent
 import com.designprototype.workshop.data.DwConsentMerge
 import com.designprototype.workshop.data.DwDictationRun
+import com.designprototype.workshop.data.DwReportFreeze
 import com.designprototype.workshop.data.DwSearchStatus
 import com.designprototype.workshop.data.DwTier3Consent
 import com.designprototype.workshop.data.DesignWorkshopDetailDto
@@ -92,6 +93,7 @@ import com.designprototype.workshop.data.computeWorkshopCompleteness
 import com.designprototype.workshop.data.dwConsentMerge
 import com.designprototype.workshop.data.dwConsentRecordedNote
 import com.designprototype.workshop.data.dwConsentStateSentence
+import com.designprototype.workshop.data.dwFrozenSentence
 import com.designprototype.workshop.data.dwTier3ConsentOf
 import com.designprototype.workshop.data.dwTier3ConsentToken
 import com.designprototype.workshop.data.isLocalOnlyWorkshop
@@ -268,6 +270,17 @@ fun StageIndexScreen(
     var recordingConsent by remember(workshopId) { mutableStateOf(false) }
     /** What just happened to the answer, said in place rather than as a toast that outlives the screen. */
     var consentNote by remember(workshopId) { mutableStateOf<String?>(null) }
+    /**
+     * WHY THIS REPORT CAN NO LONGER BE CHANGED, when the sanctioning authority has approved it or
+     * handed it on — the server's own sentence (see [dwFrozenSentence]), said here before a designer
+     * opens a stage and types into it. The server refuses every change to such a report with this
+     * sentence; the sync holds that refusal against the item and deletes nothing, so the cost of not
+     * saying it first is a designer's afternoon of edits that can never reach the report.
+     *
+     * Seeded from what this run last read, so a moment without signal keeps saying what was true a
+     * minute ago rather than going quiet; replaced by the server's answer whenever there is one.
+     */
+    var frozenNote by remember(workshopId) { mutableStateOf(DwReportFreeze.sentenceFor(workshopId)) }
     val scope = rememberCoroutineScope()
 
     LaunchedEffect(workshopId) {
@@ -296,6 +309,14 @@ fun StageIndexScreen(
             onServer = remoteId != null
             val remote = remoteId?.let {
                 runCatching { repository.designWorkshop(it) }.getOrNull()
+            }
+            // Only an ANSWER moves it: a failed read says nothing about the sign-off, and clearing the
+            // sentence on a timeout would tell a designer an approved report is open again.
+            if (remote != null) {
+                frozenNote = dwFrozenSentence(remote.status, remote.handedOnAt)
+                // Left for the stage screens, which read one stage and never the workshop's status,
+                // and for the report, whose Certification section prints the sign-off.
+                DwReportFreeze.rememberRead(workshopId, remote)
             }
             // Refreshed opportunistically, and only ever ADDING to what was read off disk above: a
             // failure leaves the cached copy exactly where it was — see [dwCustomDefinition].
@@ -433,6 +454,7 @@ fun StageIndexScreen(
             fontSize = 12.sp
         )
         serverNote?.let { Text(it, color = MaterialTheme.field.warning, fontSize = 12.sp) }
+        frozenNote?.let { Text(it, color = MaterialTheme.field.warning, fontSize = 13.sp) }
 
         Button(onClick = onOpenReport, modifier = Modifier.fillMaxWidth()) {
             Icon(Icons.Filled.Description, contentDescription = null, modifier = Modifier.size(16.dp))

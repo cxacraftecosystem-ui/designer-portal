@@ -765,21 +765,49 @@ internal fun fieldWorkshopLabel(workshop: WorkshopDetailDto): String =
  * AN UNRECOGNISED STATUS STILL GETS NO WORD. A value from a newer server must never be dressed as
  * one this build understands, and `WorkshopOptionsTest` pins that.
  */
-internal fun designWorkshopStatusWord(status: String): String? = when (status.trim().uppercase()) {
-    // Handed in and waiting on the inspecting officers. NOT "Submitted": since 2026-09-13 that word
-    // means the approved report has gone to the office, and the two must not share a label on a
-    // screen where a designer is deciding what to do next.
-    "PRE_SUBMISSION" -> "In pre-submission"
-    // The one a designer must not be able to miss — officers have asked for corrections.
-    "NEEDS_REVISION" -> "Needs revision"
-    "APPROVED" -> "Approved"
-    "SUBMITTED" -> "Submitted"
-    "ARCHIVED" -> "Archived"
-    // DRAFT, IN_PROGRESS, COMPLETE — still open and needing no word, and an unrecognised status from
-    // a newer server is treated the same way rather than dressed as one of the five above. An unknown
-    // value must never be printed as a known one.
-    else -> null
-}
+internal fun designWorkshopStatusWord(status: String, handedOnAt: String? = null): String? =
+    when (status.trim().uppercase()) {
+        // DRAFT, IN_PROGRESS, COMPLETE — still open and needing no word, and an unrecognised status
+        // from a newer server is treated the same way rather than dressed as one of the five below.
+        // An unknown value must never be printed as a known one.
+        "PRE_SUBMISSION", "NEEDS_REVISION", "APPROVED", "SUBMITTED", "ARCHIVED" ->
+            designWorkshopStatusLabel(status, handedOnAt)
+        else -> null
+    }
+
+/**
+ * THE PLAIN WORD FOR EVERY `DesignWorkshopStatus` TOKEN — the one mapping the picker hint above, the
+ * workshop list and the inspector's list all print from (2026-10-09).
+ *
+ * Until that day the two lists printed the raw token, lower-cased on one ("pre submission",
+ * "approved") and verbatim on the other ("PRE_SUBMISSION") — a column name on a designer's screen,
+ * and a third spelling beside the picker's own word for the same state.
+ *
+ * "Handed on" ONLY WHERE [handedOnAt] SAYS SO. `SUBMITTED` changed meaning on 2026-09-13 and nothing
+ * was backfilled, so the status alone cannot tell a report the sanctioning authority handed on to the
+ * office from a designer's own submission of before that day. The column can, and a row without it
+ * keeps the word it always had.
+ *
+ * AN UNRECOGNISED TOKEN IS PRINTED AS ITSELF, lower-cased and with its underscores as spaces — what
+ * the workshop list always printed — and never as one of the eight words below: a status from a
+ * newer server must not be dressed as one this build understands.
+ */
+internal fun designWorkshopStatusLabel(status: String, handedOnAt: String? = null): String =
+    when (status.trim().uppercase()) {
+        "DRAFT" -> "Draft"
+        "IN_PROGRESS" -> "In progress"
+        "COMPLETE" -> "Complete"
+        // Handed in and waiting on the inspecting officers. NOT "Submitted": since 2026-09-13 that
+        // word means the approved report has gone to the office, and the two must not share a label
+        // on a screen where a designer is deciding what to do next.
+        "PRE_SUBMISSION" -> "In pre-submission"
+        // The one a designer must not be able to miss — officers have asked for corrections.
+        "NEEDS_REVISION" -> "Needs revision"
+        "APPROVED" -> "Approved"
+        "SUBMITTED" -> if (handedOnAt.isNullOrBlank()) "Submitted" else "Handed on"
+        "ARCHIVED" -> "Archived"
+        else -> status.trim().lowercase().replace('_', ' ')
+    }
 
 /**
  * The three facts that tell two design workshops apart on a phone: what craft, where, and when.
@@ -795,7 +823,7 @@ internal fun designWorkshopStatusWord(status: String): String? = when (status.tr
  * instead of drawing a box of its own.
  */
 internal fun designWorkshopHint(workshop: DesignWorkshopDto): String? = listOfNotNull(
-    designWorkshopStatusWord(workshop.status),
+    designWorkshopStatusWord(workshop.status, workshop.handedOnAt),
     workshop.craftName?.takeIf { it.isNotBlank() },
     workshop.clusterName?.takeIf { it.isNotBlank() } ?: workshop.state?.takeIf { it.isNotBlank() },
     workshop.startDate?.take(10)?.takeIf { it.isNotBlank() },

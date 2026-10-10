@@ -52,7 +52,7 @@ from app.core.deps import can_run_design_workshops, has_rank, is_admin
 # because it must import nothing that reaches the database — that is what lets THIS module import
 # it without a cycle (`records` imports `app.core.db`; the loop module imports `review_update`
 # inside the one function that needs it) and what lets its rules be asserted with no Postgres.
-from app.schemas import design_workshop_review_loop
+from app.schemas import design_workshop_approvals, design_workshop_review_loop
 from app.services import (
     custom_sections,
     design_workshop_data,
@@ -283,6 +283,7 @@ async def load_workshop_or_404(
     *,
     for_edit: bool = False,
     barred_to_post_holders: bool = True,
+    allow_when_frozen: bool = False,
 ) -> Any:
     """Fetch a workshop the caller may see, or raise.
 
@@ -406,6 +407,31 @@ async def load_workshop_or_404(
             )
         if not admin:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Record not found")
+    # ── THE THIRD REFUSAL: AN APPROVED OR HANDED-ON REPORT IS FROZEN (2026-10-10) ────────────────
+    #
+    # AN APPROVAL THAT DOES NOT COVER THE CONTENT IT NAMES IS NOT AN APPROVAL. From the moment the
+    # approving authority approves a report until the approval is withdrawn, and from its hand-on to
+    # the office until the authority returns it, every write of its CONTENT is refused here — the
+    # stage saves, the custom sections, the capture aids and AI layers, the header edit and the
+    # delete, and a record filed into it through the record forms' filing gate — 403, with the
+    # sentence that names whose move it is (`schemas/design_workshop_approvals.frozen_refusal`). 403
+    # and not 409 because both clients already treat a 403 on a save as "who may write this
+    # workshop" and quote the server, which is the right sentence; a 409 would read as "deleted".
+    #
+    # TWO DOORS PASS `allow_when_frozen=True`, and the whole list is theirs: recording a report
+    # export (the office must be able to record the approved file) and the dictation consent (an
+    # artisan withdrawing consent cannot wait for an approval to be withdrawn, and it changes nothing
+    # the report prints). A LEGACY SUBMITTED row — handedOnAt null — is not frozen.
+    #
+    # THE CHECK HERE IS ADVISORY FOR A SAVE ALREADY IN FLIGHT: an approval can commit between this
+    # read and the write. `save_stage`'s header write and the header edit's write carry the same
+    # predicate (`FROZEN_WHERE`) and refuse there too, rolling the whole save back.
+    if for_edit and not allow_when_frozen:
+        refusal = design_workshop_approvals.frozen_refusal(
+            getattr(record, "status", None), getattr(record, "handedOnAt", None)
+        )
+        if refusal:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=refusal)
     return record
 
 
@@ -531,6 +557,11 @@ WHERE e."deletedAt" IS NULL
 """
 
 
+def _iso_or_none(moment: Any) -> str | None:
+    """A stored moment as ISO-8601, or None — for the columns a row may not carry at all."""
+    return moment.isoformat() if isinstance(moment, datetime) else None
+
+
 def workshop_summary(record: Any) -> dict[str, Any]:
     """The workshop header as the clients read it.
 
@@ -603,6 +634,21 @@ def workshop_summary(record: Any) -> dict[str, Any]:
         # it is ordered by `reviewedAt`, and a queue that cannot show its own sort key is a queue
         # somebody will re-sort in the client against a value it does not have.
         "submissionRound": record.submissionRound,
+        # ── THE SANCTIONING AUTHORITY'S SIGN-OFF (2026-10-09) ────────────────────────────────────
+        # NAMED HERE OR IT IS INVISIBLE. Ids and moments and no names, for `reviewedById`'s reason:
+        # the single reads resolve the two names (`approvedByName`, `handedOnByName`). On the LIST as
+        # well, because the sign-off queue is a list and "approved, waiting to be handed on" and
+        # "handed on, on the 9th" are what its rows say. `getattr` with a default because a header
+        # built from a device's draft, or a row from a client generated before these columns, has
+        # none of them — absent there means "this device does not know", as the four keys above.
+        "approvedById": getattr(record, "approvedById", None),
+        "approvedAt": _iso_or_none(getattr(record, "approvedAt", None)),
+        "approvedRound": getattr(record, "approvedRound", None),
+        "handedOnById": getattr(record, "handedOnById", None),
+        "handedOnAt": _iso_or_none(getattr(record, "handedOnAt", None)),
+        "handedOnTo": getattr(record, "handedOnTo", None),
+        "handedOnExportId": getattr(record, "handedOnExportId", None),
+        "lastHandedInAt": _iso_or_none(getattr(record, "lastHandedInAt", None)),
         # Tier 3 consent: may this workshop's recordings leave the device? Three keys — the answer, the
         # moment the ARTISAN gave it, and who took it down. The acceptor's display NAME is deliberately
         # not here: this dict is serialised once per row by the paged list, and resolving a name would
@@ -6034,7 +6080,29 @@ async def save_stage(
             # moved the status first, which is the outcome the predicate exists to produce; the
             # stage rows AND the promoted columns this transaction wrote stand either way — which is
             # now true of both halves, and used to be true only of the rows.
-            await tx.designworkshop.update(where={"id": workshop_id}, data=header)
+            # ── AND, SINCE 2026-10-10, THE CONTENT WRITE IS PREDICATED AFTER ALL ─────────────────
+            #
+            # On NOT FROZEN, and nothing else. The paragraph above is right that a predicate which
+            # MISSES drops a designer's corrections on the floor — so this one does not miss quietly:
+            # zero rows means the approving authority approved (or handed on) the report between this
+            # save's read and its write, and the save RAISES, which rolls the whole transaction back —
+            # stage rows included — and answers 403 with the frozen sentence. A save is then either
+            # wholly in the approved report's past or wholly refused; it can never land half inside
+            # an approval nobody saw it under. The approval side of the race is its own
+            # compare-and-set on `updatedAt`, which this statement moves.
+            written = await tx.designworkshop.update_many(
+                where={"id": workshop_id, "NOT": design_workshop_approvals.FROZEN_WHERE},
+                data=header,
+            )
+            if written != 1:
+                frozen = await tx.designworkshop.find_unique(where={"id": workshop_id})
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=design_workshop_approvals.frozen_refusal(
+                        getattr(frozen, "status", None), getattr(frozen, "handedOnAt", None)
+                    )
+                    or design_workshop_approvals.FROZEN_APPROVED,
+                )
             if resubmission:
                 await tx.designworkshop.update_many(
                     where={"id": workshop_id, "status": "NEEDS_REVISION"}, data=resubmission

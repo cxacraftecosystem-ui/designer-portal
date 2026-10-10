@@ -51,12 +51,18 @@ router = APIRouter(prefix="/review", tags=["review"])
 # says WHY this approval mattered: the record was submitted after its workshop had ended.
 LATE_SUBMISSION_LOG_NOTE = "Late workshop submission — approved by an admin."
 
-# ReviewLog has NO action column: its only verb is ``status``, typed as the ``RecordStatus`` ENUM
+# ReviewLog's verb for the six record types is ``status``, typed as the ``RecordStatus`` ENUM
 # (DRAFT | PENDING | APPROVED | REJECTED | NEEDS_REVISION). Adding an EDITED value would need a schema
 # change plus a migration, and a reviewer edit is not a status in any case — it deliberately leaves the
 # record's status alone. So the edit log row carries the record's UNCHANGED status and says what
 # happened in ``notes``, prefixed with this marker so a UI (or a human) can pick edits out of the
 # per-record log without parsing prose.
+#
+# (Since 2026-10-09 the table HAS an ``action`` column, with ``fromStatus``, ``toStatus`` and
+# ``round`` beside it — written by the DESIGN-WORKSHOP decisions only, from
+# ``schemas/design_workshop_review_loop``, whose CHECK-constrained vocabulary has no EDITED in it.
+# Every row this module writes leaves all four NULL, and this marker is still how an edit is told
+# apart here.)
 EDIT_LOG_PREFIX = "EDITED"
 
 

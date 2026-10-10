@@ -1587,6 +1587,13 @@ data class DwInspectionFeedbackDto(
     val actorName: String? = null,
     val recordedAt: String? = null,
     val createdAt: String? = null,
+    /**
+     * TRUE FOR A SENTENCE THE APPROVING AUTHORITY WROTE — the twelfth key, added 2026-10-09: a report
+     * sent back without being approved, an approval withdrawn, or a report returned after it was
+     * handed on. The rest were written by an inspecting officer. Defaulted false, so a server that
+     * predates the key reads as the officers' register it always was.
+     */
+    val byApprovingAuthority: Boolean = false,
 )
 
 /** The workshop header, as `workshop_summary` serves it. */
@@ -1669,6 +1676,23 @@ data class DesignWorkshopDto(
      * server counts it, and nothing anywhere decrements it.
      */
     val submissionRound: Int = 0,
+    /*
+      THE SANCTIONING AUTHORITY'S SIGN-OFF — five of the header keys `workshop_summary` gained on
+      2026-10-09, ids and moments only (the list resolves no names, for [reviewedById]'s reason).
+
+      [handedOnAt] IS THE ONE THAT CHANGES WHAT THIS HANDSET DOES. `SUBMITTED` changed meaning on
+      2026-09-13 and nothing was backfilled, so the status alone cannot tell a report the authority
+      handed on to the office from a designer's own submission of before that day; this column can.
+      A handed-on report and an APPROVED one refuse every change on the server — see [dwIsFrozen].
+
+      All nullable and defaulted, so a server that predates them reads as "nobody has signed it
+      off", which is the truth for it.
+    */
+    val approvedAt: String? = null,
+    val approvedById: String? = null,
+    val approvedRound: Int? = null,
+    val handedOnAt: String? = null,
+    val handedOnTo: String? = null,
 )
 
 @Serializable
@@ -2159,6 +2183,22 @@ data class DesignWorkshopDetailDto(
     val reviewedById: String? = null,
     val reviewedAt: String? = null,
     val submissionRound: Int = 0,
+    /*
+      THE SIGN-OFF, the same five header keys as [DesignWorkshopDto] plus the three only the
+      SINGLE-RECORD read resolves: who approved it, by name and role, and who handed it on, by name.
+      Decoded here because this is the payload the workshop's own screen and the report read, and
+      the report's Certification section prints them (see [dwReportSignOffLines]). Null throughout
+      for a report nobody has signed off, and on a server that predates the keys.
+    */
+    val approvedAt: String? = null,
+    val approvedById: String? = null,
+    val approvedRound: Int? = null,
+    val handedOnAt: String? = null,
+    val handedOnTo: String? = null,
+    val approvedByName: String? = null,
+    /** A role TOKEN, e.g. `MINISTRY_ADMIN`; spoken through [dwApproverRoleLabel]. */
+    val approvedByRole: String? = null,
+    val handedOnByName: String? = null,
     /**
      * EVERY CORRECTION SUGGESTION EVER FILED against this report, newest first — the SINGLE-RECORD
      * read only, never the list, because it is a second query per workshop to print something a paged

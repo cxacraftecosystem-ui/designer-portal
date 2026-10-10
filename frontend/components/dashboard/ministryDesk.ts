@@ -4,11 +4,13 @@ import {
   DraftingCompass,
   FileSignature,
   LayoutDashboard,
+  Stamp,
   UserCheck,
   type LucideIcon
 } from "lucide-react";
 
 import {
+  canApproveDesignWorkshops,
   canAssignWorkshopOversight,
   canReadAnnualPlan,
   canReadWorkshopOversight,
@@ -41,16 +43,16 @@ export type MinistryDestination = {
 
 /**
  * THE MINISTRY DESK: the overview first, then the order a workshop reaches these screens — planned,
- * sanctioned, staffed, filled in, read back.
+ * sanctioned, staffed, filled in, read back, approved and handed on to the office.
  *
  * ── WHY AN OVERVIEW LEADS A LIFECYCLE ───────────────────────────────────────────────────────────
  *
  * The rows below the first are a SEQUENCE and are asserted as one against the directorate
  * walkthrough's deck. "Ministry dashboard" is not a step in that sequence — it is the register of
  * every workshop that has been through it, which is why it sits above rather than inside. An officer
- * opening this card most often wants to know what is happening before deciding which of the five
- * acts to perform, and a register filed last would be a register reached after scrolling past the
- * five things it summarises. `DIRECTORATE_STEPS` carries the matching step at the same index and
+ * opening this card most often wants to know what is happening before deciding which of the acts
+ * below to perform, and a register filed last would be a register reached after scrolling past the
+ * things it summarises. `DIRECTORATE_STEPS` carries the matching step at the same index and
  * `e2e/ministry-desk-unit.spec.ts` holds the two lists to each other, so moving this row obliges
  * moving that step in the same edit.
  *
@@ -64,7 +66,7 @@ export type MinistryDestination = {
  *
  * ── THE ORDER IS THE WALKTHROUGH'S, DELIBERATELY AND BY ASSERTION ───────────────────────────────
  *
- * `components/guide/directorateSteps.ts` teaches these five screens in exactly this sequence, and
+ * `components/guide/directorateSteps.ts` teaches these screens in exactly this sequence, and
  * `e2e/ministry-desk-unit.spec.ts` holds the two lists to each other — same hrefs, same order. A
  * launcher and a lesson that disagree about the order of one job teach two jobs, and the reader has
  * no way to tell which is the product. It is also the cheapest guard against the defect this
@@ -74,15 +76,15 @@ export type MinistryDestination = {
  *
  * Read off `NAV_ITEMS` in `components/DynamicIslandNav.tsx`, and asserted against that file as text.
  * Every one of these destinations already answers to a name in the menu, and a sixth spelling
- * invented on a card is a name nobody's grep finds and nobody's colleague recognises. Four of the
- * five have no Android counterpart to be parity with — the nav's own comment says so where it
+ * invented on a card is a name nobody's grep finds and nobody's colleague recognises. Apart from
+ * Design workshops, none of these has an Android counterpart to be parity with — the nav's own comment says so where it
  * declares them — so the web nav is the only authority there is, and this table follows it rather
  * than competing with it.
  *
  * ── AND THERE IS NO DASHBOARD TILE FOR ANY OF THEM, WHICH IS WHY THE CARD EXISTS ────────────────
  *
  * The `tiles` array on the dashboard is held to Android's `EntryMode` list by two parity tests, one
- * per client, and none of these five is an `EntryMode` — so none of them can join that grid without
+ * per client, and none of these is an `EntryMode` — so none of them can join that grid without
  * putting the web out of step with the handset. A ministry officer's dashboard therefore showed them
  * nineteen tiles of a designer's work and not one of their own, and their screens were reachable
  * only from the nav sheet: behind a tap, in one scrolling column, where somebody who does not
@@ -130,8 +132,22 @@ export const MINISTRY_DESK: readonly MinistryDestination[] = [
     label: "Workshops I monitor",
     href: "/officers/monitored",
     icon: Binoculars,
-    note: "The workshops you were named on as Assistant Director or Regional Director, read-only",
+    note: "The workshops you were named on as Assistant Director or Regional Director, read stage by stage",
     can: canReadWorkshopOversight
+  },
+  {
+    /*
+      LAST, BECAUSE IT IS THE END OF THE SEQUENCE: the report has been filled in, inspected and read
+      back, and the Ministry Admin signs it off — approves it or sends it back with a reason, and hands
+      an approved report on to the office. The master admin's card carries it too; an Assistant or
+      Regional Director's does not, because a director post is for reading a workshop and the sign-off
+      is the ministry's (`canApproveDesignWorkshops`, the mirror of `require_approving_authority`).
+    */
+    label: "Reports to approve",
+    href: "/design-workshop-approvals",
+    icon: Stamp,
+    note: "Read each report its designers hand in, approve it or send it back with a reason, and hand the approved report on to the office",
+    can: canApproveDesignWorkshops
   }
 ];
 
@@ -232,46 +248,20 @@ export function awaitingSanctionSentence(count: number): string {
 export const AWAITING_SANCTION_BADGE_CLASS =
   "inline-flex shrink-0 items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-800";
 
-/**
- * THE HOP THIS JOURNEY DOES NOT HAVE YET, said on the card rather than discovered by hunting for a
- * button.
+/* ────────────────────────────────────────────────────────────────────────────
+ * THE SECOND BADGE — how many reports are waiting for the Ministry Admin's approval.
  *
- * The five rows above are "in the order a workshop reaches them", and a reader is entitled to read
- * an ordered sequence as a complete one. It is not: the ministry's own terminus — read the report
- * back and sign it off — has no router. **VERIFIED** at the time of writing: there is no
- * `backend/app/api/routes/design_workshop_approvals.py`, and `DECISION_EDGES` in
- * `backend/app/schemas/design_workshop_review_loop.py` names the three verbs
- * (`/approve`, `/revise`, `/hand-on`) against a router "this workstream does not build", with the
- * words "until it lands APPROVED is simply unreachable". `PATCH /design-workshops/{id}` refuses all
- * three edges by design, so no header edit can manufacture one either.
- *
- * ── WHY IT IS ON SCREEN AND NOT ONLY IN A COMMENT ───────────────────────────────────────────────
- *
- * This card is the ministry account's front door and the only place in the product that lays their
- * screens out as a sequence. An officer who reads that sequence, watches a report reach
- * Pre-submission and then cannot find the button that signs it off has been taught that the product
- * is broken — the same failure `/design-workshops`' empty-scope screen already costs the directorate
- * tiers, and this repository's most repeated bug class in one sentence. Stating a missing step is
- * the cheapest possible fix and it is the truncation rule's own reasoning: work that is not done has
- * to be visible as not done.
- *
- * ── IT PROMISES NOTHING, ON PURPOSE ─────────────────────────────────────────────────────────────
- *
- * No release number and no "coming soon". Who the sanctioning authority is — which tier may approve
- * at all — is an open product question and was deferred rather than answered, so copy naming a tier
- * or a date would be this card inventing the answer. What is stated is only what is true today, and
- * what an officer can still do instead.
- *
- * ── IT IS MEANT TO BE DELETED ───────────────────────────────────────────────────────────────────
- *
- * `e2e/ministry-desk-unit.spec.ts` tests this constant against the ABSENCE of that router file: the
- * day the approvals workstream lands, that test goes red and this sentence — and the paragraph that
- * renders it — must come out in the same commit. A "not built yet" notice that outlives the thing
- * not being built is worse than never having written one.
- */
-export const MINISTRY_APPROVAL_GAP =
-  "Reading a report back is where this sequence stops today. Nothing in the product can approve a " +
-  "finished workshop yet — approving one, withdrawing an approval and handing one on to the office " +
-  "have no screen and no endpoint, and a header edit is refused — so none of the rows above is " +
-  "waiting on a signature from you. Sending a report back for corrections does exist; it is the " +
-  "inspector's, on the workshop itself.";
+ * The same three things as the sanction badge above and for the same reasons: a destination that
+ * names the row it rides on, a whole sentence for a pointer and a screen reader, and the one pill
+ * class. The number is `components/hooks/useAwaitingApprovalCount.ts`, one store read by the nav and
+ * by this card, and it counts the reports in Pre-submission — the ones nobody has decided on yet.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/** The destination the approval count rides on — a row on this desk, held to it by the spec. */
+export const AWAITING_APPROVAL_BADGE_HREF = "/design-workshop-approvals";
+
+/** The whole sentence the approval badge is given, in both plurals. */
+export function awaitingApprovalSentence(count: number): string {
+  return count === 1 ? "1 report is waiting for approval" : `${count} reports are waiting for approval`;
+}
+

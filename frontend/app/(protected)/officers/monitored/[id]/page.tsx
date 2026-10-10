@@ -78,6 +78,7 @@ import {
   type DwStageCompleteness,
   type DwStageData
 } from "@/lib/designWorkshops";
+import { decisionKindLabel, signOffLines } from "@/lib/designWorkshopApprovals";
 import { formatDate } from "@/lib/format";
 import { isUnreachable } from "@/lib/offline";
 import { canReadWorkshopOversight, roleLabel } from "@/lib/permissions";
@@ -523,6 +524,35 @@ export default function WorkshopUnderOversightPage({
             onRetry={media.retry}
             state={media.state}
           />
+          {/* WHERE THE REPORT STANDS, AND WHO DECIDED — the sign-off is the Ministry Admin's, and a
+              supervisor reading the workshop is owed who approved it, who handed it on, and every
+              decision on the way. */}
+          {signOffLines(detail).length || detail.decisions?.length ? (
+            <section className="panel mb-4 grid gap-3 p-4">
+              <h2 className="font-display text-base font-bold tracking-tight text-ink-900">Decisions on this report</h2>
+              {signOffLines(detail).map((line) => (
+                <p className="text-sm leading-6 text-ink-700" key={line}>
+                  {line}
+                </p>
+              ))}
+              {detail.decisions?.length ? (
+                <ul className="grid gap-2">
+                  {detail.decisions.map((decision) => (
+                    <li className="rounded-md border border-line-200 bg-surface-50 px-3 py-2" key={decision.id}>
+                      <p className="text-sm font-medium text-ink-900">{decisionKindLabel(decision.kind)}</p>
+                      {decision.note?.trim() ? (
+                        <p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-ink-700">{decision.note}</p>
+                      ) : null}
+                      <p className="mt-1 text-xs leading-5 text-ink-500">
+                        {decision.actorName?.trim() || "Somebody no longer on record"}
+                        {decision.at ? ` · ${formatDate(decision.at)}` : ""}
+                      </p>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </section>
+          ) : null}
 
           {registry === null ? (
             registryError ? null : (

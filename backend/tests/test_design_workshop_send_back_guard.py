@@ -189,7 +189,8 @@ def test_the_send_back_refuses_inside_the_transaction_so_the_suggestion_rolls_ba
     tx = source.index("async with db.tx()")
     feedback = source.index("_apply(tx, plans.feedback)")
     guarded = source.index("_apply_while_under_review(tx, plans.workshop)")
-    refusal = source.index("NOT_UNDER_REVIEW_REFUSAL", guarded)
+    # `review_closed_refusal` since 2026-10-10: the sentence now depends on where the report went.
+    refusal = source.index("review_closed_refusal", guarded)
     log = source.index("_apply(tx, plans.log)")
 
     assert tx < feedback < guarded < refusal < log, (

@@ -87,7 +87,7 @@ import { ApiError, apiFetch, buildQuery } from "@/lib/api";
 import { fetchFile } from "@/lib/fileDownload";
 import type { DwCustomDefinition } from "@/lib/customSections";
 import { designerCreateFields } from "@/lib/designWorkshops";
-import type { DwStageCompleteness, DwStageData, DwSummary } from "@/lib/designWorkshops";
+import type { DwDecision, DwStageCompleteness, DwStageData, DwSummary } from "@/lib/designWorkshops";
 import { listDesignWorkshopInspectors, type DwInspector } from "@/lib/designWorkshopInspections";
 import {
   canAssignWorkshopOversight,
@@ -257,6 +257,11 @@ export type DwOversightDetail = DwSummary & {
   customSections?: DwCustomDefinition;
   /** Who supervises this workshop, so the officer reading it can see the other capacity. */
   oversight?: DwOversightAssignment[];
+  /** Who approved the report and who handed it on, resolved on this read; null until somebody has. */
+  approvedByName?: string | null;
+  handedOnByName?: string | null;
+  /** Every decision taken on the report, newest first. */
+  decisions?: DwDecision[];
   /**
    * The server's own word for "this is a read". See {@link oversightIsReadOnly}, which is the only
    * thing that should ever read this key directly.

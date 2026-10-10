@@ -84,6 +84,7 @@ import { UploadTray } from "@/components/media/UploadTray";
 import { UploadsProvider } from "@/lib/uploads";
 import { ApiError } from "@/lib/api";
 import {
+  dwFrozenReason,
   getDesignWorkshopStage,
   saveDesignWorkshopStage,
   type DwEntity,
@@ -457,8 +458,14 @@ function DesignWorkshopStagePageBody({
   const postRefusal = useHeldPostRefusal(serverId);
   /** The notice's live region, which both Save buttons name while a refusal is shown. */
   const heldNoticeId = useId();
-  /** No box takes input while a save is in flight — or, for a post holder, at all. */
-  const locked = saving || writesHeld(postRefusal);
+  /**
+   * WHY NOBODY MAY CHANGE THIS STAGE, or null — the report is approved, or handed on to the office.
+   * Read off this device's copy of the header, which the workshop's own page refreshes from the
+   * repository; the server refuses the save with the same sentence if this device is behind.
+   */
+  const [frozenReason, setFrozenReason] = useState<string | null>(null);
+  /** No box takes input while a save is in flight — or, for a post holder or a signed-off report, at all. */
+  const locked = saving || writesHeld(postRefusal) || frozenReason !== null;
   /**
    * Entities a row has been REMOVED from in this session. See decision 2 in the file header: it is
    * what arms `replaceCollections`, and it is a set of entity keys rather than a boolean so the
@@ -674,6 +681,7 @@ function DesignWorkshopStagePageBody({
           return;
         }
         draftIdRef.current = draft.localId;
+        setFrozenReason(dwFrozenReason({ status: draft.header.status, handedOnAt: draft.header.handedOnAt ?? null }));
         // THE ID THE PREVIEW PANEL ASKS THE SERVER ABOUT — resolved here because this is the one place
         // holding the draft, through the same `reportServerId` rule the report page and its history
         // view use. A `null` out of it is an ANSWER ("this workshop has not reached the repository
@@ -1277,7 +1285,7 @@ function DesignWorkshopStagePageBody({
     // Both buttons are disabled for a post holder, and while that is being asked; this is the line
     // that keeps it so if a third caller ever arrives. The server would refuse it with the same
     // sentence the notice shows.
-    if (!stage || writesHeld(postRefusal)) return;
+    if (!stage || writesHeld(postRefusal) || frozenReason !== null) return;
     const target = draftIdRef.current;
     setSaving(true);
     setError(null);
@@ -1848,6 +1856,11 @@ function DesignWorkshopStagePageBody({
           mounted from first paint (unlike the standing banners argued below): it is the one sentence
           on this page that arrives a round trip AFTER the page and switches every control off. */}
       <HeldPostNotice refusal={postRefusal} id={heldNoticeId} sayPending />
+      {frozenReason ? (
+        <p className="mb-4 rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-sm leading-6 text-ink-700">
+          {frozenReason}
+        </p>
+      ) : null}
       {/*
         THE OUTCOME OF A SAVE, IN TWO REGIONS THAT ARE MOUNTED FROM FIRST PAINT.
 

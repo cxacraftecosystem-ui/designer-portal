@@ -169,6 +169,11 @@ export type DesignRegisterRow = {
   beneficiaries: number | null;
   standingGroup: string | null;
   progress: RegisterProgress;
+  /** When the Ministry Admin approved the report and handed it on — optional, so a register that does not
+   *  carry them prints nothing rather than "not approved". Names are not on a register row. */
+  approvedAt?: string | null;
+  handedOnAt?: string | null;
+  handedOnTo?: string | null;
 };
 
 /** One recorded-workshop row. Deliberately a different shape: it has no stages to be far through. */

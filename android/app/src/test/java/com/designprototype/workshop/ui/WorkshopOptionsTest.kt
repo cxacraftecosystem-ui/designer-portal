@@ -50,6 +50,7 @@ class WorkshopOptionsTest {
         state: String? = null,
         startDate: String? = null,
         createdAt: String? = null,
+        handedOnAt: String? = null,
     ) = DesignWorkshopDto(
         id = id,
         title = title,
@@ -59,6 +60,7 @@ class WorkshopOptionsTest {
         state = state,
         startDate = startDate,
         createdAt = createdAt,
+        handedOnAt = handedOnAt,
     )
 
     private fun fw(
@@ -648,5 +650,63 @@ class WorkshopOptionsTest {
         assertEquals("nine strings collapse to four, not to three", 4, all.toSet().size)
         assertEquals("Not filed under a design workshop", NO_DESIGN_WORKSHOP)
         assertEquals("Not linked to a workshop", NO_FIELD_WORKSHOP)
+    }
+
+    /**
+     * ONE MAPPING FOR EVERY STATUS, and the two lists print from it (2026-10-09).
+     *
+     * The designer's list printed the raw token lower-cased ("pre submission") and the inspector's
+     * printed it verbatim ("PRE_SUBMISSION"), beside the picker's own word for the same state. Every
+     * member of `DesignWorkshopStatus` is listed here by hand for the reason the test above lists
+     * them: `status` is a plain string off the wire and there is no enum to derive the cases from.
+     */
+    @Test
+    fun `every design workshop status has a plain word on the lists`() {
+        assertEquals("Draft", designWorkshopStatusLabel("DRAFT"))
+        assertEquals("In progress", designWorkshopStatusLabel("IN_PROGRESS"))
+        assertEquals("Complete", designWorkshopStatusLabel("COMPLETE"))
+        assertEquals("In pre-submission", designWorkshopStatusLabel("PRE_SUBMISSION"))
+        assertEquals("Needs revision", designWorkshopStatusLabel("NEEDS_REVISION"))
+        assertEquals("Approved", designWorkshopStatusLabel("APPROVED"))
+        assertEquals("Submitted", designWorkshopStatusLabel("SUBMITTED"))
+        assertEquals("Archived", designWorkshopStatusLabel("ARCHIVED"))
+        // The picker's word and the lists' word are one word wherever the picker prints one.
+        for (token in listOf("PRE_SUBMISSION", "NEEDS_REVISION", "APPROVED", "SUBMITTED", "ARCHIVED")) {
+            assertEquals(token, designWorkshopStatusLabel(token), designWorkshopStatusWord(token))
+        }
+    }
+
+    /**
+     * "HANDED ON" ONLY FOR A REPORT THE SANCTIONING AUTHORITY HANDED ON.
+     *
+     * `SUBMITTED` changed meaning on 2026-09-13 and nothing was backfilled, so a row with no
+     * `handedOnAt` is a designer's own submission from before that day and keeps the word it had.
+     */
+    @Test
+    fun `a handed-on report says so, and a legacy submitted one does not`() {
+        val handedOn = "2026-10-10T08:00:00+00:00"
+        assertEquals("Handed on", designWorkshopStatusLabel("SUBMITTED", handedOn))
+        assertEquals("Handed on", designWorkshopStatusWord("SUBMITTED", handedOn))
+        assertEquals("Submitted", designWorkshopStatusLabel("SUBMITTED", null))
+        // The column means nothing on any other status.
+        assertEquals("Approved", designWorkshopStatusLabel("APPROVED", handedOn))
+
+        val options = designWorkshopOptions(
+            listOf(
+                dw("gone", "Handed-on round", status = "SUBMITTED", handedOnAt = handedOn),
+                dw("legacy", "Old round", status = "SUBMITTED"),
+            )
+        )
+        assertTrue(options.single { it.value == "gone" }.hint!!.startsWith("Handed on"))
+        assertTrue(options.single { it.value == "legacy" }.hint!!.startsWith("Submitted"))
+        // Both are over for the person holding this phone, so both sort with the closed rounds.
+        assertEquals(1, designWorkshopStanding(dw("gone", status = "SUBMITTED", handedOnAt = handedOn)))
+    }
+
+    /** A status from a newer server is printed as itself on the lists, never dressed as a known one. */
+    @Test
+    fun `an unknown status is printed as its own words on the lists`() {
+        assertEquals("some future state", designWorkshopStatusLabel("SOME_FUTURE_STATE"))
+        assertNull(designWorkshopStatusWord("SOME_FUTURE_STATE", "2026-10-10T08:00:00+00:00"))
     }
 }

@@ -264,14 +264,15 @@ export const DIRECTORATE_TRACK: GuideTrack = {
   audience: "Assistant Director, Regional Director, Ministry Admin",
   description:
     "What a ministry post does: the annual plan, the sanction register, naming a workshop's " +
-    "designer and its two supervising officers, filling in a workshop, and " +
-    `reading one back. ${DIRECTORATE_STEPS.length} screens, in the order a workshop reaches them.`,
-  headline: "Plan it, sanction it, staff it, read it back.",
+    "designer and its two supervising officers, filling in a workshop, reading one back, and " +
+    "approving the report and handing it on to the office. " +
+    `${DIRECTORATE_STEPS.length} screens, in the order a workshop reaches them.`,
+  headline: "Plan it, sanction it, staff it, read it back, sign it off.",
   intro:
     "This walkthrough follows one workshop as the ministry sees it: the entry in the annual plan, " +
-    "the order that opens it, the postings that staff it, the stages you can fill in, and the " +
-    "read-back afterwards. Your three posts can do different things, so each card says who its " +
-    "screen is for.",
+    "the order that opens it, the postings that staff it, the stages you can fill in, the " +
+    "read-back afterwards, and the sign-off at the end. Your three posts can do different things, " +
+    "so each card says who its screen is for.",
   facts: [
     { icon: FileSignature, text: "A sanction order opens a workshop and creates its designer's account" },
     { icon: ListOrdered, text: `${DIRECTORATE_STEPS.length} screens, in the order a workshop reaches them` },
@@ -280,8 +281,8 @@ export const DIRECTORATE_TRACK: GuideTrack = {
   steps: DIRECTORATE_STEPS,
   recapTitle: "A workshop's life, in one line",
   recapLead:
-    "Planned, sanctioned, staffed, filled in, read back. These screens are on the web, and Design " +
-    "workshops also works the same way in the Android app.",
+    "Planned, sanctioned, staffed, filled in, read back, approved and handed on to the office. These " +
+    "screens are on the web, and Design workshops also works the same way in the Android app.",
   checklistTitle: "Before you sign it off",
   checklistLead:
     "Each of these is easy to get right now and hard to fix later — an account created for the " +
@@ -291,6 +292,7 @@ export const DIRECTORATE_TRACK: GuideTrack = {
     "Each sign-in link has been sent to its designer. A link is shown only once, works once, and expires.",
     "Every workshop you opened has a designer named on it. Without one, the designer's work can't begin.",
     "Both officer posts are filled. Without an Assistant Director and a Regional Director, nobody is supervising the workshop.",
+    "Before you approve a report, read what the inspecting officers asked for and check the corrections were made. An approved report can no longer be changed, and a correction found afterwards means withdrawing the approval.",
     "Any artisan entries the upload couldn't read were corrected and uploaded again — the upload report names each one and why.",
     "The filled-in artisan pro-forma has been deleted from wherever you saved it. It contains Aadhaar numbers, and the portal doesn't keep a copy.",
     "Anything you corrected in the annual plan for a workshop that is already open was also corrected on the workshop itself. Once a workshop is open, changes to the plan don't reach it."
