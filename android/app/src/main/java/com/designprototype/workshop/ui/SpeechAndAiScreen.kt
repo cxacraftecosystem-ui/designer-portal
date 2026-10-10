@@ -28,17 +28,18 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import com.designprototype.workshop.data.DW_TIER2_RUNTIME_PRESENT
 import com.designprototype.workshop.data.DW_TIER_STALE_SENTENCE
 import com.designprototype.workshop.data.DwAiTier
 import com.designprototype.workshop.data.DwAsrModelState
 import com.designprototype.workshop.data.DwDeviceMeasurement
+import com.designprototype.workshop.data.DwTier2FailureStore
 import com.designprototype.workshop.data.dwAsrInstalledModelIds
 import com.designprototype.workshop.data.dwDeviceClassLabel
 import com.designprototype.workshop.data.dwDeviceReadoutSentence
 import com.designprototype.workshop.data.dwProbeDevice
 import com.designprototype.workshop.data.dwProbeIsStale
 import com.designprototype.workshop.data.dwRecommendTiers
+import com.designprototype.workshop.data.dwTier2TierLine
 import com.designprototype.workshop.data.dwTier3Sentence
 import com.designprototype.workshop.data.dwTierOfferSentence
 import com.designprototype.workshop.ui.designworkshop.DW_DICTATION_LANGUAGES
@@ -50,6 +51,7 @@ import com.designprototype.workshop.ui.designworkshop.dwConnection
 import com.designprototype.workshop.ui.designworkshop.rememberDwAsrModel
 import com.designprototype.workshop.ui.designworkshop.rememberDwAsrRuntime
 import com.designprototype.workshop.ui.designworkshop.rememberDwLanguagePacks
+import com.designprototype.workshop.ui.designworkshop.rememberDwTier2Models
 import kotlinx.coroutines.delay
 
 /**
@@ -96,6 +98,7 @@ fun SpeechAndAiScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
     val languagePacks = rememberDwLanguagePacks(active = true)
     val asrRuntime = rememberDwAsrRuntime(active = true)
     val asrModel = rememberDwAsrModel(active = true)
+    val tier2Models = rememberDwTier2Models()
     val languageLabels = remember { DW_DICTATION_LANGUAGES.associate { it.tag to it.label } }
 
     Column(
@@ -137,16 +140,14 @@ fun SpeechAndAiScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
         /*
          * ---- AND ONE FOR WHAT THIS PHONE IS, WHICH IS NUMBERS -----------------------------------
          *
-         * It is second because it offers less: nothing on it can be installed. The Tier 2 catalogue is
-         * no longer empty — two weighed rows since 2026-08-13 — but no runtime in this build can open
-         * one, so this card's honest content is a readout, a verdict per model, and no control. The
-         * brief's words for it:
+         * It is second because what it offers is larger and rarer: the Tier 2 language models, which
+         * LiteRT-LM in this APK runs once one is downloaded and verified. The brief's words for it:
          * *"Keep 'AI on this phone' as the numbers only — class, free memory, free storage, one line
          * per tier."*
          */
         PreferenceCard {
             PreferenceCardHeading(Icons.Filled.Memory, "AI on this phone")
-            DwDeviceTierBody(asrRuntime.status, asrModel)
+            DwDeviceTierBody(asrRuntime.status, asrModel, tier2Models)
         }
     }
 }
@@ -177,6 +178,7 @@ fun SpeechAndAiScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
 private fun DwDeviceTierBody(
     runtime: com.designprototype.workshop.data.DwAsrRuntimeStatus,
     models: com.designprototype.workshop.ui.designworkshop.DwAsrModelController,
+    tier2Models: com.designprototype.workshop.ui.designworkshop.DwTier2ModelController,
 ) {
     val context = LocalContext.current.applicationContext
     var probeCount by remember { mutableStateOf(0) }
@@ -188,6 +190,7 @@ private fun DwDeviceTierBody(
         stale = false
         reading = dwProbeDevice(context)
         connection = dwConnection(context)
+        tier2Models.refresh()
     }
 
     val measurement = reading
@@ -220,7 +223,10 @@ private fun DwDeviceTierBody(
         // Tier 1 out of an UNKNOWN engine state — "this app could not look at its own files" — which
         // is a true sentence about a question this screen HAS asked and would print it beside a card
         // that knows the answer.
-        val recommendation = dwRecommendTiers(measurement, connection, runtime = runtime)
+        // THE TIER 2 LOAD FAILURES RECORDED ON THIS HANDSET ARE PASSED IN, so a model that would not
+        // load here is never suggested or offered here again (plan §2.1: a failure is data).
+        val failures = remember(probeCount) { DwTier2FailureStore.read(context) }
+        val recommendation = dwRecommendTiers(measurement, connection, failures, runtime = runtime)
 
         // ---- The numbers, first, because they are what a designer reads down a phone line --------
         Text(
@@ -238,14 +244,10 @@ private fun DwDeviceTierBody(
         }
 
         // ---- One line per tier --------------------------------------------------------------
-        // On-device AI is drawn only when the app can run a model on the phone; until then the line
-        // and the model list below would describe something the screen cannot offer.
-        if (DW_TIER2_RUNTIME_PRESENT) {
-            Text(
-                dwTierOfferSentence(DwAiTier.TIER_2, recommendation.tier2),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.field.body
-            )
+        // Tier 2 says what runs here, or what is suggested, or nothing: a phone that cannot run a
+        // language model is not told so — it is simply not offered one.
+        dwTier2TierLine(recommendation.tier2, tier2Models.installed)?.let { line ->
+            Text(line, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.field.body)
         }
         Text(
             dwTierOfferSentence(DwAiTier.TIER_1, recommendation.tier1),
@@ -268,14 +270,9 @@ private fun DwDeviceTierBody(
          * that fires — the pinned model's 1.26 GB peak RSS against this phone's free memory fits
          * physically with the 512 MiB margin gone.
          *
-         * Tier 2 draws through `DwTier2ModelList` and not through this composable, and the reason is
-         * two false sentences rather than a preference: `dwModelChoiceSentence` appends "How
-         * accurately it transcribes ANY language is UNMEASURED" and "How long it takes to transcribe a
-         * recording on this phone is UNMEASURED" to a plan with no scores and no timing band — true of
-         * the speech model they were written for, nonsense under a proofreader. That list also carries
-         * the two Gemma 3n artifacts, which have no published memory figure and therefore cannot be
-         * `DwModelPlan`s at all, and it needs no `onInstall`: this build has no runtime that could
-         * open a language model, so a control spending 2.6 GB would be worse than none.
+         * Tier 2 draws through `DwTier2ModelList` and not through this composable, because
+         * `dwModelChoiceSentence` speaks about transcription, which is false under a proofreader. That
+         * list owns its own download, pause, cancel and remove, through `DwTier2ModelController`.
          */
         val labels = remember { DW_DICTATION_LANGUAGES.associate { it.tag to it.label } }
         DwModelChoiceList(
@@ -286,12 +283,12 @@ private fun DwDeviceTierBody(
             heading = "Speech models",
             onInstall = { models.install() },
         )
-        if (DW_TIER2_RUNTIME_PRESENT) {
-            DwTier2ModelList(
-                choices = recommendation.tier2Choices,
-                measurement = measurement,
-            )
-        }
+        DwTier2ModelList(
+            choices = recommendation.tier2Choices,
+            measurement = measurement,
+            connection = connection,
+            models = tier2Models,
+        )
 
         OutlinedButton(onClick = { probeCount += 1 }) { Text("Check again") }
     }

@@ -157,6 +157,7 @@ from app.schemas.design_workshops import (
     AiLayerDecisionIn,
     AiLayerRegisterIn,
     AiMediaVerbIn,
+    AiOnDeviceLayerIn,
     AiProofreadIn,
     AiTranslateIn,
     CustomSectionsIn,
@@ -4212,6 +4213,52 @@ async def translate_ai_layer(
     )
 
 
+@router.post("/{workshop_id}/ai-layers/on-device", status_code=status.HTTP_201_CREATED)
+async def record_on_device_ai_layer(
+    workshop_id: str,
+    payload: AiOnDeviceLayerIn,
+    current_user: Any = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Record a proofread or a translation that a model ON THE HANDSET produced, as a TIER_2 layer.
+
+    **THIS ROUTE RUNS NO MODEL AND REACHES NO PROVIDER.** The Android app ran the verb itself with a
+    language model it downloaded and verified against a pinned SHA-256; what arrives is the words it
+    produced and the passage it was given. So the two money gates in ``_verb_gate`` are deliberately
+    absent: dictation consent is about material leaving the phone for a third party, which did not
+    happen, and the daily allowance bounds provider spend, of which there was none — the repository
+    owner scoped the cap to the paid providers in so many words. The designer set and the workshop's
+    own edit check still stand in front of it, exactly as on every other layer write.
+
+    **THE TIER IS FIXED HERE, AS ``_SERVER_TIER`` IS ON THE FIVE CLOUD ROUTES**, and the model must be
+    one of ``ai_verbs.ON_DEVICE_MODEL_IDS``. What this cannot establish is that a handset rather than
+    some other client produced the words; the layer is therefore inert until a person accepts it, and
+    the annexure names it as on-device output — the same protections every layer has.
+    """
+    _require_designer(current_user)
+    await load_workshop_or_404(workshop_id, current_user, for_edit=True)
+    try:
+        language = ai_verbs.clean_language(payload.language, what="the layer") or ""
+        plan = ai_verbs.on_device(
+            workshop_id=workshop_id,
+            kind=ai_layers.LayerKind(payload.kind),
+            text=payload.text,
+            source_text=payload.sourceText,
+            model_id=payload.modelId,
+            model_version=payload.modelVersion,
+            language=language,
+            produced_at=datetime.fromisoformat(payload.producedAt),
+            created_by_id=current_user.id,
+        )
+    except (ai_verbs.VerbError, ai_layers.LayerRuleViolation) as exc:
+        raise _verb_http(exc) from exc
+    row = await ai_layers.apply_plan(plan)
+    return {
+        "layer": ai_layers.layer_payload(row, include_text=True),
+        "accepted": False,
+        "acceptanceRequired": True,
+    }
+
+
 @router.post("/{workshop_id}/ai-layers/caption", status_code=status.HTTP_201_CREATED)
 async def caption_ai_layer(
     workshop_id: str,
@@ -5201,8 +5248,8 @@ async def _transcripts_payload(entries: list[Any], viewer: Any) -> dict[str, Any
 def _require_designer(user: Any) -> None:
     """The designer set — ``deps.DESIGN_WORKSHOP_ROLES``: the designer, the Assistant Director,
     Regional Director and Ministry Admin posts, the admin and the master admin (it named only the
-    first and the last two until 2026-10-09; the set is the authority) — in front of sixteen of this
-    router's twenty-two non-GET routes. **This is not a gate on "the two capture aids", which is
+    first and the last two until 2026-10-09; the set is the authority) — in front of seventeen of
+    this router's twenty-three non-GET routes. **This is not a gate on "the two capture aids", which is
     what this docstring said while fourteen call sites in this file were reading it.**
 
     THE COUNTS BELOW ARE ASSERTED, NOT REMEMBERED.
@@ -5211,7 +5258,7 @@ def _require_designer(user: Any) -> None:
     fails naming this paragraph if either moves. A hand-kept count in a comment is the shape this
     repository has a rot detector for; the test is the version of it that cannot quietly go stale.
 
-    Counted from the source, the fourteen direct calls are:
+    Counted from the source, the fifteen direct calls are:
 
     * the two CAPTURE AIDS the old sentence named — ``POST /ocr/identity`` and
       ``POST /ocr/identity/retention`` — plus the two allowance probes beside them,
@@ -5220,12 +5267,13 @@ def _require_designer(user: Any) -> None:
     * **``PATCH /{workshop_id}``**, which renames a workshop and rewrites its promoted columns, and
       **``PUT /{workshop_id}/stages/{stage_key}``**, which is every one of the 22 stages — the whole
       fortnight of fieldwork — together with ``PUT /{workshop_id}/custom-sections``;
-    * the AI layer writes: ``POST /{workshop_id}/ai-layers`` and the accept / unaccept / delete trio
-      on ``/{workshop_id}/ai-layers/{layer_id}``;
+    * the AI layer writes: ``POST /{workshop_id}/ai-layers``, ``POST /{workshop_id}/ai-layers/on-device``
+      (a layer a model on the handset produced) and the accept / unaccept / delete trio on
+      ``/{workshop_id}/ai-layers/{layer_id}``;
     * ``_verb_gate``, one call standing in front of five more routes — proofread, expand,
       translate, caption and subtitles.
 
-    So: **eighteen routes, and the stage save is one of them.** The count is written down because a
+    So: **nineteen routes, and the stage save is one of them.** The count is written down because a
     gate whose docstring understates its reach by an order of magnitude is how somebody later lifts
     it off a route they have been told is unimportant. If you add a call, add it here.
 

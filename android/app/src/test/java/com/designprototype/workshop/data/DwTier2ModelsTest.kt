@@ -50,8 +50,7 @@ class DwTier2ModelsTest {
     @Test
     fun `every row carries a weighed file, a named handset for its memory figure, and no language claim`() {
         assertEquals(
-            "the catalogue is the two Gemma 4 artifacts; the two Gemma 3n ones cannot be plans and " +
-                "live in DW_TIER2_UNJUDGED",
+            "the catalogue is the two Gemma 4 artifacts; the gated Gemma 3n ones are not offered",
             2,
             DW_TIER2_PLANS.size
         )
@@ -130,11 +129,6 @@ class DwTier2ModelsTest {
                 "${plan.modelId}: the row must be built from the LARGER of the two published figures",
                 plan.peakRssBytes > gpu!!
             )
-            // And the smaller one still reaches the designer, as a claim, because it is the number
-            // that would change the answer if it held.
-            assertTrue(
-                dwTier2RowSentence(dwModelFit(plan, fleetHandset), fleetHandset).contains("graphics backend")
-            )
         }
     }
 
@@ -143,7 +137,7 @@ class DwTier2ModelsTest {
     // -----------------------------------------------------------------------------------------
 
     @Test
-    fun `all four models are visible on every handset, and only the arithmetic decides the verdict`() {
+    fun `both models are judged on every handset, and only the arithmetic decides the verdict`() {
         listOf(fleetHandset, thirtyTwoBitOnly, roomy, DwDeviceMeasurement()).forEach { device ->
             val choices = dwModelChoices(DW_TIER2_PLANS, device, tier = DwAiTier.TIER_2)
             assertEquals(
@@ -160,11 +154,6 @@ class DwTier2ModelsTest {
                 )
             }
         }
-        assertEquals(
-            "and the two unjudgeable artifacts are listed too, on every device, with no verdict",
-            2,
-            DW_TIER2_UNJUDGED.size
-        )
     }
 
     @Test
@@ -219,29 +208,27 @@ class DwTier2ModelsTest {
     // -----------------------------------------------------------------------------------------
 
     @Test
-    fun `no handset and no connection may be offered a download while there is no runtime`() {
-        assertFalse("this build has no LiteRT-LM runtime", DW_TIER2_RUNTIME_PRESENT)
+    fun `a download is offered exactly where the fit allows it, with a connection, and the runtime in the APK`() {
+        assertTrue("LiteRT-LM is in this APK", DW_TIER2_RUNTIME_PRESENT)
         listOf(fleetHandset, roomy, thirtyTwoBitOnly, DwDeviceMeasurement()).forEach { device ->
             dwModelChoices(DW_TIER2_PLANS, device, tier = DwAiTier.TIER_2).forEach { choice ->
                 DwConnection.entries.forEach { connection ->
-                    assertFalse(
-                        "a 2.6 GB fetch for a file nothing in this build can open is worse than no " +
-                            "control at all",
+                    assertEquals(
+                        "${choice.plan.modelId} on $connection: the gate is the fit verdict and a " +
+                            "connection, nothing else",
+                        dwTier2Eligible(choice) && connection != DwConnection.NONE,
                         dwTier2InstallMayBeOffered(choice, connection)
                     )
                 }
             }
         }
-        // AND THE GATE IS THE RUNTIME, NOT THE FIT. With a runtime the same phones would be offered
-        // exactly what dwModelDownloadMayBeOffered offers, so the day it lands this needs no thought.
+        // A 32-bit phone is never offered either model: the AAR has no 32-bit build.
+        dwModelChoices(DW_TIER2_PLANS, thirtyTwoBitOnly, tier = DwAiTier.TIER_2).forEach { choice ->
+            assertFalse(dwTier2InstallMayBeOffered(choice, DwConnection.UNMETERED))
+        }
+        // And a build without the runtime offers nothing anywhere.
         val comfortable = dwModelChoices(DW_TIER2_PLANS, roomy, tier = DwAiTier.TIER_2).first()
-        assertTrue(
-            dwTier2InstallMayBeOffered(comfortable, DwConnection.UNMETERED, runtimePresent = true)
-        )
-        assertFalse(
-            "and never with no connection, even then",
-            dwTier2InstallMayBeOffered(comfortable, DwConnection.NONE, runtimePresent = true)
-        )
+        assertFalse(dwTier2InstallMayBeOffered(comfortable, DwConnection.UNMETERED, runtimePresent = false))
     }
 
     // -----------------------------------------------------------------------------------------
@@ -249,85 +236,39 @@ class DwTier2ModelsTest {
     // -----------------------------------------------------------------------------------------
 
     @Test
-    fun `a row says whose figure the memory is, and never prints a transcription sentence`() {
+    fun `a row states the size, the memory and the verdict, and never a transcription sentence`() {
         dwModelChoices(DW_TIER2_PLANS, fleetHandset, tier = DwAiTier.TIER_2).forEach { choice ->
             val sentence = dwTier2RowSentence(choice, fleetHandset)
             assertTrue("the size is stated before the tap", sentence.contains("to download"))
+            assertTrue("and the memory it needs", sentence.contains("of memory while it runs"))
             assertTrue(
                 "the memory figure must be attributed in the same breath",
                 sentence.contains("Google's") && sentence.contains("S26 Ultra")
             )
-            assertTrue(
-                "and must say it is the publisher's figure, not a reading of this phone",
-                sentence.contains("published figure")
-            )
-            /*
-             * THE TWO SENTENCES THIS ROW EXISTS TO AVOID. `dwModelChoiceSentence` would have appended
-             * "How accurately it transcribes ANY language is UNMEASURED" and "How long it takes to
-             * transcribe a recording on this phone is UNMEASURED" — both true of the speech model they
-             * were written for, both nonsense under a proofreader.
-             */
             assertFalse(
                 "a language model does not transcribe, and a row that says it does teaches a " +
                     "designer to expect dictation from it",
                 sentence.contains("transcribe")
             )
-            // TERSE. The list that came off this screen was 1,207 words; a row is a scannable thing.
+            listOf("nothing has been measured", "unmeasured", "not built", "yet", "server").forEach {
+                assertFalse("a row may not narrate what is missing: “$it” in $sentence", sentence.contains(it))
+            }
             assertTrue(
-                "a row sentence is ${sentence.split(Regex("\\s+")).size} words; over 90 is an essay",
-                sentence.split(Regex("\\s+")).size <= 90
+                "a row sentence is ${sentence.split(Regex("\\s+")).size} words; over 80 is an essay",
+                sentence.split(Regex("\\s+")).size <= 80
             )
         }
     }
 
     @Test
-    fun `the list says once why nothing can be installed, and does not repeat it per row`() {
-        val intro = dwTier2ListIntro(DW_TIER2_PLANS.size, DW_TIER2_UNJUDGED.size)
-        // The list is drawn only when a runtime exists (SpeechAndAiScreen), so its opening line says
-        // what the list is and never narrates a missing runtime.
-        assertTrue(intro.contains("Language models"))
-        assertFalse(
-            "the intro never narrates what this app lacks",
-            intro.contains("no runtime")
-        )
-        assertTrue("and the unjudged rows are accounted for in it", intro.contains("no verdict"))
-        dwModelChoices(DW_TIER2_PLANS, fleetHandset, tier = DwAiTier.TIER_2).forEach { choice ->
-            assertFalse(
-                "the reason belongs in the opening line, once",
-                dwTier2RowSentence(choice, fleetHandset).contains("no runtime")
-            )
+    fun `the list opens with what the models are for and that nothing downloads by itself`() {
+        assertTrue(DW_TIER2_LIST_INTRO.contains("Language models"))
+        assertTrue(DW_TIER2_LIST_INTRO.contains("translating"))
+        assertTrue(DW_TIER2_LIST_INTRO.contains("unless you ask"))
+        listOf("no runtime", "not built", "yet", "nobody").forEach {
+            assertFalse(DW_TIER2_LIST_INTRO.contains(it))
         }
     }
-
-    @Test
-    fun `an unjudged row says the size as a number and the memory as the word, and never guesses`() {
-        DW_TIER2_UNJUDGED.forEach { model ->
-            val sentence = dwTier2UnjudgedSentence(model)
-            assertTrue(sentence.contains("to download"))
-            assertTrue(
-                "the memory has to be the word, in that word",
-                sentence.contains("unknown")
-            )
-            /*
-             * THE NUMBERS THAT MUST NOT APPEAR. A Google Developers Blog post says the Gemma 3n family
-             * operates "with as little as 2GB (E2B) and 3GB (E4B) of memory". That is a claim about a
-             * family, on no named handset, and if it ever reaches a row it will read as this
-             * artifact's requirement.
-             */
-            assertFalse(sentence.contains("2 GB of memory"))
-            assertFalse(sentence.contains("3 GB of memory"))
-            assertTrue(
-                "and the gate has to be named, because it is what stops a phone being given the file",
-                sentence.contains("licence")
-            )
-            assertTrue(
-                "an unjudged row is still a weighed row",
-                model.onDiskBytes > 3_000_000_000L
-            )
-        }
-        assertEquals("No memory figure", DW_TIER2_UNJUDGED_LABEL)
-    }
-
     // -----------------------------------------------------------------------------------------
     // Sideloading goes through the same check as a download
     // -----------------------------------------------------------------------------------------
@@ -389,23 +330,24 @@ class DwTier2ModelsTest {
     }
 
     @Test
-    fun `the four artifacts are the four real files, and the gated two are labelled as the host's word`() {
-        assertEquals(4, DW_TIER2_ARTIFACTS.size)
-        val gated = DW_TIER2_ARTIFACTS.filter { it.needsUpstreamApproval }
-        assertEquals("the two google, gated repositories", 2, gated.size)
-        gated.forEach { artifact ->
-            assertTrue(artifact.repo.startsWith("google/"))
+    fun `the two artifacts are ungated, measured here, and fetched from a URL pinned to a revision`() {
+        assertEquals(2, DW_TIER2_ARTIFACTS.size)
+        DW_TIER2_ARTIFACTS.forEach { artifact ->
+            assertTrue(artifact.repo.startsWith("litert-community/"))
+            assertFalse(artifact.needsUpstreamApproval)
+            assertTrue(artifact.digestProvenance.startsWith("MEASURED"))
             assertTrue(
-                "bytes nobody here has held may not carry a digest labelled as measured",
-                artifact.digestProvenance.startsWith("PUBLISHED BY THE HOST")
-            )
-            assertNotNull(
-                "and each gated artifact is one of the rows listed without a verdict",
-                DW_TIER2_UNJUDGED.firstOrNull { it.modelId == artifact.modelId }
+                "the URL is the artifact's own repository, at a 40-hex revision, ending in its file name",
+                Regex("^https://huggingface\\.co/${Regex.escape(artifact.repo)}/resolve/[0-9a-f]{40}/" +
+                    Regex.escape(artifact.fileName) + "$").matches(artifact.url)
             )
         }
-        DW_TIER2_ARTIFACTS.filterNot { it.needsUpstreamApproval }.forEach { artifact ->
-            assertTrue(artifact.repo.startsWith("litert-community/"))
+        val good = DW_TIER2_ARTIFACTS.first()
+        listOf(
+            { good.copy(url = "http://huggingface.co/x/resolve/main/${good.fileName}") },
+            { good.copy(url = "https://example.test/${good.fileName}") },
+        ).forEach { build ->
+            assertTrue(runCatching { build() }.exceptionOrNull() is IllegalArgumentException)
         }
     }
 }

@@ -1,6 +1,6 @@
 # Open findings
 
-**Status: 33 open, 1 decision recorded and 1 deferral, 108 closed.** Every count re-counted by
+**Status: 32 open, 1 decision recorded and 1 deferral, 109 closed.** Every count re-counted by
 heading on 2026-10-10: main's 31 open and 106 closed that day (the 15 open of 2026-10-09, plus 18
 opened by the Android copy sweep, less the 2 of those closed the same day), plus the toolchain
 upgrade's 2 opened and 2 closed, merged the same day. The entries closed on 2026-10-09 were
@@ -42,6 +42,11 @@ issued no links; the annual plan's guide said a Regional Director could not corr
 rows. None was recorded here as open — each lived only in the screen's own copy — so they enter as
 three closed entries under *Closed on 2026-10-10*. Counted by heading: still 31 open, and 103 + 3 = 106
 closed.
+
+**On-device AI (Tier 2), built on 2026-10-10, closed one more of the copy sweep's entries.** The
+handset now carries the LiteRT-LM runtime, downloads and verifies a Gemma 4 model on demand, and
+proofreads and translates on the phone. It is under *Closed on 2026-10-10*. 31 − 1 = 30 open; 99 + 1
+= 100 closed.
 
 **Moving a set-password link's token off the web's request lines narrowed one entry the same day,
 and moved neither number.** The web now checks a link with `POST /api/auth/set-password/check`, the
@@ -679,21 +684,12 @@ new build goes out in a body. The entry stays open until that build has replaced
 the same, and neither form closes the browser's history.
 
 
-**Eighteen entries were opened on 2026-10-10 by the Android copy sweep; sixteen are below.** The
-other two — correction suggestions on the handset, and inspections without signal — were built and
-closed the same day, under *Closed on 2026-10-10*. The Android copy sweep of 2026-10-10 removed every on-screen sentence that admitted a missing feature
+**Eighteen entries were opened on 2026-10-10 by the Android copy sweep; fifteen are below.** The
+other three — correction suggestions on the handset, inspections without signal, and on-device AI —
+were built and closed the same day, under *Closed on 2026-10-10*. The Android copy sweep of 2026-10-10 removed every on-screen sentence that admitted a missing feature
 or a known defect, because a screen shown to field staff and ministry officials must describe a
 product that works. The gaps themselves are not closed by that, so each one is recorded here, one
 heading each, and closes only with the change that builds or fixes it.
-
-### [LOW] On-device AI cannot run on the handset, so Speech & AI no longer shows it (android) — opened 2026-10-10
-
-`DW_TIER2_RUNTIME_PRESENT` is false: the APK carries no runtime that can load a language model. Speech
-& AI → "AI on this phone" now draws the on-device AI line and the language-model list only when that
-flag is true, so today every account sees neither. Building the runtime is the work
-([PLAN-AI-TIERS-AND-CUSTOM-SECTIONS.md](PLAN-AI-TIERS-AND-CUSTOM-SECTIONS.md)). Files:
-`android/app/src/main/java/com/designprototype/workshop/data/DwDeviceTier.kt`,
-`android/app/src/main/java/com/designprototype/workshop/ui/SpeechAndAiScreen.kt`.
 
 ### [LOW] The offline speech model cannot be installed on today's handsets, so its section is hidden (android, backend) — opened 2026-10-10
 
@@ -927,6 +923,18 @@ the public URL, a ranged presigned GET and a delete. `docker-compose.yml` names 
 ---
 
 ## Closed on 2026-10-10
+
+### [LOW] On-device AI could not run on the handset, so Speech & AI did not show it (android, backend) — **CLOSED 2026-10-10**
+
+`DW_TIER2_RUNTIME_PRESENT` was false and the copy sweep hid the on-device AI line and the
+language-model list. The runtime is now built: LiteRT-LM 0.18.0 is in the APK and the flag is true;
+the two Gemma 4 models download on demand from revision-pinned URLs and are verified by size and
+SHA-256 before use; a phone is offered a model only when its own reading fits it
+(`dwTier2Eligible`); proofreading and translation run on the phone and are recorded as TIER_2 layers
+through `POST /design-workshops/{id}/ai-layers/on-device`, falling back to the cloud verbs when the
+model cannot run. See [TIER2-LANGUAGE-MODEL-MEASUREMENT.md](TIER2-LANGUAGE-MODEL-MEASUREMENT.md) §0.
+Pinned by `DwTier2InstallTest`, `DwTier2ModelsTest`, `test_ai_layers_on_device.py` and the emulator
+probe `DwTier2RuntimeProbeTest`.
 
 Three Android parity gaps that the handset's own screens and walkthrough admitted in so many words,
 found by the sweep of customer-visible copy (items F6, F7 and F12 of that sweep) and closed by
