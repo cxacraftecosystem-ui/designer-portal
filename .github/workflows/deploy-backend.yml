@@ -136,7 +136,7 @@ jobs:
       android: ${{ steps.detect.outputs.android }}
     steps:
       - name: Checkout (full history, so both the push range and the live range can be diffed)
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
@@ -482,7 +482,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # ─── OPEN A DEPLOY WINDOW ON PORT 22, FOR THIS RUNNER ONLY ───────────────────────────────
       #
@@ -1424,6 +1424,25 @@ jobs:
           echo "link origin pinned"
           REMOTE
 
+      # The sender address and SES region are Actions VARIABLES, not lines inside BACKEND_ENV: they
+      # are not secret, and BACKEND_ENV can only be replaced wholesale. Authoritative, like the CORS
+      # pin above: any inherited value is deleted first. An unset variable leaves mail switched off.
+      - name: Pin the mail sender
+        env:
+          SHA: ${{ env.REL_ID }}
+          MAIL_FROM_ADDRESS: ${{ vars.MAIL_FROM_ADDRESS }}
+          MAIL_SES_REGION: ${{ vars.MAIL_SES_REGION }}
+        run: |
+          ssh ubuntu@${{ secrets.EC2_HOST }} "SHA='$SHA' FROM='$MAIL_FROM_ADDRESS' REGION='$MAIL_SES_REGION' bash -s" <<'REMOTE'
+          set -euo pipefail
+          cd "/home/ubuntu/app/releases/$SHA/backend"
+          [ -s .env ] && [ -n "$(tail -c1 .env)" ] && printf '\n' >> .env
+          sed -i '/^MAIL_FROM_ADDRESS=/d;/^MAIL_SES_REGION=/d' .env
+          if [ -n "$FROM" ]; then printf 'MAIL_FROM_ADDRESS=%s\n' "$FROM" >> .env; fi
+          if [ -n "$REGION" ]; then printf 'MAIL_SES_REGION=%s\n' "$REGION" >> .env; fi
+          echo "mail sender pinned: ${FROM:-off}"
+          REMOTE
+
       # ─── THE VENV, AND WHY IT IS COPIED RATHER THAN REBUILT OR HARD-LINKED ──────────────────
       #
       # A venv per release is what makes the symlink flip a real rollback: roll back to a release
@@ -1488,7 +1507,7 @@ jobs:
       # and would import on another minor, but "the bytes the box would have produced" is a cheaper
       # property to hold than an argument about which syntax the generator emits.
       - name: Python 3.12 for the generator
-        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
 

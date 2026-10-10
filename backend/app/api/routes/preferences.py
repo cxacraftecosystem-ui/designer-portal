@@ -5,7 +5,8 @@ from fastapi.encoders import jsonable_encoder
 
 from app.core.db import db
 from app.core.deps import get_current_user
-from app.schemas.preferences import PreferencesUpdateRequest
+from app.schemas.preferences import NotificationPreferencesUpdate, PreferencesUpdateRequest
+from app.services import mailer
 
 router = APIRouter(prefix="/preferences", tags=["preferences"])
 
@@ -55,3 +56,39 @@ async def upsert_my_preferences(
         },
     )
     return _serialize(preferences)
+
+
+@router.get("/notifications")
+async def my_notification_preferences(
+    current_user: Any = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Whether this deployment sends e-mail at all, and this person's opt-outs.
+
+    ``available`` is what both clients read before drawing ANY e-mail control — the Settings
+    switch, the "Send by e-mail" choice beside a password link. False means they draw none of it
+    and say nothing about it. Readable by every signed-in account because it says nothing secret:
+    only whether mail is on.
+    """
+    row = await db.userpreference.find_unique(where={"userId": current_user.id})
+    return {
+        "available": mailer.mail_configured(),
+        "emailReviewNotes": bool(getattr(row, "emailReviewNotes", True)) if row else True,
+    }
+
+
+@router.put("/notifications")
+async def update_my_notification_preferences(
+    payload: NotificationPreferencesUpdate,
+    current_user: Any = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Save this person's e-mail opt-outs. Stored even while mail is off, so a choice made once
+    still holds when mail is turned on."""
+    fields = {"emailReviewNotes": payload.emailReviewNotes}
+    row = await db.userpreference.upsert(
+        where={"userId": current_user.id},
+        data={
+            "create": {**fields, "user": {"connect": {"id": current_user.id}}},
+            "update": fields,
+        },
+    )
+    return {"available": mailer.mail_configured(), "emailReviewNotes": row.emailReviewNotes}

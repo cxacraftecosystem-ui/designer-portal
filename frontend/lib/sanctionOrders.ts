@@ -56,8 +56,8 @@
  *
  * ── NOTHING IS EMAILED, AND THE SCREEN MUST NOT IMPLY OTHERWISE ─────────────────────────────────
  *
- * There is no mailer in this product. `credential_links.delivery()` hard-returns `CopyLinkDelivery`,
- * which logs one line WITHOUT the link and answers `"COPY_LINK"`. The sign-in link comes back in
+ * The sanction register does not e-mail. Its links are issued with the default delivery,
+ * `CopyLinkDelivery`, which logs one line WITHOUT the link and answers `"COPY_LINK"`. The sign-in link comes back in
  * the 201 body ONCE — the table stores only a SHA-256 digest, so nothing can show it again — and
  * the officer is the transport. {@link sanctionMessageFor} is the prewritten message they paste
  * into WhatsApp or their own mail client, so that the transport is a paste rather than a
@@ -167,7 +167,7 @@ export type SanctionOrderCredentialLink = {
   link: string;
   expiresAt: string;
   purpose: "INVITE" | "RESET";
-  /** `"COPY_LINK"` today, always. There is no mailer — see the module header. */
+  /** `"COPY_LINK"`, always: the register does not e-mail — see the module header. */
   deliveredBy: string;
 };
 
@@ -295,7 +295,7 @@ export function formatSanctionAmount(amount: string | null | undefined): string 
 /**
  * THE PREWRITTEN MESSAGE, worded once, here.
  *
- * The officer is the transport — there is no mailer — so the smallest honest thing this product can
+ * The officer is the transport — the register does not e-mail — so the smallest honest thing this product can
  * do is hand them a sentence to paste rather than asking them to compose one at nine in the
  * morning, fifteen times. It names four things on purpose:
  *
@@ -412,10 +412,17 @@ export async function updateSanctionNotes(id: string, notes: string | null) {
   });
 }
 
-/** Re-mint. 429 when the 4-per-hour-per-designer budget is spent. */
-export async function issueSanctionCredentialLink(id: string) {
+/**
+ * Re-mint a first sign-in link for ONE designer the order names — the lead when `designerUserId` is
+ * left out, any co-designer when it is given. Refused (422) for a designer whose account this order
+ * did not create, one now senior to the officer, one on the master admin's mailbox or one who signs in
+ * with Google; 404 for somebody the order does not name; 429 when the 4-per-hour budget is spent.
+ */
+export async function issueSanctionCredentialLink(id: string, designerUserId?: string | null) {
   return apiFetch<SanctionOrderCredentialLink>(
-    `/sanction-orders/${encodeURIComponent(id)}/credential-link`,
+    `/sanction-orders/${encodeURIComponent(id)}/credential-link${buildQuery({
+      designerUserId: designerUserId || undefined
+    })}`,
     { method: "POST" }
   );
 }
@@ -529,9 +536,9 @@ export type SanctionImportReport = {
   recorded: number;
   skipped: number;
   refused: number;
-  /** How many people this press let in. Every one of them needs a sign-in link re-issued by hand. */
+  /** How many people this press let in. */
   accountsCreated: number;
-  /** Always 0 — an import mints no credentials. See {@link confirmSanctionImport}. */
+  /** How many first sign-in links came back — one per account created, unless the throttle refused. */
   credentialLinksIssued: number;
   created: {
     sheetRow: number;
@@ -540,6 +547,10 @@ export type SanctionImportReport = {
     designWorkshopId: string;
     designers: SanctionOrderDesigner[];
     accountsCreated: number;
+    /** The whole order, so each link's prewritten message can name it. */
+    sanctionOrder: SanctionOrder;
+    /** One entry per account this order created — exactly what the form's own create answers. */
+    credentialLinks: SanctionOrderCredential[];
   }[];
   /** `null` when the ledger row could not be written — the orders still stand. */
   importId: string | null;
@@ -572,10 +583,10 @@ export async function uploadSanctionOrders(file: File) {
  * row on the way in, so a stale row comes back REFUSED with its own sentence rather than recorded
  * wrongly.
  *
- * **NO SIGN-IN LINKS COME BACK.** Two hundred one-time credentials on one screen changes the
- * security posture of the feature rather than its ergonomics: a link is shown once, cannot be shown
- * again, and the officer's clipboard is the only transport there is. `accountsCreated` says how many
- * people were let in, and each link is re-issued from that order's own row on the register.
+ * **THE FIRST SIGN-IN LINKS COME BACK, AS THEY DO FROM THE FORM.** One per account an order created,
+ * in `created[].credentialLinks`; the screen draws each in its own panel to copy, with the prewritten
+ * message, and each can be withdrawn there or re-issued later from its designer's button on the
+ * register.
  */
 export async function confirmSanctionImport(body: {
   sheet?: string | null;

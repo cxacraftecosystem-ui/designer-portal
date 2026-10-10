@@ -82,3 +82,14 @@ class AnnualPlanEntryUpdate(APIModel):
     """
 
     notes: str | None = Field(default=None, max_length=2000)
+
+
+class RegionalDirectorStatesIn(APIModel):
+    """The whole set of states one Regional Director answers for on the annual plan.
+
+    Names are folded through ``address.normalize_state`` by the service and refused when they are
+    not on the canonical list. Bounded at the list's own length — there are thirty-six names to
+    choose from.
+    """
+
+    states: list[Annotated[str, Field(max_length=80)]] = Field(default_factory=list, max_length=40)

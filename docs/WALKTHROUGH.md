@@ -646,10 +646,10 @@ Score a colleague's sketches and prototypes out of five, say what you would chan
 an order: **Your score for this piece** (1 to 5), **What you think of it**, **What you would change**,
 and **Move up / Move down** or drag to reorder.
 
-Two ways in, and they are not two spellings of one control: **A workshop you can open yourself** is a
-dropdown of your own workshops, and **Or any other workshop, from its link or its id** is a box —
-because the pool round is by design about workshops you were never added to. Then **Prototypes** or
-**Sketches**.
+Three ways in. **Workshops open to the pool** lists every workshop that has opened a sketch or a
+prototype to the pool, with how many of each are open — choose one to read its round. **A workshop you
+can open yourself** is a dropdown of your own workshops, and **Or any other workshop, from its link or
+its id** is a box for a link somebody sent. Then **Prototypes** or **Sketches**.
 
 **Two rounds, and this screen is the second.** The workshop's own designers rate each other first, on
 the *Review* tab of Step F. Then the wider pool ranks the pieces a workshop has finished — including
@@ -723,8 +723,11 @@ you resubmitted?" needs an answer.
 **Screen: Workshops to inspect** (`/design-workshop-inspections`)
 
 The inspector's own list: the design & prototype workshops an admin has assigned them, searchable by
-title, craft, cluster or workshop code. Open one and all 22 stages are readable and none of it is
-editable, with **who wrote each field and when** under every value, and how complete the workshop is.
+title, craft, cluster or workshop code and filtered by **status**, **submission round**, **state**,
+**type of workshop** and the days it **started** between. Open one and all 22 stages are readable and
+none of it is editable, with **who wrote each field and when** under every value, how complete the
+workshop is, its photographs, recordings and attachments, and the answers to its own questions beside
+the questions they answer.
 
 **Why it exists.** A report submitted to a Development Commissioner's office is read by somebody who
 did not run the fortnight, and *who wrote this field* is most of what that reading is for. The
@@ -747,8 +750,10 @@ and the designer being inspected can never be reading two different accounts of 
   or about the report as a whole — and the second of its two buttons sends the report back, which
   moves it to *Needs revision*. That changes the report's standing and never a workshop's contents:
   not a stage value, not a photograph, not the completeness figure, not a record.
-- Photographs, recordings and attachments are **counted rather than shown**. An empty gallery would
-  look like a file that failed to load, which is not what happened.
+- Photographs, recordings and attachments are **shown, read-only**: under *Files* and under each media
+  field. Nothing on the page can upload, replace or delete one, and the links stop working a few
+  minutes after the page loads — *Refresh files* renews them. An Assistant or Regional Director sees
+  the same on *Workshops I monitor*, for the workshops they are posted to.
 
 ---
 

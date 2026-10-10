@@ -315,6 +315,32 @@ class Settings(BaseSettings):
     # step that puts the bytes there, are in docs/ASR-MODEL-HOSTING.md.
     asr_model_dir: str | None = Field(default=None, alias="ASR_MODEL_DIR")
 
+    # --- E-mail (app/services/mailer.py, app/services/email_outbox.py) ----------------------------
+    # Amazon SES (the SESv2 API, through boto3, with the same AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY
+    # the media bucket uses — that IAM user needs `ses:SendEmail` on the verified identity).
+    #
+    # MAIL IS ON EXACTLY WHEN MAIL_FROM_ADDRESS IS SET. Unset (the default) means nothing is ever
+    # queued, `GET /preferences/notifications` answers `available: false`, and both clients hide
+    # every e-mail control — the product looks the way it did before e-mail existed, with no
+    # sentence anywhere about its absence. The address must be an SES-verified identity (the
+    # address itself, or its whole domain) in MAIL_SES_REGION; docs/ENVIRONMENT.md lists the
+    # owner's steps.
+    mail_from_address: str | None = Field(default=None, alias="MAIL_FROM_ADDRESS")
+    # The display name in the From header: "Design Prototype Workshop <no-reply@…>".
+    mail_from_name: str = Field(default="Design Prototype Workshop", alias="MAIL_FROM_NAME")
+    # Where a reply goes. Unset means replies go to the From address.
+    mail_reply_to: str | None = Field(default=None, alias="MAIL_REPLY_TO")
+    # Mumbai, beside the users. SES identities and the production-access grant are per region.
+    mail_ses_region: str = Field(default="ap-south-1", alias="MAIL_SES_REGION")
+    # Optional SES configuration set (bounce/complaint event publishing). Unset sends without one.
+    mail_ses_configuration_set: str | None = Field(
+        default=None, alias="MAIL_SES_CONFIGURATION_SET"
+    )
+    # How many sends one message is given before it is marked FAILED. Backoff is 1, 2, 4, 8 … min.
+    mail_max_attempts: int = Field(default=5, alias="MAIL_MAX_ATTEMPTS")
+    # Messages sent per drain pass of the queue worker. SES's sandbox rate is 1/s; production 14/s.
+    mail_batch_size: int = Field(default=10, alias="MAIL_BATCH_SIZE")
+
     next_public_app_url: AnyHttpUrl | str = Field(
         default="http://localhost:3000", alias="NEXT_PUBLIC_APP_URL"
     )
@@ -322,6 +348,15 @@ class Settings(BaseSettings):
 
     google_client_id: str | None = Field(default=None, alias="GOOGLE_CLIENT_ID")
     google_android_client_id: str | None = Field(default=None, alias="GOOGLE_ANDROID_CLIENT_ID")
+    # Microsoft and Yahoo sign-in (app/services/oidc_sign_in.py). Each provider is live only when
+    # BOTH its client ID and its secret are set: the client brings back an authorization code and
+    # this server redeems it, which needs the secret. MICROSOFT_TENANT is common, organizations,
+    # consumers or one tenant's ID, and must match the account types the app registration allows.
+    microsoft_client_id: str | None = Field(default=None, alias="MICROSOFT_CLIENT_ID")
+    microsoft_client_secret: str | None = Field(default=None, alias="MICROSOFT_CLIENT_SECRET")
+    microsoft_tenant: str = Field(default="common", alias="MICROSOFT_TENANT")
+    yahoo_client_id: str | None = Field(default=None, alias="YAHOO_CLIENT_ID")
+    yahoo_client_secret: str | None = Field(default=None, alias="YAHOO_CLIENT_SECRET")
     master_admin_email: str = Field(alias="MASTER_ADMIN_EMAIL")
     master_admin_name: str = Field(default="Ankit Kumar", alias="MASTER_ADMIN_NAME")
     # Role given to brand-new self-registered Google accounts. Defaults to the lowest tier so an

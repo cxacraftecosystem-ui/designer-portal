@@ -205,6 +205,28 @@ android {
         buildConfigField("String", "GOOGLE_ANDROID_CLIENT_ID", "\"614092441670-p6kfpnqqitg4n8dtc3klj815jcaa2h94.apps.googleusercontent.com\"")
         buildConfigField("String", "MAPTILER_API_KEY", "\"OJJYFRqCD2HD2k3BbXGF\"")
 
+        /*
+         * MICROSOFT AND YAHOO SIGN-IN (data/OidcSignIn.kt). Each provider's button exists only when
+         * its client ID is set here; blank means no button at all. Read from local.properties
+         * (microsoftClientId, microsoftTenant, yahooClientId, oidcRedirectUri) or from the
+         * environment (MICROSOFT_CLIENT_ID, MICROSOFT_TENANT, YAHOO_CLIENT_ID, OIDC_REDIRECT_URI),
+         * which is how publish-android.yml passes the repository variables of the same names.
+         *
+         * OIDC_REDIRECT_URI is the WEB app's `/login/callback` — the one redirect URI registered with
+         * both providers. The browser tab comes back there, and the web route hands the code to this
+         * app over `appAuthRedirectScheme` below. Client IDs and that URI are public values; the
+         * secrets that redeem a code live on the backend only.
+         */
+        fun oidcValue(property: String, environment: String): String =
+            signingProperty(localProperties, property, environment) ?: ""
+        buildConfigField("String", "MICROSOFT_CLIENT_ID", "\"${oidcValue("microsoftClientId", "MICROSOFT_CLIENT_ID")}\"")
+        buildConfigField("String", "MICROSOFT_TENANT", "\"${oidcValue("microsoftTenant", "MICROSOFT_TENANT").ifEmpty { "common" }}\"")
+        buildConfigField("String", "YAHOO_CLIENT_ID", "\"${oidcValue("yahooClientId", "YAHOO_CLIENT_ID")}\"")
+        buildConfigField("String", "OIDC_REDIRECT_URI", "\"${oidcValue("oidcRedirectUri", "OIDC_REDIRECT_URI")}\"")
+        // AppAuth's redirect receiver is registered for this scheme (AndroidManifest.xml). It must
+        // equal `ANDROID_SIGN_IN_SCHEME` in frontend/lib/oidcSignIn.ts, which a web unit spec pins.
+        manifestPlaceholders["appAuthRedirectScheme"] = "com.designprototype.workshop.signin"
+
         /**
          * NO `ndk { abiFilters }` HERE, AND THAT ABSENCE IS LOAD-BEARING — see `buildTypes.release`.
          *
@@ -540,6 +562,10 @@ dependencies {
     implementation("androidx.credentials:credentials:1.6.0")
     implementation("androidx.credentials:credentials-play-services-auth:1.6.0")
     implementation("com.google.android.libraries.identity.googleid:googleid:1.2.1")
+    // Microsoft and Yahoo sign-in: the authorization request (PKCE, state, nonce) in a browser tab and
+    // the redirect receiver. The code is redeemed by the backend, never on the phone. 0.11.1 is the
+    // latest release on Maven Central.
+    implementation("net.openid:appauth:0.11.1")
 
     /**
      * Coil 3, which moved to its own group (`io.coil-kt.coil3`) and package (`coil3.*`); Coil 2's

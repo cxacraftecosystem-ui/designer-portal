@@ -48,7 +48,7 @@
  *
  * ══ NOTHING IS EMAILED. THE OFFICER IS THE TRANSPORT, AND THIS SCREEN SAYS SO ══════════════════
  *
- * There is no mailer in this product. The sign-in link comes back once, in the response to the
+ * The sanction register does not e-mail. The sign-in link comes back once, in the response to the
  * create, and nothing anywhere can show it again — the server stores only a SHA-256 digest. So the
  * panel below offers the link to copy and a prewritten message to paste, and it says in words that
  * nothing has been sent. An officer who records ten sanctions and copies none has ten designers who
@@ -124,6 +124,30 @@ type IssuedLink = {
   designerName: string;
   signInEmail: string;
 };
+
+/**
+ * The designers on an order whose first sign-in link can be re-issued from the register: those whose
+ * account THIS order created. An order recorded before the team was listed carries only the lead
+ * scalars, and the lead stands in for the list then.
+ */
+function reissuable(order: SanctionOrder): {
+  designerUserId: string;
+  designerName: string;
+  signInEmail: string;
+}[] {
+  if (order.designers.length > 0) {
+    return order.designers
+      .filter((designer) => designer.accountCreated)
+      .map((designer) => ({
+        designerUserId: designer.designerUserId,
+        designerName: designer.designerName,
+        signInEmail: designer.signInEmail || designer.designerEmail
+      }));
+  }
+  return order.accountCreated
+    ? [{ designerUserId: order.designerUserId, designerName: order.designerName, signInEmail: order.designerEmail }]
+    : [];
+}
 
 function problemOf(error: unknown, fallback: string): string {
   const detail = (error as { payload?: { detail?: unknown } } | null)?.payload?.detail;
@@ -614,6 +638,24 @@ export default function SanctionOrdersPage() {
               });
               setPreview(null);
               setImportReport(report);
+              /*
+                THE IMPORT'S FIRST SIGN-IN LINKS, DRAWN EXACTLY AS THE FORM'S ARE: one panel each,
+                with the copy button, the prewritten message and the withdraw button. A link is
+                shown once; one this officer does not copy now is re-issued from its designer's
+                button on the register.
+              */
+              const imported = report.created.flatMap((order) =>
+                (order.credentialLinks ?? [])
+                  .filter((entry) => entry.link !== null)
+                  .map((entry) => ({
+                    order: order.sanctionOrder,
+                    link: entry.link!,
+                    designerName: entry.designerName,
+                    signInEmail: entry.signInEmail
+                  }))
+              );
+              setIssuedLinks(imported);
+              setCopied(null);
               setPage(1);
               await refresh();
               // THE SAME HAND-OFF, AND IT MATTERS MORE HERE: an import can record two hundred orders
@@ -820,8 +862,15 @@ export default function SanctionOrdersPage() {
                   >
                     {readinessSentence(order)}
                   </span>
-                  {order.accountCreated ? (
+                  {/*
+                    ONE RE-ISSUE PER DESIGNER WHOSE ACCOUNT THIS ORDER CREATED, co-designers
+                    included. Each button names its person, the server mints for exactly that
+                    person, and every refusal (an account senior to you, one that signs in with
+                    Google) is asked of them and comes back as a sentence above the list.
+                  */}
+                  {reissuable(order).map((designer) => (
                     <button
+                      key={designer.designerUserId}
                       type="button"
                       className="field-button-secondary"
                       disabled={linkBusy}
@@ -830,19 +879,13 @@ export default function SanctionOrdersPage() {
                         setError(null);
                         setLinkNotice(null);
                         try {
-                          const link = await issueSanctionCredentialLink(order.id);
-                          // THE LEAD, BECAUSE THAT IS WHO THIS ROUTE MINTS FOR. The re-issue arm
-                          // reads `SanctionOrder.designerUserId` — the lead scalar — so a
-                          // co-designer's link cannot be re-issued from here, and the panel must
-                          // not imply otherwise by naming the wrong person. Raising that gap is
-                          // this comment's job; closing it is a route change.
-                          const first = order.designers[0];
+                          const link = await issueSanctionCredentialLink(order.id, designer.designerUserId);
                           setIssuedLinks([
                             {
                               order,
                               link,
-                              designerName: first?.designerName || order.designerName,
-                              signInEmail: first?.signInEmail || order.designerEmail
+                              designerName: designer.designerName,
+                              signInEmail: designer.signInEmail
                             }
                           ]);
                           setCopied(null);
@@ -853,9 +896,11 @@ export default function SanctionOrdersPage() {
                         }
                       }}
                     >
-                      Re-issue sign-in link
+                      {order.designers.length > 1
+                        ? `Re-issue ${designer.designerName || designer.signInEmail}'s sign-in link`
+                        : "Re-issue sign-in link"}
                     </button>
-                  ) : null}
+                  ))}
                 </div>
                 {order.reportCopyMatches === false ? (
                   /* REPORTED, NOT BLOCKED. A designer correcting a mistyped number on their own

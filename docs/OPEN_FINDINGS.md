@@ -1,20 +1,44 @@
 # Open findings
 
-**Status: 31 open, 1 decision recorded and 1 deferral, 100 closed.** Every count re-counted by
+**Status: 31 open, 1 decision recorded and 1 deferral, 108 closed.** Every count re-counted by
 heading on 2026-10-10 (15 + 18 opened by the Android copy sweep that day, less the 2 of those closed
 the same day); earlier counts on 2026-10-09; the entries closed on 2026-10-09 were checked against the tree that day, and
 the older closed sections were last re-checked on 2026-09-03.
+
+**Three missing features named by the customer-copy sweep were built on 2026-10-10, and recorded
+closed.** The sweep found screens explaining, to the people using them, features that did not exist:
+inspectors and directorate monitors could not see a workshop's files or the wording of its own
+questions, the inspection list had no filters, and Design review had no list of the workshops open to
+the pool. The web side had no open entry, so the open count does not move; the two handset entries for the
+same screens stay open. Counted by heading: still 31 open, and 100 + 3 = 103 closed.
 
 **Two missing features named on screen were built on 2026-10-10, and each closed a heading.** Join
 cards can now be printed, listed, cancelled and redeemed on the web, and a stored 3D model is turned
 in 3D on both clients while the report names it as a model. Neither was recorded open before — the
 screens themselves said the features were missing — so the open count does not move. Counted by
-heading: 31 open, and 98 + 2 = 100 closed.
+heading: 31 open, and 106 + 2 = 108 closed.
 
 **Three Android gaps were closed on 2026-10-10 by building them**: correction suggestions on the
 handset, its own review queue, and inspections that work without signal. Two of them had been opened
 that day by the Android copy sweep and leave the open list; the review queue had no entry and is
 recorded already closed. 33 − 2 = 31 open; 95 + 3 = 98 closed.
+
+**E-mail delivery, built on 2026-10-10, closed one entry.** No product could send e-mail: the
+walkthrough told directorate officers and inspectors so, and a correction suggestion could sit unread
+until somebody opened the workshop. It is under *Closed on 2026-10-10*, recorded and closed in the same
+change. Counted by heading: still 31 open, and 98 + 1 = 99 closed.
+
+**And "Continue with Microsoft" and "Continue with Yahoo" were built the same day** (item F3 of the
+copy sweep): the sign-in screen had admitted them as "Coming soon" with no entry here, so the gap is
+recorded already closed. Counted by heading: 31 open; 99 + 1 = 100 closed.
+
+**Three screens that narrated a missing feature got the feature on 2026-10-10.** The AI layers panel
+said a layer's decision history and one layer's text could not be read on their own; the sanction
+register's guide said a co-designer's first sign-in link could not be re-issued and that an import
+issued no links; the annual plan's guide said a Regional Director could not correct their own state's
+rows. None was recorded here as open — each lived only in the screen's own copy — so they enter as
+three closed entries under *Closed on 2026-10-10*. Counted by heading: still 31 open, and 103 + 3 = 106
+closed.
 
 **Moving a set-password link's token off the web's request lines narrowed one entry the same day,
 and moved neither number.** The web now checks a link with `POST /api/auth/set-password/check`, the
@@ -853,6 +877,148 @@ way; an answer lost on the way back is recognised on the register by its device 
 twice; nothing queued is deleted except by its author. The pass also runs on the app's
 "network came back" hook. Pinned by `InspectionNotesSyncTest` and
 `DesignWorkshopInspectionFeedbackTest`.
+
+The e-mail entry below was closed the same day by building the product's mail sender.
+
+### [MEDIUM] Nothing could be e-mailed, so a designer was never told about a correction and every password link was a copy and paste (backend, frontend) — **CLOSED 2026-10-10**
+
+There was no mail sender. The web walkthrough said so to directorate officers ("This product has no
+mail sender") and to the sanction checklist's reader, an inspector was told that a suggestion "may sit
+unread until somebody opens the workshop", and every set-password link had to be copied out of Users
+and passed on by hand.
+
+Built: an Amazon SES sender (SESv2 through boto3, `services/mailer.py`) behind an outbox
+(`EmailMessage`, migration `20261010100000_email_outbox`, `services/email_outbox.py`) that the
+existing `fieldrepo-queue` drain sends from, with compare-and-set claiming, retries with backoff for a
+throttle or SES fault, a permanent failure for a rejected message, and the row itself as the send log.
+Plain-text and HTML templates; bodies are rendered at send time and never stored or logged. Two
+triggers: an inspector filing a correction suggestion or sending a report back e-mails the workshop's
+designers (`notify_review_note`, after the write, never failing it), and a provisioner can choose
+"E-mail a password link" on Users (`delivery: "EMAIL"`), which queues the link Fernet-sealed, clears
+the seal once the message is dealt with, and hands the provisioner no copy. Each person can switch
+the review notices off in Settings (`emailReviewNotes`, opt-out). Mail is on only when
+`MAIL_FROM_ADDRESS` is set; otherwise every e-mail control is absent and nothing on screen mentions
+it. The walkthrough sentences above were rewritten to be true either way.
+
+**The owner's steps** (no AWS resource is created by this repository): verify the sending identity
+in SES ap-south-1, request production access there, grant the backend IAM user `ses:SendEmail`, and
+add `MAIL_FROM_ADDRESS` to `BACKEND_ENV` — [ENVIRONMENT.md](ENVIRONMENT.md), *E-mail (Amazon SES)*.
+
+Pinned by `tests/test_mailer.py` (the SES request and the retry classification, SES stubbed),
+`tests/test_email_outbox.py` (the seal, the drain, retries, expiry, the opt-out, the recipients, no
+link or address in a log line), `tests/test_review_note_triggers.py` (both inspection doors notify
+after their write, and a refused send-back notifies nobody) and `tests/test_email_db.py` (the
+preference routes, an e-mailed link against a real database, and the drain).
+
+And one sign-in gap the web admitted on its front door (item F3 of the same sweep), closed by building
+the two providers.
+
+### [P0] "Continue with Microsoft" and "Continue with Yahoo" were dead buttons with a "Coming soon" badge on the sign-in screen (frontend, backend, android) — **CLOSED 2026-10-10**
+
+The web sign-in card drew both buttons with a "Coming soon" badge and a toast ("… sign-in is coming
+soon — use Google, or your email and password, for now"), over a code comment saying the providers
+had nothing behind them; the handset drew neither. Both providers are now built end to end: an
+authorization code with PKCE and a nonce, redeemed by the backend with the client secret, the ID token
+verified against the provider's keys (issuer, audience, expiry, nonce), the address accepted only when
+the provider verified it, then exactly the Google path's allow-list admission and account linking —
+without its Gmail-spelling fold ([SECURITY.md](SECURITY.md) §3.3A). Each button is drawn only when its
+client ID is configured for that client; there is no badge and no disabled placeholder. Pinned by
+`backend/tests/test_oidc_sign_in.py` (verification against a fake JWKS, every refusal),
+`backend/tests/test_oidc_sign_in_admission.py` (admission, linking, refusals, through the real route),
+`frontend/e2e/oidc-sign-in-unit.spec.ts` and
+`android/app/src/test/java/com/designprototype/workshop/data/OidcSignInTest.kt`. Live once the owner
+registers the two apps and sets the values [ENVIRONMENT.md](ENVIRONMENT.md) lists.
+
+---
+
+## Closed on 2026-10-10
+
+Built on `feature/inspect` from the customer-copy sweep's items F5, F13 and F8. Each entry names the
+test that fails without it.
+
+### [MEDIUM] Inspectors and directorate monitors could not see a workshop's photographs, recordings, attachments or the wording of its own questions (backend, frontend) — **CLOSED 2026-10-10**
+
+Both read-only surfaces — `/design-workshop-inspections/[id]` and `/officers/monitored/[id]` — counted
+each media field's files and the answers to the workshop's own questions, and told the reader the
+read did not carry them. An inspector deciding whether to send a report back could not look at the
+photograph the note would be about.
+
+Each surface now has a second GET behind its own read-only loader —
+`GET /api/design-workshop-inspections/{id}/media` and
+`GET /api/design-workshop-oversight/assigned/{id}/media` — served by
+`backend/app/services/design_workshop_reader_media.py` through `records.public_encode` with the
+workshop half naming that one workshop and `signed_only=True`: only files tagged to the workshop, every
+URL a short-lived signature whatever `MEDIA_PRESIGNED_READS` says, no `objectKey` or `publicUrl`, no
+write. Both workshop reads carry `customSections`. The web draws both with
+`frontend/components/designworkshop/ReaderWorkshopMedia.tsx`. Pinned per role, admitted and refused —
+an inspector of another workshop, a post holder not posted to it, and the roles neither surface
+admits — by `backend/tests/test_reader_media_and_pool_directory.py`, and on the web by
+`frontend/e2e/workshop-reader-media-unit.spec.ts`. The handset's inspection screen is not changed by
+this entry.
+
+### [LOW] The inspection list had a search box and no filters (backend, frontend) — **CLOSED 2026-10-10**
+
+`GET /api/design-workshop-inspections` now takes `statusFilter`, `round`, `state`, `workshopKind`,
+`dateFrom` and `dateTo`, AND-composed beside the inspection scope by
+`backend/app/services/reader_list_filters.py`, so no filter can list a workshop the inspector holds no
+row on; the web list draws them. Pinned by
+`test_each_filter_narrows_the_inspectors_own_rows` and
+`test_no_filter_reaches_a_workshop_the_inspector_holds_no_row_on`.
+
+### [LOW] Design review had no list of the workshops that had opened a piece to the pool (backend, frontend) — **CLOSED 2026-10-10**
+
+The page told pool reviewers that browsing the workshops open to the pool "is still a different
+question with no answer". `GET /api/design-ratings/workshops` now lists them — behind the POOL round's
+own gate, answered 404 to anybody else, with the title, the dates and the open counts per kind and no
+other workshop or stage field — and `/design-review` draws it first. Pinned by
+`test_the_pool_reviewers_see_only_workshops_that_opened_a_piece`,
+`test_the_pool_directory_is_refused_to_everybody_the_pool_round_refuses` and, for the stage-entry fence,
+`test_the_pool_directory_takes_the_gate_and_serves_no_stage_field` in
+`backend/tests/test_entry_provenance_readers.py`.
+
+---
+
+The three below were sentences on web screens admitting a missing feature (the copy sweep's F9, F10
+and F11). The feature was built, the sentence removed, and the test named in each entry fails without it.
+
+### [MEDIUM] AI layers: no decision history and no single-layer text read (backend, frontend) — **CLOSED 2026-10-10**
+
+The panel said earlier decisions "cannot be read from this screen", and "Show the full text" fetched
+every layer's text in one request because one layer's could not be read alone. Two reads now exist,
+both on the workshop's own gate: `GET /api/design-workshops/{id}/ai-layers/decisions` (who accepted,
+withdrew or declined which layer, and when, newest first, with the actor's name — a decline read off
+the layer's own `deletedAt`/`deletedById`) and `GET /api/design-workshops/{id}/ai-layers/{layer_id}`
+(one layer with its full text, withheld exactly as the list withholds it, and its own history). The
+panel offers "Read this layer" and "Show its decision history" per row and the workshop's whole
+history at the top. Pinned by `backend/tests/test_ai_layer_history.py` (the designer, an admin, and a
+designer with no access to the workshop) and `frontend/e2e/admin-gap-features-unit.spec.ts`.
+
+### [MEDIUM] A co-designer's first sign-in link could not be re-issued, and an import issued none (backend, frontend) — **CLOSED 2026-10-10**
+
+`POST /api/sanction-orders/{id}/credential-link` takes `designerUserId` and re-issues for any designer
+the order names; left out, it is the lead, as before. Every existing rule is asked of THAT person:
+their own `accountCreated` on the order, their rank against the officer (an account since promoted to
+the officer's tier or above is refused), the master admin's mailbox, Google sign-in; the issuer is
+recorded and re-checked at redemption (`issuer_still_manages`), and a promotion still withdraws the
+link. Somebody the order does not name is a 404. The import (`POST /api/sanction-orders/upload/confirm`)
+now hands back the INVITE links `create_from_sanction` mints — per order, with the order beside them —
+and counts them in `credentialLinksIssued`; a throttled link is a warning against its Excel row. The
+register draws one re-issue button per created account. Pinned by
+`backend/tests/test_sanction_reissue_codesigner.py` (Assistant Director, Regional Director, Ministry
+Admin and Admin allowed; Designer and Inspector refused) and `backend/tests/test_sanction_import.py`.
+
+### [MEDIUM] A Regional Director could not correct their own state's annual-plan rows (backend, frontend) — **CLOSED 2026-10-10**
+
+The plan had no record of which state was a Regional Director's, so admitting one would have handed
+them the national directory. `RegionalDirectorState` (migration `20261010140000`) is that scope,
+assigned by a Ministry Admin and above (`GET`/`PUT /api/annual-plan/regional-directors`) and only to a
+Regional Director. Through `require_annual_plan_reader` a Regional Director reaches the year list, the
+list, one row and the remarks correction, each narrowed to their states; a row in another state is the
+same 404 as no row. Upload, export, the pro-forma, promote, withdraw, reinstate and the assignment stay
+the Ministry Admin's. Assistant Directors are unchanged. Pinned by
+`backend/tests/test_annual_plan_regional_scope.py` (a Regional Director of the row's state and of a
+different state, one with none, an Assistant Director, a Designer, a Ministry Admin and an Admin) and
+`backend/tests/test_annual_plan_routes.py`.
 
 ## Closed on 2026-10-09
 

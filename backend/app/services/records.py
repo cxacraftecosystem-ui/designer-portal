@@ -121,8 +121,11 @@ _MEDIA_TAKEABLE_KEYS = (*_MEDIA_URL_KEYS, *_TRANSCRIPT_KEYS)
 _MEDIA_MARKER = "objectKey"
 
 
-def _sign_media_url(node: dict[str, Any], ttl_seconds: int) -> None:
+def _sign_media_url(node: dict[str, Any], ttl_seconds: int) -> bool:
     """Replace this entitled media node's stored ``url`` with a signed, expiring one. In place.
+
+    Returns whether a signature was written, so a caller in signed-only mode
+    (``public_encode(signed_only=True)``) can withhold the stored URL instead of serving it.
 
     Called ONLY when ``MEDIA_PRESIGNED_READS`` is on and only for a node
     :func:`_redact_sensitive` has just decided may keep its bytes. The RBAC is therefore already
@@ -282,7 +285,7 @@ def _sign_media_url(node: dict[str, Any], ttl_seconds: int) -> None:
     object_key = node.get(_MEDIA_MARKER)
     stored = node.get("url")
     if not object_key or not isinstance(stored, str) or not stored:
-        return
+        return False
     from app.api.routes.media import signed_read_headers
     from app.services.s3 import presign_get_url
 
@@ -316,7 +319,8 @@ def _sign_media_url(node: dict[str, Any], ttl_seconds: int) -> None:
             disposition=disposition,
         )
     except Exception:  # noqa: BLE001 — see FAILURE above: fall back to the stored URL, never 500.
-        return
+        return False
+    return True
 
 
 #: Passed as ``media_urls`` to mean "every URL may travel" — a professor, an admin, or a surface that
@@ -368,6 +372,22 @@ def presigned_read_ttl() -> int | None:
         return None
     ttl = int(getattr(settings, "media_presigned_read_ttl_seconds", 0) or 0)
     return ttl if ttl > 0 else None
+
+
+def signed_only_ttl() -> int:
+    """The signature lifetime a ``signed_only`` surface uses while ``MEDIA_PRESIGNED_READS`` is off.
+
+    The same configured number the flag would use (``MEDIA_PRESIGNED_READ_TTL_SECONDS``), so the two
+    can never disagree about how long a look lasts; 900 seconds when settings cannot be built or the
+    value is not positive, because a signed-only surface has no "serve the stored URL" to fall to.
+    """
+    from app.core.config import get_settings
+
+    try:
+        ttl = int(getattr(get_settings(), "media_presigned_read_ttl_seconds", 0) or 0)
+    except Exception:  # noqa: BLE001 — no environment: the documented default.
+        ttl = 0
+    return ttl if ttl > 0 else 900
 
 
 def derive_age(date_of_birth: Any, *, on: datetime | None = None) -> int | None:
@@ -585,6 +605,7 @@ def _redact_sensitive(
     media_urls: set[str] | None = None,
     media_workshops: frozenset[str] = frozenset(),
     presign_ttl: int | None = None,
+    signed_only: bool = False,
 ) -> Any:
     """Recursively scrub an already-encoded payload of everything that must not leave the API.
 
@@ -668,14 +689,29 @@ def _redact_sensitive(
                 for key in _MEDIA_TAKEABLE_KEYS:
                     value.pop(key, None)
             elif presign_ttl is not None:
-                _sign_media_url(value, presign_ttl)
+                signed = _sign_media_url(value, presign_ttl)
+                if signed_only:
+                    # SIGNED-ONLY: the signature is the one handle that travels. A node that could
+                    # not be signed keeps no URL at all, and the key and the public URL — either of
+                    # which IS the file while the bucket is public-read — are never handed over.
+                    for key in _MEDIA_URL_KEYS:
+                        if key != "url" or not signed:
+                            value.pop(key, None)
         for nested in value.values():
             _redact_sensitive(
-                nested, viewer_id, unmasked, media_urls, media_workshops, presign_ttl
+                nested,
+                viewer_id,
+                unmasked,
+                media_urls,
+                media_workshops,
+                presign_ttl,
+                signed_only,
             )
     elif isinstance(value, list):
         for item in value:
-            _redact_sensitive(item, viewer_id, unmasked, media_urls, media_workshops, presign_ttl)
+            _redact_sensitive(
+                item, viewer_id, unmasked, media_urls, media_workshops, presign_ttl, signed_only
+            )
     return value
 
 
@@ -685,6 +721,7 @@ def public_encode(
     *,
     media_urls: Any = _UNSET,
     media_workshops: frozenset[str] = frozenset(),
+    signed_only: bool = False,
 ) -> Any:
     """``jsonable_encoder`` plus a recursive scrub of everything that must not leave the API.
 
@@ -722,6 +759,13 @@ def public_encode(
 
     Pass the current user from any route whose caller legitimately needs the real number — the
     artisan edit form is the reason that path exists.
+
+    ``signed_only`` IS FOR A SURFACE THAT MUST NEVER HAND OVER A PERMANENT HANDLE, whatever
+    ``MEDIA_PRESIGNED_READS`` says: the read-only media of a workshop shown to its inspectors and
+    its directors (``services/design_workshop_reader_media``). The entitlement decision above is
+    unchanged — it is still made first, per file — and a file that survives it is signed even with
+    the flag off; ``objectKey`` and ``publicUrl`` are dropped, and a file that cannot be signed
+    travels with no URL at all rather than with its stored one.
     """
     from app.core.deps import get_value, has_rank
 
@@ -730,6 +774,8 @@ def public_encode(
     # every dict of every response in the API and a per-node call would put a cache lookup and an
     # attribute read on all of them for a value that cannot change mid-request.
     presign_ttl = presigned_read_ttl()
+    if signed_only and presign_ttl is None:
+        presign_ttl = signed_only_ttl()
     if viewer is None:
         # No viewer named: mask everything and withhold every URL. `set()` rather than None, because
         # None means "all allowed" and this is the path a route reaches by NOT thinking about it.
@@ -741,6 +787,7 @@ def public_encode(
             media_urls=allowed,
             media_workshops=media_workshops,
             presign_ttl=presign_ttl,
+            signed_only=signed_only,
         )
 
     viewer_id = get_value(viewer, "id")
@@ -761,6 +808,7 @@ def public_encode(
         media_urls=allowed,
         media_workshops=media_workshops,
         presign_ttl=presign_ttl,
+        signed_only=signed_only,
     )
 
 

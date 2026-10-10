@@ -1574,7 +1574,7 @@ export const GUIDE_STEPS: GuideStep[] = [
       // has no edit path and its own docstring forbids one being added. Write that; never the
       // shorter thing.
       "There is no Save and no stage form, and neither is missing: the loader behind this page has no edit path at all, and its own docstring says it must never grow one. What an inspector CAN write is a correction suggestion — a note about one stage or about the report as a whole — and the second of its two buttons sends the report back, which moves it to Needs revision. That changes the report's standing and never a workshop's contents: not a stage value, not a photograph, not the completeness figure, not a record.",
-      "Photographs, recordings and attachments are COUNTED rather than shown — “3 photographs are recorded here; an inspection read does not carry them”. An empty gallery would look like a file that failed to load, which is not what happened."
+      "Photographs, recordings and attachments are shown and played here, read-only: nothing on this page can upload, replace or delete one. Each media field shows its own files, and the workshop's own questions are printed beside their answers."
     ]
   }
 ];

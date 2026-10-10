@@ -29,7 +29,7 @@ from app.schemas.auth import (
     SetPasswordRequest,
     TokenResponse,
 )
-from app.services import access_roster, credential_links, identity, usage
+from app.services import access_roster, credential_links, identity, oidc_sign_in, usage
 from app.services.account_provisioning import (
     GOOGLE_ONLY_LINK_DETAIL,
     assert_may_reset_credentials,
@@ -467,7 +467,7 @@ MASTER_ADDRESS_HOLDS_A_PASSWORD_ACCOUNT_DETAIL = (
 
 
 def _auth_provider(account: Any) -> str:
-    """``LOCAL`` or ``GOOGLE``, from a live row (a Prisma enum member) or a hand-built one (a str)."""
+    """``LOCAL``, ``GOOGLE``, ``MICROSOFT`` or ``YAHOO``, from a live row (a Prisma enum member) or a hand-built one (a str)."""
     provider = getattr(account, "authProvider", None)
     return str(getattr(provider, "value", provider) or "").upper()
 
@@ -555,15 +555,90 @@ async def login_with_google(token: str) -> tuple[Any, Any | None]:
             detail="Google account email is not verified",
         )
 
-    email = id_info["email"].lower()
+    return await _sign_in_verified_mailbox(
+        id_info["email"].lower(),
+        display_name=id_info.get("name"),
+        avatar_url=id_info.get("picture"),
+        provider="GOOGLE",
+    )
+
+
+def _oidc_refused_detail(label: str) -> str:
+    """What a Microsoft or Yahoo sign-in that did not prove itself is told. One sentence for every
+    failure of the code, the token or its signature: the log line carries the class, and the person
+    has the same useful move whichever it was."""
+    return f"Signing in with {label} did not complete. Try again, or use another way to sign in."
+
+
+def _oidc_unverified_detail(label: str) -> str:
+    return (
+        f"{label} has not confirmed the email address on this account, so it cannot be used to sign "
+        f"in here. Confirm the address with {label}, or use another way to sign in."
+    )
+
+
+async def login_with_oidc(payload: LoginRequest) -> tuple[Any, Any | None]:
+    """The Microsoft and Yahoo branch: redeem, prove, then exactly the Google admission and linking.
+
+    THE SAME ORDER AS :func:`login_with_google` AND FOR ITS REASONS: the identity is proved (the code
+    redeemed, the ID token verified against the provider's keys, the nonce matched, the address
+    verified by the provider) before anything is read from or written to the allow-list, so this door
+    cannot be used to enumerate addresses or to fill the pending queue. From there it is
+    :func:`_sign_in_verified_mailbox`, the one function the Google branch also ends in, with ONE
+    difference, stated where it is decided: no Gmail-spelling fold to find an account.
+    """
+    name = payload.oidcProvider or ""
+    label = oidc_sign_in.label_of(name)
+    if oidc_sign_in.provider(name) is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Signing in with {label} is not available here. Use another way to sign in.",
+        )
+    if not oidc_sign_in.acceptable_redirect_uri(payload.oidcRedirectUri or ""):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail=_oidc_refused_detail(label)
+        )
+    try:
+        proved = await oidc_sign_in.prove(
+            name,
+            code=payload.oidcCode or "",
+            code_verifier=payload.oidcCodeVerifier or "",
+            redirect_uri=payload.oidcRedirectUri or "",
+            raw_nonce=payload.oidcNonce or "",
+        )
+    except oidc_sign_in.EmailNotVerified as exc:
+        logger.info("auth: %s sign-in refused (%s)", name, exc.reason)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail=_oidc_unverified_detail(label)
+        ) from exc
+    except oidc_sign_in.SignInRefused as exc:
+        # THE REASON TAG, NEVER THE TOKEN OR THE CODE. See oidc_sign_in's module docstring.
+        logger.info("auth: %s sign-in refused (%s)", name, exc.reason)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail=_oidc_refused_detail(label)
+        ) from exc
+    return await _sign_in_verified_mailbox(
+        proved.email, display_name=proved.name, avatar_url=None, provider=proved.provider
+    )
+
+
+async def _sign_in_verified_mailbox(
+    email: str, *, display_name: str | None, avatar_url: str | None, provider: str
+) -> tuple[Any, Any | None]:
+    """Admission, then the account a PROVED, provider-verified mailbox signs in to.
+
+    Reached from :func:`login_with_google` and :func:`login_with_oidc` only, each after its provider
+    has verified ``email``. ``provider`` is ``GOOGLE``, ``MICROSOFT`` or ``YAHOO``: it is the
+    ``authProvider`` a new account is created with, and it decides whether another Gmail spelling may
+    be folded to find an existing account (Google only; see the block below).
+    """
     settings = get_settings()
     role = role_for_email(email)
     name = (
         settings.master_admin_name
         if role == "MASTER_ADMIN"
-        else id_info.get("name") or email.split("@")[0]
+        else display_name or email.split("@", maxsplit=1)[0]
     )
-    avatar_url = id_info.get("picture")
 
     # ADMISSION IS DECIDED HERE, BEFORE ANY WRITE, AND THIS IS THE BIGGEST BEHAVIOURAL CHANGE IN THE
     # FEATURE. Until this line existed, a verified Google token for ANY address on earth reached the
@@ -619,9 +694,16 @@ async def login_with_google(token: str) -> tuple[Any, Any | None]:
     # elevation below is written only onto an account found under that literal address — and only
     # onto one that is already a master admin or holds no password, since a password at that address
     # may be somebody else's (``_refuse_to_promote_a_password_account``, also 2026-10-09).
+    #
+    # THE FOLD IS GOOGLE'S ONLY (2026-10-10). It rests on Google having verified the mailbox AND on
+    # Google being the provider that runs Gmail and publishes the spelling rule. Microsoft and Yahoo
+    # verify the literal address they hold and promise nothing about other spellings of it, so on
+    # those two paths an account is found under the literal address or not at all. (Admission above
+    # still reads the mailbox's spellings, as it does for a password sign-in: that is a rule about
+    # which Gmail mailbox an administrator approved, not about which account a provider vouched for.)
     existing = await db.user.find_unique(where={"email": email})
     found_literally = existing is not None
-    if existing is None and role != "MASTER_ADMIN":
+    if existing is None and role != "MASTER_ADMIN" and provider == "GOOGLE":
         existing = await _local_account_on_the_mailbox(email)
     if existing and role == "MASTER_ADMIN" and found_literally:
         # BEFORE ANY WRITE, the avatar included: an account at the master's address that is not a
@@ -636,9 +718,15 @@ async def login_with_google(token: str) -> tuple[Any, Any | None]:
         # ``mustChangePassword`` stays — the temporary password is still live and still has to go.
         # Only the avatar, which nobody types, is refreshed. A Google-only account behaves exactly
         # as it always did.
-        data: dict[str, Any] = {"avatarUrl": avatar_url}
+        # Microsoft and Yahoo send no picture, so their sign-in leaves the avatar alone rather than
+        # blanking one a Google sign-in put there.
+        data: dict[str, Any] = {"avatarUrl": avatar_url} if provider == "GOOGLE" else {}
         if existing.passwordHash is None:
-            data.update({"name": name, "authProvider": "GOOGLE"})
+            data["name"] = name
+            # Recorded by the first provider that signed in to a password-less account. A second
+            # provider is a second way in, not a change of what the account is.
+            if _auth_provider(existing) in ("LOCAL", provider):
+                data["authProvider"] = provider
         if role == "MASTER_ADMIN" and found_literally:
             data["role"] = "MASTER_ADMIN"
             data["canManageQuestionnaire"] = True
@@ -671,7 +759,7 @@ async def login_with_google(token: str) -> tuple[Any, Any | None]:
             "email": email,
             "name": name,
             "avatarUrl": avatar_url,
-            "authProvider": "GOOGLE",
+            "authProvider": provider,
             "role": role,
             "canManageQuestionnaire": role == "MASTER_ADMIN",
         }
@@ -696,6 +784,10 @@ async def login(payload: LoginRequest) -> dict[str, Any]:
         # docstring: on the Google path admission is what decides whether an account exists at all,
         # so it cannot be checked out here after the fact.
         user, access = await login_with_google(payload.googleIdToken)
+    elif payload.has_oidc_login:
+        # Microsoft and Yahoo. Admitted inside the call and before any write, for the Google
+        # branch's reason; see ``login_with_oidc``.
+        user, access = await login_with_oidc(payload)
     else:
         # ── THREE IDENTIFIER SPACES IN, ONE ACCOUNT OUT, AND THE GATES BELOW NEVER LEARN ──────
         #
@@ -938,9 +1030,10 @@ async def me(current_user: Any = Depends(get_current_user)) -> dict[str, Any]:
 # Owner, 2026-08-30: *"implement all the measures, we will use just admin copies the link for now
 # though."* So: a single-use expiring token bound to the account's credential state, revocation, a
 # per-account issuing throttle, session revocation on redemption, and a transport behind an
-# interface — with the one shipped transport being "hand it to the admin to copy". **No mail
-# dependency was added.** See app/services/credential_links.py, which carries the whole argument
-# and names what was and was not ported from C:/dev/cxa-cms.
+# interface — "hand it to the admin to copy" by default, and since 2026-10-10 "e-mail it to the
+# account's own address" when mail is configured and the administrator chooses it. See
+# app/services/credential_links.py, which carries the whole argument and names what was and was
+# not ported from C:/dev/cxa-cms.
 
 
 def _link_payload(issued: credential_links.DeliveredLink) -> dict[str, Any]:
@@ -1008,7 +1101,13 @@ async def issue_password_link(
             user=target,
             purpose=credential_links.purpose_for(target),
             issued_by_id=current_user.id,
+            deliver_by=payload.delivery,
         )
+    except credential_links.DeliveryUnavailable as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="This link cannot be sent by e-mail. Copy it instead and pass it on yourself.",
+        ) from exc
     except credential_links.IssueThrottled as exc:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -1020,11 +1119,12 @@ async def issue_password_link(
         ) from exc
     # Ids, never the link: the link is a credential and the log is not a place for one.
     logger.info(
-        "auth: %s issued a %s password link %s for account %s",
+        "auth: %s issued a %s password link %s for account %s (%s)",
         current_user.id,
         issued.purpose,
         issued.id,
         target.id,
+        issued.deliveredBy,
     )
     return _link_payload(issued)
 
