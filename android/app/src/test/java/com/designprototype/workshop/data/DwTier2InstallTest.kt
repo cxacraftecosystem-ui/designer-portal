@@ -280,14 +280,21 @@ class DwTier2InstallTest {
 
     @Test
     fun `the gap admissions this feature replaced are gone from the source`() {
-        val models = File("src/main/java/com/designprototype/workshop/data/DwTier2Models.kt").readText()
+        // Code only: the KDoc keeps dated quotations of what these sentences used to say, which is
+        // history rather than something a designer reads.
+        fun code(path: String) = File(path).readLines().filterNot { line ->
+            val t = line.trim()
+            t.startsWith("*") || t.startsWith("//") || t.startsWith("/*")
+        }.joinToString("
+")
+        val models = code("src/main/java/com/designprototype/workshop/data/DwTier2Models.kt")
         listOf(
             "No model here can run yet",
             "nothing has been measured on this phone",
             "Cannot be judged",
             "requires a licence to be accepted",
         ).forEach { assertFalse("DwTier2Models.kt still says “$it”", models.contains(it)) }
-        val tier = File("src/main/java/com/designprototype/workshop/data/DwDeviceTier.kt").readText()
+        val tier = code("src/main/java/com/designprototype/workshop/data/DwDeviceTier.kt")
         listOf(
             "is not in this app yet",
             "has no speech engine of its own yet",
