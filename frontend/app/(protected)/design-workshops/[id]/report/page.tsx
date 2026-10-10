@@ -85,20 +85,24 @@
  * that is not camelCase — `width_pct`, `info_rows`, `total_row`, `height_px`. See the header of
  * `lib/designWorkshops.ts`.
  *
- * THIS PAGE IS THE ONE PART OF THE FEATURE THAT GENUINELY NEEDS A CONNECTION, and it says so up
- * front rather than failing at the click. The preview, the .docx and the .pdf are all built by the
- * server from the record the server holds; a report generated from the local draft would be a
- * different document produced by a different renderer, and this architecture already has four of
- * those that must agree line-for-line about a file a ministry receives. So when there is no
- * connection the buttons are disabled, the reason is written on the page, and the designer is
- * pointed at the Android app, which IS the offline export path. Everything they captured is still
- * on this laptop, in `lib/designWorkshopStore`; it is only the printing that has to wait.
+ * WITH NO CONNECTION THE REPORT IS BUILT ON THIS DEVICE (since 2026-10-10). `lib/offlineReport` is
+ * a port of the server's builder (`report_builder.py` and the modules around it) that builds the same
+ * blocks from the draft this browser holds, plus the sources `GET /report/sources` handed it the last
+ * time this screen was open with a connection (`lib/offlineReport/reportCache`); the .docx and the
+ * .pdf are then written here by `docx` and pdfmake. `offline-report-parity-unit.spec.ts` holds the
+ * port to the server's output for a fixture workshop, block for block. It is used when the device is
+ * offline, when the server cannot be reached, and for a workshop that has never been uploaded.
+ *
+ * WHICH FILE IS AUTHORITATIVE: the server's, whenever there is a connection — it is built from the
+ * record the office holds, carries native Word charts, and is the one recorded in the report history.
+ * The device's copy exists so a designer with no signal is never without their report; it includes
+ * stages not yet uploaded, which the server's cannot. `docs/DESIGN_WORKSHOP.md` says this for
+ * readers; the screen does not lecture designers about it.
  *
  * ⚠ THERE IS ONE THING A BROWSER CAN STILL PRINT, and the sheet stylesheet exists for it: Ctrl+P
  * on this page produces a real document rather than a screenshot of a web page — physical units,
  * `@page` at the document's own size, the app chrome switched off, tables and figures kept off
- * page boundaries. It is not the server's .pdf and does not claim to be, but it is the fastest
- * path a designer on a train has to something they can send.
+ * page boundaries.
  */
 
 import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -122,6 +126,7 @@ import {
 } from "@/components/designworkshop/report/ReportSettingsPanel";
 import {
   downloadDesignWorkshopReport,
+  fetchReportSources,
   fetchStageRegistry,
   getDesignWorkshop,
   listDesignWorkshopTranscripts,
@@ -133,14 +138,24 @@ import {
   type DwDetail,
   type DwEntryData,
   type DwPreview,
+  type DwStageCompleteness,
   type DwRegistry,
   type DwTemplate,
   type DwTranscriptList
 } from "@/lib/designWorkshops";
 import { listDesignWorkshopAiLayers } from "@/lib/aiLayers";
-import { loadDraft } from "@/lib/designWorkshopStore";
+import { loadDraft, loadRegistry, localCompleteness } from "@/lib/designWorkshopStore";
 import { ACCENT_PRESETS } from "@/lib/reportTheme";
 import { ApiError } from "@/lib/api";
+import { useAuth } from "@/components/AuthProvider";
+import type { ReportOptions } from "@/lib/offlineReport/assemble";
+import { buildPreviewOnDevice } from "@/lib/offlineReport/devicePreview";
+import type { Registry } from "@/lib/offlineReport/builder";
+import { browserWriters } from "@/lib/offlineReport/browserWriters";
+import { draftReportInput, generateOfflineFile } from "@/lib/offlineReport/generate";
+import { warmReportAssets } from "@/lib/offlineReport/offlineAssets";
+import { getSources, putSources } from "@/lib/offlineReport/reportCache";
+import { TEMPLATES } from "@/lib/offlineReport/templates";
 import { isUnreachable } from "@/lib/offline";
 // The route param is not always a server id and the header column is not the template — both rules,
 // and what they cost when they are skipped, are written out in that module. Shared with the history
@@ -334,6 +349,55 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
    * counts generations. What matters is ignoring the late answer, not cancelling the request.
    */
   const previewGeneration = useRef(0);
+  const { user } = useAuth();
+  const userId = user?.id ?? null;
+  /**
+   * Whether the sheets on screen, and the last file downloaded, were built on this device rather
+   * than by the server — so the banners can say which copy of the workshop they were built from.
+   */
+  const [builtHere, setBuiltHere] = useState(false);
+  const [fileBuiltHere, setFileBuiltHere] = useState(false);
+  /** Completeness scored from the draft, for when the workshop cannot be read from the server. */
+  const [deviceScores, setDeviceScores] = useState<Record<string, DwStageCompleteness> | null>(null);
+
+  /**
+   * The report built on this device: the draft this browser holds, the registry it last read, and
+   * the sources kept the last time this screen was open with a connection. Returns null when the
+   * draft or the registry is not on this device, which is the one case nothing can be built.
+   */
+  const buildHere = useCallback(
+    (template: string): Promise<DwPreview | null> => buildPreviewOnDevice(id, userId, template),
+    [id, userId]
+  );
+
+  /**
+   * What the page needs from the workshop when it cannot ask the server for it: the template list
+   * (the six templates are compiled into `lib/offlineReport/templates`), stage 20's answers and the
+   * template they name — all from the draft. Seeding `templateId` is what starts the preview.
+   */
+  const adoptDraftForReport = useCallback(async () => {
+    setTemplates((current) =>
+      current.length ? current : TEMPLATES.map((t) => ({ id: t.id, name: t.name, description: t.description }))
+    );
+    const draft = await loadDraft(id);
+    if (!draft) {
+      setPreviewing(false);
+      return;
+    }
+    try {
+      const { registry: loaded } = await loadRegistry();
+      setRegistry((current) => current ?? loaded);
+      setDeviceScores(localCompleteness(loaded, draft));
+    } catch {
+      // No registry on this device: the stage list and the scores stay empty, and the preview says why.
+    }
+    const stage20 = draft.stages[REPORT_STAGE_KEY];
+    const nextSettings: DwEntryData = stage20 ? Object.assign({}, ...Object.values(stage20.singletons)) : EMPTY_SETTINGS;
+    setSettings((current) => (current === EMPTY_SETTINGS ? nextSettings : current));
+    const seeded = reportTemplateId(settingText(nextSettings, "templateId"), draft.header.templateId);
+    setTemplateId((current) => current || seeded);
+    if (!seeded) setPreviewing(false);
+  }, [id]);
 
   useEffect(() => {
     const read = () => setOnline(typeof navigator === "undefined" || navigator.onLine !== false);
@@ -376,7 +440,8 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
       setLocalOnly(target === null);
       // Nothing below can arrive, so the "Refreshing…" the page mounts in would otherwise spin for
       // ever over a preview that is never going to be requested.
-      if (target === null) setPreviewing(false);
+      // A workshop that has never been uploaded is built here from the draft, which holds all of it.
+      if (target === null) void adoptDraftForReport();
       if (!draft) return;
       setUnsentStages(
         Object.values(draft.stages).filter((stage) => stage.dirtyAt !== null || stage.removedFrom.length > 0).length
@@ -387,7 +452,7 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
     return () => {
       cancelled = true;
     };
-  }, [id]);
+  }, [id, adoptDraftForReport]);
 
   /**
    * THE WORKSHOP, ITS REGISTRY AND THE TEMPLATE LIST — the read every other thing on this page
@@ -435,6 +500,11 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
         if (!seeded) setPreviewing(false);
       } catch (err) {
         if (cancelled) return;
+        if (isUnreachable(err)) {
+          // No connection: everything this page reads is on the device, so it reads it there.
+          void adoptDraftForReport();
+          return;
+        }
         setError(err instanceof Error ? err.message : "Unable to load this design workshop");
         /*
           AND STOP CLAIMING A PREVIEW IS BEING BUILT.
@@ -452,7 +522,21 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
     return () => {
       cancelled = true;
     };
-  }, [remoteId, retryToken]);
+  }, [remoteId, retryToken, adoptDraftForReport]);
+
+  /**
+   * KEEP WHAT AN OFFLINE REPORT NEEDS, while there is a connection to fetch it with: the report's
+   * sources for this workshop, and the fonts and borders a file written on the device uses. Best
+   * effort and silent — nothing on this screen depends on it now; it is for the next time there is
+   * no signal.
+   */
+  useEffect(() => {
+    if (!remoteId || !online || !userId) return;
+    void fetchReportSources(remoteId)
+      .then((sources) => putSources(remoteId, userId, sources))
+      .catch(() => {});
+    void warmReportAssets();
+  }, [remoteId, online, userId]);
 
   /**
    * Rebuild the sheets. `template` is what the DESIGNER asked for and is empty for "the server
@@ -476,44 +560,52 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
         Every setter below is guarded, including the one in `finally`: a late failure clearing
         `previewing` would take the "Refreshing…" state off a request that is still in flight.
       */
-      // Refuses rather than falls back to the route param: a preview requested under a `dwlocal-…`
-      // id 404s, and the banner it paints says the workshop does not exist.
-      if (!remoteId) return;
       const mine = ++previewGeneration.current;
       setPreviewing(true);
       // A fresh attempt is not a failed one. Unguarded on purpose — this is the newest request by
       // construction, so there is no older generation whose verdict it could be overwriting.
       setPreviewFailed(false);
-      try {
-        const next = await previewDesignWorkshopReport(remoteId, template || undefined);
-        if (mine !== previewGeneration.current) return;
-        setPreview(next);
+      const fromDevice = async (): Promise<boolean> => {
+        const built = await buildHere(template).catch(() => null);
+        if (mine !== previewGeneration.current) return true;
+        if (!built) return false;
+        setPreview(built);
+        setBuiltHere(true);
         setPreviewFailed(false);
         setError(null);
-      } catch (err) {
-        if (mine !== previewGeneration.current) return;
-        setPreviewFailed(true);
-        setError(
+        return true;
+      };
+      try {
+        // No server record, or no connection: the report is built here. A preview requested under
+        // a local id would 404, so the route param is never sent.
+        if (!remoteId || !online) {
+          if (!(await fromDevice()) && mine === previewGeneration.current) setPreviewFailed(true);
+          return;
+        }
+        try {
+          const next = await previewDesignWorkshopReport(remoteId, template || undefined);
+          if (mine !== previewGeneration.current) return;
+          setPreview(next);
+          setBuiltHere(false);
+          setPreviewFailed(false);
+          setError(null);
+        } catch (err) {
+          if (mine !== previewGeneration.current) return;
           // `isUnreachable`, not `isTransient`: a 5xx means the server WAS reached and then failed,
-          // and telling a designer their connection is at fault sends them to look at their signal
-          // while the real fault sits in a response nobody sees. The download handler below already
-          // made this split by hand — see its note — and this is the same rule.
-          isUnreachable(err)
-            ? "The preview is built by the server, so it cannot be refreshed without a connection. Everything you have captured is " +
-                "safe on this device; the report can be generated as soon as there is signal, or on the Android app, which " +
-                "generates it on the handset."
-            : err instanceof Error
-              ? err.message
-              : "Unable to build the report preview"
-        );
-        // The previous preview is deliberately kept on screen. Blanking it on a failed refresh
-        // replaces a document the designer can still read with nothing, and "the report is empty"
-        // is a far worse thing to believe than "the refresh failed".
+          // and that is reported as the failure it is. A request that never arrived is the offline
+          // case, and the report is built on the device instead.
+          if (isUnreachable(err) && (await fromDevice())) return;
+          if (mine !== previewGeneration.current) return;
+          setPreviewFailed(true);
+          setError(err instanceof Error ? err.message : "Unable to build the report preview");
+          // The previous preview is deliberately kept on screen. Blanking it on a failed refresh
+          // replaces a document the designer can still read with nothing.
+        }
       } finally {
         if (mine === previewGeneration.current) setPreviewing(false);
       }
     },
-    [remoteId]
+    [remoteId, online, buildHere]
   );
 
   useEffect(() => {
@@ -628,8 +720,15 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
         if (cancelled) return;
         setAcceptedLayerCount(next.accepted);
       })
-      .catch(() => {
+      .catch(async () => {
+        // With no connection the count is read from the sources kept on this device, which is
+        // exactly what a file written here would print.
+        const kept = await getSources(remoteId, userId);
         if (cancelled) return;
+        if (kept) {
+          setAcceptedLayerCount(kept.sources.aiLayers.filter((layer) => layer.accepted).length);
+          return;
+        }
         // NOT setAcceptedLayerCount(0). Zero is a claim that nothing has been accepted; this is the
         // absence of an answer, and the two send a designer to different places — one to the AI
         // layers screen to accept something, the other to their connection.
@@ -639,7 +738,7 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
     return () => {
       cancelled = true;
     };
-  }, [remoteId, includeAiLayers]);
+  }, [remoteId, includeAiLayers, userId]);
 
   const templateName = templates.find((template) => template.id === templateId)?.name ?? preview?.meta.templateName ?? "";
   const { headerText, footerText } = useMemo(
@@ -686,74 +785,89 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
   const mediaUrls = useReportMediaUrls(blocks);
   const codeSpans = useMemo(() => countCodeSpans(blocks), [blocks]);
 
+  /**
+   * The choices this file is made with, the same set the server's request carries — see the notes
+   * on each field in `downloadDesignWorkshopReport`'s call below.
+   */
+  const fileOptions: ReportOptions = {
+    templateId: templateTouched ? templateId || null : null,
+    pageSize: settingText(settings, "pageSize") || null,
+    headerText: settingText(settings, "headerText") || null,
+    footerText: settingText(settings, "footerText") || null,
+    themeAccent: accentOverride || null,
+    includeTranscripts: transcriptOverride === "" ? null : transcriptOverride === "YES",
+    includeAiLayers
+  };
+
+  /** Write the file on this device, from the draft and the sources it holds. */
+  async function writeHere(format: "DOCX" | "PDF") {
+    const draft = await loadDraft(id);
+    if (!draft) throw new Error("This workshop is not saved on this device, so its report cannot be built here.");
+    const registry = (await loadRegistry()).registry as unknown as Registry;
+    const sources = draft.remoteId ? ((await getSources(draft.remoteId, userId))?.sources ?? null) : null;
+    const file = await generateOfflineFile(
+      registry,
+      draftReportInput(draft, sources),
+      format,
+      fileOptions,
+      browserWriters(userId, palette)
+    );
+    saveBlobToDisk(file.blob, file.fileName);
+    setFileBuiltHere(true);
+    setDownloadWarnings(file.warnings);
+  }
+
   async function download(format: "DOCX" | "PDF") {
-    // Belt as well as braces: the buttons are disabled without a server id, and a file generated
-    // under the route param would 404 rather than produce anything.
-    if (!remoteId) return;
     setDownloading(format);
     setError(null);
     setDownloadWarnings(null);
     try {
-      const file = await downloadDesignWorkshopReport(remoteId, {
-        // ONLY WHAT THE DESIGNER ASKED FOR. Untouched, this is silent and `resolve_template_id`
-        // reads stage 20's answer and then the header column — the same order the dropdown above is
-        // seeded in, so the file matches the screen. Sending the seeded value back would put this
-        // page's copy of the precedence in charge of the document a ministry receives, and that is
-        // exactly how the header column (`DCH_STANDARD`, defaulted at create) came to override a
-        // required stage-20 answer on this surface and nowhere else.
-        templateId: templateTouched ? templateId || null : null,
-        formats: [format],
-        // THE STAGE-20 ANSWERS ONLY, AND ONLY WHERE THEY WERE FILLED IN. `report_meta` does not
-        // read these three off the stage entry, so they reach a file only through this request —
-        // but where the designer left them blank the SERVER's own derivation must stand, and
-        // sending this page's mirror of it instead would let a one-character drift in that mirror
-        // silently become the header printed on the paper. Omitted means "yours is right".
-        pageSize: settingText(settings, "pageSize") || undefined,
-        headerText: settingText(settings, "headerText") || undefined,
-        footerText: settingText(settings, "footerText") || undefined,
-        // Sent only when this page is overriding. Omitted, the server reads stage 20 itself and
-        // then falls back to the template's own palette — and sending this page's resolution of
-        // that instead would make a one-character drift in the mirror above into the colour the
-        // ministry receives.
-        themeAccent: accentOverride || undefined,
-        // `undefined` means "whatever stage 20 says"; sending `false` for it would strip an
-        // annexure the designer had already asked for and saved.
-        includeTranscripts: transcriptOverride === "" ? undefined : transcriptOverride === "YES",
-        // THE SWITCH THAT WAS MISSING, and its absence was the whole defect rather than a rough
-        // edge. `report_ai_layers` renders the annexure, `ReportBuilder.build` has the branch,
-        // `attach_report_ai_layers` loads it and `apply_report_settings` splices the section — and
-        // no client sent the flag, so `ReportGenerateIn.includeAiLayers` took its default of false
-        // on every report either app has ever produced. That is the shape this repository has
-        // already shipped once: the transcript annexure was a complete, tested module with no call
-        // site, and every report silently dropped it while three surfaces promised the office's
-        // copy would carry it. Sent unconditionally rather than only when true, so the request says
-        // what the designer chose rather than leaving the server to infer it from silence.
-        includeAiLayers
-      });
-      saveBlobToDisk(file.blob, file.fileName);
-      // Shown whether or not there were any: "generated with no warnings" is information, and a
-      // banner that appears only on failure trains people to read its absence as nothing happening.
-      setDownloadWarnings(file.warnings);
+      // No server record yet, or no connection: the file is written here.
+      if (!remoteId || !online) {
+        await writeHere(format);
+        return;
+      }
+      try {
+        const file = await downloadDesignWorkshopReport(remoteId, {
+          // ONLY WHAT THE DESIGNER ASKED FOR. Untouched, this is silent and `resolve_template_id`
+          // reads stage 20's answer and then the header column — the same order the dropdown above is
+          // seeded in, so the file matches the screen.
+          templateId: fileOptions.templateId ?? null,
+          formats: [format],
+          // The stage-20 answers only, and only where they were filled in: where the designer left
+          // them blank the server's own derivation must stand.
+          pageSize: fileOptions.pageSize || undefined,
+          headerText: fileOptions.headerText || undefined,
+          footerText: fileOptions.footerText || undefined,
+          // Sent only when this page is overriding; omitted, stage 20 and the template decide.
+          themeAccent: fileOptions.themeAccent || undefined,
+          // `undefined` means "whatever stage 20 says"; sending `false` for it would strip an
+          // annexure the designer had already asked for and saved.
+          includeTranscripts: fileOptions.includeTranscripts ?? undefined,
+          // Sent unconditionally, so the request says what the designer chose rather than leaving
+          // the server to infer it from silence. See the note on `includeAiLayers` above.
+          includeAiLayers
+        });
+        saveBlobToDisk(file.blob, file.fileName);
+        setFileBuiltHere(false);
+        // Shown whether or not there were any: "generated with no warnings" is information.
+        setDownloadWarnings(file.warnings);
+      } catch (err) {
+        // NOT `isTransient` here, deliberately — see `e2e/report-download.spec.ts`. An ApiError means
+        // the request arrived and was answered: say what the answer was. Anything else is a request
+        // that never completed, which is the offline case — and the file is then written here.
+        if (err instanceof ApiError) {
+          setError(
+            `The ${format} could not be generated: ${err.message} The workshop itself is safe — nothing you have entered was affected.`
+          );
+          return;
+        }
+        await writeHere(format);
+      }
     } catch (err) {
-      // NOT `isTransient` here, deliberately — see `e2e/report-download.spec.ts`.
-      //
-      // `isTransient` answers "is it worth retrying", and it counts every 5xx as yes. That is the
-      // right answer for the outbox and the wrong one for this message, because a 5xx means the
-      // server was REACHED and then failed. Telling the designer their connection is at fault when
-      // the server answered is a lie that sends them to look at their signal: a real bug
-      // (`ReportMeta` has no `__dict__`, so any saved page size 500'd) hid behind this sentence and
-      // was reported as an offline problem.
-      //
-      // The honest split is by whether the server spoke at all. An ApiError means it did — show
-      // what it said. Anything else is a fetch that never completed, which IS the offline case.
-      const serverAnswered = err instanceof ApiError;
       setError(
-        serverAnswered
-          ? `The server could not generate the ${format}: ${(err as ApiError).message} ` +
-              "The workshop itself is safe — nothing you have entered was affected."
-          : `The ${format} is written by the server, so it cannot be generated without a connection. Nothing has been lost — ` +
-              "the workshop is on this device and the file can be generated the moment there is signal. The Android app " +
-              "generates the same document on the handset if you need it before then."
+        `The ${format} could not be written: ${err instanceof Error ? err.message : "something went wrong"} ` +
+          "The workshop itself is safe — nothing you have entered was affected."
       );
     } finally {
       setDownloading(null);
@@ -768,14 +882,16 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
    * designer looking at a thin report wants to know which stage to go and open, and a warning that
    * says "Cost sheet: Unit cost is required" does not say where that lives.
    */
+  /** The server's scores, or — when the workshop could not be read from it — the draft's own. */
+  const completeness = detail?.completeness ?? deviceScores ?? undefined;
   const incomplete = useMemo(() => {
-    if (!registry || !detail) return [];
+    if (!registry || !completeness) return [];
     return registry.stages
-      .map((stage) => ({ stage, score: detail.completeness?.[stage.key] }))
+      .map((stage) => ({ stage, score: completeness[stage.key] }))
       .filter((entry) => entry.score && !entry.score.isComplete);
-  }, [registry, detail]);
+  }, [registry, completeness]);
 
-  const percent = overallPercent(detail?.completeness);
+  const percent = overallPercent(completeness);
 
   return (
     <>
@@ -790,8 +906,8 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
         description={
           detail
             ? `Generated from “${detail.title}” — the same document the .docx and .pdf are written from.`
-            : localOnly
-              ? "This workshop has not reached the repository yet, and the report is written by the server from the copy it holds."
+            : localOnly || builtHere
+              ? "Built on this device from everything saved on it."
               : previewFailed
                 ? "This workshop could not be loaded. The panel at the foot of the page offers a retry."
                 : "Loading…"
@@ -1014,9 +1130,9 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
               }
               if (stage20Pending) {
                 setError(
-                  "Stage 20 has changes on this device that have not reached the repository. Saving the colour from here " +
-                    "would be undone the moment those changes sync, so it has not been saved — send them first, from the " +
-                    "stage itself, and then set the colour."
+                  "Stage 20 has changes on this device that have not uploaded yet. Saving the colour from here would be " +
+                    "undone the moment they upload, so it has not been saved — let them upload first, from the stage " +
+                    "itself, and then set the colour."
                 );
                 return;
               }
@@ -1066,57 +1182,37 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
           />
         </div>
 
-        {localOnly ? (
+        {localOnly || !online || builtHere ? (
           /*
-            THE WORKSHOP IS REAL AND IS NOT LOST — it has simply never been to the repository, and
-            everything on this screen is produced BY the repository.
-
-            This is the state that used to be a red "Record not found", because the page carried the
-            route param — a `dwlocal-…` id the create fell back to with no signal — straight into
-            `GET /api/design-workshops/…`. The stage index, all 22 forms, readiness, the codes screen
-            and Cards & tags all open from that same URL, so the two report screens were alone in
-            telling a designer their fieldwork did not exist. Said as a sentence with a date on it,
-            and pointed at the one surface that CAN produce the file today.
+            THE REPORT IS BUILT ON THIS DEVICE, and this says so in the designer's terms: what it was
+            built from, and what to expect of the photographs. It used to say the opposite — that the
+            report needed a connection and that the browser had no renderer of its own —
+            which was true of the code and was a missing feature narrated to the person who needed it.
+            Which copy is authoritative is written down for maintainers (docs/DESIGN_WORKSHOP.md), not
+            argued on this screen.
           */
-          <div className="rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-sm text-amber-800">
-            <p className="flex items-start gap-1.5 font-semibold">
+          <div className="rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-sm text-ink-700">
+            <p className="flex items-start gap-1.5 font-semibold text-ink-900">
               <CloudOff className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
-              This workshop has not reached the repository yet
+              {localOnly ? "This workshop is saved on this device" : "Working without a connection"}
             </p>
             <p className="mt-1 leading-6">
-              It was created on this device without a connection and everything in it is saved here — nothing is lost. The
-              preview, the .docx and the .pdf are all written by the server from the copy it holds, and it has no copy yet.
-              It is created automatically on the next connection; open this page again then and it works. The Android app
-              generates the same document on the handset in the meantime.
+              {localOnly
+                ? "It was started without a connection and uploads by itself the next time there is one. "
+                : ""}
+              The preview below and the .docx and .pdf are built on this device from everything saved on it, including
+              changes that have not uploaded yet. Photographs taken on this device, and any opened here before, are
+              included; anything the file leaves out is listed beside the download.
             </p>
           </div>
         ) : null}
 
-        {!online && !localOnly ? (
-          // SAID BEFORE THE CLICK, not after it. A designer who presses Download and gets an error
-          // has already decided the app is broken; a disabled button with the reason beside it is a
-          // fact about the world, and it names the thing that DOES work offline.
+        {unsentStages && !builtHere ? (
           <div className="rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-sm text-amber-800">
-            <p className="flex items-start gap-1.5 font-semibold">
-              <CloudOff className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
-              The report needs a connection
-            </p>
-            <p className="mt-1 leading-6">
-              The preview, the .docx and the .pdf are all produced by the server from the record it holds, and this browser
-              deliberately has no renderer of its own — a fifth one would eventually disagree with the four that write the file a
-              ministry receives. Everything you have captured is safe on this device and nothing is waiting on you. Generate the
-              report once there is signal, or use the Android app, which writes the same .docx and .pdf on the handset. The
-              pages below can still be printed from this browser with Ctrl+P.
-            </p>
-          </div>
-        ) : null}
-
-        {unsentStages ? (
-          <div className="rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-sm text-amber-800">
-            {unsentStages} stage{unsentStages === 1 ? " is" : "s are"} saved on this device only and{" "}
-            {unsentStages === 1 ? "has" : "have"} not reached the repository yet. The report is generated from the server&apos;s
-            copy, so anything in {unsentStages === 1 ? "that stage" : "those stages"} will be missing from the file until it
-            syncs — and the file itself will not say so.
+            {unsentStages} stage{unsentStages === 1 ? " is" : "s are"} saved on this device and{" "}
+            {unsentStages === 1 ? "has" : "have"} not uploaded yet. The preview and the files below are built from the
+            uploaded copy, so {unsentStages === 1 ? "that stage's" : "those stages'"} latest changes are not in them until
+            the upload finishes.
           </div>
         ) : null}
 
@@ -1124,7 +1220,7 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
           <button
             type="button"
             className="field-button"
-            disabled={downloading !== null || !online || !remoteId}
+            disabled={downloading !== null}
             onClick={() => download("DOCX")}
           >
             <Download className="h-4 w-4" aria-hidden />
@@ -1133,7 +1229,7 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
           <button
             type="button"
             className="field-button-secondary"
-            disabled={downloading !== null || !online || !remoteId}
+            disabled={downloading !== null}
             onClick={() => download("PDF")}
           >
             <Download className="h-4 w-4" aria-hidden />
@@ -1164,10 +1260,11 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
                 ))}
               </ul>
               {/* Stated because the header is capped at 900 characters server-side, and a list that
-                  quietly stops is indistinguishable from a list that ended. */}
-              <p className="mt-1 text-xs">
-                Long warning lists are truncated in transit — the preview warnings below are the complete set.
-              </p>
+                  quietly stops is indistinguishable from a list that ended. A file written on this
+                  device hands over its whole list, so the note is not shown for one. */}
+              {fileBuiltHere ? null : (
+                <p className="mt-1 text-xs">Long lists are shortened here — the preview warnings below are the complete set.</p>
+              )}
             </div>
           ) : (
             <p className="rounded-md border border-success-600/25 bg-success-100 px-3 py-2 text-sm text-success-600">
@@ -1275,7 +1372,7 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
             Open a stage to correct something the preview shows
           </summary>
           <p className="mt-2 text-xs leading-5 text-ink-500">
-            The pages below print each stage&rsquo;s own saved answers, not the repository records they were
+            The pages below print each stage&rsquo;s own saved answers, not the artisan or product records they were
             copied from — so a value that is filled in but wrong is corrected on its stage, and a report already
             handed over is never changed by editing an artisan or a product afterwards.
           </p>
@@ -1340,8 +1437,8 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
           ) : previewFailed ? (
             <div className="grid justify-items-start gap-2">
               <p className="text-sm text-ink-700">
-                The preview could not be built. The banner at the top of this page says what the server or the connection
-                answered; nothing you have captured is affected.
+                The preview could not be built. The banner at the top of this page says why; nothing you have captured is
+                affected.
               </p>
               <button type="button" className="field-button-secondary" onClick={retryPreview}>
                 Try again

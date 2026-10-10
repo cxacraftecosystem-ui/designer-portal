@@ -2,34 +2,77 @@
 
 Hardening properties this module is responsible for (documented in docs/SECURITY.md):
 
-* **The signing algorithm is pinned on decode.** ``jose`` is given exactly one algorithm — the
+* **The signing algorithm is pinned on decode.** PyJWT is given exactly one algorithm — the
   configured HMAC one — so a token whose header claims ``alg: none`` (unsigned) or ``alg: RS256``
   (signature verified against our shared secret used as a "public key") is rejected outright
   instead of being trusted. Leaving ``algorithms`` unset, or passing the token's own header value,
   is the classic algorithm-confusion hole. ``Settings._normalise_jwt_algorithm`` guarantees the
   configured value is one of HS256/384/512, so the environment cannot widen this either.
-* **Expiry is mandatory, not optional.** ``require_exp`` makes a token without an ``exp`` claim
-  invalid rather than eternal, and ``verify_exp`` enforces it. Same for ``sub``, which every caller
-  (``deps.get_current_user``) relies on to identify the account.
+* **Expiry is mandatory, not optional.** ``require: ["exp", "sub"]`` makes a token without an
+  ``exp`` claim invalid rather than eternal, and ``verify_exp`` enforces it. Same for ``sub``, which
+  every caller (``deps.get_current_user``) relies on to identify the account.
 * **The secret is validated at startup, not at first login.** ``verify_jwt_configuration`` refuses
   to boot on the ``.env.example`` placeholder or a secret too short for the algorithm, because a
   guessable HMAC secret lets anyone forge a master-admin token, and a hole like that must fail
   visibly on deploy rather than silently in production.
+
+── TWO LIBRARIES WERE REPLACED HERE ON 2026-10-09, AND NEITHER CHANGED A STORED BYTE ──────────────
+
+``passlib`` (unmaintained since 2020) gave way to ``bcrypt`` itself. passlib could not run on bcrypt 5
+at all — its backend self-test hashes a password longer than 72 bytes, which bcrypt 4 truncated
+silently and bcrypt 5 refuses — so it was holding bcrypt at 4.0.1. The functions below reproduce what
+passlib did with that backend, rule for rule: the same ``$2b$`` hash at cost 12, the same 72-byte
+truncation (now written out instead of left to the library), the same refusal of a NUL character and
+of anything over passlib's 4096-byte cap (UTF-8 bytes, not characters: see
+:data:`MAX_CHECKED_PASSWORD_BYTES`). Every hash already in the database verifies exactly as it did;
+``tests/test_password_hash_compat.py`` holds hashes passlib wrote and checks them.
+
+``python-jose`` gave way to PyJWT. jose's last release depends on ``ecdsa``, which carries an unfixed
+timing weakness (CVE-2024-23342); this module only ever used HMAC, which PyJWT does with the standard
+library. The tokens are byte-for-byte the ones jose produced — same header, same claim order, same
+HMAC — and the decode checks the same claims the same way (see :func:`decode_access_token` for the
+one sub-second difference at the expiry boundary). ``tests/test_jwt_compat.py`` holds a token jose
+minted and checks both directions.
 """
 
 import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from jose import JWTError, jwt
-from passlib.context import CryptContext
-from passlib.exc import PasswordValueError
+import bcrypt
+import jwt
 
 from app.core.config import get_settings
 
 logger = logging.getLogger(__name__)
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+#: The bcrypt cost factor: passlib's default for its ``bcrypt`` scheme, so a hash written today costs
+#: exactly what one written before 2026-10-09 did. ``scripts/`` and the load-test seeder hash through
+#: :func:`hash_password` too, so this is the only place the number lives.
+BCRYPT_ROUNDS = 12
+
+#: bcrypt keys on the first 72 BYTES of a secret and ignores the rest. Version 4 truncated silently;
+#: version 5 raises on anything longer. Truncating here, explicitly, is what passlib's bcrypt backend
+#: did on our behalf — so every hash it wrote verifies against exactly the bytes it was made from.
+BCRYPT_MAX_SECRET_BYTES = 72
+
+#: The length of every bcrypt hash this application, and passlib before it, ever stored: ``$2b$``, two
+#: cost digits, ``$``, 22 characters of salt and 31 of checksum. See :func:`verify_password` for why it
+#: is checked rather than left to bcrypt.
+BCRYPT_HASH_LENGTH = 60
+
+#: The longest password :func:`verify_password` will check at all, in UTF-8 BYTES. It is passlib's
+#: ``MAX_PASSWORD_SIZE``: passlib refused anything longer, and the sign-in answered "wrong password".
+#: Kept, rather than dropped with passlib, because without it a 5,000-byte paste whose first 72 bytes
+#: happened to be the password would now sign in where it used to be refused — a change to what a
+#: credential check answers, which is not a library upgrade's to make.
+#:
+#: BYTES AND NOT CHARACTERS, BECAUSE THAT IS WHERE passlib MEASURED IT. Its bcrypt handler encodes the
+#: secret to UTF-8 first and then applies the cap (``_norm_digest_args`` in passlib/handlers/bcrypt.py,
+#: 1.7.4), so 2,085 characters of which 2,012 are ``é`` — 4,097 bytes — were refused. Measured against
+#: passlib 1.7.4 with bcrypt 4.0.1 on 2026-10-09: a character count here accepted that paste, and any
+#: other multi-byte paste of 4,097 to 16,384 bytes, whenever its first 72 bytes were the password.
+MAX_CHECKED_PASSWORD_BYTES = 4096
 
 #: The longest password this product will STORE, on every field that sets one: ``UserCreate``,
 #: ``UserUpdate``, ``ChangePasswordRequest`` and ``SetPasswordRequest``. ONE NUMBER, because they
@@ -38,8 +81,9 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 #: into ``currentPassword`` — the forced change could only be finished through a link.
 #:
 #: THE EFFECTIVE LENGTH IS SHORTER AND THAT IS bcrypt's, NOT OURS: it uses only the first 72 BYTES of
-#: a password (passlib truncates silently at this pin), so two passwords that agree on their first 72
-#: bytes are one password. 200 characters is a typing ceiling, not a strength claim.
+#: a password (:data:`BCRYPT_MAX_SECRET_BYTES`, truncated explicitly below), so two passwords that
+#: agree on their first 72 bytes are one password. 200 characters is a typing ceiling, not a strength
+#: claim.
 #:
 #: The sign-in body (``LoginRequest``) deliberately carries no such ceiling — a person types what
 #: they type — and :func:`verify_password` answers False rather than raising for anything too long
@@ -66,23 +110,70 @@ _PLACEHOLDER_JWT_SECRETS = frozenset(
 )
 
 
+def _bcrypt_secret(password: str) -> bytes:
+    """The bytes bcrypt is keyed with: UTF-8, cut at :data:`BCRYPT_MAX_SECRET_BYTES`.
+
+    THE CUT IS ON BYTES, NOT CHARACTERS, exactly where bcrypt 4 cut it — so a password whose 72nd byte
+    falls inside a multi-byte character is cut through that character, as it always was, and the
+    hash passlib wrote for it still matches.
+    """
+    return password.encode("utf-8")[:BCRYPT_MAX_SECRET_BYTES]
+
+
+def _uncheckable(password: str) -> str | None:
+    """Why ``password`` cannot be hashed or checked, or None when it can — passlib's two refusals.
+
+    A NUL character (``NullPasswordError``): bcrypt implementations disagree about the bytes after
+    one — the OpenBSD C original keys on a C string and stops there, while pyca/bcrypt (4 and 5,
+    measured) keys on all of them — so passlib refused it rather than write a hash whose meaning
+    depends on the library. Refusing it still is what keeps every verdict what it was. And more than
+    :data:`MAX_CHECKED_PASSWORD_BYTES` bytes of UTF-8 (``PasswordSizeError``). The character count
+    is tested first only because it is free and implies the byte count (a character is at least one
+    byte), so a pasted megabyte is refused without being encoded. The answer never quotes the
+    password.
+    """
+    if "\x00" in password:
+        return "a password may not contain a NUL character"
+    if (
+        len(password) > MAX_CHECKED_PASSWORD_BYTES
+        or len(password.encode("utf-8")) > MAX_CHECKED_PASSWORD_BYTES
+    ):
+        return f"a password may not be longer than {MAX_CHECKED_PASSWORD_BYTES} bytes of UTF-8"
+    return None
+
+
 def hash_password(password: str) -> str:
-    return pwd_context.hash(password)
+    """A ``$2b$`` bcrypt hash at cost :data:`BCRYPT_ROUNDS` — the format and cost passlib wrote.
+
+    Raises ValueError for a password :func:`_uncheckable` refuses, as passlib did (its refusals
+    were ValueErrors too). Every field that sets a password is bounded at :data:`MAX_PASSWORD_LENGTH`
+    first, so that is reachable only through a NUL character.
+    """
+    reason = _uncheckable(password)
+    if reason:
+        raise ValueError(reason)
+    salt = bcrypt.gensalt(rounds=BCRYPT_ROUNDS, prefix=b"2b")
+    return bcrypt.hashpw(_bcrypt_secret(password), salt).decode("ascii")
 
 
 def verify_password(password: str, password_hash: str | None) -> bool:
     if not password_hash:
         return False
-    try:
-        return pwd_context.verify(password, password_hash)
-    except PasswordValueError:
-        # passlib refuses to hash a secret over its own size cap (4096 characters) with
-        # ``PasswordSizeError`` rather than answering False, and the sign-in and dataset-token
-        # bodies are unbounded on purpose — so without this a pasted megabyte was a 500 at the front
-        # door. Something that long is not this account's password, which is all a sign-in asks. A
-        # MALFORMED STORED HASH is a different ValueError and still raises: that is a broken row an
-        # operator must hear about, not a wrong password.
+    if _uncheckable(password):
+        # The sign-in and dataset-token bodies are unbounded on purpose, so a pasted megabyte — or a
+        # NUL — arrives here. Something that long, or that cannot be a bcrypt key, is not this
+        # account's password, which is all a sign-in asks: False, never a 500, and never a check of
+        # its first 72 bytes (see MAX_CHECKED_PASSWORD_BYTES).
         return False
+    # A MALFORMED STORED HASH still raises, because that is a broken row an operator must hear about,
+    # not a wrong password; passlib raised a ValueError for it too. bcrypt 5 raises on its own only
+    # for a bad prefix or salt (ValueError "Invalid salt"). A hash of the wrong LENGTH — one character
+    # short, or a trailing space or newline from a hand-written UPDATE — it simply fails to match, so
+    # that row would have read as "wrong password" for ever. passlib refused every such shape
+    # ("malformed bcrypt hash", measured against passlib 1.7.4 on 2026-10-09), hence the check here.
+    if len(password_hash) != BCRYPT_HASH_LENGTH:
+        raise ValueError(f"the stored password hash is malformed: not {BCRYPT_HASH_LENGTH} characters")
+    return bcrypt.checkpw(_bcrypt_secret(password), password_hash.encode("ascii"))
 
 
 def _jwt_signing_weakness(secret: str) -> str | None:
@@ -187,7 +278,36 @@ def create_access_token(
         payload.update(extra_claims)
     if credential is not None:
         payload[CREDENTIAL_CLAIM] = credential
+    # PyJWT turns the `exp` datetime into whole seconds with `timegm(utctimetuple())`, exactly as
+    # jose did, and serialises the header with sorted keys and the claims in insertion order, as jose
+    # did: a token minted here is byte-for-byte the token jose would have minted in the same second.
     return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
+
+
+#: What :func:`decode_access_token` asks PyJWT to enforce. `require` is the presence check jose spelt
+#: `require_exp`/`require_sub` (PyJWT also counts a claim whose value is null as absent, which jose
+#: then refused one step later as "not a string"). `verify_iat` is OFF ON PURPOSE and replaced by
+#: :func:`_require_integral_iat`: PyJWT's own check ALSO refuses an `iat` in the future, a rule jose
+#: never had, and on one box minting and checking its own tokens the only way to meet it is a clock
+#: that stepped backwards after a sign-in — which should not sign that person out. `aud`, `iss`,
+#: `nbf`, `jti` and the string-only `sub` are verified as jose verified them (only when present, and
+#: an `aud` with no audience expected is refused), and none of them is in a token this module mints.
+_DECODE_OPTIONS: dict[str, Any] = {
+    "verify_signature": True,
+    "verify_exp": True,
+    "verify_iat": False,
+    "require": ["exp", "sub"],
+}
+
+
+def _require_integral_iat(claims: dict[str, Any]) -> None:
+    """jose's whole check on ``iat``: when present it must read as an integer. Nothing else."""
+    if "iat" not in claims:
+        return
+    try:
+        int(claims["iat"])
+    except (ValueError, TypeError, OverflowError) as exc:
+        raise ValueError("Invalid or expired token") from exc
 
 
 def decode_access_token(token: str) -> dict[str, Any]:
@@ -196,19 +316,21 @@ def decode_access_token(token: str) -> dict[str, Any]:
     ``algorithms`` is the single configured HMAC algorithm (never the token's own ``alg`` header),
     and the options below make ``exp``/``sub`` mandatory rather than optional — a token missing
     either is rejected instead of being treated as a non-expiring or subject-less credential.
+
+    THE ONE DIFFERENCE FROM jose, MEASURED RATHER THAN ASSUMED: at the expiry boundary PyJWT refuses
+    once ``exp <= now`` with ``now`` in fractional seconds, where jose refused once ``exp`` fell
+    below the current WHOLE second. So a token now ends up to one second sooner than it did. Nothing
+    that is valid for its lifetime notices, and nothing that has expired is accepted.
     """
     settings = get_settings()
     try:
-        return jwt.decode(
+        claims = jwt.decode(
             token,
             settings.jwt_secret,
             algorithms=[settings.jwt_algorithm],
-            options={
-                "verify_signature": True,
-                "verify_exp": True,
-                "require_exp": True,
-                "require_sub": True,
-            },
+            options=_DECODE_OPTIONS,
         )
-    except JWTError as exc:
+    except jwt.PyJWTError as exc:
         raise ValueError("Invalid or expired token") from exc
+    _require_integral_iat(claims)
+    return claims

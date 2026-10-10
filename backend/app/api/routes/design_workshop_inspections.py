@@ -550,7 +550,7 @@ def _parse_recorded_at(value: str | None) -> Any:
     if not text:
         return None
     try:
-        # NO `.replace("Z", "+00:00")`. `requires-python` is >=3.11 and 3.11's `fromisoformat` reads
+        # NO `.replace("Z", "+00:00")`. `requires-python` is >=3.14 and since 3.11 `fromisoformat` reads
         # the military Z itself, so the substitution was a no-op that FURB162 reports as a lint
         # error — and `pyproject.toml`'s own baseline note says the redundancy is real and belongs
         # to whoever is in the function. The handsets go on sending Z-suffixed times and go on

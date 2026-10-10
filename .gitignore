@@ -83,6 +83,12 @@ override.tf.json
 *_override.tf
 *_override.tf.json
 .terraform.lock.hcl
+# THE PROVIDER LOCK FOR THIS REPOSITORY'S OWN CONFIGURATION IS COMMITTED (2026-10-09). The blanket rule
+# above was copied from a template; HashiCorp's guidance is the opposite — commit it — and it holds no
+# secret, only provider versions and their checksums. Committed, every operator installs the same
+# aws/archive provider builds, verified against the same hashes, for all five platforms named in
+# infra/terraform/main.tf. `git check-ignore -v` on the path is the check.
+!infra/terraform/.terraform.lock.hcl
 
 # Keys / secrets
 *.pem

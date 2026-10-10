@@ -51,11 +51,11 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+import jwt  # PyJWT, which replaced python-jose in app/core/security.py on 2026-10-09
 import pytest
 from conftest import needs_db
 from fastapi import HTTPException
 from fastapi.security import HTTPAuthorizationCredentials
-from jose import jwt
 from starlette.requests import HTTPConnection
 
 from app.api.routes import auth as auth_routes

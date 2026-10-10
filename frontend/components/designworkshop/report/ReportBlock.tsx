@@ -27,6 +27,7 @@ import {
   useEffect,
   useId,
   useMemo,
+  useRef,
   useState,
   type CSSProperties,
   type Dispatch,
@@ -38,6 +39,9 @@ import { ImageOff, Map as MapIcon, Table2 } from "lucide-react";
 import { IndiaMap } from "@/components/map/IndiaMap";
 import type { MapCounts, MapPoint } from "@/components/map/types";
 import { apiFetch } from "@/lib/api";
+import { draftSessionUserId, isLocalMediaRef } from "@/lib/designWorkshopStore";
+import { mediaBlob } from "@/lib/offlineReport/images";
+import { hasMedia, putMedia } from "@/lib/offlineReport/reportCache";
 import type { DwImageRef, DwRun } from "@/lib/designWorkshops";
 import type { MediaFile } from "@/lib/types";
 import { ReportChartSvg } from "@/components/designworkshop/report/ReportChart";
@@ -305,7 +309,7 @@ function ReportImage({
     return (
       <span className={`rp-photo-missing ${className ?? ""}`}>
         <ImageOff className="h-3.5 w-3.5 shrink-0" aria-hidden />
-        This photograph is not readable from here — it will still be embedded in the file if the server can read it.
+        This photograph cannot be shown here.
       </span>
     );
   }
@@ -353,20 +357,45 @@ export function useReportMediaUrls(blocks: PreviewBlock[] | undefined): Record<s
   }, [blocks]);
 
   const [urls, setUrls] = useState<Record<string, string | null>>({});
+  /** Object URLs this hook made from bytes on the device, revoked when it unmounts. */
+  const madeHere = useRef<string[]>([]);
+
+  useEffect(() => {
+    const made = madeHere.current;
+    return () => {
+      for (const url of made) URL.revokeObjectURL(url);
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
     const unresolved = ids.filter((mediaId) => !(mediaId in urls));
     if (!unresolved.length) return;
     (async () => {
+      const userId = draftSessionUserId();
       const resolved = await Promise.all(
         unresolved.map(async (mediaId) => {
-          try {
-            const file = await apiFetch<MediaFile>(`/media/${mediaId}`);
-            return [mediaId, file.url ?? null] as const;
-          } catch {
-            return [mediaId, null] as const;
+          /*
+            THE DEVICE FIRST FOR A PHOTOGRAPH TAKEN HERE, THE SERVER FIRST FOR ANYTHING ELSE, AND
+            THE DEVICE AGAIN WHEN THE SERVER CANNOT BE REACHED. A `dwlocal:` id has no server row at
+            all; a server id resolved with a connection is also KEPT (`keepForOffline`), which is what
+            lets the report screen — and a report file built on this device — show it again with
+            none. See `lib/offlineReport/reportCache`.
+          */
+          if (!isLocalMediaRef(mediaId)) {
+            try {
+              const file = await apiFetch<MediaFile>(`/media/${mediaId}`);
+              if (file.url) void keepForOffline(mediaId, file.url, userId);
+              return [mediaId, file.url ?? null] as const;
+            } catch {
+              // Fall through to the device's copy.
+            }
           }
+          const blob = await mediaBlob(mediaId, userId).catch(() => null);
+          if (!blob) return [mediaId, null] as const;
+          const url = URL.createObjectURL(blob);
+          madeHere.current.push(url);
+          return [mediaId, url] as const;
         })
       );
       if (cancelled) return;
@@ -375,12 +404,24 @@ export function useReportMediaUrls(blocks: PreviewBlock[] | undefined): Record<s
     return () => {
       cancelled = true;
     };
-    // `urls` is read to skip ids already resolved but is deliberately NOT a dependency: it is what
-    // this effect writes, and depending on it would re-run the effect on its own result forever.
+    // `urls` is deliberately not a dependency: it is written by this effect, and listing it would
+    // re-run the effect after every resolution. `ids` changes exactly when a new image appears.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ids.join(",")]);
 
   return urls;
+}
+
+/** Keep a photograph's bytes on the device, once, for a report built with no connection. */
+async function keepForOffline(mediaId: string, url: string, userId: string | null): Promise<void> {
+  if (!userId || (await hasMedia(mediaId, userId))) return;
+  try {
+    const response = await fetch(url);
+    if (!response.ok) return;
+    await putMedia(mediaId, userId, await response.blob());
+  } catch {
+    // Best effort: the photograph is still on the server, and the file built online carries it.
+  }
 }
 
 /* ────────────────────────────────────────────────────────────────────────────

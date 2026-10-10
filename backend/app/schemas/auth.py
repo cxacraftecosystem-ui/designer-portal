@@ -60,7 +60,7 @@ class LoginRequest(APIModel):
         )
 
     @model_validator(mode="after")
-    def validate_login_mode(self) -> "LoginRequest":
+    def validate_login_mode(self) -> LoginRequest:
         has_password_login = bool(self.email and self.password)
         has_google_login = bool(self.googleIdToken)
         partial_oidc = any(

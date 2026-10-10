@@ -2,6 +2,9 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 
+import { forgetOfflinePages } from "@/components/OfflineAppShell";
+import { clearReportCache } from "@/lib/offlineReport/reportCache";
+
 import {
   ApiError,
   apiFetch,
@@ -211,6 +214,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     } finally {
       setToken(null);
       adopt(null);
+      // The copies kept for a report built with no connection are this account's; a shared laptop
+      // must not hand them to the next person who signs in. Drafts are NOT touched — see
+      // `setDraftSessionUser`.
+      void clearReportCache();
+      forgetOfflinePages();
     }
   }, [adopt]);
 

@@ -2,22 +2,47 @@
 name = "design-workshop-backend"
 version = "0.1.0"
 description = "API-first FastAPI backend for Design Prototype Workshop capture, review and report generation."
-requires-python = ">=3.11"
+# 3.14 EVERYWHERE SINCE 2026-10-09: the EC2 box (upstream CPython 3.14.8, a pinned
+# python-build-standalone build; BOX_PYTHON_* in deploy-backend.yml), backend/Dockerfile, and every
+# CI job. 3.15.0 reached python.org on 2026-10-09 and is not a target until the builds and wheels
+# this stack needs exist; deploy-backend.yml's job env lists what was missing that day.
+requires-python = ">=3.14"
 dependencies = [
     "fastapi>=0.111.0",
     "uvicorn[standard]>=0.30.0",
     "pydantic>=2.7.0",
     "pydantic-settings>=2.2.1",
-    "python-jose[cryptography]>=3.3.0",
-    "passlib[bcrypt]>=1.7.4",
-    "bcrypt>=4.0.1,<4.1.0",
-    "prisma>=0.13.1",
+    # PyJWT and bcrypt REPLACED python-jose and passlib on 2026-10-09 — app/core/security.py has
+    # the argument, and tests/test_password_hash_compat.py and tests/test_jwt_compat.py hold the
+    # hashes and the token the old pair wrote, so the swap stays provably invisible. bcrypt's floor is
+    # 5: security.py truncates to 72 bytes itself, which is what 5 demands and 4 did silently.
+    "PyJWT>=2.15.1",
+    "bcrypt>=5.0.0",
+    # PINNED EXACTLY, AND THERE IS NOTHING NEWER TO MOVE TO. 0.15.0 is prisma-client-py's final
+    # release: the project is archived upstream (RobertCraigie/prisma-client-py, last push
+    # 2025-04-10) and is bound to Prisma CLI/engines 5.17.0, while Prisma ORM itself is on 7.x with a
+    # Rust-free engine that no Python client speaks. A range here could only ever resolve to this one
+    # version, so it is written as the pin it is. WHAT THE PIN HOLDS BACK, AND THE WAY OUT, are in
+    # docs/OPEN_FINDINGS.md ("prisma-client-py is archived"): PostgreSQL 18 (the 5.17 schema engine
+    # predates it) and Python 3.15 (never tested upstream), removed by moving app/core/db.py and every
+    # `prisma.<model>` call to a maintained async stack (SQLAlchemy 2 with asyncpg or psycopg 3).
+    "prisma==0.15.0",
     "boto3>=1.34.0",
     "python-multipart>=0.0.9",
     "email-validator>=2.1.1",
     "google-auth>=2.29.0",
     "requests>=2.32.0",
     "pydub>=0.25.1",
+    # THE `audioop` MODULE pydub IS BUILT ON, WHICH PYTHON 3.13 REMOVED (PEP 594). pydub 0.25.1 — its
+    # newest release — does `import audioop` and falls back to `import pyaudioop`, a module that does
+    # not exist, so on 3.14 `import pydub` itself raises ModuleNotFoundError. Both callers catch that
+    # quietly: data_browser's audio-as-mp4 conversion answers 503 "pydub is not installed", and
+    # ai._split_audio_into_chunks returns None, so a recording over Whisper's size limit goes up whole
+    # and is refused. Nothing in CI imports the real pydub (test_media_convert_bound.py stubs it), and
+    # production ran 3.12 until 2026-10-09, so the break would have shipped silently with the move to
+    # 3.14. audioop-lts is the maintained port of the removed module; tests/test_audio_runtime_deps.py
+    # imports pydub for real so the next interpreter move cannot lose it again.
+    "audioop-lts>=0.2.2",
     "openpyxl>=3.1.2",
     # PDF rendering for the workshop report (app/services/report_pdf.py). A CORE dependency, not
     # an extra, because app/api/routes/design_workshops.py imports it at module scope and the API
@@ -113,7 +138,10 @@ cache = [
 ]
 
 [build-system]
-requires = ["setuptools>=69", "wheel"]
+# The floor is the newest setuptools (84.0.0, 2026-08-08). pip's isolated build resolves the newest
+# anyway, so this states what is actually used rather than holding anything back. `wheel` is gone:
+# setuptools has built wheels itself since 70.1, and listing it only installed a package nothing read.
+requires = ["setuptools>=84"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
@@ -122,7 +150,9 @@ exclude = ["prisma*"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+# py314 with `requires-python` above. Raising it turned on the UP rules for 3.12-3.14 syntax; what
+# they found was fixed in the same commit (2026-10-09), so nothing was added to the baseline below.
+target-version = "py314"
 
 # The rule set is pinned HERE, by name, deliberately. With no [tool.ruff.lint] section ruff falls
 # back to its own implicit default, and that default has changed between ruff releases -- so this
@@ -137,7 +167,7 @@ select = [
     "E",      # pycodestyle errors
     "W",      # pycodestyle warnings
     "I",      # isort -- one import order, enforced mechanically rather than by review
-    "UP",     # pyupgrade -- requires-python is >=3.11, so write 3.11
+    "UP",     # pyupgrade -- requires-python is >=3.14, so write 3.14
     "B",      # flake8-bugbear -- mutable defaults, loop-variable capture, silent truncation
     "C4",     # flake8-comprehensions
     "SIM",    # flake8-simplify
@@ -336,7 +366,7 @@ combine-as-imports = true
 "app/services/questionnaire_forms.py" = ["I001"]
 
 # (a) in flight, and (b): FURB162 is right that `fromisoformat(s.replace("Z", "+00:00"))` is
-# redundant on 3.11+, which is the floor `requires-python` sets. Deleting the replace is still a
+# redundant on 3.11+, and the floor `requires-python` sets is 3.14. Deleting the replace is still a
 # parsing change on a date-of-birth string that arrives from the wire, and it belongs to whoever is
 # in that function.
 "app/services/records.py" = ["FURB162"]
@@ -382,3 +412,31 @@ combine-as-imports = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+# ─── ANYIO'S PLUGIN IS LOADED FIRST, AND THE ORDER IS A FIX (2026-10-09) ───────────────────────────
+#
+# pytest-asyncio (`asyncio_mode = "auto"` above hands it every async TEST) and anyio's plugin
+# (`pytest.mark.anyio`) both wrap `pytest_fixture_setup`, and the one registered LAST wraps
+# outermost and takes an async FIXTURE onto its own event loop. With pytest-asyncio registered
+# first, that is anyio: an anyio test's async fixture runs on an anyio loop while the test runs on
+# pytest-asyncio's, so a `db.connect()` in the fixture binds Prisma's httpx pool to one loop and the
+# test's first query uses it from the other — "RuntimeError: <asyncio.locks.Event ...> is bound to a
+# different event loop". That was the 37 integration failures of 2026-10-01 to 2026-10-09, whatever
+# the interpreter. Measured with a probe that records which plugin drove the fixture and which the
+# test: in that order, anyio and pytest-asyncio on two loops; in this one, pytest-asyncio on one.
+#
+# WITHOUT THIS LINE THE ORDER IS AN ACCIDENT of how site-packages happens to list two .dist-info
+# directories, so it differs between machines and between runner images: every red CI run printed
+# `plugins: asyncio-1.4.0, anyio-4.14.2`, the last green one `plugins: anyio-4.14.2, asyncio-1.4.0`,
+# and NTFS lists them alphabetically, which is why no laptop ever reproduced it. `-p anyio` loads
+# anyio's plugin while pytest pre-parses its arguments, before entry-point autoload registers
+# pytest-asyncio, so pytest-asyncio is last however the directory is listed. NOT `-p asyncio` AS
+# WELL: pytest would also mark the standard library's `asyncio` for assertion rewriting and warn on
+# every run that it cannot (PytestAssertRewriteWarning), and autoload already puts pytest-asyncio
+# after anyio. Measured with pytest-asyncio listed first in site-packages: no flag splits fixture
+# from test, `-p anyio` joins them, `-p anyio -p asyncio` joins them and warns.
+#
+# The three modules that failed have since moved onto `asyncio.run` (PR #24) and need no order;
+# the pin is for the forty-nine that still connect `db` in an async fixture (see "reaching the
+# database" in tests/conftest.py). tests/conftest.py refuses the other order at startup, and
+# tests/test_async_plugin_order.py checks the property that actually matters.
+addopts = ["-p", "anyio"]

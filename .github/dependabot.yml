@@ -146,6 +146,7 @@ updates:
         update-types:
           - version-update:semver-minor
           - version-update:semver-major
-      # `bcrypt>=4.0.1,<4.1.0` is a compatibility ceiling for passlib's bcrypt backend, not a
-      # stale pin. Raising it needs the password path exercised, not a green Dependabot tick.
-      - dependency-name: bcrypt
+      # NO bcrypt ENTRY ANY MORE (2026-10-09). It held bcrypt below 4.1 for passlib's sake; passlib
+      # is gone, app/core/security.py calls bcrypt 5 directly with the 72-byte truncation written
+      # out, and tests/test_password_hash_compat.py checks hashes passlib wrote on every run — so a
+      # bcrypt bump is now an ordinary one, gated by that test like any other.

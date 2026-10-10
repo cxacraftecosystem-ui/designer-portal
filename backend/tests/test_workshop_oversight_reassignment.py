@@ -83,7 +83,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from collections.abc import Awaitable, Callable
-from typing import Any, TypeVar
+from typing import Any
 
 import pytest
 from conftest import needs_db
@@ -101,10 +101,8 @@ PLAN_ENTITY = "workshopPlan"
 
 PASSWORD = "workshop-oversight-reassignment-password"
 
-_T = TypeVar("_T")
 
-
-def _in_a_private_loop(work: Callable[[], Awaitable[_T]]) -> _T:
+def _in_a_private_loop[T](work: Callable[[], Awaitable[T]]) -> T:
     """Run database work with ``db`` connected, in an event loop that exists for that call alone.
 
     ``asyncio.run`` creates the loop and closes it on the way out, and the connection is opened and
@@ -114,7 +112,7 @@ def _in_a_private_loop(work: Callable[[], Awaitable[_T]]) -> _T:
     ``db`` while this one runs, and the next call connects afresh.
     """
 
-    async def connected() -> _T:
+    async def connected() -> T:
         await db.connect()
         try:
             return await work()

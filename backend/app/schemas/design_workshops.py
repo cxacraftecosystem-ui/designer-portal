@@ -247,7 +247,7 @@ class DesignWorkshopCreate(APIModel):
     notes: str | None = Field(default=None, max_length=MAX_NOTES_CHARS)
 
     @model_validator(mode="after")
-    def _known_template(self) -> "DesignWorkshopCreate":
+    def _known_template(self) -> DesignWorkshopCreate:
         if self.templateId not in REPORT_TEMPLATE_IDS:
             raise ValueError(f"templateId must be one of {', '.join(sorted(REPORT_TEMPLATE_IDS))}")
         # `workshopKind` reaches a plain TEXT column, so Prisma would accept a typo and store it —
@@ -286,7 +286,7 @@ class DesignWorkshopUpdate(APIModel):
     status: str | None = Field(default=None, max_length=24)
 
     @model_validator(mode="after")
-    def _known_status_and_template(self) -> "DesignWorkshopUpdate":
+    def _known_status_and_template(self) -> DesignWorkshopUpdate:
         """Reject a status or a template the system does not have.
 
         ``status`` reaches a Postgres enum column, so an unknown value was not merely stored
@@ -347,7 +347,7 @@ class StageEntryIn(APIModel):
     )
 
     @model_validator(mode="after")
-    def _bound_payload(self) -> "StageEntryIn":
+    def _bound_payload(self) -> StageEntryIn:
         if len(self.data) > MAX_FIELD_KEYS:
             raise ValueError(f"a stage entry may carry at most {MAX_FIELD_KEYS} field keys")
         return self
@@ -395,7 +395,7 @@ class StageSaveIn(APIModel):
     )
 
     @model_validator(mode="after")
-    def _bound_rows(self) -> "StageSaveIn":
+    def _bound_rows(self) -> StageSaveIn:
         if len(self.entries) > MAX_STAGE_ROWS:
             raise ValueError(f"a stage may carry at most {MAX_STAGE_ROWS} entries per request")
         # Bounded like every other list on the wire, and bounded by the same number the entries
@@ -510,7 +510,7 @@ class ReportGenerateIn(APIModel):
     )
 
     @model_validator(mode="after")
-    def _known_formats(self) -> "ReportGenerateIn":
+    def _known_formats(self) -> ReportGenerateIn:
         allowed = {"DOCX", "PDF"}
         wanted = {f.upper() for f in self.formats}
         if not wanted:
@@ -628,7 +628,7 @@ class AiLayerRegisterIn(APIModel):
     )
 
     @model_validator(mode="after")
-    def _producedAt_is_a_real_moment(self) -> "AiLayerRegisterIn":
+    def _producedAt_is_a_real_moment(self) -> AiLayerRegisterIn:
         """Refuse a timestamp that cannot be parsed instead of quietly dropping it.
 
         The sibling ``ExportRecordIn.generatedAt`` is parsed with a helper that returns None on a
@@ -642,7 +642,7 @@ class AiLayerRegisterIn(APIModel):
             return self
         try:
             # A trailing "Z" needs no substitution: fromisoformat has accepted it since 3.11, and
-            # `requires-python` is >=3.11. The route's older `_parse_datetime` still rewrites it
+            # `requires-python` is >=3.14. The route's older `_parse_datetime` still rewrites it
             # because it predates that and is shared with paths this validator does not cover.
             datetime.fromisoformat(str(self.producedAt))
         except ValueError:
@@ -818,7 +818,7 @@ class AiProofreadIn(APIModel):
     sourceLayerId: str | None = Field(default=None, max_length=64)
 
     @model_validator(mode="after")
-    def _exactly_one_source(self) -> "AiProofreadIn":
+    def _exactly_one_source(self) -> AiProofreadIn:
         return _require_exactly_one_source(self, verb="proofread")
 
 
@@ -877,8 +877,45 @@ class AiTranslateIn(APIModel):
     )
 
     @model_validator(mode="after")
-    def _exactly_one_source(self) -> "AiTranslateIn":
+    def _exactly_one_source(self) -> AiTranslateIn:
         return _require_exactly_one_source(self, verb="translate")
+
+
+class AiOnDeviceLayerIn(APIModel):
+    """A layer a model ON THE HANDSET produced. **The body the Android app's `dwTier2LayerBody` sends.**
+
+    ``text`` IS WHAT THE MODEL WROTE, not a passage to work on — the opposite of ``AiProofreadIn``'s
+    ``text``. Nothing on this route runs a model, so the field cannot be mistaken for input: the route
+    records it and calls no provider (a test asserts that). ``sourceText`` is the passage the handset
+    gave the model, kept on the row so a reviewer can see what it was asked.
+
+    WHAT IS NOT HERE, AND WHY: no ``tier`` (the route fixes TIER_2), no ``accepted`` (acceptance stays a
+    separate act by a person), no stage or field key (a layer stands beside the designer's words), and
+    no consent token or allowance (a model on the phone sends nothing off it and spends nothing at a
+    provider — the repository owner's own scoping of the daily cap).
+    """
+
+    kind: Annotated[str, Field(pattern="^(PROOFREAD|TRANSLATION)$")]
+    text: str = Field(min_length=1, max_length=MAX_VERB_TEXT_CHARS)
+    provider: Annotated[str, Field(pattern="^litert-lm$")]
+    modelId: str = Field(min_length=1, max_length=120)
+    modelVersion: str = Field(min_length=1, max_length=120)
+    language: str = Field(min_length=1, max_length=40)
+    producedAt: str = Field(min_length=1, max_length=40)
+    sourceText: str = Field(min_length=1, max_length=MAX_VERB_TEXT_CHARS)
+
+    @model_validator(mode="after")
+    def _a_real_moment_and_a_pinned_model(self) -> "AiOnDeviceLayerIn":
+        """Refuse an unparseable time and a model nobody pinned, before any gate is read."""
+        try:
+            datetime.fromisoformat(str(self.producedAt))
+        except ValueError:
+            raise ValueError(
+                "producedAt must be an ISO-8601 moment such as 2026-03-04T11:20:00+05:30."
+            ) from None
+        if not self.text.strip() or not self.sourceText.strip():
+            raise ValueError("A layer needs words, and the passage it was made from.")
+        return self
 
 
 class AiMediaVerbIn(APIModel):
@@ -995,7 +1032,7 @@ class DictationConsentIn(APIModel):
     )
 
     @model_validator(mode="after")
-    def _a_decision_somebody_can_record(self) -> "DictationConsentIn":
+    def _a_decision_somebody_can_record(self) -> DictationConsentIn:
         """Refuse an unknown token, and refuse NOT_RECORDED by name so the message can say why.
 
         The token reaches a Postgres enum column, so anything outside the three values was not merely
@@ -1019,7 +1056,7 @@ class DictationConsentIn(APIModel):
         return self
 
     @model_validator(mode="after")
-    def _recordedAt_is_a_real_moment(self) -> "DictationConsentIn":
+    def _recordedAt_is_a_real_moment(self) -> DictationConsentIn:
         """Refuse a timestamp that cannot be parsed instead of quietly dropping it.
 
         ``ExportRecordIn.generatedAt`` is parsed with a helper that returns None on a malformed value

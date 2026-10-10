@@ -60,7 +60,7 @@ def throttle(
     key: str,
     min_interval: float,
     *,
-    deadline: "Deadline | None" = None,
+    deadline: Deadline | None = None,
     clock: Callable[[], float] = time.monotonic,
     sleeper: Callable[[float], None] = time.sleep,
 ) -> float:
@@ -104,7 +104,7 @@ class Deadline:
     started_at: float
 
     @classmethod
-    def start(cls, budget_seconds: float) -> "Deadline":
+    def start(cls, budget_seconds: float) -> Deadline:
         return cls(budget_seconds=budget_seconds, started_at=time.perf_counter())
 
     @property

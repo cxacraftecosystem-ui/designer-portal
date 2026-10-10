@@ -14,9 +14,12 @@ Four things must be true before the first spec runs, and they must become true i
 because each one is what the next one talks to.
 
 ```bash
-# 1. Postgres + MinIO. From the REPOSITORY ROOT and nowhere else — see the warning below.
+# 1. Postgres + object storage. From the REPOSITORY ROOT and nowhere else — see the warning below.
 docker compose up -d
 docker compose ps                      # both must say (healthy) before you go on
+# (Since 2026-10-09 that is PostgreSQL 17 and Silo, a maintained MinIO fork, under the same service
+#  name `minio`. A volume made by the old PostgreSQL 16 image will not open: docs/DOCKER.md,
+#  Troubleshooting, has the dump-and-restore or start-over steps.)
 
 # 2. The accounts the specs sign in as. Idempotent; run it as often as you like.
 cd backend
@@ -42,7 +45,8 @@ try if `next dev` is healthy for you; the build is what is known to work on this
 
 `playwright test` now runs `e2e/support/preflight.ts` before the first spec. It probes the API's
 `/health`, signs in for real (the only cheap proof that the database and the seeded accounts are both
-there), asks MinIO's `/minio/health/live` whether object storage is up, and fetches the web app plus
+there), asks MinIO's `/minio/health/live` whether object storage is up (Silo, the maintained fork the
+stack runs since 2026-10-09, keeps that route — checked that day), and fetches the web app plus
 one of the scripts the page it returns actually asks for. So a missing piece arrives as one sentence
 naming it instead of a hundred failures that each name something else. It stays out of the way of
 `npm run test:unit`, which is still allowed to need nothing at all.

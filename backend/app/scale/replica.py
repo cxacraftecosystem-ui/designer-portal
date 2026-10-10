@@ -28,11 +28,9 @@ are also the ones that are slow, which is convenient rather than coincidental.
 
 import asyncio
 from collections.abc import Awaitable, Callable
-from typing import Any, TypeVar
+from typing import Any
 
 from app.scale.flags import log_once, read_replica_url
-
-T = TypeVar("T")
 
 # Consecutive replica failures after which this process stops using it. Same reasoning as the Redis
 # breaker in redis_backend.py: absorb a blip, but never flap. A demoted replica is one restart away
@@ -123,7 +121,7 @@ async def _build(url: str) -> Any | None:
     return client
 
 
-async def read_via_replica(run: Callable[[Any], Awaitable[T]]) -> T:
+async def read_via_replica[T](run: Callable[[Any], Awaitable[T]]) -> T:
     """Run a read on the replica, falling back to the primary if the replica cannot serve it.
 
         rows = await read_via_replica(lambda client: client.artisan.find_many(where=where, take=20))

@@ -1222,7 +1222,7 @@ def _money(value: Any) -> str | None:
         return None
 
 
-def _reference_data(spec: "ReferenceModel", row: Any, photo: Any) -> dict[str, Any]:
+def _reference_data(spec: ReferenceModel, row: Any, photo: Any) -> dict[str, Any]:
     """One record's display payload, with any stored FORMATTING flattened out of it.
 
     ── THE DEFECT THIS EXISTS FOR ───────────────────────────────────────────────────────────────
@@ -3721,7 +3721,7 @@ class PendingEntry:
     #: information is gone the instant the value lands: a hydrated name and a typed name are the
     #: same string in ``data``, which is the whole reason field-level provenance was unanswerable
     #: on this table before. Reset per save, never persisted.
-    hydrated: dict[str, "entry_provenance.HydrationSource"] = dataclass_field(default_factory=dict)
+    hydrated: dict[str, entry_provenance.HydrationSource] = dataclass_field(default_factory=dict)
     #: THE ``version`` THE ROW CARRIED IN THE READ THIS SAVE WAS PLANNED AGAINST, and 0 for a row
     #: this save is creating. It is the predicate the UPDATE is written under — see
     #: :class:`_RowUpdate` and ``DwStageEntry.version`` in schema.prisma — so it must come from the
@@ -4977,7 +4977,7 @@ class _RowUpdate:
 
 
 def _content_changed(
-    creates: list[dict[str, Any]], updates: list["_RowUpdate"], removed: list[str]
+    creates: list[dict[str, Any]], updates: list[_RowUpdate], removed: list[str]
 ) -> bool:
     """Did this save actually change the designer's content? THE RESUBMISSION GATE, AS ONE LINE.
 
@@ -7090,6 +7090,11 @@ class MediaIndex:
     def ref(self, media_id: str) -> ImageRef | None:
         return self._refs.get(media_id)
 
+    def known_refs(self) -> dict[str, ImageRef]:
+        """Every photograph this reader may place, by media id — what ``/report/sources`` hands
+        the browser so a document built offline sizes and turns each picture as this one does."""
+        return dict(self._refs)
+
     def blob(self, image: ImageRef) -> bytes | None:
         return self._blobs.get(image.source)
 
@@ -7675,6 +7680,22 @@ async def attach_report_custom_sections(
         if row.entityKey == custom_sections.CUSTOM_ENTITY_KEY
     }
 
+    items, warnings = report_custom_section_items(definition, values_by_stage)
+    attach_custom_sections(data, items)
+    return warnings
+
+
+def report_custom_section_items(
+    definition: Any, values_by_stage: Mapping[str, Mapping[str, Any]]
+) -> tuple[list[CustomSectionItem], list[str]]:
+    """The workshop's own sections as the report prints them, and the warning about the empty ones.
+
+    PURE, AND SPLIT OUT OF :func:`attach_report_custom_sections` SO IT HAS ONE COPY. The browser
+    builds the same document offline from the definition and the answers it already holds
+    (``frontend/lib/offlineReport``), and ``tools/report_offline_parity.py`` runs THIS function over
+    the shared fixture so the two cannot disagree about which sections print or what is said
+    about the ones that do not.
+    """
     items: list[CustomSectionItem] = []
     for section in definition.sections:
         item = CustomSectionItem(
@@ -7752,7 +7773,6 @@ async def attach_report_custom_sections(
             continue
         items.append(item)
 
-    attach_custom_sections(data, items)
     warnings: list[str] = []
     # THE WARNING ASKS THE RENDERER'S OWN QUESTION AND NOT A SECOND ONE THAT LOOKS LIKE IT.
     #
@@ -7797,7 +7817,7 @@ async def attach_report_custom_sections(
             + ", ".join(sorted(item.title for item in unanswered)[:4])
             + ("…" if len(unanswered) > 4 else "")
         )
-    return warnings
+    return items, warnings
 
 
 async def attach_report_questionnaires(data: WorkshopData, workshop_id: str) -> list[str]:

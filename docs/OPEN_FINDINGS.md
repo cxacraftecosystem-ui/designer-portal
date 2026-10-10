@@ -1,9 +1,19 @@
 # Open findings
 
-**Status: 31 open, 1 decision recorded and 1 deferral, 108 closed.** Every count re-counted by
-heading on 2026-10-10 (15 + 18 opened by the Android copy sweep that day, less the 2 of those closed
-the same day); earlier counts on 2026-10-09; the entries closed on 2026-10-09 were checked against the tree that day, and
-the older closed sections were last re-checked on 2026-09-03.
+**Status: 32 open, 1 decision recorded and 1 deferral, 112 closed.** Every count re-counted by
+heading on 2026-10-10: main's 31 open and 106 closed that day (the 15 open of 2026-10-09, plus 18
+opened by the Android copy sweep, less the 2 of those closed the same day), plus the toolchain
+upgrade's 2 opened and 2 closed, merged the same day, plus the 2 closed when join cards and the 3D
+model viewer were built. The entries closed on 2026-10-09 were
+checked against the tree that day, and the older closed sections were last re-checked on 2026-09-03.
+
+**The toolchain upgrade of 2026-10-09 opened two and closed two.** Moving the EC2 box, the image and
+CI to Python 3.14, the lock to its newest pins, the local stack to PostgreSQL 17, and the runners to
+ubuntu-26.04 turned up two things to keep open — prisma-client-py is archived and now visibly holds the
+data layer back, and 3.14 costs each process ~170 MiB more against memory ceilings measured on 3.12 —
+and closed two that were already biting: 37 integration tests failing on every CI runner whose
+site-packages listed pytest-asyncio before anyio, and a local stack that could not start because no
+MinIO image could be pulled any more. Counted by heading: 15 + 2 = 17 open, and 95 + 2 = 97 closed.
 
 **Three missing features named by the customer-copy sweep were built on 2026-10-10, and recorded
 closed.** The sweep found screens explaining, to the people using them, features that did not exist:
@@ -16,7 +26,7 @@ same screens stay open. Counted by heading: still 31 open, and 100 + 3 = 103 clo
 cards can now be printed, listed, cancelled and redeemed on the web, and a stored 3D model is turned
 in 3D on both clients while the report names it as a model. Neither was recorded open before — the
 screens themselves said the features were missing — so the open count does not move. Counted by
-heading: 31 open, and 106 + 2 = 108 closed.
+heading: 32 open (main's, unchanged), and 110 + 2 = 112 closed.
 
 **Three Android gaps were closed on 2026-10-10 by building them**: correction suggestions on the
 handset, its own review queue, and inspections that work without signal. Two of them had been opened
@@ -39,6 +49,11 @@ issued no links; the annual plan's guide said a Regional Director could not corr
 rows. None was recorded here as open — each lived only in the screen's own copy — so they enter as
 three closed entries under *Closed on 2026-10-10*. Counted by heading: still 31 open, and 103 + 3 = 106
 closed.
+
+**On-device AI (Tier 2), built on 2026-10-10, closed one more of the copy sweep's entries.** The
+handset now carries the LiteRT-LM runtime, downloads and verifies a Gemma 4 model on demand, and
+proofreads and translates on the phone. It is under *Closed on 2026-10-10*. 31 − 1 = 30 open; 99 + 1
+= 100 closed.
 
 **Moving a set-password link's token off the web's request lines narrowed one entry the same day,
 and moved neither number.** The web now checks a link with `POST /api/auth/set-password/check`, the
@@ -676,21 +691,12 @@ new build goes out in a body. The entry stays open until that build has replaced
 the same, and neither form closes the browser's history.
 
 
-**Eighteen entries were opened on 2026-10-10 by the Android copy sweep; sixteen are below.** The
-other two — correction suggestions on the handset, and inspections without signal — were built and
-closed the same day, under *Closed on 2026-10-10*. The Android copy sweep of 2026-10-10 removed every on-screen sentence that admitted a missing feature
+**Eighteen entries were opened on 2026-10-10 by the Android copy sweep; fifteen are below.** The
+other three — correction suggestions on the handset, inspections without signal, and on-device AI —
+were built and closed the same day, under *Closed on 2026-10-10*. The Android copy sweep of 2026-10-10 removed every on-screen sentence that admitted a missing feature
 or a known defect, because a screen shown to field staff and ministry officials must describe a
 product that works. The gaps themselves are not closed by that, so each one is recorded here, one
 heading each, and closes only with the change that builds or fixes it.
-
-### [LOW] On-device AI cannot run on the handset, so Speech & AI no longer shows it (android) — opened 2026-10-10
-
-`DW_TIER2_RUNTIME_PRESENT` is false: the APK carries no runtime that can load a language model. Speech
-& AI → "AI on this phone" now draws the on-device AI line and the language-model list only when that
-flag is true, so today every account sees neither. Building the runtime is the work
-([PLAN-AI-TIERS-AND-CUSTOM-SECTIONS.md](PLAN-AI-TIERS-AND-CUSTOM-SECTIONS.md)). Files:
-`android/app/src/main/java/com/designprototype/workshop/data/DwDeviceTier.kt`,
-`android/app/src/main/java/com/designprototype/workshop/ui/SpeechAndAiScreen.kt`.
 
 ### [LOW] The offline speech model cannot be installed on today's handsets, so its section is hidden (android, backend) — opened 2026-10-10
 
@@ -795,9 +801,147 @@ workshop-code sentence ("…once it has reached the server…", `backend/tests/t
 They change together with `frontend/components/guide/steps.ts`, `frontend/components/guide/inspectorSteps.ts`,
 `docs/WALKTHROUGH.md`, `frontend/app/(protected)/dashboard/page.tsx` and `frontend/lib/workshopCodes.ts`.
 
+### [MEDIUM] prisma-client-py is archived, and pins the data layer to Prisma 5.17's engines (backend) — opened 2026-10-09
+
+`backend/pyproject.toml` pins `prisma==0.15.0` exactly, because there is nothing newer: 0.15.0
+(2024-08-16) is prisma-client-py's final release and `RobertCraigie/prisma-client-py` is archived
+(last push 2025-04-10). It is bound to Prisma CLI and engines 5.17.0 — the 5.x line itself ended at
+5.22, and Prisma ORM is on 7.x with a Rust-free engine no Python client speaks. Every other runtime here
+was raised to its newest release on 2026-10-09; this one cannot be, and it now holds two of them back:
+
+* **PostgreSQL 18.** The 5.17 schema engine predates it, so `prisma migrate` is unproven there. Local
+  and CI databases stay on 17, production's major — which the production provider caps at 17 anyway.
+* **Python 3.15**, released on python.org on 2026-10-09: the project was never tested on it upstream
+  and will not be. It is one of four reasons the API boxes stayed on 3.14.8 that day, beside
+  setup-python and Docker Hub not carrying 3.15.0 yet and PyYAML, a uvicorn[standard] dependency,
+  shipping no cp315 wheel; httptools, the other one, gained cp315 wheels in 0.9.0 that evening, and
+  the lock still pins 0.8.0 (`.github/workflows/deploy-backend.yml`'s job env has the list).
+  python-build-standalone, the source of the boxes' interpreter, carried 3.15.0 from its 20261009
+  release that afternoon, so it no longer holds anything back.
+
+It also forces one patch to generated code. The client it writes for this schema is 675,391 lines of
+TypedDicts without `from __future__ import annotations`, which Python 3.14 imports in tens of minutes
+and over a gigabyte; `backend/scripts/generate_prisma_client.py` adds that line after every generate,
+and every automated generate runs it. That script is a workaround for a library nobody maintains.
+
+**The exit**, and the only one: move `app/core/db.py` and every `db.<model>` call to a maintained async
+stack — SQLAlchemy 2 with asyncpg or psycopg 3 — with migrations kept on the Node Prisma CLI used only
+for `migrate`, or moved to Alembic. Until then, keep caching the 5.17.0 engines (fetched by hash from
+Prisma's CDN), keep databases on 17, and do not move production to a new Python minor without
+re-measuring the client import. Open as of 2026-10-09.
+
+### [MEDIUM] On Python 3.14 each process carries ~170 MiB more, and the box's memory ceilings and the app's read caps were set on 3.12 (backend) — opened 2026-10-09
+
+Importing the generated Prisma client — which uvicorn and the queue worker both do at start — holds
+727 MiB on 3.14.8 against 557 MiB on 3.12.15, measured in identical containers on 2026-10-09 with the
+import fix in place (without it, 3.14 needs over a gigabyte and many minutes). The systemd ceilings in
+`.github/workflows/deploy-backend.yml` and `infra/terraform/user_data.sh` were sized from a 3.12
+measurement: the API under a 1000M soft ceiling and no hard one, the queue under 800M soft / 1100M hard.
+
+**The box on 3.12, read over SSM on 2026-10-09** (release `201d269`, 24 minutes after a restart, idle):
+`fieldrepo` 686 MB (`memory.current`), `fieldrepo-queue` 585 MB, both `memory.events` at zero, swap
+29 MB used of 2 GiB, and `MemAvailable` 384 MB of 1,905 — 538 MB an hour and a half later, once the
+kernel had moved cold pages to swap, so on 3.12 it moves between about 380 and 540 MB. Adding ~178 MB
+to each process puts the API near 865 MB (inside its soft ceiling, and it has no hard one) and the
+idle queue near 765 MB — about 75 MB under its 800M soft ceiling, so a transcription job starts
+throttled, but nearly 400 MB under the 1100M hard stop, and `memory.max` does not count swap, so
+neither unit is expected to be killed by its ceiling. Raising the ceilings would not have helped:
+they are per-unit caps, not memory.
+
+**What the extra ~356 MB does take is `MemAvailable`, and the application reads it.**
+`app/services/memory_budget.budget_bytes` caps a read at a quarter of `MemAvailable` (8 MiB floor) —
+the cgroup files it also tries are the root's, which a systemd unit's process does not have — and four
+paths size themselves by it: audio-as-mp4 conversion, captions and media measurement (32 MiB ceilings
+each) and report images (96 MiB). At 384-538 MB available all four run at or near their ceilings.
+Take the full ~356 MB away and the range becomes roughly 30-180 MB: at the top of it only the report
+images' cap shrinks (to ~43 MiB); at the bottom all four sit on the 8 MiB floor, and media between
+there and 32 MiB that is accepted today is refused. That is an estimate from the kernel's arithmetic,
+not a measurement — swapping cold pages out gives some back — which is why it is written down here.
+
+Read after the first 3.14 deploy, before calling it done: `systemctl status fieldrepo
+fieldrepo-queue` (the `Memory:` lines, and set both drop-ins and user_data.sh's base units from them)
+and `free -m` (`available`). If `available` sits near the 8 MiB-floor arithmetic (~130 MB or less
+makes every one of the four caps smaller than its ceiling), the box needs memory — the next instance
+size — or each process needs to stop carrying the client's TypedDicts at run time
+(`backend/tests/scale/_lean_prisma_types.py` shows they can be stubbed); a ceiling edit will not do it.
+Open until those readings are taken.
+
+**The memory half was decided the same day, before any reading: the next instance size.** The owner
+chose to rebuild the box on Ubuntu 26.04 as a **t3.medium** (4 GiB), blue/green;
+`infra/terraform/main.tf` declares it, with the procedure, and the systemd ceilings are unchanged on it.
+That box also runs a different build of 3.14.8 — upstream CPython from python-build-standalone rather
+than the container images the 727 MiB was measured in — so the readings above are to be taken on the
+new box after its first deploy, and this stays open until they are. A first reading of that build, in
+an ubuntu:26.04 container running the deploy's own steps on 2026-10-09: the API settled at 793 MiB
+resident (VmRSS; 821 MiB with its query engine) after its first requests, inside its 1000M soft
+ceiling and close to the ~865 MB `deploy-backend.yml` estimates. The queue worker was not measured
+there, and a container is not the box.
+
+---
+
+## Closed on 2026-10-09 — by the toolchain upgrade
+
+Both found while moving the backend, the image, CI and the local stack to their newest releases, and
+closed in that change — the first together with PR #24, which reached the same cause from the test
+side. Each names what fails without its fix.
+
+### [MEDIUM] 37 integration tests failed on every CI runner whose site-packages listed pytest-asyncio before anyio (backend) — **CLOSED 2026-10-09**
+
+`Backend integration tests` reported the same 37 failures — `test_designer_roster_names.py`,
+`test_save_stage_resubmission.py`, `test_workshop_oversight_reassignment.py` — on every run from
+2026-10-01, on Python 3.12.14, 3.12.15 and 3.14.8 alike, all "RuntimeError: <asyncio.locks.Event ...>
+is bound to a different event loop". The comments that blamed the interpreter (checks.yml,
+docs/CI.md) and the one that called function scope the fix (test_save_stage_resubmission.py) were
+wrong. The cause was the ORDER the two async plugins were registered: both wrap
+`pytest_fixture_setup`, the one registered last wraps outermost and takes an async fixture onto its
+own loop, and with pytest-asyncio registered first that was anyio — so an anyio test's async fixture
+ran on an anyio loop while `asyncio_mode = "auto"` ran the test on pytest-asyncio's, and the Prisma
+connection the fixture opened was used from another loop. Every red run's pytest header read
+`plugins: asyncio-1.4.0, anyio-4.14.2`; the last green one read `plugins: anyio-4.14.2,
+asyncio-1.4.0`. The order came from how site-packages listed two `.dist-info` directories, so it
+flipped between runner images and never reproduced on NTFS, which lists them alphabetically.
+Reproduced without a database, both by forcing the order with `-p` and by listing pytest-asyncio
+first in a scratch venv, with a probe recording which plugin drove the fixture and which the test.
+
+**Closed from both sides.** PR #24 (`201d269`) moved the three modules onto sync tests whose
+database work is one `asyncio.run` each, which leaves neither plugin anything to own. The toolchain
+upgrade pins the order for everything else: `addopts = ["-p", "anyio"]` in `backend/pyproject.toml`
+makes pytest-asyncio register last however site-packages is listed, a `pytest_configure` in
+`backend/tests/conftest.py` refuses the other order at startup, and
+`backend/tests/test_async_plugin_order.py` fails under the old order (measured both ways). The pin
+is what protects the forty-nine modules that still connect `db` in an async fixture.
+
+### [HIGH] `docker compose up`, and with it e2e-live.yml, could not start: no MinIO image could be pulled (infra) — **CLOSED 2026-10-09**
+
+`docker-compose.yml` pinned `quay.io/minio/minio` and `quay.io/minio/mc` after MinIO withdrew them from
+Docker Hub on 2026-09-21. By 2026-10-09 quay.io refused them too — an anonymous token is still issued,
+but both manifests and the tag lists answer 401 to it, and `docker manifest inspect` says "no such
+manifest" — and upstream MinIO is archived. So a bare `docker compose up` failed at the pull, and so
+did every run of the live browser suite.
+
+**Closed by** `docker.io/pgsty/silo:RELEASE.2026-09-16T00-00-00Z`, a maintained fork of the same MinIO
+source (AGPL-3.0, monthly releases), for both the server and the one-shot bucket job (its bundled
+`mcli`). The service is still `minio` and still on the same ports, MinIO's `/minio/health/live` answers,
+and the app's own S3 traffic was replayed against it: presigned PUT from the web origin with CORS, a
+70 MiB multipart upload through presigned 16 MiB parts with browser-readable ETags, an anonymous GET of
+the public URL, a ranged presigned GET and a delete. `docker-compose.yml` names the alternative
+(rustfs/rustfs) and why it is not a drop-in.
+
 ---
 
 ## Closed on 2026-10-10
+
+### [LOW] On-device AI could not run on the handset, so Speech & AI did not show it (android, backend) — **CLOSED 2026-10-10**
+
+`DW_TIER2_RUNTIME_PRESENT` was false and the copy sweep hid the on-device AI line and the
+language-model list. The runtime is now built: LiteRT-LM 0.18.0 is in the APK and the flag is true;
+the two Gemma 4 models download on demand from revision-pinned URLs and are verified by size and
+SHA-256 before use; a phone is offered a model only when its own reading fits it
+(`dwTier2Eligible`); proofreading and translation run on the phone and are recorded as TIER_2 layers
+through `POST /design-workshops/{id}/ai-layers/on-device`, falling back to the cloud verbs when the
+model cannot run. See [TIER2-LANGUAGE-MODEL-MEASUREMENT.md](TIER2-LANGUAGE-MODEL-MEASUREMENT.md) §0.
+Pinned by `DwTier2InstallTest`, `DwTier2ModelsTest`, `test_ai_layers_on_device.py` and the emulator
+probe `DwTier2RuntimeProbeTest`.
 
 ### [MEDIUM] Join cards could be printed and scanned only on the handset; the web read a genuine card as "update the app" (frontend) — **CLOSED 2026-10-10**
 
@@ -1019,6 +1163,36 @@ the Ministry Admin's. Assistant Directors are unchanged. Pinned by
 `backend/tests/test_annual_plan_regional_scope.py` (a Regional Director of the row's state and of a
 different state, one with none, an Assistant Director, a Designer, a Ministry Admin and an Admin) and
 `backend/tests/test_annual_plan_routes.py`.
+
+## Closed on 2026-10-10
+
+### [HIGH] The web report could not be previewed or generated without a connection, and the screens narrated the gap (frontend) — **CLOSED 2026-10-10**
+
+**What was wrong.** With no signal the report screen disabled both downloads and told the designer the
+preview, the .docx and the .pdf "are all produced by the server … and this browser deliberately has no
+renderer of its own"; a workshop started offline could not be previewed at all, the per-stage document
+panel said the same, and the public landing page and FAQ said "generating the report is the one part of
+the web half that needs the server" and "the browser's report … needs the API". The handset had built
+its report offline for months. Found by the 2026-10-10 copy sweep (item F17).
+
+**What closed it.** `frontend/lib/offlineReport/` ports the server's builder and writes the files in the
+browser (`docx`, pdfmake, Noto faces under `frontend/public/report-fonts/`); `GET
+/api/design-workshops/{id}/report/sources` hands the device what the builder reads besides the stages,
+kept in IndexedDB with limits and cleared on sign-out; `frontend/public/sw.js` keeps the application's
+files so the screen opens offline. The report screen, the per-stage panel, the landing page and the FAQ
+now describe what happens. [DESIGN_WORKSHOP.md](DESIGN_WORKSHOP.md) §8.1 says which copy is
+authoritative (the server's, whenever there is a connection) and what differs.
+
+**The tests that fail without it.** `frontend/e2e/offline-report-parity-unit.spec.ts` (every block,
+the meta, the theme and every warning of nine template and settings cases against the server's own
+output for `shared/report-parity/workshop.json`); `frontend/e2e/offline-report-files-unit.spec.ts`
+(the .docx and .pdf written from that fixture open and carry its text, Odia included);
+`frontend/e2e/offline-report-behaviour-unit.spec.ts` (the cache's limits and ownership, and the
+service worker's rules); `backend/tests/test_report_offline_parity.py` (the expected output is what
+the server builds today); and the two `/report/sources` tests in `backend/tests/test_media_entitlement.py`
+(no photograph the caller may not download, and nothing at all for a stranger).
+
+---
 
 ## Closed on 2026-10-09
 

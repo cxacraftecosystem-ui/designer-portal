@@ -37,11 +37,9 @@ than a throttle on the common case.
 
 import asyncio
 from collections.abc import Coroutine
-from typing import Any, TypeVar
+from typing import Any
 
 from app.core.config import get_settings
-
-T = TypeVar("T")
 
 
 def pool_width() -> int:
@@ -54,7 +52,7 @@ def pool_width() -> int:
     return max(1, get_settings().database_connection_limit)
 
 
-async def gather_reads(*coros: Coroutine[Any, Any, T], limit: int | None = None) -> list[T]:
+async def gather_reads[T](*coros: Coroutine[Any, Any, T], limit: int | None = None) -> list[T]:
     """Await independent read coroutines concurrently, at most ``limit`` in flight.
 
     Results come back positionally, so callers can unpack them exactly as they would have read

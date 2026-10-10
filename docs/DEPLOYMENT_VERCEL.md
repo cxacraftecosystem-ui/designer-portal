@@ -15,7 +15,7 @@ Vercel account. Sister documents:
 | Piece | Where it runs | Notes |
 |---|---|---|
 | Next.js web app | **Vercel** | Deployed by `.github/workflows/deploy-frontend.yml`, **after** the backend deploy succeeds ([docs/CI.md](CI.md)) — not by Vercel's Git integration (§3). Every page under a dynamic segment (`[id]`, `[artisanId]`, …) renders on demand in a function pinned to `bom1` (Mumbai); every other page prerenders to static HTML (§8). No route handlers, no server actions, no `fs` access — see §8. |
-| FastAPI API | **AWS EC2** `t3.small`, behind nginx | Not deployed by Vercel. Auto-deployed by `.github/workflows/deploy-backend.yml`. A `t3.micro` until 2026-09-17; [CI.md](CI.md) §1.2 has the measurement that retired it. |
+| FastAPI API | **AWS EC2** `t3.small`, behind nginx | Not deployed by Vercel. Auto-deployed by `.github/workflows/deploy-backend.yml`. A `t3.micro` until 2026-09-17; [CI.md](CI.md) §1.2 has the measurement that retired it. Being rebuilt on Ubuntu 26.04 as a `t3.medium`, declared in `infra/terraform/main.tf` on 2026-10-09. |
 | HTTPS + IPv6 edge for the API | **CloudFront** `https://d3ekigkotd1xa2.cloudfront.net` | The value the browser actually talks to. |
 | Database | **PostgreSQL**, managed | Reached only by the backend. Which provider hosts it is deliberately not restated here — it is recorded once, with its evidence, under "The database" in [ENVIRONMENT.md](ENVIRONMENT.md). |
 | Media | **S3** `designrepo-media-626159998512` (dual-stack endpoints) | Browsers upload straight to S3 with signed PUT URLs — the bytes never pass through Vercel. |
