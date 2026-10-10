@@ -1,8 +1,13 @@
 # Open findings
 
-**Status: 15 open, 1 decision recorded and 1 deferral, 95 closed.** Every count re-counted by
-heading on 2026-10-09; the entries closed on 2026-10-09 were checked against the tree that day, and
-the older closed sections were last re-checked on 2026-09-03.
+**Status: 15 open, 1 decision recorded and 1 deferral, 96 closed.** Every count re-counted by
+heading on 2026-10-10; the entries closed on 2026-10-09 and 2026-10-10 were checked against the tree
+those days, and the older closed sections were last re-checked on 2026-09-03.
+
+**The web's report could not be previewed or generated offline, and the screen said so instead of
+doing it; that was closed on 2026-10-10.** It was never recorded open here — the code comments called
+it deliberate — so it enters and leaves on the same day: one heading under *Closed on 2026-10-10*.
+Counted by heading: 15 open, and 95 + 1 = 96 closed.
 
 **Moving a set-password link's token off the web's request lines narrowed one entry the same day,
 and moved neither number.** The web now checks a link with `POST /api/auth/set-password/check`, the
@@ -638,6 +643,36 @@ not one is answered `200` with `"valid": false` and the reason `malformed`), so 
 new build goes out in a body. The entry stays open until that build has replaced the shipped ones,
 0.0.6 to 0.0.15, which still ask with the GET and read only the query; `link_for`'s switch waits on
 the same, and neither form closes the browser's history.
+
+---
+
+## Closed on 2026-10-10
+
+### [HIGH] The web report could not be previewed or generated without a connection, and the screens narrated the gap (frontend) — **CLOSED 2026-10-10**
+
+**What was wrong.** With no signal the report screen disabled both downloads and told the designer the
+preview, the .docx and the .pdf "are all produced by the server … and this browser deliberately has no
+renderer of its own"; a workshop started offline could not be previewed at all, the per-stage document
+panel said the same, and the public landing page and FAQ said "generating the report is the one part of
+the web half that needs the server" and "the browser's report … needs the API". The handset had built
+its report offline for months. Found by the 2026-10-10 copy sweep (item F17).
+
+**What closed it.** `frontend/lib/offlineReport/` ports the server's builder and writes the files in the
+browser (`docx`, pdfmake, Noto faces under `frontend/public/report-fonts/`); `GET
+/api/design-workshops/{id}/report/sources` hands the device what the builder reads besides the stages,
+kept in IndexedDB with limits and cleared on sign-out; `frontend/public/sw.js` keeps the application's
+files so the screen opens offline. The report screen, the per-stage panel, the landing page and the FAQ
+now describe what happens. [DESIGN_WORKSHOP.md](DESIGN_WORKSHOP.md) §8.1 says which copy is
+authoritative (the server's, whenever there is a connection) and what differs.
+
+**The tests that fail without it.** `frontend/e2e/offline-report-parity-unit.spec.ts` (every block,
+the meta, the theme and every warning of nine template and settings cases against the server's own
+output for `shared/report-parity/workshop.json`); `frontend/e2e/offline-report-files-unit.spec.ts`
+(the .docx and .pdf written from that fixture open and carry its text, Odia included);
+`frontend/e2e/offline-report-behaviour-unit.spec.ts` (the cache's limits and ownership, and the
+service worker's rules); `backend/tests/test_report_offline_parity.py` (the expected output is what
+the server builds today); and the two `/report/sources` tests in `backend/tests/test_media_entitlement.py`
+(no photograph the caller may not download, and nothing at all for a stranger).
 
 ---
 
