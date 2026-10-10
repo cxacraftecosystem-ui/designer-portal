@@ -331,7 +331,7 @@ fun QuestionnaireListScreen(
             Column(modifier = Modifier.weight(1f)) {
                 Text("Show deactivated", color = MaterialTheme.colorScheme.onSurface, fontSize = 13.sp)
                 Text(
-                    "Deactivation is what this app has instead of deleting. The answers are still there.",
+                    "Deactivating hides a questionnaire from new interviews. Its answers are kept.",
                     color = MaterialTheme.field.muted,
                     fontSize = 11.sp
                 )
@@ -352,8 +352,8 @@ fun QuestionnaireListScreen(
             // phone cannot reach the server" look identical on screen and mean opposite things — one
             // of them sends a designer off to build a form they have already built.
             offline -> Text(
-                "The server could not be reached, so this list is not the whole story. " +
-                    "A questionnaire is only ever on the server; nothing is stored on this phone.",
+                "Could not connect, so this list may be incomplete. Questionnaires are kept " +
+                    "online, not on this phone. Try again where there is a signal.",
                 color = MaterialTheme.field.warning,
                 fontSize = 12.sp
             )
@@ -668,9 +668,9 @@ private fun CreateQuestionnaireDialog(
                                 onCreated(created.id)
                             } else {
                                 onError(
-                                    "“${title.trim()}” is saved on this handset. It is sent to the " +
-                                        "repository when there is a connection, and its sections and " +
-                                        "questions can be written once it has arrived."
+                                    "“${title.trim()}” is saved on this phone and uploads when " +
+                                        "there is a connection. Its sections and questions can be " +
+                                        "added once it has uploaded."
                                 )
                                 onDismiss()
                             }

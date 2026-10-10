@@ -638,8 +638,8 @@ fun QuestionnaireDetailScreen(
                     if (blankAnswerRow) {
                         Text(
                             "One of the sittings still holds a blank answer against this question — " +
-                                "somebody opened it and cleared it. The server may refuse to delete it " +
-                                "for that reason. If it does, nothing has been lost: leave the question " +
+                                "somebody opened it and cleared it, so the question may not be deleted. " +
+                                "If it is not, nothing has been lost: leave the question " +
                                 "in place, or remove the sitting's blank answer first.",
                             color = MaterialTheme.field.warning,
                             fontSize = 12.sp
@@ -947,8 +947,8 @@ private fun InterchangeCard(
             if (!mayEdit) {
                 Text(
                     "This one belongs to the designer who created the questionnaire, a designer on " +
-                        "its design workshop, or an admin. If the server refuses it, it will say so " +
-                        "and point you at the question set — which is yours to take.",
+                        "its design workshop, or an admin. If it is not yours to change, you will be " +
+                        "told, and you can still take a copy of the question set.",
                     color = MaterialTheme.field.muted,
                     fontSize = 11.sp,
                     lineHeight = 16.sp

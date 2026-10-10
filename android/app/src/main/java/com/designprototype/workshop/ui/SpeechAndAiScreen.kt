@@ -28,6 +28,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import com.designprototype.workshop.data.DW_TIER2_RUNTIME_PRESENT
 import com.designprototype.workshop.data.DW_TIER_STALE_SENTENCE
 import com.designprototype.workshop.data.DwAiTier
 import com.designprototype.workshop.data.DwAsrModelState
@@ -237,11 +238,15 @@ private fun DwDeviceTierBody(
         }
 
         // ---- One line per tier --------------------------------------------------------------
-        Text(
-            dwTierOfferSentence(DwAiTier.TIER_2, recommendation.tier2),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.field.body
-        )
+        // On-device AI is drawn only when the app can run a model on the phone; until then the line
+        // and the model list below would describe something the screen cannot offer.
+        if (DW_TIER2_RUNTIME_PRESENT) {
+            Text(
+                dwTierOfferSentence(DwAiTier.TIER_2, recommendation.tier2),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.field.body
+            )
+        }
         Text(
             dwTierOfferSentence(DwAiTier.TIER_1, recommendation.tier1),
             style = MaterialTheme.typography.bodySmall,
@@ -281,10 +286,12 @@ private fun DwDeviceTierBody(
             heading = "Speech models",
             onInstall = { models.install() },
         )
-        DwTier2ModelList(
-            choices = recommendation.tier2Choices,
-            measurement = measurement,
-        )
+        if (DW_TIER2_RUNTIME_PRESENT) {
+            DwTier2ModelList(
+                choices = recommendation.tier2Choices,
+                measurement = measurement,
+            )
+        }
 
         OutlinedButton(onClick = { probeCount += 1 }) { Text("Check again") }
     }

@@ -208,9 +208,9 @@ fun retentionOutcomeSentence(result: DwRetentionResultDto): String {
  */
 fun retentionChoiceBlurb(keep: Boolean): String = if (keep) {
     "You have asked for this photograph to be KEPT on the record. It is a photograph of an identity " +
-        "document, so it is stored unmasked — unlike the number itself, which this repository masks " +
-        "everywhere it is shown. Your name is recorded against the decision."
+        "document, so it is stored unmasked — unlike the number itself, which is masked everywhere " +
+        "it is shown. Your name is recorded against the decision."
 } else {
-    "The photograph is not kept — not on this phone and not on the server. Only the number you " +
+    "The photograph is not kept — not on this phone and not online. Only the number you " +
         "confirm is saved."
 }

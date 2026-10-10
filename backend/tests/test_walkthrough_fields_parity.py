@@ -114,13 +114,12 @@ ANDROID_ANCHOR = "private val WALKTHROUGH_FIELDS"
 # `WalkthroughDeck` in `WalkthroughSteps.kt`, and `DIRECTORATE_TRACK.recapLead` says the same thing
 # from the web's side. A join for it would be a join against nothing, asserted green forever.
 #
-# ── AND THE INSPECTOR DECK IS THREE OF THE WEB'S FOUR, BY A DECISION WITH A REGISTER ───────────
+# ── AND THE INSPECTOR DECK, WITH ITS REGISTER OF OMISSIONS ─────────────────────────────────────
 #
-# `inspection-feedback` is not taught on the handset because the capability is absent: no client
-# method for `POST …/feedback` or `.../send-back`, no panel on `InspectionDetailScreen`, and no
-# reader anywhere under `ui/` for the `inspectionFeedback` rows the payload already carries. The
-# decision is argued where the deck is declared; `walkthroughInspectorOmissions` is the one register
-# of it, and this file reads that register rather than hard-coding the id, so the two cannot drift.
+# The handset teaches all four of the web's inspector cards since the feedback box landed on
+# `InspectionDetailScreen`, so `walkthroughInspectorOmissions` is `emptySet()`. It stays the one
+# register of any card the handset leaves out, and this file reads it rather than hard-coding ids,
+# so the two cannot drift.
 # `WalkthroughDecksTest.kt` holds the same register to the web's own list from the Android side.
 WEB_INSPECTOR_ANCHOR = "export const INSPECTOR_STEPS"
 ANDROID_INSPECTOR_ANCHOR = "private val WALKTHROUGH_INSPECTOR_FIELDS"
@@ -334,6 +333,15 @@ def android_inspector_omissions() -> set[str]:
         "register of which web inspector cards this handset leaves out; if it has moved, this file "
         "moves with it."
     )
+    # AN EXPLICITLY EMPTY REGISTER IS A REAL ANSWER: the handset teaches every web inspector card.
+    # Read off the declaration's own line, so a `setOf(` further down the file is never mistaken for it.
+    declaration = source[at : source.index("\n", at)]
+    if "emptySet()" in declaration:
+        return set()
+    assert "setOf(" in declaration, (
+        f"{ANDROID_OMISSIONS_ANCHOR} is neither `emptySet()` nor `setOf(` on its own line, so this "
+        "parser cannot read it"
+    )
     opener = source.index("setOf(", at) + len("setOf(") - 1
     block = _balanced(source, opener, "(", ")")
     # LINE COMMENTS OFF FIRST. `_literals` reads every quoted run it is handed, and the Kotlin side
@@ -418,12 +426,15 @@ def test_both_declarations_still_parse_to_something():
         "a handset inspector entry parsed to an EMPTY listOf(): "
         f"{[i for i, f in android_inspector if not f]}"
     )
-    # AND THE OMISSION REGISTER PARSED TO SOMETHING. If `setOf(…)` ever came back empty, the
-    # equality below would silently become "the handset teaches every web inspector card", which is
-    # a claim nobody made and which would go green the day a card was dropped.
-    assert android_inspector_omissions(), (
-        "the handset's omission register parsed to nothing, so the inspector join below has "
-        "stopped asking whether a card was dropped"
+    # AND THE OMISSION REGISTER WAS READ. Since the feedback box landed it is `emptySet()` — the
+    # handset teaches all four cards — and that is read as an explicit empty set; a `setOf(…)` that
+    # parsed to nothing would be a commented-out entry, which is not the same claim.
+    source = ANDROID_STEPS.read_text(encoding="utf-8")
+    at = source.find(ANDROID_OMISSIONS_ANCHOR)
+    declaration = source[at : source.index("\n", at)]
+    assert "emptySet()" in declaration or android_inspector_omissions(), (
+        "the handset's omission register is a `setOf(…)` that parsed to nothing, so the inspector "
+        "join below has stopped asking whether a card was dropped"
     )
 
 

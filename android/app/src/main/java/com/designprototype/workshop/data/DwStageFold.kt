@@ -163,7 +163,7 @@ data class DwStageFold(
             }
             if (addedRows.isNotEmpty()) {
                 val count = addedRowCount
-                parts += "$count row${if (count == 1) "" else "s"} " +
+                parts += "$count entr${if (count == 1) "y" else "ies"} " +
                     "in ${addedRows.keys.joinToString(", ")}"
             }
             if (addedCustom.isNotEmpty()) {
@@ -172,7 +172,7 @@ data class DwStageFold(
                     "(${addedCustom.take(4).joinToString(", ")}${if (addedCustom.size > 4) ", …" else ""})"
             }
             return buildString {
-                append("This stage has now been read from the server. ")
+                append("This stage has been updated with the latest online version. ")
                 if (parts.isNotEmpty()) {
                     append(parts.joinToString("; "))
                     append(" were already there and not on this phone, and have been added below. ")
@@ -184,9 +184,9 @@ data class DwStageFold(
                     append("You had deleted everything in ")
                     append(sweptRows.keys.joinToString(", "))
                     append(" on this phone, so ")
-                    append("$rows row${if (rows == 1) "" else "s"} the server still holds ")
+                    append("$rows entr${if (rows == 1) "y" else "ies"} still saved online ")
                     append(if (rows == 1) "there has" else "there have")
-                    append(" NOT been added back, and the next save will delete $them on the server — ")
+                    append(" not been added back, and the next save will delete $them online — ")
                     append("including anything added there by somebody else since you deleted. Your ")
                     append("deletion stands, which is what you asked for. ")
                     // THE REMEDY HAS TO BE ONE THE DESIGNER CAN ACTUALLY CARRY OUT, and "add the rows
@@ -197,9 +197,9 @@ data class DwStageFold(
                     // makes it fixable by somebody, instead of an action that would fail.
                     append("If you did not mean to delete $them, say so before this stage is ")
                     append("submitted: ")
-                    append("the repository records a deletion rather than erasing the row, so ")
-                    append(if (rows == 1) "it" else "they")
-                    append(" can be brought back by whoever runs it.")
+                    append("a deleted entry is kept, so an administrator can bring ")
+                    append(if (rows == 1) "it" else "them")
+                    append(" back.")
                 }
                 if (declinedRows.isNotEmpty()) {
                     // REASSURANCE, NOT AN ALARM — see [declinedRows] for why it is not the sentence
@@ -209,13 +209,10 @@ data class DwStageFold(
                     // asking when they count the rows on screen.
                     val rows = declinedRowCount
                     if (isNotEmpty()) append(" ")
-                    append("The $rows row${if (rows == 1) "" else "s"} you deleted in ")
+                    append("The $rows entr${if (rows == 1) "y" else "ies"} you deleted in ")
                     append(declinedRows.keys.joinToString(", "))
-                    append(" ${if (rows == 1) "has" else "have"} NOT come back: the server still ")
-                    append("holds ${if (rows == 1) "it" else "them"} because that deletion has not ")
-                    append("been sent yet, and the next save from this phone removes ")
-                    append(if (rows == 1) "it" else "them")
-                    append(" there.")
+                    append(" ${if (rows == 1) "has" else "have"} not come back. That deletion has ")
+                    append("not been sent yet; the next save from this phone sends it.")
                 }
             }.trim()
         }

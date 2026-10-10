@@ -84,11 +84,11 @@ class DwSketchTraceFailureTest {
     @Test
     fun `a missing bundle blames the build and an old WebView blames the phone`() {
         val bundle = dwTraceSentence(DwTraceFailureKind.BUNDLE_MISSING)
-        assertTrue("a missing bundle must say it is this build: $bundle", bundle.contains("build"))
+        assertTrue("a missing bundle must send the designer to an app update: $bundle", bundle.contains("Update the app"))
         assertFalse("a missing bundle must not send anyone to Play", bundle.contains("Play Store"))
         assertTrue(
-            "a missing bundle must say the handset cannot fix it: $bundle",
-            bundle.contains("Nothing on this handset"),
+            "a missing bundle must say the photograph is safe: $bundle",
+            bundle.contains("unaffected"),
         )
 
         val webview = dwTraceSentence(DwTraceFailureKind.SANDBOX_UNSUPPORTED)

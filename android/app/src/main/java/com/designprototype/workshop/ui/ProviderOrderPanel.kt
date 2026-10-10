@@ -48,7 +48,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.CoroutineScope
@@ -126,6 +125,13 @@ class ProviderOrderState internal constructor(
     var trouble by mutableStateOf<SttTrouble?>(null)
         private set
 
+    /**
+     * True when the load was answered 404: this deployment does not offer the ranking at all, so the
+     * panel draws nothing rather than a card explaining an absent feature.
+     */
+    var absent by mutableStateOf(false)
+        private set
+
     /** A failure that did NOT cost us the live data — a save or a test that was refused. */
     var actionTrouble by mutableStateOf<SttTrouble?>(null)
         private set
@@ -175,6 +181,7 @@ class ProviderOrderState internal constructor(
                 .onFailure { error ->
                     providers = BUILT_IN_STT_PROVIDERS
                     saved = BUILT_IN_STT_PROVIDERS
+                    absent = (error as? retrofit2.HttpException)?.code() == 404
                     trouble = describeSttTrouble(error, "load")
                 }
             loading = false
@@ -300,6 +307,9 @@ fun ProviderOrderPanel(
     LaunchedEffect(state.notice) { state.notice?.let(onMessage) }
     LaunchedEffect(state.actionTrouble) { state.actionTrouble?.let { onError(it.headline) } }
 
+    // The ranking is not offered here at all: draw nothing rather than a card about its absence.
+    if (state.absent) return
+
     ElevatedCard(
         colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surface),
         shape = MaterialTheme.shapes.large,
@@ -327,8 +337,7 @@ fun ProviderOrderPanel(
             state.trouble?.let { trouble ->
                 ProviderTroubleCard(trouble = trouble, busy = state.loading, onRetry = state::load)
                 Text(
-                    "Showing the app's built-in default order. This is not the live ranking, and nothing " +
-                        "below will do anything until the panel can reach the server.",
+                    "Showing the default order. It can be changed once the current order has loaded.",
                     style = MaterialTheme.typography.labelSmall,
                     fontWeight = FontWeight.SemiBold,
                     color = tokens.muted
@@ -391,12 +400,6 @@ fun ProviderOrderPanel(
                     Text(
                         trouble.advice,
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onErrorContainer
-                    )
-                    Text(
-                        trouble.technical,
-                        style = MaterialTheme.typography.labelSmall,
-                        fontFamily = FontFamily.Monospace,
                         color = MaterialTheme.colorScheme.onErrorContainer
                     )
                 }
@@ -701,12 +704,6 @@ private fun ProviderTroubleCard(trouble: SttTrouble, busy: Boolean, onRetry: () 
             style = MaterialTheme.typography.bodySmall,
             color = tokens.onWarningContainer
         )
-        Text(
-            trouble.technical,
-            style = MaterialTheme.typography.labelSmall,
-            fontFamily = FontFamily.Monospace,
-            color = tokens.onWarningContainer
-        )
         if (trouble.retryable) {
             OutlinedButton(onClick = onRetry, enabled = !busy) {
                 if (busy) {
@@ -782,14 +779,13 @@ private fun providerBanners(state: ProviderOrderState): List<Pair<BannerTone, St
 
     if (runnable.isEmpty()) {
         out += BannerTone.WARN to (
-            "None of these engines has an API key, so recordings cannot be transcribed at all yet. The " +
-                "ranking is still saved and starts applying the moment a key is added and passes its test."
+            "None of these engines has an API key, so recordings cannot be transcribed. The ranking is " +
+                "still saved and applies as soon as a key is added and passes its test."
             )
     } else if (verified.isEmpty()) {
         out += BannerTone.INFO to (
-            "Nothing here has been tested yet, so nothing is frozen — rank the engines however you like. " +
-                "Tap Test on the one you want first: until an engine has answered, this list is a " +
-                "preference rather than a promise."
+            "None of these engines has been tested, so you can rank them however you like. Tap Test " +
+                "on the one you want first to confirm its key works."
             )
     } else if (saved.firstOrNull()?.configured == false) {
         out += BannerTone.WARN to (
@@ -803,9 +799,8 @@ private fun providerBanners(state: ProviderOrderState): List<Pair<BannerTone, St
         out += BannerTone.WARN to (
             "This saved order puts ${joinSttNames(stragglers.map { it.name })} above " +
                 "${joinSttNames(verified.map { it.name })}, which ${if (verified.size == 1) "has" else "have"} " +
-                "passed a test. The next save moves the unverified ${if (stragglers.size == 1) "one" else "ones"} " +
-                "below — the pipeline already prefers whatever actually answers, so the list will simply stop " +
-                "disagreeing with it."
+                "passed a test. The next save moves the untested ${if (stragglers.size == 1) "one" else "ones"} " +
+                "below them; transcription already uses whichever engine answers first."
             )
     }
 

@@ -296,29 +296,23 @@ fun dwTraceSentence(kind: DwTraceFailureKind, detail: String = ""): String {
 
         DwTraceFailureKind.IMAGE_UNREADABLE ->
             "This phone could not read that photograph, so there is nothing to trace. The " +
-                "photograph on the record is unaffected — it can still be attached as it is, and " +
-                "the portal can trace it on a laptop."
+                "photograph on the record is unaffected and can still be attached as it is."
 
         DwTraceFailureKind.IMAGE_EMPTY ->
             "That photograph decoded to no pixels at all, so there is nothing to trace. Take or " +
                 "choose another photograph of the sheet."
 
         DwTraceFailureKind.BUNDLE_MISSING ->
-            "This build of the app was packaged without the tracing engine, so no phone running it " +
-                "can trace a sketch. Nothing on this handset will fix it — report the app version, " +
-                "and trace on a laptop in the meantime."
+            "Tracing could not start on this phone. Update the app to the latest version and try " +
+                "again; the photograph and its straightened plate are unaffected."
 
         DwTraceFailureKind.BUNDLE_CONTRACT_MISMATCH ->
-            "The tracing engine packaged with this app is not the version this app knows how to " +
-                "drive, so it has not been run rather than run wrongly. Report the app version; a " +
-                "rebuild is needed. Trace on a laptop in the meantime." +
-                if (trimmed.isEmpty()) "" else " ($trimmed)"
+            "The tracing part of the app needs updating before it can run. Update the app to the " +
+                "latest version; nothing has been attached and the photograph is unaffected."
 
         DwTraceFailureKind.PROTOCOL_UNREADABLE ->
-            "The tracing engine answered with something this app could not read, so nothing has " +
-                "been attached and the photograph is unaffected. Try once more; if it happens " +
-                "again, report the app version and trace on a laptop." +
-                if (trimmed.isEmpty()) "" else " ($trimmed)"
+            "The trace did not finish properly, so nothing has been attached and the photograph " +
+                "is unaffected. Try once more; if it happens again, update the app."
     }
 }
 

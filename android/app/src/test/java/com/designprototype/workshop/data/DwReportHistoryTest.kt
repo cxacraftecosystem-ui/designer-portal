@@ -395,7 +395,7 @@ class DwReportHistoryTest {
     fun `a file made on a phone puts the device's clock in the window, and the limits say so`() {
         val diff = dwDiffExports(history(), "e1", "e2")!!
         assertTrue("e2 was made on a phone with no network", diff.deviceClockInvolved)
-        assertTrue(dwDiffLimits(diff, history()).any { it.contains("device’s clock") })
+        assertTrue(dwDiffLimits(diff, history()).any { it.contains("phone’s clock") })
 
         val serverOnly = history(exports = listOf(export("e1", t0), export("e2", t2, onDevice = false)))
         val quiet = dwDiffExports(serverOnly, "e1", "e2")!!
@@ -514,7 +514,7 @@ class DwReportHistoryTest {
         // device with no network — and the honest narrower fact is that the LOG row needs a server id.
         assertFalse(DW_REPORT_HISTORY_LOCAL_ONLY.contains("no file has been generated"))
         assertTrue(DW_REPORT_HISTORY_LOCAL_ONLY.contains("still made on this phone"))
-        assertTrue(DW_REPORT_HISTORY_LOCAL_ONLY.contains("will not be listed here"))
+        assertTrue(DW_REPORT_HISTORY_LOCAL_ONLY.contains("listed here once the workshop has been uploaded"))
     }
 
     // ── The list's own two notices ───────────────────────────────────────────────────────────────

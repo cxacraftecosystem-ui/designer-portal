@@ -271,9 +271,7 @@ class DwTraceExporterUnavailable(reason: String = DW_TRACE_NO_EXPORTER_SENTENCE)
  * "The SVG download needs nothing extra and works either way."
  */
 const val DW_TRACE_NO_EXPORTER_SENTENCE: String =
-    "This phone can save the drawing as an SVG, which is the full vector line work, and as a " +
-        "picture. PDF, EPS and DXF are not available here yet — the portal can write all three from " +
-        "this same photograph on a laptop when you next have a connection."
+    "This drawing can be saved as an SVG, which is the full vector line work, or as a picture."
 
 /* ────────────────────────────────────────────────────────────────────────────
  * Which route a save takes
@@ -384,5 +382,5 @@ fun dwTraceExportPlan(
  */
 const val DW_TRACE_NO_GEOMETRY_SENTENCE: String =
     "The drawing's shapes did not come back with this trace, so the picture and the three take-away " +
-        "formats cannot be made from it here. The SVG still saves — the engine wrote it on the way " +
-        "out and it is the full vector line work. Trace the sheet again if you need the rest."
+        "formats cannot be made from it here. The SVG still saves, with the full vector line " +
+        "work. Trace the sheet again if you need the rest."

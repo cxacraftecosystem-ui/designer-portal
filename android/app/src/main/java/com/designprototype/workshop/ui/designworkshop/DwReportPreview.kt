@@ -620,8 +620,8 @@ private fun MissingFigure(name: String) {
             .background(MaterialTheme.field.surface100, RoundedCornerShape(8.dp))
     ) {
         Text(
-            "$name — this device cannot read the file, so it is not drawn here and the export will " +
-                "leave it out of the document as well. Nothing on the handset can fetch it back.",
+            "$name could not be opened on this phone, so it is not shown here or included in the " +
+                "exported report.",
             color = MaterialTheme.field.muted,
             fontSize = 11.sp,
             lineHeight = 15.sp,

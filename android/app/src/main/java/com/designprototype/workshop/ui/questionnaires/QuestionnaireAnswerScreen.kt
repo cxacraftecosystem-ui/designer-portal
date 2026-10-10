@@ -662,8 +662,8 @@ private fun AnswerField(
         )
         when {
             locked -> Text(
-                "Someone else recorded this answer. Only they, or an admin, can change it — and " +
-                    "sending it anyway would make the server refuse this whole section.",
+                "Someone else recorded this answer. Only they, or an admin, can change it — a " +
+                    "change here would stop this whole section from saving.",
                 color = MaterialTheme.field.warning,
                 fontSize = 11.sp
             )

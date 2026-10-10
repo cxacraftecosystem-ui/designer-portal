@@ -254,7 +254,7 @@ fun OfflineOutboxTray(
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 Text(
-                    "The server refused these, so waiting for a signal will not send them. Nothing " +
+                    "These could not be saved, so waiting for a signal will not send them. Nothing " +
                         "has been deleted — the record and its photographs are still on this phone.",
                     color = MaterialTheme.field.muted,
                     fontSize = 12.sp,
@@ -270,7 +270,7 @@ fun OfflineOutboxTray(
                     }
 
                     rows.isEmpty() -> Text(
-                        "Nothing is refused any more.",
+                        "Nothing is waiting on you any more.",
                         color = MaterialTheme.field.muted,
                         fontSize = 13.sp,
                     )
@@ -369,7 +369,7 @@ private fun OutboxFailureCard(
             // somewhere to go. It NAMES the field, because the sentence's value and this row's whole
             // remedy are the same fact: which box to change.
             Text(
-                "POINTS AT ${row.danglingNouns.joinToString(" OR ") { it.uppercase() }} THE SERVER DOES NOT HAVE",
+                "POINTS AT ${row.danglingNouns.joinToString(" OR ") { it.uppercase() }} THAT COULD NOT BE FOUND",
                 color = MaterialTheme.field.warning,
                 fontSize = 10.sp,
                 fontWeight = FontWeight.SemiBold,
@@ -408,9 +408,8 @@ private fun OutboxFailureCard(
             // next app run; saying so stops a designer deleting a good record to make a message go
             // away. Same sentence-shape as `skewSentence` on the sync path.
             Text(
-                "This one is not your fault and not something you can fix: this copy of the app and " +
-                    "the server disagree about the shape of the request. It will be tried again by " +
-                    "itself after the app is updated. Do not delete it.",
+                "This one is not your fault and not something you can fix here: the app needs an " +
+                    "update. It will be tried again by itself after the app is updated. Do not delete it.",
                 color = MaterialTheme.field.muted,
                 fontSize = 11.sp,
                 lineHeight = 16.sp,

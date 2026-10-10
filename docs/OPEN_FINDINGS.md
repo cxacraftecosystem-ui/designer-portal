@@ -1,10 +1,16 @@
 # Open findings
 
-**Status: 49 open, 1 decision recorded and 1 deferral, 95 closed.** Every count re-counted by
-heading on 2026-10-10; the entries closed on 2026-10-09 were checked against the tree that day, and
+**Status: 60 open, 1 decision recorded and 1 deferral, 98 closed.** Every count re-counted by
+heading on 2026-10-10 (15 + 18 opened by the Android copy sweep and 29 by the web's that day, less the 2 of those closed
+the same day); earlier counts on 2026-10-09; the entries closed on 2026-10-09 were checked against the tree that day, and
 the older closed sections were last re-checked on 2026-09-03.
 
-**The web's copy rewrite of 2026-10-10 moved 34 gaps off the screens and into this register.** The web app, its landing pages and the backend's user-facing messages used to tell people what the product could not do — "no screen and no endpoint", "coming soon", "this build", "the server refused". That copy was rewritten (branch `copy/dp-web`) so that a screen says what happened and what to do, and every missing feature or known defect it used to narrate is recorded below instead, under *Open*, each opened 2026-10-10. Approval, sign-off and hand-on copy was left to the approvals branch and is not among them. Counted by heading: 15 + 34 = 49 open, and 95 closed.
+**Three Android gaps were closed on 2026-10-10 by building them**: correction suggestions on the
+handset, its own review queue, and inspections that work without signal. Two of them had been opened
+that day by the Android copy sweep and leave the open list; the review queue had no entry and is
+recorded already closed. 33 − 2 = 31 open; 95 + 3 = 98 closed.
+
+**The web's copy rewrite of 2026-10-10 moved 29 gaps off the screens and into this register.** The web app, its landing pages and the backend's user-facing messages used to tell people what the product could not do — "no screen and no endpoint", "coming soon", "this build", "the server refused". That copy was rewritten (branch `copy/dp-web`) so that a screen says what happened and what to do, and every missing feature or known defect it used to narrate is recorded below instead, under *Open*, each opened 2026-10-10. Approval, sign-off and hand-on copy was left to the approvals branch and is not among them. Five more it found were already here from the Android sweep, or had just been closed by building them, and were not entered twice. Counted by heading: 31 + 29 = 60 open, and 98 closed.
 
 **Moving a set-password link's token off the web's request lines narrowed one entry the same day,
 and moved neither number.** The web now checks a link with `POST /api/auth/set-password/check`, the
@@ -641,15 +647,131 @@ new build goes out in a body. The entry stays open until that build has replaced
 0.0.6 to 0.0.15, which still ask with the GET and read only the query; `link_for`'s switch waits on
 the same, and neither form closes the browser's history.
 
+
+**Eighteen entries were opened on 2026-10-10 by the Android copy sweep; sixteen are below.** The
+other two — correction suggestions on the handset, and inspections without signal — were built and
+closed the same day, under *Closed on 2026-10-10*. The Android copy sweep of 2026-10-10 removed every on-screen sentence that admitted a missing feature
+or a known defect, because a screen shown to field staff and ministry officials must describe a
+product that works. The gaps themselves are not closed by that, so each one is recorded here, one
+heading each, and closes only with the change that builds or fixes it.
+
+### [LOW] On-device AI cannot run on the handset, so Speech & AI no longer shows it (android) — opened 2026-10-10
+
+`DW_TIER2_RUNTIME_PRESENT` is false: the APK carries no runtime that can load a language model. Speech
+& AI → "AI on this phone" now draws the on-device AI line and the language-model list only when that
+flag is true, so today every account sees neither. Building the runtime is the work
+([PLAN-AI-TIERS-AND-CUSTOM-SECTIONS.md](PLAN-AI-TIERS-AND-CUSTOM-SECTIONS.md)). Files:
+`android/app/src/main/java/com/designprototype/workshop/data/DwDeviceTier.kt`,
+`android/app/src/main/java/com/designprototype/workshop/ui/SpeechAndAiScreen.kt`.
+
+### [LOW] The offline speech model cannot be installed on today's handsets, so its section is hidden (android, backend) — opened 2026-10-10
+
+Until the server is given the model files ([ASR-MODEL-HOSTING.md](ASR-MODEL-HOSTING.md)) it offers no
+download, and the published archive is a format the handset cannot unpack; the only route is loading
+it by cable ([ASR-MODEL-SIDELOAD.md](ASR-MODEL-SIDELOAD.md)). The "Speech model" section of Speech &
+AI is now hidden in that state and reappears when a download, a copy on the phone or an install
+exists. File: `android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/DwAsrModelInstallUi.kt`.
+
+### [LOW] Subtitles always use the organisation's transcription key, never the designer's own (backend, android) — opened 2026-10-10
+
+The subtitle verb transcribes without the requesting user, so it bills the organisation's key even
+when the designer saved their own; the other AI verbs use the designer's key. The review sheet no
+longer says so. File: `android/app/src/main/java/com/designprototype/workshop/data/DwAiVerbs.kt`.
+
+### [LOW] No AI verbs on a file attached on the web or on another phone (android) — opened 2026-10-10
+
+A media tile whose file this phone never imported shows no caption or subtitle controls, because the
+tile resolves through local descriptors only. The note that said so is gone. Fixing it needs the sync
+to bring down a descriptor carrying the remote media id. File:
+`android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/DwMediaCapture.kt`.
+
+### [LOW] Today's AI allowance cannot be seen before a run (backend, android) — opened 2026-10-10
+
+The allowance comes back only with a run's result or a limit refusal; no route answers "what is left
+today". The handset now shows no count until a run has gone through that day. File:
+`android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/DwAiVerbWording.kt`.
+
+### [LOW] Usage screens still show text the backend writes in technical terms (backend, android) — opened 2026-10-10
+
+The handset stopped printing API paths, HTTP methods and status codes on the usage notice and the
+usage screens, but a person's own trail still shows each request's path (nothing maps a request to a
+screen name), and the notice's descriptions are written by `backend/app/services/usage.py`, which
+still names routes and internal checks. Files:
+`android/app/src/main/java/com/designprototype/workshop/ui/UsageRecordingScreen.kt`,
+`android/app/src/main/java/com/designprototype/workshop/ui/UsageConsentGate.kt`.
+
+### [MEDIUM] An offline correction to a record replaces it whole, overwriting a colleague's later edit (android) — opened 2026-10-10
+
+A queued correction replays the whole record when it uploads, with no version check, so an edit a
+colleague made in between is lost and nobody is told. The toast and the walkthrough no longer narrate
+this. Closing it needs the record's version sent as a precondition with the queued write. Files:
+`android/app/src/main/java/com/designprototype/workshop/data/Offline.kt`,
+`android/app/src/main/java/com/designprototype/workshop/data/WorkshopRepository.kt`.
+
+### [LOW] A stage save can come back with entries removed that the phone did not ask to remove (backend, android) — opened 2026-10-10
+
+When that happens the stage now says plainly that entries were removed during the save and asks the
+designer to check the stage; the cause on the server is not investigated here. File:
+`android/app/src/main/java/com/designprototype/workshop/data/WorkshopSync.kt`.
+
+### [LOW] The "updated with the latest online version" note names fields by their internal keys (android) — opened 2026-10-10
+
+It prints keys such as `loomsWorking` instead of the field labels. File:
+`android/app/src/main/java/com/designprototype/workshop/data/DwStageFold.kt`.
+
+### [LOW] Design review's pool round has no list of workshops that opened pieces to it (android, frontend) — opened 2026-10-10
+
+A reviewer reaches another workshop's pool round only from a link or id somebody sent them. File:
+`android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/DesignReviewScreen.kt`.
+
+### [LOW] Inspectors on the handset see counts, not photographs, recordings, attachments or custom-question answers (android) — opened 2026-10-10
+
+The inspection read carries counts only, and a workshop's own custom-question answers are counted and
+not shown. Files: `android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/InspectionDetailScreen.kt`,
+`android/app/src/main/java/com/designprototype/workshop/data/DesignWorkshopInspections.kt`.
+
+### [LOW] The record editor offers Save on another person's record to roles below Professor (android) — opened 2026-10-10
+
+Editing someone else's record is Professor and above, but the handset's editor does not check
+ownership and rank, so an Inspector / Reviewer or a Designer can type into such a record and is
+refused at the save. The walkthrough no longer narrates the refusal; it tells the reviewer to send
+the record back instead. File: `android/app/src/main/java/com/designprototype/workshop/MainActivity.kt`
+(`EditScreen`).
+
+### [LOW] A report generated on the phone leaves out what the phone does not hold (android) — opened 2026-10-10
+
+It has no transcript annexure even when stage 20 asks for transcripts, no machine-assisted text
+annexure, no plates for photographs the phone never downloaded (it says they are in the online
+workshop record), and custom answers of a type the phone cannot read print as held in the online
+record. The export screen and the document no longer narrate the first two. Files:
+`android/app/src/main/java/com/designprototype/workshop/report/ReportSettings.kt`,
+`android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/ReportScreen.kt`.
+
+### [LOW] Reports made before a workshop is first uploaded never reach its report history (android) — opened 2026-10-10
+
+File: `android/app/src/main/java/com/designprototype/workshop/data/DwReportHistory.kt`.
+
+### [LOW] Tracing materials differ between the phone and the web (android, frontend) — opened 2026-10-10
+
+The web has no Metalwork material and one "Wood & stone carving" where the phone has two, so the web
+cannot show which was chosen on the phone. The phone's picker no longer says so. File:
+`android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/DwTraceKotlinPresets.kt`.
+
+### [LOW] Handset copy pinned word for word to the web still carries backend wording (android, frontend) — opened 2026-10-10
+
+Three registers are held to the web by tests and so could not change on the Android side alone: the
+walkthrough's "What the screen asks for" chips (`backend/tests/test_walkthrough_fields_parity.py`;
+for example "…already in the repository…", "…with no deployment", "there is no filter by designer,
+district or date on this list"), the dashboard group notes (`DashboardTileParityTest`), and one
+workshop-code sentence ("…once it has reached the server…", `backend/tests/test_workshop_code_letters.py`).
+They change together with `frontend/components/guide/steps.ts`, `frontend/components/guide/inspectorSteps.ts`,
+`docs/WALKTHROUGH.md`, `frontend/app/(protected)/dashboard/page.tsx` and `frontend/lib/workshopCodes.ts`.
+
 ---
 
 ### [MEDIUM] Nobody can sign in with a Microsoft or Yahoo account (frontend, android, backend) — opened 2026-10-10
 
 F3. As of 2026-10-10 the product has no Microsoft or Yahoo sign-in: there is no OAuth endpoint for either provider in `backend/app/api/routes/auth.py` and no allow-list check for them, so only a password or Google can sign anybody in. `frontend/app/login/page.tsx` used to draw "Continue with Microsoft" and "Continue with Yahoo" buttons with a "Coming soon" badge (`ComingSoonBadge`) and a toast from `comingSoon()` ("… sign-in is coming soon" / "… for now."); those controls and sentences were removed in the 2026-10-10 copy rewrite. The Android sign-in screen in `android/app/src/main/java/com/designprototype/workshop/MainActivity.kt` still draws them as of 2026-10-10 (the Android stream owns it). Closing it would take an OAuth flow for each provider in `backend/app/api/routes/auth.py`, checked against the same platform allow-list as Google sign-in, and then the buttons on both clients.
-
-### [MEDIUM] An offline correction can overwrite a colleague's later edit of the same record without warning (frontend, android, backend) — opened 2026-10-10
-
-F23. As of 2026-10-10 a correction made with no signal is saved whole when it uploads — on the web through `saveOrQueue` in `frontend/lib/offline.ts`, on Android through the outbox in `android/app/src/main/java/com/designprototype/workshop/data/Offline.kt` — so if a colleague changed the same record in the meantime, their change is overwritten; nothing checks for a conflict or merges the two, and nobody is told. The public landing FAQ (`frontend/components/hero/HeroFAQ.tsx`, the `FAQS` entry "Does it work offline?") used to say so ("an offline edit replays the whole record, so a colleague's later change to the same row is overwritten rather than merged"); that sentence was removed in the 2026-10-10 copy rewrite (the Android walkthrough and the `Offline.kt` toast still say it as of 2026-10-10). Closing it would take a version or updated-at check on the record update routes, with the queued edit carrying the version it started from, and a conflict answer both clients show so the person can resolve it.
 
 ### [LOW] Usage figures cannot tell web requests from Android requests (frontend, android, backend) — opened 2026-10-10
 
@@ -667,17 +789,9 @@ F26 (3 of 3). As of 2026-10-10 nothing deletes usage records on a schedule: an a
 
 F15. As of 2026-10-10 a join card (one person creates the design workshop, colleagues scan a card to join the same one) can only be made and scanned in the Android app; the web has no join-card screen. The designer walkthrough said so on the Cards & tags card (`frontend/components/guide/steps.ts`, the `design-workshop-codes` step's `watch`, "there is no join card on the web"), and that bullet was removed in the 2026-10-10 copy rewrite. Closing it means a web join-card panel on `frontend/app/(protected)/design-workshops/[id]/codes/page.tsx` that issues a card and accepts a scanned one, then teaching it again on that card.
 
-### [MEDIUM] Reports generated in the Android app leave out transcripts and machine-assisted text (android) — opened 2026-10-10
-
-F18. As of 2026-10-10 a report generated on the handset cannot include recording transcripts or machine-assisted text, and the delivered file says so; only the web-generated report carries them. The designer walkthrough's Report card (`frontend/components/guide/steps.ts`, the `design-workshop-report` step's `watch`) named the two missing annexures, and that sentence was removed in the 2026-10-10 copy rewrite; the card now only says the phone report uses the same template and settings. Closing it means the handset fetching transcripts and AI layers while online and rendering them in its report writers, after which the warnings printed inside the file can go.
-
 ### [MEDIUM] Nobody can be sent an email by the portal — sign-in links must be passed on by hand (backend) — opened 2026-10-10
 
 F2. As of 2026-10-10 the designer-portal has no mail sender: a sanction order's one-time sign-in link (and every password link) is shown on screen once and the officer copies it to the designer themselves. The directorate walkthrough said so in `frontend/components/guide/directorateSteps.ts` (`DIRECTORATE_STEPS`, the `ministry-sanction-order` card: "NOTHING IS EMAILED, BY ANYBODY, EVER. This product has no mail sender…") and in `frontend/components/guide/tracks.ts` (`DIRECTORATE_TRACK.checklist`: "Nothing is emailed by this product…"); both sentences were removed in the 2026-10-10 copy rewrite and the cards now only describe copying the link. Closing it needs a mail adapter in the backend, a sender identity, and a decision on whether one-time credentials may travel by email at all.
-
-### [MEDIUM] Inspectors cannot file or read correction suggestions on the Android app (android) — opened 2026-10-10
-
-F6. As of 2026-10-10 the handset's inspection screens (`android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/InspectionDetailScreen.kt`) neither file a correction suggestion, nor send a report back, nor show the suggestions already filed, although the inspection detail it reads carries them. The web walkthrough said so in `frontend/components/guide/tracks.ts` (`INSPECTOR_TRACK.recapLead`: "Correction suggestions is web-only — the handset can neither file a suggestion nor read the ones already on a workshop…"); the sentence was removed in the 2026-10-10 copy rewrite. Closing it needs client methods for the feedback and send-back calls, a panel on the inspection detail screen, and the inspector deck's Android card (removing `inspection-feedback` from `walkthroughInspectorOmissions` in `android/app/src/main/java/com/designprototype/workshop/ui/WalkthroughSteps.kt`).
 
 ### [LOW] A co-designer's first sign-in link cannot be re-issued, and an imported sanction order shows no links (backend) — opened 2026-10-10
 
@@ -699,9 +813,9 @@ F14. As of 2026-10-10 a correction suggestion filed without sending the report b
 
 F5. As of 2026-10-10 the inspection read (`read_workshop_under_inspection` in `backend/app/api/routes/design_workshop_inspections.py`) and the oversight read (`read_overseen_workshop`) carry media fields only as ids that an inspector or Assistant/Regional Director cannot resolve, and the questions behind a workshop's custom answers are served only through `GET /design-workshops/{id}/custom-sections`, which those readers cannot reach. `frontend/app/(protected)/design-workshop-inspections/[id]/page.tsx` and `frontend/app/(protected)/officers/monitored/[id]/page.tsx` (`ReadField`, `ReadStage`, and the read-only banner) used to say that an inspection/oversight read "does not carry photographs, recordings or attachments" and that the questions "are read through a route an inspection does not reach"; those sentences were removed in the 2026-10-10 copy rewrite, leaving only the counts ("{n} files recorded here", "{n} answers recorded to questions…"). Closing it needs an owner decision on whether post holders may see media, then a per-file media entitlement for post holders and the custom-section definitions folded into both reads.
 
-### [MEDIUM] Inspection notes cannot be saved offline to send later (frontend, android) — opened 2026-10-10
+### [MEDIUM] Inspection notes cannot be saved offline in the browser to send later (frontend) — opened 2026-10-10
 
-F12. As of 2026-10-10 filing a correction suggestion or sending a report back from `frontend/app/(protected)/design-workshop-inspections/[id]/page.tsx` (`FeedbackPanel`) is online-only: there is no outbox for `recordInspectionFeedback` / `sendWorkshopBackForRevision`, so with no signal nothing is filed. The page's failure message used to narrate "There is no offline queue on an inspection"; it was removed in the 2026-10-10 copy rewrite and now reads "Couldn't send your note. Check your connection and try again — your text is still in the box." Closing it would mean queueing the note in the outbox (the server already accepts a `recordedAt` moment on these routes) and draining it on reconnect, on web and Android.
+F12. As of 2026-10-10 filing a correction suggestion or sending a report back from `frontend/app/(protected)/design-workshop-inspections/[id]/page.tsx` (`FeedbackPanel`) is online-only: there is no outbox for `recordInspectionFeedback` / `sendWorkshopBackForRevision`, so with no signal nothing is filed. The page's failure message used to narrate "There is no offline queue on an inspection"; it was removed in the 2026-10-10 copy rewrite and now reads "Couldn't send your note. Check your connection and try again — your text is still in the box." Closing it would mean queueing the note in the outbox (the server already accepts a `recordedAt` moment on these routes) and draining it on reconnect, as the Android app has done since 2026-10-10.
 
 ### [MEDIUM] The web report cannot be previewed or generated offline (frontend) — opened 2026-10-10
 
@@ -722,14 +836,6 @@ F9. As of 2026-10-10 "Show the full text" on the AI layers screen fetches the te
 ### [MEDIUM] Custom questions cannot be a photo, file, recording, formatted text, coordinates or a record reference (frontend) — opened 2026-10-10
 
 F19. As of 2026-10-10 a workshop's own custom questions are limited to the plain answer types in `V1_CUSTOM_TYPES` (`frontend/lib/customSections.ts`; the server's own check is `validate_definition` in `backend/app/services/custom_sections.py`); the editor only offers those. The validation message in `customDefinitionProblems` used to add that the other types "are deliberately not available" and why; that sentence was removed in the 2026-10-10 copy rewrite (web and backend now say only which types to choose). Closing it means making custom-question answers carry media and references through stage sync and the report, on web and Android, before widening `V1_CUSTOM_TYPES`.
-
-### [LOW] Subtitles always run on the organisation's transcription key, never the designer's own AI key (backend) — opened 2026-10-10
-
-F20. As of 2026-10-10 the subtitle verb (`subtitle_ai_layer` in `backend/app/api/routes/design_workshops.py`) transcribes with the deployment's key even when the designer has supplied their own, unlike the other four AI verbs. The web used to say so in a note exported from `frontend/lib/aiVerbs.ts` and shown in `frontend/components/designworkshop/AiVerbReviewDialog.tsx` and `frontend/components/designworkshop/MediaAiVerbs.tsx`; the note and both uses were removed in the 2026-10-10 copy rewrite. Closing it needs `ai.transcribe_timed_bytes` to accept a user id and resolve keys through `user_ai_keys.resolve` like the other verbs.
-
-### [MEDIUM] Designers cannot browse the workshops that have opened pieces to the design-review pool (frontend, backend, android) — opened 2026-10-10
-
-F8. As of 2026-10-10 there is no list of the design workshops holding at least one sketch or prototype opened to the wider pool, so a designer can reach another workshop's pool round only from a link or id its designers sent them; the dropdown on `/design-review` lists only the workshops the reader can already open. `frontend/app/(protected)/design-review/page.tsx` (`DesignReview`, the `design-review-why` and `design-review-scope` paragraphs) used to say so on screen ("What does not exist yet is a list of every workshop that has opened a piece to the pool…", "nothing lists those workshops"); those sentences were removed in the 2026-10-10 copy rewrite and the page now only tells the reader to pick a workshop or paste a link or id. Closing it needs a pool-scoped listing route on the design-ratings router (title, date and per-entity open counts only, as the page's own header comment sketches) and a chooser on `/design-review` and on Android's `DesignReviewScreen.kt`.
 
 ### [LOW] 3D model files have no viewer, and the report shows only "1 document attached" for them (frontend, backend, android) — opened 2026-10-10
 
@@ -778,6 +884,47 @@ D6. As of 2026-10-10 the report export in `backend/app/services/design_workshops
 ### [LOW] A correction suggestion cannot be filed on a workshop whose submission count reads zero (backend) — opened 2026-10-10
 
 D7. As of 2026-10-10 `feedback_plan` in `backend/app/schemas/design_workshop_review_loop.py` refuses a suggestion when the workshop's `submissionRound` is 0, which can only happen if a caller skipped copying it from the workshop. The refusal used to name the CHECK constraint `DwInspectionFeedback_round_check` and say a database refusal reaches the officer as a 500; in the 2026-10-10 copy rewrite it became "This suggestion couldn't be filed because the workshop's submission couldn't be read. Reload the workshop and try again." Closing it means proving no route can reach `feedback_plan` with a zero round (or deriving the round inside it) so the officer never sees this.
+
+## Closed on 2026-10-10
+
+Three Android parity gaps that the handset's own screens and walkthrough admitted in so many words,
+found by the sweep of customer-visible copy (items F6, F7 and F12 of that sweep) and closed by
+building the features. None moved a permission: the handset calls the routes the web calls, behind
+the same doors.
+
+### [MEDIUM] An inspector on the handset could not read the correction suggestions on a workshop, file one, or send a report back (android) — **CLOSED 2026-10-10**
+
+The walkthrough's closing card said "FILING A CORRECTION IS A BROWSER JOB … this app cannot show you
+the suggestions already filed on a workshop either", and the web's inspector recap said the same.
+Both were true: `WorkshopRepositoryApi` declared no `POST …/feedback` or `…/send-back`, and nothing
+under `ui/` read the `inspectionFeedback` rows the payload carried. `InspectionDetailScreen` now draws
+`InspectionFeedbackPanel` above the stages — the register round by round with who filed each row,
+the box, the stage choice, and the two buttons, the send-back behind a confirmation — gated on the
+payload's `mayRecordFeedback` and on the report being under review, exactly as the web's panel is.
+The inspector deck teaches the `inspection-feedback` card and `walkthroughInspectorOmissions` is
+empty. Pinned by `InspectionNotesSyncTest` (routes, bodies, answers) and `WalkthroughDecksTest`.
+
+### [MEDIUM] The handset had no review queue of its own (android) — **CLOSED 2026-10-10**
+
+The menu's Review row opened the record browser and the walkthrough said "THIS HANDSET HAS NO
+SEPARATE REVIEW QUEUE". Review now opens `Screen.ReviewQueue`: for an Inspector / Reviewer, the
+assigned workshops whose report is waiting for a decision, the ones sent back below them, a count of
+the rest and a line on any of the inspector's notes still on the phone; then the record queue every
+reviewer shares. Pinned by `DesignWorkshopInspectionFeedbackTest` (the split) and
+`InspectionNotesSyncTest` (the list read, live and kept).
+
+### [MEDIUM] An inspection could not be read or annotated without signal (android) — **CLOSED 2026-10-10**
+
+`InspectionListScreen` said "This screen needs a connection … never kept on this phone". The last
+read of each assigned workshop and the last list are now kept per account and shown with the day
+they were saved; a read that answers 404 deletes them. A suggestion or send-back is kept on the phone
+first and sent when there is signal, after the workshop is read again: a report no longer under
+review, or handed in again since the note was written, holds the note with the reason and sends
+nothing; the server's own refusal (the 422 the web shows when a report has moved on) holds it the same
+way; an answer lost on the way back is recognised on the register by its device moment and not filed
+twice; nothing queued is deleted except by its author. The pass also runs on the app's
+"network came back" hook. Pinned by `InspectionNotesSyncTest` and
+`DesignWorkshopInspectionFeedbackTest`.
 
 ## Closed on 2026-10-09
 

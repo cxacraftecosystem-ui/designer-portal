@@ -210,7 +210,7 @@ data class DwEligibleViewers(
  */
 fun dwViewerOfferNotice(offer: DwEligibleViewers): String? = when {
     offer.truncated && offer.users.isEmpty() ->
-        "Some eligible accounts could not be listed, and no search can reach them — the server log says why."
+        "Some eligible accounts could not be listed, and searching will not bring them up. Try again later."
     offer.truncated && offer.search == null ->
         "Too many accounts to show them all — search a name or email to reach the rest."
     offer.truncated -> "Too many matches to show them all — narrow the search."
@@ -565,11 +565,11 @@ fun dwViewerFailureMessage(
     val unknownOutcome = attempt == DwViewerAttempt.SAVE
     return when {
         status == null ->
-            "This phone could not reach the repository. Deciding who may open a workshop is a " +
-                "change on the server, so unlike the 22 stages it cannot be done offline. " +
+            "Could not connect. Changing who may open a workshop needs a connection — try again " +
+                "when you have signal. " +
                 if (unknownOutcome) {
-                    "The request may still have landed — open this screen again on a connection to " +
-                        "see where the workshop stands before you save anything else."
+                    "Your change may already have been saved — open this screen again with a " +
+                        "connection to check where the workshop stands before you change anything else."
                 } else {
                     "Nothing has been changed."
                 }
@@ -581,34 +581,33 @@ fun dwViewerFailureMessage(
         // The server's own words FIRST, because "Admin access required" is what was actually
         // decided; the clause after it is why, and who to ask — for a reader it can be about.
         status == 403 && readerIsAdmin ->
-            (said?.asSentence() ?: "The repository refused this. ") + "Nothing was changed."
+            (said?.asSentence() ?: "This was not allowed. ") + "Nothing was changed."
 
         status == 403 ->
             said.asSentence() +
-                "Deciding who may open a design & prototype workshop is administration, so it is " +
-                "open to admins and the master admin only — not to the designer who created it. " +
-                "Nothing was changed."
+                "Deciding who may open a design & prototype workshop is open to admins and the " +
+                "master admin only. Nothing was changed."
 
         status == 404 ->
             said.asSentence() +
-                "This workshop is not on the server — it may have been deleted since this screen " +
+                "This workshop could not be found — it may have been deleted since this screen " +
                 "was opened. Nothing was changed."
 
         // The server's own 422 already names the offending account and already ends with "Nothing
         // was changed." — see `_assert_every_id_may_be_granted`. Repeating either would be this
         // screen talking over the one message written for exactly this moment.
         status == 422 ->
-            "The repository would not accept this. " +
+            "This could not be saved. " +
                 (said ?: "One of the accounts named cannot be given access. Nothing was changed.")
 
         status >= 500 ->
-            (said ?: "The repository had a problem answering.") +
+            (said ?: "Something went wrong.") +
                 " This is not a connection problem. " +
                 if (unknownOutcome) {
-                    "Part of the change may have landed — open this screen again to see where the " +
+                    "Part of the change may have been saved — open this screen again to see where the " +
                         "workshop stands."
                 } else {
-                    "Nothing was changed; it is worth trying again in a moment."
+                    "Nothing was changed. Try again in a moment."
                 }
 
         else -> said ?: "That did not go through."

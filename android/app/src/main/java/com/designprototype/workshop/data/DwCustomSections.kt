@@ -594,9 +594,8 @@ fun undrawableCustomFieldsWithValues(
  * `data={}, dropped=('other',)`).
  */
 fun dwCustomUnsupportedNote(type: String): String =
-    "This question is a ${type.ifBlank { "type this app was not told the name of" }} and this " +
-        "version of the app cannot draw one. Whatever is already recorded against it is kept and is " +
-        "not changed by anything you do here. Answer it on the web, or update the app."
+    "Update the app to answer this question. Whatever is already recorded for it is kept and is " +
+        "not changed by anything you do here."
 
 /**
  * What to say beside the export buttons about this workshop's own questions.
@@ -651,17 +650,15 @@ fun dwCustomUnsupportedNote(type: String): String =
  */
 fun dwCustomSectionWarnings(copy: DwCustomCopy, answersHeld: Boolean = false): List<String> {
     if (copy != DwCustomCopy.UNKNOWN) return emptyList()
-    val tail = "Open this workshop on this phone once while you have a connection and they are kept " +
-        "here for every export afterwards, including offline ones. The office's copy of this report " +
-        "will carry them either way."
+    val tail = "Open this workshop on this phone once while you have a connection and they are " +
+        "included in every export afterwards, including offline ones."
     return listOf(
         if (answersHeld) {
-            "This device holds answers to questions that belong to this workshop's own sections, and " +
-                "it has not read the sections themselves — so those answers are not in this file, " +
-                "because nothing here knows what they were asked. $tail"
+            "This device holds answers to this workshop's own questions, but not the questions " +
+                "themselves, so those answers are not in this file. $tail"
         } else {
             "If this workshop has questions of its own, the answers recorded against them are not in " +
-                "this file. This device has not yet read this workshop's custom sections. $tail"
+                "this file. $tail"
         }
     )
 }

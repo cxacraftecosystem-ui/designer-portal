@@ -137,7 +137,7 @@ class WorkshopDraftDowngradeRefusalTest {
         val alert = WorkshopDraftStore.takeAlert()
         assertNotNull("a refused save must not be silent either", alert)
         assertTrue(alert!!.contains("could not be set aside"))
-        assertTrue("the alert must not contradict the refusal: $alert", alert.contains("refused"))
+        assertTrue("the alert must not contradict the refusal: $alert", alert.contains("this save was stopped"))
         assertTrue(alert.contains("Install the newer version again"))
     }
 

@@ -165,22 +165,21 @@ internal object DwAsrSpeechModel {
         // rather than trusted from whoever built the status.
         if (!dwAsrModelMayLoad(status)) {
             return Outcome.Refused(
-                "the speech model on this phone was not verified in this run, so it was not opened"
+                "the speech model on this phone has not been checked yet"
             )
         }
         val model = status.model
-            ?: return Outcome.Refused("no speech model is pinned in this build")
+            ?: return Outcome.Refused("there is no speech model on this phone")
         val head = model.headFor(languageTag)
             ?: return Outcome.Refused(
-                "the speech model on this phone has no head for $languageTag, so there is no graph " +
-                    "that would write this language down"
+                "the speech model on this phone does not write this language"
             )
         val dir = dwAsrModelDir(context, model.modelId)
         val graph = File(dir, head.graphFileName)
         val tokens = File(dir, head.tokensFileName)
         if (!graph.isFile || !tokens.isFile) {
             return Outcome.Refused(
-                "the speech model's files are not where this app installed them (${dir.absolutePath})"
+                "the speech model's files are missing from this phone"
             )
         }
         if (samples.isEmpty()) return Outcome.Text("", 0L)

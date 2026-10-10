@@ -254,7 +254,7 @@ class DwSketchTraceWireTest {
             assertTrue("$bad was sent to the engine", failure is DwTraceHostFailure)
             assertTrue(
                 "the refusal must name the key: ${failure?.message}",
-                failure!!.message!!.contains("output.simplify"),
+                (failure as DwTraceHostFailure).detail.contains("output.simplify"),
             )
         }
     }

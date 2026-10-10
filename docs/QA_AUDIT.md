@@ -217,6 +217,18 @@ demand and never a gate, since 2026-09-03. No run of it executed a test until 37
 
 The gates on Android are therefore: it compiles, and its unit tests pass. Lint is advisory (§4).
 
+**The inspector's note queue is the newest offline path, and it is pinned in the unit suite rather
+than on a device** (2026-10-10). `InspectionNotesSyncTest` drives `WorkshopRepository` over a real
+Retrofit and a scripted transport: a suggestion and a send-back reach their two routes with the
+device's `recordedAt` and no round; a note written without signal is kept and waits; a report that
+moved on (withdrawn, or handed in again) HOLDS the note and posts nothing; the server's
+not-under-review 422 holds it too; a 5xx leaves it waiting; an answer lost on the way back is found
+on the register and not filed twice; a 404 holds every note on that workshop and deletes the kept
+read. `DesignWorkshopInspectionFeedbackTest` pins the pure rules and the file store (another
+account's notes and reads are never handed back; a damaged notes file is set aside, never emptied).
+What no automated check drives is the panel itself and a real loss of signal on a device — the
+same gap as the rest of the outbox, named in the next paragraph.
+
 **What is still genuinely untested on Android is the UI and anything needing a device** — the
 instrumented set runs only when somebody dispatches the emulator job, and none of its classes drives
 a screen, a permission prompt, the camera, or the offline outbox against real storage, so no

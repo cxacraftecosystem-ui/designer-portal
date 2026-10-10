@@ -607,9 +607,8 @@ fun dwAdoptCandidateNotice(
     listTruncated: Boolean,
 ): String? = when {
     offline ->
-        "The server could not be reached, so this list holds only the workshops this phone already " +
-            "knows about and cannot be checked against it. Moving waits for signal — nothing would " +
-            "be sent before then anyway."
+        "Could not connect, so this list holds only the workshops already on this phone. Moving " +
+            "waits for a connection, and nothing is sent before then."
     searched ->
         "This list is narrowed by what you typed in the search box on the workshops screen. If the " +
             "workshop you are moving this into is not here, close this, clear that box, and open " +
@@ -638,11 +637,11 @@ fun dwAdoptCandidateNotice(
  * workshop the admin already made is how a person walks up a hill for nothing.
  */
 fun dwAdoptNoCandidatesMessage(offline: Boolean): String = if (offline) {
-    "There are no workshops on this phone to move it into, and the server could not be reached — " +
-        "so this list may not be the whole story. Ask an admin to create the workshop, then open " +
+    "There are no workshops on this phone to move it into, and the app could not connect — " +
+        "so this list may not be complete. Ask an admin to create the workshop, then open " +
         "this list once with a connection and try again."
 } else {
-    "No workshop on the server is open to this account yet. A design workshop is visible only to " +
+    "No design workshop is open to this account yet. A design workshop is visible only to " +
         "the designers named on it, so ask an admin to create one for your cluster and name you " +
         "as one of its designers — or to send you its join card, which lets you in yourself from " +
         "“Workshop access”. It appears here and this draft can then be moved into it. Nothing on " +

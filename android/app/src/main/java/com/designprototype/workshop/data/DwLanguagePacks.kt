@@ -417,16 +417,15 @@ fun dwPackStateSentence(label: String, state: DwPackState): String = when (state
     // $label — this phone was never asked — and it does not tell the designer to give up on it,
     // which is what the UNSUPPORTED sentence below used to do to seventeen working languages.
     DwPackState.NO_OFFLINE_PACK ->
-        "This phone's speech service offers no offline pack for $label — the list of packs it " +
-            "carries is Google's, not this app's, and most Indian languages are not on it. " +
-            "Dictation in $label is handed to the online recogniser instead, so it needs a " +
-            "connection. If it fails even with signal, type the answer in."
+        "This phone's speech service offers no offline pack for $label. Dictation in $label uses " +
+            "the online recogniser instead, so it needs a connection. If it fails even with signal, " +
+            "type the answer in."
     DwPackState.UNSUPPORTED ->
         "This phone's speech recogniser does not offer $label, offline or online. Type the answer " +
             "in, or pick another language."
     DwPackState.UNKNOWN ->
-        "This phone cannot say whether $label is installed. Android 13 added the way to ask; on " +
-            "older versions dictation will simply tell you if the language is missing."
+        "This phone cannot say whether $label is installed. Dictation will tell you if the language " +
+            "is missing."
 }
 
 /**

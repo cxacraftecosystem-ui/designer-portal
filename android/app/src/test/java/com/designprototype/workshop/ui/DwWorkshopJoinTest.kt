@@ -129,7 +129,7 @@ class DwWorkshopJoinTest {
         )
         assertTrue(
             "and the ordering rule is stated so nobody infers a different one",
-            note.contains("reached the server first"),
+            note.contains("Whichever scan was uploaded first counts."),
         )
     }
 

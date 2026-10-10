@@ -391,7 +391,7 @@ class DwDictationConsentTest {
         assertTrue("The server's own sentence is passed through: $note", note.contains(refusal))
         assertFalse(
             "It will not arrive on the next open, so do not say it will: $note",
-            note.contains("goes to the server the next time"),
+            note.contains("uploads the next time"),
         )
         assertTrue(
             "And the gate here still honours it, said first: $note",
@@ -400,7 +400,7 @@ class DwDictationConsentTest {
 
         // The ordinary courtyard case is unchanged and does NOT read as a failure.
         val offline = dwConsentRecordedNote(DwTier3Consent.GRANTED, synced = false, storedOnDevice = true)
-        assertTrue(offline.contains("goes to the server the next time"))
-        assertFalse(offline.contains("would not record"))
+        assertTrue(offline.contains("uploads the next time"))
+        assertFalse(offline.contains("could not be saved online"))
     }
 }
