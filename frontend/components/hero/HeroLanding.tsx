@@ -1054,13 +1054,10 @@ export default function HeroLanding({ census }: { census?: CorpusCensus }) {
           the API does not have, and would read to an admin as a promise their records are fenced.
         */}
         <p className="mt-3 max-w-2xl text-base leading-relaxed text-ink-500">
-          Six of the eight also file under a design &amp; prototype workshop — everything captured
-          at one, which is artisans, products, processes, tools, media and questionnaires. A craft
-          is a tradition many workshops document and the field workshop is itself a container, so
-          neither carries the box. Where it is there it arrives already holding the workshop you
+          Six of the eight — artisans, products, processes, tools, media and questionnaires — can
+          also be filed under a design &amp; prototype workshop. The form starts on the workshop you
           were most recently given access to, so a fortnight of records lands in the right place
-          without anybody choosing it on every record. It is a suggestion and not a fence: the list
-          still offers every workshop you are on, and a record can be filed under none of them.
+          without choosing it each time. You can pick any other workshop you are on, or none.
         </p>
         <div className="mt-12 grid grid-cols-2 gap-4 md:grid-cols-4">
           {RECORD_TYPES.map((record) => (
@@ -1160,8 +1157,8 @@ export default function HeroLanding({ census }: { census?: CorpusCensus }) {
             there read as a fault in the app. */}
         <p className="relative mx-auto mt-3 max-w-xl text-white/75">
           Sign in with your researcher account, or with Google. Access is by invitation: an
-          administrator admits your address first, and a new sign-in from an address that is not yet
-          on the list becomes a request for approval rather than an account.
+          administrator approves your address first, and signing in from an address that isn&rsquo;t
+          on the list sends them a request for approval.
         </p>
         <div className="relative mt-8 flex flex-wrap items-center justify-center gap-4">
           <Link
@@ -1203,10 +1200,9 @@ export default function HeroLanding({ census }: { census?: CorpusCensus }) {
               strengthen the second into a claim about funding or sanction that nothing here checks.
             */}
             <p className="text-base leading-relaxed text-ink-700">
-              A Centre of Excellence project at IIT Kharagpur. The document this app writes is
-              addressed to a real office: its default template is a submission to the Office of the
-              Development Commissioner (Handicrafts), and the cover carries the Government of India
-              and Ministry of Textiles line above it.
+              A Centre of Excellence project at IIT Kharagpur. Its default report template is a
+              submission to the Office of the Development Commissioner (Handicrafts), with the
+              Government of India and Ministry of Textiles line on the cover.
             </p>
           </div>
 
@@ -1277,9 +1273,7 @@ export default function HeroLanding({ census }: { census?: CorpusCensus }) {
             `<img>` marks above avoid with `alt=""`, for the same reason.
           */}
           <p className="max-w-2xl text-sm leading-relaxed text-ink-500">
-            The Centre keeps its own site — its account of itself, its research, and the crafts it
-            holds. It is a separate application rather than a section of this one, so this link
-            leaves the repository:{" "}
+            Visit the Centre&rsquo;s website for its research and the crafts it holds:{" "}
             <a
               href={CENTRE_OF_EXCELLENCE_HREF}
               target="_blank"

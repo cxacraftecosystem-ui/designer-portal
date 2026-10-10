@@ -179,8 +179,8 @@ export default function TermsPage() {
               <UsageConsentNoticeBody notice={notice} />
             ) : noticeError ? (
               <p className="text-sm leading-6 text-ink-700">
-                The recording notice could not be loaded, so it is not shown here. It is also available in Settings once
-                you have signed in. <span className="text-ink-500">{noticeError}</span>
+                The recording notice couldn&apos;t be loaded. Check your connection and reload the page, or read it in
+                Settings after you sign in.
               </p>
             ) : (
               <p className="text-sm leading-6 text-ink-500">Loading the recording notice…</p>

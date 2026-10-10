@@ -75,6 +75,7 @@ import { isAdmin, isMasterAdmin } from "@/lib/permissions";
 import {
   bucketTickText,
   consentMoment,
+  consentStateText,
   daysAgoIso,
   durationText,
   errorRateText,
@@ -123,7 +124,7 @@ function SectionError({ message }: { message: string }) {
 }
 
 function Loading({ what }: { what: string }) {
-  return <section className="panel p-4 text-sm text-ink-500">Reading {what}…</section>;
+  return <section className="panel p-4 text-sm text-ink-500">Loading {what}…</section>;
 }
 
 /**
@@ -171,9 +172,8 @@ function CollectionPosture({ method }: { method: UsageCollectionMethod }) {
         <div className="min-w-0 flex-1 text-sm leading-6 text-amber-900">
           <p className="font-semibold">
             {method.consent.flowExists
-              ? "Consent is asked, and every figure below is drawn from accounts that did not refuse."
-              : "No consent flow exists yet. This deployment's policy for the unasked is " +
-                `${method.consent.unaskedPolicy}${attributed ? " — requests ARE attributed to an account id, without having asked." : "."}`}
+              ? "Everyone is asked for consent. The figures below leave out people who declined."
+              : `Requests from accounts that haven't answered are recorded ${attributed ? "with their name" : "without a name"}.`}
           </p>
 
           {/* The server's own sentences, in the order it wrote them. Every one of these is a fact a
@@ -188,21 +188,9 @@ function CollectionPosture({ method }: { method: UsageCollectionMethod }) {
             <p className="mt-1 text-amber-800">{method.consent.withdrawalCosts}</p>
           ) : null}
 
-          <p className="mt-2 text-xs text-amber-700">
-            {method.consent.noticeVersion ? (
-              <>
-                Notice in force: <span className="font-mono">{method.consent.noticeVersion}</span>.{" "}
-              </>
-            ) : null}
-            Full method, caps and buffer losses: <span className="font-mono">{method.document}</span>. Decision record:{" "}
-            <span className="font-mono">{method.consent.document}</span>
-            {method.consent.priorDocument ? (
-              <>
-                , which supersedes <span className="font-mono">{method.consent.priorDocument}</span>
-              </>
-            ) : null}
-            .
-          </p>
+          {method.consent.noticeVersion ? (
+            <p className="mt-2 text-xs text-amber-700">Notice version in force: {method.consent.noticeVersion}.</p>
+          ) : null}
         </div>
       </div>
     </section>
@@ -247,7 +235,7 @@ function AccountTrailPanel({ from, to }: { from: string; to: string }) {
     } catch (err) {
       // The server's own sentence, verbatim. It is the only text that knows which of the three
       // refusals this was, and nothing this bundle could write in its place would know it.
-      setError(readableError(err, "That account's trail could not be read."));
+      setError(readableError(err, "That person's activity couldn't be loaded. Try again."));
     } finally {
       setBusy(false);
     }
@@ -258,14 +246,12 @@ function AccountTrailPanel({ from, to }: { from: string; to: string }) {
       <div className="flex items-start gap-2.5">
         <UserSearch className="mt-0.5 h-5 w-5 shrink-0 text-purple-700" aria-hidden />
         <div className="min-w-0">
-          <h2 className="font-display font-bold text-ink-900">One account&apos;s trail</h2>
+          <h2 className="font-display font-bold text-ink-900">One person&apos;s activity</h2>
           <p className="mt-0.5 text-sm leading-6 text-ink-500">
-            Request by request, for one named account, over the window chosen above. Readable by the master admin alone,
-            and only where that person&apos;s own answer is <span className="font-medium text-ink-700">GRANTED</span> —
-            an account that refused, or that nobody has asked, has no attributed rows at all.{" "}
+            Step by step, for one person, over the period chosen above. Only the master admin can see this, and only for
+            someone who agreed to be recorded.{" "}
             <span className="font-medium text-ink-700">
-              Every read of this writes a line to the server log naming you, them and the window. There is no durable
-              audit table; that is stated rather than implied.
+              Each time you open it, your name, theirs and the period are logged.
             </span>
           </p>
         </div>
@@ -278,12 +264,12 @@ function AccountTrailPanel({ from, to }: { from: string; to: string }) {
             className="field-input"
             value={subject}
             onChange={(event) => setSubject(event.target.value)}
-            placeholder="The account id you already hold"
+            placeholder="Paste the person's account id"
             autoComplete="off"
           />
         </label>
         <button type="submit" className="field-button" disabled={busy || !subject.trim()}>
-          {busy ? "Reading…" : "Read the trail"}
+          {busy ? "Loading…" : "Show activity"}
         </button>
       </form>
 
@@ -296,14 +282,13 @@ function AccountTrailPanel({ from, to }: { from: string; to: string }) {
       {trail ? (
         <div className="mt-3 grid gap-2">
           <p className="text-sm text-ink-700">
-            <span className="font-mono text-xs">{trail.userId}</span> — their own answer is{" "}
-            <span className="font-medium">{trail.subjectConsent.state}</span>
+            <span className="font-mono text-xs">{trail.userId}</span> — their answer:{" "}
+            <span className="font-medium">{consentStateText(trail.subjectConsent.state)}</span>
             {trail.subjectConsent.at ? <> since {consentMoment(trail.subjectConsent.at)}</> : null}.
           </p>
           {trail.events.length === 0 ? (
             <p className="rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-sm leading-6 text-ink-700">
-              No requests were attributed to this account in this window. A window that begins before they agreed is
-              genuinely empty at the start, and that is not the same fact as &ldquo;nothing was done&rdquo;.
+              Nothing recorded for this person in this period. Activity from before they agreed is not recorded.
             </p>
           ) : (
             <div className="overflow-x-auto">
@@ -314,9 +299,9 @@ function AccountTrailPanel({ from, to }: { from: string; to: string }) {
                     <th className="py-2 pr-3 font-medium">Screen</th>
                     <th className="py-2 pr-3 font-medium">Method</th>
                     <th className="py-2 pr-3 font-medium">Status</th>
-                    <th className="py-2 pr-3 font-medium">Server took</th>
-                    <th className="py-2 pr-3 font-medium">Client</th>
-                    <th className="py-2 font-medium">Consent on the row</th>
+                    <th className="py-2 pr-3 font-medium">Took</th>
+                    <th className="py-2 pr-3 font-medium">App</th>
+                    <th className="py-2 font-medium">Answer at the time</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -329,7 +314,7 @@ function AccountTrailPanel({ from, to }: { from: string; to: string }) {
                       <td className="py-2 pr-3 text-ink-700">{durationText(event.durationMs)}</td>
                       <td className="py-2 pr-3 text-ink-700">{event.clientApp}</td>
                       {/* The answer THAT ROW was collected under — not the account's answer today. */}
-                      <td className="py-2 text-ink-700">{event.consentState ?? "—"}</td>
+                      <td className="py-2 text-ink-700">{event.consentState ? consentStateText(event.consentState) : "—"}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -337,8 +322,7 @@ function AccountTrailPanel({ from, to }: { from: string; to: string }) {
             </div>
           )}
           <p className="text-xs leading-5 text-ink-500">
-            Showing {trail.events.length} of at most {trail.maxRows} rows per page, newest first. There is no withholding
-            floor here: the subject is named in the request, so there is no group for a floor to protect them inside.
+            Showing {trail.events.length} of at most {trail.maxRows} per page, newest first.
           </p>
           <ul className="list-disc space-y-1 pl-5 text-xs leading-5 text-ink-500">
             {trail.notes.map((note) => (
@@ -387,7 +371,7 @@ export default function UsagePage() {
         if (!cancelled) setMethod(result);
       })
       .catch((err) => {
-        if (!cancelled) setMethodError(readableError(err, "Unable to load the collection method"));
+        if (!cancelled) setMethodError(readableError(err, "Couldn't load how usage is recorded. Try again."));
       });
     return () => {
       cancelled = true;
@@ -404,7 +388,7 @@ export default function UsagePage() {
         if (!cancelled) setRoutes(result);
       })
       .catch((err) => {
-        if (!cancelled) setRoutesError(readableError(err, "Unable to load usage by screen"));
+        if (!cancelled) setRoutesError(readableError(err, "Couldn't load usage by screen. Try again."));
       });
     return () => {
       cancelled = true;
@@ -436,16 +420,16 @@ export default function UsagePage() {
 
     loadUsageTimeline({ from, to, bucket })
       .then((result) => !cancelled && setTimeline(result))
-      .catch((err) => !cancelled && setTimelineError(readableError(err, "Unable to load traffic over time")));
+      .catch((err) => !cancelled && setTimelineError(readableError(err, "Couldn't load traffic over time. Try again.")));
     loadUsageLatency({ from, to })
       .then((result) => !cancelled && setLatency(result))
-      .catch((err) => !cancelled && setLatencyError(readableError(err, "Unable to load latency percentiles")));
+      .catch((err) => !cancelled && setLatencyError(readableError(err, "Couldn't load response times. Try again.")));
     loadUsageClients({ from, to })
       .then((result) => !cancelled && setClients(result))
-      .catch((err) => !cancelled && setClientsError(readableError(err, "Unable to load the client split")));
+      .catch((err) => !cancelled && setClientsError(readableError(err, "Couldn't load the split by app. Try again.")));
     loadUsageScreens({ from, to, limit: 10 })
       .then((result) => !cancelled && setScreens(result))
-      .catch((err) => !cancelled && setScreensError(readableError(err, "Unable to rank the screens")));
+      .catch((err) => !cancelled && setScreensError(readableError(err, "Couldn't load the busiest and slowest screens. Try again.")));
 
     return () => {
       cancelled = true;
@@ -461,10 +445,10 @@ export default function UsagePage() {
    */
   const scopeText = useCallback(
     (scope: { count: number; notIncluded: number; maxPerRequest: number; source: string }) =>
-      `${scope.count} screen${scope.count === 1 ? "" : "s"} in this answer${
-        scope.source === "mounted" ? " (the first the server mounts, in sorted order)" : " (the ones asked about)"
-      }, at most ${scope.maxPerRequest} per request${
-        scope.notIncluded > 0 ? `. ${scope.notIncluded} mounted screen${scope.notIncluded === 1 ? " is" : "s are"} outside it` : ""
+      `Showing ${scope.count} screen${scope.count === 1 ? "" : "s"}${
+        scope.source === "mounted" ? ", the first in alphabetical order" : ", the ones asked for"
+      }, at most ${scope.maxPerRequest} at a time${
+        scope.notIncluded > 0 ? `. ${scope.notIncluded} more screen${scope.notIncluded === 1 ? " is" : "s are"} not included` : ""
       }.`,
     []
   );
@@ -472,7 +456,7 @@ export default function UsagePage() {
   const header = (
     <PageHeader
       title="Usage"
-      description="Which screens are reached, how often, how fast, and how often broken — aggregated across every account, with nobody's name in the answer."
+      description="Which screens people use, how often, how fast, and how often they fail — totals across every account, with no names."
       icon={<Activity className="h-5 w-5" aria-hidden />}
     />
   );
@@ -492,7 +476,7 @@ export default function UsagePage() {
         {header}
         <RestrictedPanel
           title="Admin access required"
-          body="Usage aggregates navigation across every account on the platform, so it is available to admins and the master admin. It is never a record of one colleague's afternoon — see the note on this page for what it deliberately does not show."
+          body="Usage shows totals across every account, so only admins and the master admin can open it."
         />
       </>
     );
@@ -507,7 +491,7 @@ export default function UsagePage() {
         ) : method ? (
           <CollectionPosture method={method} />
         ) : (
-          <Loading what="the collection method" />
+          <Loading what="how usage is recorded" />
         )}
 
         <section className="panel p-4">
@@ -545,7 +529,7 @@ export default function UsagePage() {
             </label>
             <label className="grid gap-1 text-sm">
               <span id="usage-bucket-label" className="field-label">
-                Buckets
+                Chart detail
               </span>
               {/*
                 THE THEMED DROPDOWN. This was a native `<select>` until 2026-08-30, kept that way on
@@ -591,9 +575,8 @@ export default function UsagePage() {
             </label>
             {routes ? (
               <p className="text-xs leading-5 text-ink-500">
-                {routes.window.days} day{routes.window.days === 1 ? "" : "s"}, up to {routes.window.maxDays} allowed in
-                one request. Dates with no time are read as UTC midnight, and buckets are UTC calendar days or hours —
-                not local ones.
+                {routes.window.days} day{routes.window.days === 1 ? "" : "s"} chosen, up to {routes.window.maxDays} at a
+                time. Days and hours are in UTC, not local time.
               </p>
             ) : null}
           </div>
@@ -609,15 +592,15 @@ export default function UsagePage() {
               <Stat label="Requests on this page" value={routes.totalsForThisPage.requests.toLocaleString("en-IN")} />
               <Stat label="Succeeded" value={routes.totalsForThisPage.ok.toLocaleString("en-IN")} />
               <Stat
-                label="Client / server errors"
+                label="Refused / failed"
                 value={`${routes.totalsForThisPage.clientErrors.toLocaleString("en-IN")} / ${routes.totalsForThisPage.serverErrors.toLocaleString("en-IN")}`}
               />
               <Stat
-                label="Screens withheld"
+                label="Screens hidden"
                 value={String(routes.totalsForThisPage.routesWithheld)}
                 hint={
                   routes.totalsForThisPage.routesWithheld > 0
-                    ? `Fewer than ${routes.limits.minimumIdentifiedUsers} identified accounts used them in this window.`
+                    ? `Fewer than ${routes.limits.minimumIdentifiedUsers} people used them in this period.`
                     : undefined
                 }
               />
@@ -632,17 +615,17 @@ export default function UsagePage() {
               <div className="grid gap-4 xl:grid-cols-2">
                 <ChartFrame
                   title="Traffic over time"
-                  description={`Requests per UTC ${timeline.bucket}, across the screens in scope. A bucket with no traffic is a measured zero and is plotted; a withheld bucket is a hatched gap and is not.`}
+                  description={`Requests per ${timeline.bucket} (UTC), across these screens. A period with no requests is drawn at zero; a hidden period is drawn as a hatched gap.`}
                   caps={
                     <>
-                      {timeline.series.length} bucket{timeline.series.length === 1 ? "" : "s"} drawn, at most{" "}
-                      {timeline.limits.maxBuckets ?? "—"} per request. {scopeText(timeline.scope)}
+                      {timeline.series.length} point{timeline.series.length === 1 ? "" : "s"} drawn, at most{" "}
+                      {timeline.limits.maxBuckets ?? "—"} per chart. {scopeText(timeline.scope)}
                     </>
                   }
                 >
                   <UsageLineChart
                     unit="count"
-                    ariaLabel={`Requests per ${timeline.bucket} over ${timeline.window.days} days, across ${timeline.scope.count} screens. The figures are in the table below this page's by-screen section.`}
+                    ariaLabel={`Requests per ${timeline.bucket} over ${timeline.window.days} days, across ${timeline.scope.count} screens.`}
                     points={timeline.series.map<LinePoint>((row) => ({
                       label: bucketTickText(row.bucket, timeline.bucket),
                       title: row.bucket,
@@ -655,11 +638,10 @@ export default function UsagePage() {
 
                 <ChartFrame
                   title="Error rate over time"
-                  description="The share of requests that answered 4xx or 5xx. Its own chart and its own axis — a second scale laid over the traffic line would put a crossing point on screen that is an artefact of where the axis was started."
+                  description="The share of requests that were refused or failed."
                   caps={
                     <>
-                      Null — drawn as a gap — wherever there were no requests at all: 0 of 0 is
-                      &ldquo;nothing happened&rdquo;, not &ldquo;nothing went wrong&rdquo;.{" "}
+                      Drawn as a gap where there were no requests at all.{" "}
                       {scopeText(timeline.scope)}
                     </>
                   }
@@ -667,7 +649,7 @@ export default function UsagePage() {
                   <UsageLineChart
                     unit="percent"
                     tone="error"
-                    ariaLabel={`Share of requests answering 4xx or 5xx, per ${timeline.bucket}, over ${timeline.window.days} days.`}
+                    ariaLabel={`Share of requests that were refused or failed, per ${timeline.bucket}, over ${timeline.window.days} days.`}
                     points={timeline.series.map<LinePoint>((row) => ({
                       label: bucketTickText(row.bucket, timeline.bucket),
                       title: `${row.bucket} — ${errorRateText(row.errorRate)}`,
@@ -686,24 +668,24 @@ export default function UsagePage() {
             {latencyError ? (
               <SectionError message={latencyError} />
             ) : !latency ? (
-              <Loading what="latency percentiles" />
+              <Loading what="response times" />
             ) : (
               <ChartFrame
-                title="How long the server took, per screen"
-                description={`Median and tail: ${latency.percentiles.join(", ")}. These cannot be derived from the averages in the table below — an average cannot see a tail, and a screen whose mean is 120 ms and whose p99 is four seconds is broken for one request in a hundred.`}
+                title="How long each screen took"
+                description={`Typical and slowest times: ${latency.percentiles.join(", ")}. An average can hide a few slow requests, so these won't match the averages in the table below.`}
                 legend={
                   <ChartLegend
                     items={[
-                      { label: "p50 — the middle request", className: ORDINAL_BG[0] },
+                      { label: "p50 — typical", className: ORDINAL_BG[0] },
                       { label: "p95", className: ORDINAL_BG[1] },
-                      { label: "p99 — the tail", className: ORDINAL_BG[2] }
+                      { label: "p99 — slowest", className: ORDINAL_BG[2] }
                     ]}
                   />
                 }
                 caps={
                   <>
-                    {scopeText(latency.scope)} Server time only — from this API receiving the request to it finishing
-                    the answer. It is not what anybody waited for.
+                    {scopeText(latency.scope)} Measured from when a request reaches us until we answer; connection
+                    and device time are not included.
                   </>
                 }
                 table={
@@ -715,7 +697,7 @@ export default function UsagePage() {
                 }
               >
                 <UsagePercentileRows
-                  ariaLabel={`Server duration percentiles for ${latency.routes.length} screens, p50 to p99 on one shared axis.`}
+                  ariaLabel={`Response times for ${latency.routes.length} screens, p50 to p99 on one shared scale.`}
                   rows={latency.routes.map<PercentileRow>((row) => ({
                     label: row.routeTemplate,
                     p50: row.p50Ms,
@@ -735,15 +717,15 @@ export default function UsagePage() {
             {clientsError ? (
               <SectionError message={clientsError} />
             ) : !clients ? (
-              <Loading what="the client split" />
+              <Loading what="the split by app" />
             ) : (
               <ChartFrame
                 title="Web and Android"
-                description={`Which client each request said it was, from the ${clients.header} header.`}
+                description="Which app each request came from."
                 caps={
                   <>
-                    Known clients: {clients.known.join(", ")}. Anything that did not send the header is filed under{" "}
-                    <span className="font-mono">{clients.fallback}</span>. {scopeText(clients.scope)}
+                    Requests that did not say which app sent them are counted under &ldquo;{clients.fallback}&rdquo;.{" "}
+                    {scopeText(clients.scope)}
                   </>
                 }
                 table={
@@ -752,11 +734,11 @@ export default function UsagePage() {
                       <table className="w-full min-w-[520px] text-left text-sm">
                         <thead className="border-b border-line-200 text-xs uppercase tracking-wide text-ink-500">
                           <tr>
-                            <th className="py-2 pr-3 font-medium">Client</th>
+                            <th className="py-2 pr-3 font-medium">App</th>
                             <th className="py-2 pr-3 font-medium">Requests</th>
                             <th className="py-2 pr-3 font-medium">Error rate</th>
                             <th className="py-2 pr-3 font-medium">Identified accounts</th>
-                            <th className="py-2 font-medium">Avg duration</th>
+                            <th className="py-2 font-medium">Average time</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -792,7 +774,7 @@ export default function UsagePage() {
                 }
               >
                 <UsageStackedBar
-                  ariaLabel="Share of requests by client. The same figures are in the table underneath."
+                  ariaLabel="Share of requests by app. The same figures are in the table underneath."
                   segments={clients.clients.map((row) => ({
                     label: row.clientApp,
                     value: row.requests,
@@ -812,7 +794,7 @@ export default function UsagePage() {
               <div className="grid gap-4 xl:grid-cols-2">
                 <ChartFrame
                   title="Busiest screens"
-                  description="Ranked on the server, not here — a withheld row carries null in every metric, and null sorts as zero through a JavaScript comparator."
+                  description="The screens with the most requests."
                   caps={
                     <>
                       Top {screens.limit}. {screens.withheld.routes > 0 ? screens.withheld.explanation : null}{" "}
@@ -835,7 +817,7 @@ export default function UsagePage() {
 
                 <ChartFrame
                   title="Slowest screens"
-                  description="Ranked on the MEAN server duration, which cannot see a tail. The percentile chart above is the honest answer to “which screens are slow”."
+                  description="Ranked by average time. An average can hide a few slow requests — the response-time chart above shows those."
                   caps={
                     <>
                       Top {screens.limit}. {screens.withheld.routes > 0 ? screens.withheld.explanation : null}{" "}
@@ -852,7 +834,7 @@ export default function UsagePage() {
                 >
                   <UsageBarRows
                     unit="ms"
-                    ariaLabel={`The ${screens.slowest.length} slowest screens by mean server duration.`}
+                    ariaLabel={`The ${screens.slowest.length} slowest screens by average time.`}
                     rows={screens.slowest.map<BarRow>((row) => ({
                       label: row.routeTemplate,
                       value: row.avgDurationMs,
@@ -870,13 +852,13 @@ export default function UsagePage() {
                 <h2 className="font-display font-bold text-ink-900">By screen</h2>
                 <p className="text-sm text-ink-500">
                   {routes.routeSource === "mounted"
-                    ? "Every measured screen this deployment currently serves."
+                    ? "Every screen that is measured."
                     : "The screens you asked about."}{" "}
-                  Sums above are for this page only — never a platform total; no arm of this API produces one.
+                  The totals above cover this page only.
                 </p>
                 {routes.notMeasured.length > 0 ? (
                   <p className="mt-1 text-xs text-ink-500">
-                    Not measured, on any window: {routes.notMeasured.join(", ")}.
+                    Never measured: {routes.notMeasured.join(", ")}.
                   </p>
                 ) : null}
               </div>
@@ -888,17 +870,17 @@ export default function UsagePage() {
                       <th className="px-4 py-2 font-medium">Requests</th>
                       <th className="px-4 py-2 font-medium">Identified accounts</th>
                       <th className="px-4 py-2 font-medium">OK</th>
-                      <th className="px-4 py-2 font-medium">Client errors</th>
-                      <th className="px-4 py-2 font-medium">Server errors</th>
-                      <th className="px-4 py-2 font-medium">Avg duration</th>
-                      <th className="px-4 py-2 font-medium">Max duration</th>
+                      <th className="px-4 py-2 font-medium">Refused</th>
+                      <th className="px-4 py-2 font-medium">Failed</th>
+                      <th className="px-4 py-2 font-medium">Average time</th>
+                      <th className="px-4 py-2 font-medium">Longest time</th>
                     </tr>
                   </thead>
                   <tbody>
                     {routes.items.length === 0 ? (
                       <tr>
                         <td className="px-4 py-6 text-sm text-ink-500" colSpan={8}>
-                          No screens in this window.
+                          No screens in this period.
                         </td>
                       </tr>
                     ) : (

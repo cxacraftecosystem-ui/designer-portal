@@ -1030,7 +1030,7 @@ async def test_the_collection_method_states_the_consent_default_and_the_losses(
     # account at all.
     assert body["consent"]["flowExists"] is True
     assert body["consent"]["noticeVersion"] == usage.NOTICE_VERSION
-    assert "CONDITION OF ACCESS" in body["consent"]["askedAt"], (
+    assert "required to sign in" in body["consent"]["askedAt"], (
         "the published method must say that a grant at the door is not a free choice — a "
         "methodology that reports the answer without the circumstance is the defect this whole "
         "endpoint exists to prevent"
@@ -1069,23 +1069,23 @@ async def test_the_published_method_cannot_claim_consent_the_policy_does_not_req
     caller["user"] = SimpleNamespace(id="a-1", role="ADMIN")
 
     honest = (await _get(_read_app(), "/usage/collection")).json()
-    account_line = [line for line in honest["collects"] if "account id" in line]
+    account_line = [line for line in honest["collects"] if "Your name" in line]
     assert len(account_line) == 1
-    assert "ONLY where consent has been recorded as granted" in account_line[0]
+    assert "only if you agree" in account_line[0]
 
     monkeypatch.setattr(
         usage, "DEFAULT_UNASKED_COLLECTION", usage.UnaskedCollection.ATTRIBUTED
     )
     attributed = (await _get(_read_app(), "/usage/collection")).json()
-    account_line = [line for line in attributed["collects"] if "account id" in line]
+    account_line = [line for line in attributed["collects"] if "Your name" in line]
 
     assert len(account_line) == 1
-    assert "ONLY where consent" not in account_line[0]
-    assert "nobody has asked" in account_line[0]
+    assert "only if you agree" not in account_line[0]
+    assert "before you have answered" in account_line[0]
     assert attributed["consent"]["unaskedPolicy"] == usage.UnaskedCollection.ATTRIBUTED.value
     # Unchanged, and it is the claim that has to be unchangeable: attributing a row is not the same
     # act as recording an agreement, and only one of the two is ever written here.
-    assert "NULL on every row written so far" in attributed["consent"]["consentStateWritten"]
+    assert "answer it was recorded under" in attributed["consent"]["consentStateWritten"]
     assert usage.collection_plan(usage.UsageConsent.NOT_RECORDED).consent_state is None
 
     # THE THIRD POLICY, which is the same defect wearing the opposite hat: under NOTHING the list
@@ -1095,5 +1095,5 @@ async def test_the_published_method_cannot_claim_consent_the_policy_does_not_req
     nothing = (await _get(_read_app(), "/usage/collection")).json()
 
     assert len(nothing["collects"]) == 1
-    assert nothing["collects"][0].startswith("NOTHING.")
+    assert nothing["collects"][0].startswith("Nothing until you agree.")
     assert usage.collection_plan(usage.UsageConsent.NOT_RECORDED).record is False

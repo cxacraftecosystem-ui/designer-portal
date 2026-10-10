@@ -42,7 +42,7 @@ const AUDIENCES = [
     points: [
       `${STAGE_COUNT_WORD} stages, filled with no signal and resumed where you left off`,
       "Sketches, prototypes, and a ranking that is your colleagues' judgement",
-      "A submission-ready .docx or PDF, from the server or from the phone"
+      "A submission-ready .docx or PDF, from the web or from the phone"
     ]
   },
   {
@@ -72,7 +72,7 @@ const AUDIENCES = [
       // every threshold instinct: `assert_inspection_surface` refuses professors, admins and the
       // master admin with a 403, deliberately. Hence "appoint an inspector" and not "an inspector
       // or anybody senior to one" — an admin appoints, and does not thereby gain the read.
-      "Appoint an inspector to a workshop: they get every stage read-only, with who wrote each field, and nothing they can change"
+      "Appoint an inspector to a workshop: they can read every stage and see who wrote each field, without changing anything"
     ]
   }
 ];

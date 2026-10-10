@@ -78,41 +78,6 @@ function GoogleMark({ className }: { className?: string }) {
   );
 }
 
-function MicrosoftMark({ className }: { className?: string }) {
-  return (
-    <svg viewBox="0 0 21 21" className={className} aria-hidden>
-      <rect x="1" y="1" width="9" height="9" fill="#f25022" />
-      <rect x="11" y="1" width="9" height="9" fill="#7fba00" />
-      <rect x="1" y="11" width="9" height="9" fill="#00a4ef" />
-      <rect x="11" y="11" width="9" height="9" fill="#ffb900" />
-    </svg>
-  );
-}
-
-function YahooMark({ className }: { className?: string }) {
-  return (
-    <svg viewBox="0 0 24 24" className={className} aria-hidden>
-      <path
-        d="M0 6.71h4.62l2.69 6.88 2.72-6.88h4.5L7.76 22.5H3.23l1.86-4.32L0 6.71zm17.62 5.05h-5.03L17.06 1.5h5.02l-4.46 10.26zm-3.03 1.4c1.55 0 2.8 1.26 2.8 2.81a2.8 2.8 0 1 1-5.61 0c0-1.55 1.26-2.8 2.81-2.8z"
-        fill="#5f01d1"
-      />
-    </svg>
-  );
-}
-
-/**
- * Below ~420px the badge and the full provider name cannot both fit on one 52px row, and
- * something has to give: the badge hides and the tap still raises the "Coming soon" toast,
- * which beats truncating the provider's name to "Continue with Micro…".
- */
-function ComingSoonBadge() {
-  return (
-    <span className="hidden shrink-0 rounded-full bg-purple-50 px-2 py-0.5 text-[11px] font-semibold text-purple-700 min-[420px]:inline-block">
-      Coming soon
-    </span>
-  );
-}
-
 const BRAND_POINTS = [
   "Artisans, crafts, workshops, products, tools and interviews — one connected archive.",
   "Recordings transcribed and translated to English automatically.",
@@ -138,7 +103,7 @@ const BRAND_POINTS = [
   "Eleven-tier access control; every edit audited."
 ];
 
-/** Shared chrome for the four sign-in actions, so they are one height and one radius. */
+/** Shared chrome for the Google sign-in action, so it matches the password form's height and radius. */
 const PROVIDER_BUTTON = buttonVariants({ variant: "provider", size: "auth" });
 
 export default function LoginPage() {
@@ -253,7 +218,7 @@ function ConsentGateField({
         {!agreed
           ? "Required to sign in."
           : noticeError
-            ? "The recording notice is unavailable, so this answer is not filed yet. You will be asked again."
+            ? "Your answer can't be saved right now. You'll be asked again at your next sign-in."
             : ""}
       </p>
     </div>
@@ -284,7 +249,7 @@ function StandingRefusal({ gate, onContinue }: { gate: UsageConsentGate; onConti
       <p className="text-ink-700">{gate.reason}</p>
       {/* One line, not a paragraph. The server's sentence above already says what the answer is and
           that it costs nothing; all this half has to add is that the tick did not overturn it. */}
-      <p className="text-ink-700">Ticking the box did not change it. Settings is where to change it.</p>
+      <p className="text-ink-700">Ticking the box didn&apos;t change it. You can change it in Settings.</p>
       <Button type="button" size="auth" onClick={onContinue} className="mt-1 w-full font-display text-base font-bold">
         Continue
       </Button>
@@ -571,7 +536,7 @@ function LoginView() {
     // needs to branch on has to travel beside it. Absent means unclassified, which draws the
     // plain box around the server's own sentence.
     setHint(signInHintOf(err instanceof ApiError ? err.headers?.get(SIGN_IN_HINT_HEADER) : null));
-    setError(err instanceof Error ? err.message : "Unable to sign in or reach the server.");
+    setError(err instanceof ApiError ? err.message : "Couldn't sign in. Check your connection and try again.");
   }, []);
 
   /**
@@ -739,16 +704,6 @@ function LoginView() {
     }
   }
 
-  /** Fires the notice and nothing else — these providers have no endpoint behind them yet. */
-  function comingSoon(provider: string) {
-    toast({
-      id: `coming-soon-${provider}`,
-      title: `${provider} sign-in is coming soon`,
-      description: "Use Google, or your email and password, for now.",
-      tone: "info"
-    });
-  }
-
   return (
     <div className="grid min-h-dvh lg:grid-cols-[43%_57%]">
       {/* ── Brand panel (left) ─────────────────────────────────────────── */}
@@ -798,8 +753,8 @@ function LoginView() {
             an admin or the master admin can now create a password account outright at /users,
             with no admission and no first Google sign-in at all. */}
         <p className="relative z-10 text-xs text-white/40">
-          By invitation. An administrator approves your address first, and a new account joins at the tier they
-          chose, or as a Crowdsource Volunteer — or they create the account for you outright.
+          By invitation. An administrator approves your address and chooses your role, or creates your account for
+          you.
         </p>
       </aside>
 
@@ -946,7 +901,7 @@ function LoginView() {
               PATHS AT ONCE.
 
               In DOM order it precedes every sign-in control on this card — the password submit here,
-              and the three provider buttons below the divider — so somebody reading the page with a
+              and the Google button below the divider — so somebody reading the page with a
               screen reader meets the requirement before either control that it disables, rather than
               tabbing onto a dead button and being told nothing.
             */}
@@ -970,75 +925,61 @@ function LoginView() {
             </Button>
           </form>
 
-          <div className="my-4 flex items-center gap-3">
-            <span className="h-px flex-1 bg-line-200" />
-            <span className="text-sm text-ink-300">OR</span>
-            <span className="h-px flex-1 bg-line-200" />
-          </div>
+          {/* Google is the only other way in; where it is not configured, neither it nor the divider is drawn. */}
+          {googleClientId ? (
+            <>
+              <div className="my-4 flex items-center gap-3">
+                <span className="h-px flex-1 bg-line-200" />
+                <span className="text-sm text-ink-300">OR</span>
+                <span className="h-px flex-1 bg-line-200" />
+              </div>
 
-          <div className="grid gap-2.5">
-            {googleClientId ? (
-              <div
-                className={cn(
-                  PROVIDER_BUTTON,
-                  // The GSI button underneath carries the focus, so the ring has to be drawn
-                  // by the wrapper — an outline on a transparent element is invisible.
-                  "relative w-full min-w-0 overflow-hidden focus-within:outline-solid focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-purple-700",
-                  // Matches `.field-button`'s own disabled treatment, because the control it is
-                  // standing in for is disabled and must not look live.
-                  blocked && "cursor-not-allowed opacity-60"
-                )}
-                // `aria-disabled` and NOT `disabled`: this is a `div`, and the element that actually
-                // takes the click is Google's, inside it. The attribute is what a screen reader
-                // reads; `inert` below is what actually removes it from the tab order.
-                aria-disabled={blocked || undefined}
-              >
-                <span aria-hidden className="pointer-events-none flex min-w-0 items-center gap-2.5">
-                  <GoogleMark className="h-5 w-5 shrink-0" />
-                  <span className="min-w-0 truncate">Continue with Google</span>
-                </span>
-                {/* GSI renders a 40px-tall button; stretching this layer vertically makes the
-                    invisible hit area cover the full 52px of chrome behind it. */}
-                {/*
-                  THE TWO GUARDS ON A CONTROL THIS BUNDLE DOES NOT OWN.
-
-                  `pointer-events-none` stops the click and `inert` stops the keyboard — Google
-                  renders a focusable button (in older builds, an iframe) into this host, and a
-                  `disabled` attribute reaches none of it. Neither is the load-bearing guard: the
-                  early return inside the GIS callback is, because it is the only one that still
-                  holds if Google changes what it renders here. These two exist so the button never
-                  LOOKS live while the box is unticked, which is what stops somebody clicking it,
-                  completing Google's own account chooser, and only then being refused.
-                */}
+              {/* A grid, so the inline-flex control is laid out as a block, exactly as before. */}
+              <div className="grid">
                 <div
-                  ref={googleHost}
-                  inert={blocked || undefined}
                   className={cn(
-                    "absolute inset-0 flex items-center justify-center opacity-0 transform-[scaleY(1.35)]",
-                    blocked && "pointer-events-none"
+                    PROVIDER_BUTTON,
+                    // The GSI button underneath carries the focus, so the ring has to be drawn
+                    // by the wrapper — an outline on a transparent element is invisible.
+                    "relative w-full min-w-0 overflow-hidden focus-within:outline-solid focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-purple-700",
+                    // Matches `.field-button`'s own disabled treatment, because the control it is
+                    // standing in for is disabled and must not look live.
+                    blocked && "cursor-not-allowed opacity-60"
                   )}
-                />
+                  // `aria-disabled` and NOT `disabled`: this is a `div`, and the element that actually
+                  // takes the click is Google's, inside it. The attribute is what a screen reader
+                  // reads; `inert` below is what actually removes it from the tab order.
+                  aria-disabled={blocked || undefined}
+                >
+                  <span aria-hidden className="pointer-events-none flex min-w-0 items-center gap-2.5">
+                    <GoogleMark className="h-5 w-5 shrink-0" />
+                    <span className="min-w-0 truncate">Continue with Google</span>
+                  </span>
+                  {/* GSI renders a 40px-tall button; stretching this layer vertically makes the
+                      invisible hit area cover the full 52px of chrome behind it. */}
+                  {/*
+                    THE TWO GUARDS ON A CONTROL THIS BUNDLE DOES NOT OWN.
+
+                    `pointer-events-none` stops the click and `inert` stops the keyboard — Google
+                    renders a focusable button (in older builds, an iframe) into this host, and a
+                    `disabled` attribute reaches none of it. Neither is the load-bearing guard: the
+                    early return inside the GIS callback is, because it is the only one that still
+                    holds if Google changes what it renders here. These two exist so the button never
+                    LOOKS live while the box is unticked, which is what stops somebody clicking it,
+                    completing Google's own account chooser, and only then being refused.
+                  */}
+                  <div
+                    ref={googleHost}
+                    inert={blocked || undefined}
+                    className={cn(
+                      "absolute inset-0 flex items-center justify-center opacity-0 transform-[scaleY(1.35)]",
+                      blocked && "pointer-events-none"
+                    )}
+                  />
+                </div>
               </div>
-            ) : (
-              <div className="rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-sm text-ink-500">
-                Add NEXT_PUBLIC_GOOGLE_CLIENT_ID and GOOGLE_CLIENT_ID to enable Google sign-in.
-              </div>
-            )}
-            {/* The badge rides in the flex row rather than floating over it — absolutely
-                positioned it sat on top of the longer label and clipped it. */}
-            {/* `min-w-0` on the grid item is load-bearing: the labels are nowrap, so without it
-                the button refuses to shrink below its content and overflows the card on phones. */}
-            <Button type="button" variant="provider" size="auth" onClick={() => comingSoon("Microsoft")} className="w-full min-w-0">
-              <MicrosoftMark className="h-5 w-5 shrink-0" />
-              <span className="min-w-0 truncate">Continue with Microsoft</span>
-              <ComingSoonBadge />
-            </Button>
-            <Button type="button" variant="provider" size="auth" onClick={() => comingSoon("Yahoo")} className="w-full min-w-0">
-              <YahooMark className="h-5 w-5 shrink-0" />
-              <span className="min-w-0 truncate">Continue with Yahoo</span>
-              <ComingSoonBadge />
-            </Button>
-          </div>
+            </>
+          ) : null}
 
           <p className="mt-4 text-center text-sm text-ink-500">
             No account yet?{" "}

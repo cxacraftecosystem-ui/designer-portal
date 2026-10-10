@@ -655,7 +655,7 @@ def collection_plan(
             consent_state=None,
             reason=(
                 "This account declined to have its use of the platform recorded, so nothing about "
-                "this request is kept — not anonymously either."
+                "this request is kept, not even without a name."
             ),
         )
     if policy is UnaskedCollection.NOTHING:
@@ -664,8 +664,7 @@ def collection_plan(
             attribute=False,
             consent_state=None,
             reason=(
-                "Nobody has been asked yet whether their use of the platform may be recorded, and "
-                "this deployment collects nothing until they have been."
+                "Nothing is recorded from accounts that haven't answered yet."
             ),
         )
     if policy is UnaskedCollection.ATTRIBUTED:
@@ -677,9 +676,8 @@ def collection_plan(
             # for.
             consent_state=None,
             reason=(
-                "Nobody has been asked yet whether their use of the platform may be recorded. This "
-                "deployment records and attributes it anyway; the row says truthfully that no "
-                "answer was ever given."
+                "Requests from accounts that haven't answered yet are recorded with their name, "
+                "and marked as unanswered."
             ),
         )
     return CollectionPlan(
@@ -687,9 +685,8 @@ def collection_plan(
         attribute=False,
         consent_state=None,
         reason=(
-            "Nobody has been asked yet whether their use of the platform may be recorded, so the "
-            "request is kept without the identity: which screen, what it answered, how long it "
-            "took, and no name."
+            "Requests from accounts that haven't answered yet are recorded without a name: which "
+            "screen, whether it worked and how long it took."
         ),
     )
 
@@ -879,38 +876,19 @@ def collects() -> list[str]:
     plan = collection_plan(UsageConsent.NOT_RECORDED)
     if not plan.record:
         return [
-            "NOTHING. This deployment's policy for accounts nobody has asked is "
-            f"{DEFAULT_UNASKED_COLLECTION.value}, and no request from an unasked account is "
-            "recorded at all. The columns below describe what this instrumentation WOULD collect "
-            "from an account that has agreed. See 'consent'.",
+            "Nothing until you agree. Once you agree, we record which screen you opened, when, "
+            "whether it worked and how long it took, with your name attached.",
         ]
 
     if plan.attribute:
-        account = (
-            "The account id, on EVERY signed-in request — including from accounts nobody has asked. "
-            "This deployment's policy for the unasked is "
-            f"{DEFAULT_UNASKED_COLLECTION.value}. The rows still record consentState NULL, "
-            "which means nobody was asked; they are attributed and unconsented, and anybody "
-            "reporting figures drawn from them has to say so. See 'consent' below."
-        )
+        account = "Your name, on everything recorded — including before you have answered."
     else:
-        account = (
-            "The account id, ONLY where consent has been recorded as granted. An account that has "
-            "not answered, or that has refused, has no name on any row. See 'consent' below."
-        )
+        account = "Your name, only if you agree."
 
     return [
-        "The matched route TEMPLATE — /design-workshops/{workshop_id}, never the interpolated "
-        "path. Record ids travel in paths here, so a table of raw paths would be a per-designer "
-        "reading list of other people's fieldwork.",
-        "The HTTP method.",
-        "The status code the client received.",
-        "Server duration in whole milliseconds.",
-        "Which client said it was, from a header: web, android, or api for anything that did "
-        "not say — which is every client today, because neither the web nor the Android layer "
-        "sends the header yet.",
+        "Which screen you opened, and when.",
+        "Whether it worked, and how long it took.",
         account,
-        "The moment the request finished.",
     ]
 
 
@@ -918,11 +896,9 @@ def does_not_collect() -> list[str]:
     """The other half of the notice, and the half a person actually wants. Constant, because every
     line of it is true under all three policies: none of these has a column to be stored in."""
     return [
-        "The interpolated path, so no record id is ever stored.",
-        "Query strings — '?q=' carries whatever somebody typed into a search box.",
-        "Request or response bodies, headers other than the client label, IP addresses, "
-        "user agents, or anything a person typed.",
-        "Anything at all from the routes in 'notMeasured'.",
+        "What you type, search or upload.",
+        "Which record you opened — only the screen it was on.",
+        "Your IP address, or details of your browser or phone.",
     ]
 
 
@@ -935,34 +911,39 @@ def readable_by() -> dict[str, str]:
     ``tests/test_usage_tracking.py`` walks the router against this dict so the omission cannot ship.
     """
     return {
-        "/usage/me": "the account itself, and nobody else at any rank",
-        "/usage/me/trail": "the account itself, and nobody else at any rank",
-        "/usage/routes": "Admin and above (deps.can_read_usage) — aggregates only, no user ids",
-        "/usage/timeline": "Admin and above — aggregates only, no user ids",
-        "/usage/latency": "Admin and above — aggregates only, no user ids",
-        "/usage/clients": "Admin and above — aggregates only, no user ids",
-        "/usage/screens": "Admin and above — aggregates only, no user ids",
-        "/usage/collection": "Admin and above — this document, no figures about anybody",
-        "/usage/accounts/{user_id}/trail": (
-            "the MASTER ADMIN alone (deps.can_read_person_usage), and only where that account's own "
-            "answer is GRANTED — a trail of somebody who refused, or who was never asked, is not "
-            "readable by anyone. Each read is written to the server log naming the reader, the "
-            "subject and the window; there is deliberately no durable audit TABLE for it yet, and "
-            "the route says so rather than implying one"
-        ),
+        READER_YOU: "can see your own record, in Settings.",
+        READER_ADMINS: "see totals only, never anyone's name.",
+        READER_MASTER_ADMIN: "can see one person's history, and only if that person agreed.",
     }
+
+
+#: The three readers the notice names. Plain words, because both clients print the key beside its
+#: sentence ("You — can see your own record, in Settings.").
+READER_YOU = "You"
+READER_ADMINS = "Admins"
+READER_MASTER_ADMIN = "The master admin"
+
+#: Every route that reads usage, and which line of :func:`readable_by` covers it. **CHANGE THIS IN
+#: THE SAME COMMIT AS ANY NEW READ ROUTE** — ``tests/test_usage_consent.py`` walks the router against
+#: it, so a read route nobody accounted for in the notice cannot ship.
+READ_ROUTE_READERS: dict[str, str] = {
+    "/usage/me": READER_YOU,
+    "/usage/me/trail": READER_YOU,
+    "/usage/routes": READER_ADMINS,
+    "/usage/timeline": READER_ADMINS,
+    "/usage/latency": READER_ADMINS,
+    "/usage/clients": READER_ADMINS,
+    "/usage/screens": READER_ADMINS,
+    "/usage/collection": READER_ADMINS,
+    "/usage/accounts/{user_id}/trail": READER_MASTER_ADMIN,
+}
 
 
 def retention_note() -> str:
     """How long these rows are kept. A sentence saying there is no policy, because the absence of one
     is a fact a person agreeing to be recorded is entitled to, and silence would be read as a policy
     somebody chose."""
-    return (
-        "There is no retention policy and nothing deletes these rows on a schedule; that is a "
-        "decision nobody has made yet, and this sentence exists so it is not mistaken for one "
-        "that was. Deleting an account deletes its rows (onDelete: Cascade), and withdrawing "
-        "consent deletes that account's rows immediately."
-    )
+    return "Kept until you withdraw or your account is deleted."
 
 
 def consent_notice() -> dict[str, Any]:
@@ -992,38 +973,30 @@ def consent_notice() -> dict[str, Any]:
         "title": "Recording how you use this platform",
         "required": True,
         "requiredSentence": (
-            "You cannot sign in without agreeing to this. It is a condition of using the platform, "
-            "which means it is not a free choice — and this system records that it was not, rather "
-            "than filing your answer as though you had been offered one."
+            "You need to agree to this to sign in. Your answer is saved as one given at sign-in."
         ),
         "collects": collects(),
         "doesNotCollect": does_not_collect(),
         "durationCaveat": (
-            "The duration recorded is SERVER time only: from this API receiving your request to it "
-            "finishing the answer. It is not what you waited for — it excludes the network, your "
-            "device and anything drawn on your screen."
+            "It is not how long you waited: it is measured from when your request reaches us until "
+            "we answer, and leaves out your connection and your device."
         ),
         "readableBy": readable_by(),
         "withdrawal": {
-            "where": "Settings, on either client, at any time.",
-            "costsNothing": (
-                "Withdrawing does not sign you out and does not remove anything you can do. That "
-                "is deliberate: an agreement you cannot take back without losing access is not an "
-                "agreement."
-            ),
+            "where": "Withdraw any time in Settings.",
+            "costsNothing": "Withdrawing does not sign you out or stop you using anything.",
             "does": [
-                "Stops recording new requests from this account immediately.",
-                "Throws away anything already observed and not yet written.",
-                "DELETES the rows already stored for this account — it does not merely unname them.",
+                "Recording stops straight away.",
+                "Everything already recorded about you is deleted.",
             ],
             "doesNot": [
-                "It does not erase the fact that you had agreed. The dated decisions stay in your "
-                "own consent log, because a withdrawal must not rewrite the answer the earlier "
-                "collection was actually made under.",
+                "Your earlier answers stay listed in Settings, with their dates.",
             ],
         },
         "retention": retention_note(),
-        "document": "docs/DECISION-usage-consent-at-sign-in.md",
+        # Blank on purpose: both clients print this beside the version when it is set, and a file
+        # path is not something a person agreeing to the notice can use.
+        "document": "",
     }
 
 
@@ -1075,30 +1048,26 @@ def consent_gate(user: Any) -> dict[str, Any]:
 
     if state is UsageConsent.GRANTED and agreed_version == NOTICE_VERSION:
         required = False
-        reason = "This account has agreed to the current version of the recording notice."
+        reason = "You have agreed to the current recording notice."
     elif state is UsageConsent.GRANTED:
         required = True
         reason = (
-            "This account agreed to an earlier version of the recording notice"
+            "You agreed to an earlier version of the recording notice"
             + (f" ({agreed_version})" if agreed_version else "")
-            + ". The notice has changed, so the question is being asked again — agreeing to text "
-            "somebody never saw is not something this system will record on their behalf. "
-            "Recording continues in the meantime under the answer already given."
+            + ". It has changed, so please read it and answer again. Until you do, your earlier "
+            "answer still applies."
         )
     elif state is UsageConsent.REFUSED:
         required = False
         reason = (
-            "This account has declined to have its use of the platform recorded, and nothing about "
-            "its requests is kept — not anonymously either. That answer is on record and it costs "
-            "this account nothing: everything else in the product works exactly as it does for "
-            "anybody else. It can be changed in Settings at any time."
+            "You have declined, so nothing about how you use the platform is recorded. Everything "
+            "else works as normal, and you can change your answer in Settings at any time."
         )
     else:
         required = True
         reason = (
-            "Nobody has asked this account yet whether its use of the platform may be recorded. "
-            "Agreeing is a condition of using the platform, so this has to be answered before the "
-            "product can be used — and until it is, requests are recorded WITHOUT any name on them."
+            "You haven't answered yet. Agreeing is required to use the platform. Until you answer, "
+            "nothing recorded carries your name."
         )
 
     return {
@@ -1227,9 +1196,7 @@ def consent_decision_plans(
     account = str(user_id or "").strip()
     if not account:
         raise UsageRuleViolation(
-            "A usage consent belongs to an account. Sign in and record it as yourself — there is "
-            "deliberately no route by which one person records another's answer about being "
-            "observed, because a consent somebody else can enter for you is not a consent."
+            "Sign in to give your own answer. Nobody can answer for someone else."
         )
     if decision is UsageConsent.NOT_RECORDED:
         raise UsageRuleViolation(
@@ -1253,11 +1220,9 @@ def consent_decision_plans(
     recorded_at = _as_utc_moment(recorded_at)
     if recorded_at is not None and at is not None and recorded_at > at + MAX_DEVICE_CLOCK_SKEW:
         raise UsageRuleViolation(
-            f"This answer says it was recorded at {recorded_at.isoformat()}, which is in the "
-            f"future — the device's clock is wrong. Fix the date and time on the device and try "
-            f"again, or answer here so this server's own clock is used. It is not stored with a "
-            f"corrected time, because when somebody consented is not something this server may "
-            f"guess."
+            f"Your answer couldn't be saved because your device's clock is set in the future "
+            f"({recorded_at.isoformat()}). Set the correct date and time on your device, then try "
+            f"again."
         )
 
     answered_at = recorded_at or at
@@ -2277,8 +2242,7 @@ async def usage_for_routes(
                     "withheld": True,
                     "withheldBecause": (
                         f"Fewer than {MIN_IDENTIFIED_USERS_FOR_ROUTE} people used this screen in "
-                        f"this period, so a figure here would describe them individually rather "
-                        f"than describe a group."
+                        f"this period, so it is hidden to keep anyone from being singled out."
                     ),
                     "ok": None,
                     "clientErrors": None,
@@ -2406,8 +2370,8 @@ def _withheld_because(what: str) -> str:
     reader is an administrator looking at a dash and not a person reading this file.
     """
     return (
-        f"Fewer than {MIN_IDENTIFIED_USERS_FOR_ROUTE} identified people are behind {what}, so a "
-        f"figure here would describe them individually rather than describe a group."
+        f"Fewer than {MIN_IDENTIFIED_USERS_FOR_ROUTE} people are behind {what}, so it is hidden to "
+        f"keep anyone from being singled out."
     )
 
 
@@ -2479,10 +2443,8 @@ async def usage_timeline(
     expected = _expected_buckets(since, until, unit)
     if expected > MAX_TIMELINE_BUCKETS:
         raise UsageRuleViolation(
-            f"That window is {expected} {unit} buckets and at most {MAX_TIMELINE_BUCKETS} are "
-            f"returned. Ask for a narrower window, or bucket by day instead of by hour — the "
-            f"request is refused rather than truncated, because a truncated series looks exactly "
-            f"like a period in which nothing happened."
+            f"That period would need {expected} points at one per {unit}, and a chart can show at "
+            f"most {MAX_TIMELINE_BUCKETS}. Choose a shorter period, or choose One per day."
         )
 
     start, end = _sql_window(since, until)

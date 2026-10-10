@@ -432,9 +432,18 @@ export function withdrawUsageConsent(payload: {
  * has never heard of is a fact about a newer server and not an error.
  */
 export function consentBasisText(basis: string | null | undefined): string {
-  if (basis === "REQUIRED_AT_SIGN_IN") return "Required at sign-in — a condition of access, not a free choice";
-  if (basis === "OFFERED_IN_SETTINGS") return "Offered in settings — freely given, or freely taken back";
+  if (basis === "REQUIRED_AT_SIGN_IN") return "Required at sign-in";
+  if (basis === "OFFERED_IN_SETTINGS") return "Chosen in Settings";
   return basis ? String(basis) : "Not recorded";
+}
+
+/** A stored answer in words — "Agreed", "Declined", "Not answered" — the same three the Settings
+ *  card's chip prints. Unknown tokens fall through to the raw value, as `consentBasisText` does. */
+export function consentStateText(state: string | null | undefined): string {
+  if (state === "GRANTED") return "Agreed";
+  if (state === "REFUSED") return "Declined";
+  if (state === "NOT_RECORDED" || !state) return "Not answered";
+  return String(state);
 }
 
 /** A stored instant as a person reads it, or the em dash. Never "now" and never a relative phrase:

@@ -96,7 +96,7 @@ export function UsageConsentNoticeBody({ notice }: { notice: UsageConsentNotice 
         {notice.requiredSentence}
       </p>
 
-      <Block title="What “duration” is not">
+      <Block title="How long it took">
         <p className="text-sm leading-6 text-ink-700">{notice.durationCaveat}</p>
       </Block>
 
@@ -107,7 +107,7 @@ export function UsageConsentNoticeBody({ notice }: { notice: UsageConsentNotice 
         <dl className="grid gap-1.5 text-sm leading-6">
           {Object.entries(notice.readableBy).map(([route, who]) => (
             <div key={route} className="grid gap-0.5 sm:grid-cols-[minmax(0,14rem)_1fr] sm:gap-3">
-              <dt className="font-mono text-xs text-ink-500">{route}</dt>
+              <dt className="font-medium text-ink-900">{route}</dt>
               <dd className="text-ink-700">{who}</dd>
             </div>
           ))}
@@ -127,9 +127,7 @@ export function UsageConsentNoticeBody({ notice }: { notice: UsageConsentNotice 
       </Block>
 
       <p className="text-xs leading-5 text-ink-500">
-        Version <span className="font-mono">{notice.version}</span>. The answer you give is stored against this exact
-        version, so a record always says which words were on screen. Full argument:{" "}
-        <span className="font-mono">{notice.document}</span>.
+        Notice version {notice.version}. Your answer is saved with this version.
       </p>
     </div>
   );

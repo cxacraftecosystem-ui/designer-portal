@@ -128,7 +128,7 @@ function MyTrail() {
     try {
       setTrail(await loadMyUsageTrail({ from: daysAgoIso(7), to: nowIso() }));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to read your own record.");
+      setError(err instanceof Error ? err.message : "Couldn't load your record. Try again.");
     } finally {
       setBusy(false);
     }
@@ -140,7 +140,7 @@ function MyTrail() {
         <div className="min-w-0">
           <h3 className="text-sm font-medium text-ink-900">What has been recorded about you</h3>
           <p className="text-xs leading-5 text-ink-500">
-            The last seven days, newest first. Yours alone — no other account can read it at any rank.
+            The last seven days, newest first.
           </p>
         </div>
         <button type="button" className="field-button-secondary" onClick={load} disabled={busy}>
@@ -166,8 +166,8 @@ function MyTrail() {
                     <th className="py-2 pr-3 font-medium">Screen</th>
                     <th className="py-2 pr-3 font-medium">Method</th>
                     <th className="py-2 pr-3 font-medium">Status</th>
-                    <th className="py-2 pr-3 font-medium">Server took</th>
-                    <th className="py-2 font-medium">Client</th>
+                    <th className="py-2 pr-3 font-medium">Took</th>
+                    <th className="py-2 font-medium">App</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -189,7 +189,7 @@ function MyTrail() {
           {/* THE CAP, WITH ITS NUMBER, ALWAYS — a list that quietly stops is indistinguishable from
               a person who did nothing else. */}
           <p className="text-xs leading-5 text-ink-500">
-            Showing {trail.events.length} of at most {trail.maxRows} rows per page, over{" "}
+            Showing {trail.events.length} of at most {trail.maxRows} per page, over{" "}
             {trail.window.days} day{trail.window.days === 1 ? "" : "s"}.
           </p>
           <ul className="grid list-disc gap-1 pl-5 text-xs leading-5 text-ink-500">
@@ -216,7 +216,7 @@ export function UsageConsentCard() {
     try {
       setState(await loadMyUsageConsent());
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to read your recording answer.");
+      setError(err instanceof Error ? err.message : "Couldn't load your recording answer. Check your connection and try again.");
     }
   }, []);
 
@@ -227,7 +227,7 @@ export function UsageConsentCard() {
         if (!cancelled) setState(result);
       })
       .catch((err) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : "Unable to read your recording answer.");
+        if (!cancelled) setError(err instanceof Error ? err.message : "Couldn't load your recording answer. Check your connection and try again.");
       });
     return () => {
       cancelled = true;
@@ -277,7 +277,7 @@ export function UsageConsentCard() {
       await applyResult(result);
       toast({ title: "Recorded", description: "Your use of the platform is now recorded against your account.", tone: "success" });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to record your answer.");
+      setError(err instanceof Error ? err.message : "Your answer couldn't be saved. Try again.");
     } finally {
       setBusy(false);
     }
@@ -296,8 +296,8 @@ export function UsageConsentCard() {
     */
     const ok = await confirm({
       title: "Stop recording, and delete what is stored?",
-      body: "New requests from this account stop being recorded immediately, anything observed and not yet written is thrown away, and the rows already stored for you are deleted.",
-      note: "It does not sign you out and removes nothing you can do. Your dated decisions stay in the log below, because a withdrawal must not rewrite the answer earlier collection was made under.",
+      body: "Recording stops straight away, and everything already recorded about you is deleted.",
+      note: "It does not sign you out or stop you using anything. Your earlier answers stay listed below.",
       confirmLabel: "Withdraw",
       tone: "danger"
     });
@@ -322,7 +322,7 @@ export function UsageConsentCard() {
         duration: result.withdrawal && !result.withdrawal.storedDeleteRan ? 0 : undefined
       });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to withdraw.");
+      setError(err instanceof Error ? err.message : "Couldn't withdraw. Try again.");
     } finally {
       setBusy(false);
     }
@@ -464,7 +464,7 @@ export function UsageConsentCard() {
           </div>
           {state.decisions.length === 0 ? (
             <p className="mt-1 text-sm text-ink-500">
-              Nothing recorded yet. Nobody has asked you, which is a different thing from a refusal you never made.
+              You haven&apos;t answered yet.
             </p>
           ) : (
             <ul className="mt-1">

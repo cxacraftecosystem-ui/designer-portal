@@ -62,25 +62,25 @@ const STEPS = [
     icon: Mic,
     title: "Capture in the field",
     copy:
-      "Record interviews, photograph products and tools, and log GPS positions on the Android app or the web — with or without a signal. A microphone on every narrative box, so a long description is spoken rather than thumbed in on a phone in a courtyard; in the browser's record forms the device's own recogniser does the writing, and the audio never becomes a file at all. Nothing waits for connectivity."
+      "Record interviews, photograph products and tools, and log GPS positions on the Android app or the web — with or without a signal. A microphone on every narrative box, so a long description can be spoken instead of typed on a phone; in the browser's record forms the words are written on the device and no recording is kept. Nothing waits for a connection."
   },
   {
     icon: Languages,
     title: "Transcribe & translate automatically",
     copy:
-      "Every recording moves through a three-provider speech-to-text chain with automatic failover, then arrives as clean English text linked to its artisan, craft, and workshop. The sitting itself records the language it was conducted in, picked from a fixed list — twenty-three, and an explicit Other — that the phone and the browser hold identically, so one language stops arriving under three spellings."
+      "Every recording is transcribed automatically and arrives as clean English text, linked to its artisan, craft, and workshop. Each interview also records the language it was held in, picked from the same list of twenty-three languages, plus Other, on the phone and on the web."
   },
   {
     icon: ClipboardCheck,
     title: "Review & approve up the ladder",
     copy:
-      "Reviewers approve, reject, or send work back for revision with comments. Each tier reviews the tiers below it, so quality climbs the same ladder as access."
+      "Reviewers approve, reject, or send work back for revision with comments. Each role reviews the work of the roles below it, so quality climbs the same ladder as access."
   },
   {
     icon: FolderDown,
     title: "Explore & export the dataset",
     copy:
-      "Browse the whole repository like a file system, grant collaborators tiered access, and — from Professor upwards, or with an explicit grant — export research-ready records, media, and transcripts."
+      "Browse the whole repository like folders on a computer, give collaborators download, comment or edit access, and — from Professor upwards, or with an explicit grant — export research-ready records, media, and transcripts."
   }
 ];
 

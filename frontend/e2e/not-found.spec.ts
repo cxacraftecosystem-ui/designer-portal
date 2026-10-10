@@ -56,8 +56,10 @@ test("the 404 names the deleted record without confirming it ever existed", asyn
   // The disjunction. Both halves, in one sentence, so neither can be dropped on its own.
   await expect(panel).toContainText("it may have been deleted, or it may not be one this account can open");
 
-  // And the refusal to resolve it, which is what stops a reader treating the first half as the answer.
-  await expect(panel).toContainText("Nothing here can tell you which");
+  // The page still names both causes and picks neither; it no longer explains the server's reasoning
+  // (copy rewrite, 2026-10-10), so the old "answers the same way to both, on purpose" sentence is gone.
+  await expect(panel).not.toContainText("Nothing here can tell you which");
+  await expect(panel).not.toContainText("on purpose");
 });
 
 test("an ordinary link to a record lands on it too, and shows the address that was asked for", async ({ page }) => {

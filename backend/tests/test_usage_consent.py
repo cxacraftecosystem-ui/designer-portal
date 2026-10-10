@@ -352,7 +352,7 @@ async def test_a_clock_in_the_future_is_refused_rather_than_quietly_corrected(
 
     detail = str(refusal.value)
     assert "in the future" in detail
-    assert "not stored with a corrected time" in detail
+    assert "Set the correct date and time on your device" in detail
 
     # Inside the tolerance it is stored exactly as sent — including its offset, which is the only
     # clue about where the answer was taken down.
@@ -623,7 +623,7 @@ async def test_a_refusal_is_not_asked_again_and_costs_the_account_nothing(
 
     assert gate["state"] == "REFUSED"
     assert gate["required"] is False
-    assert "costs this account nothing" in gate["reason"]
+    assert "Everything else works as normal" in gate["reason"]
 
 
 # --------------------------------------------------------------------------------------
@@ -652,15 +652,18 @@ async def test_the_notice_is_ungated_and_carries_what_a_person_must_be_told(
     body = response.json()
     assert body["version"] == usage.NOTICE_VERSION
     assert body["required"] is True
-    assert "cannot sign in without agreeing" in body["requiredSentence"]
-    assert "not a free choice" in body["requiredSentence"]
-    assert any("route TEMPLATE" in line for line in body["collects"])
-    assert any("account id" in line for line in body["collects"])
-    assert any("IP addresses" in line for line in body["doesNotCollect"])
-    assert "not what you waited for" in body["durationCaveat"]
-    assert any("DELETES" in line for line in body["withdrawal"]["does"])
+    assert "need to agree to this to sign in" in body["requiredSentence"]
+    assert "given at sign-in" in body["requiredSentence"]
+    assert any("Which screen you opened" in line for line in body["collects"])
+    assert any("Your name" in line for line in body["collects"])
+    assert any("IP address" in line for line in body["doesNotCollect"])
+    assert "not how long you waited" in body["durationCaveat"]
+    assert any("is deleted" in line for line in body["withdrawal"]["does"])
     assert "does not sign you out" in body["withdrawal"]["costsNothing"]
-    assert "no retention policy" in body["retention"]
+    assert body["retention"] == "Kept until you withdraw or your account is deleted."
+    # The notice is read by people, so it names readers in words and carries no file path.
+    assert set(body["readableBy"]) == {"You", "Admins", "The master admin"}
+    assert body["document"] == ""
 
 
 async def test_every_read_route_in_this_module_is_named_in_the_notice(
@@ -672,7 +675,7 @@ async def test_every_read_route_in_this_module_is_named_in_the_notice(
     and is not named there makes the notice false for everybody who has already answered — and the
     omission is invisible, because nothing else in the system compares the two.
     """
-    named = set(usage.readable_by())
+    named = set(usage.READ_ROUTE_READERS)
     served = {
         route.path
         for route in usage_routes.router.routes
@@ -683,9 +686,12 @@ async def test_every_read_route_in_this_module_is_named_in_the_notice(
         and not getattr(route, "path", "").startswith("/usage/consent")
     }
     assert served == named, (
-        f"routes not named in usage.readable_by(): {sorted(served - named)}; named but not served: "
-        f"{sorted(named - served)}"
+        f"routes not named in usage.READ_ROUTE_READERS: {sorted(served - named)}; named but not "
+        f"served: {sorted(named - served)}"
     )
+    # Every reader a route is filed under is a line the person actually reads, and every line of
+    # "who can read it" is backed by at least one route.
+    assert set(usage.READ_ROUTE_READERS.values()) == set(usage.readable_by())
 
 
 async def test_recording_an_answer_needs_no_permission_and_drops_the_cached_identity(
@@ -901,8 +907,8 @@ async def test_the_sign_in_gate_admits_rather_than_refuses_so_the_answer_can_be_
     )
     assert answer["user"][auth_routes.USAGE_CONSENT_GATE_KEY]["required"] is True
     reason = answer["user"][auth_routes.USAGE_CONSENT_GATE_KEY]["reason"]
-    assert "condition of using the platform" in reason
-    assert "WITHOUT any name" in reason
+    assert "required to use the platform" in reason
+    assert "nothing recorded carries your name" in reason
 
 
 async def test_the_sign_in_gate_cannot_lock_out_the_break_glass_master_admin(

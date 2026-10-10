@@ -350,8 +350,8 @@ export function UsageLineChart({
             reason={
               point.withheldBecause ??
               (point.withheld
-                ? "Withheld: too few identified accounts in this period for the server to report it."
-                : "Not stated: there were no requests in this period, so there is no rate to report.")
+                ? "Hidden: too few people in this period."
+                : "No requests in this period.")
             }
           />
         ) : null
@@ -441,7 +441,7 @@ export function UsageBarRows({ rows, unit, ariaLabel }: { rows: BarRow[]; unit: 
                 width={barMax}
                 top={y + 3}
                 height={14}
-                reason={row.withheldBecause ?? "Withheld: too few identified accounts used this screen in this window."}
+                reason={row.withheldBecause ?? "Hidden: too few people used this screen in this period."}
               />
             ) : (
               <g className={PRIMARY_INK}>
@@ -553,8 +553,8 @@ export function UsagePercentileRows({ rows, ariaLabel }: { rows: PercentileRow[]
                 reason={
                   row.withheldBecause ??
                   (row.noTraffic
-                    ? "No traffic on this screen in this window, so there is no distribution to report. That is not the same fact as a withheld one."
-                    : "Withheld: too few identified accounts used this screen in this window.")
+                    ? "Nobody used this screen in this period."
+                    : "Hidden: too few people used this screen in this period.")
                 }
               />
             ) : (
@@ -624,7 +624,7 @@ export function UsageStackedBar({ segments, ariaLabel }: { segments: StackSegmen
   if (!total) {
     return (
       <p className="rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-sm text-ink-500">
-        No requests were recorded from any client in this window, so there is no split to draw.
+        No requests were recorded in this period.
       </p>
     );
   }

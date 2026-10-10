@@ -207,8 +207,8 @@ test.describe("the consent gate is read, never derived", () => {
   test("the circumstance is rendered in words, and an unknown token is passed through, not guessed", () => {
     // The basis is the column that stops a turnstile being filed as a free choice, so it is printed
     // on every decision row. A token from a newer server is a fact about the server, not an error.
-    expect(consentBasisText("REQUIRED_AT_SIGN_IN")).toContain("condition of access");
-    expect(consentBasisText("OFFERED_IN_SETTINGS")).toContain("freely");
+    expect(consentBasisText("REQUIRED_AT_SIGN_IN")).toBe("Required at sign-in");
+    expect(consentBasisText("OFFERED_IN_SETTINGS")).toBe("Chosen in Settings");
     expect(consentBasisText("SOMETHING_NEWER")).toBe("SOMETHING_NEWER");
     expect(consentBasisText(null)).toBe("Not recorded");
   });
@@ -231,13 +231,13 @@ test("the notice's sentences live on the server, and are nowhere in this client"
   const roots = ["app", "components", "lib"];
   const banned = [
     // `usage.consent_notice()["requiredSentence"]`
-    "You cannot sign in without agreeing to this",
+    "You need to agree to this to sign in",
     // `usage.retention_note()`
-    "There is no retention policy",
+    "Kept until you withdraw or your account is deleted",
     // `usage.consent_notice()["withdrawal"]["costsNothing"]`
     "Withdrawing does not sign you out",
     // `usage.consent_gate()`'s REFUSED sentence
-    "has declined to have its use of the platform recorded"
+    "You have declined, so nothing about how you use the platform is recorded"
   ];
 
   const offenders: string[] = [];

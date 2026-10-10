@@ -98,11 +98,9 @@ export default function DesignWorkshopSection() {
           product where a workshop belongs to one person.
         */}
         <motion.p variants={item} className="mt-3 max-w-2xl text-base leading-relaxed text-ink-500">
-          An administrator opens the workshop for a cluster and names the designers it is for — a
-          fortnight in a cluster is not a solo expedition — and they do the work inside it. That
-          division is deliberate rather than an oversight: a workshop ends in a document submitted
-          under one named designer&rsquo;s name, whose profile is the one copied onto its cover, and
-          starting one is an administrative act.
+          An administrator opens the workshop for a cluster and names the designers it is for, and
+          they do the work inside it. The finished document is submitted under one named
+          designer&rsquo;s name, and their profile is copied onto its cover.
         </motion.p>
 
         {/* THE ARC. The same four-up grid as the record-types section above, on purpose: this page
@@ -152,8 +150,8 @@ export default function DesignWorkshopSection() {
             </span>
             <h3 className="font-display text-sm font-bold text-ink-900">And your own</h3>
             <p className="mt-1.5 text-sm leading-relaxed text-ink-700">
-              Sections and questions a designer adds to their own workshop — no deployment, no
-              waiting, and reorderable by arrows or by dragging.
+              Sections and questions a designer adds to their own workshop, ready to use straight
+              away and reordered by arrows or by dragging.
             </p>
           </motion.li>
         </ul>
@@ -169,7 +167,7 @@ export default function DesignWorkshopSection() {
             // Scored in BOTH places, deliberately, by two ports of one scorer — so "not on the
             // server" would have been wrong. What is true and worth saying is that the device can
             // answer without asking.
-            "Completeness scored on the device, not only on the server",
+            "Completeness scored right on the device",
             "A readiness list, not a locked submit",
             // `components/media/MediaRepositoryPicker.tsx`, mounted on the stage media field at
             // `designworkshop/FieldInput.tsx:4386`. Worded as ATTACH and never as "move" or "file
@@ -220,12 +218,11 @@ export default function DesignWorkshopSection() {
             what a reader assumes from a completeness percentage. Said next to the readiness chip
             above, where the assumption is formed. */}
         <motion.p variants={item} className="mt-8 max-w-2xl text-sm leading-relaxed text-ink-500">
-          A workshop is submitted when the designer says it is. An empty field is never what refuses
-          it — a readiness screen lists what is still outstanding, ranked, and works from the local
-          draft so the question can be asked in the courtyard where the answer changes what happens
-          next. The one thing that does refuse is a single stage&rsquo;s own &ldquo;Save and check
-          required fields&rdquo;, and it refuses that stage alone. {STAGE_COUNT_WORD} stages of
-          nothing is a legitimate record on day one.
+          A workshop is submitted when the designer says it is. An empty field never blocks it: a
+          readiness screen lists what is still outstanding, ranked, and works from the draft on the
+          device, so it can be checked in the courtyard with no signal. Only a stage&rsquo;s own
+          &ldquo;Save and check required fields&rdquo; stops at an empty required field, and only for
+          that stage. {STAGE_COUNT_WORD} empty stages are a valid record on day one.
         </motion.p>
       </motion.div>
     </section>

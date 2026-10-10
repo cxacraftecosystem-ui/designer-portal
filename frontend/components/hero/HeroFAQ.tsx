@@ -48,19 +48,19 @@ const TIER_COUNT_WORD_LOWER = TIER_COUNT_WORD.toLowerCase();
 const FAQS = [
   {
     q: "Who can sign in?",
-    a: `Only addresses an administrator has admitted. Signing in — by password or with Google — checks your address against the platform allow-list first; if it is not on the list, no account is created and your request goes to the administrators as a pending approval. Everyone already using the repository when the allow-list was introduced was carried onto it, so nothing changed for existing accounts. Once you are admitted you join the ${TIER_COUNT_WORD_LOWER}-tier ladder, and an admin raises you up it (field contributor, researcher, designer, inspector/reviewer, professor, admin) as your role in the project grows.`
+    a: `Only addresses an administrator has admitted. Signing in — by password or with Google — checks your address against the approved list first; if it is not on the list, your request goes to the administrators for approval. Once you are admitted you are given a role, and an admin raises it (field contributor, researcher, designer, inspector/reviewer, professor, admin) as your part in the project grows.`
   },
   {
     q: "I signed in with Google and was told I need approval. Why?",
-    a: "Because a verified Google address is proof of who you are, not permission to be here. Google sign-in used to create an account for any address that could authenticate; now it is checked against the same allow-list as a password, so an address nobody has admitted gets no account and no token. Your request is queued for an administrator, and you will be able to sign in once they approve it. A refused password and an address awaiting approval are answered differently, so you are never left guessing which of the two you are looking at."
+    a: "Google sign-in checks the same approved list as passwords; if your address isn't approved, your request goes to an administrator. You will be able to sign in once they approve it."
   },
   {
     q: "What happens to my recordings?",
-    a: "They upload to secure storage and join the transcription queue, where a chain of three speech-to-text providers with automatic failover transcribes them and translates them into English. The finished transcript is linked back to the artisan, craft, and workshop it belongs to."
+    a: "They upload to secure storage and join the transcription queue, where they are transcribed and translated into English automatically. The finished transcript is linked back to the artisan, craft, and workshop it belongs to."
   },
   {
     q: "How does review work?",
-    a: "Every record enters a peer-review ladder. A reviewer can approve it, reject it, or send it back for revision with mandatory comments — and each tier reviews the work of those ranked below it, with the master admin able to review everyone's."
+    a: "Every record enters a peer-review ladder. A reviewer can approve it, reject it, or send it back for revision with mandatory comments — and each role reviews the work of the roles below it, with the master admin able to review everyone's."
   },
   {
     q: "Who can download the data?",
@@ -68,7 +68,7 @@ const FAQS = [
   },
   {
     q: "What can a brand-new account actually do?",
-    a: "A newly admitted account starts at the bottom of the ladder — Crowdsource Volunteer unless the administrator who admitted it chose a higher tier — and can take interviews, upload media, and comment on existing records. Creating artisans, products, processes and tools begins at Researcher — the two tiers below it fill in records rather than open them, which is deliberate and the thing people are most often surprised by. A Field Contributor adds the extra power of reviewing a volunteer's work. An admin raises the tier when the person's role in the project does."
+    a: "A newly admitted account starts as a Crowdsource Volunteer, unless the administrator who admitted it chose a higher role, and can take interviews, upload media, and comment on existing records. Creating artisans, products, processes and tools begins at Researcher; Crowdsource Volunteers and Field Contributors fill in existing records. A Field Contributor can also review a volunteer's work. An admin raises the role when the person's part in the project grows."
   },
   {
     q: "What is a design & prototype workshop?",
@@ -76,11 +76,11 @@ const FAQS = [
   },
   {
     q: "Who can start a design workshop, and who does the work inside it?",
-    a: `Admins and the master admin start one; designers, admins and the master admin work inside it. That is a set rather than a rank, which is the one place this app's ladder is not a ladder: a professor outranks a designer and still cannot run a workshop, because the document is submitted under a named designer's name and outranking one is not the same as being one. If you are a designer, ask an admin to create the workshop for your cluster and give you access — you can then fill in all ${STAGE_COUNT_WORD_LOWER} stages, add artisans, products and photographs, and generate the report. Any workshop you already have access to is open to you now.`
+    a: `Admins and the master admin start one; designers, Assistant Directors, Regional Directors, Ministry Admins, admins and the master admin work inside it. Professors and inspectors do not run workshops. If you are a designer, ask an admin to create the workshop for your cluster and give you access — you can then fill in all ${STAGE_COUNT_WORD_LOWER} stages, add artisans, products and photographs, and generate the report. Any workshop you already have access to is open to you now.`
   },
   {
     q: "Will an unfilled field stop me submitting a workshop?",
-    a: "No. A workshop is submitted when the designer says it is, and an empty field never refuses it — a readiness screen ranks what is still outstanding and links straight to the box holding each gap. It is built from the local draft, so the question can be asked on the last afternoon with no signal. One thing does refuse: a single stage's own “Save and check required fields”, and it refuses that stage alone. Standard- and Advanced-tier fields are depth and block nothing at all, which is deliberate — a thin stage should be a decision rather than an oversight."
+    a: "No. A workshop is submitted when the designer says it is, and an empty field never refuses it — a readiness screen ranks what is still outstanding and links straight to the box holding each gap. It is built from the local draft, so the question can be asked on the last afternoon with no signal. One thing does refuse: a single stage's own “Save and check required fields”, and it refuses that stage alone. Standard- and Advanced-tier fields add depth and never block anything."
   },
   {
     // AMENDED, and the amendment is a correction rather than an addition. The last sentence read
@@ -114,11 +114,11 @@ const FAQS = [
       still said "uploading": a permanent dead end that looked like progress.
     */
     q: "Does it work offline?",
-    a: "The Android app is offline-first — capture interviews, media, and GPS positions with no signal at all, and everything syncs when you are back online. Corrections queue as well as new records, with one trade worth knowing: an offline edit replays the whole record, so a colleague's later change to the same row is overwritten rather than merged. Anything the queue cannot deliver is listed with its own reason and retried one at a time, instead of failing silently behind a banner that still says “uploading”. The handset also builds a workshop's report on itself, from its own draft. The web portal complements it for review, browsing, and administration, and it keeps a design & prototype workshop's draft in the browser too, so its stages can be filled in, scored and checked for readiness with no connection; generating the report is the one part of the web half that needs the server. Creating your own questionnaire works with no signal as far as it honestly can — the form is banked with its name and its workshop and lands the moment there is signal, and its questions are written afterwards. An existing questionnaire opens offline so you can read the questions you are about to ask; recording the answers still needs a connection, deliberately, because a question can be retired between opening the screen and pressing save."
+    a: "The Android app is offline-first — capture interviews, media, and GPS positions with no signal at all, and everything syncs when you are back online. Corrections wait to upload as well as new records, and anything that cannot be sent is listed with its reason and retried one at a time. The handset also builds a workshop's report on itself, from its own draft. The web portal complements it for review, browsing, and administration, and it keeps a design & prototype workshop's draft in the browser too, so its stages can be filled in, scored and checked for readiness with no connection. You can create your own questionnaire with no signal — it is saved with its name and its workshop and uploads when you are back online, and you add its questions after that. An existing questionnaire opens offline so you can read the questions you are about to ask; recording the answers needs a connection."
   },
   {
     q: "What about privacy?",
-    a: `Access is governed by the ${TIER_COUNT_WORD_LOWER}-tier role ladder, cross-researcher sharing is opt-in per grant, and every edit carries an audited revision history. Media lives in private cloud storage that only signed-in, authorized users can reach. National identifiers are masked wherever a record leaves its owner: an artisan's Aadhaar number is used to make sure the same person documented at two workshops becomes one record, not two, but it renders as XXXX XXXX 9012 on every shared and exported surface — the data browser, CSV, and the .xlsx report — and only the researcher who recorded that artisan, or a professor and above, can read it in full.`
+    a: `Access is governed by ${TIER_COUNT_WORD_LOWER} roles, each with its own permissions. Sharing between researchers is opt-in per grant, and every edit carries an audited revision history. Media lives in private cloud storage that only signed-in, authorized users can reach. National identifiers are masked wherever a record leaves its owner: an artisan's Aadhaar number is used to make sure the same person documented at two workshops becomes one record, not two, but it renders as XXXX XXXX 9012 on every shared and exported surface — the data browser, CSV, and the .xlsx report — and only the researcher who recorded that artisan, or a professor and above, can read it in full.`
   }
 ];
 

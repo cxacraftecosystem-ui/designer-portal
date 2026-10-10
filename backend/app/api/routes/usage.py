@@ -198,18 +198,16 @@ def _window(raw_from: datetime, raw_to: datetime) -> tuple[datetime, datetime]:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
-                f"'from' must be earlier than 'to'; this request asked for {since.isoformat()} to "
-                f"{until.isoformat()}."
+                f"The start date must be before the end date ({since.date().isoformat()} to "
+                f"{until.date().isoformat()})."
             ),
         )
     if until - since > timedelta(days=usage.MAX_RANGE_DAYS):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
-                f"A usage window may be at most {usage.MAX_RANGE_DAYS} days; this one is "
-                f"{(until - since).days}. Ask for a narrower period, or build a longer report from a "
-                f"rollup designed for it — there is deliberately no index that serves a whole-archive "
-                f"scan of this table."
+                f"Choose a period of {usage.MAX_RANGE_DAYS} days or fewer. This one is "
+                f"{(until - since).days} days."
             ),
         )
     return since, until
@@ -295,10 +293,10 @@ async def my_usage(
         "routes": report["routes"],
         "collection": _collection_summary(),
         "notes": [
-            "Screens are route templates, not features: one template can serve several things a "
-            "person would name differently, and one screen can call several templates.",
-            "Durations are server time only — no network, no rendering, nothing you actually waited "
-            "for.",
+            "A screen here is one kind of page or action in the app, so one page you see can count "
+            "as more than one screen.",
+            "Times are measured from when a request reaches us until we answer, and leave out your "
+            "connection and your device.",
         ],
     }
 
@@ -386,24 +384,22 @@ async def usage_by_route(
     payload["notMeasured"] = sorted(UNRECORDED_TEMPLATES)
     payload["notes"] = [
         (
-            f"A screen used by fewer than {usage.MIN_IDENTIFIED_USERS_FOR_ROUTE} identified accounts "
-            f"in this window is withheld: every figure is null and 'withheld' is true. That is a "
-            f"refusal, not a zero — null becomes 0 through arithmetic and through ??, so branch on "
-            f"'withheld' rather than falling back."
+            f"A screen used by fewer than {usage.MIN_IDENTIFIED_USERS_FOR_ROUTE} people in this "
+            f"period is hidden and shown as a dash, so that no one can be singled out. A dash is "
+            f"not a zero."
         ),
         (
-            "A screen with no identified accounts at all is reported in full. Sign-in traffic is "
-            "almost entirely unauthenticated, and 'the sign-in page is slow for the people who "
-            "cannot get in' is one of the things this record exists to be able to show."
+            "A screen used only by people who are not signed in, such as the sign-in page, is "
+            "shown in full."
         ),
         (
-            "'totalsForThisPage' is the sum over the routes on this page only, withheld ones "
-            "excluded. It is not a total for the platform, and no arm of this API produces one."
+            "The totals at the top add up the screens on this page only, leaving out hidden ones. "
+            "They are not totals for the whole platform."
         ),
         (
-            "Durations are server time: from the middleware entering to the response being finished. "
-            "No network, no rendering. A screen that looks fast here can still be a spinner in a "
-            "courtyard on a 2G connection."
+            "Times are measured from when a request reaches us until we answer. They leave out the "
+            "connection and the device, so a screen that looks fast here can still be slow on a "
+            "weak signal."
         ),
     ]
     return payload
@@ -493,30 +489,21 @@ async def collection_method(_: Any = Depends(require_usage_reader)) -> dict[str,
             "noticeVersion": usage.NOTICE_VERSION,
             "bases": [option.value for option in usage.UsageConsentBasis],
             "askedAt": (
-                "At sign-in, on both clients and on both credentials, and again whenever the notice "
-                "version moves. Agreeing is a CONDITION OF ACCESS, which means a grant collected "
-                "there is not freely given — so the circumstance is stored beside the answer as "
-                "REQUIRED_AT_SIGN_IN, and every withdrawal is stored as OFFERED_IN_SETTINGS. A "
-                "system that recorded a turnstile as a free choice would be forging the one "
-                "distinction this vocabulary exists to preserve."
+                "Everyone is asked when they sign in, on the website and the Android app, and again "
+                "whenever the notice changes. Agreeing is required to sign in, so each answer is "
+                "saved with where it was given: at sign-in, or by choice in Settings."
             ),
             "withdrawalCosts": (
-                "Nothing. Withdrawing does not sign anybody out and removes no capability. That "
-                "asymmetry is what makes the condition of access above defensible rather than "
-                "merely documented: an agreement that cannot be taken back is not an agreement."
+                "Withdrawing costs nothing: it does not sign anyone out or take anything away."
             ),
             "explanation": _collection_summary()["explanation"],
             "consentStateWritten": (
-                "NULL on every row written so far. NULL means NOBODY WAS ASKED, which is the only "
-                "thing that makes these rows findable and deletable on the day somebody decides "
-                "they should be. The token GRANTED is written in exactly one circumstance: an "
-                "account whose recorded answer is GRANTED. Nothing backfills the earlier NULLs, and "
-                "whether those rows are deleted is an open decision recorded in the document below."
+                "Each entry is marked with the answer it was recorded under. Entries recorded "
+                "before a person agreed are marked as unanswered."
             ),
             "refusalCost": (
-                "A refusing account is not recorded at all, not even anonymously. Every aggregate "
-                "therefore describes everyone who did not refuse, and anybody reporting these "
-                "figures has to say so."
+                "People who decline are not recorded at all, not even without a name. These figures "
+                "therefore cover only people who did not decline; say so when you quote them."
             ),
             "document": "docs/DECISION-usage-consent-at-sign-in.md",
             "priorDocument": "docs/DECISION-usage-consent-default.md",
@@ -546,12 +533,9 @@ async def collection_method(_: Any = Depends(require_usage_reader)) -> dict[str,
             # this endpoint as a deployment-wide loss figure was understating it by a factor of the
             # replica count, on the one endpoint that exists so figures can be quoted honestly.
             "scope": (
-                "this worker process, since it started, and NOT the deployment. Every process runs "
-                "uvicorn with --workers 1, but the deployment runs more than one of them (two "
-                "replicas in production, and an autoscaler above that), and each keeps its own "
-                "buffer and its own counters. These numbers describe the single process that "
-                "answered this request; there is deliberately no fleet total, because a process "
-                "cannot honestly report how many siblings it has."
+                "These counts come from one of the copies of the service that answer requests, "
+                "since it last started. Each copy keeps its own counts, so they are not totals for "
+                "the whole platform."
             ),
             "buffered": stats["buffered"],
             "written": stats["written"],
@@ -559,49 +543,29 @@ async def collection_method(_: Any = Depends(require_usage_reader)) -> dict[str,
             "abandonedAfterFailedWrites": stats["abandoned"],
             "failedFlushes": stats["failedFlushes"],
             "explanation": (
-                "Rows are buffered in memory and written in batches. The two counters above are "
-                "different failures and must not be added together or read for one another. "
-                "'abandonedAfterFailedWrites' is the one that moves when the DATABASE is away: a "
-                "batch is offered twice and then written off, so about five seconds of "
-                "unavailability is survivable and everything past that is lost at the rate the "
-                "writer drains it — the buffer does not fill up and wait. 'droppedAtCeiling' is the "
-                "one that moves when this PROCESS is producing faster than it can write: the buffer "
-                "reaches its 5,000-row ceiling and the OLDEST rows go, because the newest describe "
-                "the trouble and are what anybody will look at. Every loss of either kind is "
-                "counted here rather than being silent."
+                "Entries are saved in batches. 'abandonedAfterFailedWrites' counts entries lost "
+                "because saving failed twice in a row; 'droppedAtCeiling' counts the oldest entries "
+                "let go when more than 5,000 were waiting to be saved. They are different losses, "
+                "so do not add them together."
             ),
         },
         "knownLimitations": [
-            "Server duration is not user-perceived latency: no network, no rendering, no time on a "
-            "handset. A fast number here is compatible with a slow experience in the field.",
-            "A route template is not a feature. One template serves several things a person would "
-            "name differently, and one screen calls several templates.",
-            "A count of accounts is a floor and never a headcount, and since 2026-08-30 it is no "
-            "longer zero — which is the more dangerous state, because while every row carried a "
-            "NULL userId a per-person claim could not be made by accident. Attributed rows now "
-            "exist for consenting accounts, so a distinct-id count returns a real number; it "
-            "counts people who were asked, agreed, and then made a request, and it silently "
-            "excludes every unauthenticated request, every row written before the flow shipped, "
-            "everyone who has not yet answered (recorded without their identity) and everyone who "
-            "refused (not recorded at all).",
-            "The record starts on the day it was deployed. There is no history before it and none "
-            "can be reconstructed.",
-            "Only requests that reached this API are here. Anything served from a cache, an offline "
-            "draft or a client-side navigation is invisible to it.",
-            "The '<unmatched>' template means 'no route name was available', which is a 404 in "
-            "production and, where BACKEND_EXPOSE_DOCS is on, also FastAPI's own documentation "
-            "pages: /docs, /openapi.json and /redoc are plain Starlette routes, so they are served "
-            "without the router ever naming them. They are deliberately absent from "
-            "'/usage/routes' rather than listed there reporting a permanent zero.",
-            "Rows written before 2026-08-30 carry consentState NULL because nobody had been asked, "
-            "and nothing backfills them. Any figure spanning that date mixes rows collected under "
-            "an agreement with rows collected before there was one to give, and the two are told "
-            "apart by that column and by nothing else.",
-            "A person's own trail can be read back by them and by the master admin, and it is "
-            "DELETED outright when they withdraw. So a trail is not a stable dataset: a figure "
-            "computed from attributed rows in March is not reproducible in April if somebody "
-            "withdrew in between, and no record of what was removed survives beyond the dated "
-            "decision in their consent log.",
+            "Times are not what people waited for: they are not user-perceived latency, and leave "
+            "out the connection and the device. A fast time here can still be a slow screen in "
+            "the field.",
+            "A screen here is not a feature: one page a person sees can count as more than one "
+            "screen.",
+            "The count of people includes only people who agreed to be recorded and were signed "
+            "in, so it is a minimum and never a headcount.",
+            "Recording started on 30 August 2026. There is nothing from before then.",
+            "Only requests that reached us are counted. Pages opened from the device's memory and "
+            "work saved offline are not.",
+            "Requests for addresses that do not exist are counted under '<unmatched>' and are not "
+            "listed as a screen.",
+            "Entries recorded before 30 August 2026 are marked as unanswered, because nobody had "
+            "been asked yet. Figures that span that date mix the two.",
+            "A person's activity is deleted when they withdraw, so figures that included it can "
+            "change afterwards.",
         ],
         "retention": usage.retention_note(),
         "document": "docs/METHODOLOGY-usage-instrumentation.md",
@@ -798,15 +762,12 @@ async def _record_consent(
             "storedDeleted": outcome.withdrawal.stored_deleted,
             "storedDeleteRan": outcome.withdrawal.stored_delete_ran,
             "explanation": (
-                "Recording has stopped for this account, anything observed and not yet written has "
-                "been thrown away, and the rows already stored were deleted."
+                "Recording has stopped, and everything recorded about you has been deleted."
                 if outcome.withdrawal.stored_delete_ran
                 else (
-                    "Recording has stopped for this account and anything not yet written has been "
-                    "thrown away, but the rows already stored could NOT be deleted — the database "
-                    "refused the delete. Nothing further is being collected. Ask an administrator "
-                    "to re-run the withdrawal; repeating it is safe and is what completes the "
-                    "deletion."
+                    "Recording has stopped, but what was already recorded about you couldn't be "
+                    "deleted. Nothing more is being recorded. Ask an administrator to finish "
+                    "deleting it."
                 )
             ),
         }
@@ -964,9 +925,7 @@ def _requested_templates(template: list[str] | None) -> list[str]:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
-                "This deployment has no registered route table, so there is no default set of "
-                "screens to report on. Name the screens with 'template', or look at the startup log "
-                "for why the usage allow-list was not installed."
+                "Usage figures aren't available right now. Please try again later."
             ),
         )
     return mounted
@@ -988,16 +947,13 @@ def _template_block(wanted: list[str], named: bool) -> dict[str, Any]:
 
 
 _WITHHELD_NOTE = (
-    "Every figure here is withheld — null, with 'withheld' true — wherever fewer than "
-    "{floor} identified accounts are behind it. That is a REFUSAL and never a zero: null becomes 0 "
-    "through arithmetic and through ??, so branch on 'withheld' rather than falling back. A chart is "
-    "the sharp case, because a plotted zero looks like a measurement while a gap looks like a gap."
+    "Any figure with fewer than {floor} people behind it is hidden, so that no one can be singled "
+    "out. A hidden figure is shown as a gap or a dash, never as a zero."
 )
 
 _SERVER_TIME_NOTE = (
-    "Durations are server time: from the middleware entering to the response being finished. No "
-    "network, no rendering. A screen that looks fast here can still be a spinner in a courtyard on a "
-    "2G connection."
+    "Times are measured from when a request reaches us until we answer. They leave out the "
+    "connection and the device, so a screen that looks fast here can still be slow on a weak signal."
 )
 
 
@@ -1053,13 +1009,11 @@ async def usage_over_time(
         },
         "notes": [
             _WITHHELD_NOTE.format(floor=usage.MIN_IDENTIFIED_USERS_FOR_ROUTE),
-            "A bucket with no traffic is reported as zero rather than omitted. A bucket that is "
-            "WITHHELD is a different fact and carries nulls — do not draw the two the same way.",
-            "'errorRate' is null where there were no requests. It is the share of requests that "
-            "answered 4xx or 5xx, between 0 and 1.",
-            "Buckets are UTC calendar hours or days, labelled by the moment they start. They are "
-            "not local-time days, and a report that straddles a timezone will not agree with one "
-            "computed in that timezone.",
+            "A period with no requests is shown as zero. A hidden period is different, and is "
+            "shown as a gap.",
+            "The error rate is the share of requests that failed. It is left blank where there "
+            "were no requests.",
+            "Days and hours are in UTC, not local time, and each is labelled by when it starts.",
             _SERVER_TIME_NOTE,
         ],
     }
@@ -1106,11 +1060,10 @@ async def usage_latency(
         },
         "notes": [
             _WITHHELD_NOTE.format(floor=usage.MIN_IDENTIFIED_USERS_FOR_ROUTE),
-            "A screen with no traffic in the window reports null percentiles and 'withheld' false. "
-            "That is 'there is no distribution', which is a different fact from 'the distribution "
-            "is not being shown' — the two must not render alike.",
-            "Percentiles are computed over the raw durations in the window and are NOT derivable "
-            "from the averages reported by /usage/routes. Do not reconstruct one from the other.",
+            "A screen nobody used in this period has no times to show. That is different from a "
+            "hidden screen.",
+            "These times are worked out from every request in the period, so they cannot be "
+            "worked out from the averages in the by-screen table.",
             _SERVER_TIME_NOTE,
         ],
     }
@@ -1171,18 +1124,15 @@ async def usage_by_client(
         "notes": [
             _WITHHELD_NOTE.format(floor=usage.MIN_IDENTIFIED_USERS_FOR_ROUTE),
             (
-                f"'{usage.DEFAULT_CLIENT_APP}' is what a request that did not send the "
-                f"'{usage.CLIENT_APP_HEADER}' header records as, NOT a separate kind of client. "
-                "Neither the web nor the Android layer sends that header yet, so traffic filed "
-                "under it is web and Android traffic that could not say which it was."
+                f"'{usage.DEFAULT_CLIENT_APP}' counts requests that did not say which app sent them. "
+                "They come from the website and the Android app."
             )
             if unlabelled is not None
             else (
-                f"'{usage.DEFAULT_CLIENT_APP}' is what a request that did not send the "
-                f"'{usage.CLIENT_APP_HEADER}' header records as, NOT a separate kind of client."
+                f"'{usage.DEFAULT_CLIENT_APP}' counts requests that did not say which app sent them."
             ),
-            "Counts of people cannot be added across clients: one person using both the web and the "
-            "handset is identified in both rows, so summing 'identifiedUsers' counts them twice.",
+            "Do not add up the people counts across apps: someone who uses both the website and "
+            "the Android app is counted in each row, so adding them counts that person twice.",
             _SERVER_TIME_NOTE,
         ],
     }
@@ -1256,9 +1206,8 @@ async def busiest_and_slowest_screens(
         "withheld": {
             "routes": sum(1 for row in routes if row.get("withheld")),
             "explanation": (
-                f"Screens used by fewer than {usage.MIN_IDENTIFIED_USERS_FOR_ROUTE} identified "
-                f"accounts are excluded from BOTH rankings rather than placed in them. They are "
-                f"counted here so the ranking can be read as covering less than the whole scope."
+                f"Screens used by fewer than {usage.MIN_IDENTIFIED_USERS_FOR_ROUTE} people are left "
+                f"out of both lists."
             ),
         },
         "limits": {
@@ -1267,13 +1216,9 @@ async def busiest_and_slowest_screens(
             "minimumIdentifiedUsers": usage.MIN_IDENTIFIED_USERS_FOR_ROUTE,
         },
         "notes": [
-            "This is a ranking of the screens in 'scope', not of the product. 'scope.notIncluded' "
-            "is how many mounted screens are outside it. There is deliberately no route that ranks "
-            "every screen: that is a whole-window scan and no index here serves one.",
-            "'slowest' is ranked on the MEAN server duration, which cannot see a tail. A screen "
-            "whose mean is 120 ms and whose p95 is four seconds is broken for one request in twenty "
-            "and will not appear here. /usage/latency is the honest answer to 'which screens are "
-            "slow'.",
+            "These lists rank the screens included above, not every screen in the app.",
+            "The slowest list is ranked by average time, which can hide occasional slow requests. "
+            "The response-time chart shows those.",
             _WITHHELD_NOTE.format(floor=usage.MIN_IDENTIFIED_USERS_FOR_ROUTE),
             _SERVER_TIME_NOTE,
         ],
@@ -1290,14 +1235,10 @@ def _trail_notes() -> list[str]:
     cannot come to describe the same rows differently — which would be the worst place in this module
     for two descriptions of one dataset, because one of the two readers is the subject."""
     return [
-        "This is a LOG and not an aggregate: it replays the order requests arrived in. Everything "
-        "else under /usage is a count.",
-        "Only requests that reached this API are here. A cached page, an offline draft or a "
-        "client-side navigation is invisible to it, so an absence of rows is not an absence of "
-        "work.",
-        "Rows are attributed only where consent was GRANTED at the moment they were recorded. A "
-        "period before an account agreed is genuinely empty here, and that is not the same fact as "
-        "'nothing was done'.",
+        "This is a list of requests in the order they arrived, not a total.",
+        "Only requests that reached us are here. Pages opened from the device's memory and work "
+        "saved offline are not, so an empty list does not mean nothing was done.",
+        "Requests are listed only from when the person agreed to be recorded.",
         _SERVER_TIME_NOTE,
     ]
 
@@ -1434,18 +1375,13 @@ async def account_trail(
             status_code=status.HTTP_409_CONFLICT,
             detail=(
                 (
-                    "This account has DECLINED to have its use of the platform recorded. Nothing "
-                    "was kept, and whatever had been collected was deleted when they declined, so "
-                    "there is no trail to read and there will not be one. Asking them again is not "
-                    "a thing this product does — a refusal that can be reopened by an administrator "
-                    "is not a refusal."
+                    "This person declined to have their use of the platform recorded, so there is "
+                    "nothing to show."
                 )
                 if state is usage.UsageConsent.REFUSED
                 else (
-                    "Nobody has asked this account yet whether its use of the platform may be "
-                    "recorded, so no request of theirs has ever been attributed and there is no "
-                    "trail to read. They are asked at their next sign-in and the answer is theirs "
-                    "alone — it cannot be given on their behalf."
+                    "This person hasn't answered yet, so nothing recorded carries their name. They "
+                    "will be asked when they next sign in."
                 )
             ),
         )
@@ -1483,14 +1419,12 @@ async def account_trail(
         "subjectConsent": usage.consent_record(subject),
         "readBy": get_value(reader, "id"),
         "notes": [
-            "THIS IS ONE NAMED PERSON'S TRAIL, not an aggregate. It is readable by the master "
-            "admin alone, only while that person's own answer is GRANTED, and every read of it is "
-            "written to the server log naming the reader, the subject and the window.",
-            "'consentState' on each row is the answer THAT ROW was collected under. It can differ "
-            "from the account's current answer, and a window that begins before they agreed is "
-            "genuinely empty at the start.",
-            "There is no withholding floor here: the subject is named in the request, so there is "
-            "no group for a floor to protect them inside.",
+            "This is one person's activity, not a total. Only the master admin can see it, and "
+            "only while that person agrees to be recorded. Each view is logged with who looked, "
+            "whose activity it was and the period.",
+            "Each entry shows the answer it was recorded under, which can differ from the person's "
+            "answer today.",
+            "Small numbers are not hidden here, because this view is about one named person.",
             *_trail_notes(),
         ],
     }

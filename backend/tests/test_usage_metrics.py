@@ -309,7 +309,7 @@ async def test_an_hourly_timeline_wider_than_the_bucket_cap_is_refused_with_the_
     detail = response.json()["detail"]
     assert str(usage.MAX_TIMELINE_BUCKETS) in detail
     assert "4800" in detail, "the number of buckets asked for is in the sentence"
-    assert "bucket by day" in detail
+    assert "One per day" in detail
     assert store.raw.calls == [], "the refusal happened before any database work"
 
 
@@ -406,7 +406,7 @@ async def test_latency_reports_three_percentiles_and_withholds_them_under_the_fl
     assert silent["p95Ms"] is None and silent["requests"] == 0, (
         "no traffic is not a refusal. The two must not render alike."
     )
-    assert any("NOT derivable from the averages" in note for note in body["notes"]), (
+    assert any("cannot be worked out from the averages" in note for note in body["notes"]), (
         "the response has to say that a percentile cannot be reconstructed from /usage/routes' "
         "means — otherwise somebody will try, and get a number that looks plausible"
     )
@@ -467,8 +467,8 @@ async def test_the_client_split_names_every_known_client_and_explains_the_api_fa
     assert by_client["web"]["withheld"] is True, "two identified people is not an aggregate"
     assert by_client["web"]["requests"] is None
 
-    assert any("did not send" in note for note in body["notes"])
-    assert any("counts them twice" in note for note in body["notes"]), (
+    assert any("did not say which app sent them" in note for note in body["notes"])
+    assert any("counts that person twice" in note for note in body["notes"]), (
         "identifiedUsers cannot be summed across clients: one person on both is in both rows"
     )
 
@@ -541,7 +541,7 @@ async def test_the_screen_ranking_excludes_withheld_routes_from_both_orderings(
         "a screen with no traffic has no average; ranking it as instantaneous is the same defect"
     )
     assert body["scope"]["source"] == "requested"
-    assert any("ranked on the MEAN" in note for note in body["notes"]), (
+    assert any("ranked by average time" in note for note in body["notes"]), (
         "a mean cannot see a tail, and this route says so rather than letting a ranking imply more "
         "than it measured"
     )
@@ -635,8 +635,8 @@ async def test_a_deployment_with_no_registered_route_table_is_refused_with_the_c
 
     assert response.status_code == 400
     detail = response.json()["detail"]
-    assert "no registered route table" in detail
-    assert "'template'" in detail
+    assert "Usage figures aren't available right now" in detail
+    assert "'template'" not in detail, "an admin is not told to edit a query string"
     assert store.raw.calls == []
 
 
@@ -681,7 +681,7 @@ async def test_a_person_may_read_their_own_trail_and_it_is_ordered_so_paging_is_
         "createdAt alone is not a total order, and a paged read over a non-total order drops and "
         "repeats rows at the page boundary"
     )
-    assert any("LOG and not an aggregate" in note for note in body["notes"])
+    assert any("in the order they arrived, not a total" in note for note in body["notes"])
 
 
 async def test_the_trail_page_is_capped_and_the_cap_is_stated(
@@ -739,8 +739,8 @@ async def test_the_account_trail_refuses_every_rank_below_master_admin(
 @pytest.mark.parametrize(
     ("state", "phrase"),
     [
-        ("REFUSED", "DECLINED"),
-        ("NOT_RECORDED", "Nobody has asked this account yet"),
+        ("REFUSED", "declined to have their use of the platform recorded"),
+        ("NOT_RECORDED", "hasn't answered yet"),
     ],
 )
 async def test_the_account_trail_refuses_a_non_consenting_subject_with_a_sentence(
@@ -822,8 +822,8 @@ async def test_the_master_admin_reads_a_consenting_subject_and_the_rows_carry_th
     assert body["subjectConsent"]["state"] == "GRANTED"
     assert body["subjectConsent"]["basis"] == "REQUIRED_AT_SIGN_IN"
     assert all(event["consentState"] == "GRANTED" for event in body["events"])
-    assert any("ONE NAMED PERSON'S TRAIL" in note for note in body["notes"])
-    assert any("no withholding floor here" in note for note in body["notes"]), (
+    assert any("one person's activity, not a total" in note for note in body["notes"])
+    assert any("Small numbers are not hidden here" in note for note in body["notes"]), (
         "there is no group to hide in when the subject is named in the URL, and the response says "
         "so rather than leaving a reader to wonder whether the figures were suppressed"
     )

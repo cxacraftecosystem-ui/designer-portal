@@ -164,12 +164,12 @@ import { ACCENT_PRESETS } from "@/lib/reportTheme";
  * is correct in saying so.
  */
 const RENDERERS = [
-  { icon: FileText, format: ".docx", where: "on the server" },
-  { icon: FileText, format: ".pdf", where: "on the server" },
+  { icon: FileText, format: ".docx", where: "online" },
+  { icon: FileText, format: ".pdf", where: "online" },
   { icon: MonitorPlay, format: "Preview", where: "in the browser" },
-  { icon: Smartphone, format: ".docx", where: "on the handset" },
-  { icon: Smartphone, format: ".pdf", where: "on the handset" },
-  { icon: Smartphone, format: "Preview", where: "on the handset" }
+  { icon: Smartphone, format: ".docx", where: "on the phone" },
+  { icon: Smartphone, format: ".pdf", where: "on the phone" },
+  { icon: Smartphone, format: "Preview", where: "on the phone" }
 ];
 
 const FACTS = [
@@ -177,13 +177,13 @@ const FACTS = [
     icon: ScrollText,
     title: "Read as paper, not as cards",
     copy:
-      "The preview lays the document onto A4 or Letter sheets at their real millimetre dimensions — the cover on its own page, a running head and foot after it, and a visible mark at every break the template declares. Whether the cover table has crowded the photograph off the page is a question about a page, so the answer has to be one. A single stage's own slice is previewable from its form, and it follows the saves rather than the keystrokes: it is the same server-built document, never a second one drawn from what is still being typed."
+      "The preview lays the document onto A4 or Letter sheets at their real size — the cover on its own page, a running head and foot after it, and a visible mark at every page break the template sets. You can see whether the cover table has pushed the photograph onto the next page before anyone prints it. Each stage's part of the report can also be previewed from its own form, and it shows what has been saved."
   },
   {
     icon: Palette,
     title: "Six templates, and colour you can see before you commit",
     copy:
-      `A DCH submission, a DIC submission, an implementing agency's, a compact summary, a detailed technical report and a photograph catalogue — with ${ACCENT_PRESETS.length} named accents and a colour well beside them. Pick one and every sheet on screen redraws in the same frame: headings, rules, table headers, zebra stripes and the live figures. One accent is chosen and the other seven colours are derived from it, so nobody has to generate a file to find out they dislike the colour.`
+      `A DCH submission, a DIC submission, an implementing agency's, a compact summary, a detailed technical report and a photograph catalogue — with ${ACCENT_PRESETS.length} named accent colours and a colour picker beside them. Pick one and every sheet on screen changes at once: headings, rules, table headers, row shading and the live figures. The other seven colours are derived from the one you choose, so nobody has to generate a file to find out they dislike the colour.`
   },
   {
     icon: FileWarning,
@@ -193,9 +193,9 @@ const FACTS = [
   },
   {
     icon: Smartphone,
-    title: "Generated on the handset, with nothing to connect to",
+    title: "Generated on the phone, with no signal needed",
     copy:
-      "The phone builds the document from its own local draft and writes both files on the device, so a fortnight in a cluster ends in a document rather than in a queue. It is candid about the three annexures a handset can be short of, in a sentence each rather than a silent hole in the file: transcripts, because workshop audio is transcribed on the server; the answers to an attached questionnaire, until this phone has read that questionnaire once with a connection, after which they print offline too; and machine-assisted text, the one gap nothing on the phone can close. The browser's report is the other way round: it needs the API."
+      "The phone builds the document from its own draft and writes the .docx and the PDF on the device, so a fortnight in a cluster ends in a finished document, even far from a signal."
   },
   /*
     ── THE FIFTH CARD: REPORT HISTORY ─────────────────────────────────────────────────────────────
@@ -223,7 +223,7 @@ const FACTS = [
     icon: FileClock,
     title: "Every file you have generated, and what provably did not change",
     copy:
-      "A report goes to a ministry and comes back for revision three or four times. Each of those files was already recorded — its checksum, its size, its page count, the template and the registry it was built against, including the ones a phone wrote with no signal — and now they are on a screen, with a comparison between any two of them. The comparison is careful about which direction it can be certain in: a stage nobody saved between two files carried identical data in both, and that is a proof rather than a likelihood. A stage that was saved is reported as written to, and never as a field that changed, because nothing stored can say which one."
+      "A report goes to a ministry and comes back for revision three or four times. Every file generated is listed — its size, its page count, the template it used and when it was made, including the ones a phone wrote with no signal — and any two can be compared. A stage nobody saved between two files is marked unchanged; a stage that was saved is marked as edited."
   },
   /*
     ── THE SIXTH CARD: THE FIGURES ────────────────────────────────────────────────────────────────
@@ -262,7 +262,7 @@ const FACTS = [
     icon: BarChart3,
     title: "Figures the report draws for itself",
     copy:
-      "Who the market survey actually asked, and what those people said they would pay; where the money went, head by head; the price bands the workshop's own cost sheets fall into; sketches against prototypes against final products, and how the review dispositioned each one; and how many products were still being made at three, six and twelve months. Seven figures, each drawn from the stages as they stand wherever the chosen template carries the stage it comes from — so a chart cannot quietly disagree with the table above it. A cost head nobody entered is left off rather than drawn as zero, because “Transport ₹ 0” beside four real heads reads as a claim that transport was free."
+      "Who the market survey actually asked, and what those people said they would pay; where the money went, head by head; the price bands the workshop's own cost sheets fall into; sketches against prototypes against final products, and how the review decided on each one; and how many products were still being made at three, six and twelve months. Seven figures, each drawn straight from its stage wherever the chosen template includes that stage — so a chart always matches the table above it. A cost head nobody entered is left off rather than drawn as zero: “Transport ₹ 0” would read as a claim that transport was free."
   }
 ];
 
@@ -288,7 +288,7 @@ export default function ReportEngine() {
           variants={item}
           className="max-w-3xl font-display text-3xl font-bold tracking-tight text-ink-900 sm:text-4xl"
         >
-          One document. Six renderers that have to agree, line for line.
+          One document, drawn six ways that agree line for line.
         </motion.h2>
         {/* THE COUNT IS STATED ONCE, IN THE HEADING, AND NOWHERE ELSE. It sits three lines above a
             list of six tiles a reader can count for themselves, which is the same trick the
@@ -299,11 +299,9 @@ export default function ReportEngine() {
             made it six. Change `RENDERERS` and this heading together — plus the `lg` column count
             below, which is the list's length and not a number of its own. */}
         <motion.p variants={item} className="mt-4 max-w-2xl text-base leading-relaxed text-ink-500">
-          The {STAGE_COUNT_WORD_LOWER} stages are built once into a single document — what the report
-          says, with nothing in it about how any of it is drawn. The renderers below then draw that
-          one document, and not one of them walks the record a second time. A preview that rebuilt the
-          pages from the stage data would be the first of them to drift, silently, in front of the one
-          person reading it precisely so they need not open the file.
+          The {STAGE_COUNT_WORD_LOWER} stages are assembled once into a single document, and each of
+          the six below draws that same document — so what you check in the preview is what the
+          ministry receives.
         </motion.p>
 
         {/* The fan. One label, a short rule, then the six — a diagram made of a border and a
@@ -311,7 +309,7 @@ export default function ReportEngine() {
             this page's one place for bespoke geometry. */}
         <motion.div variants={item} className="mt-12 flex flex-col items-center">
           <div className="rounded-md border border-line-200 bg-card px-5 py-3 text-center shadow-sm">
-            <p className="font-display text-sm font-bold text-ink-900">One document model</p>
+            <p className="font-display text-sm font-bold text-ink-900">One document</p>
             <p className="mt-0.5 text-xs text-ink-500">assembled from the stages, once</p>
           </div>
           <div aria-hidden className="h-6 w-px bg-line-200" />

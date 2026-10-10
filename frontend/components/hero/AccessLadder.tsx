@@ -81,7 +81,7 @@ const TIER_COPY: Record<UserRole, string> = {
   FIELD_CONTRIBUTOR:
     "Fill in and correct existing records, and review a volunteer's work. Cannot open a new record.",
   RESEARCHER:
-    "Create artisans, products, processes, tools and interviews; edit your own and review the tiers below.",
+    "Create artisans, products, processes, tools and interviews; edit your own, and review field contributors' and volunteers' work.",
   DESIGNER:
     "Run design & prototype workshops and sign the report — the stages, the custom sections, the AI layers, the exports.",
   // The one row whose sentence has to say what the tier is NOT, because the label alone reads like a
@@ -96,14 +96,14 @@ const TIER_COPY: Record<UserRole, string> = {
   ASSISTANT_DIRECTOR:
     "Everything a professor can do, and review or correct a professor's records as well as an inspector's and a designer's.",
   REGIONAL_DIRECTOR:
-    "The same reach, one tier wider: an assistant director's work comes under review too. Reads design-workshop data on screen.",
+    "Everything an assistant director can do, and review an assistant director's work too. Reads design-workshop data on screen.",
   // "No account creation" stopped being true on 2026-10-09, when the owner made this tier an account
   // provisioner (`ACCOUNT_PROVISIONER_ROLES`): it creates password accounts at or below its own tier
   // and looks after their passwords. What it still lacks is what makes somebody an admin.
   MINISTRY_ADMIN:
     "The widest review and correction authority short of admin, and creates password accounts and resets their passwords. Not an admin: no deletes, no capability grants.",
   ADMIN: "Settings hub, task assignment, workshop access grants, accounts.",
-  MASTER_ADMIN: "Everything, plus managed API keys and global app settings."
+  MASTER_ADMIN: "Everything, plus app-wide settings and the keys for connected services."
 };
 
 /**
@@ -220,10 +220,8 @@ export default function AccessLadder() {
             guard's own sentence for /design-workshops in that file. */}
         <motion.p variants={item} className="mt-3 max-w-2xl text-base leading-relaxed text-ink-500">
           One power is an exception. Running a design &amp; prototype workshop belongs to designers, the
-          Assistant Director, Regional Director and Ministry Admin posts, admins and the master admin —
-          a named set, not everyone above a rank: a professor outranks a designer and still cannot run
-          one, because a workshop is a fortnight of a named designer&apos;s work ending in a report
-          submitted under their name, and outranking a designer is not the same as being one.
+          Assistant Director, Regional Director and Ministry Admin posts, admins and the master admin.
+          Professors and inspectors do not run workshops.
         </motion.p>
 
         <ol className="mt-12 space-y-2.5">

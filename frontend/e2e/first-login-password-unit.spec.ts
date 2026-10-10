@@ -94,10 +94,10 @@ const SIGN_IN = read("lib", "signIn.ts");
 const AUTH = read("components", "AuthProvider.tsx");
 const APP_SHELL = read("components", "AppShell.tsx");
 
-/** `/login`'s password submit, from its declaration to the next function on the page. */
+/** `/login`'s password submit, from its declaration to the page's JSX. */
 const SUBMIT = (() => {
   const from = LOGIN.indexOf("async function submit(");
-  return from < 0 ? "" : LOGIN.slice(from, LOGIN.indexOf("function comingSoon(", from));
+  return from < 0 ? "" : LOGIN.slice(from, LOGIN.indexOf("return (", from));
 })();
 /** The Google Identity Services callback, from its opening line to the GIS button render. */
 const GIS_CALLBACK = (() => {
@@ -198,6 +198,19 @@ test("both sign-in paths check the account they were handed, not the effect", ()
   // the belt rather than the brace.
   const guards = LOGIN.match(/if \(mustChangePassword\(account\)\) return;/g) ?? [];
   expect(guards.length, "the password path and the Google path").toBe(2);
+});
+
+test("the sign-in card offers only the ways in that exist", () => {
+  // Microsoft and Yahoo sign-in never had anything behind them; their buttons, the "Coming soon"
+  // badge and its toast were removed on 2026-10-10. Google is drawn only where it is configured,
+  // and an unconfigured site shows no setup instructions in its place.
+  expect(LOGIN).not.toContain("Continue with Microsoft");
+  expect(LOGIN).not.toContain("Continue with Yahoo");
+  expect(LOGIN).not.toContain("Coming soon");
+  expect(LOGIN).not.toMatch(/sign-in is coming soon/);
+  expect(LOGIN).not.toContain("to enable Google sign-in");
+  expect(LOGIN).toMatch(/\{googleClientId \? \([\s\S]{0,400}?>OR<[\s\S]*?Continue with Google[\s\S]*?\) : null\}/);
+  expect(SUBMIT, "the submit slice ends before the JSX").not.toContain("<form");
 });
 
 test("the redirect effect refuses to navigate while either gate stands", () => {

@@ -56,8 +56,7 @@ export default function NotFound() {
         */}
         <DeadEndText>
           If you followed a link to a record — a craft, a workshop, an artisan — it may have been deleted, or it may not
-          be one this account can open. Nothing here can tell you which: the repository answers the same way to both, on
-          purpose, so that a list of ids cannot be used to work out which records exist.
+          be one this account can open.
         </DeadEndText>
         <DeadEndText>
           The address may also simply be mistyped, or point at a page that has moved since the link was written. If a
