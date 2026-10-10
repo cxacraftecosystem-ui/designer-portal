@@ -82,7 +82,7 @@ found" — the same trap that once left the admin's designer picker empty on a s
 existed. FastAPI matches in declaration order, so the literal path is declared first.
 """
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -131,8 +131,9 @@ from app.schemas.design_workshop_inspections import (
     DwInspectionFeedbackIn,
     DwInspectionSendBackIn,
 )
+from app.services import email_outbox
 from app.services.concurrency import gather_reads
-from app.services.custom_sections import load_definition_or_empty
+from app.services.custom_sections import definition_payload, load_definition_or_empty
 from app.services.design_workshop_inspectors import (
     assert_inspection_surface,
     eligible_inspectors,
@@ -141,9 +142,11 @@ from app.services.design_workshop_inspectors import (
     load_inspectable_workshop_or_404,
     replace_inspectors,
 )
+from app.services.design_workshop_reader_media import workshop_media_for_reader
 from app.services.design_workshops import entry_rows, workshop_completeness, workshop_summary
 from app.services.entry_provenance import resolve_display_names
 from app.services.pagination import normalize_pagination, page_payload
+from app.services.reader_list_filters import apply_reader_list_filters
 from app.services.records import contains
 from app.services.stage_schema import registry_version
 
@@ -273,9 +276,20 @@ async def list_inspectable_workshops(
     page: int = 1,
     pageSize: int = 20,
     search: str | None = Query(None, max_length=120),
+    statusFilter: str | None = Query(None, max_length=120),
+    round: int | None = Query(None, ge=0, le=1000),
+    state: str | None = Query(None, max_length=120),
+    workshopKind: str | None = Query(None, max_length=120),
+    dateFrom: date | None = None,
+    dateTo: date | None = None,
     current_user: Any = Depends(require_inspector),
 ) -> dict[str, Any]:
     """The design & prototype workshops this inspector has been assigned, newest first.
+
+    THE FILTERS NARROW THE SCOPE AND NEVER REPLACE IT (sweep item F13, 2026-10-10): status, the
+    submission round, the state, the type of workshop and the days it ran, each AND-composed by
+    ``reader_list_filters.apply_reader_list_filters`` beside the inspection clause below. No filter
+    can add a workshop the inspector holds no row on.
 
     **AN INSPECTOR WITH NO INSPECTION ROW SEES AN EMPTY PAGE, AND THAT IS THE WHOLE SCOPE.** There
     is no "all workshops" arm, no rank fallback and no ``createdById`` arm — an inspector creates
@@ -306,6 +320,15 @@ async def list_inspectable_workshops(
             {"clusterName": contains(term)},
             {"workshopCode": contains(term)},
         ]
+    apply_reader_list_filters(
+        where,
+        status=statusFilter,
+        round_=round,
+        state=state,
+        workshop_kind=workshopKind,
+        date_from=dateFrom,
+        date_to=dateTo,
+    )
     where.setdefault("AND", []).append(inspectable_by_clause(current_user.id))
 
     clean_page, clean_size, skip = normalize_pagination(page, pageSize)
@@ -343,9 +366,12 @@ async def read_workshop_under_inspection(
       route on this prefix. ``load_inspectable_workshop_or_404`` takes no ``for_edit`` parameter, so
       there is no argument this request could carry that turns the read into a write.
 
-    Whether an inspector SHOULD see the workshop's photographs and recordings is an owner's decision
-    that has not been made. It is deliberately not made here by accident: today the answer is no,
-    stated in one place, rather than yes by inheritance from a predicate written for co-designers.
+    THE WORKSHOP'S OWN FILES ARE A SECOND READ, NOT A KEY HERE (owner's ruling, sweep item F5,
+    2026-10-10): ``GET /{workshop_id}/media`` behind the same loader, signed and read-only — see
+    ``services/design_workshop_reader_media``. They are still not reached through ``transcripts`` or
+    any co-designer predicate. The workshop's own custom QUESTIONS do travel here, as
+    ``customSections``, so the answers in each stage's ``custom`` bucket can be read with their
+    wording rather than counted.
 
     Provenance names ARE resolved, because "who wrote this field" is most of what an inspection is
     for, and the ids without them are unreadable. ``resolve_display_names`` is one query for the
@@ -360,6 +386,9 @@ async def read_workshop_under_inspection(
     summary["completeness"] = workshop_completeness(entries, definition=definition)
     summary["schemaVersion"] = registry_version()
     summary["customSchemaVersion"] = definition.version
+    # The questions behind the `custom` answers — the definition this route already loaded for the
+    # completeness score, in the shape `GET /design-workshops/{id}/custom-sections` serves it.
+    summary["customSections"] = definition_payload(definition)
     # SAID ON THE WIRE RATHER THAN INFERRED FROM THE URL, because both clients will eventually render
     # this payload through the same screen as the designer's read, and a screen that cannot tell the
     # two apart will offer a Save button that the API answers 404 to. One boolean is cheaper than the
@@ -388,6 +417,20 @@ async def read_workshop_under_inspection(
     # "this report has not been handed in yet" is something an officer needs to be told.
     summary["mayRecordFeedback"] = True
     return summary
+
+
+@router.get("/{workshop_id}/media")
+async def read_workshop_media_under_inspection(
+    workshop_id: str, current_user: Any = Depends(require_inspector)
+) -> dict[str, Any]:
+    """The photographs, recordings and attachments of one workshop under inspection. READ-ONLY.
+
+    The same read-only loader as the workshop read, first — so an inspector of another workshop,
+    and anybody whose role cannot hold an inspection, gets the same 404 a missing id gets — and then
+    ``workshop_media_for_reader``, which signs every URL it keeps and hands over no permanent one.
+    """
+    await load_inspectable_workshop_or_404(workshop_id, current_user)
+    return await workshop_media_for_reader(workshop_id, current_user)
 
 
 # --------------------------------------------------------------------------------------
@@ -589,6 +632,11 @@ async def record_inspection_feedback(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(refused)
         ) from refused
     await _apply(db, plan)
+    # The designers hear about it by e-mail (when mail is configured and they have not turned it
+    # off). Never raises: the suggestion is already filed.
+    await email_outbox.notify_review_note(
+        record, actor=current_user, note=payload.note, stage_key=payload.stageKey, sent_back=False
+    )
     return await _feedback_answer(record)
 
 
@@ -676,4 +724,12 @@ async def send_workshop_back_for_revision(
         # some other transaction has left it.
         updated = await tx.designworkshop.find_unique(where={"id": workshop_id})
         await _apply(tx, plans.log)
+    # After the transaction, so a rolled-back send-back e-mails nobody. Never raises.
+    await email_outbox.notify_review_note(
+        updated or record,
+        actor=current_user,
+        note=payload.note,
+        stage_key=payload.stageKey,
+        sent_back=True,
+    )
     return await _feedback_answer(updated)

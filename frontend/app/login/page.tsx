@@ -15,6 +15,17 @@ import { GLASS_PANEL, GlassSurface } from "@/components/ui/GlassSurface";
 import { useToast } from "@/components/ui/Toast";
 import { ApiError } from "@/lib/api";
 import {
+  beginSignIn,
+  callbackErrorMessage,
+  configuredOidcProviders,
+  loginBody,
+  parseCallbackFragment,
+  takePendingSignIn,
+  type CallbackResult,
+  type OidcProvider,
+  type OidcProviderId
+} from "@/lib/oidcSignIn";
+import {
   ACCESS_STATUS_HEADER,
   accessRefusalChrome,
   accessRefusalKind,
@@ -76,6 +87,32 @@ function GoogleMark({ className }: { className?: string }) {
       />
     </svg>
   );
+}
+
+function MicrosoftMark({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 21 21" className={className} aria-hidden>
+      <rect x="1" y="1" width="9" height="9" fill="#f25022" />
+      <rect x="11" y="1" width="9" height="9" fill="#7fba00" />
+      <rect x="1" y="11" width="9" height="9" fill="#00a4ef" />
+      <rect x="11" y="11" width="9" height="9" fill="#ffb900" />
+    </svg>
+  );
+}
+
+function YahooMark({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} aria-hidden>
+      <path
+        d="M0 6.71h4.62l2.69 6.88 2.72-6.88h4.5L7.76 22.5H3.23l1.86-4.32L0 6.71zm17.62 5.05h-5.03L17.06 1.5h5.02l-4.46 10.26zm-3.03 1.4c1.55 0 2.8 1.26 2.8 2.81a2.8 2.8 0 1 1-5.61 0c0-1.55 1.26-2.8 2.81-2.8z"
+        fill="#5f01d1"
+      />
+    </svg>
+  );
+}
+
+function ProviderMark({ id, className }: { id: OidcProviderId; className?: string }) {
+  return id === "MICROSOFT" ? <MicrosoftMark className={className} /> : <YahooMark className={className} />;
 }
 
 const BRAND_POINTS = [
@@ -298,7 +335,7 @@ function StandingRefusal({ gate, onContinue }: { gate: UsageConsentGate; onConti
  */
 function LoginView() {
   const router = useRouter();
-  const { login, loginWithGoogle, logout, markPasswordChanged, refreshMe, user } = useAuth();
+  const { login, loginWithGoogle, loginWithOidc, logout, markPasswordChanged, refreshMe, user } = useAuth();
   const { toast } = useToast();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -343,6 +380,18 @@ function LoginView() {
   const googleHost = useRef<HTMLDivElement | null>(null);
   const renderedWidth = useRef(0);
   const googleClientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
+  /**
+   * Microsoft and Yahoo, each present only when this build carries its client ID — no badge and no
+   * dead button for one that is not configured. Read once: the environment is inlined at build time.
+   */
+  const [oidcProviders] = useState<OidcProvider[]>(() => configuredOidcProviders());
+  /**
+   * The provider's answer, read off `/login#oidc=…` on the first render and taken off the address bar
+   * at once, held here until the recording notice has settled — `settleConsent` files the consent
+   * against the notice's version, so completing before it arrives would drop the answer.
+   */
+  const oidcCallback = useRef<CallbackResult | null>(null);
+  const [oidcReturned, setOidcReturned] = useState(false);
 
   /** The recording notice, fetched ungated. `null` while in flight; `noticeError` once it failed. */
   const [notice, setNotice] = useState<UsageConsentNotice | null>(null);
@@ -704,6 +753,94 @@ function LoginView() {
     }
   }
 
+  /**
+   * "CONTINUE WITH MICROSOFT / YAHOO": leave for the provider. The consent gate is enforced here
+   * exactly as on the Google path, before anything is minted or stored — and the button is disabled
+   * while the box is unticked, so this guard is the brace behind it.
+   */
+  async function startOidc(provider: OidcProvider) {
+    if (blocked) {
+      setRefusal(null);
+      setHint(null);
+      setError("Please agree to the terms and conditions above the sign-in buttons.");
+      document.getElementById(AGREE_BOX_ID)?.focus();
+      return;
+    }
+    setError(null);
+    setRefusal(null);
+    setHint(null);
+    setLoading(true);
+    try {
+      window.location.assign(await beginSignIn(provider, window.location.origin, agreedAt.current));
+    } catch {
+      setLoading(false);
+      setError(callbackErrorMessage(provider.id, null));
+    }
+  }
+
+  // THE PROVIDER'S ANSWER, read once and taken off the address bar before anything else happens: a
+  // code is single use, and leaving it in the history would leave it for whoever opens this tab next.
+  useEffect(() => {
+    const callback = parseCallbackFragment(window.location.hash);
+    if (!callback) return;
+    window.history.replaceState(null, "", window.location.pathname + window.location.search);
+    oidcCallback.current = callback;
+    setOidcReturned(true);
+  }, []);
+
+  /**
+   * COMPLETING A MICROSOFT OR YAHOO SIGN-IN — the Google callback's rules, in the Google callback's
+   * order: no leftover password for the gate, a refusal into the card rather than a toast, the
+   * consent settled before anybody is let through, and the password gate read off the ACCOUNT.
+   *
+   * The tick was taken before the person left for the provider (`startOidc` refuses otherwise), so it
+   * is restored from the stored half of the flow with the moment it was made.
+   */
+  useEffect(() => {
+    const callback = oidcCallback.current;
+    if (!oidcReturned || !callback) return;
+    if (notice === null && noticeError === null) return;
+    oidcCallback.current = null;
+    setDoorPassword("");
+    const pending = takePendingSignIn(callback.state);
+    if (!pending) {
+      setRefusal(null);
+      setError("That sign-in could not be completed in this tab. Start it again from here.");
+      return;
+    }
+    if (callback.error || !callback.code) {
+      setRefusal(null);
+      setError(callbackErrorMessage(pending.provider, callback.error));
+      return;
+    }
+    const code = callback.code;
+    agreedAt.current = pending.agreedAt;
+    setAgreed(true);
+    setError(null);
+    setRefusal(null);
+    setHint(null);
+    setLoading(true);
+    signingIn.current = true;
+    void (async () => {
+      try {
+        const account = await loginWithOidc(loginBody(pending, code));
+        const standing = await settleConsent(account);
+        signingIn.current = false;
+        if (standing) {
+          setHeld(standing);
+          return;
+        }
+        if (mustChangePassword(account)) return;
+        router.replace("/dashboard");
+      } catch (err) {
+        signingIn.current = false;
+        describeFailure(err);
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, [describeFailure, loginWithOidc, notice, noticeError, oidcReturned, router, settleConsent]);
+
   return (
     <div className="grid min-h-dvh lg:grid-cols-[43%_57%]">
       {/* ── Brand panel (left) ─────────────────────────────────────────── */}
@@ -925,8 +1062,8 @@ function LoginView() {
             </Button>
           </form>
 
-          {/* Google is the only other way in; where it is not configured, neither it nor the divider is drawn. */}
-          {googleClientId ? (
+          {/* The other ways in, each drawn only where this site is set up for it; with none, neither they nor the divider is drawn. */}
+          {googleClientId || oidcProviders.length > 0 ? (
             <>
               <div className="my-4 flex items-center gap-3">
                 <span className="h-px flex-1 bg-line-200" />
@@ -934,7 +1071,8 @@ function LoginView() {
                 <span className="h-px flex-1 bg-line-200" />
               </div>
 
-              {/* A grid, so the inline-flex control is laid out as a block, exactly as before. */}
+              <div className="grid gap-2.5">
+              {googleClientId ? (
               <div className="grid">
                 <div
                   className={cn(
@@ -977,6 +1115,26 @@ function LoginView() {
                     )}
                   />
                 </div>
+              </div>
+              ) : null}
+              {/* Microsoft and Yahoo, ONLY those this build is configured for — see `oidcProviders`.
+                  `min-w-0` on the grid item is load-bearing: the labels are nowrap, so without it the
+                  button refuses to shrink below its content and overflows the card on phones.
+                  `disabled` while the box is unticked, as the password submit is: both are ours. */}
+              {oidcProviders.map((provider) => (
+                <Button
+                  key={provider.id}
+                  type="button"
+                  variant="provider"
+                  size="auth"
+                  disabled={loading || blocked}
+                  onClick={() => void startOidc(provider)}
+                  className="w-full min-w-0"
+                >
+                  <ProviderMark id={provider.id} className="h-5 w-5 shrink-0" />
+                  <span className="min-w-0 truncate">Continue with {provider.label}</span>
+                </Button>
+              ))}
               </div>
             </>
           ) : null}

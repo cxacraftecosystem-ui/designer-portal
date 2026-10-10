@@ -1,6 +1,6 @@
 """The rating ledger on the wire: submit or amend one, read one subject's, rank a round's.
 
-Three routes. The rules they enforce — who is in a round, who may read the ledger, whose name is on
+Four routes. The rules they enforce — who is in a round, who may read the ledger, whose name is on
 it, and why the pool round does not go through ``load_workshop_or_404`` — all live in
 ``app/services/design_ratings.py``; this module is only the wire, and every refusal below defers to
 a predicate there rather than restating one.
@@ -29,7 +29,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-from app.core.deps import get_current_user, is_admin
+from app.core.deps import can_run_design_workshops, get_current_user, is_admin
 from app.schemas.design_ratings import DesignRatingIn
 from app.services import design_ratings
 from app.services.design_ratings import (
@@ -40,6 +40,7 @@ from app.services.design_ratings import (
     RatingSubjectGone,
     round_score,
 )
+from app.services.pagination import normalize_pagination, page_payload
 
 router = APIRouter(prefix="/design-ratings", tags=["design-ratings"])
 
@@ -281,6 +282,43 @@ async def subject_ledger(
         "canReadLedger": access.may_read_ledger,
         "namesShown": access.sees_rater_identity,
     }
+
+
+# --------------------------------------------------------------------------------------
+# The pool directory — the workshops that have opened a piece to the pool (sweep item F8)
+# --------------------------------------------------------------------------------------
+
+
+@router.get("/workshops")
+async def pool_workshops(
+    page: int = Query(1, ge=1),
+    pageSize: int = Query(20, ge=1, le=100),
+    search: str | None = Query(None, max_length=120),
+    current_user: Any = Depends(get_current_user),
+) -> dict[str, Any]:
+    """The workshops holding at least one sketch or prototype opened to the pool, paged.
+
+    THE POOL ROUND'S OWN DOOR: ``can_run_design_workshops``, the first line of
+    ``load_ratable_workshop_or_404``, answered with this file's one 404 — the people who review the
+    pool are the people who may read a POOL round, and nobody else learns that the list exists.
+    Membership is irrelevant, exactly as it is to the round: a workshop is listed because it
+    published, and every row listed is one whose POOL round answers this caller.
+
+    What each row carries is ``design_ratings.PoolWorkshop`` and nothing more — see there for why the
+    title and dates may travel and the craft, cluster, code, status and the day a piece was opened
+    may not.
+    """
+    if not can_run_design_workshops(current_user):
+        raise _not_found()
+    listed = await design_ratings.pool_directory(search=search)
+    clean_page, clean_size, skip = normalize_pagination(page, pageSize)
+    window = listed[skip : skip + clean_size]
+    return page_payload(
+        [design_ratings.pool_workshop_payload(item) for item in window],
+        len(listed),
+        clean_page,
+        clean_size,
+    )
 
 
 # --------------------------------------------------------------------------------------

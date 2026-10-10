@@ -100,7 +100,8 @@ export const INSPECTOR_STEPS: GuideStep[] = [
       "Inspections are assigned one workshop at a time, so you see only the workshops you are responsible for. If a workshop isn't here, it hasn't been assigned to you.",
     fields: [
       "Search — by title, craft, cluster or workshop code, across your assignments only",
-      "Each row: the workshop's title, its code, craft and cluster, its dates and its status"
+      "Each row: the workshop's title, its code, craft and cluster, its dates and its status",
+      "Filters — status, submission round, state, type of workshop, and the days it started between; each narrows your assignments and none can add one, and Clear filters puts them all back"
     ],
     watch: [
       "Inspections are assigned by a Ministry Admin, an Admin or the Master Admin, one workshop at a time. To be assigned a workshop, ask one of them.",
@@ -124,12 +125,15 @@ export const INSPECTOR_STEPS: GuideStep[] = [
       "Required fields answered — a percentage across every stage",
       "Each stage, numbered and titled, with its own required-field count",
       "Under each value: who wrote it, and where it was copied from",
-      "Media fields, as a count — “3 files recorded here”"
+      "Files — every photograph, recording and attachment filed with the workshop, and under each media field the files it holds",
+      "Under a stage: the answers to the workshop's own questions, with the questions they answer"
     ],
     watch: [
       "This page is read-only: you can read every stage but not change it.",
+      "You can open the photographs, recordings, videos and attachments, but not change them. If a file stops opening, select Refresh files.",
       "The completeness figure counts required fields answered — it doesn't say the answers are right. A stage that a workshop may skip is marked beside its count.",
       "Values chosen from a record are copied when the stage is saved, so the record may have been corrected since. The line under the value names the record it came from.",
+      "Each workshop's own questions are shown with their answers and who gave them. A question that is no longer asked still shows its answer.",
     ]
   },
   {

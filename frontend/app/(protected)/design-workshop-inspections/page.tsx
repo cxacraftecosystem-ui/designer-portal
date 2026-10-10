@@ -31,6 +31,14 @@
  * state rather than as a banner ({@link inspectionRefusalMeansNoPosts}). An Inspector / Reviewer
  * refused here has met a fault and still gets the banner.
  *
+ * ── THE FILTERS (sweep item F13, 2026-10-10) ──────────────────────────────────────────────────
+ *
+ * Status, submission round, state, type of workshop and the days it started on, beside the search
+ * box. Each narrows the inspector's OWN rows on the server and none can add one. The state list is
+ * the address list every record form validates against, and the types come from the stage registry,
+ * so neither control can offer a value the list read would refuse. Changing any filter returns to
+ * page one, for the reason the search effect gives.
+ *
  * ── WHY THE ROUTE IS A SIBLING OF /design-workshops AND NOT A PAGE INSIDE IT ──────────────────
  *
  * Because the API's prefix is, for a reason that is a guard rail rather than a filing decision:
@@ -42,7 +50,7 @@
  */
 
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { FileSearch, Lock } from "lucide-react";
 
 import { useAuth } from "@/components/AuthProvider";
@@ -51,18 +59,29 @@ import { PageHeader } from "@/components/PageHeader";
 import { Pagination } from "@/components/Pagination";
 import { SearchInput } from "@/components/SearchInput";
 import { StatusBadge } from "@/components/StatusBadge";
-import { ApiError } from "@/lib/api";
+import { Dropdown } from "@/components/ui/Dropdown";
+import { ApiError, apiFetch } from "@/lib/api";
 import {
   ELIGIBLE_INSPECTOR_SEARCH_MAX,
+  INSPECTION_ROUND_OPTIONS,
+  INSPECTION_STATUS_OPTIONS,
+  inspectableFilterCount,
   inspectionEmptyState,
   inspectionRefusalMeansNoPosts,
-  listInspectableDesignWorkshops
+  listInspectableDesignWorkshops,
+  type DwInspectableListParams
 } from "@/lib/designWorkshopInspections";
-import type { DwSummary } from "@/lib/designWorkshops";
+import {
+  fetchStageRegistry,
+  peekStageRegistry,
+  workshopKindOptions,
+  type DwRegistry,
+  type DwSummary
+} from "@/lib/designWorkshops";
 import { formatDate } from "@/lib/format";
 import { isUnreachable } from "@/lib/offline";
 import { canInspectDesignWorkshops, roleLabel } from "@/lib/permissions";
-import type { PageResult } from "@/lib/types";
+import type { AddressReference, PageResult } from "@/lib/types";
 
 const PAGE_SIZE = 20;
 
@@ -99,6 +118,29 @@ export default function DesignWorkshopInspectionsPage() {
   const [page, setPage] = useState(1);
   const [data, setData] = useState<PageResult<DwSummary> | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /* THE FILTERS. Empty string means "any", by absence — nothing is sent for it. */
+  const [status, setStatus] = useState("");
+  const [round, setRound] = useState("");
+  const [stateName, setStateName] = useState("");
+  const [kind, setKind] = useState("");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [registry, setRegistry] = useState<DwRegistry | null>(() => peekStageRegistry());
+  const [states, setStates] = useState<string[]>([]);
+
+  const filters: DwInspectableListParams = useMemo(
+    () => ({
+      statusFilter: status || null,
+      round: round === "" ? null : Number(round),
+      state: stateName || null,
+      workshopKind: kind || null,
+      dateFrom: dateFrom || null,
+      dateTo: dateTo || null
+    }),
+    [status, round, stateName, kind, dateFrom, dateTo]
+  );
+  const activeFilters = inspectableFilterCount(filters);
+  const kindChoices = useMemo(() => workshopKindOptions(registry), [registry]);
 
   /**
    * A generation counter rather than an abort: `listInspectableDesignWorkshops` goes through
@@ -123,11 +165,33 @@ export default function DesignWorkshopInspectionsPage() {
     return () => window.clearTimeout(timer);
   }, [query]);
 
+  /*
+    THE TWO VOCABULARIES THE FILTERS DRAW FROM. Neither failing empties the list: the type control
+    falls back to the built-in kinds and the state control simply offers "Any state".
+  */
+  useEffect(() => {
+    if (loading || !canInspectDesignWorkshops(user)) return;
+    let cancelled = false;
+    fetchStageRegistry()
+      .then((result) => {
+        if (!cancelled) setRegistry(result);
+      })
+      .catch(() => undefined);
+    apiFetch<AddressReference>("/reference/address")
+      .then((result) => {
+        if (!cancelled) setStates(result.statesAndUnionTerritories ?? []);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [loading, user]);
+
   useEffect(() => {
     if (loading || !canInspectDesignWorkshops(user)) return;
     const current = generation.current + 1;
     generation.current = current;
-    listInspectableDesignWorkshops({ page, pageSize: PAGE_SIZE, search: applied || undefined })
+    listInspectableDesignWorkshops({ page, pageSize: PAGE_SIZE, search: applied || undefined, ...filters })
       .then((result) => {
         if (generation.current !== current) return;
         setData(result);
@@ -146,7 +210,7 @@ export default function DesignWorkshopInspectionsPage() {
         // assigned to me", which is the one thing this screen must never say by accident.
         setError(describeFailure(err));
       });
-  }, [applied, page, loading, user]);
+  }, [applied, page, loading, user, filters]);
 
   /*
     THE SAME PREDICATE THE API APPLIES, APPLIED HERE TOO — a mirror and not a narrowing.
@@ -219,6 +283,99 @@ export default function DesignWorkshopInspectionsPage() {
         />
       </div>
 
+      <div className="mb-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-3" role="group" aria-label="Filter the workshops to inspect">
+        <Dropdown
+          value={status}
+          onChange={(next) => {
+            setStatus(next);
+            setPage(1);
+          }}
+          options={[...INSPECTION_STATUS_OPTIONS]}
+          ariaLabel="Filter by status"
+          advanceOnSelect={false}
+        />
+        <Dropdown
+          value={round}
+          onChange={(next) => {
+            setRound(next);
+            setPage(1);
+          }}
+          options={[...INSPECTION_ROUND_OPTIONS]}
+          ariaLabel="Filter by submission round"
+          advanceOnSelect={false}
+        />
+        <Dropdown
+          value={stateName}
+          onChange={(next) => {
+            setStateName(next);
+            setPage(1);
+          }}
+          options={[{ value: "", label: "Any state" }, ...states.map((name) => ({ value: name, label: name }))]}
+          ariaLabel="Filter by state"
+          searchable
+          advanceOnSelect={false}
+        />
+        <Dropdown
+          value={kind}
+          onChange={(next) => {
+            setKind(next);
+            setPage(1);
+          }}
+          options={[
+            { value: "", label: "Any type of workshop" },
+            ...kindChoices.options.map((option) => ({ value: option.value, label: option.label }))
+          ]}
+          ariaLabel="Filter by type of workshop"
+          advanceOnSelect={false}
+        />
+        <label className="grid gap-1 text-xs text-ink-500">
+          Started on or after
+          <input
+            className="field-input"
+            type="date"
+            value={dateFrom}
+            max={dateTo || undefined}
+            onChange={(event) => {
+              setDateFrom(event.target.value);
+              setPage(1);
+            }}
+          />
+        </label>
+        <label className="grid gap-1 text-xs text-ink-500">
+          Started on or before
+          <input
+            className="field-input"
+            type="date"
+            value={dateTo}
+            min={dateFrom || undefined}
+            onChange={(event) => {
+              setDateTo(event.target.value);
+              setPage(1);
+            }}
+          />
+        </label>
+      </div>
+      {activeFilters > 0 ? (
+        <p className="mb-4 flex flex-wrap items-center gap-2 text-xs text-ink-500">
+          {activeFilters} filter{activeFilters === 1 ? "" : "s"} applied.
+          <button
+            type="button"
+            className="field-button-secondary"
+            onClick={() => {
+              setStatus("");
+              setRound("");
+              setStateName("");
+              setKind("");
+              setDateFrom("");
+              setDateTo("");
+              setPage(1);
+            }}
+          >
+            Clear filters
+          </button>
+        </p>
+      ) : null}
+
       <section className="panel overflow-hidden">
         {data === null ? (
           // null is "still asking" and [] is "genuinely none". Saying "nothing is assigned to you"
@@ -227,7 +384,7 @@ export default function DesignWorkshopInspectionsPage() {
           <div className="p-4 text-sm text-ink-700">Loading…</div>
         ) : rows.length === 0 ? (
           <div className="p-4">
-            <EmptyState {...inspectionEmptyState(Boolean(applied))} />
+            <EmptyState {...inspectionEmptyState(Boolean(applied) || activeFilters > 0)} />
           </div>
         ) : (
           <ul className="divide-y divide-line-200">

@@ -97,7 +97,7 @@ const APP_SHELL = read("components", "AppShell.tsx");
 /** `/login`'s password submit, from its declaration to the page's JSX. */
 const SUBMIT = (() => {
   const from = LOGIN.indexOf("async function submit(");
-  return from < 0 ? "" : LOGIN.slice(from, LOGIN.indexOf("return (", from));
+  return from < 0 ? "" : LOGIN.slice(from, LOGIN.indexOf("async function startOidc(", from));
 })();
 /** The Google Identity Services callback, from its opening line to the GIS button render. */
 const GIS_CALLBACK = (() => {
@@ -194,22 +194,23 @@ test("the Android handset carries the same floor and the same first clause", () 
  * ──────────────────────────────────────────────────────────────────────────── */
 
 test("both sign-in paths check the account they were handed, not the effect", () => {
-  // Regression 1. Two call sites — the password submit and the Google callback — and the effect is
-  // the belt rather than the brace.
+  // Regression 1. Three call sites — the password submit, the Google callback and the Microsoft/Yahoo
+  // completion — and the effect is the belt rather than the brace.
   const guards = LOGIN.match(/if \(mustChangePassword\(account\)\) return;/g) ?? [];
-  expect(guards.length, "the password path and the Google path").toBe(2);
+  expect(guards.length, "the password path, the Google path and the Microsoft/Yahoo path").toBe(3);
 });
 
 test("the sign-in card offers only the ways in that exist", () => {
-  // Microsoft and Yahoo sign-in never had anything behind them; their buttons, the "Coming soon"
-  // badge and its toast were removed on 2026-10-10. Google is drawn only where it is configured,
-  // and an unconfigured site shows no setup instructions in its place.
-  expect(LOGIN).not.toContain("Continue with Microsoft");
-  expect(LOGIN).not.toContain("Continue with Yahoo");
+  // Every button on the card is a working way in: Microsoft and Yahoo are drawn from
+  // `oidcProviders`, i.e. only where this site is configured for them, and Google only where its
+  // client id is set. Nothing says "coming soon", and an unconfigured site shows no setup
+  // instructions in place of a button.
+  expect(LOGIN).toContain("oidcProviders.map((provider) =>");
+  expect(LOGIN).toContain("Continue with {provider.label}");
   expect(LOGIN).not.toContain("Coming soon");
   expect(LOGIN).not.toMatch(/sign-in is coming soon/);
   expect(LOGIN).not.toContain("to enable Google sign-in");
-  expect(LOGIN).toMatch(/\{googleClientId \? \([\s\S]{0,400}?>OR<[\s\S]*?Continue with Google[\s\S]*?\) : null\}/);
+  expect(LOGIN).toMatch(/\{googleClientId \|\| oidcProviders\.length > 0 \? \([\s\S]{0,400}?>OR<[\s\S]*?Continue with Google[\s\S]*?\) : null\}/);
   expect(SUBMIT, "the submit slice ends before the JSX").not.toContain("<form");
 });
 
@@ -295,7 +296,7 @@ test("the gate is handed the password of the last SUCCESSFUL sign-in, never the 
   expect(LOGIN).toMatch(/const \[doorPassword, setDoorPassword\] = useState\(""\);/);
 });
 
-test("the door password is written at four moments and no others", () => {
+test("the door password is written at five moments and no others", () => {
   // Set as an attempt goes out — BEFORE the request, so the render that draws the gate already holds
   // it — and taken back when that attempt is refused.
   expect(SUBMIT, "the submit was located").toContain("await login(email, password)");
@@ -313,8 +314,12 @@ test("the door password is written at four moments and no others", () => {
   const onDone = /onDone=\{\(\) => \{[\s\S]*?\}\}/.exec(LOGIN)?.[0] ?? "";
   expect(escape).toContain('setDoorPassword("")');
   expect(onDone).toContain('setDoorPassword("")');
-  // Nothing else writes it: four empties and one set.
-  expect((LOGIN.match(/setDoorPassword\(/g) ?? []).length).toBe(5);
+  // At the top of the Microsoft/Yahoo completion too, for the Google callback's reason.
+  const oidc = LOGIN.slice(LOGIN.indexOf("const callback = oidcCallback.current;"));
+  expect(oidc.indexOf('setDoorPassword("")'), "emptied before the sign-in").toBeGreaterThan(-1);
+  expect(oidc.indexOf('setDoorPassword("")')).toBeLessThan(oidc.indexOf("loginWithOidc("));
+  // Nothing else writes it: five empties and one set.
+  expect((LOGIN.match(/setDoorPassword\(/g) ?? []).length).toBe(6);
 });
 
 test("the box is asked for when the host has none, and again after any refusal", () => {

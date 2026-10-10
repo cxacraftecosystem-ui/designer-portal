@@ -482,6 +482,50 @@ lasts as long as the account's password does not change** (§3.6): it carries th
 whatever password the account held when it signed in, so a password set by any door afterwards ends
 it, and a name or avatar correction does not.
 
+### 3.3A Microsoft and Yahoo sign-in (2026-10-10)
+
+Both are OpenID Connect, driven as an **authorization code with PKCE (S256) and a nonce**, and
+**redeemed by the backend** with the client secret (`backend/app/services/oidc_sign_in.py`). Yahoo's
+token endpoint accepts only a client secret and answers no cross-origin request, so no phone and no
+browser could redeem a Yahoo code without holding a secret it must not hold; Microsoft is driven the
+same way so there is one path. Each provider is live only when its client ID and secret are both set
+(`MICROSOFT_CLIENT_ID`/`_SECRET`, `YAHOO_CLIENT_ID`/`_SECRET`); the clients draw a button only when
+their own build carries the client ID — never a disabled one.
+
+- **One redirect URI**, the web app's `/login/callback` (a route handler). A web `state` goes back to
+  `/login` with the answer in the URL **fragment**, so the code reaches no server log and no
+  `Referer`; the page removes it from the address bar before using it. A `state` starting `app.` is
+  handed to the Android app on `com.designprototype.workshop.signin://oidc/callback`, where AppAuth
+  refuses any `state` it did not send. A code intercepted on that hop is useless without the PKCE
+  verifier, which never leaves the app (or the browser tab) that started the flow.
+- **The ID token is verified even though it arrived on the TLS back channel**: signature against the
+  provider's JWKS (RS256 or ES256 only — `none` and HMAC are refused before a key is looked up), issuer
+  (Yahoo's fixed one; Microsoft's per-tenant one, bound to the token's `tid` and to `MICROSOFT_TENANT`),
+  audience (with several, `azp` must be ours), `exp`/`nbf`/`iat` with a minute of leeway, and the
+  **nonce**: the provider is sent `base64url(sha256(raw))` and the backend is sent the raw value, so a
+  token is accepted only from whoever started the flow that minted it. Keys are cached for an hour and
+  refetched for an unknown `kid` at most once a minute.
+- **The address must be verified by the provider.** Yahoo: `email_verified` true. Microsoft: a
+  personal account (tenant `9188040d-…`) carries an address Microsoft verified; a work or school
+  account's `email` is whatever its tenant says, so it counts only with the optional claim
+  `xms_edov` true — the owner must add `email` and `xms_edov` to the registration's ID token
+  (Token configuration). This is what closes the "nOAuth" takeover, where a tenant administrator sets
+  somebody else's address on an account they control. An unverified address is a 401 before admission
+  is consulted, so nothing is written.
+- **Admission and linking are Google's** (§3.3, through the one function both paths end in,
+  `auth._sign_in_verified_mailbox`): the allow-list decides before any write, the same tiers, the
+  same master-admin rules, a password account stays a password account. **One difference: no Gmail
+  spelling is folded to find an account.** That fold rests on Google running Gmail and publishing its
+  spelling rule; Microsoft and Yahoo promise nothing about other spellings of the address they
+  verified, so their sign-in finds an account at the literal address or creates one. (The allow-list
+  itself still reads a Gmail mailbox's spellings, as it does for a password sign-in.) A new account is
+  recorded with `authProvider` `MICROSOFT` or `YAHOO`; a second provider on an existing account
+  changes neither the provider nor the avatar.
+- **Logged**: the provider and a reason tag (`nonce-mismatch`, `wrong-audience`,
+  `redemption-refused` with the provider's fixed error code, …). Never a code, verifier, nonce,
+  token, secret or response body. The person reads one sentence per provider — "did not complete",
+  "was cancelled", or "has not confirmed the email address".
+
 ### 3.4 Provisioned passwords, and the forced change
 
 **WHO TYPES A PASSWORD FOR WHOM.** Password accounts are created by the account provisioners —
@@ -697,10 +741,26 @@ no role check, because the link is the whole authority.
   route kills every outstanding link; and since 2026-10-09 the same fingerprint binds every session
   token (§3.6), so the new password also ends every session opened with the old one, whenever it was
   opened.
-- **Delivery is a copy and paste.** There is no mailer: the provisioner copies the link out of the
-  screen (`credential_links.CopyLinkDelivery`) and hands it over. The server's log lines carry account
-  and link ids, never the link or an address. The link's origin is the backend's
-  `NEXT_PUBLIC_APP_URL`, which [ENVIRONMENT.md](ENVIRONMENT.md) documents.
+- **Delivery is a copy and paste, or an e-mail the provisioner chooses** (since 2026-10-10). By
+  default the provisioner copies the link out of the screen (`credential_links.CopyLinkDelivery`) and
+  hands it over. When mail is configured (`MAIL_FROM_ADDRESS`, [ENVIRONMENT.md](ENVIRONMENT.md)) Users
+  also offers "E-mail a password link" (`delivery: "EMAIL"`, `credential_links.EmailDelivery`): the
+  link is queued to the account's own address and **the provisioner is handed no copy of it** (the
+  answer's `link` is null). The queued row (`EmailMessage`) holds the link only Fernet-sealed with the
+  `managed_secrets` key, and the seal is set to NULL the moment the message is sent or has failed; a
+  link that expires while still queued is never sent. Asking for e-mail where mail is off is a 422
+  before anything is minted. The server's log lines carry account, link and message ids — never the
+  link, a message body or an address. The link's origin is the backend's `NEXT_PUBLIC_APP_URL`.
+- **What this product e-mails, and nothing else.** (1) A set-password or invitation link, only when a
+  provisioner chooses e-mail for it, to that account's own address. (2) To a design workshop's
+  designers (its designer-access rows, and its creator when the creator is a designer), a notice when
+  an inspecting officer files a correction suggestion on it or sends it back: the workshop's title,
+  the officer's name, the stage, the officer's note and a link to the workshop — never a stage value,
+  a photograph or a record. Each person can switch (2) off in Settings
+  (`UserPreference.emailReviewNotes`, opt-out); (1) is not a notification and has no opt-out. Bodies
+  are rendered in the queue worker at send time and are never stored or logged; `EmailMessage` keeps
+  the kind, the address, the subject, the template parameters above, the status, the attempts, SES's
+  message id and the SES error code — the send log.
 - **The web keeps the token off every request line it sends, and out of the address bar**
   (2026-10-09). `POST /api/auth/set-password/check` takes `{"token": …}` and answers exactly what
   `GET /api/auth/set-password?token=…` answers — the same verdict, the same three fields, nothing

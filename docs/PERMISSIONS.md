@@ -163,7 +163,10 @@ permission error:
    `401 Invalid email or password` for a wrong credential. **The `MASTER_ADMIN` exemption is what
    makes gating everybody safe**: it lives in the gate, not in the table, so there is always one
    account that can reach the roster and let people back in. Google sign-in is gated too; an address
-   that is not admitted becomes a pending request instead of an account.
+   that is not admitted becomes a pending request instead of an account. So are Microsoft and Yahoo
+   sign-in (2026-10-10), by the same function and with the same answers, once the provider has
+   verified the address ([SECURITY.md](SECURITY.md) §3.3A); a new account they create starts at the
+   tier the allow-list row names, exactly as a Google one does.
 2. **The designer empanelment** (`backend/app/services/designers.py` → `roster_allows`) still gates
    `DESIGNER` accounts only, and still answers in its own words. `User.role = DESIGNER` is not by
    itself what admits a designer. Admins are deliberately not empanelment-gated — an admin
@@ -228,9 +231,10 @@ Admin and above manage the allow-list (`can_manage_access_roster` → `require_a
 `/api/access/roster`); read is gated with write, because the pending queue is a list of somebody's
 colleagues, applicants and former staff.
 
-**Where an administrator actually does it, on each client, and how they are told.** There is no
-email sender and no push transport anywhere in this codebase, so the notification is a COUNT on a
-surface an admin already opens, with the queue one tap behind it. The number is the same on both
+**Where an administrator actually does it, on each client, and how they are told.** The
+notification is a COUNT on a surface an admin already opens, with the queue one tap behind it (the
+product's e-mail carries password links and workshop review notices, not this queue — see
+[SECURITY.md](SECURITY.md)). The number is the same on both
 clients; the route to it is not, and that is deliberate rather than drift:
 
 | | Web | Android |
@@ -564,6 +568,9 @@ this table is that "grep `deps.py`" is no longer a complete way to check a row.
 | **Be appointed** to a post on one workshop, by somebody else (§4.8) | the holder sets, then `design_workshop_posts`' rules | ⬜ | ⬜ | ⬜ | designer | inspector | ⬜ | designer, AD | designer, RD | **any¹⁶** | **any¹⁶** | **any¹⁶** |
 | **Read a workshop I monitor** (§4.6) | `assert_oversight_surface` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | **✅¹⁰** | **✅¹⁰** | **✅¹⁰** | **✅¹⁰** | **✅¹⁰** |
 | **Read a workshop I inspect** (§4.5) | `assert_inspection_surface` | ⬜ | ⬜ | ⬜ | ⬜ | ✅ | ⬜ | ⬜ | ⬜ | **✅¹¹** | **✅¹¹** | **✅¹¹** |
+| **See and hear a workshop's files, read-only** — `GET /design-workshop-inspections/{id}/media` (§4.5) | `require_inspector` + the row (`load_inspectable_workshop_or_404`) | ⬜ | ⬜ | ⬜ | ⬜ | ✅ | ⬜ | ⬜ | ⬜ | **✅¹¹** | **✅¹¹** | **✅¹¹** |
+| **See and hear a monitored workshop's files, read-only** — `GET /design-workshop-oversight/assigned/{id}/media` (§4.6) | `require_officer` + the row (`load_overseen_workshop_or_404`) | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | **✅¹⁰** | **✅¹⁰** | **✅¹⁰** | **✅¹⁰** | **✅¹⁰** |
+| **List the workshops open to the pool** — `GET /design-ratings/workshops` | `can_run_design_workshops` (404 otherwise) | ⬜ | ⬜ | ⬜ | ✅ | ⬜ | ⬜ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | **File a correction suggestion / send a report back** (§4.5) | `require_inspector` + the row | ⬜ | ⬜ | ⬜ | ⬜ | **✅¹¹** | ⬜ | ⬜ | ⬜ | **✅¹¹** | **✅¹¹** | **✅¹¹** |
 | **Upload a workshop's artisan list**, or unlink an artisan from it | `assert_may_assign_oversight`, then `refuse_a_holders_write` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | **⬜⁹** | **⬜⁹** | **✅¹⁶** | ✅¹⁶ | ✅¹⁶ |
 | Assign **tasks** to other users | `require_admin` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜⁷ | ⬜⁷ | ⬜⁷ | ✅ | ✅ |
@@ -1190,7 +1197,7 @@ own table, and is granted by a different person:
 | 2 | `DataAccessGrant` | one **account's** records at large | the record **owner**, not an admin | §4.2 |
 | 3 | `DesignWorkshopViewer` | one **design workshop**, read + stage-writes | an admin, or a Ministry Admin through the oversight screen's designer doors (§2's ¹⁴) — never the creator, never the grantee themselves, and never to the workshop's inspector or directors (§4.8) | §4.4 |
 | 4 | `DesignWorkshopAccessRequest` | nothing on its own — it is the **asking** half of 3, a separate table with its own `DwAccessRequestStatus` and `DwAccessRequestSource` enums (`backend/prisma/schema.prisma`) | the requester raises it, an admin decides it | **not written up here** — §4.4.3 only says why the lifecycle is not on the grant table itself |
-| 5 | `DesignWorkshopInspector` | one **design workshop**, **read-only**, for the `INSPECTOR` tier or an administrator appointed to inspect it — the stage data and nothing attached to it | a Ministry Admin, an admin or the master admin — never the appointee themselves and never to anybody who authored the workshop | **§4.5** |
+| 5 | `DesignWorkshopInspector` | one **design workshop**, **read-only**, for the `INSPECTOR` tier or an administrator appointed to inspect it — the stage data, its own questions, and its files to see and hear (never to change) | a Ministry Admin, an admin or the master admin — never the appointee themselves and never to anybody who authored the workshop | **§4.5** |
 | 6 | `DesignWorkshopOversight` | one **design workshop**, **read-only**, for its Assistant Director and its Regional Director — the two director tiers, or an administrator appointed to the post | the same three tiers, on the same terms | **§4.6** |
 
 §4.3 is not one of them: it is the audit trail that records what they permitted. Row 4 is the one
@@ -1693,7 +1700,8 @@ right-hand column is narrower than a reader expects, and the narrowness is the d
 | **Recording dictation consent** | ✅ | ⬜ |
 | **AI layers** — register, accept, unaccept, delete; all five verbs | ✅ | ⬜ |
 | **Rewriting the custom-section definition** | ✅ | ⬜ |
-| **This workshop's media** — recordings, photographs, transcripts | ✅ | ⬜ — see below |
+| **This workshop's media** — recordings, photographs, transcripts | ✅ | ✅ **read-only, its own read** — `GET …/{id}/media`, signed links; see below |
+| **Reading the workshop's own custom questions** | ✅ | ✅ on the read, as `customSections` |
 | **Questionnaire responses** | ✅ (§4.4.4) | ⬜ — `_visible_questionnaire_where` writes `viewers: {some: {userId}}` by hand |
 | Deleting the workshop, or re-granting it to anyone | ⬜ | ⬜ |
 
@@ -1706,10 +1714,17 @@ takes away for as long as it is held (§4.8).
 `records._design_workshop_media_branches` is keyed on `DesignWorkshopViewer` and `createdById`
 through the viewer module's `visible_to_clause` (§4.4.1 records why that arm exists). An inspector
 holds neither, and `owned_or_granted_where` gives them nothing either — its free pass starts at
-`has_rank(user, "PROFESSOR")`, rank 40, above this tier. **Whether an inspector should see a
-workshop's photographs is an owner's decision that has not been made**, and it is unmade on purpose
-rather than by accident: it is a product question, and the structure was built so that answering it
-has to be a deliberate edit.
+`has_rank(user, "PROFESSOR")`, rank 40, above this tier. **None of that changed when the owner ruled,
+on 2026-10-10 (sweep item F5), that an inspector sees the workshop's photographs, recordings and
+attachments** — the ruling was answered with a deliberate edit of its own rather than by widening a
+predicate. `GET /api/design-workshop-inspections/{id}/media` loads the workshop through
+`load_inspectable_workshop_or_404` and then `services/design_workshop_reader_media.py` encodes the
+files tagged to THAT workshop through `records.public_encode` with the uploader half empty and the
+workshop half naming that one workshop, and `signed_only=True`: every URL that survives is a
+short-lived signature even while `MEDIA_PRESIGNED_READS` is off, `objectKey` and `publicUrl` never
+travel, and a file that cannot be signed travels with no URL at all. `GET /media`, `/search`,
+`/export` and `/data` still give an inspector no URL, and every media write door still refuses a post
+holder (§4.8). Pinned per role, both ways, by `backend/tests/test_reader_media_and_pool_directory.py`.
 
 **THE ASSIGNERS ONLY, and the reason is stronger than §4.4.2's.** That section's argument is handover —
 an owner who picks their own readers freezes access the day they leave. Here the argument is the point
@@ -1892,7 +1907,8 @@ row which slots it fits.
 
 **What a row confers, and it is the whole list.** The account may READ the workshop through
 `GET /api/design-workshop-oversight/assigned/{id}` — every stage, every entity, the completeness
-scores, and the per-field provenance names — and it appears in their own list at
+scores, the per-field provenance names and the workshop's own questions — sees and hears its files
+through `GET /api/design-workshop-oversight/assigned/{id}/media`, and it appears in their own list at
 `GET /api/design-workshop-oversight/assigned`. That is all. For a holder whose role could otherwise
 write the workshop — an administrator — the row also TAKES AWAY writing its content and its designer
 team while it is held (§4.8).
@@ -1900,12 +1916,12 @@ There is no approval route for either post, and none is planned: the posts are v
 
 **What it deliberately does not confer.** No stage write. No report generation. No dictation consent.
 No AI-layer verb. No delete and no restore. No re-granting — an officer cannot put another officer on
-anything. **No media**: `transcripts` is absent from the read, and the photographs, recordings and
-attachments are counted on screen and not carried, because the media predicates are keyed on
-`DesignWorkshopViewer` and `createdById` and an officer holds neither. Whether an officer SHOULD see
-them is an owner's decision that has not been made; today the answer is no, stated in one place,
-rather than yes by inheritance from a predicate written for co-designers — the identical
-non-decision §4.5 records one scope over.
+anything. **No media predicate**: `transcripts` is absent from the read, because the media
+predicates are keyed on `DesignWorkshopViewer` and `createdById` and an officer holds neither. **The
+files themselves are a read of their own since 2026-10-10** (owner's ruling, sweep item F5):
+`GET /api/design-workshop-oversight/assigned/{id}/media`, through `load_overseen_workshop_or_404` and
+the same signed, read-only encoder §4.5 describes — the workshop's own files only, short-lived links
+only, nothing that writes. The workshop's own custom questions travel on the read as `customSections`.
 
 None of that is enforced by a check anybody could forget. It is enforced by the table not being
 consulted from any of those paths, and by `load_overseen_workshop_or_404` having **no `for_edit`

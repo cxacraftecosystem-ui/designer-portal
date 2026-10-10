@@ -391,11 +391,13 @@ export const DIRECTORATE_STEPS: GuideStep[] = [
       "Venue",
       "Required fields answered — a percentage across every stage",
       "Who supervises this workshop",
-      "All 22 stages, read-only, with who wrote each field"
+      "Files — the workshop's photographs, recordings and attachments",
+      "All 22 stages, read-only, with who wrote each field and the answers to the workshop's own questions"
     ],
     watch: [
       "A Ministry Admin, an Admin or the Master Admin can also be named to these posts by someone else, and then sees those workshops here — only the ones they were named on.",
       "If you haven't been named on any workshop yet, the page says so. If the list couldn't be loaded, it says that instead.",
+      "You can open the photographs, recordings, videos and attachments, but not change them. If a file stops opening, select Refresh files.",
       "This page is read-only. If a stage is wrong, ask its designers to correct it."
     ]
   }

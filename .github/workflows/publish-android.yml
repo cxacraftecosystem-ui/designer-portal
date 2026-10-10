@@ -181,7 +181,7 @@ jobs:
         working-directory: android
     steps:
       - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # No `ref:` override here, unlike android-build.yml. That file builds a `workflow_run`
           # commit, where the default ref (tip of main) may have moved past what was deployed.
@@ -468,7 +468,7 @@ jobs:
           esac
 
       - name: Set up JDK 25
-        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
         with:
           distribution: temurin
           # The JDK that RUNS Gradle: 25, the newest LTS (Temurin), since 2026-10-09. It does NOT
@@ -641,6 +641,12 @@ jobs:
           ANDROID_RELEASE_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_RELEASE_KEYSTORE_PASSWORD }}
           ANDROID_RELEASE_KEY_ALIAS: ${{ secrets.ANDROID_RELEASE_KEY_ALIAS }}
           ANDROID_RELEASE_KEY_PASSWORD: ${{ secrets.ANDROID_RELEASE_KEY_PASSWORD }}
+          # Microsoft and Yahoo sign-in. Repository VARIABLES, not secrets: a client ID and a redirect
+          # URI are public values compiled into every APK. Unset means the button is not drawn.
+          MICROSOFT_CLIENT_ID: ${{ vars.MICROSOFT_CLIENT_ID }}
+          MICROSOFT_TENANT: ${{ vars.MICROSOFT_TENANT }}
+          YAHOO_CLIENT_ID: ${{ vars.YAHOO_CLIENT_ID }}
+          OIDC_REDIRECT_URI: ${{ vars.OIDC_REDIRECT_URI }}
         run: |
           set -euo pipefail
           ./gradlew :app:assembleRelease --console=plain --stacktrace 2>&1 \

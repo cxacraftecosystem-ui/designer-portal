@@ -1,16 +1,32 @@
 # Open findings
 
-**Status: 60 open, 1 decision recorded and 1 deferral, 98 closed.** Every count re-counted by
-heading on 2026-10-10 (15 + 18 opened by the Android copy sweep and 29 by the web's that day, less the 2 of those closed
+**Status: 55 open, 1 decision recorded and 1 deferral, 103 closed.** Every count re-counted by
+heading on 2026-10-10 (15 + 18 opened by the Android copy sweep and 24 by the web's that day, less the 2 of those closed
 the same day); earlier counts on 2026-10-09; the entries closed on 2026-10-09 were checked against the tree that day, and
 the older closed sections were last re-checked on 2026-09-03.
+
+**Three missing features named by the customer-copy sweep were built on 2026-10-10, and recorded
+closed.** The sweep found screens explaining, to the people using them, features that did not exist:
+inspectors and directorate monitors could not see a workshop's files or the wording of its own
+questions, the inspection list had no filters, and Design review had no list of the workshops open to
+the pool. The web side had no open entry, so the open count does not move; the two handset entries for the
+same screens stay open. Counted by heading: still 31 open, and 100 + 3 = 103 closed.
 
 **Three Android gaps were closed on 2026-10-10 by building them**: correction suggestions on the
 handset, its own review queue, and inspections that work without signal. Two of them had been opened
 that day by the Android copy sweep and leave the open list; the review queue had no entry and is
 recorded already closed. 33 − 2 = 31 open; 95 + 3 = 98 closed.
 
-**The web's copy rewrite of 2026-10-10 moved 29 gaps off the screens and into this register.** The web app, its landing pages and the backend's user-facing messages used to tell people what the product could not do — "no screen and no endpoint", "coming soon", "this build", "the server refused". That copy was rewritten (branch `copy/dp-web`) so that a screen says what happened and what to do, and every missing feature or known defect it used to narrate is recorded below instead, under *Open*, each opened 2026-10-10. Approval, sign-off and hand-on copy was left to the approvals branch and is not among them. Five more it found were already here from the Android sweep, or had just been closed by building them, and were not entered twice. Counted by heading: 31 + 29 = 60 open, and 98 closed.
+**E-mail delivery, built on 2026-10-10, closed one entry.** No product could send e-mail: the
+walkthrough told directorate officers and inspectors so, and a correction suggestion could sit unread
+until somebody opened the workshop. It is under *Closed on 2026-10-10*, recorded and closed in the same
+change. Counted by heading: still 31 open, and 98 + 1 = 99 closed.
+
+**And "Continue with Microsoft" and "Continue with Yahoo" were built the same day** (item F3 of the
+copy sweep): the sign-in screen had admitted them as "Coming soon" with no entry here, so the gap is
+recorded already closed. Counted by heading: 31 open; 99 + 1 = 100 closed.
+
+**The web's copy rewrite of 2026-10-10 moved 24 gaps off the screens and into this register.** The web app, its landing pages and the backend's user-facing messages used to tell people what the product could not do — "no screen and no endpoint", "coming soon", "this build", "the server refused". That copy was rewritten (branch `copy/dp-web`) so that a screen says what happened and what to do, and every missing feature or known defect it used to narrate that is still missing is recorded below, under *Open*, each opened 2026-10-10. Approval, sign-off and hand-on copy was left to the approvals branch. Ten more it found were not entered: four the Android sweep had already recorded, and six the same day closed by building them (e-mail, Microsoft and Yahoo sign-in, the inspection list's filters, files and custom answers on an inspection read, and correction suggestions on the handset). Counted by heading: 31 + 24 = 55 open, and 103 closed.
 
 **Moving a set-password link's token off the web's request lines narrowed one entry the same day,
 and moved neither number.** The web now checks a link with `POST /api/auth/set-password/check`, the
@@ -769,10 +785,6 @@ They change together with `frontend/components/guide/steps.ts`, `frontend/compon
 
 ---
 
-### [MEDIUM] Nobody can sign in with a Microsoft or Yahoo account (frontend, android, backend) — opened 2026-10-10
-
-F3. As of 2026-10-10 the product has no Microsoft or Yahoo sign-in: there is no OAuth endpoint for either provider in `backend/app/api/routes/auth.py` and no allow-list check for them, so only a password or Google can sign anybody in. `frontend/app/login/page.tsx` used to draw "Continue with Microsoft" and "Continue with Yahoo" buttons with a "Coming soon" badge (`ComingSoonBadge`) and a toast from `comingSoon()` ("… sign-in is coming soon" / "… for now."); those controls and sentences were removed in the 2026-10-10 copy rewrite. The Android sign-in screen in `android/app/src/main/java/com/designprototype/workshop/MainActivity.kt` still draws them as of 2026-10-10 (the Android stream owns it). Closing it would take an OAuth flow for each provider in `backend/app/api/routes/auth.py`, checked against the same platform allow-list as Google sign-in, and then the buttons on both clients.
-
 ### [LOW] Usage figures cannot tell web requests from Android requests (frontend, android, backend) — opened 2026-10-10
 
 F26 (1 of 3). As of 2026-10-10 neither the web client nor the Android app sends the `x-client-app` header (`CLIENT_APP_HEADER` in `backend/app/services/usage.py`), so every recorded request is filed under the fallback label and the admin "Web and Android" chart on `frontend/app/(protected)/settings/usage/page.tsx` cannot split traffic by app. The recording notice (`collects()` in `backend/app/services/usage.py`) and the clients note in `usage_clients` in `backend/app/api/routes/usage.py` used to say "neither the web nor the Android layer sends the header yet"; both sentences were removed in the 2026-10-10 copy rewrite. Closing it would take `frontend/lib/api.ts` and the Android HTTP client each sending the header on every request (and the API allowing it in CORS).
@@ -789,10 +801,6 @@ F26 (3 of 3). As of 2026-10-10 nothing deletes usage records on a schedule: an a
 
 F15. As of 2026-10-10 a join card (one person creates the design workshop, colleagues scan a card to join the same one) can only be made and scanned in the Android app; the web has no join-card screen. The designer walkthrough said so on the Cards & tags card (`frontend/components/guide/steps.ts`, the `design-workshop-codes` step's `watch`, "there is no join card on the web"), and that bullet was removed in the 2026-10-10 copy rewrite. Closing it means a web join-card panel on `frontend/app/(protected)/design-workshops/[id]/codes/page.tsx` that issues a card and accepts a scanned one, then teaching it again on that card.
 
-### [MEDIUM] Nobody can be sent an email by the portal — sign-in links must be passed on by hand (backend) — opened 2026-10-10
-
-F2. As of 2026-10-10 the designer-portal has no mail sender: a sanction order's one-time sign-in link (and every password link) is shown on screen once and the officer copies it to the designer themselves. The directorate walkthrough said so in `frontend/components/guide/directorateSteps.ts` (`DIRECTORATE_STEPS`, the `ministry-sanction-order` card: "NOTHING IS EMAILED, BY ANYBODY, EVER. This product has no mail sender…") and in `frontend/components/guide/tracks.ts` (`DIRECTORATE_TRACK.checklist`: "Nothing is emailed by this product…"); both sentences were removed in the 2026-10-10 copy rewrite and the cards now only describe copying the link. Closing it needs a mail adapter in the backend, a sender identity, and a decision on whether one-time credentials may travel by email at all.
-
 ### [LOW] A co-designer's first sign-in link cannot be re-issued, and an imported sanction order shows no links (backend) — opened 2026-10-10
 
 F10. As of 2026-10-10 "Re-issue sign-in link" on the sanction register re-issues only for the lead designer of an order; a co-designer who loses their first link has to be given a temporary password by a Ministry Admin or an Admin on Manage users. Orders imported from a sheet issue no links at all, so each one has to be re-issued by hand from its entry. The walkthrough said both in `frontend/components/guide/directorateSteps.ts` (`DIRECTORATE_STEPS`, `ministry-sanction-order`: "There is no route in this product that can re-issue a CO-DESIGNER'S first link…" and "AN IMPORT ISSUES NO SIGN-IN LINKS AT ALL…"); both were removed in the 2026-10-10 copy rewrite and the card now gives only the remedies. Closing it needs the re-issue action to take a designer, not only the order's lead, and a way to collect an import's links safely (for example a one-time downloadable list).
@@ -800,18 +808,6 @@ F10. As of 2026-10-10 "Re-issue sign-in link" on the sanction register re-issues
 ### [LOW] Regional Directors cannot correct their own state's annual-plan entries (backend) — opened 2026-10-10
 
 F11. As of 2026-10-10 the annual plan is open only to a Ministry Admin, an Admin or the Master Admin (`canManageAnnualPlan` in `frontend/lib/permissions.ts`); a Regional Director cannot correct the entries for their own region because a plan entry carries no region to scope an edit to. The walkthrough explained this in `frontend/components/guide/directorateSteps.ts` (`DIRECTORATE_STEPS`, `ministry-annual-plan`: "…The reason is written into the server (`can_manage_annual_plan`)… If regional editing is ever wanted it is a scope table, not a promotion."); the explanation was removed in the 2026-10-10 copy rewrite and the card now only says who can open the screen. Closing it needs a per-region scope for plan entries and a regional read/write permission on the annual-plan routes and page.
-
-### [LOW] The inspection list cannot be filtered by designer, district or date (frontend) — opened 2026-10-10
-
-F13. As of 2026-10-10 "Workshops to inspect" (`frontend/app/(protected)/design-workshop-inspections/page.tsx`) offers only a text search over title, craft, cluster and workshop code. The inspector walkthrough listed the absence as a field in `frontend/components/guide/inspectorSteps.ts` (`INSPECTOR_STEPS`, `inspection-list`: "Nothing else — there is no filter by designer, district or date on this list"); the entry was removed in the 2026-10-10 copy rewrite. Closing it needs designer, district and date filters on the inspection list (and its Android twin). Note: the same field string is mirrored in `WALKTHROUGH_INSPECTOR_FIELDS` in `android/app/src/main/java/com/designprototype/workshop/ui/WalkthroughJourney.kt`, which must drop it too.
-
-### [MEDIUM] Designers are not told when an inspector files a correction suggestion (backend) — opened 2026-10-10
-
-F14. As of 2026-10-10 a correction suggestion filed without sending the report back leaves the report where it is and nobody is notified, so it may sit unread until a designer opens the workshop. The walkthrough said so in `frontend/components/guide/inspectorSteps.ts` (`INSPECTOR_STEPS`, `inspection-feedback`: "A suggestion filed on its own may sit unread until somebody opens the workshop."); the sentence was removed in the 2026-10-10 copy rewrite. Closing it needs an in-app notification (or email, which depends on F2) to the workshop's designers when a suggestion is filed.
-
-### [MEDIUM] Inspectors and directorate monitors cannot see a workshop's photographs, recordings, attachments or its custom-question answers (frontend, backend) — opened 2026-10-10
-
-F5. As of 2026-10-10 the inspection read (`read_workshop_under_inspection` in `backend/app/api/routes/design_workshop_inspections.py`) and the oversight read (`read_overseen_workshop`) carry media fields only as ids that an inspector or Assistant/Regional Director cannot resolve, and the questions behind a workshop's custom answers are served only through `GET /design-workshops/{id}/custom-sections`, which those readers cannot reach. `frontend/app/(protected)/design-workshop-inspections/[id]/page.tsx` and `frontend/app/(protected)/officers/monitored/[id]/page.tsx` (`ReadField`, `ReadStage`, and the read-only banner) used to say that an inspection/oversight read "does not carry photographs, recordings or attachments" and that the questions "are read through a route an inspection does not reach"; those sentences were removed in the 2026-10-10 copy rewrite, leaving only the counts ("{n} files recorded here", "{n} answers recorded to questions…"). Closing it needs an owner decision on whether post holders may see media, then a per-file media entitlement for post holders and the custom-section definitions folded into both reads.
 
 ### [MEDIUM] Inspection notes cannot be saved offline in the browser to send later (frontend) — opened 2026-10-10
 
@@ -925,6 +921,106 @@ way; an answer lost on the way back is recognised on the register by its device 
 twice; nothing queued is deleted except by its author. The pass also runs on the app's
 "network came back" hook. Pinned by `InspectionNotesSyncTest` and
 `DesignWorkshopInspectionFeedbackTest`.
+
+The e-mail entry below was closed the same day by building the product's mail sender.
+
+### [MEDIUM] Nothing could be e-mailed, so a designer was never told about a correction and every password link was a copy and paste (backend, frontend) — **CLOSED 2026-10-10**
+
+There was no mail sender. The web walkthrough said so to directorate officers ("This product has no
+mail sender") and to the sanction checklist's reader, an inspector was told that a suggestion "may sit
+unread until somebody opens the workshop", and every set-password link had to be copied out of Users
+and passed on by hand.
+
+Built: an Amazon SES sender (SESv2 through boto3, `services/mailer.py`) behind an outbox
+(`EmailMessage`, migration `20261010100000_email_outbox`, `services/email_outbox.py`) that the
+existing `fieldrepo-queue` drain sends from, with compare-and-set claiming, retries with backoff for a
+throttle or SES fault, a permanent failure for a rejected message, and the row itself as the send log.
+Plain-text and HTML templates; bodies are rendered at send time and never stored or logged. Two
+triggers: an inspector filing a correction suggestion or sending a report back e-mails the workshop's
+designers (`notify_review_note`, after the write, never failing it), and a provisioner can choose
+"E-mail a password link" on Users (`delivery: "EMAIL"`), which queues the link Fernet-sealed, clears
+the seal once the message is dealt with, and hands the provisioner no copy. Each person can switch
+the review notices off in Settings (`emailReviewNotes`, opt-out). Mail is on only when
+`MAIL_FROM_ADDRESS` is set; otherwise every e-mail control is absent and nothing on screen mentions
+it. The walkthrough sentences above were rewritten to be true either way.
+
+**The owner's steps** (no AWS resource is created by this repository): verify the sending identity
+in SES ap-south-1, request production access there, grant the backend IAM user `ses:SendEmail`, and
+add `MAIL_FROM_ADDRESS` to `BACKEND_ENV` — [ENVIRONMENT.md](ENVIRONMENT.md), *E-mail (Amazon SES)*.
+
+Pinned by `tests/test_mailer.py` (the SES request and the retry classification, SES stubbed),
+`tests/test_email_outbox.py` (the seal, the drain, retries, expiry, the opt-out, the recipients, no
+link or address in a log line), `tests/test_review_note_triggers.py` (both inspection doors notify
+after their write, and a refused send-back notifies nobody) and `tests/test_email_db.py` (the
+preference routes, an e-mailed link against a real database, and the drain).
+
+And one sign-in gap the web admitted on its front door (item F3 of the same sweep), closed by building
+the two providers.
+
+### [P0] "Continue with Microsoft" and "Continue with Yahoo" were dead buttons with a "Coming soon" badge on the sign-in screen (frontend, backend, android) — **CLOSED 2026-10-10**
+
+The web sign-in card drew both buttons with a "Coming soon" badge and a toast ("… sign-in is coming
+soon — use Google, or your email and password, for now"), over a code comment saying the providers
+had nothing behind them; the handset drew neither. Both providers are now built end to end: an
+authorization code with PKCE and a nonce, redeemed by the backend with the client secret, the ID token
+verified against the provider's keys (issuer, audience, expiry, nonce), the address accepted only when
+the provider verified it, then exactly the Google path's allow-list admission and account linking —
+without its Gmail-spelling fold ([SECURITY.md](SECURITY.md) §3.3A). Each button is drawn only when its
+client ID is configured for that client; there is no badge and no disabled placeholder. Pinned by
+`backend/tests/test_oidc_sign_in.py` (verification against a fake JWKS, every refusal),
+`backend/tests/test_oidc_sign_in_admission.py` (admission, linking, refusals, through the real route),
+`frontend/e2e/oidc-sign-in-unit.spec.ts` and
+`android/app/src/test/java/com/designprototype/workshop/data/OidcSignInTest.kt`. Live once the owner
+registers the two apps and sets the values [ENVIRONMENT.md](ENVIRONMENT.md) lists.
+
+---
+
+## Closed on 2026-10-10
+
+Built on `feature/inspect` from the customer-copy sweep's items F5, F13 and F8. Each entry names the
+test that fails without it.
+
+### [MEDIUM] Inspectors and directorate monitors could not see a workshop's photographs, recordings, attachments or the wording of its own questions (backend, frontend) — **CLOSED 2026-10-10**
+
+Both read-only surfaces — `/design-workshop-inspections/[id]` and `/officers/monitored/[id]` — counted
+each media field's files and the answers to the workshop's own questions, and told the reader the
+read did not carry them. An inspector deciding whether to send a report back could not look at the
+photograph the note would be about.
+
+Each surface now has a second GET behind its own read-only loader —
+`GET /api/design-workshop-inspections/{id}/media` and
+`GET /api/design-workshop-oversight/assigned/{id}/media` — served by
+`backend/app/services/design_workshop_reader_media.py` through `records.public_encode` with the
+workshop half naming that one workshop and `signed_only=True`: only files tagged to the workshop, every
+URL a short-lived signature whatever `MEDIA_PRESIGNED_READS` says, no `objectKey` or `publicUrl`, no
+write. Both workshop reads carry `customSections`. The web draws both with
+`frontend/components/designworkshop/ReaderWorkshopMedia.tsx`. Pinned per role, admitted and refused —
+an inspector of another workshop, a post holder not posted to it, and the roles neither surface
+admits — by `backend/tests/test_reader_media_and_pool_directory.py`, and on the web by
+`frontend/e2e/workshop-reader-media-unit.spec.ts`. The handset's inspection screen is not changed by
+this entry.
+
+### [LOW] The inspection list had a search box and no filters (backend, frontend) — **CLOSED 2026-10-10**
+
+`GET /api/design-workshop-inspections` now takes `statusFilter`, `round`, `state`, `workshopKind`,
+`dateFrom` and `dateTo`, AND-composed beside the inspection scope by
+`backend/app/services/reader_list_filters.py`, so no filter can list a workshop the inspector holds no
+row on; the web list draws them. Pinned by
+`test_each_filter_narrows_the_inspectors_own_rows` and
+`test_no_filter_reaches_a_workshop_the_inspector_holds_no_row_on`.
+
+### [LOW] Design review had no list of the workshops that had opened a piece to the pool (backend, frontend) — **CLOSED 2026-10-10**
+
+The page told pool reviewers that browsing the workshops open to the pool "is still a different
+question with no answer". `GET /api/design-ratings/workshops` now lists them — behind the POOL round's
+own gate, answered 404 to anybody else, with the title, the dates and the open counts per kind and no
+other workshop or stage field — and `/design-review` draws it first. Pinned by
+`test_the_pool_reviewers_see_only_workshops_that_opened_a_piece`,
+`test_the_pool_directory_is_refused_to_everybody_the_pool_round_refuses` and, for the stage-entry fence,
+`test_the_pool_directory_takes_the_gate_and_serves_no_stage_field` in
+`backend/tests/test_entry_provenance_readers.py`.
+
+---
 
 ## Closed on 2026-10-09
 

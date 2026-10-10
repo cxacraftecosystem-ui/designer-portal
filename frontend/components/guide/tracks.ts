@@ -345,6 +345,7 @@ export const INSPECTOR_TRACK: GuideTrack = {
     "Your note says what is wrong and what it should say. The designers read it exactly as written.",
     "You picked the right stage. “The report as a whole” is the default, so change it if your note is about one stage.",
     "You pressed the button you meant. Filing a suggestion leaves the report where it is; only sending it back puts it on the designers' desks.",
+    "You have looked at the photographs and listened to the recordings your note is about. They are on the inspection page, under Files and under each stage.",
     "A value that looks wrong may be a copy taken when the stage was saved; the record it came from may have been corrected since.",
     "A stage reading 100% means every required field was answered, not that the answers are right."
   ],

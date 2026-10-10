@@ -8,6 +8,7 @@ import { adminChromeVisible, useAdminView } from "@/components/AdminViewProvider
 import { useAuth } from "@/components/AuthProvider";
 import { AppSettingsPanel } from "@/components/settings/AppSettingsPanel";
 import { ChangePasswordCard } from "@/components/settings/ChangePasswordCard";
+import { EmailNotificationsCard } from "@/components/settings/EmailNotificationsCard";
 import { GetTheAppPanel } from "@/components/settings/GetTheAppPanel";
 import { GrievanceRedressalCard } from "@/components/settings/GrievanceRedressalCard";
 import { PublishAppUpdatePanel } from "@/components/settings/PublishAppUpdatePanel";
@@ -133,6 +134,9 @@ export default function SettingsPage() {
           <AppearanceCard />
           <AccessibilityCard />
         </div>
+
+        {/* This account's e-mail opt-outs. Draws nothing on a deployment that sends no e-mail. */}
+        <EmailNotificationsCard />
 
         {/*
           NO ROLE GATE, AND HIGH UP, WITH THE OTHER TWO THINGS THIS ACCOUNT OWNS.

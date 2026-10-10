@@ -24,7 +24,7 @@
  * is the number an officer's next hour depends on.
  *
  * **THAT NO SIGN-IN LINK WAS ISSUED, AND WHAT TO DO ABOUT IT.** A link is shown once and can never be
- * shown again; there is no mailer in this product and the officer's clipboard is the transport. An
+ * shown again; the register does not e-mail, and the officer's clipboard is the transport. An
  * import that returned two hundred live credentials on one screen would change the SECURITY posture
  * of the feature — one accidental close strands two hundred designers, one screenshot is two hundred
  * credentials — so it mints none, and this panel has to say so in words or the accounts it made are

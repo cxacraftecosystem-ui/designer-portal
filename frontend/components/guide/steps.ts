@@ -1571,7 +1571,8 @@ export const GUIDE_STEPS: GuideStep[] = [
       // photograph, no completeness figure, no record — because `load_inspectable_workshop_or_404`
       // has no edit path and its own docstring forbids one being added. Write that; never the
       // shorter thing.
-      "The stages are read-only here. An inspector can write a correction suggestion about one stage or the whole report, or send the report back, which marks it Needs revision. Sending it back changes the report's status, never a workshop's contents."
+      "The stages are read-only here. An inspector can write a correction suggestion about one stage or the whole report, or send the report back, which marks it Needs revision. Sending it back changes the report's status, never a workshop's contents.",
+      "Photographs, recordings and attachments are shown here read-only, and each workshop's own questions are printed beside their answers."
     ]
   }
 ];

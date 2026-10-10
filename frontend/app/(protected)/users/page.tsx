@@ -19,6 +19,7 @@ import { useAuth } from "@/components/AuthProvider";
 import { LIST_PAGE_CEILING } from "@/components/data/cappedList";
 import { apiFetch, listResource } from "@/lib/api";
 import { formatDate } from "@/lib/format";
+import { fetchNotificationPreferences } from "@/lib/notifications";
 import { requiredText } from "@/lib/forms";
 import {
   ROLES_BY_RANK,
@@ -37,7 +38,8 @@ import {
   createPasswordAccount,
   issuePasswordLink,
   revokePasswordLink,
-  type IssuedPasswordLink
+  type IssuedPasswordLink,
+  type PasswordLinkDelivery
 } from "@/lib/signIn";
 import type { PageResult, User, UserRole } from "@/lib/types";
 
@@ -148,6 +150,9 @@ function UsersScreen() {
   const [issuedLink, setIssuedLink] = useState<{ user: User; link: IssuedPasswordLink } | null>(null);
   const [linkBusy, setLinkBusy] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
+  // Whether "E-mail a password link" is offered at all. False until the answer arrives, and false
+  // for good on a deployment without mail: the choice is then simply not drawn.
+  const [mailAvailable, setMailAvailable] = useState(false);
   const { user: currentUser } = useAuth();
   const { adminMode } = useAdminView();
   /**
@@ -293,6 +298,16 @@ function UsersScreen() {
   }, [page, applied]);
 
   useEffect(() => {
+    let live = true;
+    void fetchNotificationPreferences().then((answer) => {
+      if (live) setMailAvailable(answer.available);
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  useEffect(() => {
     loadAllUsers();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentUser?.id, masterControls]);
@@ -369,11 +384,11 @@ function UsersScreen() {
     }
   }
 
-  async function issueLink(user: User) {
+  async function issueLink(user: User, delivery: PasswordLinkDelivery = "COPY_LINK") {
     setLinkBusy(true);
     setError(null);
     try {
-      const link = await issuePasswordLink(user.id);
+      const link = await issuePasswordLink(user.id, delivery);
       setIssuedLink({ user, link });
       setLinkCopied(false);
     } catch (err) {
@@ -449,7 +464,41 @@ function UsersScreen() {
           <div className="mb-4 rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-sm text-ink-700">{notice}</div>
         ) : null}
       </div>
-      {issuedLink ? (
+      {issuedLink && issuedLink.link.deliveredBy === "EMAIL" ? (
+        <div className="mb-4 grid gap-2 rounded-md border border-line-200 bg-field-50 px-3 py-3">
+          <p className="text-sm font-medium text-ink-900">
+            {issuedLink.link.purpose === "INVITE" ? "Invitation link" : "Password reset link"} e-mailed to{" "}
+            {issuedLink.user.name} · {issuedLink.user.email}
+          </p>
+          <p className="text-xs leading-5 text-ink-500">
+            It works once and expires {new Date(issuedLink.link.expiresAt).toLocaleString()}. Withdraw it if it went
+            to the wrong address.
+          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              className="field-button-secondary"
+              disabled={linkBusy}
+              onClick={async () => {
+                setLinkBusy(true);
+                try {
+                  await revokePasswordLink(issuedLink.link.id);
+                  setIssuedLink(null);
+                } catch (err) {
+                  setError(err instanceof Error ? err.message : "Unable to withdraw the link");
+                } finally {
+                  setLinkBusy(false);
+                }
+              }}
+            >
+              Withdraw
+            </button>
+            <button type="button" className="field-button-secondary" onClick={() => setIssuedLink(null)}>
+              Done
+            </button>
+          </div>
+        </div>
+      ) : issuedLink ? (
         <div className="mb-4 grid gap-2 rounded-md border border-line-200 bg-field-50 px-3 py-3">
           <p className="text-sm font-medium text-ink-900">
             {/* The SERVER chose the purpose — an invitation for an account with no password or one
@@ -461,7 +510,7 @@ function UsersScreen() {
           <div className="flex flex-wrap items-center gap-2">
             <input
               readOnly
-              value={issuedLink.link.link}
+              value={issuedLink.link.link ?? ""}
               aria-label="Password link"
               onFocus={(event) => event.currentTarget.select()}
               className="field-input min-w-0 flex-1 font-mono text-xs"
@@ -471,7 +520,7 @@ function UsersScreen() {
               className="field-button-secondary"
               onClick={async () => {
                 try {
-                  await navigator.clipboard.writeText(issuedLink.link.link);
+                  await navigator.clipboard.writeText(issuedLink.link.link ?? "");
                   setLinkCopied(true);
                 } catch {
                   // Clipboard access can be refused outright (an insecure origin, a locked-down
@@ -562,6 +611,16 @@ function UsersScreen() {
                   onClick={() => issueLink(created.account)}
                 >
                   Issue a password link
+                </button>
+              ) : null}
+              {createdLinkOffered && mailAvailable ? (
+                <button
+                  type="button"
+                  className="field-button-secondary"
+                  disabled={linkBusy}
+                  onClick={() => issueLink(created.account, "EMAIL")}
+                >
+                  Send a password link by e-mail
                 </button>
               ) : null}
               <button type="button" className="field-button-secondary" onClick={() => setCreated(null)}>
@@ -877,6 +936,16 @@ function UsersScreen() {
                               onClick={() => issueLink(user)}
                             >
                               Password link
+                            </button>
+                          ) : null}
+                          {offers.passwordLink && mailAvailable ? (
+                            <button
+                              type="button"
+                              className={rowAction("neutral")}
+                              disabled={linkBusy}
+                              onClick={() => issueLink(user, "EMAIL")}
+                            >
+                              E-mail a password link
                             </button>
                           ) : null}
                           {offers.requirePasswordChange ? (
