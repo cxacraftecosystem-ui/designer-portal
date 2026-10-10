@@ -1,10 +1,10 @@
 # Open findings
 
-**Status: 35 open, 1 decision recorded and 1 deferral, 97 closed.** Every count re-counted by
-heading on 2026-10-10: the 15 open and 95 closed of 2026-10-09, plus 18 opened by the Android copy
-sweep of 2026-10-10 and the toolchain upgrade's 2 opened and 2 closed, merged the same day. The
-entries closed on 2026-10-09 were checked against the tree that day, and the older closed sections
-were last re-checked on 2026-09-03.
+**Status: 33 open, 1 decision recorded and 1 deferral, 101 closed.** Every count re-counted by
+heading on 2026-10-10: main's 31 open and 99 closed that day (the 15 open of 2026-10-09, plus 18
+opened by the Android copy sweep, less the 2 of those closed the same day), plus the toolchain
+upgrade's 2 opened and 2 closed, merged the same day. The entries closed on 2026-10-09 were
+checked against the tree that day, and the older closed sections were last re-checked on 2026-09-03.
 
 **The toolchain upgrade of 2026-10-09 opened two and closed two.** Moving the EC2 box, the image and
 CI to Python 3.14, the lock to its newest pins, the local stack to PostgreSQL 17, and the runners to
@@ -13,6 +13,16 @@ data layer back, and 3.14 costs each process ~170 MiB more against memory ceilin
 and closed two that were already biting: 37 integration tests failing on every CI runner whose
 site-packages listed pytest-asyncio before anyio, and a local stack that could not start because no
 MinIO image could be pulled any more. Counted by heading: 15 + 2 = 17 open, and 95 + 2 = 97 closed.
+
+**Three Android gaps were closed on 2026-10-10 by building them**: correction suggestions on the
+handset, its own review queue, and inspections that work without signal. Two of them had been opened
+that day by the Android copy sweep and leave the open list; the review queue had no entry and is
+recorded already closed. 33 − 2 = 31 open; 95 + 3 = 98 closed.
+
+**E-mail delivery, built on 2026-10-10, closed one entry.** No product could send e-mail: the
+walkthrough told directorate officers and inspectors so, and a correction suggestion could sit unread
+until somebody opened the workshop. It is under *Closed on 2026-10-10*, recorded and closed in the same
+change. Counted by heading: still 31 open, and 98 + 1 = 99 closed.
 
 **Moving a set-password link's token off the web's request lines narrowed one entry the same day,
 and moved neither number.** The web now checks a link with `POST /api/auth/set-password/check`, the
@@ -650,7 +660,9 @@ new build goes out in a body. The entry stays open until that build has replaced
 the same, and neither form closes the browser's history.
 
 
-**Eighteen entries below were opened on 2026-10-10 by the Android copy sweep.** The Android copy sweep of 2026-10-10 removed every on-screen sentence that admitted a missing feature
+**Eighteen entries were opened on 2026-10-10 by the Android copy sweep; sixteen are below.** The
+other two — correction suggestions on the handset, and inspections without signal — were built and
+closed the same day, under *Closed on 2026-10-10*. The Android copy sweep of 2026-10-10 removed every on-screen sentence that admitted a missing feature
 or a known defect, because a screen shown to field staff and ministry officials must describe a
 product that works. The gaps themselves are not closed by that, so each one is recorded here, one
 heading each, and closes only with the change that builds or fixes it.
@@ -729,19 +741,6 @@ A reviewer reaches another workshop's pool round only from a link or id somebody
 The inspection read carries counts only, and a workshop's own custom-question answers are counted and
 not shown. Files: `android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/InspectionDetailScreen.kt`,
 `android/app/src/main/java/com/designprototype/workshop/data/DesignWorkshopInspections.kt`.
-
-### [LOW] An inspector cannot file a correction, send a report back, or read filed suggestions on the handset (android) — opened 2026-10-10
-
-The handset has no client for the inspection feedback and send-back routes, and no screen reads the
-suggestions the inspection payload already carries; the inspector walkthrough still omits that card
-(`walkthroughInspectorOmissions`). Its closing card no longer says so. File:
-`android/app/src/main/java/com/designprototype/workshop/ui/WalkthroughSteps.kt`.
-
-### [LOW] Inspections need a connection every time (android) — opened 2026-10-10
-
-The list and the read are fetched on each visit and nothing is kept on the phone; the copy now says
-only that a connection is needed. File:
-`android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/InspectionListScreen.kt`.
 
 ### [LOW] The record editor offers Save on another person's record to roles below Professor (android) — opened 2026-10-10
 
@@ -907,6 +906,79 @@ the public URL, a ranged presigned GET and a delete. `docker-compose.yml` names 
 (rustfs/rustfs) and why it is not a drop-in.
 
 ---
+
+## Closed on 2026-10-10
+
+Three Android parity gaps that the handset's own screens and walkthrough admitted in so many words,
+found by the sweep of customer-visible copy (items F6, F7 and F12 of that sweep) and closed by
+building the features. None moved a permission: the handset calls the routes the web calls, behind
+the same doors.
+
+### [MEDIUM] An inspector on the handset could not read the correction suggestions on a workshop, file one, or send a report back (android) — **CLOSED 2026-10-10**
+
+The walkthrough's closing card said "FILING A CORRECTION IS A BROWSER JOB … this app cannot show you
+the suggestions already filed on a workshop either", and the web's inspector recap said the same.
+Both were true: `WorkshopRepositoryApi` declared no `POST …/feedback` or `…/send-back`, and nothing
+under `ui/` read the `inspectionFeedback` rows the payload carried. `InspectionDetailScreen` now draws
+`InspectionFeedbackPanel` above the stages — the register round by round with who filed each row,
+the box, the stage choice, and the two buttons, the send-back behind a confirmation — gated on the
+payload's `mayRecordFeedback` and on the report being under review, exactly as the web's panel is.
+The inspector deck teaches the `inspection-feedback` card and `walkthroughInspectorOmissions` is
+empty. Pinned by `InspectionNotesSyncTest` (routes, bodies, answers) and `WalkthroughDecksTest`.
+
+### [MEDIUM] The handset had no review queue of its own (android) — **CLOSED 2026-10-10**
+
+The menu's Review row opened the record browser and the walkthrough said "THIS HANDSET HAS NO
+SEPARATE REVIEW QUEUE". Review now opens `Screen.ReviewQueue`: for an Inspector / Reviewer, the
+assigned workshops whose report is waiting for a decision, the ones sent back below them, a count of
+the rest and a line on any of the inspector's notes still on the phone; then the record queue every
+reviewer shares. Pinned by `DesignWorkshopInspectionFeedbackTest` (the split) and
+`InspectionNotesSyncTest` (the list read, live and kept).
+
+### [MEDIUM] An inspection could not be read or annotated without signal (android) — **CLOSED 2026-10-10**
+
+`InspectionListScreen` said "This screen needs a connection … never kept on this phone". The last
+read of each assigned workshop and the last list are now kept per account and shown with the day
+they were saved; a read that answers 404 deletes them. A suggestion or send-back is kept on the phone
+first and sent when there is signal, after the workshop is read again: a report no longer under
+review, or handed in again since the note was written, holds the note with the reason and sends
+nothing; the server's own refusal (the 422 the web shows when a report has moved on) holds it the same
+way; an answer lost on the way back is recognised on the register by its device moment and not filed
+twice; nothing queued is deleted except by its author. The pass also runs on the app's
+"network came back" hook. Pinned by `InspectionNotesSyncTest` and
+`DesignWorkshopInspectionFeedbackTest`.
+
+The e-mail entry below was closed the same day by building the product's mail sender.
+
+### [MEDIUM] Nothing could be e-mailed, so a designer was never told about a correction and every password link was a copy and paste (backend, frontend) — **CLOSED 2026-10-10**
+
+There was no mail sender. The web walkthrough said so to directorate officers ("This product has no
+mail sender") and to the sanction checklist's reader, an inspector was told that a suggestion "may sit
+unread until somebody opens the workshop", and every set-password link had to be copied out of Users
+and passed on by hand.
+
+Built: an Amazon SES sender (SESv2 through boto3, `services/mailer.py`) behind an outbox
+(`EmailMessage`, migration `20261010100000_email_outbox`, `services/email_outbox.py`) that the
+existing `fieldrepo-queue` drain sends from, with compare-and-set claiming, retries with backoff for a
+throttle or SES fault, a permanent failure for a rejected message, and the row itself as the send log.
+Plain-text and HTML templates; bodies are rendered at send time and never stored or logged. Two
+triggers: an inspector filing a correction suggestion or sending a report back e-mails the workshop's
+designers (`notify_review_note`, after the write, never failing it), and a provisioner can choose
+"E-mail a password link" on Users (`delivery: "EMAIL"`), which queues the link Fernet-sealed, clears
+the seal once the message is dealt with, and hands the provisioner no copy. Each person can switch
+the review notices off in Settings (`emailReviewNotes`, opt-out). Mail is on only when
+`MAIL_FROM_ADDRESS` is set; otherwise every e-mail control is absent and nothing on screen mentions
+it. The walkthrough sentences above were rewritten to be true either way.
+
+**The owner's steps** (no AWS resource is created by this repository): verify the sending identity
+in SES ap-south-1, request production access there, grant the backend IAM user `ses:SendEmail`, and
+add `MAIL_FROM_ADDRESS` to `BACKEND_ENV` — [ENVIRONMENT.md](ENVIRONMENT.md), *E-mail (Amazon SES)*.
+
+Pinned by `tests/test_mailer.py` (the SES request and the retry classification, SES stubbed),
+`tests/test_email_outbox.py` (the seal, the drain, retries, expiry, the opt-out, the recipients, no
+link or address in a log line), `tests/test_review_note_triggers.py` (both inspection doors notify
+after their write, and a refused send-back notifies nobody) and `tests/test_email_db.py` (the
+preference routes, an e-mailed link against a real database, and the drain).
 
 ## Closed on 2026-10-09
 

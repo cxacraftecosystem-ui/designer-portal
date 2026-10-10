@@ -46,12 +46,13 @@ fingerprint is still what makes a redeemed link dead even if the row is never re
 
 ── DELIVERY ──────────────────────────────────────────────────────────────────────────────────────
 
-Owner, 2026-08-30: *"implement all the measures, we will use just admin copies the link for now
-though."* So the whole mechanism is built and the transport is one implementation of
-:class:`CredentialDelivery` that hands the link back to the administrator to copy. **No mail
-dependency was added** — ``pyproject.toml`` declares no mailer and this change does not give it one.
-Adding SES or SMTP later is a new class here and a settings value; nothing outside this module and
-its one settings read needs to change.
+Two transports implement :class:`CredentialDelivery`. :class:`CopyLinkDelivery` hands the link
+back to the administrator to copy — the owner's choice of 2026-08-30, and still the default.
+:class:`EmailDelivery` (2026-10-10) queues the link to the account's own address through
+``email_outbox`` and hands the administrator NO link: one copy of a credential, in the inbox of the
+person it is for. It is offered only when mail is configured (``mailer.mail_configured``). The link
+travels to the worker Fernet-sealed and the seal is cleared once the message is sent or has failed;
+no log line carries it.
 """
 
 import base64
@@ -319,12 +320,12 @@ class DeliveredLink:
     ``token`` field, on cxa-cms's stated grounds."""
 
     id: str
-    link: str
+    #: ``None`` when the link was e-mailed: the administrator who chose that is not handed a copy.
+    link: str | None
     expiresAt: str
     purpose: str
     #: How it reached the person. ``COPY_LINK`` means "it did not — you copy it and hand it over",
-    #: which is what the clients print. A future SES transport answers ``EMAIL`` and the same screen
-    #: stops showing the box.
+    #: which is what the clients print. ``EMAIL`` means it was queued to the account's own address.
     deliveredBy: str
 
 
@@ -365,9 +366,54 @@ class CopyLinkDelivery:
         return self.name
 
 
-def delivery() -> CredentialDelivery:
-    """The configured transport. One implementation today; a settings branch tomorrow."""
-    return CopyLinkDelivery()
+class EmailDelivery:
+    """Queue the link to the account's own address. The administrator is handed no link.
+
+    The outbox row carries the link sealed (``managed_secrets.encrypt``) and the worker clears the
+    seal once the message is SENT or FAILED. Raises :class:`DeliveryUnavailable` when mail is not
+    configured, BEFORE anything is minted — see :func:`issue_link`.
+    """
+
+    name = "EMAIL"
+
+    async def deliver(self, *, user: Any, link: str, purpose: str, expires_at: datetime) -> str:
+        from app.services import email_outbox, mailer
+
+        row = await email_outbox.enqueue(
+            mailer.PASSWORD_LINK,
+            to_address=getattr(user, "email", "") or "",
+            recipient_id=getattr(user, "id", None),
+            params={
+                "purpose": purpose,
+                "recipientName": getattr(user, "name", None),
+                "expiresAt": expires_at.isoformat(),
+            },
+            secret=link,
+        )
+        if row is None:
+            raise DeliveryUnavailable()
+        logger.info(
+            "auth: %s link issued for account %s, expires %s (delivery: e-mail, message %s)",
+            purpose,
+            getattr(user, "id", "?"),
+            expires_at.isoformat(),
+            row.id,
+        )
+        return self.name
+
+
+class DeliveryUnavailable(Exception):
+    """E-mail delivery was asked for and mail is not configured."""
+
+
+COPY_LINK = CopyLinkDelivery.name
+EMAIL = EmailDelivery.name
+DELIVERIES = (COPY_LINK, EMAIL)
+
+
+def delivery(name: str = COPY_LINK) -> CredentialDelivery:
+    """The transport for *name*: ``COPY_LINK`` (the default) or ``EMAIL``."""
+    return EmailDelivery() if name == EMAIL else CopyLinkDelivery()
 
 
 # --------------------------------------------------------------------------------------
@@ -391,7 +437,11 @@ class IssueThrottled(Exception):
 
 
 async def issue_link(
-    *, user: Any, purpose: str | None = None, issued_by_id: str | None = None
+    *,
+    user: Any,
+    purpose: str | None = None,
+    issued_by_id: str | None = None,
+    deliver_by: str = COPY_LINK,
 ) -> DeliveredLink:
     """Mint, record, deliver.
 
@@ -403,6 +453,13 @@ async def issue_link(
     mint a link that was already spent, and binding it to none would mint one that stays valid after
     a password is set.
     """
+    if deliver_by == EMAIL:
+        from app.services import mailer
+
+        # Refused BEFORE the throttle and the mint, so asking for e-mail on a deployment without
+        # mail neither spends one of the account's four links nor leaves a row nobody holds.
+        if not mailer.mail_configured() or not getattr(user, "email", None):
+            raise DeliveryUnavailable()
     now = datetime.now(UTC)
     since = now - timedelta(hours=ISSUE_WINDOW_HOURS)
     recent = await db.passwordresettoken.count(
@@ -428,12 +485,18 @@ async def issue_link(
             "issuedById": issued_by_id,
         }
     )
-    delivered = await delivery().deliver(
-        user=user, link=link_for(token), purpose=kind, expires_at=expires_at
-    )
+    try:
+        delivered = await delivery(deliver_by).deliver(
+            user=user, link=link_for(token), purpose=kind, expires_at=expires_at
+        )
+    except Exception:
+        # Nobody holds this link — it was never handed back and never queued — so the row is
+        # withdrawn rather than left looking like an outstanding credential.
+        await db.passwordresettoken.update(where={"id": row.id}, data={"revokedAt": datetime.now(UTC)})
+        raise
     return DeliveredLink(
         id=row.id,
-        link=link_for(token),
+        link=None if delivered == EMAIL else link_for(token),
         expiresAt=expires_at.isoformat(),
         purpose=kind,
         deliveredBy=delivered,

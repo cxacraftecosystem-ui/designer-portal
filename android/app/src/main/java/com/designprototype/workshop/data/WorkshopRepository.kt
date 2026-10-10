@@ -2023,29 +2023,20 @@ class WorkshopRepository(
 
     // ── THE FIFTH SCOPE: inspections ────────────────────────────────────────────────────────────
     //
-    // ALL FIVE THROW, AND NOTHING BELOW IS CACHED, QUEUED OR FALLEN BACK TO THE DEVICE. That is a
-    // decision rather than an omission, and it is the opposite of what the 22-stage block above does
-    // — so it is worth the paragraph.
+    // THE THREE ADMINISTRATION CALLS THROW AND ARE NEVER KEPT; THE INSPECTOR'S OWN SURFACE IS KEPT.
     //
-    // The stage block degrades to the device because a workshop is a DATED OBSERVATION captured over
-    // a fortnight in a courtyard, and yesterday's copy of it is still true. An inspection is not that
-    // kind of fact, in three separate ways:
+    // Who inspects what is an admin's live decision and is only ever read straight off the wire.
+    // The inspector's read is different: an officer works in the same courtyards a designer does,
+    // so the last read of each assigned workshop (and the last list) is kept on this phone for the
+    // account that read it, and correction suggestions written without signal are queued and sent
+    // later. Three rules keep that honest, and `DesignWorkshopInspectionFeedback.kt` argues each:
     //
-    //  1. THE SCOPE IS A ROW SOMEBODY ELSE OWNS AND CAN TAKE AWAY. An admin who ends an inspection
-    //     this morning has ended it. A cached read would keep a fortnight of somebody else's
-    //     fieldwork legible on a handset whose access was withdrawn — and no later sync repairs it,
-    //     because the bytes are already on the phone.
-    //  2. AN INSPECTION IS A JUDGEMENT ABOUT WHAT THE RECORD SAYS NOW. The provenance names are
-    //     resolved server-side at read time, so a stale copy would have an inspector reviewing a
-    //     state of the workshop that no longer exists, with nothing on screen saying the two had
-    //     diverged.
-    //  3. THERE IS NOTHING TO QUEUE, AND A QUEUE HERE WOULD LOSE WORK. Every route is a GET; the
-    //     server has no write route on this prefix at all, and `saveOrQueue` does not queue a 4xx —
-    //     so a queued inspector write would be accepted by this app, refused for ever by the server,
-    //     and reported to the inspector as saved. No write path may be added here.
-    //
-    // The screens say "this needs a connection" in words BEFORE anything is attempted, rather than
-    // after it fails, exactly as the three viewer-administration calls above do.
+    //  1. THE SCOPE CAN BE TAKEN AWAY. A read that answers "not open to you" deletes the kept copy
+    //     at once, and a copy is never shown to any account but the one that read it.
+    //  2. A KEPT COPY SAYS SO. Every screen over one names the moment it was saved.
+    //  3. A QUEUED NOTE IS CHECKED AGAINST THE REPORT AS IT STANDS WHEN IT LEAVES. A report that has
+    //     moved on holds the note back with the reason in words; a refusal holds it too. Nothing
+    //     queued is ever deleted except by the inspector who wrote it.
 
     /**
      * The accounts that may be assigned an inspection at all, straight off the wire.
@@ -2132,6 +2123,291 @@ class WorkshopRepository(
      */
     suspend fun workshopUnderInspection(workshopId: String): DwInspectionDetailDto =
         api.workshopUnderInspection(workshopId)
+
+    /**
+     * One workshop under inspection, from the wire when there is signal and from the copy kept on
+     * this phone when there is none.
+     *
+     * A LIVE READ IS KEPT for this account. A "not open to you" (404) DELETES the kept copy before it
+     * is rethrown — the assignment has ended, and a copy must not outlive it. Only a request that got
+     * no answer at all falls back; anything the server answered is rethrown for the screen to say.
+     */
+    suspend fun readWorkshopUnderInspection(context: Context, workshopId: String): DwInspectionRead {
+        val owner = cachedUser()?.id.orEmpty()
+        val store = DwInspectionStore.of(context)
+        return try {
+            val detail = api.workshopUnderInspection(workshopId)
+            if (owner.isNotBlank()) {
+                withContext(Dispatchers.IO) { store.saveDetail(DwSavedInspection(owner, dwInspectionNow(), detail)) }
+            }
+            DwInspectionRead.Live(detail)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: HttpException) {
+            if (e.code() == 404) withContext(Dispatchers.IO) { store.forgetWorkshop(workshopId) }
+            throw e
+        } catch (e: IOException) {
+            val saved = withContext(Dispatchers.IO) { store.detail(workshopId, owner) } ?: throw e
+            DwInspectionRead.Saved(saved.detail, saved.savedAt)
+        }
+    }
+
+    /**
+     * The assigned list, with the same fall-back: page one of the unsearched list is kept, and read
+     * back when nothing answers. A null second value means the answer is live.
+     */
+    suspend fun readInspectableWorkshops(
+        context: Context,
+        page: Int,
+        pageSize: Int,
+        search: String?
+    ): Pair<DesignWorkshopPageDto, String?> {
+        val owner = cachedUser()?.id.orEmpty()
+        val store = DwInspectionStore.of(context)
+        return try {
+            val answer = inspectableDesignWorkshops(page = page, pageSize = pageSize, search = search)
+            if (owner.isNotBlank() && page == 1 && search.isNullOrBlank()) {
+                withContext(Dispatchers.IO) {
+                    store.saveList(DwSavedInspectionList(owner, dwInspectionNow(), answer.items, answer.total))
+                }
+            }
+            answer to null
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: IOException) {
+            if (page != 1 || !search.isNullOrBlank()) throw e
+            val saved = withContext(Dispatchers.IO) { store.list(owner) } ?: throw e
+            DesignWorkshopPageDto(
+                items = saved.items,
+                total = saved.total,
+                page = 1,
+                pageSize = saved.items.size,
+                pages = 1
+            ) to saved.savedAt
+        }
+    }
+
+    /**
+     * Every workshop assigned to this inspector, for the review queue — up to
+     * [DW_INSPECTION_QUEUE_MAX_PAGES] pages of the server's largest page — whether more were left
+     * unread, and (third) when the kept list was saved if there was no signal to read a live one.
+     */
+    suspend fun inspectionReviewQueue(context: Context): Triple<List<DesignWorkshopDto>, Boolean, String?> {
+        val owner = cachedUser()?.id.orEmpty()
+        val store = DwInspectionStore.of(context)
+        val rows = ArrayList<DesignWorkshopDto>()
+        var more = false
+        try {
+            var page = 1
+            while (true) {
+                val answer = inspectableDesignWorkshops(page = page, pageSize = DW_INSPECTION_QUEUE_PAGE_SIZE)
+                rows += answer.items
+                if (page >= answer.pages || answer.items.isEmpty()) break
+                if (page >= DW_INSPECTION_QUEUE_MAX_PAGES) {
+                    more = true
+                    break
+                }
+                page++
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: IOException) {
+            val saved = withContext(Dispatchers.IO) { store.list(owner) } ?: throw e
+            return Triple(saved.items, saved.total > saved.items.size, saved.savedAt)
+        }
+        if (owner.isNotBlank()) {
+            withContext(Dispatchers.IO) {
+                store.saveList(DwSavedInspectionList(owner, dwInspectionNow(), rows, rows.size))
+            }
+        }
+        return Triple(rows, more, null)
+    }
+
+    /** File one correction suggestion now. The answer is the register as the server holds it. */
+    suspend fun recordInspectionFeedback(
+        workshopId: String,
+        body: DwInspectionFeedbackBody
+    ): DwInspectionFeedbackAnswerDto = api.recordInspectionFeedback(workshopId, body)
+
+    /** Send the report back to its designers with this note (status Needs revision). */
+    suspend fun sendInspectionBack(
+        workshopId: String,
+        body: DwInspectionFeedbackBody
+    ): DwInspectionFeedbackAnswerDto = api.sendInspectionBack(workshopId, body)
+
+    /** Every note this account has written on this phone and not yet seen onto the record. */
+    suspend fun queuedInspectionNotes(context: Context, workshopId: String? = null): List<DwQueuedInspectionNote> {
+        val owner = cachedUser()?.id?.takeIf { it.isNotBlank() } ?: return emptyList()
+        return withContext(Dispatchers.IO) { DwInspectionStore.of(context).notesFor(owner, workshopId) }
+    }
+
+    /**
+     * Write a suggestion or a send-back to the phone FIRST, then try to send it.
+     *
+     * Kept before it is sent, never after, so a phone that dies mid-request still has the note; a
+     * request that landed with its answer lost is recognised on the next pass rather than filed twice
+     * (see [dwInspectionNoteAlreadyFiled]). [read] is the report as the inspector was reading it —
+     * its round and status are what the note is checked against before it leaves.
+     */
+    suspend fun fileInspectionNote(
+        context: Context,
+        read: DwInspectionDetailDto,
+        kind: DwInspectionNoteKind,
+        note: String,
+        stageKey: String?
+    ): DwInspectionSyncReport {
+        val owner = cachedUser()?.id?.takeIf { it.isNotBlank() }
+            ?: throw IllegalStateException("This phone is not signed in.")
+        val queued = DwQueuedInspectionNote(
+            id = java.util.UUID.randomUUID().toString(),
+            workshopId = read.id,
+            workshopTitle = read.title,
+            kind = kind,
+            note = note.trim(),
+            stageKey = stageKey?.takeIf { it.isNotBlank() },
+            recordedAt = dwInspectionNow(),
+            ownerUserId = owner,
+            draftedRound = read.submissionRound,
+            draftedStatus = read.status,
+        )
+        withContext(Dispatchers.IO) { DwInspectionStore.of(context).add(queued) }
+        return syncInspectionNotes(context, onlyWorkshopId = read.id)
+    }
+
+    /**
+     * Let a held note go again, against the round the report is in NOW — the inspector's deliberate
+     * act after reading the report again. [read] is that read.
+     */
+    suspend fun refileInspectionNote(
+        context: Context,
+        noteId: String,
+        read: DwInspectionDetailDto
+    ): DwInspectionSyncReport {
+        val store = DwInspectionStore.of(context)
+        withContext(Dispatchers.IO) {
+            store.notes().firstOrNull { it.id == noteId }?.let { held ->
+                store.update(
+                    held.copy(
+                        held = null,
+                        heldAt = null,
+                        draftedRound = read.submissionRound,
+                        draftedStatus = read.status
+                    )
+                )
+            }
+        }
+        return syncInspectionNotes(context, onlyWorkshopId = read.id)
+    }
+
+    /** Remove a note from this phone — only ever at its author's request. */
+    suspend fun discardInspectionNote(context: Context, noteId: String) {
+        withContext(Dispatchers.IO) { DwInspectionStore.of(context).remove(noteId) }
+    }
+
+    private val inspectionMutex = Mutex()
+
+    /**
+     * Send what is waiting, workshop by workshop, under the conflict rules.
+     *
+     * For each workshop the report is READ FIRST: that read refreshes the kept copy, finds a note
+     * that already landed (an answer lost on the way back), and is what [dwInspectionNoteCheck]
+     * compares each note against. No answer at all stops the pass and leaves everything queued.
+     */
+    suspend fun syncInspectionNotes(context: Context, onlyWorkshopId: String? = null): DwInspectionSyncReport {
+        val user = cachedUser()
+        val owner = user?.id?.takeIf { it.isNotBlank() } ?: return DwInspectionSyncReport()
+        val store = DwInspectionStore.of(context)
+        if (mustChangePasswordBlocks(user)) {
+            val waiting = withContext(Dispatchers.IO) { store.notesFor(owner, onlyWorkshopId).count { it.waiting } }
+            return DwInspectionSyncReport(waiting = waiting)
+        }
+        return inspectionMutex.withLock {
+            var sent = 0
+            var held = 0
+            var waiting = 0
+            val refreshed = LinkedHashMap<String, DwInspectionDetailDto>()
+            val queued = withContext(Dispatchers.IO) { store.notesFor(owner, onlyWorkshopId) }
+                .filter { it.waiting }
+                .sortedBy { it.recordedAt }
+            var offline = false
+            for ((workshopId, notes) in queued.groupBy { it.workshopId }) {
+                if (offline) {
+                    waiting += notes.size
+                    continue
+                }
+                var current = try {
+                    api.workshopUnderInspection(workshopId)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: HttpException) {
+                    val said = e.apiErrorMessage("").takeIf { it.isNotBlank() && !it.startsWith("HTTP ") }
+                    val outcome = dwInspectionSendOutcome(e.code(), said, notes.first().kind)
+                    if (outcome is DwInspectionSendOutcome.Refused) {
+                        withContext(Dispatchers.IO) {
+                            if (e.code() == 404) store.forgetWorkshop(workshopId)
+                            notes.forEach { store.update(it.copy(held = outcome.sentence, heldAt = dwInspectionNow())) }
+                        }
+                        held += notes.size
+                    } else {
+                        waiting += notes.size
+                    }
+                    continue
+                } catch (e: IOException) {
+                    offline = true
+                    waiting += notes.size
+                    continue
+                }
+                for (note in notes) {
+                    if (offline) {
+                        waiting++
+                        continue
+                    }
+                    if (dwInspectionNoteAlreadyFiled(note, current.inspectionFeedback)) {
+                        withContext(Dispatchers.IO) { store.remove(note.id) }
+                        sent++
+                        continue
+                    }
+                    val check = dwInspectionNoteCheck(note, current.status, current.submissionRound)
+                    if (check is DwInspectionNoteCheck.Hold) {
+                        withContext(Dispatchers.IO) {
+                            store.update(note.copy(held = check.sentence, heldAt = dwInspectionNow()))
+                        }
+                        held++
+                        continue
+                    }
+                    try {
+                        val answer = if (note.kind == DwInspectionNoteKind.SEND_BACK) {
+                            api.sendInspectionBack(workshopId, note.body())
+                        } else {
+                            api.recordInspectionFeedback(workshopId, note.body())
+                        }
+                        withContext(Dispatchers.IO) { store.remove(note.id) }
+                        current = current.withFeedbackAnswer(answer)
+                        sent++
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: HttpException) {
+                        val said = e.apiErrorMessage("").takeIf { it.isNotBlank() && !it.startsWith("HTTP ") }
+                        val outcome = dwInspectionSendOutcome(e.code(), said, note.kind)
+                        if (outcome is DwInspectionSendOutcome.Refused) {
+                            withContext(Dispatchers.IO) {
+                                store.update(note.copy(held = outcome.sentence, heldAt = dwInspectionNow()))
+                            }
+                            held++
+                        } else {
+                            waiting++
+                        }
+                    } catch (e: IOException) {
+                        offline = true
+                        waiting++
+                    }
+                }
+                withContext(Dispatchers.IO) { store.saveDetail(DwSavedInspection(owner, dwInspectionNow(), current)) }
+                refreshed[workshopId] = current
+            }
+            DwInspectionSyncReport(sent = sent, held = held, waiting = waiting, refreshed = refreshed)
+        }
+    }
 
     /**
      * The admin authorship & divergence report for one workshop — every stage entry, every stamp, and
@@ -6812,6 +7088,10 @@ class WorkshopRepository(
         // swipe-away) or belongs to yesterday. Detached and swallowing every failure, because a
         // number that is only an optimisation must never delay or fail the queued records beside it.
         AppScope.io.launch { runCatching { refreshDictationAllowance(context) } }
+        // AN INSPECTOR'S QUEUED CORRECTION SUGGESTIONS, on the same "the network just came back"
+        // hook. Detached: each is checked against the report before it leaves, which costs a read
+        // per workshop, and that must never delay the records queued beside them.
+        AppScope.io.launch { runCatching { syncInspectionNotes(context) } }
         val synced = syncMutex.withLock {
             val queue = OfflineOutbox.all(context)
             // Read first, then reported, and reported before the connection is even checked: a queue

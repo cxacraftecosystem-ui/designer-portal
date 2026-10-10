@@ -27,6 +27,7 @@ from app.core.deps import PASSWORD_CHANGE_REQUIRED_HEADER
 from app.core.security import verify_jwt_configuration
 from app.scale import install_rate_limit
 from app.services import usage
+from app.services.email_outbox import process_next_email_jobs
 from app.services.media_queue import acquire_queue_worker_lock, process_next_media_jobs
 
 logger = logging.getLogger(__name__)
@@ -190,6 +191,11 @@ async def _media_queue_worker() -> None:
             )
         except Exception:
             logger.exception("Media processing queue worker failed")
+        # The e-mail outbox drains wherever the media queue does (see app/worker.py).
+        try:
+            await process_next_email_jobs(worker_id="fastapi-background", settings=settings)
+        except Exception:
+            logger.exception("E-mail outbox drain failed")
         await asyncio.sleep(interval)
 
 

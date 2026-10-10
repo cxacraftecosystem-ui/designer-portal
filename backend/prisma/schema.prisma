@@ -288,6 +288,8 @@ model User {
   feedbackReportsAcknowledged FeedbackReport[] @relation("FeedbackReportAcknowledgedBy")
   feedbackReportsResolved     FeedbackReport[] @relation("FeedbackReportResolvedBy")
   preferences UserPreference? @relation("UserPreferenceUser")
+  /// Every e-mail queued for this account. See `EmailMessage`.
+  emailMessages EmailMessage[] @relation("EmailMessageRecipient")
   sectionStatusesSet QuestionnaireSectionStatus[] @relation("SectionStatusSetBy")
   workshopAssignments     WorkshopAssignment[] @relation("WorkshopAssignmentUser")
   workshopAssignmentsMade WorkshopAssignment[] @relation("WorkshopAssignmentAssignedBy")
@@ -677,6 +679,11 @@ model UserPreference {
   reducedMotion Boolean  @default(false)
   largerText    Boolean  @default(false)
   highContrast  Boolean  @default(false)
+  /// Opt-out, so true until the person turns it off in Settings: e-mail me when an inspector files a
+  /// correction suggestion on, or sends back, a workshop I work on. Read only when mail is configured
+  /// (`MAIL_FROM_ADDRESS`); a password link an administrator chose to e-mail is not a notification
+  /// and is not governed by this.
+  emailReviewNotes Boolean @default(true)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
@@ -6540,4 +6547,46 @@ model WorkshopTypeOption {
   /// for the same reason — every read of this table filters `isActive` and sorts by `sortOrder`, so
   /// a bare index on either column alone would leave Postgres doing the other half by hand.
   @@index([isActive, sortOrder])
+}
+
+// ======================================================================================
+// E-mail: the outbox the queue worker drains, and the send log
+// ======================================================================================
+
+/// ONE ROW PER E-MAIL THIS PRODUCT HAS QUEUED — the outbox the queue worker drains
+/// (`app/services/email_outbox.py`) and, once drained, the send log: who it went to, what kind of
+/// message it was, when it went, SES's message id, or why it did not.
+///
+/// THE BODY IS NEVER STORED. `kind` + `params` are what the template renders at send time, and
+/// `params` holds only what is safe to keep (a workshop's title, an inspector's name and note).
+/// A credential — the set-password link — travels in `sealed`, Fernet-encrypted with the key
+/// `managed_secrets` uses, and `sealed` is set to NULL the moment the row reaches SENT or FAILED,
+/// so the table never goes on holding a usable link once the message has been dealt with.
+///
+/// `status` is a plain string (QUEUED | SENDING | SENT | FAILED) rather than an enum, so a later
+/// state is a code change and not a migration.
+model EmailMessage {
+  id                String    @id @default(cuid())
+  kind              String
+  toAddress         String
+  recipientId       String?
+  recipient         User?     @relation("EmailMessageRecipient", fields: [recipientId], references: [id], onDelete: SetNull)
+  subject           String
+  params            Json?
+  sealed            String?
+  status            String    @default("QUEUED")
+  attempts          Int       @default(0)
+  maxAttempts       Int       @default(5)
+  runAfter          DateTime  @default(now())
+  lockedAt          DateTime?
+  lockedBy          String?
+  sentAt            DateTime?
+  providerMessageId String?
+  error             String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  /// The drain's read: queued rows that are due, oldest first.
+  @@index([status, runAfter, createdAt])
+  @@index([recipientId])
 }

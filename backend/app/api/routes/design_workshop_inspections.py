@@ -131,6 +131,7 @@ from app.schemas.design_workshop_inspections import (
     DwInspectionFeedbackIn,
     DwInspectionSendBackIn,
 )
+from app.services import email_outbox
 from app.services.concurrency import gather_reads
 from app.services.custom_sections import load_definition_or_empty
 from app.services.design_workshop_inspectors import (
@@ -590,6 +591,11 @@ async def record_inspection_feedback(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(refused)
         ) from refused
     await _apply(db, plan)
+    # The designers hear about it by e-mail (when mail is configured and they have not turned it
+    # off). Never raises: the suggestion is already filed.
+    await email_outbox.notify_review_note(
+        record, actor=current_user, note=payload.note, stage_key=payload.stageKey, sent_back=False
+    )
     return await _feedback_answer(record)
 
 
@@ -677,4 +683,12 @@ async def send_workshop_back_for_revision(
         # some other transaction has left it.
         updated = await tx.designworkshop.find_unique(where={"id": workshop_id})
         await _apply(tx, plans.log)
+    # After the transaction, so a rolled-back send-back e-mails nobody. Never raises.
+    await email_outbox.notify_review_note(
+        updated or record,
+        actor=current_user,
+        note=payload.note,
+        stage_key=payload.stageKey,
+        sent_back=True,
+    )
     return await _feedback_answer(updated)

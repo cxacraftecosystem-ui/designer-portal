@@ -353,6 +353,7 @@ import com.designprototype.workshop.ui.designworkshop.DwInlineRecordHost
 import com.designprototype.workshop.ui.designworkshop.DwInlineSeed
 import com.designprototype.workshop.ui.designworkshop.DwInlineRecordOutcome
 import com.designprototype.workshop.ui.designworkshop.DwProvenanceScreen
+import com.designprototype.workshop.ui.designworkshop.InspectionAwaitingSection
 import com.designprototype.workshop.ui.designworkshop.InspectionDetailScreen
 import com.designprototype.workshop.ui.designworkshop.InspectionListScreen
 import com.designprototype.workshop.ui.designworkshop.DwReportHistoryScreen
@@ -1129,6 +1130,14 @@ private sealed interface Screen {
      * See [NavDestination.SCAN_CODE] for why the panel gained a destination rather than moving.
      */
     data object ScanCode : Screen
+
+    /**
+     * REVIEW — the handset's own review queue, the web's `/review` page. For an Inspector / Reviewer
+     * it opens with the assigned workshops whose report is waiting for an officer's decision; under
+     * that, for every reviewer, the record queue (`ReviewApprovalCard`) that used to be reachable
+     * only from inside the record browser.
+     */
+    data object ReviewQueue : Screen
 
     /**
      * The artisan cards and prototype tags for one workshop — the phone's `…/codes` page.
@@ -3292,9 +3301,9 @@ private fun HomeScreen(
             NavDestination.CONSOLIDATED_QUESTIONNAIRE -> screen = screenFor(EntryMode.CONSOLIDATED_QUESTIONNAIRE)
             NavDestination.SHARE_DATA_ACCESS -> screen = screenFor(EntryMode.SHARING)
             NavDestination.ASSIGN_TOOLS -> screen = Screen.ToolAssign
-            // Android has no standalone review queue: reviewing happens inside the record browser,
-            // which is the surface [EntryMode.VIEW_DATA] opens and where `canReview` is honoured.
-            NavDestination.REVIEW -> screen = screenFor(EntryMode.VIEW_DATA)
+            // The review queue is a screen of its own, as `/review` is on the web: an inspector's
+            // workshops waiting for a decision, then the record queue every reviewer shares.
+            NavDestination.REVIEW -> screen = Screen.ReviewQueue
             NavDestination.SETTINGS_HUB -> screen = Screen.AdminHub()
             NavDestination.MANAGE_USERS -> screen = screenFor(EntryMode.USERS)
             // "Settings" on the web is a two-column page whose global column is this app's admin hub;
@@ -3399,6 +3408,7 @@ private fun HomeScreen(
             // opened from a scan backs out to wherever that record's own editor backs out to, which
             // is that screen's business — this one hands over and keeps nothing.
             is Screen.ScanCode -> Screen.Dashboard
+            is Screen.ReviewQueue -> Screen.Dashboard
             is Screen.DesignerProfile -> if (s.userId != null) Screen.DesignerRoster else Screen.Dashboard
             is Screen.DesignerRoster -> Screen.Dashboard
             is Screen.AccessRoster -> Screen.Dashboard
@@ -3475,6 +3485,7 @@ private fun HomeScreen(
         // page: `RecordCodeLookupPanel` draws a card with its own small caption and no page heading,
         // and a destination reached from a tile has to say its own name somewhere.
         is Screen.ScanCode -> "Scan a code"
+        is Screen.ReviewQueue -> "Review"
         is Screen.DesignerProfile -> null
         is Screen.DesignerRoster -> null
         is Screen.AccessRoster -> null
@@ -3544,6 +3555,7 @@ private fun HomeScreen(
         // behind it, and here it would additionally point them back at the buried route this
         // destination exists to replace.
         is Screen.ScanCode -> NavDestination.SCAN_CODE
+        is Screen.ReviewQueue -> NavDestination.REVIEW
         // Lights the same row as its siblings even though it is admin chrome, because it is still a
         // screen INSIDE one design workshop and the row opens the list the admin is already in.
         // It is not `DESIGNER_ROSTER`: that is the institution's list of who may sign in at all,
@@ -4483,6 +4495,24 @@ private fun HomeScreen(
              * hands over on a hit and keeps nothing, which is also why `parentOf` sends it back to the
              * dashboard rather than trying to remember where the designer came from.
              */
+            is Screen.ReviewQueue -> Column(
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)
+            ) {
+                // The inspector's half first — it draws nothing for any other account — then the
+                // record queue, gated as the menu row is.
+                InspectionAwaitingSection(
+                    repository = repository,
+                    onOpenWorkshop = { id ->
+                        message = null
+                        screen = Screen.DesignWorkshopInspection(workshopId = id)
+                    }
+                )
+                if (canReview) {
+                    ReviewApprovalCard(repository = repository, onError = { showMessage(it) })
+                }
+            }
+
             is Screen.ScanCode -> Column(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)

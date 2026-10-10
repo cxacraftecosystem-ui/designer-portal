@@ -393,6 +393,16 @@ GEMINI_API_KEYS=...,...
 # The web service must NOT drain the media queue (fieldrepo-queue does).
 MEDIA_QUEUE_WORKER_ENABLED=false
 
+# E-mail through Amazon SES (optional). Unset MAIL_FROM_ADDRESS = no e-mail and no e-mail controls.
+# The address must be SES-verified (address or domain) in MAIL_SES_REGION, the account must have SES
+# production access there, and the AWS_ACCESS_KEY_ID user above needs ses:SendEmail on it. The
+# fieldrepo-queue unit sends; uvicorn only queues. docs/ENVIRONMENT.md "E-mail (Amazon SES)".
+# MAIL_FROM_ADDRESS=no-reply@your-domain
+# MAIL_FROM_NAME=Design Prototype Workshop
+# MAIL_REPLY_TO=support@your-domain
+# MAIL_SES_REGION=ap-south-1
+# MAIL_SES_CONFIGURATION_SET=
+
 BACKEND_CORS_ORIGINS=https://your-frontend-domain
 # Required in production: the origin every set-password and invite link is built on. The default,
 # http://localhost:3000, only suits a laptop. Use the same origin as the first CORS entry above.

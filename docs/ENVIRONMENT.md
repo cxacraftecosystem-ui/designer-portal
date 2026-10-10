@@ -357,6 +357,22 @@ with no restart. Full semantics: [ARCHITECTURE.md §6](ARCHITECTURE.md).
 | `MEDIA_QUEUE_BATCH_SIZE` | No | `3` | No | Jobs claimed per sweep. |
 | `MEDIA_QUEUE_JOB_MAX_ATTEMPTS` | No | `3` | No | Retries before a job is marked failed. Provider throttling (HTTP 429/503) requeues **without** burning an attempt. |
 
+### E-mail (Amazon SES)
+
+Mail is **on exactly when `MAIL_FROM_ADDRESS` is set**. Unset, nothing is queued, `GET /api/preferences/notifications` answers `available: false`, and both clients hide every e-mail control — the Settings switch, "E-mail a password link" on Users — without a sentence about it. Messages are queued as `EmailMessage` rows and sent by the same `fieldrepo-queue` drain as the media queue (`services/email_outbox.py`, `services/mailer.py`); no request ever waits on SES. The SES call uses the `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` above, so that IAM user needs `ses:SendEmail` on the verified identity. What is e-mailed, and what is never written down, is in [SECURITY.md](SECURITY.md) under the password links.
+
+| Variable | Required | Default | Secret | Notes |
+|---|---|---|---|---|
+| `MAIL_FROM_ADDRESS` | No | unset (mail off) | No | The sender, e.g. `no-reply@your-domain`. Must be an SES-verified identity — the address, or its whole domain — in `MAIL_SES_REGION`. |
+| `MAIL_FROM_NAME` | No | `Design Prototype Workshop` | No | Display name in the From header. |
+| `MAIL_REPLY_TO` | No | unset | No | Where replies go. Unset means the From address. |
+| `MAIL_SES_REGION` | No | `ap-south-1` | No | The SES region. Identities and production access are granted per region. |
+| `MAIL_SES_CONFIGURATION_SET` | No | unset | No | An SES configuration set, for bounce and complaint event publishing. |
+| `MAIL_MAX_ATTEMPTS` | No | `5` | No | Sends per message before it is marked `FAILED`. A throttle or SES fault is retried after 1, 2, 4, 8 … minutes (capped at an hour); a rejected message or an unverified sender fails at once. |
+| `MAIL_BATCH_SIZE` | No | `10` | No | Messages sent per queue sweep (`MEDIA_QUEUE_INTERVAL_SECONDS` apart). The SES sandbox allows 1 a second; production access usually 14. |
+
+**The owner's steps to turn it on** (nothing in this repository creates AWS resources): verify the sending domain (its DKIM records) or the single sender address in SES **ap-south-1**; request SES production access for that region (until then SES delivers only to verified addresses); grant the backend IAM user `ses:SendEmail` on that identity; then add `MAIL_FROM_ADDRESS` (and optionally `MAIL_REPLY_TO`, `MAIL_FROM_NAME`, `MAIL_SES_CONFIGURATION_SET`) to the `BACKEND_ENV` secret and let the next deploy restart both units.
+
 ### Media upload ceiling
 
 | Variable | Required | Default | Secret | Notes |

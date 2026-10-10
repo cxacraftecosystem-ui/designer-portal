@@ -23,13 +23,11 @@ import java.io.File
  *     inspector deck inherited exactly none of that suite's parity, and the honest fix is not to
  *     widen it (a deck the web keeps elsewhere cannot be held to `steps.ts`) but to read the file
  *     that does own those ids. That is what [WEB_INSPECTOR_STEPS] is.
- *  2. **THE OMISSION BECOMING AN ACCIDENT.** This handset teaches three of the web's four inspector
- *     cards. `inspection-feedback` is left out because the capability is absent — no client method,
- *     no panel, and no screen anywhere under `ui/` that reads the `inspectionFeedback` rows the
- *     payload already carries — and that decision is argued where the deck is declared. What a
- *     decision needs and an accident does not is a REGISTER: `walkthroughInspectorOmissions`, held
- *     here to the web's own list so that a second card quietly dropped, or a feedback box quietly
- *     shipped, is a red test rather than a file that looks the same either way.
+ *  2. **THE OMISSION BECOMING AN ACCIDENT.** This handset teaches all four of the web's inspector
+ *     cards since the feedback box landed; until then it left `inspection-feedback` out. What a
+ *     decision needs and an accident does not is a REGISTER: `walkthroughInspectorOmissions`, now
+ *     empty, held here to the web's own list so that a card quietly dropped is a red test rather than
+ *     a file that looks the same either way.
  *  3. **A DEFAULT TURNING INTO A GATE.** The web is explicit that the role picks which deck OPENS
  *     and takes nothing away: every deck stays in the bundle and the switcher reaches all of them.
  *     This handset has one nav row into the walkthrough, ungated for all eleven tiers
@@ -356,10 +354,9 @@ class WalkthroughDecksTest {
             NavDestination.DESIGN_WORKSHOP_INSPECTIONS,
             walkthroughInspectorJourney.first { it.id == "inspection-read" }.destination
         )
-        // AND THE REVIEW CARD'S ADDRESS IS REWRITTEN RATHER THAN INVENTED. The web's `/review` is a
-        // page of its own; on this handset the same nav row opens the record browser, which is what
-        // `MainActivity`'s router arm says in as many words. The precedent is the designer deck's
-        // own `review` step, against this same destination.
+        // AND THE REVIEW CARD OPENS THE REVIEW ROW. The web's `/review` is a page of its own, and so
+        // is the handset's (`Screen.ReviewQueue`): the inspector's workshops waiting for a decision,
+        // then the record queue.
         assertEquals(
             "the review card must name the row this handset really has",
             NavDestination.REVIEW,
