@@ -176,8 +176,8 @@ function customSectionBlocks(
     blocks.push(
       paragraph(
         runsOf(
-          `[Answers truncated after ${MAX_ROWS_PER_SECTION} questions. The full set is held ` +
-            `against the workshop in the repository.]`
+          `[Answers truncated after ${MAX_ROWS_PER_SECTION} questions. The full set is in ` +
+            `the online workshop record.]`
         ),
         "NOTE"
       )
@@ -454,8 +454,8 @@ function sittingBlocks(sitting: QuestionnaireSitting): Block[] {
     blocks.push(
       paragraph(
         runsOf(
-          `[Answers truncated after ${MAX_ROWS_PER_SITTING} questions. The full set is held ` +
-            `against the questionnaire in the repository.]`
+          `[Answers truncated after ${MAX_ROWS_PER_SITTING} questions. The full set is in ` +
+            `the online workshop record.]`
         ),
         "NOTE"
       )
@@ -513,7 +513,7 @@ export function appendQuestionnaireAnnexure(
       if (dropped > 0) {
         doc.para(
           `[${dropped} further sitting(s) were recorded against this questionnaire and ` +
-            `are not printed here. The full set is held in the repository.]`,
+            `are not printed here. The full set is in the online workshop record.]`,
           "NOTE"
         );
       }
@@ -637,8 +637,8 @@ export function transcriptBodyBlocks(text: string): Block[] {
     blocks.push(
       paragraph(
         runsOf(
-          `[Transcript truncated after ${MAX_PARAGRAPHS_PER_TRANSCRIPT} paragraphs. The ` +
-            `full text is held against the recording in the repository.]`
+          `[Transcript shortened to the first ${MAX_PARAGRAPHS_PER_TRANSCRIPT} paragraphs. ` +
+            `The full text is in the online workshop record.]`
         ),
         "NOTE"
       )
@@ -756,7 +756,7 @@ const KIND_TITLES: Record<string, string> = {
 const TIER_WORDS: Record<string, string> = {
   TIER_1: "on the handset, with no connection",
   TIER_2: "on the handset, by a small model held on the device",
-  TIER_3: "on the server, by a hosted model"
+  TIER_3: "online, by a hosted model"
 };
 const UNRECORDED = "UNRECORDED";
 const SOURCE_QUOTE_CHARS = 240;
@@ -774,7 +774,7 @@ function acceptor(item: AiLayerItem): string {
   const name = pyStrip(item.accepted_by || "");
   if (name) return name;
   const account = pyStrip(item.accepted_by_id || "");
-  if (account) return `the account ${account}, whose name this report could not resolve`;
+  if (account) return `a user whose name is not recorded (account ${account})`;
   return "somebody this report cannot identify";
 }
 
@@ -894,8 +894,8 @@ export function appendAiLayerAnnexure(
       kept.push(
         paragraph(
           runsOf(
-            `[Text truncated after ${MAX_PARAGRAPHS_PER_LAYER} paragraphs. The full layer is ` +
-              `held against the workshop in the repository, under ${item.layer_id}.]`
+            `[Shortened to the first ${MAX_PARAGRAPHS_PER_LAYER} paragraphs. The full text ` +
+              `is in the online workshop record.]`
           ),
           "NOTE"
         )

@@ -20877,7 +20877,7 @@
        ],
        [
         {
-         "text": "on the server, by a hosted model",
+         "text": "online, by a hosted model",
          "bold": false,
          "italic": false,
          "underline": false,
@@ -20977,7 +20977,7 @@
        ],
        [
         {
-         "text": "the account u2, whose name this report could not resolve",
+         "text": "a user whose name is not recorded (account u2)",
          "bold": false,
          "italic": false,
          "underline": false,
@@ -21021,7 +21021,7 @@
        ],
        [
         {
-         "text": "on the server, by a hosted model",
+         "text": "online, by a hosted model",
          "bold": false,
          "italic": false,
          "underline": false,
@@ -21105,7 +21105,7 @@
      "type": "PARAGRAPH",
      "runs": [
       {
-       "text": "Produced on the server, by a hosted model · provider anthropic · model-x 2026-01 · in or · 2026-07-09 · made from the recording “audio.m4a”. Accepted by Ananya Rao on 2026-07-09.",
+       "text": "Produced online, by a hosted model · provider anthropic · model-x 2026-01 · in or · 2026-07-09 · made from the recording “audio.m4a”. Accepted by Ananya Rao on 2026-07-09.",
        "bold": false,
        "italic": false,
        "underline": false,
@@ -21194,7 +21194,7 @@
      "type": "PARAGRAPH",
      "runs": [
       {
-       "text": "Produced on the handset, with no connection · the model was not recorded · several languages, interleaved · made from the note “weavers want lighter cloth”. Accepted by the account u2, whose name this report could not resolve.",
+       "text": "Produced on the handset, with no connection · the model was not recorded · several languages, interleaved · made from the note “weavers want lighter cloth”. Accepted by a user whose name is not recorded (account u2).",
        "bold": false,
        "italic": false,
        "underline": false,
@@ -21271,7 +21271,7 @@
      "type": "PARAGRAPH",
      "runs": [
       {
-       "text": "Produced on the server, by a hosted model · provider x · m · translated from several languages, interleaved into English · made from the recording “cmgmedia00000000000000042”. Accepted by Ananya Rao.",
+       "text": "Produced online, by a hosted model · provider x · m · translated from several languages, interleaved into English · made from the recording “cmgmedia00000000000000042”. Accepted by Ananya Rao.",
        "bold": false,
        "italic": false,
        "underline": false,
