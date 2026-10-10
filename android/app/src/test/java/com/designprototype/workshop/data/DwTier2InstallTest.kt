@@ -285,8 +285,7 @@ class DwTier2InstallTest {
         fun code(path: String) = File(path).readLines().filterNot { line ->
             val t = line.trim()
             t.startsWith("*") || t.startsWith("//") || t.startsWith("/*")
-        }.joinToString("
-")
+        }.joinToString(" ")
         val models = code("src/main/java/com/designprototype/workshop/data/DwTier2Models.kt")
         listOf(
             "No model here can run yet",
