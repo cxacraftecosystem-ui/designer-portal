@@ -24,7 +24,7 @@ package com.designprototype.workshop.data
  * sentence in a Google Developers Blog post ("as little as 2GB (E2B) and 3GB (E4B) of memory"), which
  * is a claim about a FAMILY and not a reading of THIS artifact on ANY named phone. Writing
  * `peakRssBytes = 2 GB, measuredOn = "?"` to get past the constructor is the single thing that class
- * exists to make impossible, so those two rows are carried in [DW_TIER2_UNJUDGED] instead: listed on
+ * exists to make impossible, so those two rows were carried as unjudged rows instead (removed 2026-10-10): listed on
  * every device, with their real size and their real digest, and with the word **unmeasured** where the
  * memory figure would be. A row that cannot be judged is still a row a designer may read; what it may
  * not do is carry a verdict computed from a number nobody took.
@@ -83,41 +83,27 @@ package com.designprototype.workshop.data
  * sentences below take a [DwModelChoice] that has already been judged. A second set of rules that
  * happened to be kinder to a 2.6 GB download is the failure mode this note exists to name.
  *
- * **AND NOTHING HERE CAN RUN TODAY.** See [DW_TIER2_RUNTIME_ABSENCE]: one sentence, and the rows are
- * listed anyway, because a designer deciding whether this phone could ever do this work is owed the
- * numbers whether or not today's build can act on them.
+ * **AND SINCE 2026-10-10 THEY RUN.** LiteRT-LM 0.18.0 is in the APK (`DwTier2Engine.kt`), the two
+ * Gemma 4 files are fetched on demand from the pinned URLs below and verified against the pinned
+ * SHA-256 before anything opens them (`DwTier2Install.kt`, `DwTier2ModelInstallUi.kt`), and a phone
+ * whose own reading rules a row out is simply not offered it. The two Gemma 3n artifacts that used
+ * to be listed beside them with no verdict are gone from this file: their repositories need a
+ * licence accepted by a person before anyone can be given the bytes, so no phone could ever be
+ * offered them, and a row that can never be acted on is not a row a designer needs to read.
  */
 
 // ---------------------------------------------------------------------------------------------
-// The runtime, in one sentence
+// The runtime
 // ---------------------------------------------------------------------------------------------
 
 /*
- * **WHY NONE OF THESE CAN BE RUN BY THIS BUILD.** (2026-10-10: the sentence that used to say so on
- * screen is gone — the whole Tier 2 section is now hidden while [DW_TIER2_RUNTIME_PRESENT] is false,
- * and the gap is recorded in docs/OPEN_FINDINGS.md instead of narrated to a designer.)
- *
- * `com.google.ai.edge.litertlm:litertlm-android:0.16.0` exists on Google's Maven, is Apache-2.0,
- * `minSdkVersion 24`, and carries `liblitertlm_jni.so` for `arm64-v8a` and `x86_64` only. Adding it to
- * this module did not compile while it was on Kotlin 2.0.21: `javap -v` on
- * `com.google.ai.edge.litertlm.Engine` reads `kotlin.Metadata(mv=[2,3,0])`, and the compiler stopped with
- * *"The binary version of its metadata is 2.3.0, expected version is 2.0.0"* followed by an internal
- * compiler error. **Every published version had the same problem, and "every" was checked against
- * `maven-metadata.xml` rather than assumed** — an earlier note here called 0.8.0 the oldest release,
- * which is wrong: that file lists twenty versions and the oldest is `0.0.0-alpha06`. `javap -v` on
- * `Engine` across the range reads `mv=[2,3,0]` for 0.10.0, 0.11.0, 0.13.1, 0.15.0 and 0.16.0, and
- * `mv=[2,2,0]` for the two oldest, `0.0.0-alpha06` and `0.9.0-alpha01`. So the floor across the whole
- * catalogue is 2.2.0, still above the 2.0.0 that compiler expected, and there was no version to pin
- * back to: the prerequisite was a Kotlin upgrade of the whole project.
- *
- * **THAT PREREQUISITE WAS MET ON 2026-10-09**, by the toolchain move rather than for Tier 2: the project
- * compiles with Kotlin 2.4.21 now, and a 2.4 compiler reads metadata up to 2.5.0, above litertlm's
- * 2.3.0. Nothing was re-measured by compiling the runtime in, so the one sentence below still stands
- * as written — there is no runtime in this build — and what it would take is now the build work alone.
- *
- * The alternative was priced rather than assumed: `com.google.mediapipe:tasks-genai:0.10.35` is pure
- * Java, carries no Kotlin metadata and WOULD compile here — but Google's own README calls that LLM
- * route "in maintenance mode", it takes `.task` bundles, and Gemma 4 publishes none for mobile.
+ * `com.google.ai.edge.litertlm:litertlm-android:0.18.0`, Google's Maven, Apache-2.0, `minSdk 24`,
+ * `liblitertlm_jni.so` for arm64-v8a and x86_64. It did not compile here while the project was on
+ * Kotlin 2.0.21 — `Engine` carries Kotlin metadata newer than that compiler could read, across every
+ * published version — and the Kotlin 2.4.21 toolchain of 2026-10-09 removed that obstacle. 0.18.0
+ * (metadata 2.4) is the newest release on 2026-10-10. MediaPipe's `tasks-genai` was the priced
+ * alternative and is not used: Google calls that LLM route "in maintenance mode", and it takes
+ * `.task` bundles that Gemma 4 does not publish for phones.
  */
 
 // ---------------------------------------------------------------------------------------------
@@ -125,19 +111,15 @@ package com.designprototype.workshop.data
 // ---------------------------------------------------------------------------------------------
 
 /**
- * Where a Tier 2 artifact's bytes come from, **and it is never a Hugging Face URL from a handset.**
+ * Where a Tier 2 artifact's bytes come from, and what they must hash to.
  *
- * The wall is the same one the speech model hit: `huggingface.co` needs credentials for a gated repo,
- * a field handset has none, and this app is authenticated against exactly one thing — its own
- * deployment. The route that works therefore already exists and is not built twice:
- * `GET /api/asr-models/{artifactId}/files/{fileName}` in `backend/app/api/routes/asr_models.py`, which
- * verifies the file's SHA-256 in-process before a byte leaves, serves `Range` through Starlette's
- * `FileResponse`, and sets `ETag` to the content digest so a resume across replicas cannot be told to
- * start again. **What that route cannot serve today is a LANGUAGE model**, because its catalogue is
- * `asr_artifacts.ASR_MODEL_ARTIFACTS` and its own docstring calls the thing it serves a speech model.
- * The metadata below is deliberately in that catalogue's shape — id, file name, byte count, digest,
- * upstream version, provenance — so publishing these is a catalogue entry and a prefix, not a second
- * endpoint. See `docs/TIER2-LANGUAGE-MODEL-MEASUREMENT.md` for the exact server-side gap.
+ * **CHANGED 2026-10-10: THE BYTES COME FROM THE UPSTREAM REPOSITORY, PINNED TO A REVISION.** This said
+ * "never a Hugging Face URL from a handset", on the ground that `huggingface.co` needs credentials for
+ * a gated repository. That is true of the Gemma 3n repositories and false of the two Gemma 4 ones this
+ * file now carries: both are ungated, so a field handset fetches them with no credential at all —
+ * exactly as the speech model's pinned GitHub release asset is fetched — and the SHA-256 pinned here is
+ * what makes the host irrelevant to safety: a host that changed the bytes changes them into a file
+ * [dwTier2VerifyFile] refuses and the controller deletes.
  */
 data class DwTier2Artifact(
     /** Matches [DwModelPlan.modelId] of the row it carries, so a row and its bytes cannot drift. */
@@ -146,6 +128,14 @@ data class DwTier2Artifact(
     val repo: String,
     /** The file as it is published and as it would sit on the phone. A bare name, never a path. */
     val fileName: String,
+    /**
+     * Where the bytes are fetched from: an `https://` URL **pinned to a repository revision**, so the
+     * file behind it cannot change under the digest below. A Hugging Face URL, and safe for the reason
+     * the speech model's GitHub URL is: [sha256] is pinned in the APK and checked before the file is
+     * opened, so a host that changed the bytes changes them into a file this app deletes. The two
+     * repositories are ungated (Apache-2.0), so no credential is needed and none is sent.
+     */
+    val url: String,
     /** Its size, in bytes, **weighed on this machine's copy** rather than read off a model card. */
     val bytes: Long,
     /** Lower-case hex SHA-256 of that file. See [digestProvenance] for who took it. */
@@ -173,6 +163,10 @@ data class DwTier2Artifact(
                 "files inside this app's own storage, and a separator would put multi-gigabyte bytes " +
                 "somewhere this feature does not own."
         }
+        require(url.startsWith("https://") && "/resolve/" in url && url.endsWith("/$fileName")) {
+            "A Tier 2 artifact is fetched over TLS from a URL pinned to a revision and ending in its " +
+                "own file name: “$url” is not one."
+        }
         require(bytes > 0L) {
             "A Tier 2 artifact needs its real size. This is the figure a designer reads before " +
                 "spending a data bundle on it, and a zero would print as “0 MB” for 2.6 GB."
@@ -190,21 +184,18 @@ data class DwTier2Artifact(
 }
 
 /**
- * **THE FOUR ARTIFACTS, AS FILES. TWO WEIGHED AND HASHED HERE, TWO PUBLISHED-ONLY BECAUSE THE
- * REPOSITORY IS GATED.**
- *
- * The two `litert-community` files were downloaded in full and hashed locally; `hf download --dry-run`
- * reports them `gated=false`, `license:apache-2.0`. The two `google/gemma-3n-*-litert-lm` repositories
- * answer `Error: Access denied. This repository requires approval.` — their card's own gate text says
- * *"Requests are processed immediately"*, so the whole action is a person accepting Google's licence on
- * the model page. Until that happens, their `sha256` here is the LFS `oid` from
- * `/api/models/<repo>?blobs=true` and is labelled as the host's claim, not as a measurement.
+ * **THE TWO ARTIFACTS, AS FILES, BOTH WEIGHED AND HASHED HERE.** `hf download --dry-run` reports both
+ * repositories `gated=false`, `license:apache-2.0`. Re-checked 2026-10-10 against
+ * `/api/models/<repo>?blobs=true`: the LFS `sha256` at each pinned revision equals the digest below,
+ * and a ranged GET of the E2B URL answered `206` with `Content-Range: bytes 0-15/2588147712`.
  */
 val DW_TIER2_ARTIFACTS: List<DwTier2Artifact> = listOf(
     DwTier2Artifact(
         modelId = "gemma-4-E2B-it.litertlm",
         repo = "litert-community/gemma-4-E2B-it-litert-lm",
         fileName = "gemma-4-E2B-it.litertlm",
+        url = "https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/" +
+            "b3ca0d2f076785a8f4b2219ddbd2bdb99954eae1/gemma-4-E2B-it.litertlm",
         bytes = 2_588_147_712L,
         sha256 = "181938105e0eefd105961417e8da75903eacda102c4fce9ce90f50b97139a63c",
         digestProvenance = "MEASURED — the file was downloaded on 2026-08-13 and hashed on the " +
@@ -217,32 +208,15 @@ val DW_TIER2_ARTIFACTS: List<DwTier2Artifact> = listOf(
         modelId = "gemma-4-E4B-it.litertlm",
         repo = "litert-community/gemma-4-E4B-it-litert-lm",
         fileName = "gemma-4-E4B-it.litertlm",
+        url = "https://huggingface.co/litert-community/gemma-4-E4B-it-litert-lm/resolve/" +
+            "2eee7ac325f20eb8c9ac1d0e972f7c84663062da/gemma-4-E4B-it.litertlm",
         bytes = 3_659_530_240L,
         sha256 = "0b2a8980ce155fd97673d8e820b4d29d9c7d99b8fa6806f425d969b145bd52e0",
         digestProvenance = "MEASURED — downloaded 2026-08-13 and hashed on the release machine. " +
             "Google's “Model size (MB)” column reads 3654 for it.",
         needsUpstreamApproval = false,
     ),
-    DwTier2Artifact(
-        modelId = "gemma-3n-E2B-it-int4.litertlm",
-        repo = "google/gemma-3n-E2B-it-litert-lm",
-        fileName = "gemma-3n-E2B-it-int4.litertlm",
-        bytes = 3_655_827_456L,
-        sha256 = "2ed7bc3a0026c93d5b8a4544b352d9d00cd66ff0bac3ef6a20ac3d2cba4010d6",
-        digestProvenance = "PUBLISHED BY THE HOST — the LFS oid from Hugging Face's own API. The " +
-            "repository is gated (`gated=manual`), so nobody here has held these bytes and this " +
-            "digest has not been checked against anything.",
-        needsUpstreamApproval = true,
-    ),
-    DwTier2Artifact(
-        modelId = "gemma-3n-E4B-it-int4.litertlm",
-        repo = "google/gemma-3n-E4B-it-litert-lm",
-        fileName = "gemma-3n-E4B-it-int4.litertlm",
-        bytes = 4_919_541_760L,
-        sha256 = "2e67a6cd51dfe0f793431e6bd4ed8d029c88e10f52ca0469ad38445e3cd3c1f4",
-        digestProvenance = "PUBLISHED BY THE HOST — LFS oid, repository gated, bytes never held here.",
-        needsUpstreamApproval = true,
-    ),
+
 )
 
 /** The artifact carrying [modelId], or null when this build pins none for it. */
@@ -272,8 +246,7 @@ private const val DW_TIER2_MIB: Long = 1024L * 1024L
 /**
  * **THE TIER 2 ROWS. TWO OF THEM, AND [DW_TIER2_CATALOGUE] DELEGATES TO THIS LIST.**
  *
- * Neither can be run by this build ([DW_TIER2_RUNTIME_ABSENCE]) and both are listed on every handset
- * anyway, which is this feature's whole rule: *we suggest, they choose* — so every model is visible
+ * Both are judged on every handset by [dwModelFit], which is this feature's whole rule: *we suggest, they choose* — so every model is visible
  * everywhere with its size, its memory requirement and this device's verdict, and the verdict comes
  * from [dwModelFit] rather than from anything written here.
  *
@@ -363,123 +336,46 @@ fun dwTier2GpuClaimBytes(modelId: String): Long? = when (modelId) {
 }
 
 // ---------------------------------------------------------------------------------------------
-// The rows that cannot be judged, and are listed anyway
-// ---------------------------------------------------------------------------------------------
-
-/**
- * **A REAL ARTIFACT WITH NO MEMORY FIGURE ANYWHERE. LISTED, SIZED, DIGESTED — AND NOT JUDGED.**
- *
- * The shape exists because [DwModelPlan] rightly cannot be built without a peak resident set and the
- * handset it came off, and hiding the two Gemma 3n artifacts on those grounds would leave a reader who
- * has heard of them unable to find out from this app that they exist. *Measured and rejected is a more
- * useful answer than silence* is already this repository's rule for a language a model hears badly;
- * **weighed and unjudgeable** is the same rule applied to an artifact whose publisher never said what
- * it costs to run.
- */
-data class DwTier2UnjudgedModel(
-    val modelId: String,
-    val quantisation: String,
-    val onDiskBytes: Long,
-    /** In one clause: what is missing, and who would have to supply it. Printed as-is. */
-    val whyNoVerdict: String,
-    /** Whether a person has to accept a licence upstream before any phone could be given the bytes. */
-    val needsUpstreamApproval: Boolean,
-) {
-    init {
-        require(modelId.isNotBlank() && quantisation.isNotBlank()) {
-            "An unjudged row still names the exact artifact and its quantisation — those are the two " +
-                "things that decide what it would cost, and they are known for both of these."
-        }
-        require(onDiskBytes > 0L) {
-            "An unjudged row is unjudged about MEMORY, not about size. The file's byte count is " +
-                "known for both of these and is the one figure that makes the row worth printing."
-        }
-        require(whyNoVerdict.isNotBlank()) {
-            "A row with no verdict has to say why there is none, or it reads as a rendering fault."
-        }
-    }
-}
-
-/**
- * **THE TWO GEMMA 3n ARTIFACTS. REAL, GATED, AND UNJUDGEABLE ON EVERY HANDSET.**
- *
- * Their `litert-lm` model cards publish prefill and decode and **no memory figure of any kind** — read,
- * not assumed. The 2 GB / 3 GB numbers that circulate come from a Google Developers Blog post about the
- * Gemma 3n family (Sanseviero & Ballantyne, 26 Jun 2025) and are a claim about a family: not a
- * measurement of these artifacts, not taken on a named phone, and therefore not something
- * [DwModelPlan.peakRssBytes] may be filled from.
- */
-val DW_TIER2_UNJUDGED: List<DwTier2UnjudgedModel> = listOf(
-    DwTier2UnjudgedModel(
-        modelId = "gemma-3n-E2B-it-int4.litertlm",
-        quantisation = "int4 weights, float activations",
-        onDiskBytes = 3_655_827_456L,
-        // NOT A SECOND COPY OF THE SENTENCE ABOVE IT. `dwTier2UnjudgedSentence` has already said that
-        // the memory cost is unknown; this clause says WHY nobody knows, which is the half that tells a
-        // reader whether it is worth waiting for.
-        whyNoVerdict = "Its publisher gives no memory figure for it, so this phone cannot be " +
-            "checked against it.",
-        needsUpstreamApproval = true,
-    ),
-    DwTier2UnjudgedModel(
-        modelId = "gemma-3n-E4B-it-int4.litertlm",
-        quantisation = "int4",
-        onDiskBytes = 4_919_541_760L,
-        whyNoVerdict = "Its publisher gives no memory figure for it either.",
-        needsUpstreamApproval = true,
-    ),
-)
-
-// ---------------------------------------------------------------------------------------------
 // The gate
 // ---------------------------------------------------------------------------------------------
 
 /**
- * Whether a control that would fetch [choice] may be drawn. **False on every handset today.**
+ * Whether this phone is in a device tier that runs a Tier 2 model at all. **The plan's table, read
+ * off the phone's own numbers.**
  *
- * It is [dwModelDownloadMayBeOffered] AND the runtime, and the second half is what makes it false: a
- * 2.6 GB download for a file nothing in this build can open would spend a designer's bundle on bytes
- * that could only sit there. The same rule as `DwPackOffer.NO_CONNECTION` — *a control that cannot
- * work is worse than an absent one* — applied to a missing runtime rather than a missing network.
+ * docs/PLAN-AI-TIERS-AND-CUSTOM-SECTIONS.md §2.1: a "low-RAM flag set, or < 3 GB" handset gets
+ * "**none** — say so plainly", and the rule this app adds is that "plainly" means not offering it. So
+ * on top of [DwModelFit.mayInstall] — which lets a designer override a TIGHT verdict — the two DURABLE
+ * tight notes rule a row out: Android's own low-memory flag, and a phone whose total memory cannot
+ * hold the model with the app's margin however many apps are closed. Those are exactly the two
+ * conditions [dwPlanFits] calls [DwTierRefusal.DEVICE_TOO_SMALL]. What stays overridable is the
+ * one figure that moves — free memory right now — and a tight storage margin.
+ */
+fun dwTier2Eligible(choice: DwModelChoice): Boolean =
+    choice.fit.mayInstall &&
+        DwFitNote.ANDROID_CALLS_THIS_A_LOW_MEMORY_DEVICE !in choice.notes &&
+        DwFitNote.LITTLE_MEMORY_LEFT_OVER !in choice.notes
+
+/**
+ * Whether a control that would fetch [choice] may be drawn. **The one gate for a Tier 2 download.**
  *
- * The fit half is still evaluated rather than short-circuited, so the day the runtime lands this
- * function needs no thought: it already refuses the phones [dwModelFit] refuses.
+ * [dwTier2Eligible] (the fit verdict and the device tier), a connection, and LiteRT-LM in this
+ * package. A phone the measured reading rules out is never offered a 2.6 GB download it could not use.
  */
 fun dwTier2InstallMayBeOffered(
     choice: DwModelChoice,
     connection: DwConnection,
     runtimePresent: Boolean = DW_TIER2_RUNTIME_PRESENT,
-): Boolean = runtimePresent && dwModelDownloadMayBeOffered(choice, connection)
+): Boolean = runtimePresent && dwTier2Eligible(choice) && dwModelDownloadMayBeOffered(choice, connection)
 
 // ---------------------------------------------------------------------------------------------
 // The words. Terse: name, size, memory, verdict, one action
 // ---------------------------------------------------------------------------------------------
 
-/**
- * The one line above the Tier 2 list. **Says what kind of list it is and that nothing is suggested.**
- *
- * It does not reuse [dwModelChoiceIntroSentence], and the reason is a false sentence rather than a
- * preference: that function's no-suggestion arm reads *"Nothing is marked “suggested”, because this
- * phone's own reading is not comfortable with any of them"* — which is inferred from the absence of a
- * marking, and on this list the marking is absent because there is no runtime to suggest anything
- * with, not because the phone is short of room. On a handset where these rows come out COMFORTABLE it
- * would be printing the opposite of the verdict two lines below it.
- */
-fun dwTier2ListIntro(judged: Int, unjudged: Int): String = buildString {
-    append("Language models, for tidying and translating what is already written.")
-    // Drawn only when the app can run one (see SpeechAndAiScreen), so the line says what the list is
-    // and nothing about what is missing.
-    if (judged > 0) append(" Each shows its download size and what this phone makes of it.")
-    if (unjudged > 0) {
-        append(" ")
-        append(
-            if (unjudged == 1) "One more is listed with no verdict, because its publisher gives no " +
-                "memory figure."
-            else "$unjudged more are listed with no verdict, because their publishers give no " +
-                "memory figure."
-        )
-    }
-}
+/** The one line above the Tier 2 list: what the models are for, and that nothing downloads by itself. */
+const val DW_TIER2_LIST_INTRO: String =
+    "Language models, for tidying and translating what is already written. Each shows its " +
+        "download size and what this phone makes of it. Nothing is downloaded unless you ask for it."
 
 /**
  * One judged row, in one sentence: **what it costs, whose figure that is, and what this phone makes
@@ -498,23 +394,19 @@ fun dwTier2ListIntro(judged: Int, unjudged: Int): String = buildString {
  * bends: the verdict comes from [dwModelFit], the verdict WORD from [dwModelFitLabel], and the sizes
  * from [dwBytesLabel]. What is local is the length.
  *
- * **THE OVERRIDE CONFIRMATION IS NOT DRAWN AT ALL TODAY, AND WHEN IT IS IT MUST BE
- * [dwModelOverrideSentence] AND NOT A SHORTER LOCAL COPY.** No control is offered while there is no
- * runtime ([dwTier2InstallMayBeOffered] is false everywhere), so there is nothing to confirm; the row
- * text above is for reading, not for committing to a gigabyte. The moment an install button exists, the
- * sentence a designer accepts is the one place brevity is the wrong instinct — it is the only text in
- * this feature that changes what happens to their work — and it already exists, tested, one file over.
+ * **THE OVERRIDE CONFIRMATION IS [dwModelOverrideSentence] AND NOT A SHORTER LOCAL COPY.** A TIGHT
+ * row's Download asks for it before a byte moves (`DwTier2ModelUi.kt`): the sentence a designer
+ * accepts is the one place brevity is the wrong instinct, and it already exists, tested, one file over.
  */
 fun dwTier2RowSentence(choice: DwModelChoice, measurement: DwDeviceMeasurement): String = buildString {
     val plan = choice.plan
     /*
      * WORD COUNT IS A CONSTRAINT ON THIS FUNCTION AND NOT AN AESTHETIC. `DwTier2ModelsTest` fails the
-     * build over 90 words for a single-note row, because the list this screen replaced was measured at
-     * 1,207 words off the handset's own view hierarchy and was deleted for it. The first draft of this
-     * sentence came to 95 and was cut to 84; anything added here has to displace something.
+     * build over 80 words for a single-note row: the size, the memory figure the verdict was computed
+     * from and whose figure it is, and this phone's verdict.
      */
     append(dwBytesLabel(plan.onDiskBytes))
-    append(" to download. It needs ")
+    append(" to download. It needs about ")
     append(dwBytesLabel(plan.peakRssBytes))
     append(" of memory while it runs (Google's published figure, from a Galaxy S26 Ultra).")
     dwTier2GpuClaimBytes(plan.modelId)?.let { gpu ->
@@ -531,8 +423,8 @@ fun dwTier2RowSentence(choice: DwModelChoice, measurement: DwDeviceMeasurement):
  *
  * Deliberately shorter than [dwModelFitSentence], which is 90-odd words on its TIGHT arm and names the
  * camera. That length is right where a designer is about to spend a gigabyte and tap through a
- * confirmation; here nothing can be installed at all, and the row's job is to let somebody scan four
- * models and see which their phone could take.
+ * confirmation, and it is drawn there — in the confirmation a TIGHT row's Download opens. The row's
+ * job is to let somebody scan the models and see which their phone could take.
  */
 fun dwTier2FitClause(choice: DwModelChoice, measurement: DwDeviceMeasurement): String = when (choice.fit) {
     DwModelFit.COMFORTABLE -> buildString {
@@ -601,25 +493,6 @@ private fun dwTier2NoteClause(
         "it would leave ${dwBytesLabel(choice.freeStorageHeadroomBytes)} of storage free, under the " +
             "${dwBytesLabel(DW_MODEL_FREE_STORAGE_MARGIN_BYTES)} this app keeps for a workshop day."
 }
-
-/**
- * One unjudged row, in one sentence. **The size is a number; the memory is the word "unknown".**
- *
- * "Unknown" rather than "unmeasured" on the surface only: to the designer holding the phone, the
- * useful distinction is not who failed to measure it. The catalogue keeps the precise version —
- * [DwTier2UnjudgedModel.whyNoVerdict] — and it is the second half of this sentence.
- */
-fun dwTier2UnjudgedSentence(model: DwTier2UnjudgedModel): String = buildString {
-    append(dwBytesLabel(model.onDiskBytes))
-    append(" to download. How much memory it needs while it runs is unknown. ")
-    append(model.whyNoVerdict)
-    if (model.needsUpstreamApproval) {
-        append(" Its publisher asks for a licence to be accepted before it can be downloaded.")
-    }
-}
-
-/** The short verdict for an unjudged row, where a judged row shows [dwModelFitLabel]. */
-const val DW_TIER2_UNJUDGED_LABEL: String = "No memory figure"
 
 // ---------------------------------------------------------------------------------------------
 // Sideloading, through the same check and not around it

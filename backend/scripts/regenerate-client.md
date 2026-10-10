@@ -53,6 +53,7 @@ into `~/.cache/prisma-python` and is *not* part of what is copied.
 OUT=/tmp/prismagen && rm -rf "$OUT" && mkdir -p "$OUT"
 docker run --rm \
   -v "C:/dev/IIT/designer-portal/backend/prisma:/work/prisma:ro" \
+  -v "C:/dev/IIT/designer-portal/backend/scripts/generate_prisma_client.py:/work/scripts/generate_prisma_client.py:ro" \
   -v "$OUT:/out" \
   -e DATABASE_URL="postgresql://u:p@127.0.0.1:5432/db" \
   python:3.14-slim bash -lc '
@@ -60,7 +61,9 @@ docker run --rm \
     pip install --quiet prisma==0.15.0                        # MUST match the version in the venv
     SP=$(python -c "import prisma,os;print(os.path.dirname(prisma.__file__))")
     cp -r "$SP" /tmp/before
-    cd /work && prisma generate
+    # The script, not a bare `prisma generate` (2026-10-09): it adds the one line to types.py that
+    # makes this client import in seconds on Python 3.14 rather than in tens of minutes.
+    cd /work && python scripts/generate_prisma_client.py
     cd "$SP" && for f in $(find . -name "*.py" | sed "s|^\./||"); do
       if [ ! -f "/tmp/before/$f" ] || ! cmp -s "$f" "/tmp/before/$f"; then
         mkdir -p "/out/$(dirname $f)"; cp "$f" "/out/$f"
@@ -118,6 +121,6 @@ on whichever screen somebody opens next.
 
 ## None of this applies to CI or to the servers
 
-`deploy-backend.yml` runs `prisma generate` and `prisma migrate deploy` on Linux, where neither
-failure exists. Production has never been affected by either of these, and was not affected by the
+`deploy-backend.yml` runs `scripts/generate_prisma_client.py` (`prisma generate` plus the Python
+3.14 import fix) and `prisma migrate deploy` on Linux, where neither failure exists. Production has never been affected by either of these, and was not affected by the
 outage that produced this file — the drift was local only.

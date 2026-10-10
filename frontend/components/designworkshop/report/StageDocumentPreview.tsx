@@ -103,7 +103,9 @@ import {
   useReportMediaUrls
 } from "@/components/designworkshop/report/ReportBlock";
 import type { PreviewBlock } from "@/components/designworkshop/report/previewModel";
-import { previewDesignWorkshopReport, type DwRun } from "@/lib/designWorkshops";
+import { previewDesignWorkshopReport, type DwPreview, type DwRun } from "@/lib/designWorkshops";
+import { draftSessionUserId } from "@/lib/designWorkshopStore";
+import { buildPreviewOnDevice } from "@/lib/offlineReport/devicePreview";
 import { readableError } from "@/components/review/reviewErrors";
 import { isUnreachable } from "@/lib/failureTriage";
 
@@ -270,7 +272,25 @@ export function StageDocumentPreview({
       generation.current = mine;
       setState({ kind: "loading" });
       try {
-        const payload = await previewDesignWorkshopReport(workshopId);
+        /*
+          ON THIS DEVICE WHEN THERE IS NO SERVER COPY OR NO CONNECTION, from the server otherwise.
+          `buildPreviewOnDevice` builds the same document from the draft (see `lib/offlineReport`),
+          so a workshop started offline, or a stage edited on a train, still shows its pages.
+        */
+        const fromDevice = () => buildPreviewOnDevice(workshopId, draftSessionUserId());
+        const offline = typeof navigator !== "undefined" && navigator.onLine === false;
+        let payload: DwPreview | null;
+        if (localOnly === true || offline) payload = await fromDevice();
+        else {
+          try {
+            payload = await previewDesignWorkshopReport(workshopId);
+          } catch (error) {
+            if (!isUnreachable(error)) throw error;
+            payload = await fromDevice();
+            if (!payload) throw error;
+          }
+        }
+        if (!payload) throw new Error("This workshop is not saved on this device, so its document cannot be built here.");
         // THE LATE ANSWER IS DROPPED, INCLUDING ITS TOKEN. Writing `drawn` here unconditionally was
         // the second half of the defect: a superseded attempt would mark its own older token as
         // drawn, and since the effect's dependencies had not moved, nothing would ever correct it.
@@ -302,7 +322,7 @@ export function StageDocumentPreview({
     // the wrong way to close the same hole: it would re-BUILD a document the server has not changed —
     // every stage loaded, every media row resolved, every figure rasterised — because a title string
     // arrived.
-    [workshopId]
+    [workshopId, localOnly]
   );
 
   useEffect(() => {
@@ -311,7 +331,7 @@ export function StageDocumentPreview({
     // would issue the build while `workshopId` is still the route's own `dwlocal-…` id, and
     // `load_workshop_or_404` answers that with "Record not found": the panel would report a failure
     // about a workshop nobody has looked up yet, which is the opposite of what the resolved id is for.
-    if (!open || localOnly !== false) return;
+    if (!open || localOnly === null) return;
     if (drawn.current === refreshToken) return;
     void load(refreshToken);
     // NO CLEANUP THAT RELEASES ANYTHING, and that is correct here rather than an omission. Nothing is
@@ -398,15 +418,7 @@ export function StageDocumentPreview({
             which is rule 10 in one paragraph.
           */}
           {localOnly === null ? (
-            <p className="text-sm leading-6 text-ink-700">
-              Checking whether this workshop has been uploaded. The preview appears here once that is
-              known. If something stopped this page loading the workshop, the messages above say so.
-            </p>
-          ) : localOnly ? (
-            <p className="text-sm leading-6 text-ink-700">
-              This workshop is still only on this device. The preview appears once it has uploaded.
-              Everything captured so far is safe on this device.
-            </p>
+            <p className="text-sm leading-6 text-ink-700">Getting the document ready…</p>
           ) : (
             <>
               {/* THE HONEST FRAMING, ABOVE THE DOCUMENT AND NOT BURIED UNDER IT. See the header: this
@@ -495,7 +507,7 @@ export function StageDocumentPreview({
               {state.kind === "failed" ? (
                 <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
                   {state.offline
-                    ? "Connect to the internet to build the document. Everything captured is safe."
+                    ? "The document couldn't be built just now. Everything captured is safe, and it will be built again on the next save."
                     : state.message}
                 </p>
               ) : null}

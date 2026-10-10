@@ -61,3 +61,7 @@ Dockerfile      text eol=lf
 # `core-export`, hashed in `android/UPSTREAM-MANIFEST-KOTLIN.txt` — so there is no generated asset
 # left to protect. This line still earns its keep for the TypeScript the web traces with.
 frontend/lib/trace/**  text eol=lf
+# The cost-report Lambda's source is zipped by Terraform at plan time and compared by hash,
+# so a Windows checkout's CRLF made every plan propose redeploying unchanged code (measured
+# 2026-10-09: a CRLF index.py hashes differently from the LF one that was applied).
+infra/terraform/cost_report/** text eol=lf

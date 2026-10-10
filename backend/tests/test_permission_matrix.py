@@ -239,11 +239,11 @@ class _Api:
     def __init__(self, tripwire: _Tripwire) -> None:
         self.tripwire = tripwire
 
-    def as_(self, user: Any) -> "_Api":
+    def as_(self, user: Any) -> _Api:
         _CURRENT["user"] = user
         return self
 
-    def preload(self, name: str, delegate: Any) -> "_Api":
+    def preload(self, name: str, delegate: Any) -> _Api:
         """Let the handler get past one specific database read, for the tests whose decision point
         is behind it."""
         self.tripwire.preload(name, delegate)

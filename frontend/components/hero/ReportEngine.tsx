@@ -167,6 +167,8 @@ const RENDERERS = [
   { icon: FileText, format: ".docx", where: "online" },
   { icon: FileText, format: ".pdf", where: "online" },
   { icon: MonitorPlay, format: "Preview", where: "in the browser" },
+  { icon: MonitorPlay, format: ".docx", where: "in the browser" },
+  { icon: MonitorPlay, format: ".pdf", where: "in the browser" },
   { icon: Smartphone, format: ".docx", where: "on the phone" },
   { icon: Smartphone, format: ".pdf", where: "on the phone" },
   { icon: Smartphone, format: "Preview", where: "on the phone" }
@@ -195,7 +197,7 @@ const FACTS = [
     icon: Smartphone,
     title: "Generated on the phone, with no signal needed",
     copy:
-      "The phone builds the document from its own draft and writes the .docx and the PDF on the device, so a fortnight in a cluster ends in a finished document, even far from a signal."
+      "The phone builds the document from its own draft and writes the .docx and the PDF on the device, so a fortnight in a cluster ends in a finished document, even far from a signal. The browser does the same with no connection, from the workshop it holds."
   },
   /*
     ── THE FIFTH CARD: REPORT HISTORY ─────────────────────────────────────────────────────────────
@@ -288,7 +290,7 @@ export default function ReportEngine() {
           variants={item}
           className="max-w-3xl font-display text-3xl font-bold tracking-tight text-ink-900 sm:text-4xl"
         >
-          One document, drawn six ways that agree line for line.
+          One document, drawn eight ways that agree line for line.
         </motion.h2>
         {/* THE COUNT IS STATED ONCE, IN THE HEADING, AND NOWHERE ELSE. It sits three lines above a
             list of six tiles a reader can count for themselves, which is the same trick the
@@ -300,8 +302,8 @@ export default function ReportEngine() {
             below, which is the list's length and not a number of its own. */}
         <motion.p variants={item} className="mt-4 max-w-2xl text-base leading-relaxed text-ink-500">
           The {STAGE_COUNT_WORD_LOWER} stages are assembled once into a single document, and each of
-          the six below draws that same document — so what you check in the preview is what the
-          ministry receives.
+          the eight below draws that same document — so what you check in the preview is what the
+          ministry receives. With no signal, the browser and the phone build it from the workshop they hold.
         </motion.p>
 
         {/* The fan. One label, a short rule, then the six — a diagram made of a border and a
@@ -317,7 +319,7 @@ export default function ReportEngine() {
         {/* Six across from `lg`, not five: the column count is the list's length, so a sixth tile
             joins the row instead of standing alone under it. Two and three still divide six
             exactly, so no breakpoint below `lg` leaves an orphan either. */}
-        <motion.ul variants={item} className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+        <motion.ul variants={item} className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           {RENDERERS.map((renderer) => (
             <li
               key={`${renderer.format} ${renderer.where}`}

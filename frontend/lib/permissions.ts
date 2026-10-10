@@ -647,12 +647,12 @@ export const ROUTE_GUARDS: RouteGuard[] = [
       reasoning the designer roster's and the access roster's rules carry above.
     */
     path: "/annual-plan",
-    can: canManageAnnualPlan,
-    gate: "require_annual_plan_manager",
+    can: canReadAnnualPlan,
+    gate: "require_annual_plan_reader",
     ministry: true,
     title: "Ministry administrator access required",
     message:
-      "The annual plan of workshops — the ministry's directory of what is to be held this year, and where — is uploaded and corrected by the ministry administrator and above. Workshops that have already been opened are on Design workshops."
+      "The annual plan of workshops — the ministry's directory of what is to be held this year, and where — is uploaded and corrected by the ministry administrator and above, and a Regional Director corrects the rows of the states assigned to them. Workshops that have already been opened are on Design workshops."
   },
   {
     // The page now holds two things with two different owners, so the ROUTE is admin and the halves
@@ -1656,17 +1656,27 @@ export function canManageAccessRoster(user: User | null | undefined) {
  * feature exists for that tier. Gating the directory on `isAdmin` would leave the ministry
  * administrator unable to open their own ministry's plan, behind a refusal that reads as a bug.
  *
- * REGIONAL_DIRECTOR (45) AND ASSISTANT_DIRECTOR (42) ARE DELIBERATELY BELOW THE FLOOR. The annual
- * plan is a national instrument issued once a year, and this table carries no per-region column an
- * edit could be narrowed to — so the rank change that admits a regional director admits them to the
- * whole of it. If regional editing is ever wanted it is a scope table, not a rank change. See
- * `can_manage_annual_plan`'s docstring for the same argument at greater length.
+ * REGIONAL_DIRECTOR (45) AND ASSISTANT_DIRECTOR (42) ARE BELOW THE FLOOR. The annual plan is a national
+ * instrument issued once a year: uploading, exporting, promoting, withdrawing and reinstating stay
+ * here. A Regional Director reaches the screen through {@link canReadAnnualPlan} instead, narrowed by
+ * the server to the states a Ministry Admin assigned them (`RegionalDirectorState`) — a scope, not a
+ * rank change.
  *
  * READ IS THE SAME GATE AS WRITE, for the reason {@link canManageAccessRoster} gives about its own
  * queue: the plan is a list of named places and dates the ministry has not announced yet.
  */
 export function canManageAnnualPlan(user: User | null | undefined) {
   return hasRank(user, "MINISTRY_ADMIN");
+}
+
+/**
+ * May this account open the annual plan at all: a manager ({@link canManageAnnualPlan}), or a
+ * Regional Director — who then sees, and may correct the remarks of, only the rows of the states a
+ * Ministry Admin assigned them. The server's `annual_plan.can_read_annual_plan`; the narrowing itself
+ * is the server's (`plan_scope`), so this predicate only decides whether the screen is offered.
+ */
+export function canReadAnnualPlan(user: User | null | undefined) {
+  return canManageAnnualPlan(user) || user?.role === "REGIONAL_DIRECTOR";
 }
 
 /**

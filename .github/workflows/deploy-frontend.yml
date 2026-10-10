@@ -153,7 +153,7 @@ jobs:
   # build on precisely the pushes where a deploy went wrong — which that file's header already
   # forbids, and which is now load-bearing for this file too.
   gate:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     # 2026-09-17: this job used to be two steps of pure shell and could not hang. It now clones
     # the repository and calls api.vercel.com, and it sits inside a concurrency group that does
     # NOT cancel in progress (see the top of this file) — so a stalled fetch would hold the
@@ -810,7 +810,7 @@ jobs:
     # this job never starts. It runs exactly where the backend's copy could not: a push whose
     # backend deploy correctly did nothing and therefore correctly waited for nothing.
     if: ${{ needs.gate.outputs.should_deploy == 'true' && needs.gate.outputs.wait_for_checks == 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     # A hair over the poll's own 20-minute budget, so the loop's error message — which names what it
     # was still waiting for — is what a reader sees rather than a bare job cancellation. It is also
     # the bound on how long this run holds the `deploy-frontend` concurrency group, which does not
@@ -997,7 +997,7 @@ jobs:
           && needs.gate.outputs.should_deploy == 'true'
           && (needs.wait-for-checks.result == 'success' || needs.wait-for-checks.result == 'skipped')
           && needs.wait-for-checks.outputs.superseded != 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     environment:
       # Resolved from the project this run actually deployed, not written down here. A literal was
       # what made this link point at `field-repository.vercel.app` — a site this workflow has never
@@ -1033,7 +1033,7 @@ jobs:
       # `engines.node` (with @types/node and frontend/Dockerfile's NODE_VERSION); never lower anything
       # to match. The step after `vercel pull` warns when the project setting disagrees with this build.
       - name: Set up Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: frontend/package.json # engines.node, 24.x; Next 16 needs ≥ 20.9
           cache: npm

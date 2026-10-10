@@ -262,12 +262,23 @@ export type DwAiLayerList = {
 export type DwAiDecisionRecord = {
   id: string;
   layerId: string;
-  decision: DwAiDecisionKind | string;
+  /** `ACCEPTED`, `WITHDRAWN`, or — in a history read — `DECLINED`, which is the layer's own decline. */
+  decision: DwAiDecisionKind | "DECLINED" | string;
   note: string | null;
-  /** A user id, not a name. */
-  actorId: string;
+  /** A user id. Null only for a decline by an account since deleted. */
+  actorId: string | null;
+  /** The account's name, on a history read; absent on the accept and withdraw answers. */
+  actorName?: string | null;
+  /** The kind of the layer decided on, on a history read. */
+  layerKind?: string | null;
   createdAt: string | null;
 };
+
+/** The workshop's whole decision history, newest first. */
+export type DwAiDecisionHistory = { items: DwAiDecisionRecord[]; total: number };
+
+/** One layer with its full text (unless withheld) and its whole decision history, newest first. */
+export type DwAiLayerRead = { layer: DwAiLayer; decisions: DwAiDecisionRecord[] };
 
 /** The response of accept and of withdraw: the layer's new state, and its whole history. */
 export type DwAiDecisionResult = { layer: DwAiLayer; decisions: DwAiDecisionRecord[] };
@@ -322,9 +333,8 @@ export type DwAiLayerListParams = {
    * be megabytes on one bar of signal — re-sent every time the screen opened, and unread, because a
    * list is scanned by its titles.
    *
-   * ⚠ IT IS ALL-OR-NOTHING. There is no single-layer read on this server, so asking for one layer's
-   * text asks for every layer's. The panel therefore fetches it once, on an explicit press, rather
-   * than per row.
+   * ⚠ IT IS ALL-OR-NOTHING: every layer's text at once. To read ONE layer, use
+   * {@link getDesignWorkshopAiLayer}, which the panel offers per row.
    */
   includeText?: boolean;
   /** Include layers a designer declined. Off by default — a declined suggestion re-offered is the
@@ -342,6 +352,20 @@ export function listDesignWorkshopAiLayers(id: string, params: DwAiLayerListPara
       includeDeleted: params.includeDeleted ? "true" : undefined
     })}`
   );
+}
+
+/**
+ * ONE layer with its full text and its whole decision history. The text is withheld exactly as on
+ * the list (`textWithheld`), and a declined layer is readable too — its history is the record that
+ * somebody said no.
+ */
+export function getDesignWorkshopAiLayer(id: string, layerId: string) {
+  return apiFetch<DwAiLayerRead>(`/design-workshops/${id}/ai-layers/${encodeURIComponent(layerId)}`);
+}
+
+/** Who accepted, withdrew or declined which layer of this workshop, and when — newest first. */
+export function listDesignWorkshopAiLayerDecisions(id: string) {
+  return apiFetch<DwAiDecisionHistory>(`/design-workshops/${id}/ai-layers/decisions`);
 }
 
 export function registerDesignWorkshopAiLayer(id: string, body: DwAiLayerRegisterBody) {
@@ -554,6 +578,7 @@ export function tierSentence(tier: string | null | undefined): string {
 export function decisionLabel(decision: string | null | undefined): string {
   if (decision === "ACCEPTED") return "Accepted";
   if (decision === "WITHDRAWN") return "Acceptance withdrawn";
+  if (decision === "DECLINED") return "Declined";
   return decision ? `An unfamiliar decision (${decision})` : "A decision with nothing recorded";
 }
 
@@ -1012,4 +1037,11 @@ export function aiLayerProblem(error: unknown, fallback: string): string {
   }
   if (isUnreachable(error)) return NO_CONNECTION;
   return error instanceof Error && error.message.trim() ? error.message : fallback;
+}
+
+/** Who took a decision, in words: "you", the account's name, or a plain statement that it is gone. */
+export function decisionActor(entry: DwAiDecisionRecord, userId: string | null): string {
+  if (entry.actorId && userId && entry.actorId === userId) return "you";
+  if (entry.actorName) return entry.actorName;
+  return entry.actorId ? "another account" : "an account that no longer exists";
 }

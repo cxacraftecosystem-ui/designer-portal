@@ -194,8 +194,8 @@ export const DIRECTORATE_STEPS: GuideStep[] = [
   },
   {
     // SECOND, because a workshop exists on paper before it exists in this product — and because this
-    // is the one screen among the acts that a Regional Director and an Assistant Director cannot
-    // open at all. Leading the ACTS with it means the tier difference inside the directorate is the
+    // is the one screen among the acts that an Assistant Director cannot open at all, and a Regional
+    // Director opens only for the states assigned to them. Leading the ACTS with it means the tier difference inside the directorate is the
     // first thing the reader meets once the register above has shown them the programme, rather than
     // something they discover at a padlock.
     id: "ministry-annual-plan",
@@ -227,7 +227,7 @@ export const DIRECTORATE_STEPS: GuideStep[] = [
       "Designers this workshop is for — on Open workshop, with the lead chooser under it once two are ticked"
     ],
     watch: [
-      "Only a Ministry Admin, an Admin or the Master Admin can open the annual plan.",
+      "Uploading, exporting, opening a workshop from an entry, withdrawing and reinstating are for a Ministry Admin, an Admin or the Master Admin. A Regional Director sees only the entries for the states a Ministry Admin has assigned them, under “Regional Directors' states”, and can correct the remarks on those entries. An Assistant Director can't open the annual plan.",
       "Upload the whole sheet every time. Workshops already in the plan are updated and new ones are added; uploading the same sheet again changes nothing. The upload report lists every change, from what to what.",
       "The tickbox marks every planned workshop the sheet leaves out as withdrawn. Nothing is deleted, and a withdrawn workshop returns as soon as a later sheet includes it. Leave it unticked when the sheet is only a partial correction.",
       "Open workshop can be used once per entry. It copies the entry into the new workshop's stage 1, and you can name the designers as you open it: each gets access, and the lead's profile fills stages 1 and 3.",
@@ -275,10 +275,10 @@ export const DIRECTORATE_STEPS: GuideStep[] = [
     watch: [
       "Assistant Directors, Regional Directors and Ministry Admins can all record orders and read the register.",
       "When an order creates an account, its sign-in link appears on screen with a ready-written message to copy. Send each link to its designer while it is on screen — a link is shown only once, works once, and expires at the time shown.",
-      "Re-issue sign-in link, on an order's entry, gives the lead designer a new link. If another designer on the order needs one, a Ministry Admin or an Admin can set them a temporary password from Manage users.",
+      "Re-issue, on an order's entry, gives a designer the order named a new sign-in link — the lead or any co-designer. For someone who now signs in with Google, or who has been promoted to your role or above, ask an administrator on Manage users.",
       "An order can name several designers, and the first is the lead. Everyone named is admitted and given access to the workshop, but only the lead's profile fills stages 1 and 3 and appears on the report. Once two are ticked, the picker shows the lead and lets you change it.",
       "Pro-forma downloads a blank workbook for the office's orders. Upload a sheet shows every order it found and any it couldn't read, and nothing is recorded until you confirm — you can correct the sheet and upload it again as often as you need.",
-      "After an import, use Re-issue sign-in link on each order's entry when you are ready to send its designer a link.",
+      "An import gives every new account its sign-in link, shown above the import's report with a message to send it in. Copy them before you leave the page, and use Re-issue on the register for any you missed.",
       "If a designer already has an account, no link is needed. They sign in as usual and find the new workshop on their list.",
       "You can't fill in a workshop your own order opened. You can read every stage and generate its report, but you can't save its stages — the work belongs to the designer the order names. This applies only to orders you recorded yourself.",
       "You can't name yourself as a designer on an order you record.",

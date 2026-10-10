@@ -244,9 +244,15 @@ async def update_sanction_order(
 @router.post("/{sanction_id}/credential-link")
 async def reissue_credential_link(
     sanction_id: str,
+    designer_user_id: str | None = Query(default=None, alias="designerUserId", max_length=64),
     officer: Any = Depends(require_sanction_recorder),
 ) -> dict[str, Any]:
-    """Mint another first-password link for the designer this order names.
+    """Mint another first-password link for a designer this order names.
+
+    ``designerUserId`` names which of them — any designer on the order, co-designers included; left
+    out, it is the lead, which is what this route answered before the team could be named. Every
+    refusal below is asked of THAT person: their own ``accountCreated``, their own rank, their own
+    mailbox. 404 for somebody the order does not name.
 
     THE ANSWER TO "THE OFFICER CLOSED THE PANEL WITHOUT COPYING IT". The link is shown once and the
     table keeps only a digest, so there is no way to show the old one again; this issues a new one,
@@ -266,7 +272,9 @@ async def reissue_credential_link(
     ``services/sanction_orders`` rather than imported from ``routes/auth``.
     """
     row = await _load(sanction_id)
-    return await sanction_orders.reissue_credential_link(row, officer)
+    return await sanction_orders.reissue_credential_link(
+        row, officer, designer_user_id=designer_user_id
+    )
 
 
 @router.post("/{sanction_id}/credential-link/revoke")

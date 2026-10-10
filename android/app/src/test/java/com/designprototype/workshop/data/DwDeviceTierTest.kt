@@ -2,6 +2,7 @@ package com.designprototype.workshop.data
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
@@ -170,7 +171,7 @@ class DwDeviceTierTest {
                 plan.languages
             )
         }
-        assertFalse("there is no LiteRT or ONNX runtime in this APK", DW_TIER2_RUNTIME_PRESENT)
+        assertTrue("LiteRT-LM is in this APK since 2026-10-10", DW_TIER2_RUNTIME_PRESENT)
     }
 
     /*
@@ -310,25 +311,39 @@ class DwDeviceTierTest {
     }
 
     @Test
-    fun `every handset is refused Tier 2 today, and told it is about the app and not the phone`() {
+    fun `with the runtime in the APK, each handset's Tier 2 answer comes from its own numbers`() {
         /*
-         * THE REFUSAL CHANGED VALUE ON 2026-08-13 AND KEPT ITS MEANING. It was NO_MEASURED_MODEL,
-         * because the catalogue was empty; two weighed rows are in it now, and what is missing is the
-         * runtime — so the honest refusal is NO_RUNTIME_IN_THIS_BUILD. **The property being pinned is
-         * the same one and it is the important one: every handset gets the SAME answer, because the
-         * missing thing is in this app rather than in anybody's phone.**
+         * UNTIL 2026-10-10 EVERY HANDSET GOT ONE ANSWER, NO_RUNTIME_IN_THIS_BUILD, because LiteRT-LM
+         * was not in the package. It is now, so the answer is the arithmetic's, per phone — and no
+         * handset is told about the app's construction.
          */
+        assertEquals(
+            "a 12 GB phone with 6 GB free takes the larger weighed row",
+            "gemma-4-E4B-it.litertlm",
+            (dwRecommendTiers(twelveGigClassPhone, DwConnection.UNMETERED).tier2
+                as DwTierOffer.Available).plan.modelId
+        )
+        assertEquals(
+            "a 4 GB-class phone with 1.1 GB free is short of free memory for the smallest row",
+            DwTierOffer.None(DwTierRefusal.NOT_ENOUGH_FREE_RAM_NOW),
+            dwRecommendTiers(fourGigClassPhone, DwConnection.UNMETERED).tier2
+        )
+        assertEquals(
+            DwTierOffer.None(DwTierRefusal.ABI_UNMEASURED),
+            dwRecommendTiers(phoneThatWouldNotAnswer, DwConnection.UNMETERED).tier2
+        )
         listOf(fourGigClassPhone, twelveGigClassPhone, phoneThatWouldNotAnswer, goEditionPhone)
             .forEach { device ->
-                val recommendation = dwRecommendTiers(device, DwConnection.UNMETERED)
-                assertEquals(
-                    "a 12 GB flagship, a 4 GB handset, a Go-edition phone and a handset that would " +
-                        "not answer all get one answer, because none of them is what is missing",
+                assertNotEquals(
                     DwTierOffer.None(DwTierRefusal.NO_RUNTIME_IN_THIS_BUILD),
-                    recommendation.tier2
+                    dwRecommendTiers(device, DwConnection.UNMETERED).tier2
                 )
             }
         val sentence = dwTierRefusalSentence(DwAiTier.TIER_2, DwTierRefusal.NO_RUNTIME_IN_THIS_BUILD)
+        assertFalse(
+            "no sentence may narrate work that has not been built",
+            sentence.contains("not been built") || sentence.contains("yet")
+        )
         assertTrue(
             "it must say where the work is done instead of blaming the phone",
             sentence.contains("online")
@@ -356,11 +371,11 @@ class DwDeviceTierTest {
          * thing that will actually decide it — 1,900 MiB total, `isLowRamDevice` set, and 400 MiB free.
          */
         assertEquals(
-            DwTierOffer.None(DwTierRefusal.NO_RUNTIME_IN_THIS_BUILD),
+            DwTierOffer.None(DwTierRefusal.DEVICE_TOO_SMALL),
             dwRecommendTiers(goEditionPhone, DwConnection.UNMETERED).tier2
         )
         assertEquals(
-            "and when a runtime lands, this phone's own numbers are what refuse it",
+            "and it is this phone's own numbers that refuse it",
             DwTierOffer.None(DwTierRefusal.DEVICE_TOO_SMALL),
             dwBestPlan(DW_TIER2_CATALOGUE, goEditionPhone, emptyList())
         )
@@ -728,12 +743,15 @@ class DwDeviceTierTest {
         devices.forEach { device ->
             DwConnection.entries.forEach { connection ->
                 val recommendation = dwRecommendTiers(device, connection)
-                assertFalse(
-                    "a control that spends a designer's data may not be drawn for a model nobody " +
-                        "has weighed, and no Tier 2 model has been",
-                    dwTierDownloadMayBeOffered(recommendation.tier2, connection)
-                )
+                val offered2 = recommendation.tier2 as? DwTierOffer.Available
+                if (offered2 != null) {
+                    assertTrue(
+                        "a Tier 2 offer is always one of the weighed rows",
+                        offered2.plan in DW_TIER2_CATALOGUE
+                    )
+                }
                 if (connection == DwConnection.NONE) {
+                    assertFalse(dwTierDownloadMayBeOffered(recommendation.tier2, connection))
                     assertFalse(
                         "a download control on a phone with no connection is worse than none at all",
                         dwTierDownloadMayBeOffered(recommendation.tier1, connection)
@@ -769,6 +787,7 @@ class DwDeviceTierTest {
             twelveGigClassPhone,
             DwConnection.UNMETERED,
             catalogue2 = listOf(NOT_A_REAL_MODEL),
+            tier2RuntimeInApk = false,
         )
         assertEquals(
             DwTierOffer.None(DwTierRefusal.NO_RUNTIME_IN_THIS_BUILD),

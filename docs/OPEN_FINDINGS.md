@@ -1,9 +1,18 @@
 # Open findings
 
-**Status: 55 open, 1 decision recorded and 1 deferral, 103 closed.** Every count re-counted by
-heading on 2026-10-10 (15 + 18 opened by the Android copy sweep and 24 by the web's that day, less the 2 of those closed
-the same day); earlier counts on 2026-10-09; the entries closed on 2026-10-09 were checked against the tree that day, and
-the older closed sections were last re-checked on 2026-09-03.
+**Status: 51 open, 1 decision recorded and 1 deferral, 110 closed.** Every count re-counted by
+heading on 2026-10-10: main's 31 open and 106 closed that day (the 15 open of 2026-10-09, plus 18
+opened by the Android copy sweep, less the 2 of those closed the same day), plus the toolchain
+upgrade's 2 opened and 2 closed, merged the same day, plus the web copy rewrite's 19 opened. The entries closed on 2026-10-09 were
+checked against the tree that day, and the older closed sections were last re-checked on 2026-09-03.
+
+**The toolchain upgrade of 2026-10-09 opened two and closed two.** Moving the EC2 box, the image and
+CI to Python 3.14, the lock to its newest pins, the local stack to PostgreSQL 17, and the runners to
+ubuntu-26.04 turned up two things to keep open — prisma-client-py is archived and now visibly holds the
+data layer back, and 3.14 costs each process ~170 MiB more against memory ceilings measured on 3.12 —
+and closed two that were already biting: 37 integration tests failing on every CI runner whose
+site-packages listed pytest-asyncio before anyio, and a local stack that could not start because no
+MinIO image could be pulled any more. Counted by heading: 15 + 2 = 17 open, and 95 + 2 = 97 closed.
 
 **Three missing features named by the customer-copy sweep were built on 2026-10-10, and recorded
 closed.** The sweep found screens explaining, to the people using them, features that did not exist:
@@ -26,7 +35,20 @@ change. Counted by heading: still 31 open, and 98 + 1 = 99 closed.
 copy sweep): the sign-in screen had admitted them as "Coming soon" with no entry here, so the gap is
 recorded already closed. Counted by heading: 31 open; 99 + 1 = 100 closed.
 
-**The web's copy rewrite of 2026-10-10 moved 24 gaps off the screens and into this register.** The web app, its landing pages and the backend's user-facing messages used to tell people what the product could not do — "no screen and no endpoint", "coming soon", "this build", "the server refused". That copy was rewritten (branch `copy/dp-web`) so that a screen says what happened and what to do, and every missing feature or known defect it used to narrate that is still missing is recorded below, under *Open*, each opened 2026-10-10. Approval, sign-off and hand-on copy was left to the approvals branch. Ten more it found were not entered: four the Android sweep had already recorded, and six the same day closed by building them (e-mail, Microsoft and Yahoo sign-in, the inspection list's filters, files and custom answers on an inspection read, and correction suggestions on the handset). Counted by heading: 31 + 24 = 55 open, and 103 closed.
+**Three screens that narrated a missing feature got the feature on 2026-10-10.** The AI layers panel
+said a layer's decision history and one layer's text could not be read on their own; the sanction
+register's guide said a co-designer's first sign-in link could not be re-issued and that an import
+issued no links; the annual plan's guide said a Regional Director could not correct their own state's
+rows. None was recorded here as open — each lived only in the screen's own copy — so they enter as
+three closed entries under *Closed on 2026-10-10*. Counted by heading: still 31 open, and 103 + 3 = 106
+closed.
+
+**On-device AI (Tier 2), built on 2026-10-10, closed one more of the copy sweep's entries.** The
+handset now carries the LiteRT-LM runtime, downloads and verifies a Gemma 4 model on demand, and
+proofreads and translates on the phone. It is under *Closed on 2026-10-10*. 31 − 1 = 30 open; 99 + 1
+= 100 closed.
+
+**The web's copy rewrite of 2026-10-10 moved 19 gaps off the screens and into this register.** The web app, its landing pages and the backend's user-facing messages used to tell people what the product could not do — "no screen and no endpoint", "coming soon", "this build", "the server refused". That copy was rewritten (branch `copy/dp-web`) so that a screen says what happened and what to do, and every missing feature or known defect it used to narrate that is still missing is recorded below, under *Open*, each opened 2026-10-10. Approval, sign-off and hand-on copy was left to the approvals branch. The gaps it found that the same day built — e-mail, Microsoft and Yahoo sign-in, the inspection list's filters, files and custom answers on an inspection read, correction suggestions on the handset, an AI layer's decision history and its text on its own, a co-designer's sign-in link and an import's links, a Regional Director's annual-plan entries and the web report offline — are not entered, nor are the join card and the 3D model viewer, which are being built, or the four the Android sweep had already recorded. Counted by heading: 32 + 19 = 51 open, and 110 closed.
 
 **Moving a set-password link's token off the web's request lines narrowed one entry the same day,
 and moved neither number.** The web now checks a link with `POST /api/auth/set-password/check`, the
@@ -664,21 +686,12 @@ new build goes out in a body. The entry stays open until that build has replaced
 the same, and neither form closes the browser's history.
 
 
-**Eighteen entries were opened on 2026-10-10 by the Android copy sweep; sixteen are below.** The
-other two — correction suggestions on the handset, and inspections without signal — were built and
-closed the same day, under *Closed on 2026-10-10*. The Android copy sweep of 2026-10-10 removed every on-screen sentence that admitted a missing feature
+**Eighteen entries were opened on 2026-10-10 by the Android copy sweep; fifteen are below.** The
+other three — correction suggestions on the handset, inspections without signal, and on-device AI —
+were built and closed the same day, under *Closed on 2026-10-10*. The Android copy sweep of 2026-10-10 removed every on-screen sentence that admitted a missing feature
 or a known defect, because a screen shown to field staff and ministry officials must describe a
 product that works. The gaps themselves are not closed by that, so each one is recorded here, one
 heading each, and closes only with the change that builds or fixes it.
-
-### [LOW] On-device AI cannot run on the handset, so Speech & AI no longer shows it (android) — opened 2026-10-10
-
-`DW_TIER2_RUNTIME_PRESENT` is false: the APK carries no runtime that can load a language model. Speech
-& AI → "AI on this phone" now draws the on-device AI line and the language-model list only when that
-flag is true, so today every account sees neither. Building the runtime is the work
-([PLAN-AI-TIERS-AND-CUSTOM-SECTIONS.md](PLAN-AI-TIERS-AND-CUSTOM-SECTIONS.md)). Files:
-`android/app/src/main/java/com/designprototype/workshop/data/DwDeviceTier.kt`,
-`android/app/src/main/java/com/designprototype/workshop/ui/SpeechAndAiScreen.kt`.
 
 ### [LOW] The offline speech model cannot be installed on today's handsets, so its section is hidden (android, backend) — opened 2026-10-10
 
@@ -783,6 +796,132 @@ workshop-code sentence ("…once it has reached the server…", `backend/tests/t
 They change together with `frontend/components/guide/steps.ts`, `frontend/components/guide/inspectorSteps.ts`,
 `docs/WALKTHROUGH.md`, `frontend/app/(protected)/dashboard/page.tsx` and `frontend/lib/workshopCodes.ts`.
 
+### [MEDIUM] prisma-client-py is archived, and pins the data layer to Prisma 5.17's engines (backend) — opened 2026-10-09
+
+`backend/pyproject.toml` pins `prisma==0.15.0` exactly, because there is nothing newer: 0.15.0
+(2024-08-16) is prisma-client-py's final release and `RobertCraigie/prisma-client-py` is archived
+(last push 2025-04-10). It is bound to Prisma CLI and engines 5.17.0 — the 5.x line itself ended at
+5.22, and Prisma ORM is on 7.x with a Rust-free engine no Python client speaks. Every other runtime here
+was raised to its newest release on 2026-10-09; this one cannot be, and it now holds two of them back:
+
+* **PostgreSQL 18.** The 5.17 schema engine predates it, so `prisma migrate` is unproven there. Local
+  and CI databases stay on 17, production's major — which the production provider caps at 17 anyway.
+* **Python 3.15**, released on python.org on 2026-10-09: the project was never tested on it upstream
+  and will not be. It is one of four reasons the API boxes stayed on 3.14.8 that day, beside
+  setup-python and Docker Hub not carrying 3.15.0 yet and PyYAML, a uvicorn[standard] dependency,
+  shipping no cp315 wheel; httptools, the other one, gained cp315 wheels in 0.9.0 that evening, and
+  the lock still pins 0.8.0 (`.github/workflows/deploy-backend.yml`'s job env has the list).
+  python-build-standalone, the source of the boxes' interpreter, carried 3.15.0 from its 20261009
+  release that afternoon, so it no longer holds anything back.
+
+It also forces one patch to generated code. The client it writes for this schema is 675,391 lines of
+TypedDicts without `from __future__ import annotations`, which Python 3.14 imports in tens of minutes
+and over a gigabyte; `backend/scripts/generate_prisma_client.py` adds that line after every generate,
+and every automated generate runs it. That script is a workaround for a library nobody maintains.
+
+**The exit**, and the only one: move `app/core/db.py` and every `db.<model>` call to a maintained async
+stack — SQLAlchemy 2 with asyncpg or psycopg 3 — with migrations kept on the Node Prisma CLI used only
+for `migrate`, or moved to Alembic. Until then, keep caching the 5.17.0 engines (fetched by hash from
+Prisma's CDN), keep databases on 17, and do not move production to a new Python minor without
+re-measuring the client import. Open as of 2026-10-09.
+
+### [MEDIUM] On Python 3.14 each process carries ~170 MiB more, and the box's memory ceilings and the app's read caps were set on 3.12 (backend) — opened 2026-10-09
+
+Importing the generated Prisma client — which uvicorn and the queue worker both do at start — holds
+727 MiB on 3.14.8 against 557 MiB on 3.12.15, measured in identical containers on 2026-10-09 with the
+import fix in place (without it, 3.14 needs over a gigabyte and many minutes). The systemd ceilings in
+`.github/workflows/deploy-backend.yml` and `infra/terraform/user_data.sh` were sized from a 3.12
+measurement: the API under a 1000M soft ceiling and no hard one, the queue under 800M soft / 1100M hard.
+
+**The box on 3.12, read over SSM on 2026-10-09** (release `201d269`, 24 minutes after a restart, idle):
+`fieldrepo` 686 MB (`memory.current`), `fieldrepo-queue` 585 MB, both `memory.events` at zero, swap
+29 MB used of 2 GiB, and `MemAvailable` 384 MB of 1,905 — 538 MB an hour and a half later, once the
+kernel had moved cold pages to swap, so on 3.12 it moves between about 380 and 540 MB. Adding ~178 MB
+to each process puts the API near 865 MB (inside its soft ceiling, and it has no hard one) and the
+idle queue near 765 MB — about 75 MB under its 800M soft ceiling, so a transcription job starts
+throttled, but nearly 400 MB under the 1100M hard stop, and `memory.max` does not count swap, so
+neither unit is expected to be killed by its ceiling. Raising the ceilings would not have helped:
+they are per-unit caps, not memory.
+
+**What the extra ~356 MB does take is `MemAvailable`, and the application reads it.**
+`app/services/memory_budget.budget_bytes` caps a read at a quarter of `MemAvailable` (8 MiB floor) —
+the cgroup files it also tries are the root's, which a systemd unit's process does not have — and four
+paths size themselves by it: audio-as-mp4 conversion, captions and media measurement (32 MiB ceilings
+each) and report images (96 MiB). At 384-538 MB available all four run at or near their ceilings.
+Take the full ~356 MB away and the range becomes roughly 30-180 MB: at the top of it only the report
+images' cap shrinks (to ~43 MiB); at the bottom all four sit on the 8 MiB floor, and media between
+there and 32 MiB that is accepted today is refused. That is an estimate from the kernel's arithmetic,
+not a measurement — swapping cold pages out gives some back — which is why it is written down here.
+
+Read after the first 3.14 deploy, before calling it done: `systemctl status fieldrepo
+fieldrepo-queue` (the `Memory:` lines, and set both drop-ins and user_data.sh's base units from them)
+and `free -m` (`available`). If `available` sits near the 8 MiB-floor arithmetic (~130 MB or less
+makes every one of the four caps smaller than its ceiling), the box needs memory — the next instance
+size — or each process needs to stop carrying the client's TypedDicts at run time
+(`backend/tests/scale/_lean_prisma_types.py` shows they can be stubbed); a ceiling edit will not do it.
+Open until those readings are taken.
+
+**The memory half was decided the same day, before any reading: the next instance size.** The owner
+chose to rebuild the box on Ubuntu 26.04 as a **t3.medium** (4 GiB), blue/green;
+`infra/terraform/main.tf` declares it, with the procedure, and the systemd ceilings are unchanged on it.
+That box also runs a different build of 3.14.8 — upstream CPython from python-build-standalone rather
+than the container images the 727 MiB was measured in — so the readings above are to be taken on the
+new box after its first deploy, and this stays open until they are. A first reading of that build, in
+an ubuntu:26.04 container running the deploy's own steps on 2026-10-09: the API settled at 793 MiB
+resident (VmRSS; 821 MiB with its query engine) after its first requests, inside its 1000M soft
+ceiling and close to the ~865 MB `deploy-backend.yml` estimates. The queue worker was not measured
+there, and a container is not the box.
+
+---
+
+## Closed on 2026-10-09 — by the toolchain upgrade
+
+Both found while moving the backend, the image, CI and the local stack to their newest releases, and
+closed in that change — the first together with PR #24, which reached the same cause from the test
+side. Each names what fails without its fix.
+
+### [MEDIUM] 37 integration tests failed on every CI runner whose site-packages listed pytest-asyncio before anyio (backend) — **CLOSED 2026-10-09**
+
+`Backend integration tests` reported the same 37 failures — `test_designer_roster_names.py`,
+`test_save_stage_resubmission.py`, `test_workshop_oversight_reassignment.py` — on every run from
+2026-10-01, on Python 3.12.14, 3.12.15 and 3.14.8 alike, all "RuntimeError: <asyncio.locks.Event ...>
+is bound to a different event loop". The comments that blamed the interpreter (checks.yml,
+docs/CI.md) and the one that called function scope the fix (test_save_stage_resubmission.py) were
+wrong. The cause was the ORDER the two async plugins were registered: both wrap
+`pytest_fixture_setup`, the one registered last wraps outermost and takes an async fixture onto its
+own loop, and with pytest-asyncio registered first that was anyio — so an anyio test's async fixture
+ran on an anyio loop while `asyncio_mode = "auto"` ran the test on pytest-asyncio's, and the Prisma
+connection the fixture opened was used from another loop. Every red run's pytest header read
+`plugins: asyncio-1.4.0, anyio-4.14.2`; the last green one read `plugins: anyio-4.14.2,
+asyncio-1.4.0`. The order came from how site-packages listed two `.dist-info` directories, so it
+flipped between runner images and never reproduced on NTFS, which lists them alphabetically.
+Reproduced without a database, both by forcing the order with `-p` and by listing pytest-asyncio
+first in a scratch venv, with a probe recording which plugin drove the fixture and which the test.
+
+**Closed from both sides.** PR #24 (`201d269`) moved the three modules onto sync tests whose
+database work is one `asyncio.run` each, which leaves neither plugin anything to own. The toolchain
+upgrade pins the order for everything else: `addopts = ["-p", "anyio"]` in `backend/pyproject.toml`
+makes pytest-asyncio register last however site-packages is listed, a `pytest_configure` in
+`backend/tests/conftest.py` refuses the other order at startup, and
+`backend/tests/test_async_plugin_order.py` fails under the old order (measured both ways). The pin
+is what protects the forty-nine modules that still connect `db` in an async fixture.
+
+### [HIGH] `docker compose up`, and with it e2e-live.yml, could not start: no MinIO image could be pulled (infra) — **CLOSED 2026-10-09**
+
+`docker-compose.yml` pinned `quay.io/minio/minio` and `quay.io/minio/mc` after MinIO withdrew them from
+Docker Hub on 2026-09-21. By 2026-10-09 quay.io refused them too — an anonymous token is still issued,
+but both manifests and the tag lists answer 401 to it, and `docker manifest inspect` says "no such
+manifest" — and upstream MinIO is archived. So a bare `docker compose up` failed at the pull, and so
+did every run of the live browser suite.
+
+**Closed by** `docker.io/pgsty/silo:RELEASE.2026-09-16T00-00-00Z`, a maintained fork of the same MinIO
+source (AGPL-3.0, monthly releases), for both the server and the one-shot bucket job (its bundled
+`mcli`). The service is still `minio` and still on the same ports, MinIO's `/minio/health/live` answers,
+and the app's own S3 traffic was replayed against it: presigned PUT from the web origin with CORS, a
+70 MiB multipart upload through presigned 16 MiB parts with browser-readable ETags, an anonymous GET of
+the public URL, a ranged presigned GET and a delete. `docker-compose.yml` names the alternative
+(rustfs/rustfs) and why it is not a drop-in.
+
 ---
 
 ### [LOW] Usage figures cannot tell web requests from Android requests (frontend, android, backend) — opened 2026-10-10
@@ -797,45 +936,17 @@ F26 (2 of 3). As of 2026-10-10 each master-admin read of one account's activity 
 
 F26 (3 of 3). As of 2026-10-10 nothing deletes usage records on a schedule: an account's attributed entries go only when the person withdraws or the account is deleted, and entries recorded without a name (including everything recorded before consent was first asked on 2026-08-30) are kept indefinitely; whether the pre-consent entries should be deleted is also undecided (`docs/DECISION-usage-consent-at-sign-in.md`, `docs/METHODOLOGY-usage-instrumentation.md`). `retention_note()` in `backend/app/services/usage.py` used to say "There is no retention policy … a decision nobody has made yet", and the admin method's `consentStateWritten` in `collection_method` (`backend/app/api/routes/usage.py`) called the pre-consent entries "an open decision"; both were removed in the 2026-10-10 copy rewrite and the notice now says "Kept until you withdraw or your account is deleted." Closing it would take an owner decision on a retention period and a scheduled job that deletes older `UsageEvent` entries (then bump `NOTICE_VERSION`, since retention is a change of meaning).
 
-### [MEDIUM] Designers cannot create or scan a workshop join card in the web app (frontend) — opened 2026-10-10
-
-F15. As of 2026-10-10 a join card (one person creates the design workshop, colleagues scan a card to join the same one) can only be made and scanned in the Android app; the web has no join-card screen. The designer walkthrough said so on the Cards & tags card (`frontend/components/guide/steps.ts`, the `design-workshop-codes` step's `watch`, "there is no join card on the web"), and that bullet was removed in the 2026-10-10 copy rewrite. Closing it means a web join-card panel on `frontend/app/(protected)/design-workshops/[id]/codes/page.tsx` that issues a card and accepts a scanned one, then teaching it again on that card.
-
-### [LOW] A co-designer's first sign-in link cannot be re-issued, and an imported sanction order shows no links (backend) — opened 2026-10-10
-
-F10. As of 2026-10-10 "Re-issue sign-in link" on the sanction register re-issues only for the lead designer of an order; a co-designer who loses their first link has to be given a temporary password by a Ministry Admin or an Admin on Manage users. Orders imported from a sheet issue no links at all, so each one has to be re-issued by hand from its entry. The walkthrough said both in `frontend/components/guide/directorateSteps.ts` (`DIRECTORATE_STEPS`, `ministry-sanction-order`: "There is no route in this product that can re-issue a CO-DESIGNER'S first link…" and "AN IMPORT ISSUES NO SIGN-IN LINKS AT ALL…"); both were removed in the 2026-10-10 copy rewrite and the card now gives only the remedies. Closing it needs the re-issue action to take a designer, not only the order's lead, and a way to collect an import's links safely (for example a one-time downloadable list).
-
-### [LOW] Regional Directors cannot correct their own state's annual-plan entries (backend) — opened 2026-10-10
-
-F11. As of 2026-10-10 the annual plan is open only to a Ministry Admin, an Admin or the Master Admin (`canManageAnnualPlan` in `frontend/lib/permissions.ts`); a Regional Director cannot correct the entries for their own region because a plan entry carries no region to scope an edit to. The walkthrough explained this in `frontend/components/guide/directorateSteps.ts` (`DIRECTORATE_STEPS`, `ministry-annual-plan`: "…The reason is written into the server (`can_manage_annual_plan`)… If regional editing is ever wanted it is a scope table, not a promotion."); the explanation was removed in the 2026-10-10 copy rewrite and the card now only says who can open the screen. Closing it needs a per-region scope for plan entries and a regional read/write permission on the annual-plan routes and page.
-
 ### [MEDIUM] Inspection notes cannot be saved offline in the browser to send later (frontend) — opened 2026-10-10
 
 F12. As of 2026-10-10 filing a correction suggestion or sending a report back from `frontend/app/(protected)/design-workshop-inspections/[id]/page.tsx` (`FeedbackPanel`) is online-only: there is no outbox for `recordInspectionFeedback` / `sendWorkshopBackForRevision`, so with no signal nothing is filed. The page's failure message used to narrate "There is no offline queue on an inspection"; it was removed in the 2026-10-10 copy rewrite and now reads "Couldn't send your note. Check your connection and try again — your text is still in the box." Closing it would mean queueing the note in the outbox (the server already accepts a `recordedAt` moment on these routes) and draining it on reconnect, as the Android app has done since 2026-10-10.
-
-### [MEDIUM] The web report cannot be previewed or generated offline (frontend) — opened 2026-10-10
-
-F17. As of 2026-10-10 the report preview, the .docx and the .pdf on the web are all built by the backend (`GET /design-workshops/{id}/report/preview` and `POST /design-workshops/{id}/report`), so a designer with no connection, or with a workshop that has never been uploaded, cannot preview or generate the report in the browser; only the Android app writes the document on the handset. The report page (`frontend/app/(protected)/design-workshops/[id]/report/page.tsx`, the offline and local-only notices and the preview/download error handlers), `frontend/components/designworkshop/report/StageDocumentPreview.tsx` and `frontend/components/designworkshop/report/ReportSettingsPanel.tsx` used to explain that "this browser deliberately has no renderer of its own"; those sentences were removed in the 2026-10-10 copy rewrite and the screens now only say "Connect to the internet to generate the report." Closing it would take an in-browser renderer of the same `ReportDocument` that is held to the backend writers by the report parity tests (`backend/tests/test_report_parity.py`), or an offline-capable export path.
 
 ### [LOW] Report history cannot show which field changed between two generated files (frontend, backend) — opened 2026-10-10
 
 New (not in the sweep). As of 2026-10-10 a generated report records only its checksum, size, page count and template, so the comparison on `frontend/app/(protected)/design-workshops/[id]/report/history/page.tsx` (the `Limits` panel) can say a stage was "rewritten" but not which answer changed or from what. The panel used to say that "storing a snapshot of the workshop alongside each export is what would turn … into 'the unit cost went from ₹420 to ₹455'"; that sentence was removed in the 2026-10-10 copy rewrite. Closing it would take storing a stage-data snapshot with each export (the `report-history` payload served by `backend/app/api/routes/design_workshops.py`) and a field-level diff on the history screen.
 
-### [LOW] Earlier decisions on an AI layer cannot be viewed (frontend) — opened 2026-10-10
-
-F9. As of 2026-10-10 the AI layers screen only shows the accept/withdraw decisions returned by actions taken during the current visit; there is no way to read a layer's full decision history on its own. `frontend/components/designworkshop/AiLayersPanel.tsx` (`LayerRow`) used to say so on screen ("Earlier decisions are kept by the server but cannot be read from this screen — there is no endpoint for the history on its own."); that sentence was removed in the 2026-10-10 copy rewrite. Closing it needs a read route for a layer's `DwAiLayerDecision` history in `backend/app/api/routes/design_workshops.py` and a fetch in `frontend/lib/aiLayers.ts` that `LayerRow` calls.
-
-### [LOW] One AI layer's full text cannot be loaded on its own (frontend) — opened 2026-10-10
-
-F9. As of 2026-10-10 "Show the full text" on the AI layers screen fetches the text of every layer of the workshop in one request, because the layer list only offers text for all layers at once (`includeText` in `listDesignWorkshopAiLayers`, `frontend/lib/aiLayers.ts`). `frontend/components/designworkshop/AiLayersPanel.tsx` (`AiLayersPanel`) used to explain this under the toggle; the explanation was removed in the 2026-10-10 copy rewrite and the toggle still works. Closing it needs a single-layer text read in `backend/app/api/routes/design_workshops.py` and a per-row "Show text" control in `LayerRow`.
-
 ### [MEDIUM] Custom questions cannot be a photo, file, recording, formatted text, coordinates or a record reference (frontend) — opened 2026-10-10
 
 F19. As of 2026-10-10 a workshop's own custom questions are limited to the plain answer types in `V1_CUSTOM_TYPES` (`frontend/lib/customSections.ts`; the server's own check is `validate_definition` in `backend/app/services/custom_sections.py`); the editor only offers those. The validation message in `customDefinitionProblems` used to add that the other types "are deliberately not available" and why; that sentence was removed in the 2026-10-10 copy rewrite (web and backend now say only which types to choose). Closing it means making custom-question answers carry media and references through stage sync and the report, on web and Android, before widening `V1_CUSTOM_TYPES`.
-
-### [LOW] 3D model files have no viewer, and the report shows only "1 document attached" for them (frontend, backend, android) — opened 2026-10-10
-
-F16. As of 2026-10-10 a prototype's 3D model file is stored and downloadable but neither client can display it, and the generated report prints the model field as a count ("1 document attached") rather than any picture of the model. `frontend/components/sketches/upload/PrototypeModelField.tsx` (the turntable card's description and the model card's description) used to explain that "no viewer built into this application can change that, because the limit is in the document generator"; that admission was removed in the 2026-10-10 copy rewrite and the card now says only that the report lists the model as an attached file and that a turn of photographs is how the prototype appears on the printed page. Closing it would take an in-browser/on-device model viewer and, for the report, a rendered still of the model placed by the report builder.
 
 ### [LOW] Questionnaires cannot be deleted, only deactivated (frontend) — opened 2026-10-10
 
@@ -882,6 +993,18 @@ D6. As of 2026-10-10 the report export in `backend/app/services/design_workshops
 D7. As of 2026-10-10 `feedback_plan` in `backend/app/schemas/design_workshop_review_loop.py` refuses a suggestion when the workshop's `submissionRound` is 0, which can only happen if a caller skipped copying it from the workshop. The refusal used to name the CHECK constraint `DwInspectionFeedback_round_check` and say a database refusal reaches the officer as a 500; in the 2026-10-10 copy rewrite it became "This suggestion couldn't be filed because the workshop's submission couldn't be read. Reload the workshop and try again." Closing it means proving no route can reach `feedback_plan` with a zero round (or deriving the round inside it) so the officer never sees this.
 
 ## Closed on 2026-10-10
+
+### [LOW] On-device AI could not run on the handset, so Speech & AI did not show it (android, backend) — **CLOSED 2026-10-10**
+
+`DW_TIER2_RUNTIME_PRESENT` was false and the copy sweep hid the on-device AI line and the
+language-model list. The runtime is now built: LiteRT-LM 0.18.0 is in the APK and the flag is true;
+the two Gemma 4 models download on demand from revision-pinned URLs and are verified by size and
+SHA-256 before use; a phone is offered a model only when its own reading fits it
+(`dwTier2Eligible`); proofreading and translation run on the phone and are recorded as TIER_2 layers
+through `POST /design-workshops/{id}/ai-layers/on-device`, falling back to the cloud verbs when the
+model cannot run. See [TIER2-LANGUAGE-MODEL-MEASUREMENT.md](TIER2-LANGUAGE-MODEL-MEASUREMENT.md) §0.
+Pinned by `DwTier2InstallTest`, `DwTier2ModelsTest`, `test_ai_layers_on_device.py` and the emulator
+probe `DwTier2RuntimeProbeTest`.
 
 Three Android parity gaps that the handset's own screens and walkthrough admitted in so many words,
 found by the sweep of customer-visible copy (items F6, F7 and F12 of that sweep) and closed by
@@ -1019,6 +1142,78 @@ other workshop or stage field — and `/design-review` draws it first. Pinned by
 `test_the_pool_directory_is_refused_to_everybody_the_pool_round_refuses` and, for the stage-entry fence,
 `test_the_pool_directory_takes_the_gate_and_serves_no_stage_field` in
 `backend/tests/test_entry_provenance_readers.py`.
+
+---
+
+The three below were sentences on web screens admitting a missing feature (the copy sweep's F9, F10
+and F11). The feature was built, the sentence removed, and the test named in each entry fails without it.
+
+### [MEDIUM] AI layers: no decision history and no single-layer text read (backend, frontend) — **CLOSED 2026-10-10**
+
+The panel said earlier decisions "cannot be read from this screen", and "Show the full text" fetched
+every layer's text in one request because one layer's could not be read alone. Two reads now exist,
+both on the workshop's own gate: `GET /api/design-workshops/{id}/ai-layers/decisions` (who accepted,
+withdrew or declined which layer, and when, newest first, with the actor's name — a decline read off
+the layer's own `deletedAt`/`deletedById`) and `GET /api/design-workshops/{id}/ai-layers/{layer_id}`
+(one layer with its full text, withheld exactly as the list withholds it, and its own history). The
+panel offers "Read this layer" and "Show its decision history" per row and the workshop's whole
+history at the top. Pinned by `backend/tests/test_ai_layer_history.py` (the designer, an admin, and a
+designer with no access to the workshop) and `frontend/e2e/admin-gap-features-unit.spec.ts`.
+
+### [MEDIUM] A co-designer's first sign-in link could not be re-issued, and an import issued none (backend, frontend) — **CLOSED 2026-10-10**
+
+`POST /api/sanction-orders/{id}/credential-link` takes `designerUserId` and re-issues for any designer
+the order names; left out, it is the lead, as before. Every existing rule is asked of THAT person:
+their own `accountCreated` on the order, their rank against the officer (an account since promoted to
+the officer's tier or above is refused), the master admin's mailbox, Google sign-in; the issuer is
+recorded and re-checked at redemption (`issuer_still_manages`), and a promotion still withdraws the
+link. Somebody the order does not name is a 404. The import (`POST /api/sanction-orders/upload/confirm`)
+now hands back the INVITE links `create_from_sanction` mints — per order, with the order beside them —
+and counts them in `credentialLinksIssued`; a throttled link is a warning against its Excel row. The
+register draws one re-issue button per created account. Pinned by
+`backend/tests/test_sanction_reissue_codesigner.py` (Assistant Director, Regional Director, Ministry
+Admin and Admin allowed; Designer and Inspector refused) and `backend/tests/test_sanction_import.py`.
+
+### [MEDIUM] A Regional Director could not correct their own state's annual-plan rows (backend, frontend) — **CLOSED 2026-10-10**
+
+The plan had no record of which state was a Regional Director's, so admitting one would have handed
+them the national directory. `RegionalDirectorState` (migration `20261010140000`) is that scope,
+assigned by a Ministry Admin and above (`GET`/`PUT /api/annual-plan/regional-directors`) and only to a
+Regional Director. Through `require_annual_plan_reader` a Regional Director reaches the year list, the
+list, one row and the remarks correction, each narrowed to their states; a row in another state is the
+same 404 as no row. Upload, export, the pro-forma, promote, withdraw, reinstate and the assignment stay
+the Ministry Admin's. Assistant Directors are unchanged. Pinned by
+`backend/tests/test_annual_plan_regional_scope.py` (a Regional Director of the row's state and of a
+different state, one with none, an Assistant Director, a Designer, a Ministry Admin and an Admin) and
+`backend/tests/test_annual_plan_routes.py`.
+
+## Closed on 2026-10-10
+
+### [HIGH] The web report could not be previewed or generated without a connection, and the screens narrated the gap (frontend) — **CLOSED 2026-10-10**
+
+**What was wrong.** With no signal the report screen disabled both downloads and told the designer the
+preview, the .docx and the .pdf "are all produced by the server … and this browser deliberately has no
+renderer of its own"; a workshop started offline could not be previewed at all, the per-stage document
+panel said the same, and the public landing page and FAQ said "generating the report is the one part of
+the web half that needs the server" and "the browser's report … needs the API". The handset had built
+its report offline for months. Found by the 2026-10-10 copy sweep (item F17).
+
+**What closed it.** `frontend/lib/offlineReport/` ports the server's builder and writes the files in the
+browser (`docx`, pdfmake, Noto faces under `frontend/public/report-fonts/`); `GET
+/api/design-workshops/{id}/report/sources` hands the device what the builder reads besides the stages,
+kept in IndexedDB with limits and cleared on sign-out; `frontend/public/sw.js` keeps the application's
+files so the screen opens offline. The report screen, the per-stage panel, the landing page and the FAQ
+now describe what happens. [DESIGN_WORKSHOP.md](DESIGN_WORKSHOP.md) §8.1 says which copy is
+authoritative (the server's, whenever there is a connection) and what differs.
+
+**The tests that fail without it.** `frontend/e2e/offline-report-parity-unit.spec.ts` (every block,
+the meta, the theme and every warning of nine template and settings cases against the server's own
+output for `shared/report-parity/workshop.json`); `frontend/e2e/offline-report-files-unit.spec.ts`
+(the .docx and .pdf written from that fixture open and carry its text, Odia included);
+`frontend/e2e/offline-report-behaviour-unit.spec.ts` (the cache's limits and ownership, and the
+service worker's rules); `backend/tests/test_report_offline_parity.py` (the expected output is what
+the server builds today); and the two `/report/sources` tests in `backend/tests/test_media_entitlement.py`
+(no photograph the caller may not download, and nothing at all for a stranger).
 
 ---
 

@@ -23,9 +23,17 @@
  * The standing column, the header copy and the promote dialog all repeat that, because a ministry
  * shown "287 workshops held this year" when 284 of them have not happened is the failure the whole
  * feature is built against.
+ *
+ * ── A REGIONAL DIRECTOR SEES THEIR OWN STATES' ROWS, AND CORRECTS ONLY THEIR REMARKS ─────────────
+ *
+ * The server narrows every read to the states a Ministry Admin assigned them (`regionalStates` on
+ * the list) and refuses their remarks correction on any other row. This page hides the national
+ * acts from them — upload, export, the pro-forma, opening a workshop, withdrawing, reinstating —
+ * because each of those is the Ministry Admin's and would only be refused. `canManageAnnualPlan`
+ * decides which of the two screens this is.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
   CalendarRange,
@@ -43,7 +51,9 @@ import { PageHeader } from "@/components/PageHeader";
 import { SearchInput } from "@/components/SearchInput";
 import { Dropdown } from "@/components/ui/Dropdown";
 import { useToast } from "@/components/ui/Toast";
+import { useAuth } from "@/components/AuthProvider";
 import { describeApiDetail } from "@/lib/api";
+import { canManageAnnualPlan } from "@/lib/permissions";
 
 import {
   downloadPlanExport,
@@ -51,6 +61,7 @@ import {
   listAnnualPlan,
   listPlanYears,
   reinstateAnnualPlanEntry,
+  updateAnnualPlanNotes,
   withdrawAnnualPlanEntry,
   type AnnualPlanEntry,
   type AnnualPlanPage,
@@ -70,6 +81,7 @@ import {
 } from "./annualPlanQuery";
 import { PlanUploadReport as UploadReportPanel } from "./PlanUploadReport";
 import { PromoteDialog } from "./PromoteDialog";
+import { RegionalStatesPanel } from "./RegionalStatesPanel";
 import { UploadPlanDialog } from "./UploadPlanDialog";
 
 /**
@@ -101,6 +113,12 @@ function StandingChip({ standing }: { standing: string }) {
 
 export default function AnnualPlanPage() {
   const { toast } = useToast();
+  const { user } = useAuth();
+  /** The whole national instrument, or a Regional Director's own states' rows (see the header). */
+  const manager = canManageAnnualPlan(user);
+  /** The row whose remarks are being corrected, and the draft. */
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [draft, setDraft] = useState("");
 
   const [years, setYears] = useState<AnnualPlanYear[] | null>(null);
   const [planYear, setPlanYear] = useState<number | null>(null);
@@ -216,6 +234,29 @@ export default function AnnualPlanPage() {
     }
   }
 
+  async function saveRemarks(entry: AnnualPlanEntry) {
+    setBusyId(entry.id);
+    try {
+      const trimmed = draft.trim();
+      await updateAnnualPlanNotes(entry.id, trimmed ? trimmed : null);
+      setEditingId(null);
+      await refreshRows();
+      toast({ title: `Remarks on ${entry.workshopNo} saved`, tone: "success" });
+    } catch (caught) {
+      setError(
+        describeApiDetail(
+          (caught as { payload?: { detail?: unknown } })?.payload?.detail,
+          caught instanceof Error ? caught.message : "The remarks could not be saved."
+        )
+      );
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  /** A Regional Director's scope, as the server stated it on the last list read. */
+  const regionalStates = rows?.regionalStates ?? null;
+
   async function download(kind: "pro-forma" | "export") {
     try {
       if (kind === "pro-forma") await downloadPlanProForma();
@@ -237,6 +278,7 @@ export default function AnnualPlanPage() {
         description="The ministry's directory of the workshops planned for the year — number, date, state, district and venue. An entry here is a plan, not a workshop: it becomes one only when somebody opens it."
         icon={<CalendarRange className="h-5 w-5" aria-hidden />}
         actions={
+          manager ? (
           <>
             <button type="button" className="field-button-secondary" onClick={() => void download("pro-forma")}>
               <FileDown className="h-4 w-4" aria-hidden />
@@ -284,8 +326,19 @@ export default function AnnualPlanPage() {
               Upload the plan
             </button>
           </>
+          ) : null
         }
       />
+
+      {manager ? <RegionalStatesPanel /> : null}
+
+      {!manager && rows ? (
+        <p className="mb-4 rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-sm leading-6 text-ink-700">
+          {regionalStates && regionalStates.length
+            ? `You see the rows of ${regionalStates.join(", ")}, the state${regionalStates.length === 1 ? "" : "s"} assigned to you, and may correct their remarks.`
+            : "No state is assigned to you, so there are no rows to show. A Ministry Admin assigns Regional Directors their states on this screen."}
+        </p>
+      ) : null}
 
       {error ? (
         <p className="mb-4 rounded-md border border-error-600/30 bg-error-100 px-3 py-2 text-sm leading-6 text-error-600">
@@ -435,7 +488,12 @@ export default function AnnualPlanPage() {
         term — `rows.items.length === 0` fires for a filter that matched nothing too. That sentence
         belongs to whoever gives the filtered-empty case its own state; it is not this fix.
       */}
-      {planYear == null && years != null && years.length === 0 ? (
+      {planYear == null && years != null && years.length === 0 && !manager ? (
+        <EmptyState
+          title="No rows for your states"
+          body="Either no state is assigned to you, or the plan holds no row in yours. A Ministry Admin assigns Regional Directors their states on this screen."
+        />
+      ) : planYear == null && years != null && years.length === 0 ? (
         <EmptyState
           title="No plan has been uploaded yet"
           body="Download the pro-forma, type the ministry's directory into it, and upload it. Correcting it later is the same act: upload the corrected sheet again."
@@ -443,10 +501,17 @@ export default function AnnualPlanPage() {
       ) : rows == null ? (
         <p className="text-sm text-ink-muted">Loading…</p>
       ) : rows.items.length === 0 ? (
-        <EmptyState
-          title="Nothing in this year's plan yet"
-          body="Download the pro-forma, type the ministry's directory into it, and upload it. Correcting it later is the same act: upload the corrected sheet again."
-        />
+        manager ? (
+          <EmptyState
+            title="Nothing in this year's plan yet"
+            body="Download the pro-forma, type the ministry's directory into it, and upload it. Correcting it later is the same act: upload the corrected sheet again."
+          />
+        ) : (
+          <EmptyState
+            title="No rows for your states"
+            body="This year's plan has no row in the states assigned to you, or none matches the filters above."
+          />
+        )
       ) : (
         <div className="panel overflow-hidden">
           <div className="overflow-x-auto">
@@ -463,7 +528,8 @@ export default function AnnualPlanPage() {
               </thead>
               <tbody>
                 {rows.items.map((entry) => (
-                  <tr key={entry.id} className="border-t border-line-200 align-top">
+                  <Fragment key={entry.id}>
+                  <tr className="border-t border-line-200 align-top">
                     <td className="px-4 py-3">
                       <span className="font-medium text-ink-900">{entry.workshopNo}</span>
                       <span className="mt-0.5 block text-xs text-ink-muted">
@@ -475,6 +541,9 @@ export default function AnnualPlanPage() {
                       {entry.plannedTitle ?? <span className="text-ink-muted">—</span>}
                       {entry.workshopKindLabel ? (
                         <span className="mt-0.5 block text-xs text-ink-muted">{entry.workshopKindLabel}</span>
+                      ) : null}
+                      {entry.notes ? (
+                        <span className="mt-1 block text-xs text-ink-700">Remarks: {entry.notes}</span>
                       ) : null}
                     </td>
                     <td className="px-4 py-3 text-ink-700">
@@ -510,7 +579,18 @@ export default function AnnualPlanPage() {
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex flex-wrap gap-2">
-                        {entry.standing === "PLANNED" ? (
+                        <button
+                          type="button"
+                          className="field-button-secondary min-h-8! px-2.5! py-1! text-xs"
+                          onClick={() => {
+                            setEditingId(entry.id);
+                            setDraft(entry.notes ?? "");
+                          }}
+                          disabled={busyId === entry.id}
+                        >
+                          Edit remarks
+                        </button>
+                        {manager && entry.standing === "PLANNED" ? (
                           <>
                             <button
                               type="button"
@@ -532,7 +612,7 @@ export default function AnnualPlanPage() {
                             </button>
                           </>
                         ) : null}
-                        {entry.standing === "WITHDRAWN" ? (
+                        {manager && entry.standing === "WITHDRAWN" ? (
                           <button
                             type="button"
                             className="field-button-secondary min-h-8! px-2.5! py-1! text-xs"
@@ -546,6 +626,44 @@ export default function AnnualPlanPage() {
                       </div>
                     </td>
                   </tr>
+                  {editingId === entry.id ? (
+                    <tr className="bg-surface-50">
+                      <td colSpan={6} className="px-4 py-3">
+                        <label className="field-label" htmlFor={`remarks-${entry.id}`}>
+                          Remarks on {entry.workshopNo}
+                        </label>
+                        <textarea
+                          id={`remarks-${entry.id}`}
+                          className="field-input mt-1 min-h-20 w-full"
+                          maxLength={2000}
+                          value={draft}
+                          onChange={(event) => setDraft(event.currentTarget.value)}
+                        />
+                        <p className="mt-1 text-xs text-ink-muted">
+                          The next upload of the plan replaces these remarks if its Remarks column for this row is filled in.
+                        </p>
+                        <div className="mt-2 flex gap-2">
+                          <button
+                            type="button"
+                            className="field-button min-h-8! px-2.5! py-1! text-xs"
+                            onClick={() => void saveRemarks(entry)}
+                            disabled={busyId === entry.id}
+                          >
+                            {busyId === entry.id ? "Saving…" : "Save remarks"}
+                          </button>
+                          <button
+                            type="button"
+                            className="field-button-secondary min-h-8! px-2.5! py-1! text-xs"
+                            onClick={() => setEditingId(null)}
+                            disabled={busyId === entry.id}
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ) : null}
+                  </Fragment>
                 ))}
               </tbody>
             </table>

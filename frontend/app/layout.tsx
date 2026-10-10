@@ -3,6 +3,7 @@ import localFont from "next/font/local";
 
 import { AdminViewProvider } from "@/components/AdminViewProvider";
 import { AuthProvider } from "@/components/AuthProvider";
+import { OfflineAppShell } from "@/components/OfflineAppShell";
 import { ThemeProvider } from "@/components/ThemeProvider";
 import { ToastProvider } from "@/components/ui/Toast";
 import { PREFERENCES_BOOT_SCRIPT, THEME_COLOR } from "@/lib/preferences";
@@ -50,6 +51,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
         {/* First child of <body>, and blocking: it must run before any content paints, otherwise
             every load flashes the light theme before ThemeProvider mounts. */}
         <script dangerouslySetInnerHTML={{ __html: PREFERENCES_BOOT_SCRIPT }} />
+        <OfflineAppShell />
         <AuthProvider>
           <ThemeProvider>
             {/* One toast queue and one live region for the whole app. It used to be mounted per

@@ -29,7 +29,26 @@
 
 services:
   postgres:
-    image: postgres:16-alpine
+    # 17, PRODUCTION'S MAJOR (the managed production database runs PostgreSQL 17), and the same image
+    # major as checks.yml's integration service — so local, CI and production agree. 16 until
+    # 2026-10-09. 18 is the newest major and is not used because production cannot follow it yet
+    # (its provider, named in docs/ENVIRONMENT.md, offers no 18; prisma-client-py's Prisma 5.17
+    # schema engine predates it).
+    #
+    # ⚠ AN EXISTING `postgres_data` VOLUME WAS INITIALISED BY 16, AND 17 WILL NOT OPEN IT: the
+    # container exits with "database files are incompatible with server". Two ways through:
+    #   • KEEP THE DATA. Before pulling this change (still on 16):
+    #         docker compose exec postgres pg_dumpall -U postgres > local-pg16.sql
+    #     then drop the old volume, start 17 on a fresh one, and restore into it:
+    #         docker compose rm -sf postgres
+    #         docker volume rm <project>_postgres_data     # `docker volume ls` shows the name
+    #         docker compose up -d postgres
+    #         docker compose exec -T postgres psql -U postgres < local-pg16.sql
+    #   • START OVER. The same `rm` and `volume rm`, then `docker compose up -d`, and from backend/
+    #     `python -m prisma migrate deploy` and `python -u scripts/seed_test_accounts.py`.
+    # Removing only the postgres volume leaves `minio_data` — the local media — where it was.
+    # (`docker compose down -v` would delete both.) docs/DOCKER.md carries the same steps.
+    image: postgres:17-alpine
     container_name: design-workshop-postgres
     environment:
       POSTGRES_USER: postgres
@@ -56,18 +75,44 @@ services:
       retries: 5
 
   minio:
-    # quay.io, AND THE REGISTRY IS PART OF THE PIN. This read `minio/minio:<tag>` — Docker Hub —
-    # until 2026-09-21. MinIO withdrew both `minio/minio` and `minio/mc` from Docker Hub: the
-    # namespace is still there with its other twenty repositories, but those two now 404 on the Hub
-    # API and answer 401 to an anonymous registry pull, so `docker compose up` failed at the pull
-    # with `pull access denied ... may require 'docker login'` — a message that reads like a
-    # credentials problem and is not one. No login fixes it; the repository is gone.
+    # SILO, A MAINTAINED FORK OF MinIO, SINCE 2026-10-09 — AND THE SERVICE KEEPS ITS NAME ON PURPOSE.
     #
-    # quay.io is MinIO's own registry and carries THE SAME RELEASE TAGS, so this is a change of
-    # where the bytes come from and not of which bytes: the version below is the one that was
-    # running before, unchanged. Do not "tidy" this back to the short form — the short form is
-    # Docker Hub, and Docker Hub no longer has it.
-    image: quay.io/minio/minio:RELEASE.2024-07-16T23-46-41Z
+    # WHY THE IMAGE CHANGED AGAIN. This read `minio/minio:<tag>` (Docker Hub) until 2026-09-21, when
+    # MinIO withdrew that repository, and then `quay.io/minio/minio:<tag>`. quay.io went the same way:
+    # measured 2026-10-09, it still issues an anonymous pull token, but the manifest and the tag list
+    # of both `minio/minio` and `minio/mc` answer 401 to it and `docker manifest inspect` says "no such
+    # manifest", so a bare `docker compose up` — and e2e-live.yml — could not start at all.
+    # Upstream is gone for good, not just moved: github.com/minio/minio is ARCHIVED, and its last
+    # release (2025-10) shipped as source only.
+    #
+    # WHY THIS ONE. `docker.io/pgsty/silo` is Pigsty's fork of that same MinIO source
+    # (github.com/pgsty/silo, AGPL-3.0 like MinIO, monthly releases, ~1.1 M pulls), and it is the only
+    # maintained option that is a TRUE DROP-IN for what this stack and its browser suite rely on:
+    #   • the same server lineage and on-disk format, so an existing `minio_data` volume is upgraded
+    #     in place the way MinIO's own releases always upgraded each other's (not exercised against a
+    #     2024 volume here: that image can no longer be pulled to make one — if yours will not open,
+    #     `docker volume rm <project>_minio_data` and re-upload, local media being disposable);
+    #   • the same `server /data` command — its entrypoint turns `server …` into `silo server …` —
+    #     the same MINIO_ROOT_* variables and the same console on :9001;
+    #   • MinIO's own routes, `/minio/health/live` included, which frontend/e2e/support/preflight.ts
+    #     asks before a run; and the bundled client, `mcli`, for the healthcheck and the bucket job.
+    # Verified on 2026-10-09 against this exact tag, the way the app uses S3: presigned PUT from the
+    # web origin (CORS preflight and response), a 70 MiB multipart upload through presigned 16 MiB part
+    # URLs whose ETags the browser can read, an anonymous GET under the `download` policy, a ranged
+    # presigned GET, and delete. `mcli anonymous set download` writes the same canned read-only policy
+    # `mc` always did — GetObject on the objects, GetBucketLocation and ListBucket on the bucket — so
+    # anonymous LISTING of the local bucket is allowed, exactly as before. (Production's bucket is
+    # not this: infra/terraform/main.tf grants anonymous GetObject on `media/*` and nothing else.)
+    #
+    # THE ALTERNATIVE, NAMED SO NOBODY RE-SEARCHES IT: rustfs/rustfs (Apache-2.0, a larger team, 1.0 on
+    # 2026-09-16). It is a different implementation rather than a fork — its MinIO volume compatibility
+    # is still a preview, it has no `mcli`, and nothing guarantees `/minio/health/live` — so moving to it
+    # means a fresh volume and a re-test of the e2e suite, not an image swap. If silo stops being
+    # maintained, that is the move, and the test above is the checklist for it.
+    #
+    # The SERVICE is still called `minio`: the API signs uploads for `http://minio:9000`, and the
+    # e2e support code maps exactly that host. Renaming it would break the browser suite for a word.
+    image: docker.io/pgsty/silo:RELEASE.2026-09-16T00-00-00Z
     container_name: design-workshop-minio
     command: server /data --console-address ":9001"
     environment:
@@ -79,22 +124,28 @@ services:
     volumes:
       - minio_data:/data
     healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
+      # `mcli` is the client silo bundles (it also ships `mc` as a symlink to it); `ready local` asks
+      # the server's readiness route through the client's built-in `local` alias, as `mc` did.
+      test: ["CMD", "mcli", "ready", "local"]
       interval: 10s
       timeout: 5s
       retries: 5
 
   create-bucket:
-    # quay.io for the same reason as `minio` above, and withdrawn from Docker Hub in the same move.
-    image: quay.io/minio/mc:RELEASE.2024-07-15T17-46-06Z
+    # THE SAME IMAGE AS `minio`, run for its bundled `mcli`: one image and one release to keep current
+    # instead of a separate client image (the old `minio/mc` was withdrawn and archived with the
+    # server). `set -e` so a failure in any of the three lines fails the container — the API waits on
+    # `service_completed_successfully` and must not start against a bucket that was never made public.
+    image: docker.io/pgsty/silo:RELEASE.2026-09-16T00-00-00Z
     depends_on:
       minio:
         condition: service_healthy
     entrypoint: >
       /bin/sh -c "
-      mc alias set local http://minio:9000 minioadmin minioadmin;
-      mc mb --ignore-existing local/design-workshop;
-      mc anonymous set download local/design-workshop;
+      set -e;
+      mcli alias set local http://minio:9000 minioadmin minioadmin;
+      mcli mb --ignore-existing local/design-workshop;
+      mcli anonymous set download local/design-workshop;
       "
 
   # -------------------------------------------------------------------------------------------
@@ -111,7 +162,10 @@ services:
   # From your host shell:    redis://localhost:56379/0
   # -------------------------------------------------------------------------------------------
   redis:
-    image: redis:7-alpine
+    # The 8 line (8.10.2 on 2026-10-09), the newest Redis major. Nothing below changed between 7 and
+    # 8: the same `redis-server` flags and the same `redis-cli ping`. Redis 8 is tri-licensed
+    # (AGPLv3, RSALv2, SSPLv1), which is fine for a local cache; production runs no Redis at all.
+    image: redis:8-alpine
     container_name: design-workshop-redis
     profiles: ["cache", "full"]
     # --save "" disables RDB snapshots. A cache has nothing worth surviving a restart, and the

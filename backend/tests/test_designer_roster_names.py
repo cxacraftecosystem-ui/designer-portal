@@ -72,7 +72,7 @@ import os
 import uuid
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
-from typing import Any, TypeVar
+from typing import Any
 
 import pytest
 
@@ -93,8 +93,6 @@ pytestmark = [
     ),
 ]
 
-_T = TypeVar("_T")
-
 #: What an administrator typed on the designer roster itself. Section 3 asserts this exact string
 #: survives an allow-list edit, rather than merely asserting "a name is present" — a code path that
 #: overwrote it with the allow-list's copy would leave a name present and would still be the bug.
@@ -105,7 +103,7 @@ ROSTER_OWN_NAME = "Dr S. Raghavan (roster screen, typed by hand)"
 ACCESS_NAME = "Sowmya Raghavan"
 
 
-def _in_a_private_loop(work: Callable[[], Awaitable[_T]]) -> _T:
+def _in_a_private_loop[T](work: Callable[[], Awaitable[T]]) -> T:
     """Run one test's database work with ``db`` connected, in an event loop of its own.
 
     ``asyncio.run`` creates the loop and closes it on the way out, and the connection is opened and
@@ -115,7 +113,7 @@ def _in_a_private_loop(work: Callable[[], Awaitable[_T]]) -> _T:
     ``db`` while this one runs, and the next test's ``asyncio.run`` connects afresh.
     """
 
-    async def connected() -> _T:
+    async def connected() -> T:
         await db.connect()
         try:
             return await work()

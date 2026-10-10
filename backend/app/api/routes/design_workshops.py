@@ -157,6 +157,7 @@ from app.schemas.design_workshops import (
     AiLayerDecisionIn,
     AiLayerRegisterIn,
     AiMediaVerbIn,
+    AiOnDeviceLayerIn,
     AiProofreadIn,
     AiTranslateIn,
     CustomSectionsIn,
@@ -831,9 +832,12 @@ async def get_stage_schema(request: Request, _: Any = Depends(get_current_user))
         # "AT THE MOMENT IT COMPRESSES" IS A CONDITION AND NOT A FIGURE OF SPEECH. The middleware
         # returns before it captures anything when the request does not offer gzip, and appends
         # `vary` only inside the compression branch, which a body under `minimum_size` also skips —
-        # so `Accept-Encoding: identity` gets a 200 with ETag, Cache-Control and NO Vary at all
-        # (MEASURED through `create_app()`, and
-        # `test_the_200_carries_no_vary_when_the_client_refuses_gzip` pins it). Harmless as
+        # so `Accept-Encoding: identity` gets a 200 with ETag, Cache-Control and no
+        # `Vary: Accept-Encoding` (MEASURED through `create_app()`, and
+        # `test_the_200_carries_no_vary_when_the_client_refuses_gzip` pins it). Since Starlette
+        # 1.7.0 that 200 does carry `Vary: Origin`: CORSMiddleware now stamps it on EVERY response it
+        # wraps, whether or not the request sent an Origin — which is right, since only some origins
+        # get an Access-Control-Allow-Origin back — and it lands on the 304 beside this one. Harmless as
         # deployed: both clients send gzip, and `private` keeps this body out of a shared cache
         # regardless. Named here because the alternative — setting Vary on the 200 too — trades a
         # duplicated header on every compressed response for one that is always present, and that
@@ -3326,6 +3330,69 @@ async def list_ai_layers(
     }
 
 
+@router.get("/{workshop_id}/ai-layers/decisions")
+async def list_ai_layer_decisions(
+    workshop_id: str, current_user: Any = Depends(get_current_user)
+) -> dict[str, Any]:
+    """WHO ACCEPTED, WITHDREW OR DECLINED WHICH LAYER, AND WHEN — the workshop's whole history.
+
+    Newest first. Every ``DwAiLayerDecision`` row of this workshop's layers, plus one entry per
+    declined layer read off the layer's own ``deletedAt``/``deletedById`` (a decline is the soft
+    delete, not a decision row — see ``ai_layers.DECLINED``). Each entry names its layer's kind and
+    the account that acted, by name where the account still exists.
+
+    THE SAME GATE AS THE LIST: anybody who can read the workshop. The history is provenance —
+    who put their name to model output, who took it off, who said no — which is what the list
+    already shows per row; it carries no layer TEXT, so the per-recording media gate the text
+    answers to has nothing to withhold here. Declared ABOVE ``/{layer_id}`` because a path parameter
+    would otherwise swallow ``decisions``.
+    """
+    await load_workshop_or_404(workshop_id, current_user)
+    layers = await ai_layers.workshop_layers(workshop_id, include_deleted=True)
+    decisions = await ai_layers.decisions_for_layers([row.id for row in layers])
+    items = await ai_layers.with_actor_names(ai_layers.history_entries(layers, decisions))
+    return {"items": items, "total": len(items)}
+
+
+@router.get("/{workshop_id}/ai-layers/{layer_id}")
+async def read_ai_layer(
+    workshop_id: str, layer_id: str, current_user: Any = Depends(get_current_user)
+) -> dict[str, Any]:
+    """ONE layer, with its full text, and its whole decision history.
+
+    The read a person needs before they put their name to one layer, without carrying the text of
+    every other layer in the workshop (``includeText`` on the list is all-or-nothing). A declined
+    layer is readable too — its history is the record that somebody said no.
+
+    THE TEXT ANSWERS TO THE SAME PER-RECORDING GATE AS THE LIST: the chain is walked over the whole
+    workshop (``chain_roots``, never a narrowed read — see ``list_ai_layers``), and a layer standing
+    on a recording this account may not read comes back ``textWithheld`` with no text, preview,
+    payload or count. 404 for an id that is not one of THIS workshop's layers, whichever workshop it
+    belongs to.
+    """
+    await load_workshop_or_404(workshop_id, current_user)
+    everything = await ai_layers.workshop_layers(workshop_id, include_deleted=True)
+    row = next((layer for layer in everything if layer.id == layer_id), None)
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="That layer is not one of this workshop's. Reload the workshop's layers.",
+        )
+    root = ai_layers.chain_roots(everything).get(row.id)
+    wanted = (
+        {root.media_id}
+        if root is not None and root.kind is ai_layers.RootKind.MEDIA and root.media_id
+        else set()
+    )
+    withheld = _root_withheld(root, await _readable_media_ids(wanted, current_user))
+    decisions = await ai_layers.decisions_for_layers([row.id])
+    history = await ai_layers.with_actor_names(ai_layers.history_entries([row], decisions))
+    return {
+        "layer": ai_layers.layer_payload(row, include_text=True, text_withheld=withheld),
+        "decisions": history,
+    }
+
+
 def _root_withheld(root: Any, readable: set[str]) -> bool:
     """Whether this caller must not see a layer's content, given what its chain stands on.
 
@@ -4105,6 +4172,52 @@ async def translate_ai_layer(
     )
 
 
+@router.post("/{workshop_id}/ai-layers/on-device", status_code=status.HTTP_201_CREATED)
+async def record_on_device_ai_layer(
+    workshop_id: str,
+    payload: AiOnDeviceLayerIn,
+    current_user: Any = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Record a proofread or a translation that a model ON THE HANDSET produced, as a TIER_2 layer.
+
+    **THIS ROUTE RUNS NO MODEL AND REACHES NO PROVIDER.** The Android app ran the verb itself with a
+    language model it downloaded and verified against a pinned SHA-256; what arrives is the words it
+    produced and the passage it was given. So the two money gates in ``_verb_gate`` are deliberately
+    absent: dictation consent is about material leaving the phone for a third party, which did not
+    happen, and the daily allowance bounds provider spend, of which there was none — the repository
+    owner scoped the cap to the paid providers in so many words. The designer set and the workshop's
+    own edit check still stand in front of it, exactly as on every other layer write.
+
+    **THE TIER IS FIXED HERE, AS ``_SERVER_TIER`` IS ON THE FIVE CLOUD ROUTES**, and the model must be
+    one of ``ai_verbs.ON_DEVICE_MODEL_IDS``. What this cannot establish is that a handset rather than
+    some other client produced the words; the layer is therefore inert until a person accepts it, and
+    the annexure names it as on-device output — the same protections every layer has.
+    """
+    _require_designer(current_user)
+    await load_workshop_or_404(workshop_id, current_user, for_edit=True)
+    try:
+        language = ai_verbs.clean_language(payload.language, what="the layer") or ""
+        plan = ai_verbs.on_device(
+            workshop_id=workshop_id,
+            kind=ai_layers.LayerKind(payload.kind),
+            text=payload.text,
+            source_text=payload.sourceText,
+            model_id=payload.modelId,
+            model_version=payload.modelVersion,
+            language=language,
+            produced_at=datetime.fromisoformat(payload.producedAt),
+            created_by_id=current_user.id,
+        )
+    except (ai_verbs.VerbError, ai_layers.LayerRuleViolation) as exc:
+        raise _verb_http(exc) from exc
+    row = await ai_layers.apply_plan(plan)
+    return {
+        "layer": ai_layers.layer_payload(row, include_text=True),
+        "accepted": False,
+        "acceptanceRequired": True,
+    }
+
+
 @router.post("/{workshop_id}/ai-layers/caption", status_code=status.HTTP_201_CREATED)
 async def caption_ai_layer(
     workshop_id: str,
@@ -4696,6 +4809,79 @@ async def preview_report(
     }
 
 
+@router.get("/{workshop_id}/report/sources")
+async def report_sources(
+    workshop_id: str,
+    current_user: Any = Depends(get_current_user),
+) -> dict[str, Any]:
+    """What the report is built from BESIDES the stage entries, for the browser to keep offline.
+
+    The web builds the same document in the browser when there is no connection
+    (``frontend/lib/offlineReport``): the stages come from the draft the browser already holds,
+    and everything else the builder reads — the records a REF names, the district anchors the map
+    places a stated address with, each photograph's size and orientation, and the three annexures'
+    sources (questionnaire sittings, transcripts, accepted AI layers) — comes from here, fetched
+    while the report screen is open with a connection and kept on the device.
+
+    THE SAME LOADERS AS THE PREVIEW, NOT A SECOND READ OF THE SAME TABLES. Every list below is
+    produced by the ``attach_*`` function ``_report_inputs`` calls, as THIS reader — so a
+    photograph or a recording the caller may not download is withheld here exactly as it is from
+    the preview and the file, and the device never holds what the server would not print for them.
+    The transcripts and the AI layers are loaded as if asked for, because whether a particular file
+    carries them is decided per download; the browser applies that switch itself.
+
+    Each source's warnings travel with it, verbatim, so a document built offline says what the
+    server would have said about the same source.
+    """
+    from dataclasses import asdict
+
+    from app.services.report_ai_layers import ai_layers_of
+    from app.services.report_annexures import transcripts_of
+    from app.services.report_questionnaires import questionnaires_of
+
+    record = await load_workshop_or_404(workshop_id, current_user)
+    entries = await entry_rows(workshop_id)
+    data = assemble_workshop_data(record, entries)
+    results = await gather_reads(
+        attach_report_references(data, entries),
+        attach_district_anchors(data),
+        attach_report_questionnaires(data, workshop_id),
+        attach_report_transcripts(data, entries, viewer=current_user, requested=True),
+        attach_report_ai_layers(
+            data,
+            workshop_id,
+            viewer=current_user,
+            readable_media=lambda ids: _readable_media_ids(ids, current_user),
+            requested=True,
+        ),
+    )
+    reference_photos = results[0]
+    resolver = await media_resolver(entries, viewer=current_user, extra_ids=reference_photos)
+    media_warnings: list[str] = []
+    if resolver.withheld:
+        # The sentence `_report_inputs` writes, word for word — see there.
+        media_warnings.append(
+            f"{len(resolver.withheld)} attached file(s) could not be included: they were "
+            "uploaded by another account, or the file is gone."
+        )
+    return {
+        "workshopId": workshop_id,
+        "builtAt": datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z"),
+        "references": {key: asdict(value) for key, value in data.references.items()},
+        "districtPoints": {key: [lat, lon] for key, (lat, lon) in data.district_points.items()},
+        "media": {key: asdict(value) for key, value in resolver.known_refs().items()},
+        "questionnaires": [asdict(item) for item in questionnaires_of(data)],
+        "transcripts": [asdict(item) for item in transcripts_of(data)],
+        "aiLayers": [asdict(item) for item in ai_layers_of(data)],
+        "warnings": {
+            "questionnaires": list(results[2]),
+            "transcripts": list(results[3]),
+            "aiLayers": list(results[4]),
+            "media": media_warnings,
+        },
+    }
+
+
 @router.post("/{workshop_id}/report")
 async def generate_report(
     workshop_id: str,
@@ -5094,8 +5280,8 @@ async def _transcripts_payload(entries: list[Any], viewer: Any) -> dict[str, Any
 def _require_designer(user: Any) -> None:
     """The designer set — ``deps.DESIGN_WORKSHOP_ROLES``: the designer, the Assistant Director,
     Regional Director and Ministry Admin posts, the admin and the master admin (it named only the
-    first and the last two until 2026-10-09; the set is the authority) — in front of sixteen of this
-    router's twenty-two non-GET routes. **This is not a gate on "the two capture aids", which is
+    first and the last two until 2026-10-09; the set is the authority) — in front of seventeen of
+    this router's twenty-three non-GET routes. **This is not a gate on "the two capture aids", which is
     what this docstring said while fourteen call sites in this file were reading it.**
 
     THE COUNTS BELOW ARE ASSERTED, NOT REMEMBERED.
@@ -5104,7 +5290,7 @@ def _require_designer(user: Any) -> None:
     fails naming this paragraph if either moves. A hand-kept count in a comment is the shape this
     repository has a rot detector for; the test is the version of it that cannot quietly go stale.
 
-    Counted from the source, the fourteen direct calls are:
+    Counted from the source, the fifteen direct calls are:
 
     * the two CAPTURE AIDS the old sentence named — ``POST /ocr/identity`` and
       ``POST /ocr/identity/retention`` — plus the two allowance probes beside them,
@@ -5113,12 +5299,13 @@ def _require_designer(user: Any) -> None:
     * **``PATCH /{workshop_id}``**, which renames a workshop and rewrites its promoted columns, and
       **``PUT /{workshop_id}/stages/{stage_key}``**, which is every one of the 22 stages — the whole
       fortnight of fieldwork — together with ``PUT /{workshop_id}/custom-sections``;
-    * the AI layer writes: ``POST /{workshop_id}/ai-layers`` and the accept / unaccept / delete trio
-      on ``/{workshop_id}/ai-layers/{layer_id}``;
+    * the AI layer writes: ``POST /{workshop_id}/ai-layers``, ``POST /{workshop_id}/ai-layers/on-device``
+      (a layer a model on the handset produced) and the accept / unaccept / delete trio on
+      ``/{workshop_id}/ai-layers/{layer_id}``;
     * ``_verb_gate``, one call standing in front of five more routes — proofread, expand,
       translate, caption and subtitles.
 
-    So: **eighteen routes, and the stage save is one of them.** The count is written down because a
+    So: **nineteen routes, and the stage save is one of them.** The count is written down because a
     gate whose docstring understates its reach by an order of magnitude is how somebody later lifts
     it off a route they have been told is unimportant. If you add a call, add it here.
 

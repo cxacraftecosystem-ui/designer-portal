@@ -138,15 +138,15 @@ class _Queue:
             )
         ])
 
-    def holding(self, count: int, source: str = "artisan") -> "_Queue":
+    def holding(self, count: int, source: str = "artisan") -> _Queue:
         self.sources[source].rows = [_pending(i) for i in range(count)]
         return self
 
-    def capped_at(self, cap: int) -> "_Queue":
+    def capped_at(self, cap: int) -> _Queue:
         self.monkeypatch.setattr(review_route, "PENDING_TAKE", cap)
         return self
 
-    def as_(self, role: str, can_review: bool = False) -> "_Queue":
+    def as_(self, role: str, can_review: bool = False) -> _Queue:
         _CURRENT["user"] = _user(role, can_review=can_review)
         return self
 

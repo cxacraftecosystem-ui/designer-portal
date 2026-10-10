@@ -56,9 +56,9 @@ import kotlinx.serialization.json.contentOrNull
  *     rather than about an unsent workshop, naming no next move.
  *  4. **NOTHING HERE WORKS OFFLINE AND NOTHING HERE MAY BE QUEUED.** Every verb is a provider round
  *     trip the server makes on this designer's behalf: `_SERVER_TIER` is a module constant and all
- *     five routes pass it, so there is no on-device runner to fall back to (see [DwTier2Verb] for
- *     what a handset model could produce and [DW_TIER2_NO_WRITE_PATH_SENTENCE] for why it still has
- *     nowhere to put it). And a verb SPENDS MONEY: `ai_verb_cap.spend` counts every run that reached
+ *     five routes pass it. (Since 2026-10-10 a verified Tier 2 model on the phone runs PROOFREAD and
+ *     TRANSLATION itself and records the result through `ai-layers/on-device` — see
+ *     `DwTier2Install.kt`; that path is not this file's and spends nothing.) And a verb SPENDS MONEY: `ai_verb_cap.spend` counts every run that reached
  *     a provider INCLUDING a failure, so a run banked in [OfflineOutbox] and replayed three days later
  *     would be charged against a day the designer is not having, over a workshop whose consent may
  *     have been withdrawn in between. Offline is this app's primary path, so the honest sentence is

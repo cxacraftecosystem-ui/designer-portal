@@ -198,6 +198,13 @@ async def test_the_304_is_smaller_than_the_body_by_orders_of_magnitude(
 # =================================================================================================
 
 
+def _vary(response: httpx.Response) -> set[str]:
+    """The response's `Vary` as a set of lower-cased field names (empty when there is none)."""
+    return {
+        part.strip().lower() for part in response.headers.get("vary", "").split(",") if part.strip()
+    }
+
+
 def _app_with_middleware() -> httpx.AsyncClient:
     """The real application — every middleware the deployment mounts — with identity overridden."""
     from app.main import create_app
@@ -231,17 +238,23 @@ async def test_the_200_carries_no_vary_when_the_client_refuses_gzip() -> None:
     """AND THE CONDITION UNDER IT, which is the part the comments used to state as a law.
 
     `SelectiveGZipMiddleware` returns before capturing anything when the request does not offer gzip,
-    so nothing appends `Vary` and the 200 goes out without it. Pinned as the current behaviour rather
-    than endorsed: it is harmless here because this body does not really vary by request header and
-    `private` keeps it out of a shared cache. If someone decides the 200 should always carry `Vary`,
-    this is the test that has to change, and changing it is the moment to re-read the route's comment.
+    so nothing appends `Vary: Accept-Encoding` and the 200 goes out without it. Pinned as the current
+    behaviour rather than endorsed: it is harmless here because this body does not really vary by
+    request header and `private` keeps it out of a shared cache. If someone decides the 200 should
+    always carry `Accept-Encoding` in `Vary`, this is the test that has to change, and changing it is
+    the moment to re-read the route's comment.
+
+    `Vary: Origin` IS there, and has been since Starlette 1.7.0 (2026-10-09's lock): its
+    CORSMiddleware now stamps `Origin` on every response it wraps, with or without an Origin on the
+    request. That is the other half of the header and not this test's subject, so `Vary` is compared
+    as a set that must hold `origin` and nothing about encoding.
     """
     async with _app_with_middleware() as client:
         response = await client.get(SCHEMA, headers={"Accept-Encoding": "identity"})
 
     assert response.status_code == 200
     assert "content-encoding" not in response.headers
-    assert "vary" not in response.headers
+    assert _vary(response) == {"origin"}
     assert response.headers["cache-control"] == routes._SCHEMA_CACHE_CONTROL
 
 
@@ -259,7 +272,9 @@ async def test_the_304_carries_vary_even_without_gzip() -> None:
         )
 
     assert second.status_code == 304
-    assert second.headers["vary"] == "Accept-Encoding"
+    # The route's `Accept-Encoding`, plus the `Origin` CORSMiddleware has stamped on every response
+    # since Starlette 1.7.0 — compared as a set, for the reason the CORS test below gives.
+    assert _vary(second) == {"accept-encoding", "origin"}
     assert second.content == b""
 
 

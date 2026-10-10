@@ -1,19 +1,17 @@
 from datetime import datetime
 from decimal import Decimal
-from typing import Any, Generic, TypeVar
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.services.address import validate_district, validate_pincode, validate_state
-
-T = TypeVar("T")
 
 
 class APIModel(BaseModel):
     model_config = ConfigDict(extra="forbid", from_attributes=True)
 
 
-class Page(BaseModel, Generic[T]):
+class Page[T](BaseModel):
     items: list[T]
     total: int
     page: int
@@ -68,7 +66,7 @@ class LocationInput(APIModel):
     _clean_pincode = field_validator("pincode")(lambda cls, v: validate_pincode(v))
 
     @model_validator(mode="after")
-    def _clean_district(self) -> "LocationInput":
+    def _clean_district(self) -> LocationInput:
         """Resolve the district WITHIN its state, which is the only scope it means anything in.
 
         A model validator rather than a field one because the rule reads two fields: several
@@ -81,7 +79,7 @@ class LocationInput(APIModel):
         return self
 
     @model_validator(mode="after")
-    def _pin_is_a_pair(self) -> "LocationInput":
+    def _pin_is_a_pair(self) -> LocationInput:
         """Half a pin is not a place.
 
         A latitude with no longitude is 111 km of meridian, and stored on its own it would read as a

@@ -132,8 +132,10 @@ import {
   MAX_AI_LAYER_NOTE_CHARS,
   acceptDesignWorkshopAiLayer,
   aiLayerProblem,
+  decisionActor,
   decisionLabel,
   deleteDesignWorkshopAiLayer,
+  getDesignWorkshopAiLayer,
   flattenAiLayerNodes,
   groupAiLayers,
   layerKindLabel,
@@ -141,12 +143,14 @@ import {
   layerKindNoun,
   aiVerbPlacementAllows,
   layerProvenance,
+  listDesignWorkshopAiLayerDecisions,
   listDesignWorkshopAiLayers,
   readAiPayload,
   registerDesignWorkshopAiLayer,
   tierLabel,
   tierSentence,
   unacceptDesignWorkshopAiLayer,
+  type DwAiDecisionHistory,
   type DwAiDecisionRecord,
   type DwAiLayer,
   type DwAiLayerList,
@@ -156,14 +160,25 @@ import {
 import { listDesignWorkshopTranscripts, type DwTranscriptItem, type DwTranscriptList } from "@/lib/designWorkshops";
 
 /**
- * Every decision this SESSION recorded, keyed by layer.
+ * Each layer's whole decision history, keyed by layer, once it has been read.
  *
- * The accept and withdraw responses carry the layer's whole `DwAiLayerDecision` history, and showing
- * it is what stops acceptance being read as a checkbox — the server's own route docstring says so.
- * There is no GET for the history, though, so a layer nobody has touched on this visit has none to
- * show, and the panel states that rather than implying an empty history is an unblemished one.
+ * Filled by "Show its decision history" on a row (`getDesignWorkshopAiLayer`), and refreshed after
+ * every accept or withdraw on that row, so the list on screen is always the server's complete one —
+ * newest first, with the name of whoever acted. A layer whose history has not been read has no entry
+ * here, and its row offers the read rather than implying an empty history.
  */
 type DecisionLog = Record<string, DwAiDecisionRecord[]>;
+
+/**
+ * What a row needs from the panel to read ONE layer on its own: its text, and its history.
+ */
+type OneLayerReads = {
+  /** The text of each layer read on its own, keyed by layer. */
+  texts: Record<string, string>;
+  /** The layer whose single read is on the wire, or null. */
+  readingId: string | null;
+  onRead: (layer: DwAiLayer) => void;
+};
 
 export function AiLayersPanel({
   workshopId,
@@ -187,17 +202,22 @@ export function AiLayersPanel({
   const [notice, setNotice] = useState<string | null>(null);
   const [includeDeleted, setIncludeDeleted] = useState(false);
   /**
-   * Whether the full text of every layer has been fetched.
+   * Whether the full text of EVERY layer has been fetched, in one read of the list.
    *
-   * ⚠ ALL OR NOTHING, BECAUSE THE SERVER HAS NO SINGLE-LAYER READ. `includeText` is a flag on the
-   * LIST, so asking for one layer's text asks for every layer's — and a workshop can hold twenty-five
-   * interviews, which is megabytes on one bar of signal. That is exactly why the list withholds text
-   * by default. So this is one deliberate press, said out loud beside the button, rather than a
-   * per-row control that would look free and would not be.
+   * A workshop can hold twenty-five interviews, which is megabytes on one bar of signal, so this is
+   * one deliberate press said out loud beside the button. Reading ONE layer is the row's own
+   * "Read this layer" (`getDesignWorkshopAiLayer`), which carries only that layer's text.
    */
   const [withText, setWithText] = useState(false);
   const [busyLayerId, setBusyLayerId] = useState<string | null>(null);
   const [decisions, setDecisions] = useState<DecisionLog>({});
+  /** Layers read on their own — the text of each, and which read is in flight. */
+  const [oneTexts, setOneTexts] = useState<Record<string, string>>({});
+  const [readingId, setReadingId] = useState<string | null>(null);
+  /** The workshop's whole decision history, once asked for. */
+  const [history, setHistory] = useState<DwAiDecisionHistory | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyLoading, setHistoryLoading] = useState(false);
   /** The layer whose withdrawal note is being typed, and the note. See `WithdrawForm` for why. */
   const [withdrawing, setWithdrawing] = useState<string | null>(null);
 
@@ -358,6 +378,52 @@ export function AiLayersPanel({
   const refresh = useCallback(() => load({ includeDeleted, withText }), [load, includeDeleted, withText]);
 
   /**
+   * ONE layer's text and its whole history, without the text of every other layer.
+   *
+   * Quiet on failure for the history half: the row keeps what it had, and the error banner says the
+   * read did not finish.
+   */
+  const readOne = useCallback(
+    async (layer: DwAiLayer) => {
+      setReadingId(layer.id);
+      try {
+        const answer = await getDesignWorkshopAiLayer(workshopId, layer.id);
+        if (typeof answer.layer.text === "string") {
+          setOneTexts((current) => ({ ...current, [layer.id]: answer.layer.text as string }));
+        }
+        setDecisions((current) => ({ ...current, [layer.id]: answer.decisions }));
+      } catch (err) {
+        setError(aiLayerProblem(err, "That layer could not be read. Press Reload and try again."));
+      } finally {
+        setReadingId(null);
+      }
+    },
+    [workshopId]
+  );
+
+  const loadHistory = useCallback(async () => {
+    setHistoryLoading(true);
+    try {
+      setHistory(await listDesignWorkshopAiLayerDecisions(workshopId));
+    } catch (err) {
+      setError(aiLayerProblem(err, "The decision history could not be read. Try again."));
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, [workshopId]);
+
+  /** After an accept or withdraw: the row's history and, if it is open, the workshop's. */
+  const afterDecision = useCallback(
+    async (layer: DwAiLayer) => {
+      await readOne(layer);
+      if (historyOpen) await loadHistory();
+    },
+    [readOne, historyOpen, loadHistory]
+  );
+
+  const oneLayer: OneLayerReads = { texts: oneTexts, readingId, onRead: (layer) => void readOne(layer) };
+
+  /**
    * Is ANY write in flight — on this row or on another one?
    *
    * EVERY ACTION ON THE PAGE IS DISABLED WHILE ONE RUNS, not merely the row that owns it, and the
@@ -393,7 +459,8 @@ export function AiLayersPanel({
       for something that destroys work.
     */
     const provenance = layerProvenance(layer);
-    const readable = withText && typeof layer.text === "string" && layer.text.trim().length > 0;
+    const shown = withText ? layer.text : oneTexts[layer.id];
+    const readable = typeof shown === "string" && shown.trim().length > 0;
     const agreed = await confirm({
       title: `Accept this ${layerKindNoun(layer.kind)} in your name?`,
       tone: "warning",
@@ -413,7 +480,7 @@ export function AiLayersPanel({
         <>
           {readable
             ? null
-            : "The full text is not on screen. Press “Show the full text” and read it before you accept — an acceptance says you did. "}
+            : "The full text is not on screen. Press “Read this layer” on its row and read it before you accept — an acceptance says you did. "}
           Once you accept it, nobody else can. You can withdraw your acceptance later and the withdrawal is recorded too,
           but a report generated in the meantime will still say you accepted it.
         </>
@@ -425,10 +492,10 @@ export function AiLayersPanel({
     setError(null);
     setNotice(null);
     try {
-      const result = await acceptDesignWorkshopAiLayer(workshopId, layer.id);
-      setDecisions((current) => ({ ...current, [layer.id]: result.decisions }));
+      await acceptDesignWorkshopAiLayer(workshopId, layer.id);
       setNotice(`Accepted. The ${layerKindNoun(layer.kind)} now carries your name and the moment you accepted it.`);
       await refresh();
+      await afterDecision(layer);
     } catch (err) {
       setError(aiLayerProblem(err, "That layer could not be accepted."));
     } finally {
@@ -441,14 +508,14 @@ export function AiLayersPanel({
     setError(null);
     setNotice(null);
     try {
-      const result = await unacceptDesignWorkshopAiLayer(workshopId, layer.id, note);
-      setDecisions((current) => ({ ...current, [layer.id]: result.decisions }));
+      await unacceptDesignWorkshopAiLayer(workshopId, layer.id, note);
       setWithdrawing(null);
       setNotice(
         "Your acceptance has been withdrawn and your reason saved. The layer itself is unchanged and can be accepted again. " +
           "Reports already generated still name it as accepted."
       );
       await refresh();
+      await afterDecision(layer);
     } catch (err) {
       setError(aiLayerProblem(err, "That acceptance could not be withdrawn."));
     } finally {
@@ -483,6 +550,7 @@ export function AiLayersPanel({
       await deleteDesignWorkshopAiLayer(workshopId, layer.id);
       setNotice("Declined. It is kept as the record that a person said no. Register the material again if it is still wanted.");
       await refresh();
+      if (historyOpen) await loadHistory();
     } catch (err) {
       setError(aiLayerProblem(err, "That layer could not be declined."));
     } finally {
@@ -583,6 +651,49 @@ export function AiLayersPanel({
             <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} aria-hidden />
             {loading ? "Reading…" : "Reload"}
           </button>
+        </div>
+
+        {!withText ? (
+          <p className="text-xs leading-5 text-ink-500">
+            “Show the full text” brings the text of every layer at once. To read just one, press “Read this layer” on
+            its row.
+          </p>
+        ) : null}
+
+        <div className="grid gap-2 border-t border-line-200 pt-3">
+          <button
+            type="button"
+            className="field-button-secondary justify-self-start"
+            aria-expanded={historyOpen}
+            disabled={historyLoading}
+            onClick={() => {
+              const next = !historyOpen;
+              setHistoryOpen(next);
+              if (next) void loadHistory();
+            }}
+            data-testid="ai-layers-history-toggle"
+          >
+            {historyLoading ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : null}
+            {historyOpen ? "Hide the decision history" : "Show the decision history"}
+          </button>
+          {historyOpen && history ? (
+            history.items.length ? (
+              <ul className="grid gap-1" data-testid="ai-layers-history">
+                {history.items.map((entry) => (
+                  <li key={entry.id} className="text-xs leading-5 text-ink-700">
+                    <span className="font-medium text-ink-900">{decisionLabel(entry.decision)}</span> ·{" "}
+                    {layerKindLabel(entry.layerKind ?? null)} · {formatDateTime(entry.createdAt)} · by{" "}
+                    {decisionActor(entry, user?.id ?? null)}
+                    {entry.note ? ` · “${entry.note}”` : ""}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-xs leading-5 text-ink-500">
+                Nobody has accepted, withdrawn or declined a layer of this workshop.
+              </p>
+            )
+          ) : null}
         </div>
 
         {/* WHERE AN ACCEPTANCE ACTUALLY LANDS, READ OFF THE SERVER RATHER THAN REMEMBERED — and the
@@ -717,6 +828,7 @@ export function AiLayersPanel({
                   busyLayerId={busyLayerId}
                   anyBusy={locked}
                   decisions={decisions}
+                  oneLayer={oneLayer}
                   withdrawing={withdrawing}
                   onAccept={accept}
                   onWithdrawOpen={setWithdrawing}
@@ -762,6 +874,7 @@ export function AiLayersPanel({
                 busyLayerId={busyLayerId}
                 anyBusy={locked}
                 decisions={decisions}
+                oneLayer={oneLayer}
                 withdrawing={withdrawing}
                 onAccept={accept}
                 onWithdrawOpen={setWithdrawing}
@@ -815,6 +928,7 @@ export function AiLayersPanel({
                     busyLayerId={busyLayerId}
                     anyBusy={locked}
                     decisions={decisions}
+                    oneLayer={oneLayer}
                     withdrawing={withdrawing}
                     onAccept={accept}
                     onWithdrawOpen={setWithdrawing}
@@ -910,6 +1024,7 @@ function LayerRow({
   busyLayerId,
   anyBusy,
   decisions,
+  oneLayer,
   withdrawing,
   onAccept,
   onWithdrawOpen,
@@ -932,6 +1047,7 @@ function LayerRow({
   /** Some write, anywhere on the page, is on the wire. See `anyBusy` in the panel for why it is global. */
   anyBusy: boolean;
   decisions: DecisionLog;
+  oneLayer: OneLayerReads;
   withdrawing: string | null;
   onAccept: (layer: DwAiLayer) => void;
   onWithdrawOpen: (layerId: string | null) => void;
@@ -944,7 +1060,11 @@ function LayerRow({
   const payload = readAiPayload(layer.payload);
   const busy = busyLayerId === layer.id;
   const declined = layer.deletedAt !== null;
-  const history = decisions[layer.id] ?? [];
+  /** Null until this layer's history has been read; then the server's complete list, newest first. */
+  const history = decisions[layer.id] ?? null;
+  const reading = oneLayer.readingId === layer.id;
+  /** The text on screen: the whole list's when that was asked for, else this layer's own read. */
+  const text = withText ? layer.text : oneLayer.texts[layer.id];
 
   /**
    * The layers still standing on this one — exactly what the DELETE would be refused for.
@@ -1070,11 +1190,11 @@ function LayerRow({
               are shown in full.
             </span>
           </p>
-        ) : withText && typeof layer.text === "string" && layer.text.trim() ? (
+        ) : typeof text === "string" && text.trim() ? (
           // Markdown, not a <pre>: transcripts carry bold speaker labels and `---` rules, and raw HTML
           // stays escaped because this renderer deliberately has no rehype-raw.
           <div className="max-h-80 overflow-y-auto rounded-md border border-line-200 bg-surface-50 px-3 py-2">
-            <Markdown text={layer.text} />
+            <Markdown text={text} />
           </div>
         ) : layer.preview ? (
           <p className="line-clamp-2 text-xs leading-5 text-ink-500">{layer.preview}</p>
@@ -1083,28 +1203,51 @@ function LayerRow({
         ) : null}
 
         {!layer.textWithheld && layer.textChars ? (
-          <p className="text-xs leading-5 text-ink-500">
+          <p className="flex flex-wrap items-center gap-x-2 text-xs leading-5 text-ink-500">
             {layer.textChars.toLocaleString("en-IN")} characters
-            {withText ? "" : " — press “Show the full text” above to read it"}
+            {typeof text === "string" ? null : (
+              <button
+                type="button"
+                className="inline-flex items-center gap-1 font-medium text-ink-700 underline"
+                disabled={reading}
+                onClick={() => oneLayer.onRead(layer)}
+              >
+                {reading ? <Loader2 className="h-3 w-3 animate-spin" aria-hidden /> : null}
+                {reading ? "Reading…" : "Read this layer"}
+              </button>
+            )}
           </p>
         ) : null}
 
         {payload ? <PayloadView view={payload} /> : null}
 
-        {history.length ? (
-          <div className="rounded-md border border-line-200 bg-surface-50 px-2 py-1.5">
-            <p className="text-xs font-medium text-ink-700">Decisions recorded in this session</p>
-            <ul className="mt-1 grid gap-0.5">
-              {history.map((entry) => (
-                <li key={entry.id} className="text-xs leading-5 text-ink-500">
-                  {decisionLabel(entry.decision)} · {formatDateTime(entry.createdAt)}
-                  {entry.actorId === userId ? " · by you" : " · by another account"}
-                  {entry.note ? ` · “${entry.note}”` : ""}
-                </li>
-              ))}
-            </ul>
+        {history ? (
+          <div className="rounded-md border border-line-200 bg-surface-50 px-2 py-1.5" data-testid="ai-layer-history">
+            <p className="text-xs font-medium text-ink-700">Decision history</p>
+            {history.length ? (
+              <ul className="mt-1 grid gap-0.5">
+                {history.map((entry) => (
+                  <li key={entry.id} className="text-xs leading-5 text-ink-500">
+                    {decisionLabel(entry.decision)} · {formatDateTime(entry.createdAt)} · by {decisionActor(entry, userId)}
+                    {entry.note ? ` · “${entry.note}”` : ""}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="mt-1 text-xs leading-5 text-ink-500">Nobody has accepted, withdrawn or declined this layer.</p>
+            )}
           </div>
-        ) : null}
+        ) : (
+          <button
+            type="button"
+            className="inline-flex items-center gap-1 justify-self-start text-xs font-medium text-ink-700 underline"
+            disabled={reading}
+            onClick={() => oneLayer.onRead(layer)}
+          >
+            {reading ? <Loader2 className="h-3 w-3 animate-spin" aria-hidden /> : null}
+            Show its decision history
+          </button>
+        )}
 
         {declined ? (
           <p className="text-xs leading-5 text-ink-500">
@@ -1218,6 +1361,7 @@ function LayerRow({
               busyLayerId={busyLayerId}
               anyBusy={anyBusy}
               decisions={decisions}
+              oneLayer={oneLayer}
               withdrawing={withdrawing}
               onAccept={onAccept}
               onWithdrawOpen={onWithdrawOpen}

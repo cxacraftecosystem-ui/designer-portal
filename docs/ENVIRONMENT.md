@@ -28,7 +28,7 @@ Read it top to bottom once; after that use it as a lookup table. Deployment clic
 Setup, in order, for a fresh machine:
 
 ```powershell
-docker compose up -d                                    # Postgres :55432, MinIO :9000
+docker compose up -d                                    # Postgres 17 :55432, object store (Silo) :9000
 cd backend;  Copy-Item .env.example .env                # then edit
 cd ..\frontend; Copy-Item .env.local.example .env.local # then edit
 ```
@@ -154,7 +154,7 @@ below the line is a property of one deployment and changes without a code change
 | | |
 |---|---|
 | Engine | **PostgreSQL**. Any provider, any host, managed or self-run. |
-| Version | 16 is what `docker-compose.yml` runs locally (`postgres:16-alpine`) and what the migrations are developed against. Nothing in the schema needs a 16-only feature. |
+| Version | 17 — production's major (the managed database) and, since 2026-10-09, what `docker-compose.yml` runs locally (`postgres:17-alpine`) and CI's integration job applies every migration to (`postgres:17`). It was 16 locally and in CI until then. Nothing in the schema needs a version-specific feature. 18 is not supported yet: the pinned prisma-client-py 0.15.0 carries Prisma 5.17 engines that predate it (docs/OPEN_FINDINGS.md). |
 | Extensions | **None.** `grep -r "CREATE EXTENSION" backend/prisma/migrations/` returns one hit and it is inside a comment explaining why `pg_trgm` was *not* adopted. A stock server is enough. |
 | Connection | One `DATABASE_URL` in libpq/Prisma form. TLS for any non-loopback host — see `DATABASE_REQUIRE_SSL` below. |
 | Pooling | The application does not require an external pooler. Prisma opens `DATABASE_CONNECTION_LIMIT` connections per worker; whether those land on a pooler or on the server is the deployment's business. |
@@ -530,7 +530,7 @@ Fixed values, listed so nothing looks mysterious. Change them only if you also c
 | Service | Setting | Value |
 |---|---|---|
 | postgres | `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | `postgres` / `postgres` / `design_workshop`, published on host port **55432** |
-| minio | `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD` | `minioadmin` / `minioadmin`, API on **9000**, console on **9001** |
+| minio | `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD` | `minioadmin` / `minioadmin`, API on **9000**, console on **9001**. The image is Silo (`docker.io/pgsty/silo`), a maintained fork of MinIO, since 2026-10-09; the service keeps its name |
 | create-bucket | — | one-shot job creating the public-download bucket `design-workshop` |
 
 ---
@@ -608,8 +608,14 @@ from your shell — use an IAM admin user's key pair, never root keys. `terrafor
 
 ```bash
 cd backend
-PATH="$PWD/.venv/Scripts:$PATH" PYTHONUTF8=1 .venv/Scripts/python.exe -m prisma generate --schema prisma/schema.prisma
+PATH="$PWD/.venv/Scripts:$PATH" PYTHONUTF8=1 .venv/Scripts/python.exe scripts/generate_prisma_client.py
 ```
+
+`scripts/generate_prisma_client.py` runs exactly `prisma generate --schema prisma/schema.prisma` and
+then adds `from __future__ import annotations` to the generated `types.py`. That line is what makes
+the client importable in seconds on Python 3.14 rather than in the ten-plus minutes this machine used
+to spend (or a `MemoryError`); the script's docstring has the measurements and the cause. A bare
+`prisma generate` still works, and gives you the slow client.
 
 `prisma/generator/generator.py` writes the packaged schema with `pathlib.write_text()` and no
 `encoding=`, so it encodes at the **locale default** — cp1252 on a standard Windows install.

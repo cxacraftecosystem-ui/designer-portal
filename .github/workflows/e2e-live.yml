@@ -30,6 +30,11 @@ name: Live end-to-end suite
 #   2026-09-14  failed in 14s: `docker compose up` could not pull the MinIO image.
 #   2026-09-21  failed in 12s, same pull. Fixed by repointing `docker-compose.yml` at quay.io.
 #
+# AND quay.io WENT THE SAME WAY (found 2026-10-09): both MinIO images there now answer 401 to an
+# anonymous pull, and upstream MinIO is archived, so this workflow could not start at all. The stack
+# now runs `docker.io/pgsty/silo`, a maintained fork of the same MinIO source; docker-compose.yml says
+# why that one and what was checked. The service is still named `minio` and still on host port 9010.
+#
 # Two weeks red on an unrelated registry change, unnoticed. A red run nobody reads is not a signal,
 # it is noise with a cost — so this is now run deliberately, when somebody intends to act on the
 # answer. THE SUITE ITSELF IS UNCHANGED and every step below still works.
@@ -83,7 +88,7 @@ concurrency:
 jobs:
   e2e:
     name: Browser suite against a live stack
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     # Generous and then some: compose pull, a full `pip install` from the lock, a Next production
     # build, a Chromium download and then the suite itself. If this is regularly hitting the limit,
     # the answer is to find what got slow, not to raise the number again.
@@ -149,6 +154,13 @@ jobs:
         # The compose file declares health checks; this waits on them rather than sleeping, because
         # a fixed sleep is either too short (and the seed fails with something that reads like an
         # application bug) or too long on every run forever.
+        #
+        # THE GREPS ARE ON COMPOSE 5's OUTPUT TOO. ubuntu-26.04 ships Docker Compose 5 (5.1.3 in the
+        # 2026-09-27 image), whose `ps --format json` prints one JSON object per line with
+        # `"Health":"starting"` written without spaces, exactly as Compose 2 did — measured with
+        # Compose 5.5.0 on 2026-10-09 against a container in its start period. If a future Compose
+        # pretty-prints that JSON, these patterns stop matching and the loop says "stack is up" early;
+        # parse with jq then rather than loosening the patterns.
         run: |
           set -euo pipefail
           for i in $(seq 1 60); do
@@ -167,9 +179,10 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          # 3.14 to match the two backend jobs in checks.yml (production's box is still 3.12; see
-          # checks.yml's backend job for what that leaves unproven).
+          # 3.14, production's interpreter and the two backend jobs' in checks.yml; `check-latest`
+          # for python.org's newest patch rather than the runner image's cached one.
           python-version: "3.14"
+          check-latest: true
           cache: pip
           cache-dependency-path: |
             backend/requirements.lock
@@ -183,7 +196,8 @@ jobs:
           pip install -r requirements.lock
           pip install -e . --no-deps
           python -m prisma py fetch
-          python -m prisma generate --schema prisma/schema.prisma
+          # Through the script, as in checks.yml: the generated client must import in seconds on 3.14.
+          python scripts/generate_prisma_client.py --schema prisma/schema.prisma
 
       - name: Apply the migrations
         # NOT IN THE DOCUMENT, and it has to be here — see the header. The laptop's database already
@@ -224,7 +238,7 @@ jobs:
 
       # ── 4. The web app: BUILD, then serve the build ───────────────────────────────────────
       - name: Set up Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           # `engines.node` in frontend/package.json — the major production runs on, read from the one
           # line checks.yml and deploy-frontend.yml read too, so this suite drives the build that ships.
@@ -288,7 +302,7 @@ jobs:
         # `trace: retain-on-failure` in playwright.config.ts mean test-results/ holds a screenshot
         # and a replayable trace for each failure.
         if: ${{ failure() }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: playwright-report
           path: |

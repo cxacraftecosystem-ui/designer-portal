@@ -7,17 +7,14 @@ import androidx.test.platform.app.InstrumentationRegistry
 import com.designprototype.workshop.data.DW_TIER2_ARTIFACTS
 import com.designprototype.workshop.data.DW_TIER2_CATALOGUE
 import com.designprototype.workshop.data.DW_TIER2_RUNTIME_PRESENT
-import com.designprototype.workshop.data.DW_TIER2_UNJUDGED
-import com.designprototype.workshop.data.DW_TIER2_UNJUDGED_LABEL
+import com.designprototype.workshop.data.DW_TIER2_LIST_INTRO
 import com.designprototype.workshop.data.DwConnection
 import com.designprototype.workshop.data.DwDeviceMeasurement
 import com.designprototype.workshop.data.dwModelFitLabel
 import com.designprototype.workshop.data.dwProbeDevice
 import com.designprototype.workshop.data.dwRecommendTiers
 import com.designprototype.workshop.data.dwTier2InstallMayBeOffered
-import com.designprototype.workshop.data.dwTier2ListIntro
 import com.designprototype.workshop.data.dwTier2RowSentence
-import com.designprototype.workshop.data.dwTier2UnjudgedSentence
 import com.designprototype.workshop.data.dwTier2VerifyFile
 import java.io.File
 import java.security.MessageDigest
@@ -61,12 +58,10 @@ import org.junit.runner.RunWith
  *    whole reason `dwHeadroomBytes` refuses to clamp.
  *  * The exact sentence each row draws, and its word count, because the per-row bound is 90 words and
  *    the screen this replaced was measured at 1,207.
- *  * Whether an install control may be drawn, for all three connection states. It must be false
- *    everywhere while [DW_TIER2_RUNTIME_PRESENT] is false.
- *  * What [dwTier2VerifyFile] says about anything actually sitting in this app's storage — the only
- *    on-device check of the sideload claim, and the one place a pushed file becomes visible to code.
- *    **NOTHING IN THE APP CALLS THAT PREDICATE**, verified by search: a sideloaded model is invisible
- *    to every screen, so this probe is currently the only thing on the phone that ever looks at it.
+ *  * Whether an install control may be drawn, for all three connection states — the gate
+ *    `DwTier2ModelList` draws Download from since the runtime landed (2026-10-10).
+ *  * What [dwTier2VerifyFile] says about anything actually sitting in this app's storage — the same
+ *    predicate `DwTier2ModelController` runs on every download and every staged copy.
  *
  * COST: it hashes every file in that directory. With the real 2.59 GB E2B artifact present that took
  * **16.9 s** on the fleet's SM-M325F (2026-08-13), against 1.7 s with only a 100 MB slice there. That
@@ -115,10 +110,9 @@ class DwTier2RowProbeTest {
         val choices = recommendation.tier2Choices
         log("  DW_TIER2_CATALOGUE size : ${DW_TIER2_CATALOGUE.size}")
         log("  tier2Choices size       : ${choices.size}")
-        log("  DW_TIER2_UNJUDGED size  : ${DW_TIER2_UNJUDGED.size}")
         log("  DW_TIER2_RUNTIME_PRESENT: $DW_TIER2_RUNTIME_PRESENT")
 
-        val intro = dwTier2ListIntro(choices.size, DW_TIER2_UNJUDGED.size)
+        val intro = DW_TIER2_LIST_INTRO
         var total = words(intro) + words("Language models")
         log("")
         log("  HEADING + INTRO (${words("Language models") + words(intro)} words)")
@@ -142,23 +136,11 @@ class DwTier2RowProbeTest {
             log("      \"$sentence\"")
         }
 
-        DW_TIER2_UNJUDGED.forEach { model ->
-            val sentence = dwTier2UnjudgedSentence(model)
-            val n = words(sentence) + words(model.modelId) + words(DW_TIER2_UNJUDGED_LABEL)
-            total += n
-            log("")
-            log("  UNJUDGED ROW ${model.modelId}  —  $n words")
-            log("    verdict label          : \"$DW_TIER2_UNJUDGED_LABEL\"")
-            log("    onDiskBytes            : ${model.onDiskBytes}")
-            log("    SENTENCE (${words(sentence)} words in the sentence alone):")
-            log("      \"$sentence\"")
-        }
-
         log("")
         log("  WHOLE SECTION, EVERY WORD ON SCREEN: $total")
     }
 
-    /** No control may be drawn while nothing can load a model. Checked, not assumed. */
+    /** Whether an install control is drawn on this phone, per row and connection. */
     private fun theGate(reading: DwDeviceMeasurement) {
         head("THE GATE — may an install control be drawn on this phone?")
         val choices = dwRecommendTiers(reading, DwConnection.UNMETERED).tier2Choices
@@ -166,9 +148,7 @@ class DwTier2RowProbeTest {
             DwConnection.entries.forEach { connection ->
                 log(
                     "  ${choice.plan.modelId} / $connection : " +
-                        "${dwTier2InstallMayBeOffered(choice, connection)} " +
-                        "(with a runtime present it would be " +
-                        "${dwTier2InstallMayBeOffered(choice, connection, runtimePresent = true)})"
+                        "${dwTier2InstallMayBeOffered(choice, connection)}"
                 )
             }
         }
@@ -197,7 +177,7 @@ class DwTier2RowProbeTest {
         }
         log("  pinned artifacts this build would accept:")
         DW_TIER2_ARTIFACTS.forEach {
-            log("    ${it.fileName}  ${it.bytes} bytes  approval=${it.needsUpstreamApproval}")
+            log("    ${it.fileName}  ${it.bytes} bytes  url=${it.url}")
         }
     }
 
