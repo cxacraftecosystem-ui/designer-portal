@@ -337,9 +337,8 @@ export function RequirePasswordChangeDialog({
             sign-in must choose a new password before they can do anything else.
           </p>
           <p className="text-sm leading-6 text-ink-700">
-            Their present password stays as it is — it opens the door once more, to the screen where they choose the new
-            one, and that screen asks for it. Somebody who signs in with Google is asked for it too; if they do not know
-            it, they need a password link.
+            Their current password still works once, to reach the screen where they choose a new one.
+            Somebody who signs in with Google is asked for it too; if they do not know it, they need a password link.
           </p>
           <label className="flex items-start gap-2 text-sm text-ink-700">
             <input
@@ -351,10 +350,6 @@ export function RequirePasswordChangeDialog({
             />
             <span>Also issue a password link — shown to you once, on this page, to send them yourself</span>
           </label>
-          <p className="text-xs leading-5 text-ink-500">
-            Phones on version 0.0.15 or older still say “An administrator set your password” — only a change was
-            required.
-          </p>
         </div>
       ) : null}
     </FieldDialog>

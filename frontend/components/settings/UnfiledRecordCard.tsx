@@ -190,10 +190,10 @@ export function UnfiledRecordDialog({
         `Delete this ${record.singular} permanently?`,
         // NAMES THE RECORD AND SAYS "permanent" IN WORDS. A destructive prompt that says only
         // "are you sure?" is a prompt about nothing in particular.
-        `“${record.row.title}” will be deleted from the repository. This cannot be undone — there is no trash on this record type and nothing to restore it from.`,
+        `“${record.row.title}” will be deleted permanently. This cannot be undone.`,
         record.bucket === "media"
           ? "The stored file is deleted from storage as well as the record of it."
-          : "Anything attached to it — photographs, recordings, documents — is NOT deleted. Those files stay in the repository with nothing pointing at them."
+          : "Anything attached to it — photographs, recordings, documents — is kept, under Miscellaneous Media."
       ),
       confirmLabel: "Delete permanently"
     });
@@ -273,8 +273,7 @@ export function UnfiledRecordDialog({
               /* The server sent a bucket this build has never heard of — a client one deploy behind.
                  Saying so beats rendering a link to a page picked by a guess. */
               <p className="rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-[11px] leading-4 text-ink-500">
-                This build does not know where a “{record.bucket}” record opens, so it cannot offer a
-                link to it. The two actions below still work.
+                This record cannot be opened from here. The two actions below still work.
               </p>
             )}
           </div>
@@ -289,16 +288,16 @@ export function UnfiledRecordDialog({
                  honest answer is that the repository holds no workshop yet. */
               workshops.length === 0 ? (
                 <p className="text-[11px] leading-4 text-ink-500">
-                  There is no workshop in the repository to file this under yet. Create one on this
-                  page first, then come back and re-check.
+                  There are no workshops to file this under. Create one first, then come back and check
+                  again.
                 </p>
               ) : (
                 <p className="text-[11px] leading-4 text-ink-500">
                   {workshopsComplete
-                    ? "Every workshop is offered, including ones with no dates — a workshop with no dates can never be chosen by the automatic check, which is one reason its records end up on this list."
-                    : "This server sent only the workshops that carry dates, so a workshop with no start or end date is NOT in this list. Add dates to it, or open the record itself, to file something there."}{" "}
-                  Only fills the empty column: if somebody filed this record while you were reading,
-                  this refuses and says who.
+                    ? "Every workshop is offered, including ones without dates."
+                    : "Only workshops with dates are listed here. To file something under a workshop without dates, add dates to it, or open the record itself."}{" "}
+                  Only fills an empty workshop: if somebody filed this record in the meantime, you are told
+                  who.
                 </p>
               )
             }
@@ -332,7 +331,7 @@ export function UnfiledRecordDialog({
               {busy === "discard" ? "Deleting…" : "Discard and delete permanently"}
             </button>
             <p className="mt-1.5 text-[11px] leading-4 text-ink-500">
-              Permanent. There is no trash for this record type and nothing to restore it from.
+              Permanent. This cannot be undone.
             </p>
           </div>
         </div>

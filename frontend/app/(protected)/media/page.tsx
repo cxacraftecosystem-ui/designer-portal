@@ -562,7 +562,7 @@ function MediaPageBody() {
         setError(
           `${failed.length} of ${selectedFiles.length} file(s) failed to upload: ${failed.map((item) => item.name).join(", ")}. ` +
             reason +
-            "The rest were saved — remove the ones that landed and upload again."
+            "The rest were saved — remove the ones that uploaded, then upload the others again."
         );
         return;
       }
@@ -596,7 +596,7 @@ function MediaPageBody() {
         "Remove this media file?",
         // Android's "Permanently delete recording?" says the same thing: the file leaves storage, so
         // there is nothing left to re-link afterwards.
-        "This deletes the file from storage and its record from the database. It cannot be undone, and the file can no longer be re-linked.",
+        "This permanently deletes the file. It cannot be undone, and the file can no longer be attached to a record.",
         "Any transcript generated from it is deleted with it."
       ),
       confirmLabel: "Remove file"
@@ -646,7 +646,7 @@ function MediaPageBody() {
     <>
       <PageHeader
         title="Miscellaneous Media"
-        description="Upload media — images, videos, audio and files go to the same repository backend. Audio is queued for transcription after upload."
+        description="Upload media — images, videos, audio and files. Audio is transcribed after it uploads."
         icon={<Images className="h-5 w-5" aria-hidden />}
       />
       {error ? <div className="mb-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div> : null}
@@ -656,7 +656,7 @@ function MediaPageBody() {
           files={selectedFiles}
           onFilesChange={setSelectedFiles}
           title="Capture media"
-          description="Images, videos, audio and files upload to the same repository backend. Audio is queued for transcription after upload."
+          description="Images, videos, audio and files. Audio is transcribed after it uploads."
         />
         <div className="grid gap-3 md:grid-cols-2">
           {/* DICTATED, and Android has been since the `TextInput` default flipped: this is the
@@ -811,7 +811,7 @@ function MediaPageBody() {
               setSearch(value);
               setPage(1);
             }}
-            placeholder="Search media by filename, caption, or MIME type"
+            placeholder="Search media by filename, caption, or file type"
           />
           {/* Why some rows' Delete and Transcribe now are held — said once, the rows marked in words. */}
           <HeldPostNotice

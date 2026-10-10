@@ -159,9 +159,7 @@ export function cachedQuestionnaireNotice(when: string | null, version: number):
   const whenPart = when && when !== "-" ? ` on ${when}` : "";
   return (
     `You are reading the copy this browser downloaded${whenPart} (version ${version}). You can read it ` +
-    "and check what has already been recorded. ANSWERS CANNOT BE SAVED without a connection: whether " +
-    "a question may still be answered is something only the server knows, so this app will not record " +
-    "an answer it might have to attach to different wording later."
+    "and check what has already been recorded. Connect to the internet to save answers."
   );
 }
 

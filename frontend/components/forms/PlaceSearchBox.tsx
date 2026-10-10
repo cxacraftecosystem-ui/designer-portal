@@ -174,7 +174,7 @@ export function PlaceSearchBox({
       : state === "searching"
         ? "Searching…"
         : state === "failed"
-          ? (problem ?? "The place search did not answer.")
+          ? (problem ?? "Place search did not respond. Try again.")
           : state === "done"
             ? hits.length
               ? `${hits.length} place${hits.length === 1 ? "" : "s"} found. Use the arrow keys to review them.`
@@ -187,8 +187,7 @@ export function PlaceSearchBox({
   if (!placeSearchAvailable()) {
     return (
       <p className="text-xs leading-5 text-ink-500">
-        Place search needs NEXT_PUBLIC_MAPTILER_API_KEY, which this build does not have. Pan the map, or type the
-        coordinates in.
+        Place search isn&apos;t available right now. Move the map or type the coordinates.
       </p>
     );
   }

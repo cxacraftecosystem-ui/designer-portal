@@ -25,7 +25,7 @@ export function DownloadCsvButton({
       const response = await fetch(`${API_BASE}/api${path}`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {}
       });
-      if (!response.ok) throw new Error(`Unable to export CSV (HTTP ${response.status})`);
+      if (!response.ok) throw new Error("The CSV export didn't finish. Please try again.");
       const blob = await response.blob();
       const url = window.URL.createObjectURL(blob);
       const anchor = document.createElement("a");

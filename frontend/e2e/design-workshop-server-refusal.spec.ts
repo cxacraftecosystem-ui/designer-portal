@@ -103,7 +103,7 @@ test("the workshop list reports a 500 as a server fault, not as a missing connec
   await page.goto("/design-workshops");
 
   await expect(
-    page.getByText(/There is no connection, so this shows only the design workshops saved in this browser/i),
+    page.getByText(/offline, so this shows only the design workshops started on this device/i),
     "the amber offline banner must not be raised for a repository that answered"
   ).toHaveCount(0);
   await expect(
@@ -150,8 +150,8 @@ test("a stage the repository refuses is named and stops being retried, instead o
 
   // On screen: the refusal, and a way to act on it — not a silent "waiting" row.
   await expect(
-    page.getByText(/The repository refused stage/i),
-    "the designer is told the repository refused it"
+    page.getByText(/couldn't be saved:/i).first(),
+    "the designer is told the stage could not be saved"
   ).toBeVisible({ timeout: 15_000 });
   await expect(page.getByRole("button", { name: /try again/i }).first()).toBeVisible();
 });

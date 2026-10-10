@@ -158,7 +158,7 @@ test("an answer with nothing in it is never told to narrow or to page", () => {
   // type" over a repository holding hundreds.
   const sentence = cappedListNotice(cutOf(0, 431, "artisans"));
   expect(sentence).toContain("431");
-  expect(sentence).toContain("this is not an empty repository");
+  expect(sentence).toContain("but they do exist");
   expect(sentence).not.toContain("typing here");
   expect(sentence).not.toContain("pager");
   // And the same is true with a pager on screen: nothing loaded is not something paging fixes.

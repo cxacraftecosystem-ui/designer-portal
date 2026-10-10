@@ -96,7 +96,7 @@ export function strandedPageSentence(total: number, page: number): string {
   const object = total === 1 ? "it" : "them";
   return page > 1
     ? `${subject} still on record — on earlier pages. Use the pager below to reach ${object}.`
-    : `${subject} still on record, but none came back on this request. Reload the page to see ${object}.`;
+    : `${subject} still on record, but none could be loaded. Reload the page to see ${object}.`;
 }
 
 /**

@@ -121,7 +121,7 @@ test("the cap sentence says what the cap now falls on first", () => {
   */
   const lines = scopeNoticeLines(SKETCH_REF, payload({ truncated: true }));
   expect(lines).toContain(
-    "Only the first 50 matches are listed and the cap falls on the rest first — type more of the name to narrow them."
+    "Only the first 50 matches are listed, tentative ones first — type more of the name to narrow them."
   );
   // And the box it points at is real: this picker's search is the server's, over every row, not a
   // filter over the page (§11.5). The clause naming it survives on both branches.

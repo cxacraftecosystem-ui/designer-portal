@@ -342,7 +342,7 @@ export function AadhaarField({
       ) : (
         <p id={hintId} className="text-xs text-ink-muted">
           {required
-            ? "Required: 12 digits from the artisan's card. It is the only identifier that tells two researchers they have documented the same person, so it is what keeps one artisan from becoming two records — that is the reason to give when you ask for it."
+            ? "Required: 12 digits from the artisan's card. It stops the same artisan being recorded twice — that is the reason to give when you ask for it."
             : "12 digits from the artisan's card. Used to recognise someone another researcher has already documented."}
           {digits.length > 0 && !complete ? ` ${digits.length} of ${AADHAAR_LENGTH} entered.` : ""}
         </p>
@@ -412,8 +412,8 @@ export function AadhaarField({
             </Link>
           )}
           <p className="mt-1 text-xs">
-            You can still save — a genuine duplicate will be refused by the server, so{" "}
-            {onUseExisting ? "use" : "open"} the existing record if this is the same person.
+            You can still save, but a duplicate will not be accepted — {onUseExisting ? "use" : "open"} the existing
+            record if this is the same person.
           </p>
         </div>
       ) : null}

@@ -63,8 +63,7 @@ export function AppUpdateDialog({ open, reloading, onReload }: { open: boolean; 
       title="Update required"
       description={
         <>
-          A new version of Design Prototype Workshop has been deployed since this tab was opened, and this one can
-          no longer load parts of the app. Reload to continue.
+          A new version of Design Prototype Workshop is available. Reload the page to continue.
         </>
       }
       footer={

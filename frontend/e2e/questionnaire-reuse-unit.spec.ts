@@ -250,9 +250,9 @@ test("the alternative route is offered whatever the length of the workshop list"
   // sentence has to appear before the `) : (` as well as after it.
   const withList = between(block, "workshops.length ?", ") : (");
   expect(withList, "a full dropdown needs the sentence too — the list is one page").toContain(
-    "attach the copy from its own page afterwards"
+    "attach the copy from its own page"
   );
-  expect(withList, "and it must say why the list is not the whole truth").toContain("one page of the newest workshops");
+  expect(withList, "and it must say why the list is not the whole truth").toContain("shows the newest workshops only");
 });
 
 /**

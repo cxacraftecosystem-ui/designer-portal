@@ -367,9 +367,10 @@ test("a deliberate stop says nothing; the four real failures each say something 
   expect(problems[0]).toContain("Allow it for this site");
   expect(problems[2]).toContain("No microphone was found");
 
-  // The unknown case still names the code rather than saying "dictation failed".
+  // The unknown case gives a plain next step and never prints the raw error code.
   expect(describeSpeechError("service-not-allowed")).toBe(describeSpeechError("not-allowed"));
-  expect(describeSpeechError("wobbly")).toContain("(wobbly)");
+  expect(describeSpeechError("wobbly")).toContain("Press the microphone to try again");
+  expect(describeSpeechError("wobbly")).not.toContain("wobbly");
 });
 
 test("onend releases the handle and onerror does not, because onend follows onerror", () => {

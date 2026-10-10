@@ -380,7 +380,7 @@ test("the three states a fetched list has are each answered in words", () => {
   // NOTHING ATTACHED: said out loud, and with the FK-versus-tag disagreement named rather than left
   // as an inexplicable blank beside a filled box.
   expect(source).toContain("No files are listed against the");
-  expect(source).toContain("linked in a way this listing does not follow");
+  expect(source).toContain("some of the ones it counted are not shown in this list");
   // AND A FAILED FETCH IS NOT AN EMPTY LIST. "This record has no media" and "we could not ask" are
   // different facts and only one is a reason to stop looking.
   expect(source).toContain("could not be listed, so this is a plain box");
@@ -396,7 +396,7 @@ test("the hydrated value is always editable and is never stranded", () => {
   expect(source).toContain("maxLength={field.maxLength || undefined}");
   // And a later visit is told what cannot be recovered: WHICH files an earlier clause named is stored
   // nowhere, so ticking replaces the clause rather than adding to it.
-  expect(source).toContain("Which files those were is recorded nowhere");
+  expect(source).toContain("so ticking here replaces that part of it rather than");
 });
 
 test("the fetch is guarded against its own late answers and against the endpoint's page ceiling", () => {

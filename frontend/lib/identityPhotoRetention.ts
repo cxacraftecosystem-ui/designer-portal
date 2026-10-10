@@ -113,4 +113,4 @@ export function retentionOutcomeSentence(result: DwPhotoRetentionResult): string
  * screen is where the cost of not deciding is paid, and it is the only place it is visible.
  */
 export const DW_PHOTO_UNDECIDED =
-  "This photograph was uploaded to the record when you attached it, so it is stored right now. Choose what happens to it: an identity card is stored unmasked, unlike the number itself, which this repository masks everywhere it is shown.";
+  "This photograph was uploaded to the record when you attached it, so it is stored right now. Choose what happens to it: an identity card is stored unmasked, unlike the number itself, which is masked everywhere it is shown.";

@@ -37,8 +37,8 @@ export function OfflineDialog({ open, onDismiss }: { open: boolean; onDismiss: (
       title="You are offline"
       description={
         <>
-          This device has lost its connection. Anything you have already typed stays on screen, and saving
-          still works &mdash; the entry is held on this device and sent the moment the connection returns.
+          You are offline. Anything you have already typed stays on screen, and saving still works &mdash;
+          your entry will upload when you are back online.
         </>
       }
       footer={
@@ -48,9 +48,9 @@ export function OfflineDialog({ open, onDismiss }: { open: boolean; onDismiss: (
       }
     >
       <p className="mt-2 text-sm leading-6 text-ink-500">
-        Queued entries are listed at the top of the page until they send, and they live in THIS browser
-        &mdash; do not clear its data or hand the laptop on while the outbox still has something in it.
-        Searching the repository and opening records you have not already loaded still need a connection.
+        Entries waiting to upload are listed at the top of the page. They are kept in this browser, so do not
+        clear its data or switch devices until they have uploaded. Searching and opening records you have not
+        already loaded need a connection.
       </p>
     </FieldDialog>
   );

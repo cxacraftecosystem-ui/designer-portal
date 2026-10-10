@@ -29,8 +29,7 @@ export default function RootError({ error, reset }: { error: Error & { digest?: 
         title="This page stopped before it finished"
       >
         <DeadEndText>
-          Something went wrong while the app was drawing this page. It is a fault in the app, not something you did, and
-          the same page often renders correctly on a second attempt.
+          Something went wrong while loading this page. It was not anything you did, and trying again usually works.
         </DeadEndText>
         {/* The digest is the only handle a designer has on a production failure: the real message is
             redacted before it reaches the browser, and a phone in a village has no console to read.

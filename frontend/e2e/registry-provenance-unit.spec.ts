@@ -46,20 +46,19 @@ test("a registry served from this tab's memory says so, and names the reload tha
   const sentence = registryProvenanceNotice("memory");
 
   expect(sentence, "this is the state that used to be silent").not.toBe("");
-  expect(sentence).toContain("has not re-checked");
+  expect(sentence).toContain("may be out of date");
   // The action has to be the one that actually works: a reload empties the module cache by
   // definition, whereas nothing on the stage form revalidates it.
-  expect(sentence).toContain("reload the page");
-  expect(sentence).toContain("a field added since will not appear");
+  expect(sentence).toContain("Reload the page");
+  expect(sentence).toContain("fields added since");
 });
 
-test("a registry read off disk after a failed fetch keeps its original wording", () => {
+test("a registry read off disk after a failed fetch says it is the copy saved on this device", () => {
   const sentence = registryProvenanceNotice("cache");
 
-  // Verbatim from the banner that was already on screen. Designers in the field have read this
-  // sentence; rewording one that works is a cost with no benefit.
-  expect(sentence).toContain("the field list saved in this browser, because the server could not be reached");
-  expect(sentence).toContain("the last time this laptop had a connection");
+  // Plain words since the 2026-10-10 copy rewrite: the cause (no connection) and what it means.
+  expect(sentence).toContain("Couldn't connect, so this is the copy of the form saved on this device");
+  expect(sentence).toContain("the last time you were online");
 });
 
 test("the two stale states do not print the same sentence", () => {

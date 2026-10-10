@@ -316,7 +316,7 @@ test("a truncated role match is stated, and never tells the reader to narrow the
   // The cut happened UPSTREAM of the search, in the account read, so narrowing the roster search
   // puts back nothing. The move that works is naming fewer tiers, and that is what it says.
   expect(notice).not.toContain("narrow the search");
-  expect(notice).toContain("fewer tiers");
+  expect(notice).toContain("fewer roles");
   // No limit read means no number invented, and the fact is stated anyway.
   const unnumbered = roleMatchCutNotice(true);
   expect(unnumbered).not.toBe("");
@@ -533,7 +533,7 @@ test("the sort control says what a click will do, and warns where the blanks wil
   // Postgres puts NULLs first on `desc`. On this column that IS the outstanding-invitation view —
   // said out loud, because a table opening on ten blank cells otherwise reads as a broken screen.
   expect(sortActionLabel("access", base, "firstSeen", "First signed in")).toBe(
-    "Sort by First signed in, newest first — rows with no date sort first"
+    "Sort by First signed in, newest first — entries with no date sort first"
   );
 });
 
@@ -699,8 +699,8 @@ test("every control's visible label is its accessible name", () => {
   }
   // And the constants themselves are §4.8's words.
   expect(ROSTER_LABELS.clearAll).toBe("Clear every filter");
-  expect(ROSTER_LABELS.accessRoles).toBe("Tier they join at");
-  expect(ROSTER_LABELS.designerRoles).toBe("Tier of the linked account");
+  expect(ROSTER_LABELS.accessRoles).toBe("Role they join with");
+  expect(ROSTER_LABELS.designerRoles).toBe("Role of the linked account");
   expect(ROSTER_LABELS.dateRange).toBe("Date range");
 });
 

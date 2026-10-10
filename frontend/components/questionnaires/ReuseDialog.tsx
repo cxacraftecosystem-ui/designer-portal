@@ -482,11 +482,9 @@ export function ReuseDialog({
                 into that workshop", and the route out is one sentence.
               */}
               <p className="text-xs leading-5 text-ink-500">
-                This list is one page of the newest workshops, so a workshop you may write to can be missing from it —
-                including a deleted one an admin can still edit, and one this box cannot reach because it searches only
-                the rows drawn here. If the one you want is not here, leave this as &ldquo;{ATTACH_LATER}&rdquo; and
-                attach the copy from its own page afterwards: that asks the server the same question this dropdown
-                would have.
+                This list shows the newest workshops only, and the box searches only what is listed. If the one you
+                want is not here, leave this as &ldquo;{ATTACH_LATER}&rdquo; and attach the copy from its own page
+                afterwards.
               </p>
             </div>
           ) : (
@@ -505,7 +503,7 @@ export function ReuseDialog({
               ) : null}
               <p className="text-sm leading-6 text-ink-700">
                 No design workshop is on offer here, so the copy is made unattached. You can attach it from its own
-                page afterwards — that asks the server the same question this dropdown would have.
+                page afterwards.
               </p>
             </div>
           )}

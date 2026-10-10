@@ -152,7 +152,7 @@ test("a site with no API address is not a server with no Gemini key", () => {
   const unconfiguredSite = new ApiUnconfiguredError();
   expect(classifyMeasurementFailure(unconfiguredSite).kind).toBe("app-unconfigured");
   expect(classifyMeasurementFailure(unconfiguredSite).sentence).toBe(unconfiguredSite.message);
-  expect(classifyMeasurementFailure(unconfiguredSite).sentence).toContain("redeploy");
+  expect(classifyMeasurementFailure(unconfiguredSite).sentence).toContain("contact your administrator");
   // It is NOT the server's sentence — no server sent it — and the flag has to say so.
   expect(classifyMeasurementFailure(unconfiguredSite).serverSaidIt).toBe(false);
 
@@ -230,7 +230,7 @@ test("apiFetch's fabricated 'HTTP 503' is never shown as though the server had s
   // not the photograph, and only an administrator can change it.
   const sentence = classifyMeasurementFailure(bodyless(503)).sentence;
   expect(classifyMeasurementFailure(bodyless(503)).kind).toBe("provider-unconfigured");
-  expect(sentence).toContain("administers the server");
+  expect(sentence).toContain("an administrator can turn it on");
   expect(sentence).toContain("photograph is fine");
 });
 

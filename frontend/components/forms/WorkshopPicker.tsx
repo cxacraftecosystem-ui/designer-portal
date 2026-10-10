@@ -677,8 +677,8 @@ export function WorkshopPicker({
       */}
       <p id={hintId} className="text-xs text-ink-500">
         {view.typesServed
-          ? "Chooses which workshops the box below lists. It is not saved on this record — the workshop you pick already carries its own type."
-          : "These are this app's built-in types of workshop — connect once to refresh them. They choose which workshops the box below lists, and are not saved on this record."}
+          ? "Chooses which workshops the box below lists. It is not saved on this record."
+          : "These are the standard types of workshop — connect once to refresh them. They choose which workshops the box below lists, and are not saved on this record."}
       </p>
       {/*
         R2: THE SECOND BOX, AND THERE IS NEVER A THIRD. One of these two, decided by the flag on the

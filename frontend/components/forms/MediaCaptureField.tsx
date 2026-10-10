@@ -718,8 +718,8 @@ export function MediaCaptureField({
         </div>
         {recording ? <RecordingStrip stream={stream} elapsedMs={elapsedMs} /> : null}
         <p className="text-xs text-ink-500">
-          Drag and drop files here, or use the buttons above. Uploading starts the moment a file is attached — saving
-          then only links it — and captured files go up unchanged so embedded EXIF metadata is retained.
+          Drag and drop files here, or use the buttons above. Files start uploading as soon as they are attached, and
+          go up unchanged so their photo details (date, place, camera) are kept.
         </p>
       </div>
       {/*

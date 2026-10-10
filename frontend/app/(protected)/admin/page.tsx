@@ -239,7 +239,7 @@ export default function AdminHubPage() {
       // The pending count rides on the tile because this is the surface an admin opens anyway;
       // see `usePendingAccessCount` for why there is no timer behind it.
       description:
-        "The platform allow-list, and the queue of people waiting to be approved. Approve, refuse, suspend and restore — nothing is ever deleted.",
+        "The addresses allowed to sign in, and the people waiting to be approved. Approve, refuse, suspend and restore — nothing is ever deleted.",
       href: "/admin/access",
       // NOT ShieldCheck — "Workshop access" above already wears it, and two shields on one grid of
       // twelve tiles is how an admin ends up on the wrong screen twice before reading the labels.
@@ -262,7 +262,7 @@ export default function AdminHubPage() {
       // only because their server gates are different predicates that could drift from it.
       label: "Types of workshop",
       description:
-        "The list behind the “Type of workshop” dropdown on every record form, and which table each type’s workshops come from.",
+        "The “Type of workshop” dropdown on every record form, and which kind of workshop each type lists.",
       href: "/admin/workshop-types",
       icon: Tags,
       visible: isAdmin(user)
@@ -322,7 +322,7 @@ export default function AdminHubPage() {
     },
     {
       label: "App settings",
-      description: "Global app configuration and OTA updates.",
+      description: "App-wide settings and app updates.",
       href: "/settings",
       icon: Settings,
       visible: isMasterAdmin(user)
@@ -374,8 +374,8 @@ export default function AdminHubPage() {
         <div className="border-b border-line-200 px-4 py-3">
           <h2 className="font-display font-bold text-ink-900">Recovered recordings</h2>
           <p className="text-sm text-ink-500">
-            Media still tagged to a deleted record. The files are intact in object storage — relink them to a live record from
-            the Media page.
+            Media still linked to a deleted record. The files are safe — relink them to a live record from the Media
+            page.
           </p>
           <HeldPostNotice
             refusal={mediaListNotice(visibleOrphans.map((item) => heldFor(mediaWorkshopIds(item))), "relinked")}

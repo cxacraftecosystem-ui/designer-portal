@@ -67,8 +67,8 @@ export function rowStanding(viewer: User | null | undefined, target: User): RowS
 /** The words a row with no controls says instead. */
 export const STANDING_LABEL: Record<Exclude<RowStanding, "MANAGED">, string> = {
   SELF: "You",
-  ABOVE: "Above your tier",
-  PEER: "Peer tier"
+  ABOVE: "Above your role",
+  PEER: "Same role as yours"
 };
 
 /**
@@ -152,7 +152,7 @@ export function createdPanelLinkNote(
   if (isMasterAdmin(viewer) && isMasterAdmin(account)) {
     return "No master admin can issue a password link for another master admin, or change its password — hand over the password you typed.";
   }
-  return "This account is at your own tier, so only a higher tier can issue its password link or change its password. Hand over the password you typed.";
+  return "This account has the same role as yours, so only a higher role can issue its password link or change its password. Hand over the password you typed.";
 }
 
 /**

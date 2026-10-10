@@ -203,7 +203,7 @@ export function MediaJobsPanel() {
       await retryMediaProcessingJob(job.id);
       setNotice(
         `${JOB_TYPE_LABEL[String(job.jobType).toUpperCase()] ?? humanize(String(job.jobType))} re-queued for ` +
-          `${job.mediaFile?.originalFilename ?? "this file"}. The worker picks it up on its next pass.`
+          `${job.mediaFile?.originalFilename ?? "this file"}. It will run again shortly.`
       );
       setLoadToken((token) => token + 1);
     } catch (err) {
@@ -225,7 +225,7 @@ export function MediaJobsPanel() {
             // server is idle, and never during a rate-limit cooldown, so an empty drain is usually a
             // closed window rather than an empty queue. Saying "nothing to run" here would have an
             // admin press it twice and conclude the button is broken.
-            "No job was eligible to run just now — transcription waits for the off-peak window (or an idle server) and pauses during a provider cooldown. Queued jobs stay queued."
+            "Nothing could run just now — transcription runs in quieter hours and pauses briefly when the transcription service is busy. Queued jobs stay queued."
           : `Ran ${run.processed} job${run.processed === 1 ? "" : "s"}: ${run.succeeded} succeeded, ${run.failed} failed.`
       );
       setLoadToken((token) => token + 1);

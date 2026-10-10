@@ -180,7 +180,7 @@ test.describe("the page prints the server's sentences", () => {
 
   test("a failed read is a card that says why, not a card that is not there", () => {
     expect(PAGE_CODE).toContain('role="alert"');
-    expect(PAGE_CODE).toContain("which is NOT the same as there being nobody in it");
+    expect(PAGE_CODE).toContain("{error} This list couldn&apos;t be loaded.");
   });
 });
 

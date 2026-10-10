@@ -62,7 +62,7 @@ const CLEAN = {
  * ──────────────────────────────────────────────────────────────────────────── */
 
 test("only a pass that carried everything may say the repository has it", () => {
-  expect(syncPassNote(CLEAN, "this file is")).toBe("Saved, and sent to the repository.");
+  expect(syncPassNote(CLEAN, "this file is")).toBe("Saved, and uploaded.");
   expect(syncPassLanded(CLEAN)).toBe(true);
 });
 
@@ -73,7 +73,7 @@ test("a pass another tab is already running is not a pass that sent anything", (
   const declined = { ...CLEAN, stagesSent: 0, mediaUploaded: 0, pending: 3 };
   expect(syncPassLanded(declined)).toBe(false);
   const note = syncPassNote(declined, "this file is");
-  expect(note).not.toContain("sent to the repository");
+  expect(note).not.toContain("Saved, and uploaded");
   expect(note, "the designer needs to know something else is carrying it").toContain(
     "Another sync is already running"
   );
@@ -81,12 +81,12 @@ test("a pass another tab is already running is not a pass that sent anything", (
 
 test("an offline pass and a refused pass each say which they were", () => {
   const offline = { ...CLEAN, stagesSent: 0, mediaUploaded: 0, stoppedOffline: true, pending: 1 };
-  expect(syncPassNote(offline, "this file is")).toContain("no connection");
+  expect(syncPassNote(offline, "this file is")).toContain("when you're back online");
   expect(syncPassLanded(offline)).toBe(false);
 
   const refused = { ...CLEAN, failed: 1, pending: 1 };
   expect(syncPassNote(refused, "this file is"), "a refusal is not a signal problem").toContain(
-    "the repository refused something"
+    "couldn't be uploaded"
   );
   expect(syncPassLanded(refused)).toBe(false);
 });
@@ -94,7 +94,7 @@ test("an offline pass and a refused pass each say which they were", () => {
 test("a pass that ran and left work behind does not report an all-clear either", () => {
   const partial = { ...CLEAN, pending: 2 };
   expect(syncPassLanded(partial)).toBe(false);
-  expect(syncPassNote(partial, "this file is")).toContain("still has work outstanding");
+  expect(syncPassNote(partial, "this file is")).toContain("still waiting to upload");
 });
 
 /* ────────────────────────────────────────────────────────────────────────────
@@ -170,7 +170,7 @@ test("a queued rating is never drawn as a rating the repository holds", () => {
   expect(queued).toBeGreaterThan(-1);
   expect(rated, "the ranking is the repository's; a card must not add a score it is still holding")
     .toBeGreaterThan(queued);
-  expect(body, "and it says so").toContain("has NOT reached the repository yet");
+  expect(body, "and it says so").toContain("hasn't been uploaded yet");
   // The queued box is not the green one. A colour is not the signal — see the comment beside it —
   // but spending the card's only affirmative styling on work that has not moved is the false
   // all-clear this repository keeps having to un-ship.
@@ -210,7 +210,7 @@ test("a queued rating is handed to the drain, not left for an `online` event thi
   // And the sentence the designer reads changes with it, in both directions.
   expect(CARD_SOURCE, "the drained case says the repository has it").toContain("outcome.sent");
   expect(CARD_SOURCE, "and the still-queued case no longer waits on an event").toContain(
-    "This browser has already "
+    "has now been uploaded"
   );
 });
 

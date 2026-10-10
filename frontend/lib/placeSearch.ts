@@ -115,7 +115,7 @@ export async function searchPlaces(
   if (!maptilerKey) {
     // Not reachable from the UI, which hides the box without a key — but a throw here means a future
     // caller that forgets the check fails loudly instead of searching against `?key=undefined`.
-    throw new ApiError(503, "This build has no map key, so places cannot be looked up.", null);
+    throw new ApiError(503, "Place search isn't available right now. Move the map or type the coordinates.", null);
   }
 
   const parameters = new URLSearchParams({
@@ -137,7 +137,7 @@ export async function searchPlaces(
     { signal }
   );
   if (!response.ok) {
-    throw new ApiError(response.status, `The place search answered ${response.status}.`, null);
+    throw new ApiError(response.status, "Place search did not respond. Try again.", null);
   }
 
   let body: { features?: GeocodeFeature[] };
@@ -147,7 +147,7 @@ export async function searchPlaces(
     // A 200 carrying something that is not JSON is the captive portal this repo has already been
     // bitten by (see the "Sync now" note in lib/offline.ts): the wi-fi answered, the geocoder did
     // not. 502 puts it in the try-again bucket below, which is the truthful next move.
-    throw new ApiError(502, "The place search answered with something that could not be read.", null);
+    throw new ApiError(502, "Place search did not respond. Try again.", null);
   }
 
   return (body.features ?? [])
@@ -183,10 +183,10 @@ export async function searchPlaces(
  */
 export function describeSearchFailure(error: unknown): string {
   if (isUnreachable(error)) {
-    return "No connection, so places cannot be looked up right now. The map still works, and the coordinate boxes need no network at all.";
+    return "No connection, so places cannot be looked up right now. The map and the coordinate boxes still work.";
   }
   if (isTransient(error)) {
-    return "The place search is not answering just now — this is the service, not your connection. Try again in a moment.";
+    return "Place search is not responding just now. Try again in a moment.";
   }
-  return "The place search refused this request: this build's map key may be missing, expired or out of quota. Nothing is wrong with what you typed, and an administrator can check the key.";
+  return "Place search isn't available right now. Move the map or type the coordinates.";
 }

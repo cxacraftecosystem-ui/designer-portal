@@ -210,7 +210,7 @@ export function mediaPickerNotice({
   }
   if (total === 0) {
     return query.trim()
-      ? `No ${noun.singular} in the repository matches “${query.trim()}”. The search asks the repository, not this page, so this is every ${noun.singular} you may read.`
+      ? `No ${noun.singular} in the repository matches “${query.trim()}”. This search covers every ${noun.singular} you may read.`
       : // "you may read" and not a flat "there is none": `list_media` composes `viewable_where`, so an
         // empty answer is a claim about this ACCOUNT'S view of the repository and never about the
         // repository. Stating it as the latter is how a reader concludes a colleague never uploaded
@@ -220,7 +220,7 @@ export function mediaPickerNotice({
   if (shown < total) {
     return (
       `Showing the ${shown} most recently uploaded of ${total} ${noun.plural}. ` +
-      `Type in the search box above to reach the rest — it asks the repository, so it searches every ` +
+      `Type in the search box above to reach the rest — it searches every ` +
       `${noun.singular} you may read, not only the ${shown} listed here.`
     );
   }
@@ -250,8 +250,8 @@ export function repositoryEntitlementNotice(rows: MediaFile[]): string | null {
   return (
     `${withheld} of the ${rows.length} listed ${withheld === 1 ? "is" : "are"} stored, but this account may not ` +
     `open the ${withheld === 1 ? "file" : "files"} ${withheld === 1 ? "itself" : "themselves"}. ` +
-    `${withheld === 1 ? "It" : "They"} can still be attached: this field stores a media id, and whether a ` +
-    `reader may open the bytes is decided each time the file is read.`
+    `${withheld === 1 ? "It" : "They"} can still be attached; whether someone may open a file is checked ` +
+    `each time it is opened.`
   );
 }
 

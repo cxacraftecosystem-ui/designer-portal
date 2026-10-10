@@ -136,13 +136,13 @@ test("a schema refusal is recorded, then cleared by the next app run once the se
   expect(
     refused.failure!.message,
     "and it does NOT tell the designer to correct an answer — no answer of theirs is involved"
-  ).toContain("out of step");
+  ).toContain("Reload the page to update the app");
   expect(
     refused.failure!.skewRun,
     "and it is marked as waiting for an update rather than for a person"
   ).toBeTruthy();
   await expect(
-    page.getByText(/out of step/i),
+    page.getByText(/Reload the page to update the app/i),
     "the designer is told; a stage that is silently not syncing is worse than one that says so"
   ).toBeVisible({ timeout: 15_000 });
 

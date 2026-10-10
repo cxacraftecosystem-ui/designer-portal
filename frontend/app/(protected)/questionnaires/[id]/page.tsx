@@ -998,7 +998,7 @@ export default function QuestionnaireDetailPage() {
             <h2 className="font-display text-lg font-bold text-ink-900">Recorded sittings</h2>
             <p className="mt-1 text-sm leading-6 text-ink-muted">
               One sitting is one filled-in copy of this questionnaire. Answers that arrived on the uploaded spreadsheet and
-              answers typed in the app are the same thing here — the source column is the only difference.
+              answers typed in the app are treated alike; each sitting just notes where it came from.
             </p>
           </div>
           <Link className="field-button-secondary" href={`/questionnaires/${id}/answer`}>

@@ -157,7 +157,7 @@ export default function ArtisansPage() {
     <>
       <PageHeader
         title="Artisans"
-        description="Create, search and maintain artisan profiles with craft, place and contact metadata."
+        description="Create, search and maintain artisan profiles with craft, place and contact details."
         icon={<Users className="h-5 w-5" aria-hidden />}
         // Gated, not merely locked: an ungated "New …" invited every tier to press a button that
         // lands on the route guard's refusal. Below researcher the honest UI is no button, matching
@@ -192,7 +192,7 @@ export default function ArtisansPage() {
           {[
             { href: artisanEntryHref("/tools/new", selectedArtisan), title: "Make a tool entry", body: "Document a tool used by this artisan.", icon: Hammer },
             { href: artisanEntryHref("/products/new", selectedArtisan), title: "Make a product entry", body: "Record an object, product or sample.", icon: Boxes },
-            { href: artisanEntryHref("/questionnaire", selectedArtisan), title: "Start questionnaire", body: "Open the interview with RESP prefilled.", icon: ClipboardList }
+            { href: artisanEntryHref("/questionnaire", selectedArtisan), title: "Start questionnaire", body: "Open the interview with this artisan filled in.", icon: ClipboardList }
           ].map((item) => (
             <Link key={item.href} href={item.href} className="panel group flex min-h-32 items-start gap-3 p-4 transition hover:-translate-y-0.5 hover:shadow-panel">
               <span className="grid h-11 w-11 shrink-0 place-items-center rounded-lg bg-field-200 text-field-700">

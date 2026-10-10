@@ -279,7 +279,7 @@ export function MediaRepositoryPicker({
           <p className="text-xs leading-5 text-ink-500">
             {`Anything already uploaded to the repository can be attached here instead of uploading it again. ` +
               `Attaching points ${label.toLowerCase()} at the ${noun.singular} that is already there` +
-              `${multiple ? "" : `, and replaces whatever this field held`} — no bytes are uploaded and nothing is copied.`}
+              `${multiple ? "" : `, and replaces whatever this field held`} — nothing is uploaded again and nothing is copied.`}
           </p>
 
           {/*
@@ -318,7 +318,7 @@ export function MediaRepositoryPicker({
                 // OFF, and the box above is why — see this file's header.
                 searchable={false}
                 // And therefore this sentence, in place of the default's "keep typing".
-                capHint="Use the search box above to reach the rest — it asks the repository rather than this page."
+                capHint="Use the search box above to reach the rest — it searches everything, not only this list."
                 // The commit is the Attach button below, not a tick and not a Confirm inside the
                 // panel: a Confirm that closed the panel without attaching anything would be a
                 // second, louder button that does nothing.
@@ -362,7 +362,7 @@ export function MediaRepositoryPicker({
               describedBy={noticeId}
               emptyLabel={notice}
               searchable={false}
-              capHint="Use the search box above to reach the rest — it asks the repository rather than this page."
+              capHint="Use the search box above to reach the rest — it searches everything, not only this list."
               // A picker inside a media box does not fill in a form field the reader is walking
               // through top to bottom, so throwing focus at whatever follows is wrong here.
               advanceOnSelect={false}

@@ -479,7 +479,7 @@ export default function SearchPage() {
                 a media type reaches media alone, and without the sentence a researcher reads an
                 unchanged Workshops list as the filter not working. */}
             <p className="text-xs text-ink-500">
-              Craft, artisan and media type narrow only the buckets that carry them.
+              Craft, artisan and media type narrow only the result types that have them.
             </p>
             {/* One line per picker that is not offering everything it claims to filter by. Nothing
                 at all when both are whole — rule 10: a list that quietly stops is indistinguishable

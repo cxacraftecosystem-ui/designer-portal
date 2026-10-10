@@ -1057,7 +1057,7 @@ const ADD_SCREENS: ReadonlyArray<{ screen: string; path: string[]; must: string[
       "setHeldBack(heldBackSentence(result));",
       "{applied !== null && heldBack ? (",
       // The rows a design workshop claims are not listed, and the report says so.
-      "record or file filed under a design &amp; prototype workshop is not listed"
+      "Records filed under a design &amp; prototype workshop are not listed here."
     ]
   },
   {
@@ -1224,7 +1224,7 @@ const SELF_RELEASE_SCREENS: ReadonlyArray<{ screen: string; path: string[]; must
       "const readerInspects = readerId !== null && baseline.includes(readerId);",
       "if (readerId && baseline.includes(readerId) && !selected.includes(readerId)) {",
       'setSaveError(selfReleaseRefused("INSPECTION"));',
-      '{selfReleaseRefusal("INSPECTION")} Your own row stays ticked;',
+      '{selfReleaseRefusal("INSPECTION")} Your own name stays ticked;',
       "readerInspects ? selfNoteId : null"
     ]
   },

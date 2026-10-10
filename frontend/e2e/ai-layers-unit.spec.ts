@@ -264,11 +264,11 @@ test("a kind or tier this build has never heard of degrades to an honest note, n
   // and a blank heading would be indistinguishable from a rendering bug. Android's
   // `UNSUPPORTED_SECTIONS` precedent, applied here.
   expect(layerKindLabel("DIARIZATION")).toContain("DIARIZATION");
-  expect(layerKindLabel("DIARIZATION")).toContain("does not know");
+  expect(layerKindLabel("DIARIZATION")).toContain("unfamiliar");
   expect(layerKindLabel("")).toBe("A layer with no kind recorded");
   expect(tierLabel("TIER_4")).toContain("TIER_4");
   expect(tierLabel("")).toBe("Tier not recorded");
-  expect(tierSentence("TIER_4")).toContain("does not know");
+  expect(tierSentence("TIER_4")).toContain("Reload the page to update the app");
 });
 
 test("the plain-word labels distinguish model prose from the artisan's own words", () => {
@@ -337,7 +337,7 @@ test("a reply that carried no reason never reaches the designer as a status code
   // It names the next move, and it deliberately does NOT claim the write did not land — a 502 from a
   // proxy sits perfectly happily in front of a write that succeeded.
   expect(shown).toContain("Reload");
-  expect(shown).toContain("cannot tell whether the change was recorded");
+  expect(shown).toContain("isn't clear whether your change was saved");
 
   // The same holds for a 500 with a JSON body that has no `detail` at all.
   expect(aiLayerProblem(new ApiError(500, "Internal Server Error", { error: "boom" }), "unused")).not.toMatch(/\d{3}/);
@@ -353,7 +353,7 @@ test("an offline failure says nothing is queued, because nothing is", () => {
   */
   const offline = aiLayerProblem(new TypeError("Failed to fetch"), "unused");
   expect(offline).toContain("without a connection");
-  expect(offline).toContain("Nothing has been queued for later");
+  expect(offline).toContain("Nothing was saved and nothing will be sent later");
   expect(offline).toContain("Reload");
   // A 408 is the one status that means the request never completed, so it is the offline answer too.
   expect(aiLayerProblem(new ApiError(408, "", null), "unused")).toBe(offline);

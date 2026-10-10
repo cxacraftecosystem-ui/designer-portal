@@ -282,12 +282,12 @@ const ENDINGS = [
   {
     name: "the service is down or rate-limited",
     arrange: (page: Page) => page.route(FORWARD_GEOCODE, (route) => route.fulfill({ status: 429, body: "" })),
-    expect: /not answering just now/i
+    expect: /not responding just now/i
   },
   {
     name: "the key is refused",
     arrange: (page: Page) => page.route(FORWARD_GEOCODE, (route) => route.fulfill({ status: 403, body: "" })),
-    expect: /refused this request/i
+    expect: /isn't available right now/i
   }
 ] as const;
 

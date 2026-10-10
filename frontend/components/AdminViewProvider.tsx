@@ -206,7 +206,7 @@ export const ADMIN_CHROME_ROUTES: AdminChromeRoute[] = [
   {
     path: "/settings/api-keys",
     label: "Managed API keys",
-    blurb: "Rotating, testing and revealing the provider keys the repository runs on."
+    blurb: "Changing, testing and revealing the provider keys the portal uses."
   },
   {
     path: "/workshop-access/manage",

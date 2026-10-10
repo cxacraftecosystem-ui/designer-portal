@@ -170,7 +170,7 @@ function describeTrouble(error: unknown, action: string): Trouble {
   // The build shipped without an API address; lib/api already writes a full explanation for that.
   if (error instanceof Error && error.name === "ApiUnconfiguredError") {
     return {
-      headline: "This site does not know where its data service is.",
+      headline: "The transcription settings aren't available right now.",
       advice: serverSentence,
       technical,
       retryable: false
@@ -189,8 +189,8 @@ function describeTrouble(error: unknown, action: string): Trouble {
   */
   if (status === 404) {
     return {
-      headline: "This server does not have the provider ranking yet.",
-      advice: `The API needs the current release deployed. Until then the order below is the built-in default and cannot be changed.`,
+      headline: "The provider ranking isn't available right now.",
+      advice: `The default order is shown below.`,
       technical,
       retryable: true
     };
@@ -217,8 +217,8 @@ function describeTrouble(error: unknown, action: string): Trouble {
   // pressing the button that would have worked.
   if (verdict.kind === "transient") {
     return {
-      headline: "The server ran into a problem of its own.",
-      advice: `Give it a minute and press Try again. If it keeps happening, send the line below to whoever looks after the backend.`,
+      headline: "Something went wrong on our side.",
+      advice: `Wait a minute and press Try again. If it keeps happening, tell an administrator.`,
       technical,
       retryable: true
     };
@@ -227,15 +227,15 @@ function describeTrouble(error: unknown, action: string): Trouble {
   // completed. The old test was `status === 0`, so the 408 arrived here wearing a refusal's words.
   if (verdict.kind === "unreachable") {
     return {
-      headline: "The page could not reach the server at all.",
+      headline: "Couldn't connect.",
       advice: `Check this device is online, then press Try again.`,
       technical,
       retryable: true
     };
   }
   return {
-    headline: `The server refused to ${action} the provider order.`,
-    advice: serverSentence || `It gave no reason. Press Try again, and tell an administrator if it persists.`,
+    headline: `Couldn't ${action} the provider order.`,
+    advice: serverSentence || `Press Try again, and tell an administrator if it keeps happening.`,
     technical,
     retryable: true
   };
@@ -409,7 +409,7 @@ export function ProviderOrderPanel() {
         setWarning(updated.normalisedNote);
         setAnnouncement(`Saved with changes. ${updated.normalisedNote}`);
       } else {
-        setNotice("Saved. The next transcription job uses this order — nothing needs restarting.");
+        setNotice("Saved. The next transcription job uses this order.");
         setAnnouncement("Order saved.");
       }
     } catch (error) {
@@ -524,7 +524,7 @@ export function ProviderOrderPanel() {
         body: (
           <>
             {join(failing.map((provider) => provider.name))} {failing.length === 1 ? "has" : "have"} a failing key, so
-            every job waits for {failing.length === 1 ? "its" : "their"} refusal first. Replace or remove{" "}
+            every job is delayed while {failing.length === 1 ? "it fails" : "they fail"} first. Replace or remove{" "}
             {failing.length === 1 ? "it" : "them"}.
           </>
         )
@@ -564,7 +564,6 @@ export function ProviderOrderPanel() {
             {trouble.headline}
           </p>
           <p className="leading-6">{trouble.advice}</p>
-          <p className="font-mono text-[11px] leading-5 text-ink-500">{trouble.technical}</p>
           {trouble.retryable ? (
             <div>
               <button
@@ -591,7 +590,7 @@ export function ProviderOrderPanel() {
           {trouble ? (
             <p className="text-xs font-medium text-ink-500" data-testid="provider-order-stale-note">
               {
-                "Built-in default order shown — not the live ranking. The controls below do nothing until the server answers."
+                "Default order shown — the saved ranking could not be loaded. The controls below are paused until it loads."
               }
             </p>
           ) : null}
@@ -766,7 +765,6 @@ export function ProviderOrderPanel() {
         >
           <p className="font-semibold">{actionTrouble.headline}</p>
           <p className="leading-6">{actionTrouble.advice}</p>
-          <p className="font-mono text-[11px] leading-5 text-ink-500">{actionTrouble.technical}</p>
         </div>
       ) : null}
       {warning ? (

@@ -359,11 +359,10 @@ function AdminViewHidden({ route, onEnable }: { route: AdminChromeRoute; onEnabl
         {route.label} is hidden while admin view is off
       </h1>
       <p className="mx-auto mt-3 max-w-lg text-sm leading-6 text-ink-500">
-        {route.blurb} You switched admin view off, so the repository is behaving exactly as it does for an ordinary
-        user.
+        {route.blurb} Admin view is off, so you are seeing the portal as an ordinary user does.
       </p>
       <p className="mt-3 text-xs text-ink-500">
-        Your access has not changed — this is your own setting, not a permission you are missing.
+        Your access has not changed — this is your own setting.
       </p>
       <div className="mt-7 flex flex-wrap items-center justify-center gap-3">
         <button type="button" onClick={onEnable} className="field-button">

@@ -202,7 +202,7 @@ test("the phone control says what is stored when it cannot show it", () => {
     "phoneValidationError(unshown || combined)"
   );
   expect(source, "and the value itself is printed, because the box is empty").toContain(
-    "What is saved for this field is"
+    "This field holds “{unshown}”"
   );
   expect(source, "only while untouched: once they type, the box IS the value").toContain(
     "!edited && stored !== \"\" && !isPhoneNumberShaped(stored)"

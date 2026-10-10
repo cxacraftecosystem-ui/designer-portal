@@ -68,13 +68,13 @@ export const UNFILED_DESTINATIONS: Record<string, UnfiledDestination> = {
     href: () => "/questionnaire",
     opensTheRecord: false,
     label: "Open the Questionnaire list",
-    note: "A questionnaire interview has no edit page of its own, so this opens the interview list. Find it there by its title."
+    note: "This opens the interview list. Find it there by its title."
   },
   media: {
     href: () => "/media",
     opensTheRecord: false,
     label: "Open the Media list",
-    note: "A media file has no edit page of its own, so this opens the media list. Find it there by its filename."
+    note: "This opens the media list. Find it there by its filename."
   }
 };
 
@@ -159,7 +159,7 @@ export function discardedNotice(result: DiscardedRecord): string {
   // with nothing pointing at them is the same class of silence this whole panel exists to end.
   if (result.mediaKept <= 0) return gone;
   const files = result.mediaKept === 1 ? "1 media file" : `${result.mediaKept} media files`;
-  return `${gone} ${files} that were attached to it were NOT deleted — they stay in the repository with nothing pointing at them, under Miscellaneous Media.`;
+  return `${gone} ${files} that were attached to it were kept, under Miscellaneous Media.`;
 }
 
 /**

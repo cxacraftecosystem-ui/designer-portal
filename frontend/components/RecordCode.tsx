@@ -323,7 +323,7 @@ export function RecordCodeCard({
   const startPrint = useCallback(() => {
     if (!document.getElementById("main-content")) {
       setProblem(
-        "This screen cannot be prepared for printing. Download the code as a PNG or an SVG and print the file instead."
+        "This can't be printed from here. Download the code as a PNG or an SVG and print the file instead."
       );
       return;
     }
@@ -358,9 +358,8 @@ export function RecordCodeCard({
             {typeLabel} code
           </h2>
           <p className="mt-1 text-sm leading-6 text-ink-muted">
-            Scan this to open this {typeLabel.toLowerCase()} from any device running the app. It holds a reference and a check
-            digit and nothing about the record itself — no name, no place, no identity number. It is drawn fresh every time this
-            screen opens and is not stored anywhere.
+            Scan this to open this {typeLabel.toLowerCase()} on any device with the app. The code holds nothing about the
+            record itself — no name, no place, no identity number.
           </p>
         </div>
       </div>

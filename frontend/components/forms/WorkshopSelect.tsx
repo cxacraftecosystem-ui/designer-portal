@@ -758,7 +758,7 @@ export function WorkshopSelect({
       </p>
       {blocked ? (
         <p className="text-xs font-medium text-error-600">
-          You are not assigned to this workshop, so saving will be refused. Ask an admin to assign you to it, or pick
+          You are not assigned to this workshop, so you cannot save to it. Ask an admin to assign you to it, or pick
           another workshop.
         </p>
       ) : null}

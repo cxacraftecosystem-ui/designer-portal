@@ -285,8 +285,8 @@ export function GridMeasurement({
                   {proposal.selfReportedConfidence !== null ? (
                     <>
                       {" "}
-                      The model rated itself {Math.round(proposal.selfReportedConfidence * 100)}% sure, which is its own
-                      claim about itself and has never been checked against a tape measure.
+                      The model rated itself {Math.round(proposal.selfReportedConfidence * 100)}% sure. That is its own
+                      estimate, so check the figure against the object.
                     </>
                   ) : null}
                 </p>

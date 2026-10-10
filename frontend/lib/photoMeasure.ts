@@ -789,7 +789,7 @@ export function measureByRectification(input: RectificationInput): MeasureResult
     return {
       ok: false,
       reason:
-        "Those four corners do not define a plane this can rectify — three of them are in a straight line, " +
+        "Those four corners cannot be used to straighten the photo — three of them are in a straight line, " +
         "or an end of the object falls where the surface runs out of view. Re-mark the corners of the " +
         "rectangle, and keep both ends of the object on it."
     };

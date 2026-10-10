@@ -125,34 +125,34 @@ const ANSWERED_ARMS = [
     body: { detail: "Not authenticated" },
     says: "Your sign-in has expired",
     // A 401 is never a refusal of the WORK — the twenty other fields were fine and one sign-in fixes it.
-    andNot: "refused the media"
+    andNot: "wasn't accepted"
   },
   {
     what: "a rate limit, which is the server asking for time in words",
     status: 429,
     body: { detail: "Too many requests" },
-    says: "could not take the media just now",
+    says: "couldn't be saved just now",
     andNot: "sign in again"
   },
   {
     what: "a 503, the shape `ApiUnconfiguredError` also wears",
     status: 503,
     body: { detail: "Service unavailable" },
-    says: "could not take the media just now",
-    andNot: "out of step"
+    says: "couldn't be saved just now",
+    andNot: "Reload the page to update the app"
   },
   {
     what: "a media type the server will not take",
     status: 415,
     body: { detail: "Unsupported media type" },
-    says: "answered and refused the media",
+    says: "wasn't accepted, for the reason given",
     andNot: "wait a minute"
   },
   {
     what: "a 422 naming a key the two builds disagree about",
     status: 422,
     body: { detail: [{ type: "extra_forbidden", loc: ["body", "merge"], msg: "Extra inputs are not permitted" }] },
-    says: "out of step",
+    says: "Reload the page to update the app",
     andNot: "re-attach the media"
   }
 ] as const;

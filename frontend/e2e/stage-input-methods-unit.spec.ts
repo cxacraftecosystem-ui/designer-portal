@@ -690,7 +690,7 @@ test("(e) EVERY WORKSHOP PICKER ASKS THE SERVER FOR THE SCOPED LIST, AND NOTHING
   // The panel is still drawn, and still says which of the two things happened. The page mounts the
   // heading by name; the words themselves are pinned next door, which is why both halves are read.
   expect(hub).toContain("CHOOSER_OFFLINE_TITLE");
-  expect(read(SKETCHES_HUB_SENTENCES)).toContain("The repository could not be reached");
+  expect(read(SKETCHES_HUB_SENTENCES)).toContain('CHOOSER_OFFLINE_TITLE = "Couldn\'t connect"');
 
   /*
    * AND THE SAME RULE ON THE WORKSHOP LIST, WHICH IS THE BIGGER SURFACE OF THE TWO. It is the primary

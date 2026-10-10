@@ -155,7 +155,7 @@ export async function fetchFile(path: string, fallbackName: string): Promise<Fet
       response.status,
       describeApiDetail(
         detail,
-        response.statusText || `The server refused the request (HTTP ${response.status}).`
+        response.statusText || "The download didn't finish. Please try again."
       ),
       payload,
       response.headers

@@ -1883,9 +1883,8 @@ export function ToolForm({
             <strong>Height (cm)</strong> and <strong>Height (inches)</strong> are the same measurement in two units, and
             filling either fills the other (1&nbsp;inch = 2.54&nbsp;cm, rounded to two decimals).{" "}
             <strong>Width (cm)</strong> and <strong>Breadth (inches)</strong> pair the same way.{" "}
-            <strong>Length (inches)</strong> has no centimetre box. Records saved before this pairing existed can hold
-            two numbers that disagree — opening one never rewrites either box, so correct whichever is wrong and its
-            partner follows.
+            <strong>Length (inches)</strong> has no centimetre box. If two paired boxes disagree, correct whichever is
+            wrong and its partner follows.
           </p>
           <Field label="Thickness">
             <TextInput name="thickness" type="number" min={0} step="0.01" defaultValue={initial?.thickness ?? ""} />
@@ -1985,15 +1984,14 @@ export function ToolForm({
         */}
         <section className="grid gap-2 rounded-lg border border-line-200 bg-card p-4">
           <div className="flex flex-wrap items-center gap-2">
-            <h3 className="text-sm font-semibold text-ink-900">If you cannot mark it: estimate with the vision model</h3>
+            <h3 className="text-sm font-semibold text-ink-900">If you cannot mark it: let AI estimate it</h3>
             <span className="rounded-full border border-amber-500 bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">
               Needs a connection
             </span>
           </div>
           <p className="text-xs leading-5 text-ink-500">
-            This asks a model to read the inches off the photograph. It is an <strong>estimate</strong>, not a
-            measurement: it carries no error bar and nobody — including the model — can re-derive it from the picture
-            afterwards. Prefer the panel above wherever the grid or a ruler is in the frame.
+            This asks AI to read the inches off the photograph. It is an <strong>estimate</strong>, not a
+            measurement. Use the panel above whenever the grid or a ruler is in the photo.
           </p>
           {/*
             THE MARKER THIS ONE CARRIES IS THE SERVER'S OWN, ECHOED BACK UNCHANGED. `POST
@@ -2133,7 +2131,7 @@ export function ToolForm({
             markDirty();
           }}
           title="Process stages"
-          description="Document each step of making or using this tool. Captures are archived in order as STAGE_STEP_1, STAGE_STEP_2, …"
+          description="Document each step of making or using this tool, in order."
         />
         {/* The tool's files are its workshop's content too: held with the record — see `filing`. */}
         {initial ? <ExistingMedia linkedRecordType="tool" linkedRecordId={initial.id} recordHold={filing.stored} /> : null}
@@ -2144,7 +2142,7 @@ export function ToolForm({
             markDirty();
           }}
           title="Tool media"
-          description="Attach or capture tool images, videos, audio notes, and documents. Image EXIF is retained and summarized in remarks."
+          description="Attach or capture tool images, videos, audio notes, and documents. Photo details (date, place, camera) are kept and summarised in remarks."
         />
         <LocationFields initial={initialLocation} onDirty={markDirty} />
         {uploadProgress ? <UploadProgress progress={uploadProgress} /> : null}

@@ -431,7 +431,7 @@ function PlatformAccessScreen() {
         refusal neither screen explained. The sentence now names the credential, and the link under
         it carries the address and the tier to the form that makes a password account.
       */
-      const message = `${created.email} may sign in with Google. They join as ${roleLabel(created.admitRole) || "the platform default tier"}, and the account is created the first time they sign in with Google.`;
+      const message = `${created.email} may sign in with Google. They join as ${roleLabel(created.admitRole) || "the default role"}, and the account is created the first time they sign in with Google.`;
       setNotice(message);
       setPasswordAccount({
         notice: message,
@@ -466,11 +466,11 @@ function PlatformAccessScreen() {
       title: `Let ${entry.email} in?`,
       body: role
         ? `They will be able to sign in immediately, as ${roleLabel(role)}.`
-        : "They will be able to sign in immediately, at this platform's default joining tier — the lowest rung — and can be promoted afterwards on Manage users.",
+        : "They will be able to sign in immediately, with the default role, and can be promoted afterwards on Manage users.",
       // The middle clause became true on 2026-10-09: approving promotes an account that already
       // exists, and one still holding a temporary password is not promoted — see `heldPromotion`.
       note:
-        "If they already have an account at a lower tier it is raised to match — unless it still has to replace a temporary password somebody typed for it, in which case it keeps its tier and you are told how to finish the promotion. An account that is already higher is never lowered by approving somebody.",
+        "If they already have an account with a lower role, it is raised to match — unless it still has to replace a temporary password, in which case you are told how to finish the promotion. Approving never lowers anybody's role.",
       confirmLabel: "Approve",
       tone: "warning"
     });
@@ -503,7 +503,7 @@ function PlatformAccessScreen() {
       // the person again, because a rejected person's next attempt bumps a counter instead of
       // rejoining this queue.
       note:
-        "Nothing is deleted — the entry stays on the list, refused, with the record of when they asked and how many times they have tried. Trying again will NOT put them back in this queue: only you can reopen it, by approving them here later.",
+        "The entry stays on the list, with when they asked and how many times they tried. Trying again will not put them back in this queue; you can approve them here later.",
       confirmLabel: "Refuse",
       tone: "danger"
     });
@@ -527,7 +527,7 @@ function PlatformAccessScreen() {
       body:
         "They will be refused at their next sign-in, and told that their access to this application was ended. Any session they are in now ends immediately.",
       note:
-        "The entry is kept — it records when they joined, and that record outlives their access. Approving them again here restores it, and their joining date is not moved by the round trip.",
+        "The entry is kept, with the date they joined. Approving them again here restores their access and keeps that date.",
       confirmLabel: "Suspend",
       tone: "danger"
     });
@@ -547,7 +547,7 @@ function PlatformAccessScreen() {
       title: `Let ${entry.email} back in?`,
       body: "They will be able to sign in again immediately.",
       note: entry.joinedAt
-        ? `Their joining date stays ${formatDate(entry.joinedAt)} — somebody who joined then, lost access and was let back in has still been here since then.`
+        ? `Their joining date stays ${formatDate(entry.joinedAt)}.`
         : undefined,
       confirmLabel: "Restore",
       tone: "warning"
@@ -579,7 +579,7 @@ function PlatformAccessScreen() {
   const header = (
     <PageHeader
       title="Who may sign in"
-      description="Every address allowed into this application, plus the people waiting for a decision. Nothing here is ever deleted — access is granted, refused, suspended and restored, and the entry keeps the history either way."
+      description="Every address allowed to sign in, and the people waiting for a decision. Entries are never deleted: access is granted, refused, suspended or restored, and each entry keeps its history."
       icon={<ShieldCheck className="h-5 w-5" aria-hidden />}
     />
   );
@@ -609,7 +609,7 @@ function PlatformAccessScreen() {
             // `roleLabel` answers "" for an absent user; AppShell never renders a protected page
             // without one, but a sentence reading "  does not open this" is a worse way to discover
             // that than a fallback nobody will see.
-            `${roleLabel(user?.role) || "Your tier"} does not open this. Ask an admin or the master admin.`
+            `${roleLabel(user?.role) || "Your role"} does not open this. Ask an admin or the master admin.`
           }
         />
       </>
@@ -690,13 +690,11 @@ function PlatformAccessScreen() {
         the person is then told the wrong reason on the sign-in screen.
       */}
       <p className="mb-4 text-sm leading-6 text-ink-500">
-        This is not the{" "}
+        This list decides who may sign in at all. Who the institution recognises as a designer is on the{" "}
         <Link href="/admin/designers" className="font-medium text-purple-700 hover:underline">
           designer roster
         </Link>
-        , which is the narrower question of who the institution recognises as a designer. This list decides who may reach
-        the application at all — and the master admin is never gated by it, which is what guarantees somebody can always
-        get in here and let people back in.
+        . The master admin can always sign in, so somebody can always let people back in.
       </p>
 
       {error ? (
@@ -717,7 +715,7 @@ function PlatformAccessScreen() {
           {notice}
           {passwordAccount && passwordAccount.notice === notice ? (
             <>
-              {" "}Will they sign in with a password instead? Admission alone never makes that account —{" "}
+              {" "}Will they sign in with a password instead? Adding them here does not create a password account —{" "}
               <Link href={passwordAccount.href} className="font-medium text-purple-700 hover:underline">
                 create their password account on Manage users
               </Link>
@@ -726,8 +724,8 @@ function PlatformAccessScreen() {
                   makes it a choice (`createFormRole`) — "already filled in" used to promise a tier
                   that then arrived as Researcher. */}
               {passwordAccount.admitRole
-                ? ", with this address and tier already filled in."
-                : ", with this address filled in — choose their tier there; Google sign-in would have started them at the lowest rung."}
+                ? ", with this address and role already filled in."
+                : ", with this address filled in — choose their role there."}
             </>
           ) : null}
         </div>
@@ -756,8 +754,8 @@ function PlatformAccessScreen() {
               ) : null}
             </h2>
             <p className="text-sm text-ink-500">
-              Each of these people proved who they are — a correct password, or a verified Google account — and was turned
-              away because this list did not carry their address. They are told they are waiting for you.
+              Each of these people signed in correctly, with a password or a Google account, but their address is not on
+              this list. They have been told they are waiting for approval.
             </p>
           </div>
         </div>
@@ -770,9 +768,9 @@ function PlatformAccessScreen() {
         */}
         {counted?.capReached ? (
           <div className="border-b border-amber-500/30 bg-amber-100 px-4 py-2 text-xs leading-5 text-amber-900">
-            This queue is at its ceiling of {counted.capacity} waiting requests, so new ones are NO LONGER BEING RECORDED —
-            anybody turned away now is told that requests are temporarily closed and to contact an administrator directly.
-            Decide the requests below to make room.
+            This queue is full ({counted.capacity} waiting requests), so new requests are not being recorded. Anybody
+            turned away now is told that requests are temporarily closed and to contact an administrator. Decide the
+            requests below to make room.
           </div>
         ) : null}
 
@@ -784,7 +782,7 @@ function PlatformAccessScreen() {
           <div className="p-4">
             <EmptyState
               title="Nobody is waiting"
-              body="When somebody who is not on this list proves their identity at the sign-in screen, they appear here — with their address, when they asked and how many times they have tried — and are told an administrator has to approve them."
+              body="When somebody who is not on this list signs in, they appear here with their address, when they asked and how many times they have tried. They are told an administrator has to approve them."
             />
           </div>
         ) : (
@@ -819,16 +817,16 @@ function PlatformAccessScreen() {
           </h2>
           <p className="mt-1 text-sm leading-6 text-ink-muted">
             {editing ? (
-              "The name, tier and note are your own record of whom you admitted and why. Changing them here cannot change whether this person may sign in — use Approve, Refuse, Suspend or Restore for that."
+              "The name, role and note are your own record of whom you admitted and why. Changing them does not change whether this person may sign in — use Approve, Refuse, Suspend or Restore for that."
             ) : (
               <>
-                For somebody who signs in with Google, no account has to exist yet: the address is admitted now and the
-                account is created the first time that person signs in with Google. Somebody who will sign in with a
+                For somebody who signs in with Google, no account is needed: the account is created the first time
+                they sign in with Google. Somebody who will sign in with a
                 password needs an account made for them on{" "}
                 <Link href="/users" className="font-medium text-purple-700 hover:underline">
                   Manage users
                 </Link>
-                , which admits the address as well. Adding somebody here IS approving them, so they never appear in the
+                , which adds the address here as well. Adding somebody here approves them, so they never appear in the
                 queue above.
               </>
             )}
@@ -1177,7 +1175,7 @@ function AdmitTierField({ grantable, initial }: { grantable: UserRole[]; initial
         value={role}
         onChange={(next) => setRole(next as UserRole | "")}
         options={[
-          { value: "", label: "Default joining tier (lowest rung)" },
+          { value: "", label: "Default role (the lowest)" },
           ...grantable.map((option) => ({ value: option, label: roleLabel(option) }))
         ]}
       />
@@ -1239,7 +1237,7 @@ function QueueRow({
           to here; this is a control paired with two buttons, not a step in a form.
         */}
         <span id={`tier-label-${entry.id}`} className="sr-only">
-          The tier {entry.email} joins at
+          The role {entry.email} joins with
         </span>
         <FieldLabelProvider value={`tier-label-${entry.id}`}>
           <Dropdown
@@ -1249,7 +1247,7 @@ function QueueRow({
               // FIRST, and it is the platform's documented default — the lowest rung. A new joiner
               // is promoted deliberately, on Manage users, rather than by whoever happened to work
               // the queue that morning.
-              { value: "", label: "Joins at the default tier" },
+              { value: "", label: "Joins with the default role" },
               ...grantable.map((option) => ({ value: option, label: `Joins as ${roleLabel(option)}` }))
             ]}
             advanceOnSelect={false}
@@ -1286,7 +1284,7 @@ function StandingChip({ entry }: { entry: AccessRosterEntry }) {
           May sign in
         </span>
         <span className="text-xs text-ink-500">
-          {entry.admitRole ? `as ${roleLabel(entry.admitRole)}` : "at the default joining tier"}
+          {entry.admitRole ? `as ${roleLabel(entry.admitRole)}` : "with the default role"}
         </span>
       </span>
     );

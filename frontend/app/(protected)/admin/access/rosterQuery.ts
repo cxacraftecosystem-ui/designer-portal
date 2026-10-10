@@ -143,9 +143,7 @@ export const ACCESS_LIST_UNREADABLE_TITLE = "The list could not be loaded";
 
 /** The body of the same state: what it is not, and what has not happened. */
 export const ACCESS_LIST_UNREADABLE_BODY =
-  "This is not showing what exists, and it is not a claim that nobody may sign in — the request for " +
-  "the allow-list did not come back. Nobody's access has been changed by the failure; the message " +
-  "above is what the server answered.";
+  "Check your connection and try again. Nobody's access has changed.";
 
 /**
  * A REFRESH FAILED WHILE ROWS WERE ALREADY ON SCREEN — a different fact from the one above, and it
@@ -157,8 +155,8 @@ export const ACCESS_LIST_UNREADABLE_BODY =
  * decides whether somebody is told to try again or told to call an administrator.
  */
 export const ACCESS_LIST_STALE_NOTE =
-  "These rows are the last answer that arrived. The most recent refresh failed, so a decision made " +
-  "since then — by you or by another administrator — may not be shown here yet.";
+  "This list may be out of date: the last refresh did not finish, so decisions made since then — by " +
+  "you or another administrator — may not show yet.";
 
 /**
  * THE FILTERS EXCLUDED EVERYONE. Not the same fact as an empty list, and the difference is the
@@ -176,9 +174,7 @@ export const ACCESS_NO_MATCH_TITLE = "Nobody matches these filters";
 
 /** The body of the same state. Says what clearing restores, and that it restores the refusals too. */
 export const ACCESS_NO_MATCH_BODY =
-  "Clear them to see everyone this application has ever admitted, refused or suspended — the " +
-  "refused and suspended entries included, which are the ones that explain why somebody cannot " +
-  "sign in.";
+  "Clear them to see everyone who has been admitted, refused or suspended.";
 
 /**
  * THE LIST IS GENUINELY EMPTY, ANSWERED AND NONE. §3.5's *genuinely-empty, unscoped*.
@@ -190,8 +186,7 @@ export const ACCESS_NOBODY_YET_TITLE = "Nobody is on the list yet";
 
 /** The body of the same state: why an empty allow-list is not a locked-out institution. */
 export const ACCESS_NOBODY_YET_BODY =
-  "Add the first address above — the master admin can always sign in regardless of this list, which " +
-  "is what makes it safe to start empty.";
+  "Add the first address above. The master admin can always sign in.";
 
 /**
  * THE PAGER IS PAST THE END OF THE LIST — rows exist, none of them are here.
@@ -240,8 +235,7 @@ export const ACCESS_PAST_END_TITLE = "Nothing on this page";
 export function accessRoleCutNotice(truncated: boolean | undefined): string {
   if (!truncated) return "";
   return (
-    "The server could not match the chosen tiers completely, so some entries are missing from every " +
-    "page of this filter — not only from this one. Choosing fewer tiers narrows what has to be " +
-    "matched and gives a complete answer; clearing the tier filter lists everyone."
+    "Some entries are missing from these results. Choose fewer roles to see the complete list, or " +
+    "clear the role filter to list everyone."
   );
 }

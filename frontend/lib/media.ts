@@ -680,24 +680,18 @@ export class StorageTransportError extends StorageError {
  * is still working is proof the link is up and the fault is at the bucket.
  */
 export function storageTransportSentence(facts: StorageTransportFacts): string {
-  const bucket = facts.bucketOrigin ?? "the storage bucket";
-  const site = facts.pageOrigin ?? "this site";
   if (facts.bytesMoved) {
     // Fact 1, decisive on its own: the bucket had already accepted the request and was taking the
     // body, which a cross-origin refusal never does. No probe is run for this case.
     return (
-      `Object storage upload failed: the connection to ${bucket} dropped after ` +
-      `${bytes(facts.sentBytes)} of ${bytes(facts.totalBytes)} had been sent. The bucket had already ` +
-      `accepted the request and taken bytes, so this is the connection and not a setting — try again ` +
-      `on a steadier signal.`
+      `The upload didn't finish: the connection dropped after ` +
+      `${bytes(facts.sentBytes)} of ${bytes(facts.totalBytes)} had been sent. Try again when the ` +
+      `signal is steadier.`
     );
   }
   switch (facts.reach) {
     case "no-route":
-      return (
-        `Object storage upload failed: this device cannot reach ${bucket} at all — not even a refusal ` +
-        `came back, and nothing was sent. That is the connection, not the repository and not this file.`
-      );
+      return `The upload didn't finish: this device couldn't connect, and nothing was sent.`;
     case "site-refused":
       /*
         WHAT THIS ARM MAY SAY IS BOUNDED BY WHAT THE PROBE MEASURED, WHICH IS A **READ**.
@@ -721,26 +715,19 @@ export function storageTransportSentence(facts: StorageTransportFacts): string {
         strongest form the evidence supports, and it still sends a designer to the right person.
       */
       return (
-        `Object storage upload failed: ${bucket} is reachable from this device but refused to answer ` +
-        `${site} — that bucket's CORS rule does not cover this site for reads, and the upload failed ` +
-        `the way a refused one does. That points at a setting on the bucket rather than your ` +
-        `connection, so trying again is unlikely to help until somebody widens that rule.`
+        `The upload didn't finish because of a problem on our side rather than your connection. ` +
+        `Trying again is unlikely to help until it is fixed.`
       );
     case "reads-allowed":
-      return (
-        `Object storage upload failed: ${bucket} is reachable and does answer ${site}, so this is ` +
-        `neither a lost connection nor a missing CORS rule — either the upload itself was refused, or the ` +
-        `connection dropped as it started.`
-      );
+      return `The upload didn't finish. It may have been interrupted as it started.`;
     case "unmeasured":
     default:
       // THE HONEST EITHER/OR. Reached when no probe could run (no `fetch`, no usable object URL), and
       // it is the sentence "network error" should always have been: both causes named, plus the one
       // thing a person can look at to decide between them.
       return (
-        `Object storage upload failed: ${bucket} gave no reply at all and not one byte was sent. That ` +
-        `is either no network on this device or that bucket refusing uploads from ${site}, and the ` +
-        `browser is not allowed to see which. If the rest of the app is still loading, it is the bucket.`
+        `The upload didn't finish and nothing was sent. Either this device has no connection, or the ` +
+        `problem is on our side. If the rest of the app is still working, it is on our side.`
       );
   }
 }
@@ -1010,7 +997,7 @@ function putBlob({
           onProgress?.(total, total);
           resolve({ etag: (xhr.getResponseHeader("ETag") ?? "").replace(/"/g, "") || null });
         } else {
-          reject(new StorageError(`Object storage upload failed: HTTP ${xhr.status}`, xhr.status));
+          reject(new StorageError("The file couldn't be uploaded.", xhr.status));
         }
       });
     xhr.onerror = () =>
@@ -1038,7 +1025,7 @@ function putBlob({
         reject(
           new StorageError(
             stalled
-              ? `Object storage upload stalled — no data moved for ${Math.round(STALL_TIMEOUT_MS / 1000)}s`
+              ? `The upload stalled: nothing was sent for ${Math.round(STALL_TIMEOUT_MS / 1000)} seconds.`
               : "Upload cancelled"
           )
         )
@@ -1269,7 +1256,7 @@ async function uploadWhole(options: ObjectUploadOptions, mediaType: MediaType, m
       if (attempt < UPLOAD_MAX_ATTEMPTS) await delay(800 * attempt);
     }
   }
-  throw lastError instanceof Error ? lastError : new StorageError(`Object storage upload failed for ${file.name}`);
+  throw lastError instanceof Error ? lastError : new StorageError(`“${file.name}” couldn't be uploaded.`);
 }
 
 /**
@@ -1315,7 +1302,7 @@ async function uploadInParts(options: ObjectUploadOptions, mediaType: MediaType,
 
   async function sendPart(partNumber: number): Promise<string | null> {
     let url = urls[String(partNumber)];
-    if (!url) throw new StorageError(`Missing presigned URL for part ${partNumber}`);
+    if (!url) throw new StorageError("The upload couldn't continue. Please try again.");
     const start = (partNumber - 1) * create.partSize;
     let lastError: unknown;
     for (let attempt = 1; attempt <= PART_MAX_ATTEMPTS; attempt += 1) {
@@ -1347,7 +1334,7 @@ async function uploadInParts(options: ObjectUploadOptions, mediaType: MediaType,
         if (attempt < PART_MAX_ATTEMPTS) await delay(800 * attempt);
       }
     }
-    throw lastError instanceof Error ? lastError : new StorageError(`Part ${partNumber} failed to upload`);
+    throw lastError instanceof Error ? lastError : new StorageError(`Part ${partNumber} of the file didn't upload.`);
   }
 
   try {
@@ -2205,23 +2192,21 @@ export function adviceForTransportFailure(error: StorageTransportError): string 
         what the probe supports.
       */
       return (
-        "Nothing you saved is lost and these files are still on this device, but nothing on this page can " +
-        "change a setting on the bucket, so trying again may well fail the same way. Keep them, and report " +
-        "that the bucket will not answer this site."
+        "Nothing you saved is lost and these files are still on this device, but trying again may well fail " +
+        "the same way. Keep them, and contact support."
       );
     case "reads-allowed":
       return (
-        "The record was saved, so re-open it and re-attach the media. If it fails the same way again this is " +
-        "the bucket's upload rule rather than your connection — say so when you report it."
+        "The record was saved, so re-open it and re-attach the media. If it fails the same way again, " +
+        "contact support."
       );
     case "no-route":
       return "Check your internet connection and try again — the record was saved, so re-open it and re-attach the media.";
     case "unmeasured":
     default:
       return (
-        "The record was saved. If the rest of the app is still loading, this is the bucket rather than your " +
-        "connection and re-attaching will not help until it is fixed; if the app has stopped loading too, it is " +
-        "the connection and a retry will."
+        "The record was saved. If the rest of the app is still working, contact support; if it has stopped " +
+        "working too, check your connection, then re-open the record and re-attach the media."
       );
   }
 }
@@ -2249,13 +2234,13 @@ function adviceForALostBatch(cause: unknown): string {
     case "say-signed-out":
       return "Your sign-in has expired, so nothing could be sent — sign in again. The record was saved, so re-open it and re-attach the media.";
     case "say-try-later":
-      return "The repository was reached but could not take the media just now, so this is not your connection — wait a minute. The record was saved, so re-open it and re-attach the media.";
+      return "The media couldn't be saved just now — wait a minute and try again. The record was saved, so re-open it and re-attach the media.";
     case "say-out-of-step":
-      return "This app and the repository are out of step about the shape of the request — nothing you did is wrong and nothing here will change it until one of them is updated. The record was saved.";
+      return "The record was saved, but the media couldn't be attached. Reload the page to update the app, then try again.";
     case "say-refused":
-      return "The repository answered and refused the media, so this is not your connection — the reason above is what has to change. The record was saved, so re-open it and re-attach the media once it has.";
+      return "The media wasn't accepted, for the reason given. The record was saved, so re-open it and re-attach the media once that is fixed.";
     case "say-unsendable":
-      return "Nothing was sent: the reason above is about the file itself, so no connection and no retry can clear it. The record was saved, so re-open it and attach a good copy.";
+      return "Nothing was sent because of a problem with the file itself. The record was saved, so re-open it and attach a good copy.";
     case "say-offline":
     default:
       return "Check your internet connection and try again — the record was saved, so re-open it and re-attach the media.";
@@ -2451,7 +2436,7 @@ export async function transcribeMediaFile(file: File, mediaType = inferMediaType
   return {
     transcriptText: result.formattedTranscript ?? result.text ?? null,
     transcriptStatus: result.status,
-    transcriptError: result.available ? null : result.message ?? "Transcription unavailable for now"
+    transcriptError: result.available ? null : result.message ?? "Transcription isn't available right now."
   };
 }
 
@@ -2535,7 +2520,7 @@ export type MeasurementAnalysisResponse = {
  */
 export class MeasurementTimeoutError extends Error {
   constructor(public readonly timeoutMs: number) {
-    super(`No answer from the measurement service within ${Math.round(timeoutMs / 1000)} seconds.`);
+    super(`Measuring took too long: no answer came back within ${Math.round(timeoutMs / 1000)} seconds.`);
     this.name = "MeasurementTimeoutError";
   }
 }

@@ -262,13 +262,13 @@ test.describe("the panel's own intro says what is now true", () => {
 
   test("the condition and the allowed act are both spelled out", () => {
     expect(PROSE, "the intro does not say when the lead cannot be dropped").toContain(
-      "While other designers stay ticked that one cannot simply be dropped"
+      "While other designers stay ticked, the lead cannot simply be dropped"
     );
     expect(PROSE, "the intro does not say that emptying the workshop is allowed").toContain(
-      "Unticking EVERYBODY is a different act and is allowed"
+      "You can also untick everybody"
     );
     // And it keeps the one refusal that is not about the selection at all.
-    expect(PROSE).toContain("A workshop whose report has already been handed in is refused outright");
+    expect(PROSE).toContain("If the report has already been handed in, saving isn&apos;t allowed");
   });
 });
 
@@ -305,8 +305,9 @@ test.describe("the empty workshop reads the same before, during and after the sa
       argument: a panel that could DRAW "nobody holds a designer row on this workshop" while
       refusing to let anybody reach that state was contradicting itself on one screen.
     */
-    expect(PROSE).toContain("Nobody holds a designer row on this workshop");
-    expect(PROSE).toContain("an empty list here is not the same as nobody at all");
+    expect(PROSE).toContain("No designer is named on this workshop");
+    expect(PROSE).toContain("Whoever created it can still open it");
+    expect(PROSE).not.toContain("designer row");
   });
 });
 

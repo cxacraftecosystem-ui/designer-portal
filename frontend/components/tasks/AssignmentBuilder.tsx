@@ -259,7 +259,7 @@ export function AssignmentBuilder({
       <Step
         n={2}
         title="Who does the work"
-        hint="Only people ranked below you can be given a task. Narrow by tier first if the list is long — one task row is created per person."
+        hint="Only people in roles below yours can be given a task. Narrow by role first if the list is long — each person gets a task of their own."
       >
         <div className="grid gap-3 md:grid-cols-2">
           <FieldBlock label="Filter by tier">
@@ -294,7 +294,7 @@ export function AssignmentBuilder({
               // "Nobody ranked below you" is a claim about the hierarchy and may only be made off an
               // answer that arrived. Before that it is the app's one word for "an answer is
               // outstanding", and on a failure it is the shared sentence.
-              emptyLabel={emptyLabelFor("people", "Nobody ranked below you")}
+              emptyLabel={emptyLabelFor("people", "Nobody in a role below yours")}
               confirmLabel="Confirm people"
             />
             {/*

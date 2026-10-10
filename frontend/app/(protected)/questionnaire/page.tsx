@@ -1667,7 +1667,7 @@ function QuestionnairePageBody() {
     const ok = await confirm({
       title: `“${holder.title}” already covers this set of artisans`,
       body: `There is one questionnaire entry per set of artisans, so this edit cannot be saved as a second one. Move this interview's answers and recordings into “${holder.title}” instead?`,
-      note: "Nothing is thrown away: every answer and every recording moves onto that interview, and this one is removed once they have. Where the two sittings answer the same question differently the move is refused rather than guessed at, and you will be told which questions they are.",
+      note: "Nothing is thrown away: every answer and every recording moves onto that interview, and this one is removed once they have. Where the two sittings answer the same question differently, nothing is moved and you will be told which questions they are.",
       confirmLabel: "Move into that interview",
       tone: "warning"
     });
@@ -1687,7 +1687,7 @@ function QuestionnairePageBody() {
       */
       setMergeOutcome({
         moved: false,
-        message: readableError(err, "That move was refused, and nothing on either interview was changed."),
+        message: readableError(err, "That move couldn't be made, and nothing on either interview was changed."),
         questions: mergeConflictQuestions(err)
       });
       return true;
@@ -2354,7 +2354,7 @@ function QuestionnairePageBody() {
         <InstrumentPicker
           value={SHARED_INSTRUMENT}
           allowed={canRunDesignWorkshops(user)}
-          hint="Your own .xlsx-derived forms open on their own screen, which is where their answers are recorded."
+          hint="Questionnaires you built yourself open on their own screen, which is where their answers are recorded."
           onChange={(next) => {
             if (next === SHARED_INSTRUMENT) return;
             router.push(`/questionnaires/${next}/answer`);
@@ -2681,9 +2681,9 @@ function QuestionnairePageBody() {
               {editingInterview ? (
                 <>
                   Another interview — <span className="font-medium">{existingEntry.title}</span> — already covers this
-                  exact set of artisans. There is one entry per set, so saving this edit with these artisans ticked will
-                  be refused. Put the original artisans back, cancel and edit that interview instead, or accept the
-                  offer to move this interview into it when the refusal comes back.
+                  exact set of artisans. There is one entry per set, so this edit can&apos;t be saved with these
+                  artisans ticked. Put the original artisans back, cancel and edit that interview instead, or accept the
+                  offer to move this interview into it when you save.
                 </>
               ) : (
                 <>
@@ -2744,7 +2744,7 @@ function QuestionnairePageBody() {
           files={mediaFiles}
           onFilesChange={setMediaFiles}
           title="Interview audio"
-          description="Record or upload interview audio. The backend will transcribe it when a transcription provider API key (ElevenLabs, Deepgram, or OpenAI) is configured; otherwise the audio is still saved."
+          description="Record or upload interview audio. It is transcribed automatically when transcription is available; the audio is saved either way."
           allowDocuments={false}
           allowedTypes={["AUDIO"]}
         />
@@ -3670,8 +3670,8 @@ function CompletionMatrixPanel({
       {matrix && (matrix.unassignedInterviews ?? 0) > 0 ? (
         <div className="mb-3 rounded-md border border-amber-500/40 bg-amber-100 px-3 py-2 text-xs leading-5 text-amber-800">
           <span className="font-semibold">
-            {matrix.unassignedInterviews} interview{matrix.unassignedInterviews === 1 ? "" : "s"} in the
-            repository name no workshop
+            {matrix.unassignedInterviews} interview{matrix.unassignedInterviews === 1 ? "" : "s"} with no
+            workshop named
           </span>
           , so {matrix.unassignedInterviews === 1 ? "it counts" : "they count"} towards no workshop scope and
           nothing {matrix.unassignedInterviews === 1 ? "it holds" : "they hold"} turns a cell green here.
@@ -3770,7 +3770,7 @@ function CompletionMatrixPanel({
           {matrix.overridesAreRepositoryWide ? (
             <p className="mt-2 text-[11px] leading-4 text-ink-500">
               The workshop scope narrows the green derived from recordings. An admin override is a judgement
-              about that artisan&rsquo;s section across the whole repository, so a marked cell keeps its
+              about that artisan&rsquo;s section across all records, so a marked cell keeps its
               colour under every scope.
             </p>
           ) : null}

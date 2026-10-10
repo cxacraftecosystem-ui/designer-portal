@@ -362,8 +362,8 @@ export default function QuestionnairesPage() {
         // the entry and where it lives; this says the one thing that banner cannot, which is what
         // happens to this particular questionnaire next.
         setNotice(
-          `“${title}” is saved on this device. It is sent to the repository when the connection ` +
-            "returns, and its sections and questions can be written once it has arrived."
+          `“${title}” is saved on this device and will upload when you're back online. You can add its ` +
+            "sections and questions once it has uploaded."
         );
         return;
       }
@@ -466,8 +466,8 @@ export default function QuestionnairesPage() {
         the API would in fact allow" failure this change was asked to remove.
       */}
       <p className="mb-5 rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-sm leading-6 text-ink-700">
-        Looking for the repository&apos;s shared artisan questionnaire — the default one, already seeded with its
-        sections and questions? It is a different instrument from the ones on this page and it lives on{" "}
+        Looking for the shared artisan questionnaire — the standard one, with its sections and questions already
+        in place? It is separate from the ones on this page and it lives on{" "}
         <Link href="/questionnaire" className="font-medium text-purple-700 underline-offset-2 hover:underline">
           Take interview
         </Link>
@@ -533,8 +533,8 @@ export default function QuestionnairesPage() {
           <div>
             <h2 className="font-display text-lg font-bold text-ink-900">Start a questionnaire by hand</h2>
             <p className="mt-1 text-sm leading-6 text-ink-muted">
-              The slower of the two doors, and it leads to the same place: sections and questions are added on the next
-              screen. Most designers download the pro-forma above and type their questions in Excel instead.
+              Sections and questions are added on the next screen. Most designers download the pro-forma above and type
+              their questions in Excel instead.
             </p>
           </div>
           <div className="grid gap-3 md:grid-cols-2">
@@ -677,7 +677,7 @@ export default function QuestionnairesPage() {
           <span className="font-medium">Show deactivated</span>
         </label>
         <p className="max-w-md text-right text-xs leading-5 text-ink-500">
-          Deactivation is what this app has instead of deleting. The answers are still there.
+          Deactivating keeps every answer.
         </p>
       </div>
 

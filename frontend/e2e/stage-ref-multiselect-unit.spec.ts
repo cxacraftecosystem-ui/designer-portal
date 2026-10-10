@@ -209,7 +209,7 @@ test("an unanswered cascade names the box to answer first, and never blames the 
 test("an empty repository says what has to exist first, and names the field that cannot be answered", () => {
   const line = notice({ payload: answer({ scopedToWorkshop: false }) });
   expect(line).toContain("Target product categories");
-  expect(line).toContain("has to exist in the repository first");
+  expect(line).toContain("Create the record first, then link it here");
   // And it does not offer a create this control does not have — see the four things
   // `ReferenceMultiSelect` deliberately does not do, in its own header.
   expect(line).toContain("it does not create them");
@@ -220,7 +220,7 @@ test("the linked-workshop sentence is the server's own, said once and never doub
   // `scopeNoticeLines` owns this sentence; the arm imports it rather than writing a second copy.
   expect(line).toContain("linked workshop yet");
   // Two explanations of one empty list would be the form arguing with itself.
-  expect(line).not.toContain("has to exist in the repository first");
+  expect(line).not.toContain("Create the record first, then link it here");
 });
 
 test("a typed term replaces the scope's empty-list claim instead of stacking on it", () => {
@@ -231,8 +231,8 @@ test("a typed term replaces the scope's empty-list claim instead of stacking on 
   expect(line).toContain("kamla");
   // But the narrowing still has to be said, or "Nothing matches" reads as "this person has no
   // record" about somebody documented one workshop away.
-  expect(line).toContain("narrowed to this design workshop");
-  expect(line).toContain("will not appear");
+  expect(line).toContain("only shows records documented under this design workshop");
+  expect(line).toContain("This list only shows records");
 });
 
 test("an unlinked workshop keeps its widened-net sentence even under a search", () => {
@@ -383,7 +383,7 @@ test("the record arm turns the picker's own filter off and says where the rest a
   // control deliberately does not have.
   expect(arm).toContain("searchable={false}");
   expect(arm).toContain("capHint={");
-  expect(arm).toContain("Use the search box above to reach the rest");
+  expect(arm).toContain("Use the search box above to find the rest");
 });
 
 test("the search box is the server's, and it sits above the picker", () => {
@@ -570,7 +570,7 @@ test("free text stored before the promotion is drawn as the words it is, not as 
   // The hint is what separates the two kinds for a designer reading the list, and it is the only
   // thing on screen that can: both rows are just text in a dropdown.
   expect(rows[1].hint).toBe("typed on this field, not a linked record");
-  expect(rows[3].hint).toContain("not in the list the repository returned");
+  expect(rows[3].hint).toContain("not in the current list");
 });
 
 test("every held value survives the round trip, whichever shape it is", () => {

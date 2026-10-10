@@ -200,7 +200,7 @@ test("nothing matched and nothing exists are two different sentences", () => {
   expect(matched).toContain("warp");
   // The claim is about the QUERY, and it says the search reached past this page — otherwise "no
   // matches" is exactly the lie a client-side filter over a truncated list tells.
-  expect(matched).toContain("asks the repository, not this page");
+  expect(matched).toContain("This search covers every");
   // AND THE EMPTY CASE IS A CLAIM ABOUT THIS ACCOUNT'S VIEW, never about the repository:
   // `list_media` composes `viewable_where`, so a flat "there is none" is how a reader concludes a
   // colleague never uploaded the photograph they are looking at on their own screen.
@@ -231,7 +231,7 @@ test("withheld urls are counted and explained without discouraging the pick", ()
   expect(one).toContain("may not open the file itself");
   // The half that matters: it must not read as "do not pick this one".
   expect(one).toContain("can still be attached");
-  expect(one).toContain("stores a media id");
+  expect(one).toContain("checked each time it is opened");
 
   const many = repositoryEntitlementNotice([ROW({ id: "a", url: null }), ROW({ id: "b", url: undefined })]);
   expect(many).toContain("2 of the 2 listed are stored");
@@ -376,7 +376,7 @@ test("a stored id is never cleared, and a withheld url is never drawn as a broke
   // all. The chip is the worded state, and it is gated on a row that RESOLVED: `undefined` is still
   // in flight and `null` already has its own sentence.
   expect(source).toContain("{file && !file.url ? (");
-  expect(source).toContain("Not openable by this account");
+  expect(source).toContain("You don&apos;t have access to this file");
   // Nothing in the picker's commit path may drop an id because the bytes are not readable from here.
   const commit = between(source, "function attachExisting", "\n  }");
   expect(commit).not.toContain(".url");

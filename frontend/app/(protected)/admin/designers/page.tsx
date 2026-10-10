@@ -134,11 +134,11 @@ const ROSTER_PATH = "/admin/designers";
  * the first thought an admin has when this list goes blank is that something has been deleted.
  */
 const ROSTER_READ_FAILED =
-  "The roster could not be loaded, so this is not showing who is empanelled — it is not a claim that nobody is. Nothing on the server has changed. The message above is what the request actually answered.";
+  "The roster could not be loaded. Check your connection and try again. Nothing has changed.";
 
 /** §3.5's **genuinely-empty, unscoped** sentence: a statement about the repository, whose next move is to create one. */
 const NOBODY_EMPANELLED =
-  "Nobody has been empanelled yet. Add the first designer above — the address is all that is needed, and their account will create itself when they sign in.";
+  "Nobody has been empanelled yet. Add the first designer above — their email address is all that is needed, and their account is created when they first sign in.";
 
 /**
  * The filters excluded everything. NOT the same claim as either sentence above.
@@ -149,7 +149,7 @@ const NOBODY_EMPANELLED =
  * from the one a client-side box would print, which is the sentence that is not to be trusted.
  */
 const NARROWED_TO_NOTHING =
-  "No entry matches the filters set above. They are applied on the server, over the whole roster and not only the rows this page had loaded, so this is an answer about every empanelment there has ever been. Clear every filter to see everybody again, suspended entries included.";
+  "No entry matches these filters. Clear them to see everybody, suspended entries included.";
 
 /**
  * The institution vocabulary could not be read — §3.5's could-not-be-listed, one control down.
@@ -164,11 +164,11 @@ const NARROWED_TO_NOTHING =
  * genuinely empty.
  */
 const INSTITUTIONS_READ_FAILED =
-  "The list of institutions could not be loaded, so the Institution filter above is not offering what exists — an institution missing from it has not been ruled out. Typing the institution's name into the search box still works: that runs on the server, over the whole roster.";
+  "The list of institutions could not be loaded, so the Institution filter above may be incomplete. You can still type an institution's name into the search box.";
 
 /** The same fact, for the picker's own panel. See {@link INSTITUTIONS_READ_FAILED}. */
 const INSTITUTIONS_EMPTY_FAILED =
-  "The institution list could not be loaded, so this is not showing what exists. Type the institution's name into the search box above instead — it is searched on the server.";
+  "The institution list could not be loaded. Type the institution's name into the search box above instead.";
 
 /** §3.5's genuinely-empty-unscoped, for the institution picker: a claim about the roster, not about a read. */
 const INSTITUTIONS_EMPTY_NONE =
@@ -444,12 +444,12 @@ function DesignerRosterPageInner() {
   async function suspend(entry: DesignerRosterEntry) {
     const ok = await confirm({
       title: `Suspend ${entry.fullName || entry.email}?`,
-      body: "They will be refused at their next request and at every sign-in after it, until the entry is restored.",
+      body: "They lose access straight away and cannot sign in until the entry is restored.",
       // The tone is danger because access is being taken away, but the note has to correct the word
       // the tone implies: nothing is deleted here, and an admin who believes otherwise will hesitate
       // over something that is one click from being undone.
       note:
-        "The roster entry is kept — this records that they were empanelled, and that record outlives their access. Nothing they have recorded is touched, and Restore gives the access back.",
+        "The roster entry is kept, and nothing they have recorded is touched. Restore gives their access back.",
       confirmLabel: "Suspend",
       tone: "danger"
     });
@@ -471,7 +471,7 @@ function DesignerRosterPageInner() {
       title: `Restore ${entry.fullName || entry.email}?`,
       body: "They will be able to sign in again immediately.",
       note: entry.revokedAt
-        ? `They were suspended on ${formatDate(entry.revokedAt)}. Restoring clears that date, because a row cannot be both active and revoked.`
+        ? `They were suspended on ${formatDate(entry.revokedAt)}. Restoring clears that date.`
         : undefined,
       confirmLabel: "Restore",
       tone: "warning"
@@ -528,7 +528,7 @@ function DesignerRosterPageInner() {
             // `roleLabel` answers "" for an absent user. AppShell never renders a protected page
             // without one, but a sentence that reads "  does not open this" is a worse way to find
             // that out than a fallback nobody will ever see.
-            `${roleLabel(user?.role) || "Your tier"} does not open this. Ask an admin or the master admin.`
+            `${roleLabel(user?.role) || "Your role"} does not open this. Ask an admin or the master admin.`
           }
         />
       </>
@@ -565,13 +565,13 @@ function DesignerRosterPageInner() {
         empanels somebody on this one, and those rows say so in the Added column below.
       */}
       <p className="mb-4 text-sm leading-6 text-ink-500">
-        This roster is the <em>designer</em> half of signing in. Whether an address may reach the application at all is
-        decided on{" "}
+        This roster lists who may sign in as a <em>designer</em>. Whether an address may sign in at all is decided
+        on{" "}
         <Link href="/admin/access" className="font-medium text-purple-700 hover:underline">
           Who may sign in
         </Link>
-        , where people waiting for approval also queue up. Empanelling somebody here admits them there too, and admitting
-        somebody there as a designer empanels them here, so this stays one action either way round.
+        , where people waiting for approval also appear. Empanelling somebody here admits them there too, and admitting
+        somebody there as a designer empanels them here.
       </p>
 
       {error ? (
@@ -595,8 +595,8 @@ function DesignerRosterPageInner() {
           </h2>
           <p className="mt-1 text-sm leading-6 text-ink-muted">
             {editing
-              ? "The name, institution and note are the admin’s own record of whom they empanelled and why. Changing them cannot change whether this person may sign in — use Suspend or Restore for that."
-              : "The email address is the only thing needed, and no account has to exist yet: that is how somebody is empanelled before they have ever opened the app. The first time they sign in with Google under this address, the account is created and promoted to Designer."}
+              ? "The name, institution and note are the admin’s own record of whom they empanelled and why. Changing them does not change whether this person may sign in — use Suspend or Restore for that."
+              : "Only the email address is needed; no account has to exist yet. The first time they sign in with Google using this address, their account is created as a Designer."}
           </p>
         </div>
         <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
@@ -682,8 +682,8 @@ function DesignerRosterPageInner() {
 
       {directoryCapped ? (
         <p className="mb-4 rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-xs leading-5 text-amber-800">
-          The account list this page reads to match a roster entry to a person stops at {DIRECTORY_CAP} accounts, so “Open
-          profile” may be missing from a row whose account does exist. The roster itself is complete and paged below.
+          Only the first {DIRECTORY_CAP} accounts are matched to roster entries, so “Open profile” may be missing from some
+          entries. The roster itself is complete and paged below.
         </p>
       ) : null}
 
@@ -792,7 +792,7 @@ function DesignerRosterPageInner() {
                           // honest answer is "nobody did".
                           <span className="mt-1 flex w-fit items-center gap-1 rounded-full border border-line-200 bg-surface-50 px-2 py-0.5 text-[11px] font-medium text-ink-700">
                             <ShieldCheck className="h-3 w-3 shrink-0 text-purple-700" aria-hidden />
-                            Automatically, from the allow-list
+                            Automatically, from Who may sign in
                           </span>
                         ) : null}
                       </td>

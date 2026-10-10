@@ -1421,7 +1421,7 @@ export function ArtisanForm({
               <p id={experienceHintId} className="text-xs leading-5 text-ink-muted">
                 {derivedExperience === null
                   ? "Used when there is no “practising since” date: a stated answer, which does not change as the years pass. Leave a box on “Not recorded” rather than answering 0 — they mean different things."
-                  : `The date above answers the years — ${derivedExperience} years is what the workshop and the report print, and a number chosen here stays on the record and is read only while that date is empty. The months have no date behind them: they are stored as chosen, and the participant table and the exports still print the years alone.`}
+                  : `The date above sets the years — ${derivedExperience} years is what the workshop and the report print. A number chosen here is used only when that date is empty. Months are stored as chosen; the participant table and the exports print the years only.`}
               </p>
             }
           >
@@ -1587,7 +1587,7 @@ export function ArtisanForm({
                 to one record. Stored securely and masked on every shared or exported view.
                 {aadhaarRequired
                   ? ""
-                  : " This artisan was recorded before an Aadhaar number was required, so the record still saves without one — add it only if the artisan is willing."}
+                  : " This record can be saved without an Aadhaar number — add it only if the artisan is willing."}
               </p>
             </div>
             <AadhaarField
@@ -1612,13 +1612,13 @@ export function ArtisanForm({
           </div>
           <DosDontsField
             name="dos"
-            label="Do's (positive prompt)"
+            label="Do's"
             helper="Lessons from years at the craft — the things the artisan has learnt to do. Press Enter for each new point."
             defaultValue={initial?.dos}
           />
           <DosDontsField
             name="donts"
-            label="Don'ts (negative prompt)"
+            label="Don'ts"
             helper="Lessons from years at the craft — the things the artisan has learnt not to do / to avoid. Press Enter for each new point."
             defaultValue={initial?.donts}
           />
@@ -1635,7 +1635,7 @@ export function ArtisanForm({
             markDirty();
           }}
           title="Artisan media"
-          description="Attach or capture artisan images, audio introductions, videos, and documents. Image EXIF is retained and summarized in notes."
+          description="Attach or capture artisan images, audio introductions, videos, and documents. Photo details (date, place, camera) are kept and summarised in notes."
         />
         {/*
           `statedPlace` is the free-text box the researchers used while there was no district column

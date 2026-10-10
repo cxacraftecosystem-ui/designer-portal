@@ -105,7 +105,7 @@ export function ChangePasswordCard() {
       }
       setError(
         isUnreachable(err)
-          ? "Could not reach the server. Check the connection and try again."
+          ? "Couldn't connect. Check your connection and try again."
           : err instanceof Error
             ? err.message
             : "Could not change the password."

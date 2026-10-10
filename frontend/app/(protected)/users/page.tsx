@@ -325,7 +325,7 @@ function UsersScreen() {
     // The picker is `required`, so the browser normally stops this first; said here as well because a
     // tier nobody chose must never reach the server as a default it would accept.
     if (!role) {
-      setCreateError("Choose the tier this account is created at.");
+      setCreateError("Choose the role for this account.");
       return;
     }
     const body = newAccountBody(
@@ -414,7 +414,7 @@ function UsersScreen() {
           <span className="font-medium text-ink-900">{user.name || user.email}</span> loses access immediately and
           cannot sign in again. This action cannot be undone.
         </>,
-        "Records they documented stay in the repository, still attributed to them."
+        "Records they documented are kept, still attributed to them."
       )
     );
     if (!ok) return;
@@ -652,14 +652,14 @@ function UsersScreen() {
             </Field>
           </div>
           {role === "" && prefill.email ? (
-            <p className="text-xs leading-5 text-ink-500">Choose the tier yourself: the link filled in the address, not the tier.</p>
+            <p className="text-xs leading-5 text-ink-500">Choose the role yourself: the link filled in the address only.</p>
           ) : null}
           {createsPeerAccount(currentUser, role) ? (
             // Said BEFORE the account exists: afterwards the row only reads "Peer tier".
             <p className={CAUTION_CLASS}>
               {isMasterAdmin(currentUser)
                 ? "Master admins are peers: once this account exists, no master admin can set its password, issue it a link or correct it here."
-                : "This is your own tier: once the account exists you cannot set its password, issue it a link or correct it — only a higher tier can."}
+                : "This is your own role: once the account exists you cannot set its password, issue it a link or correct it — only a higher role can."}
             </p>
           ) : null}
           {edgeSpace ? <EdgeSpaceNote /> : null}
@@ -718,13 +718,13 @@ function UsersScreen() {
             one fewer name than there are roles. The count is `.length` and the names come from
             `ROLES_BY_RANK` (already highest-first) through `roleLabel`, so this sentence cannot
             disagree with the picker three lines below it that is built from the same array. */}
-        {ROLES_BY_RANK.length} tiers: {ROLES_BY_RANK.map(roleLabel).join(" → ")}. You can promote
-        users to your own tier and below, and manage only users beneath your tier. Every tier from
-        Professor upward may change the role of anyone beneath it. {provisionerTierPhrase()} also create
+        {ROLES_BY_RANK.length} roles: {ROLES_BY_RANK.map(roleLabel).join(" → ")}. You can promote
+        users up to your own role, and manage only users below your role. Every role from
+        Professor upward may change the role of anyone below it. {provisionerTierPhrase()} also create
         password accounts, set temporary passwords, issue password links and correct names and addresses;
         deleting an account, granting a capability and letting back in an address an admin refused or
-        suspended remain admin actions. Professors and above hold every capability implicitly; the
-        checkboxes lift a single capability for a lower tier.
+        suspended remain admin actions. Professors and above have every capability; the checkboxes
+        give a single capability to somebody with a lower role.
       </p>
       <p className="mb-4 text-xs text-ink-muted">
         {/* CORRECTED 2026-10-09. This warned that promoting somebody to Designer without empanelling
@@ -748,7 +748,7 @@ function UsersScreen() {
         )}
       </p>
       <p className="mb-4 text-xs text-ink-muted">
-        Two things are decided by RANK alone and have no checkbox: adding or editing crafts and
+        Two things depend on role alone and have no checkbox: adding or editing crafts and
         workshops (Professor and above; deleting either is admin-only), and creating artisans,
         products, tools, processes and interviews (Researcher and above). Field contributors and
         volunteers keep answering existing interviews, uploading media and commenting. To give
@@ -924,8 +924,8 @@ function UsersScreen() {
       <p className="mt-2 text-xs text-ink-muted">
         “{ACCOUNT_STATUS_LABEL.MUST_CHOOSE_NEW_PASSWORD}” means the account must replace its password at its next
         sign-in — either because a provisioner typed it (a temporary password somebody else knows) or because a
-        change was required of the owner&apos;s own. Sign-ins have been recorded since August 2026, so an account last
-        used before then also reads “{ACCOUNT_STATUS_LABEL.NEVER_SIGNED_IN}”.
+        change was required of the owner&apos;s own. “{ACCOUNT_STATUS_LABEL.NEVER_SIGNED_IN}” means no sign-in has been
+        recorded for the account.
       </p>
       {masterControls ? (
         <section className="panel mt-6 p-4">
@@ -958,7 +958,7 @@ function UsersScreen() {
               <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-ink-soft">Grant</div>
               <label className="flex items-center gap-2 text-sm text-ink">
                 <input type="checkbox" checked={grantAdmin} onChange={(event) => setGrantAdmin(event.target.checked)} />
-                Administrator access (role = ADMIN)
+                Administrator access (Admin role)
               </label>
               <label className="flex items-center gap-2 text-sm text-ink">
                 <input type="checkbox" checked={grantQuestionnaire} onChange={(event) => setGrantQuestionnaire(event.target.checked)} />

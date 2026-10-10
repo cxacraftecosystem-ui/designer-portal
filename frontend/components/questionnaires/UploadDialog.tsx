@@ -269,7 +269,7 @@ export function UploadDialog({
                   // The caller said nothing, so this says the one thing that is true whatever the
                   // reason: absence from this list is never a refusal. It is the same route out the
                   // reuse dialog offers, and it asks the server the identical question.
-                  "If the workshop you want is not here, leave this unattached — a questionnaire is attached from its own page afterwards, which asks the server the same question this picker would have."}
+                  "If the workshop you want is not here, leave this unattached and attach the questionnaire from its own page afterwards."}
               </p>
             }
           >

@@ -144,8 +144,8 @@ export function PublishAppUpdatePanel() {
         <div className="min-w-0">
           <h2 className="font-display text-base font-bold text-ink-900">Publish an Android update</h2>
           <p className="mt-0.5 text-xs leading-5 text-ink-500">
-            Upload the signed APK and every device is prompted to install it the next time it opens. Same release
-            the phone&rsquo;s &ldquo;Push update to all&rdquo; publishes — this is it from where the file already is.
+            Upload the signed APK and every device is prompted to install it the next time it opens. This does the same
+            as &ldquo;Push update to all&rdquo; on the phone.
           </p>
         </div>
       </div>
@@ -174,11 +174,11 @@ export function PublishAppUpdatePanel() {
               onChange={(event) => setVersionName(event.target.value)}
               placeholder="1.1.18"
             />
-            <p className="mt-1 text-xs text-ink-500">Three numbers, the same value as android/app/build.gradle.kts.</p>
+            <p className="mt-1 text-xs text-ink-500">Three numbers, e.g. 1.4.2, matching the app being published.</p>
           </Field>
           <Field label="Version code">
             <TextInput name="versionCode" value={derived ? String(derived) : ""} readOnly onChange={() => undefined} />
-            <p className="mt-1 text-xs text-ink-500">Derived from the name, exactly as the build derives it.</p>
+            <p className="mt-1 text-xs text-ink-500">Worked out from the version name.</p>
           </Field>
         </div>
 

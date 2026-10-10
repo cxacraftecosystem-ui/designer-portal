@@ -326,7 +326,7 @@ async function openManage(page: Page) {
   await expect(viewersPanel(page).getByRole("heading", { name: /design workshop visibility/i })).toBeVisible();
   // The eligible list decides whether the controls render at all (a 404 hides them behind an honest
   // notice), so nothing below is meaningful until it has landed.
-  await expect(viewersPanel(page).getByText(/does not offer design workshop visibility/i)).toHaveCount(0);
+  await expect(viewersPanel(page).getByText(/isn't available right now/i)).toHaveCount(0);
 }
 
 /**

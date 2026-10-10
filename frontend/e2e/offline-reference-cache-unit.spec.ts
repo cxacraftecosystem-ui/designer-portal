@@ -566,22 +566,22 @@ test.describe("which id could be the missing one", () => {
 test.describe("what the researcher is told", () => {
   test("one candidate is named in the words of the box they will reopen", () => {
     const said = outboxDanglingSentence("Record not found", [referenceFieldNoun("designWorkshopId")], 0, false);
-    expect(said).toContain("This record points at a design & prototype workshop that is not on the server.");
+    expect(said).toContain("This record points at a design & prototype workshop that no longer exists.");
     // Nothing-is-lost comes BEFORE the server's words, because the control beside this sentence is
     // Discard and a person who has read "the server rejected this" reaches for it.
-    expect(said.indexOf("Nothing is lost")).toBeLessThan(said.indexOf("The server said"));
+    expect(said.indexOf("Nothing is lost")).toBeLessThan(said.indexOf("Reason:"));
     // Tersened on 2026-09-03 with Android's `outboxDanglingSentence`. The FACT is pinned, not the
     // wording of its justification: "because what is missing is missing on the server" moved into
     // the KDoc, and what a row read standing up beside a Discard button still has to say is that a
     // bare retry is pointless. Nothing was deleted is pinned beside it for the same reason.
-    expect(said).toContain("Retrying unchanged gets the same answer");
+    expect(said).toContain("Trying again without a change won't help");
     expect(said).toContain("nothing was deleted");
   });
 
   test("more than one candidate is an honest ambiguity, never a guess", () => {
     const said = outboxDanglingSentence("Record not found", ["design & prototype workshop", "workshop"], 2, true);
-    expect(said).toContain("This correction points at something that is not on the server.");
-    expect(said).toContain("the server's answer does not say which");
+    expect(said).toContain("This correction points at something that no longer exists:");
+    expect(said).toContain("a design & prototype workshop or a workshop");
     expect(said).toContain("2 file(s)");
   });
 
@@ -595,7 +595,7 @@ test.describe("the re-pick panel with nothing to offer", () => {
   test("a failed read and an empty scope are different sentences", () => {
     // Their next moves are a connection and an administrator, and somebody sent to the wrong one
     // loses a day. This is the one surface whose whole job is to be a way out.
-    expect(repickEmptyLine("workshop", false)).toContain("could not be read just now");
+    expect(repickEmptyLine("workshop", false)).toContain("couldn't be loaded just now");
     expect(repickEmptyLine("workshop", true)).toContain("An administrator can give you access to one");
   });
 

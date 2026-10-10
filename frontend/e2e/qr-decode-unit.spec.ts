@@ -210,7 +210,7 @@ test("a symbol larger than this app prints is named as foreign, not reported as 
   expect(result.ok).toBe(false);
   if (result.ok) return;
   expect(result.reason).toBe("UNSUPPORTED_VERSION");
-  expect(result.message).toMatch(/not one of ours|bigger than any card/i);
+  expect(result.message).toMatch(/isn't a workshop code|bigger than any workshop card/i);
 });
 
 /* ────────────────────────────────────────────────────────────────────────────

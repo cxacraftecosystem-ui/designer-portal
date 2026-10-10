@@ -65,7 +65,7 @@ export function StoredMediaImage({
     return (
       <div className={`grid ${className} place-items-center gap-1 rounded-md border border-line-200 bg-surface-50 p-2 text-center text-xs leading-4 text-ink-500`}>
         <ImageOff className="h-4 w-4" aria-hidden />
-        This file is no longer readable from here.
+        This file cannot be shown.
       </div>
     );
   }
@@ -75,7 +75,7 @@ export function StoredMediaImage({
     return (
       <div className={`grid ${className} place-items-center gap-1 rounded-md border border-line-200 bg-surface-50 p-2 text-center text-xs leading-4 text-ink-500`}>
         <ImageOff className="h-4 w-4" aria-hidden />
-        {file.originalFilename} is stored, but this account may not open the file itself.
+        {file.originalFilename} is saved, but you do not have access to open it.
       </div>
     );
   }

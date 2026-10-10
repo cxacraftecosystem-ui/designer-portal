@@ -276,9 +276,9 @@ test.describe("the artisan form can be filled in without seeing it", () => {
 
     // The group carries the heading that is printed above the rows, so a reader knows which of the
     // two identical lists they have landed in.
-    const dos = page.getByRole("group", { name: /Do's \(positive prompt\)/ });
+    const dos = page.getByRole("group", { name: /^Do's/ });
     await expect(dos).toBeVisible({ timeout: 45_000 });
-    const donts = page.getByRole("group", { name: /Don'ts \(negative prompt\)/ });
+    const donts = page.getByRole("group", { name: /^Don'ts/ });
     await expect(donts).toBeVisible();
 
     // And each row is named by the ordinal it is drawn with, so point 2 is distinguishable from

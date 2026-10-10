@@ -97,8 +97,8 @@ test("the answered-and-none sentence never claims a failure", () => {
  * one look identical on screen unless one of them says which it is.
  */
 test("the offline sentence separates an empty list from an unaskable one", () => {
-  expect(CHOOSER_OFFLINE_BODY).toContain("not an empty archive");
-  expect(CHOOSER_OFFLINE_BODY).toContain("could not be loaded");
+  expect(CHOOSER_OFFLINE_BODY).toContain("isn't an empty list");
+  expect(CHOOSER_OFFLINE_BODY).toContain("couldn't be loaded");
 });
 
 /**

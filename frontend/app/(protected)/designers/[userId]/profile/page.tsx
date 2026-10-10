@@ -129,7 +129,7 @@ export default function DesignerProfilePage({ params }: { params: Promise<{ user
           notFound
             ? undefined
             : mayEdit
-              ? "The details every report this designer generates is signed with. Editable by them and by admins — and by nobody else, because this text is printed under their name."
+              ? "The details every report this designer generates is signed with. Only they and admins can edit them."
               : "The details every report this designer generates is signed with. Read only from this account."
         }
         icon={<IdCard className="h-5 w-5" aria-hidden />}
@@ -150,8 +150,7 @@ export default function DesignerProfilePage({ params }: { params: Promise<{ user
         <RestrictedPanel
           title="No profile to show"
           body={
-            "There is no designer with that id, or it is not one this account may see — the API answers the same way to both, on purpose, " +
-            "so that a list of ids cannot be used to work out who works here. If you were sent this link by a colleague, ask an admin to open it."
+            "This profile does not exist, or you do not have access to it. If a colleague sent you this link, ask an admin to open it."
           }
         />
       ) : profile === null ? (
@@ -180,8 +179,7 @@ export default function DesignerProfilePage({ params }: { params: Promise<{ user
             {/* Say WHY it is read-only rather than leaving a page that merely has no controls: a
                 screen with nothing to press reads as broken, and the reason here is a rule worth
                 stating — the profile is the wording a report is signed with. */}
-            Only {displayName} and an admin may change this profile: it is the wording their reports are signed with, so it is
-            theirs to write. {DESIGNER_PROFILE_COPY_NOTICE}
+            Only {displayName} and an admin can change this profile. {DESIGNER_PROFILE_COPY_NOTICE}
           </p>
           {designerProfileIsEmpty(profile) ? (
             <section className="panel p-4 text-sm leading-6 text-ink-700">

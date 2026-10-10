@@ -115,9 +115,8 @@ function LocationRecord({ location }: { location: DesignerProfileLocation | null
     <div className="mt-5 border-t border-line-200 pt-4">
       <h3 className="field-label">Location record</h3>
       <p className="mt-1 text-xs leading-5 text-ink-500">
-        The district, the village and the map point are held on the same location record every other record page uses.
-        The four boxes above are this profile’s own address columns, and an address may still be in either place — so
-        both are shown rather than one of them being chosen for you.
+        The district, the village and the map point. An address may be recorded here or in the four boxes above, so both
+        are shown.
       </p>
       <dl className="mt-3 grid gap-4 md:grid-cols-2">
         <Row label="State">{location?.state}</Row>

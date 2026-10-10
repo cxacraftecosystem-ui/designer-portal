@@ -282,7 +282,7 @@ async function openTheFixtureWorkshop(page: Page, title: string = WORKSHOP_TITLE
   });
   // A 404 from the id-less endpoint means the deployment predates the feature and the controls are
   // hidden behind an honest notice; nothing below is meaningful until that is ruled out.
-  await expect(viewersPanel(page).getByText(/does not offer design workshop visibility/i)).toHaveCount(0);
+  await expect(viewersPanel(page).getByText(/isn't available right now/i)).toHaveCount(0);
   await listed;
 
   /*
@@ -510,7 +510,7 @@ test.describe("finding a design workshop viewer past the picker's ceiling", () =
     await openTheFixtureWorkshop(page, CLEAN_WORKSHOP_TITLE);
     const panel = viewersPanel(page);
 
-    await expect(panel.getByText(/Some eligible accounts could not be listed/)).toBeVisible();
+    await expect(panel.getByText(/Some eligible accounts couldn.t be listed/)).toBeVisible();
     // And NOT either of the three sentences that would be untrue here: nothing can be narrowed, no
     // amount of typing reaches the missing designers, and this is not "nobody matched your term".
     await expect(panel.getByText(/Too many (accounts|matches)/)).toHaveCount(0);
@@ -520,7 +520,7 @@ test.describe("finding a design workshop viewer past the picker's ceiling", () =
     // name or email to reach the rest" to "narrow the search" — while the underlying answer, and the
     // reason it is incomplete, had not changed at all.
     await searchBox(page).fill("Meher");
-    await expect(panel.getByText(/Some eligible accounts could not be listed/)).toBeVisible();
+    await expect(panel.getByText(/Some eligible accounts couldn.t be listed/)).toBeVisible();
     await expect(panel.getByText(/Too many (accounts|matches)/)).toHaveCount(0);
   });
 });

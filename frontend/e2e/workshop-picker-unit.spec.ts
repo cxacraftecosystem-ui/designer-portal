@@ -327,7 +327,7 @@ test("the control says whether the types came off the server", () => {
   // "there are only these", and an administrator may have added a seventh programme this browser has
   // never seen.
   expect(source).toContain("view.typesServed");
-  expect(source).toContain("These are this app's built-in types of workshop");
+  expect(source).toContain("These are the standard types of workshop");
   // R3's other sentence: the box looks exactly like the ones that are saved, and is not.
   expect(source.match(/It is not saved on this record|are not saved on this record/g)?.length ?? 0).toBeGreaterThanOrEqual(2);
 });

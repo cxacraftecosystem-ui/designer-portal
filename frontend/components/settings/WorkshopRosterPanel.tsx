@@ -214,7 +214,7 @@ export function WorkshopRosterPanel({ refreshToken, onChanged }: { refreshToken:
       await apiFetch<WorkshopAccessRow>(`/workshops/${workshopId}/assignments/${row.userId}`, { method: "DELETE" });
       toast({
         title: "Access revoked",
-        description: `${personName(row.user)} can no longer work in this workshop. The row is kept as a record.`,
+        description: `${personName(row.user)} can no longer work in this workshop. The entry is kept as a record.`,
         tone: "info"
       });
       setConfirmRevoke(null);
@@ -411,7 +411,7 @@ export function WorkshopRosterPanel({ refreshToken, onChanged }: { refreshToken:
                     {confirmRevoke === row.id ? (
                       <div className="mt-2 rounded-md border border-red-200 bg-error-100 p-2 text-left">
                         <p className="text-xs text-ink-700">
-                          Revoke {personName(row.user)}? They lose access to this workshop; the row is kept as a record.
+                          Revoke {personName(row.user)}? They lose access to this workshop; the entry is kept as a record.
                         </p>
                         <div className="mt-2 flex justify-end gap-2">
                           <button className={rowAction("neutral")} onClick={() => setConfirmRevoke(null)} type="button">

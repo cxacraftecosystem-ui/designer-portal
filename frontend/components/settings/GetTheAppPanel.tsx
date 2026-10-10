@@ -67,20 +67,19 @@ export function GetTheAppPanel() {
         <div className="min-w-0">
           <h2 className="font-display text-base font-bold text-ink-900">Get the Android app</h2>
           <p className="mt-0.5 text-xs leading-5 text-ink-500">
-            The phone app is the one that goes into the workshop: it records interviews, captures photos and GPS with
-            no signal at all, and queues everything until you are back in range. This portal is for reviewing,
-            browsing and administration. Same account, same repository.
+            The phone app goes into the workshop: it records interviews and captures photos and GPS with no signal at
+            all, and uploads everything when you are back online. This portal is for reviewing, browsing and
+            administration. Use the same account on both.
           </p>
         </div>
       </div>
 
       {status === "loading" ? (
-        <p className="text-xs text-ink-500">Checking which build is current…</p>
+        <p className="text-xs text-ink-500">Checking for the latest version…</p>
       ) : status === "none" ? (
         <p className="rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-xs text-ink-500">
-          No build has been published yet. A master admin publishes one — from &ldquo;Publish an Android update&rdquo;
-          on this page, or from the phone&rsquo;s own &ldquo;Push update to all&rdquo; — and it appears here
-          automatically.
+          No version has been published yet. A master admin publishes one — from &ldquo;Publish an Android
+          update&rdquo; on this page, or from &ldquo;Push update to all&rdquo; on the phone — and it appears here.
         </p>
       ) : (
         <div className="grid gap-2">
@@ -89,7 +88,7 @@ export function GetTheAppPanel() {
                 sends the filename — design-workshop-v<version>.apk — in Content-Disposition. */}
             <a className="field-button" href={DOWNLOAD_URL}>
               <Download className="h-4 w-4" aria-hidden />
-              Download the APK
+              Download the app
               {release?.versionName ? ` · v${release.versionName}` : ""}
             </a>
             <span className="text-xs text-ink-500">
@@ -99,16 +98,15 @@ export function GetTheAppPanel() {
 
           {status === "published" ? (
             <p className="text-xs text-ink-500">
-              Version {release?.versionName} (build {release?.versionCode}), published{" "}
-              {formatDate(release?.publishedAt)}. The link always fetches the newest published build — the same one
-              phones are prompted to install.
+              Version {release?.versionName}, published {formatDate(release?.publishedAt)}. The link always downloads
+              the newest version — the same one phones are prompted to install.
             </p>
           ) : (
             <p className="flex items-start gap-1.5 text-xs text-ink-500">
               <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" aria-hidden />
               <span>
-                Could not reach the repository to check which version is current. The download itself resolves the
-                newest build when you click it, so it is still worth trying.
+                Couldn&apos;t check for the latest version. The download link still gets the newest version, so try it
+                anyway.
               </span>
             </p>
           )}

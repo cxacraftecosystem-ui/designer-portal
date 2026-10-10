@@ -79,7 +79,7 @@ test("the notice says it is a copy, when it was taken, its version, and that sav
   // The version is the one number a designer can act on: it is how they find out this copy predates
   // the four questions a colleague says they added this morning.
   expect(notice).toContain("version 4");
-  expect(notice).toContain("ANSWERS CANNOT BE SAVED");
+  expect(notice).toContain("Connect to the internet to save answers");
 });
 
 test("with no readable stamp the sentence drops the clause instead of printing a placeholder", () => {
@@ -88,6 +88,6 @@ test("with no readable stamp the sentence drops the clause instead of printing a
     const notice = cachedQuestionnaireNotice(empty, 2);
     expect(notice).not.toContain("downloaded on");
     expect(notice).toContain("downloaded (version 2)");
-    expect(notice).toContain("ANSWERS CANNOT BE SAVED");
+    expect(notice).toContain("Connect to the internet to save answers");
   }
 });

@@ -188,7 +188,7 @@ export function DeletedWorkshopsCard() {
               <>
                 <h3 className="text-base font-medium text-ink">Nothing has been deleted</h3>
                 <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-ink-muted">
-                  Every design workshop in the repository is live. Deleting one puts it here, where it can be restored.
+                  Deleted design workshops appear here, where they can be restored.
                 </p>
               </>
             )}

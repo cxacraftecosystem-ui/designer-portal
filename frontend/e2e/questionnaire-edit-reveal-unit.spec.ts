@@ -521,11 +521,11 @@ test.describe("the banner tells the truth about what saving will do", () => {
     */
     const banner = sharedEntryBanner();
     expect(banner).toContain("{editingInterview ? (");
-    expect(banner).toContain("will\n                  be refused");
+    expect(banner).toContain("can&apos;t be saved with these\n                  artisans ticked");
     expect(banner).toContain("it will not create a duplicate");
     // Both arms of one ternary: the create sentence is now reachable only when NOT editing.
     expect(banner.indexOf("{editingInterview ? (")).toBeLessThan(banner.indexOf("it will not create a duplicate"));
-    expect(banner.indexOf("will\n                  be refused")).toBeLessThan(
+    expect(banner.indexOf("can&apos;t be saved with these\n                  artisans ticked")).toBeLessThan(
       banner.indexOf("it will not create a duplicate")
     );
   });
@@ -533,7 +533,7 @@ test.describe("the banner tells the truth about what saving will do", () => {
   test("and it points at the ways out, including the offer the refusal now carries", () => {
     const banner = sharedEntryBanner();
     expect(banner).toContain("Put the original artisans back");
-    expect(banner).toContain("move this interview into it when the refusal comes back");
+    expect(banner).toContain("move this interview into it when you save");
   });
 
   test("the banner is still suppressed against the record being edited", () => {

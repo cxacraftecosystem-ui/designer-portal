@@ -206,7 +206,7 @@ test("admin view off takes every provisioning and admin control away", () => {
 });
 
 test("a row with no controls says why: You, Above your tier, Peer tier", () => {
-  expect(STANDING_LABEL).toEqual({ SELF: "You", ABOVE: "Above your tier", PEER: "Peer tier" });
+  expect(STANDING_LABEL).toEqual({ SELF: "You", ABOVE: "Above your role", PEER: "Same role as yours" });
 
   const ministry = account("MINISTRY_ADMIN");
   expect(rowStanding(ministry, ministry)).toBe("SELF");
@@ -351,8 +351,8 @@ test("the success panel offers a password link only where the row would — neve
   expect(createdPanelOffersLink(ministry, account(BELOW_PROFESSOR), MINISTRY_POWERS), "ministry → below").toBe(true);
 
   // And the panel says why, in the creator's own terms — never silence where a button used to be.
-  expect(createdPanelLinkNote(admin, account("ADMIN"), ADMIN_POWERS)).toMatch(/your own tier, so only a higher tier/);
-  expect(createdPanelLinkNote(ministry, account("MINISTRY_ADMIN"), MINISTRY_POWERS)).toMatch(/your own tier/);
+  expect(createdPanelLinkNote(admin, account("ADMIN"), ADMIN_POWERS)).toMatch(/the same role as yours, so only a higher role/);
+  expect(createdPanelLinkNote(ministry, account("MINISTRY_ADMIN"), MINISTRY_POWERS)).toMatch(/the same role as yours/);
   expect(createdPanelLinkNote(master, account("MASTER_ADMIN"), ADMIN_POWERS)).toMatch(/No master admin can issue/);
   expect(createdPanelLinkNote(admin, account(BELOW_PROFESSOR), ADMIN_POWERS), "a link is offered: nothing to explain").toBeNull();
 
@@ -388,7 +388,7 @@ test("every row control is decided by rowOffers, and the old fallthroughs are go
   expect(PAGE).toMatch(/offers\.remove \? \(/);
   expect(PAGE).toMatch(/editable=\{offers\.grants\}/);
   expect(PAGE).toContain("STANDING_LABEL[offers.standing]");
-  expect(PAGE).not.toContain(">Peer tier<");
+  expect(PAGE).not.toContain(">Same role as yours<");
   expect(PAGE).not.toContain(">Protected<");
   expect(PAGE).toContain("Set temporary password");
   expect(PAGE).toContain("onClick={() => setRequiring({ open: true, user })}");
@@ -424,7 +424,8 @@ test("requiring a new password says what a Google sign-in and an old phone will 
   expect(body).toContain("Also issue a password link");
   expect(body).toContain('const withLink = withLinkChoice ?? target?.authProvider === "GOOGLE";');
   expect(body).toContain("onSaved(updated, asked)");
-  expect(body).toContain("0.0.15 or older still say “An administrator set your password”");
+  // The old-handset version note was removed in the 2026-10-10 copy rewrite: no app version is named on screen.
+  expect(body).not.toContain("0.0.15 or older");
   // The page issues the link AFTER the flag is raised, through the same path as the row's button.
   expect(PAGE).toMatch(/onSaved=\{\(updated, withLink\) => \{[\s\S]{0,600}?if \(withLink\) void issueLink\(updated\);/);
 });
@@ -504,9 +505,9 @@ test("/users reads the link once and strips it; /admin/access says Google and of
   // "…and tier already filled in" only where a tier was chosen — the link cannot carry the default.
   expect(ACCESS_PAGE).toContain("admitRole: created.admitRole");
   expect(ACCESS_PAGE).toMatch(
-    /\{passwordAccount\.admitRole\s*\?\s*", with this address and tier already filled in\."\s*:\s*", with this address filled in — choose their tier there/
+    /\{passwordAccount\.admitRole\s*\?\s*", with this address and role already filled in\."\s*:\s*", with this address filled in — choose their role there/
   );
-  expect(ACCESS_PAGE.match(/and tier already filled in/g) ?? [], "and never unconditionally").toHaveLength(1);
+  expect(ACCESS_PAGE.match(/and role already filled in/g) ?? [], "and never unconditionally").toHaveLength(1);
 });
 
 test("an approval that left the account's tier waiting says so in the server's words, on both approving paths", () => {
@@ -533,7 +534,7 @@ test("an approval that left the account's tier waiting says so in the server's w
   // Amber only while the notice is still that very sentence — a later notice replaces it, nothing to clear.
   expect(ACCESS_PAGE).toContain("heldPromotion !== null && heldPromotion === notice");
   // And the confirmation no longer promises a lift the server may hold back.
-  expect(ACCESS_PAGE).toContain("unless it still has to replace a temporary password somebody typed for it");
+  expect(ACCESS_PAGE).toContain("unless it still has to replace a temporary password, in which case you are told");
 
   // The key is the server's, read where it is written.
   expect(readFileSync(join(__dirname, "..", "..", "backend", "app", "api", "routes", "access.py"), "utf8")).toContain(

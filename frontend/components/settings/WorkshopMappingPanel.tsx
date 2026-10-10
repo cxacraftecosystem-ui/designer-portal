@@ -261,13 +261,12 @@ export function WorkshopMappingPanel() {
             Records not filed under a workshop
           </h2>
           <p className="mt-1 max-w-2xl text-xs leading-5 text-ink-500">
-            A record with no workshop is excluded from every workshop scope — the search box, the map, the
-            data browser, the exports and the completion matrix — while still appearing under{" "}
-            <span className="font-medium text-ink-700">All records</span>. That reads as an empty workshop
-            rather than as a filter. This finds them and files each one where its own evidence points: the
-            record it hangs off, the artisans in it, or the workshop whose dates it was recorded inside. A
-            record or file filed under a design &amp; prototype workshop is not listed: it belongs to that
-            workshop, and is changed from its own screen.
+            A record with no workshop does not appear when you choose a workshop — in the search box, the map,
+            the data browser, the exports or the completion matrix — though it still appears under{" "}
+            <span className="font-medium text-ink-700">All records</span>. This finds those records and files
+            each one where the evidence points: the record it belongs to, the artisans in it, or the workshop
+            whose dates it was recorded within.
+            Records filed under a design &amp; prototype workshop are not listed here.
           </p>
         </div>
         <button
@@ -286,7 +285,7 @@ export function WorkshopMappingPanel() {
       ) : null}
 
       {loading && !plan ? (
-        <p className="mt-3 text-xs text-ink-500">Reading every record that names no workshop…</p>
+        <p className="mt-3 text-xs text-ink-500">Finding records with no workshop…</p>
       ) : null}
 
       {plan && totals ? (
@@ -294,8 +293,7 @@ export function WorkshopMappingPanel() {
           {totals.unassigned === 0 ? (
             <p className="mt-3 flex items-center gap-2 rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-xs text-ink-700">
               <Check className="h-4 w-4 shrink-0 text-success-600" aria-hidden />
-              Every record in the repository names the workshop it was captured at. Nothing is hidden from a
-              workshop scope.
+              Every record is filed under a workshop.
             </p>
           ) : (
             <>
@@ -416,9 +414,9 @@ export function WorkshopMappingPanel() {
                             {stuck.length < bucket.unresolved ? (
                               <p className="mt-1.5 text-[11px] leading-4 text-ink-500">
                                 {bucket.unresolved - stuck.length} more{" "}
-                                {bucket.unresolved - stuck.length === 1 ? "is" : "are"} not shown here — the
-                                server sends at most a page of rows per record type. Re-check after clearing
-                                these to see the rest.
+                                {bucket.unresolved - stuck.length === 1 ? "is" : "are"} not shown here — only
+                                one page of each record type is listed at a time. Re-check after filing these to
+                                see the rest.
                               </p>
                             ) : null}
                           </div>
@@ -491,8 +489,8 @@ export function WorkshopMappingPanel() {
             </ul>
           ) : (
             <p className="mt-3 text-[11px] leading-4 text-ink-500">
-              No workshop in the repository has a date, so nothing can be filed by when it was recorded.
-              Adding a start and end date to a workshop makes that evidence available.
+              No workshop has dates, so nothing can be filed by when it was recorded. Add a start and end date
+              to a workshop to use them.
             </p>
           )}
         </>

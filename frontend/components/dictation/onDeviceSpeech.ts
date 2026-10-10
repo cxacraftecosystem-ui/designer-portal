@@ -178,7 +178,7 @@ export function describeSpeechError(code: string): string {
     case "aborted":
       return "";
     default:
-      return `Dictation stopped unexpectedly (${code}). Press the microphone to try again, or type the answer in.`;
+      return "Dictation stopped unexpectedly. Press the microphone to try again, or type the answer in.";
   }
 }
 

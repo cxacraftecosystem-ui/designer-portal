@@ -497,8 +497,13 @@ test("the chooser no longer asserts absence from a list that has not answered", 
     workshops you can open…", both inside `aria-live` regions.
   */
   expect(now, "the claim is now gated on the list having answered").toContain(") : ready ? (");
-  expect(now).toContain("has not answered yet, so it cannot say whether this is one of yours.");
-  expect(now).toContain("could not be loaded, so it cannot say whether this is one of yours.");
+  expect(now).toContain("It isn&apos;t in\n                your list above; its round is shown below.");
+  // Until the list has answered, the sentence claims nothing about the list at all.
+  const unanswered = now.slice(now.indexOf(") : ready ? ("));
+  expect(unanswered.slice(unanswered.indexOf(") : (")), "no absence claim before the list answers").not.toContain(
+    "your list above"
+  );
+  expect(now).toContain("Its round is shown\n                below.");
 });
 
 test("the header no longer says the pool round is only what a workshop declared finished", () => {
@@ -527,8 +532,9 @@ test("the truncation sentence names the date that actually does the sorting", ()
   */
   const notice = between(source, 'id="design-review-truncation"', "</p>");
   expect(notice).not.toContain("newest first");
-  expect(notice).toContain("most recently added to the repository");
-  expect(notice).toContain("not the order the dates on the rows read");
+  expect(notice).toContain("added most recently");
+  expect(notice).toContain("sorted by the day each workshop\n              ran");
+  expect(notice, "no developer vocabulary in the notice").not.toContain("repository");
 });
 
 test("the chooser's honest paragraphs are reachable to assistive technology", () => {
@@ -669,7 +675,7 @@ test("the empty line is three-way on a server-searched panel and two-way everywh
   expect(
     emptyListSentence({ emptyLabel: "No options", term: "bagru", server: true, ...settled })
   ).toBe(
-    "No matches for “bagru”. This box searches the whole list, not only the rows drawn here."
+    "No matches for “bagru” in the whole list."
   );
   expect(serverNoMatchSentence("  bagru  "), "the term is trimmed before it is quoted").toContain(
     "“bagru”"
@@ -781,12 +787,12 @@ test("a server-reported cut is stated even though its total is unknowable, and i
   expect(
     unknownTotalNoticeSentence({ shown: 80, pinned: 0, term: "bagru", hint: CAP_HINT_WITH_SEARCH })
   ).toBe(
-    "Showing the first 80. More match “bagru” than are drawn, and the server did not say how many. Keep typing to narrow the list."
+    "Showing the first 80. More match “bagru” than are shown. Keep typing to narrow the list."
   );
   expect(
     unknownTotalNoticeSentence({ shown: 80, pinned: 2, term: "", hint: CAP_HINT_WITH_SEARCH })
   ).toBe(
-    "Showing the first 80, plus 2 already selected. There are more than are drawn, and the server did not say how many. Keep typing to narrow the list."
+    "Showing the first 80, plus 2 already selected. There are more than are shown. Keep typing to narrow the list."
   );
   // Pinned rows are counted apart here for the same reason as in `capNoticeSentence`.
   expect(unknownTotalNoticeSentence({ shown: 80, pinned: 0, term: "", hint: "x" })).not.toContain(
@@ -808,7 +814,7 @@ test("a server-reported cut is stated even though its total is unknowable, and i
     hint: CAP_HINT_WITH_SEARCH,
     serverTruncated: true
   });
-  expect(both).toContain("the server did not say how many");
+  expect(both).toContain("than are shown");
   expect(both, "the arithmetic must not be printed over a truncated count").not.toContain("of 100");
 
   // The locally-counted cut is untouched for every control that is not server-searched.
@@ -875,10 +881,10 @@ test("the live region says the three things only a server-searched panel knows",
   // …and the cut, which a sighted reader gets from the footer and nobody else got at all.
   expect(
     listAnnouncement({ total: 80, matched: 80, term: "bagru", server: true, pending: false, truncated: true })
-  ).toBe("80 options match bagru, and more match than are drawn");
+  ).toBe("80 options match bagru, and more match than are shown");
   expect(
     listAnnouncement({ total: 80, matched: 80, term: "", server: true, pending: false, truncated: true })
-  ).toBe("80 options, and more exist than are drawn");
+  ).toBe("80 options, and more exist than are shown");
 });
 
 test("a multi-select counts what it HOLDS and names what it can, and never the other way round", () => {
@@ -1253,10 +1259,10 @@ test("what the server cut is stated in selectFilter's words, and only there", ()
   });
   expect(flagOnly.cut).toBe(0);
   expect(workshopCutSentence(flagOnly, { searchable: true })).toBe(
-    `Showing the first 1. There are more than are drawn, and the server did not say how many. ${CAP_HINT_WITH_SEARCH}`
+    `Showing the first 1. There are more than are shown. ${CAP_HINT_WITH_SEARCH}`
   );
   expect(workshopCutSentence(flagOnly, { searchable: true, term: "bagru" })).toBe(
-    `Showing the first 1. More match “bagru” than are drawn, and the server did not say how many. ${CAP_HINT_WITH_SEARCH}`
+    `Showing the first 1. More match “bagru” than are shown. ${CAP_HINT_WITH_SEARCH}`
   );
 
   // The recovered row was never on the page and is not one of the 196, so it is reported as what it
@@ -1299,7 +1305,7 @@ test("the four ways a workshop picker can be empty are four sentences, not one",
   // R6 forbids caching, so the shared §3.5 clause promising a copy on the device is not printed.
   const offline = workshopListNotice({ kind: "failed" }, voice({ online: false }));
   expect(offline).toBe(
-    "This device has not received the design workshops list yet, so there is nothing to pick here. That is not a claim that there are none. Connect and it will load; this list is never kept on the device, because a stored copy of who may file where reads a revoked grant as a grant."
+    "This device has not received the design workshops list yet, so there is nothing to pick here. Connect and it will load; this list is never kept on the device, so it always shows current access."
   );
   expect(offline, "a promise R6 forbids").not.toContain("kept on the device from then on");
 
@@ -1600,7 +1606,7 @@ test("the filter's failure sentence is composed from §3.5's opening plus the cl
   // appends its clause after the module's offline sentence rather than telling the module this is
   // not one of the two workshop tables (which it is, and which `accessList` owns).
   const sharedOffline = workshopListNotice({ kind: "failed" }, voice({ ...filterVoice, online: false }));
-  expect(sharedOffline).toContain("That is not a claim that there are none.");
+  expect(sharedOffline).toContain("so there is nothing to pick here.");
   expect(`${sharedOffline} ${clause}`).toContain("this screen is showing every record.");
   expect(code).toContain(
     'const notice = list.kind === "failed" && !online ? `${shared} ${SCOPE_SHOWS_EVERYTHING}` : shared;'
@@ -2186,12 +2192,12 @@ test("the four state sentences take a caller's noun, and drop R6's reason where 
   // access lists and keep it; an artisan list is not one, and quoting it there would explain an
   // absence with a rule that does not govern it — the same error as a wrong claim, one clause later.
   const offlineRegister = workshopListNotice({ kind: "failed" }, register({ online: false }));
-  expect(offlineRegister).toContain("That is not a claim that there are none.");
+  expect(offlineRegister).toContain("so there is nothing to pick here.");
   expect(offlineRegister).toContain("Connect and it will load.");
-  expect(offlineRegister, "a grant rule quoted over a register").not.toContain("revoked grant");
+  expect(offlineRegister, "a grant rule quoted over a register").not.toContain("current access");
   // …and the default is unchanged, which is what keeps every earlier caller honest.
   expect(workshopListNotice({ kind: "failed" }, { table: "field", scoped: true, online: false })).toContain(
-    "reads a revoked grant as a grant"
+    "so it always shows current access"
   );
 
   // THE CLOSING CLAUSE IS THE CALLER'S WHERE "this record" NAMES NOTHING. The opening stays shared,
@@ -2314,7 +2320,7 @@ test("the pickers that used to assert non-existence now name the state they are 
 
   const tasks = withoutComments(read("components", "tasks", "AssignmentBuilder.tsx"));
   expect(tasks, "three claims from one failed read").not.toContain('emptyLabel="No active questionnaire sections"');
-  expect(tasks).toContain('emptyLabelFor("people", "Nobody ranked below you")');
+  expect(tasks).toContain('emptyLabelFor("people", "Nobody in a role below yours")');
   expect(tasks).toContain('emptyLabelFor("questionnaire sections", "No active questionnaire sections")');
   expect(tasks).toMatch(/emptyLabelFor\(\s*"artisans",/);
   // The page has to hand the failure down; `loading` alone cannot say it.

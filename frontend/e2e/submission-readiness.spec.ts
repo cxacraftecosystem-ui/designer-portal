@@ -274,7 +274,7 @@ test("the list is still answered with the workshop endpoints blocked", async ({ 
 
   // The screen SAYS it is working from the local copy. Silence would leave a designer unable to tell
   // a confident list from a stale one, which is the fabricated confidence this repository refuses.
-  await expect(page.getByText(/There is no connection/), "the page admits it is offline").toBeVisible();
+  await expect(page.getByText(/offline, so this is worked out from the copy saved/), "the page admits it is offline").toBeVisible();
 
   // Proof the block was real: without this the test would pass just as well against a run where the
   // route pattern never matched and the server answered every request as usual.

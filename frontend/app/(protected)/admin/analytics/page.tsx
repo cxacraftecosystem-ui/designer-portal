@@ -665,11 +665,10 @@ export default function WorkshopAnalyticsPage() {
       {/* ------------------------------------------------- What cannot be computed */}
 
       <h2 className="mt-8 font-display text-xl font-bold text-ink-900">
-        What this cannot tell you
+        Limits of this data
       </h2>
       <p className="mt-1 max-w-3xl text-sm leading-6 text-ink-500">
-        Comparisons that were asked for and that the captured fields cannot support. They are listed
-        rather than omitted, so the missing field is named instead of being looked for again.
+        Comparisons that need information the record forms do not capture.
       </p>
       <section className="panel mt-4 divide-y divide-line-200">
         {data.notComputed.map((entry) => (

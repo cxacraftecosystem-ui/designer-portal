@@ -223,7 +223,7 @@ export default function TaskAssignmentBoardPage() {
   const header = (
     <PageHeader
       title="Task assignment"
-      description="Hand documentation work to the people below you, then watch what they report against what the repository can actually find."
+      description="Hand documentation work to the people below you, then compare what they report with what has actually been recorded."
       icon={<ClipboardCheck className="h-5 w-5" aria-hidden />}
       actions={
         <Link href="/tasks" className="field-button-secondary">
@@ -310,7 +310,7 @@ export default function TaskAssignmentBoardPage() {
         <div className="grid gap-3 pl-9 md:pl-0">
           <FieldBlock
             label="Find a person, workshop or artisan"
-            hint="Searched at the server, so it reaches names that are not on the lists below."
+            hint="Searches everyone, including names that are not on the lists below."
           >
             {/*
               ONE BOX FOR ALL THREE PICKERS, because it is one request. `GET /tasks/options` takes a

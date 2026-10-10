@@ -333,16 +333,16 @@ test("the notice names what appeared and, separately, what the next save will de
   );
 
   const notice = foldNotice(fold) ?? "";
-  expect(notice).toContain("read from the server");
+  expect(notice).toContain("already saved online");
   expect(notice).toContain("dyeing");
-  expect(notice).toContain("1 row in tool");
+  expect(notice).toContain("1 entry in tool");
   expect(notice).toContain("Nothing you had typed here was changed");
   // The second half points the other way and is the one a designer may need to act on.
-  expect(notice).toContain("NOT been added back");
+  expect(notice).toContain("not been added back");
   expect(notice).toContain("material");
   // The remedy named is one they can actually carry out: they cannot retype rows they have never been
   // shown, so the sentence names the fact that makes it recoverable by somebody who can.
-  expect(notice).toContain("records a deletion rather than erasing the row");
+  expect(notice).toContain("deleted entries are kept");
 });
 
 test("a fold that only sweeps still speaks", () => {
@@ -354,6 +354,6 @@ test("a fold that only sweeps still speaks", () => {
     serverStage({ collections: { material: [{ _entryId: "srv-1", name: "Cotton" }] } })
   );
   const notice = foldNotice(fold) ?? "";
-  expect(notice).toContain("NOT been added back");
+  expect(notice).toContain("not been added back");
   expect(notice).not.toContain("were already there");
 });

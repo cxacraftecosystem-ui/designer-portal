@@ -216,7 +216,7 @@ test("on page ONE it never names the pager, because the pager cannot help there"
     function up — Previous is disabled on page 1 and Next leads further from the rows, not nearer.
   */
   const first = strandedPageSentence(3, 1);
-  expect(first).toBe("3 deleted workshops are still on record, but none came back on this request. Reload the page to see them.");
+  expect(first).toBe("3 deleted workshops are still on record, but none could be loaded. Reload the page to see them.");
   expect(first).not.toContain("pager");
   expect(strandedPageSentence(1, 1)).toContain("Reload the page to see it.");
 });

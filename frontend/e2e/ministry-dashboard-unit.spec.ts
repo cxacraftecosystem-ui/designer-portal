@@ -263,8 +263,8 @@ test.describe("the progress sentence", () => {
     );
     expect(capped).not.toBe(unreadable);
     expect(capped).toContain("Not scored on this page");
-    expect(unreadable).toContain("could not be read");
-    expect(unreadable).toContain("not zero progress");
+    expect(unreadable).toContain("couldn't be loaded");
+    expect(unreadable).toContain("hasn't been scored");
     for (const sentence of [capped, unreadable, progressSentence(null)]) {
       expect(sentence).not.toMatch(/\b0%/);
     }
@@ -283,8 +283,8 @@ test.describe("the progress sentence", () => {
     // screen to say so — is the summary contradicting its own rows.
     expect(unclassifiedSentence(0)).toBeNull();
     expect(unclassifiedSentence(-1)).toBeNull();
-    expect(unclassifiedSentence(1)).toContain("1 workshop is in a standing");
-    expect(unclassifiedSentence(3)).toContain("3 workshops are in a standing");
+    expect(unclassifiedSentence(1)).toContain("1 workshop has a status that isn't in any group");
+    expect(unclassifiedSentence(3)).toContain("3 workshops have a status that isn't in any group");
     expect(unclassifiedSentence(3)).toContain("Everything");
   });
 });
@@ -445,8 +445,8 @@ test.describe("the accessibility contract a moving table owes", () => {
     expect(PAGE_CODE).toContain("{refreshNote}");
     // Both outcomes speak. A button silent on failure is worse than one silent always, because the
     // silence reads as success.
-    expect(PAGE_CODE).toContain("Register re-read.");
-    expect(PAGE_CODE).toContain("could not be re-read");
+    expect(PAGE_CODE).toContain("Refreshed.");
+    expect(PAGE_CODE).toContain("couldn't be refreshed");
   });
 
   test("the load-error banner interrupts, and the self-refreshing table does not", () => {

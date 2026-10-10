@@ -436,7 +436,7 @@ export function DesignerProfileForm({
       */
       if (strandedPhotos.length || strandedSignatures.length || strandedCvs.length) {
         markDirty();
-        troubles.push("Press Save again to send just that — this form saves in one PUT, so nothing is duplicated by retrying.");
+        troubles.push("Press Save again to retry — nothing will be duplicated.");
       }
       setBackPromptOpen(false);
       onSaved(saved);
@@ -899,9 +899,8 @@ export function DesignerProfileForm({
             is missing it, so this is the one surface that gains it.
           */}
           <p className="mb-3 text-sm leading-6 text-ink-muted">
-            The four boxes above are the postal address printed on your reports. This card is where the district, the
-            village and the map point live — the two things those four columns cannot hold — and it is stored the way
-            every other record page in this system stores an address. Neither one fills the other in, so fill in both.
+            The four boxes above are the postal address printed on your reports. This card holds the district, the village
+            and the map point. Neither one fills the other in, so fill in both.
           </p>
           <LocationFields initial={profile.location ?? null} onDirty={markDirty} subjectLabel="the designer" />
         </div>
@@ -1402,7 +1401,7 @@ function MediaSlot({
         title={mediaId ? `Replace ${label.toLowerCase()}` : `Attach ${label.toLowerCase()}`}
         description={
           help ??
-          "One image. It uploads as soon as it is attached; saving the profile then links it to this column."
+          "One image. It uploads as soon as it is attached; saving the profile then adds it to your profile."
         }
         allowedTypes={["IMAGE"]}
         allowDocuments={false}
@@ -1489,7 +1488,7 @@ function DocumentSlot({
         title={mediaId ? `Replace ${label}` : `Attach ${label}`}
         description={
           help ??
-          "One document. It uploads as soon as it is attached; saving the profile then links it to this column."
+          "One document. It uploads as soon as it is attached; saving the profile then adds it to your profile."
         }
         /*
           ALL THREE TOKENS ARE LOAD-BEARING AND `PDF` IS THE ONE THAT BITES.

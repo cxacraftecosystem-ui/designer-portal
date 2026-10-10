@@ -82,19 +82,19 @@ type RevealResponse = { key: string; value: string | null; source: SecretSource 
 
 const SOURCE_META: Record<SecretSource, { label: string; tone: string; help: string }> = {
   database: {
-    label: "Database",
+    label: "Saved here",
     tone: "border-purple-300 bg-purple-50 text-purple-700",
-    help: "Saved here — this value overrides the deployed environment."
+    help: "Saved here — this value overrides the default."
   },
   environment: {
-    label: "Environment",
+    label: "Default",
     tone: "border-line-200 bg-surface-50 text-ink-700",
-    help: "Coming from the deployed environment. Saving here overrides it."
+    help: "Using the default value. Saving here overrides it."
   },
   unset: {
     label: "Not set",
     tone: "border-amber-500/30 bg-amber-100 text-amber-800",
-    help: "No value anywhere — the features that need it are switched off."
+    help: "No value set — the features that need it are off."
   }
 };
 
@@ -219,7 +219,7 @@ export function ApiKeysPanel() {
       hide(secret.key);
       setEditing(null);
       setDraft("");
-      toast({ title: `${row.label} saved`, description: "It is live for everyone right now — no restart needed.", tone: "success" });
+      toast({ title: `${row.label} saved`, description: "It is in use for everyone now.", tone: "success" });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to save that key");
     } finally {
@@ -239,8 +239,8 @@ export function ApiKeysPanel() {
         title: `${row.label} override cleared`,
         description:
           row.source === "environment"
-            ? "The deployed environment value applies again."
-            : "There is no value for this key anywhere now.",
+            ? "The default value applies again."
+            : "This key has no value now.",
         tone: "info"
       });
     } catch (err) {
@@ -259,10 +259,8 @@ export function ApiKeysPanel() {
   return (
     <div className="grid gap-4">
       <div className="rounded-md border border-purple-300 bg-purple-50 px-4 py-3 text-sm leading-6 text-purple-800">
-        <span className="font-medium">Saved keys take effect immediately, for everyone.</span> A key stored here overrides the
-        deployed environment on the very next provider call — the API and the transcription queue both pick it up without a
-        restart or a redeploy. Values are encrypted at rest, are never written to logs, and revealing one is recorded against
-        your account.
+        <span className="font-medium">Saved keys take effect immediately, for everyone.</span> A key saved here overrides the
+        default value. Values are stored encrypted, and revealing one is recorded against your account.
       </div>
 
       {error ? <div className="rounded-md border border-red-200 bg-error-100 px-3 py-2 text-sm text-error-600">{error}</div> : null}
@@ -271,8 +269,7 @@ export function ApiKeysPanel() {
         <div className="border-b border-line-200 px-4 py-3">
           <h2 className="font-display font-bold text-ink-900">Managed API keys</h2>
           <p className="text-sm text-ink-500">
-            Every key the repository can be configured with. Test one to check it against the provider before a field team
-            depends on it.
+            Every key the portal uses. Test one to check it with the provider before a field team depends on it.
           </p>
         </div>
 
@@ -359,8 +356,8 @@ export function ApiKeysPanel() {
                             and the button contradict each other on screen. */}
                         {secret.overrideUnreadable ? (
                           <p className="mt-1 max-w-48 text-[0.6875rem] leading-4 text-error-600">
-                            A key saved here can no longer be decrypted, so it is not in use. Re-enter it, or clear the
-                            broken override.
+                            This saved key can no longer be read, so it is not in use. Enter it again, or clear the
+                            override.
                           </p>
                         ) : null}
                       </td>
@@ -472,7 +469,7 @@ export function ApiKeysPanel() {
                               </div>
                             </label>
                             <p className="mt-2 text-[0.6875rem] leading-4 text-ink-500">
-                              Saving replaces the value for the whole repository at once, effective immediately.
+                              Saving replaces the value for everyone, immediately.
                             </p>
                             <div className="mt-2 flex justify-end gap-2">
                               <button
@@ -504,8 +501,8 @@ export function ApiKeysPanel() {
                             <p className="text-xs font-medium text-error-600">Clear the stored {secret.label} key?</p>
                             <p className="mt-1 text-[0.6875rem] leading-4 text-ink-700">
                               {secret.overrideUnreadable
-                                ? "The saved override cannot be decrypted, so nothing is using it: deleting it changes no value, it only removes the broken row and the warning beside it."
-                                : "The saved override is deleted and the deployed environment value applies again from the next call. If the environment has no value for this key, the features that need it stop working."}
+                                ? "This saved key cannot be read, so nothing is using it. Clearing it only removes it and the warning beside it."
+                                : "The saved key is removed and the default value applies again. If there is no default value, the features that need this key stop working."}
                             </p>
                             <div className="mt-2 flex justify-end gap-2">
                               <button className={rowAction("neutral")} onClick={() => setConfirmingClear(null)} type="button">

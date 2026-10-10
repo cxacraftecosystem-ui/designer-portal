@@ -98,16 +98,16 @@ test("the measured error is visible through a MediaBatchError, and hides nothing
  * 2. No arm lies
  * -------------------------------------------------------------------------- */
 
-test("no arm says \"network error\", and every arm names the bucket and the site", () => {
+test("no arm says \"network error\" or speaks of buckets, and every arm says the upload didn't finish", () => {
   for (const reach of REACHES) {
     const sentence = storageTransportSentence({ ...FACTS, reach });
     expect(sentence, reach).not.toContain("network error");
-    expect(sentence, reach).toContain(FACTS.bucketOrigin!);
-  }
-  // The two arms that are ABOUT the rule between two origins must name both ends of it - those exact
-  // strings are what somebody has to put into the bucket's AllowedOrigins.
-  for (const reach of ["unmeasured", "site-refused", "reads-allowed"] as StorageReach[]) {
-    expect(storageTransportSentence({ ...FACTS, reach }), reach).toContain(FACTS.pageOrigin!);
+    expect(sentence, reach).toContain("The upload didn't finish");
+    // No storage vocabulary on screen: neither address, and no "bucket" or "CORS".
+    expect(sentence, reach).not.toContain(FACTS.bucketOrigin!);
+    expect(sentence, reach).not.toContain(FACTS.pageOrigin!);
+    expect(sentence.toLowerCase(), reach).not.toContain("bucket");
+    expect(sentence, reach).not.toContain("CORS");
   }
 });
 
@@ -115,17 +115,17 @@ test("the unmeasured arm names BOTH causes and the observation that separates th
   // The honest either/or, and the sentence the old "network error" should always have been. It is
   // reached when no probe could run at all, so it may not pick a side.
   const sentence = storageTransportSentence({ ...FACTS, reach: "unmeasured" });
-  expect(sentence).toContain("not one byte was sent");
-  expect(sentence).toContain("either no network on this device");
-  expect(sentence).toContain("refusing uploads from https://designer-repository.vercel.app");
+  expect(sentence).toContain("nothing was sent");
+  expect(sentence).toContain("Either this device has no connection");
+  expect(sentence).toContain("or the problem is on our side");
   // The one check a designer can actually make: the presign leg of this upload answered moments ago,
   // so a page that is still working is proof the link is up and the fault is at the bucket.
-  expect(sentence).toContain("If the rest of the app is still loading, it is the bucket");
+  expect(sentence).toContain("If the rest of the app is still working, it is on our side");
 });
 
 test("a refusal is named as a setting, and does not offer a retry that cannot work", () => {
   const sentence = storageTransportSentence({ ...FACTS, reach: "site-refused" });
-  expect(sentence).toContain("CORS rule does not cover this site");
+  expect(sentence).toContain("a problem on our side");
   expect(sentence).toContain("rather than your connection");
 
   const advice = adviceForTransportFailure(transport({ reach: "site-refused" }));
@@ -167,7 +167,7 @@ test("the refusal arm claims a setting, and stops short of promising the upload 
   }
   // What the probe DID establish, which is the whole value of the arm: the host answered this device
   // and would not answer this page, so a person should be looking at the bucket and not at the signal.
-  expect(sentence).toContain("is reachable from this device but refused to answer");
+  expect(sentence).toContain("problem on our side rather than your connection");
   expect(sentence).toContain("unlikely to help");
   expect(advice).toContain("may well fail the same way");
   // And it still never sends anybody hunting for signal - that is the defect the arm exists for.
@@ -180,7 +180,7 @@ test("bytes on the wire exonerate the bucket, with no probe spent to prove it", 
   for (const reach of REACHES) {
     const sentence = storageTransportSentence({ ...FACTS, reach, bytesMoved: true, sentBytes: 1_048_576 });
     expect(sentence, reach).toContain("1.0 MB of 4.0 MB");
-    expect(sentence, reach).toContain("this is the connection and not a setting");
+    expect(sentence, reach).toContain("the connection dropped");
     expect(sentence, reach).not.toContain("CORS");
   }
   expect(adviceForTransportFailure(transport({ bytesMoved: true, sentBytes: 1 }))).toContain(
@@ -191,7 +191,7 @@ test("bytes on the wire exonerate the bucket, with no probe spent to prove it", 
 test("a genuinely unreachable host is still told it is the connection", () => {
   // The fix must not overcorrect: when the probe says the host cannot be reached at all, "check your
   // internet connection" is the true sentence and must survive.
-  expect(storageTransportSentence({ ...FACTS, reach: "no-route" })).toContain("cannot reach");
+  expect(storageTransportSentence({ ...FACTS, reach: "no-route" })).toContain("couldn't connect");
   expect(adviceForTransportFailure(transport({ reach: "no-route" }))).toContain(
     "Check your internet connection"
   );
@@ -207,8 +207,7 @@ test("every arm produces a distinct sentence, so none of them is decoration", ()
 test("a message with no origins to name degrades to prose rather than to `null`", () => {
   // MinIO behind a proxy, a relative URL, a test double: `new URL` throws and both origins are null.
   const sentence = storageTransportSentence({ ...FACTS, bucketOrigin: null, pageOrigin: null });
-  expect(sentence).toContain("the storage bucket");
-  expect(sentence).toContain("this site");
+  expect(sentence).toContain("The upload didn't finish");
   expect(sentence).not.toContain("null");
 });
 
@@ -289,8 +288,8 @@ test("reads allowed rules out both headline causes without pretending to have fo
   // A rule that allows GET and not PUT answers both probes. That case gets its own sentence rather
   // than being folded into the either/or, because two of the three candidates HAVE been ruled out.
   const sentence = storageTransportSentence({ ...FACTS, reach });
-  expect(sentence).toContain("neither a lost connection nor a missing CORS rule");
-  expect(adviceForTransportFailure(transport({ reach }))).toContain("the bucket's upload rule");
+  expect(sentence).toContain("interrupted as it started");
+  expect(adviceForTransportFailure(transport({ reach }))).toContain("If it fails the same way again, contact support");
 });
 
 test("a probe that throws leaves the message at the honest either/or", async () => {
@@ -323,7 +322,7 @@ test("a probe that never answers is capped, and reports nothing rather than gues
   expect(reach).toBe("unmeasured");
   expect(attempts).toHaveLength(2);
   // Falls back to the either/or, which is true of a probe that measured nothing.
-  expect(storageTransportSentence({ ...FACTS, reach })).toContain("either no network on this device");
+  expect(storageTransportSentence({ ...FACTS, reach })).toContain("Either this device has no connection");
 });
 
 test("a first probe that never answers is capped too, and is not reported as no route", async () => {

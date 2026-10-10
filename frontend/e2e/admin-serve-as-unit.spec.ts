@@ -302,9 +302,9 @@ test.describe("an appointment refused by a separation-of-duties rule", () => {
   test("a 403 met by somebody who may assign is the server's reason, not a lecture about administration", () => {
     const post = "You are this workshop's inspector, so you can read it but not change it.";
     const refused = new ApiError(403, post, { detail: post });
-    expect(inspectorAdministrationFailure(refused, "fallback", true)).toBe(`The repository refused this. ${post}`);
-    expect(inspectorAdministrationFailure(refused, "fallback", false)).toMatch(/is administration/);
-    expect(viewerAdministrationFailure(refused, "fallback", true)).toBe(`The repository refused this. ${post}`);
+    expect(inspectorAdministrationFailure(refused, "fallback", true)).toBe(`This couldn't be saved. ${post}`);
+    expect(inspectorAdministrationFailure(refused, "fallback", false)).toMatch(/can choose who inspects a workshop/);
+    expect(viewerAdministrationFailure(refused, "fallback", true)).toBe(`This couldn't be saved. ${post}`);
   });
 
   test("the inspector picker's empty search names the holders, not only the tier", () => {
@@ -416,7 +416,8 @@ test.describe("holding no posts is said, not shown as an error", () => {
     // Both bodies say who appoints and where — an empty page is a next move, not a dead end.
     for (const body of [inspectionEmptyState(false).body, oversightEmptyState(false, user("MINISTRY_ADMIN")).body]) {
       expect(body).toMatch(/Workshop oversight/);
-      expect(body).toMatch(/nothing failed to load/);
+      expect(body).toMatch(/will appear here/);
+      expect(body).not.toMatch(/nothing failed to load/);
     }
   });
 });

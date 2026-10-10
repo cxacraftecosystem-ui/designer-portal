@@ -147,10 +147,10 @@ test("the sketches screen says which session stop it was, and never claims the w
   const expiredPass = { ...idle, pending: 1, credentialExpired: true };
   const gatedPass = { ...idle, pending: 1, passwordChangeRequired: true };
   expect(syncPassNote(expiredPass, "this file is")).toBe(
-    "Saved on this device. Your sign-in has expired, so it sends itself once you sign in again."
+    "Saved on this device. Your sign-in has expired, so it will upload once you sign in again."
   );
   expect(syncPassNote(gatedPass, "this file is")).toBe(
-    "Saved on this device. It sends itself once your new password is set."
+    "Saved on this device. It will upload once your new password is set."
   );
   // Neither is "another sync is already running", which is what the honest pending count used to
   // be read as.

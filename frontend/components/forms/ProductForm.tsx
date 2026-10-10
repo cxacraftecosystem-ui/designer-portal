@@ -1139,15 +1139,14 @@ export function ProductForm({
         */}
         <section className="grid gap-2 rounded-lg border border-line-200 bg-card p-4">
           <div className="flex flex-wrap items-center gap-2">
-            <h3 className="text-sm font-semibold text-ink-900">If you cannot mark it: estimate with the vision model</h3>
+            <h3 className="text-sm font-semibold text-ink-900">If you cannot mark it: let AI estimate it</h3>
             <span className="rounded-full border border-amber-500 bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">
               Needs a connection
             </span>
           </div>
           <p className="text-xs leading-5 text-ink-500">
-            This asks a model to read the inches off the photograph. It is an <strong>estimate</strong>, not a
-            measurement: it carries no error bar and nobody — including the model — can re-derive it from the picture
-            afterwards. Prefer the panel above wherever the grid or a ruler is in the frame.
+            This asks AI to read the inches off the photograph. It is an <strong>estimate</strong>, not a
+            measurement. Use the panel above whenever the grid or a ruler is in the photo.
           </p>
           {/*
             THE MARKER THIS ONE CARRIES IS THE SERVER'S OWN, ECHOED BACK UNCHANGED. `POST
@@ -1268,7 +1267,7 @@ export function ProductForm({
             markDirty();
           }}
           title="Product media"
-          description="Attach or capture product images, videos, audio notes, and documents. Image EXIF is retained and summarized in remarks."
+          description="Attach or capture product images, videos, audio notes, and documents. Photo details (date, place, camera) are kept and summarised in remarks."
         />
         <LocationFields initial={initialLocation} onDirty={markDirty} />
         {uploadProgress ? <UploadProgress progress={uploadProgress} /> : null}

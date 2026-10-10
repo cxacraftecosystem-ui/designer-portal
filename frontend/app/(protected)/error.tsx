@@ -25,8 +25,7 @@ export default function ProtectedError({ error, reset }: { error: Error & { dige
       title="This page stopped before it finished"
     >
       <DeadEndText>
-        Something went wrong while the app was drawing this page. It is a fault in the app, not something you did, and
-        the same page often renders correctly on a second attempt.
+        Something went wrong while loading this page. It was not anything you did, and trying again usually works.
       </DeadEndText>
       {/*
         Said plainly, because this app is used where a second attempt is expensive. The crash tore
@@ -37,8 +36,8 @@ export default function ProtectedError({ error, reset }: { error: Error & { dige
         re-enter a whole stage that was already safe.
       */}
       <DeadEndText>
-        Anything already saved is safe, including saves waiting in the offline queue and design workshops held on this
-        device. Anything still being typed into a form on this page was lost with it and will need entering again.
+        Anything already saved is safe, including work waiting to upload. Anything you were still typing on this page will
+        need to be entered again.
       </DeadEndText>
       {/* The digest is the only handle on a production failure: the real message is redacted before
           it reaches the browser, and a phone in the field has no console to read it from. */}

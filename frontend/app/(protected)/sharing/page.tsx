@@ -138,11 +138,10 @@ const RECORD_REACH = {
     "Comment and edit. Crafts are not separately downloadable — the archive builds its craft folders " +
     "from the artisans and workshops already in it.",
   process:
-    "Comment and edit. A process reaches a download with its PRODUCT, so share the product too if the " +
-    "archive is what your colleague needs.",
+    "Comment and edit. A process is downloaded with its product, so share the product too if your " +
+    "colleague needs the download.",
   media:
-    "Comment only — media has no edit route to grant. A file reaches a download with the record it " +
-    "hangs off."
+    "Comment only. A file is downloaded with the record it belongs to."
 } as const;
 
 /**
@@ -858,7 +857,7 @@ export default function SharingPage() {
               // was being taken and never what — which is not a fact anyone can check in the two
               // seconds a confirm dialog is open.
               <span className="block font-medium text-ink-900">
-                This TAKES ACCESS AWAY from {reductions.length === 1 ? "someone" : `${reductions.length} of them`}. One
+                This takes access away from {reductions.length === 1 ? "someone" : `${reductions.length} of them`}. One
                 tier and one scope apply to everyone chosen, so an existing grant is replaced, not added to:
                 <span className="mt-1 block font-normal">
                   {reductions.map((r) => (
@@ -943,7 +942,7 @@ export default function SharingPage() {
       ...deleteConfirm(
         "Remove this sharing entry?",
         "This permanently deletes the grant record, along with the history of who asked for what and when.",
-        "As the owner this clears a denied or revoked row; as the requester it withdraws the request or drops access you hold."
+        "As the owner this clears a denied or revoked entry; as the requester it withdraws the request or drops access you hold."
       ),
       confirmLabel: "Remove entry"
     });
@@ -1004,7 +1003,7 @@ export default function SharingPage() {
     // itself as complete is worse than a failed one, because nobody goes back for the rest.
     if (capped) {
       setMessage(
-        "Download ready — but this export hit the server's row cap, so it does NOT contain all of " +
+        "Download ready — but this export was too large to include everything, so it does not contain all of " +
           `${ownerLabel}'s data. Ask an admin for a full extract.`
       );
     }
@@ -1140,7 +1139,7 @@ export default function SharingPage() {
               that fact checkable rather than merely stated.
             */}
             <span>
-              This would TAKE ACCESS AWAY from{" "}
+              This would take access away from{" "}
               {reductions.length === 1 ? "one of them" : `${reductions.length} of them`}. A grant replaces an existing one
               rather than adding to it:
               <span className="mt-1 block">
@@ -1247,8 +1246,7 @@ export default function SharingPage() {
                 <span>
                   {recordShortfalls.capped.length ? (
                     <span className="block">
-                      This list stops at the first {PICKER_PAGE_SIZE} rows per type — the largest page the API answers.
-                      Not shown:{" "}
+                      Showing the first {PICKER_PAGE_SIZE} of each type. Not shown:{" "}
                       {recordShortfalls.capped
                         .map((group) => `${(group.total ?? 0) - group.fetched} more ${group.heading.toLowerCase()}`)
                         .join(", ")}
@@ -1261,8 +1259,8 @@ export default function SharingPage() {
                     </span>
                   ) : null}
                   <span className="block font-medium">
-                    A record that is not on this list cannot be ticked — and a save REPLACES a colleague&apos;s whole
-                    scope, so anything of theirs that lives past the cap is removed by it. Use{" "}
+                    A record that is not on this list cannot be ticked — and a save replaces a colleague&apos;s whole
+                    selection, so anything of theirs that is not shown here is removed by it. Use{" "}
                     <span className="font-semibold">All my data</span> if you cannot see everything you mean to keep.
                   </span>
                 </span>

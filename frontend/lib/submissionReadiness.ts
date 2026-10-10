@@ -352,7 +352,7 @@ function reportChecks(
         stageKey: spec.key,
         stageNumber: spec.number,
         stageTitle: spec.title,
-        title: "The report template chosen in stage 20 is not one this repository offers",
+        title: "The report template chosen in stage 20 is not available",
         detail:
           `Stage 20 names "${chosen.trim()}", which is not in the list of templates available here. The ` +
           "report will be generated from the workshop's own template instead, and the file will not " +

@@ -306,7 +306,7 @@ test("a LINKED workshop with nothing under it says the list is narrowed, not tha
   */
   const lines = scopeNoticeLines(WORKSHOP_SCOPED, payload({ options: [] }));
   expect(lines.length).toBe(1);
-  expect(lines[0]).toContain("narrowed to that workshop");
+  expect(lines[0]).toContain("linked workshop yet");
   // And it must say what to DO, or it is only a better-worded dead end.
   expect(lines[0]).toContain("Create the record here");
 });
@@ -1077,8 +1077,8 @@ test("the picker says a queued record was saved, is unlinked, and what to do nex
   // Three claims, all load-bearing: saved (or they create a duplicate), NOT linked (or they submit
   // the stage believing it is), and the way out.
   expect(notice).toContain("saved on this device");
-  expect(notice).toContain("nothing could be linked here");
-  expect(notice).toContain("choose it then");
+  expect(notice).toContain("It can be linked here once it has uploaded");
+  expect(notice).toContain("choose it");
   // Both pickers say it, so a designer meets one explanation of this state rather than two.
   expect(source.match(/QUEUED_OFFLINE_NOTICE/g)?.length).toBeGreaterThanOrEqual(3);
 });

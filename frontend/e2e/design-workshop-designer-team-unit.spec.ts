@@ -232,7 +232,7 @@ test("the picker is a multi-select whose own filter is off, with a capHint namin
   */
   expect(picker).toContain("<MultiSelectDropdown");
   expect(picker).toContain("searchable={false}");
-  expect(picker).toContain('capHint="Use the search box above to reach the rest');
+  expect(picker).toContain('capHint="Use the search box above to find the rest');
   expect(picker).toContain("listEligibleDesignWorkshopViewers(term)");
   expect(picker).toContain("<SearchInput");
 });

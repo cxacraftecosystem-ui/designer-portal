@@ -208,7 +208,7 @@ export type CutReach = "none" | "pager" | "search";
 export function cappedListNotice(cut: ListCut | null, reach: CutReach = "none"): string {
   if (!cut) return "";
   if (cut.loaded === 0) {
-    return `None of the ${cut.total} ${cut.noun} could be listed here — this is not an empty repository.`;
+    return `None of the ${cut.total} ${cut.noun} could be listed here, but they do exist.`;
   }
   if (reach === "pager") {
     return `Showing ${cut.loaded} of ${cut.total} ${cut.noun} — use the pager to reach the rest, which are not searched by the box above.`;
@@ -219,7 +219,7 @@ export function cappedListNotice(cut: ListCut | null, reach: CutReach = "none"):
     // no reason a reader could see. "which are searched on the server" is the load-bearing half:
     // "type in the box above" alone is what every locally-filtering picker in this app could
     // truthfully have said, so it is not the clause that tells this box apart from those.
-    return `Showing ${cut.loaded} of ${cut.total} ${cut.noun} — type in the box above to reach the rest, which are searched on the server.`;
+    return `Showing ${cut.loaded} of ${cut.total} ${cut.noun} — type in the box above to reach the rest; the search covers all ${cut.total}.`;
   }
   return `Showing ${cut.loaded} of ${cut.total} ${cut.noun} — the other ${cut.total - cut.loaded} are not on this list, and typing here searches only the ${cut.loaded} shown.`;
 }
@@ -338,7 +338,7 @@ export function searchCutNotice({
   // sentence above mean nothing when it does appear.
   if (loaded > 0) return "";
   if (trimmed) {
-    return `No ${noun} match “${trimmed}” — the search ran on the server, over the whole list and not only the rows this page had loaded. Clear the box to see the list again.`;
+    return `No ${noun} match “${trimmed}” anywhere in the full list. Clear the box to see the list again.`;
   }
   return emptyLabel;
 }

@@ -306,7 +306,7 @@ test("a dialect mismatch clears itself on the next app run instead of blaming th
     1
   );
   expect(refusal.skewRun).toBe(APP_RUN_ID);
-  expect(refusal.message).toContain("out of step");
+  expect(refusal.message).toContain("Reload the page to update the app");
   // Recorded and shown exactly as a permanent one is, and skipped for the REST OF THIS RUN so the
   // pass does not spin on it…
   expect(blocksRetry(refusal)).toBe(true);
@@ -370,11 +370,11 @@ test("a pass that refused six things does not answer 'Nothing to send'", () => {
   const outcome = syncOutcome({ ...IDLE, failed: 6, pending: 1 });
   expect(outcome.kind).toBe("refused");
   expect(outcome.tone).toBe("error");
-  expect(outcome.title).toBe("6 items were refused");
+  expect(outcome.title).toBe("6 items couldn't be saved");
 });
 
 test("one refusal is singular, because a banner that cannot count is a banner nobody trusts", () => {
-  expect(syncOutcome({ ...IDLE, failed: 1 }).title).toBe("1 item was refused");
+  expect(syncOutcome({ ...IDLE, failed: 1 }).title).toBe("1 item couldn't be saved");
 });
 
 test("a refusal outranks a lost connection: it is the only one of the two a person can act on", () => {

@@ -122,7 +122,7 @@ test("a scope refused with no field map at all is still reported", () => {
   const { decoded, unplaced } = placeStageErrors({ "tool[1]": {} }, ROW_KEYS);
 
   expect(decoded).toEqual({});
-  expect(unplaced).toEqual(["tool[1]: refused, with no reason given"]);
+  expect(unplaced).toEqual(["tool[1]: couldn't be saved (no reason given)"]);
 });
 
 test("placed and unplaceable refusals in one response are both accounted for", () => {

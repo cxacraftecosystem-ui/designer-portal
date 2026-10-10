@@ -303,10 +303,10 @@ test("the five verb kinds are named the way the report names them, and never as 
   };
   for (const [kind, heading] of Object.entries(expected)) {
     expect(layerKindLabel(kind)).toBe(heading);
-    expect(layerKindLabel(kind)).not.toContain("does not know");
+    expect(layerKindLabel(kind)).not.toContain("unfamiliar");
     expect(layerKindNote(kind)).toBeTruthy();
     const sentence = `Accept this ${layerKindNoun(kind)} in your name?`;
-    expect(sentence).not.toContain("does not know");
+    expect(sentence).not.toContain("unfamiliar");
     expect(sentence).not.toContain("layer kind");
   }
 
@@ -316,7 +316,7 @@ test("the five verb kinds are named the way the report names them, and never as 
   expect(layerKindNote("EXPANDED")).toContain("was not recorded in the field");
 
   // The regression witness: a kind this build genuinely does not know still degrades honestly.
-  expect(layerKindLabel("DIARIZATION")).toContain("does not know");
+  expect(layerKindLabel("DIARIZATION")).toContain("unfamiliar");
   expect(layerKindNoun("DIARIZATION")).toBe("layer");
 });
 
@@ -468,8 +468,8 @@ test("a translation into 'multi' is refused before the press, with the reason ra
   // `_check_languages` refuses a translation INTO `multi` because a target language is a CHOICE the
   // caller makes and not an observation — while `multi` stays a perfectly real SOURCE language,
   // since these interviews code-switch mid-sentence.
-  expect(translationTargetRefusal("multi")).toContain("not something a translation can be INTO");
-  expect(translationTargetRefusal("MULTI")).toContain("not something a translation can be INTO");
+  expect(translationTargetRefusal("multi")).toContain("not the language to translate into");
+  expect(translationTargetRefusal("MULTI")).toContain("not the language to translate into");
   expect(translationTargetRefusal("Odia")).toBeNull();
   expect(translationTargetRefusal("or")).toBeNull();
   expect(translationTargetRefusal("")).toContain("Name the language");

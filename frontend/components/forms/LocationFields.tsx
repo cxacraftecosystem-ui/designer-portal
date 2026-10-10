@@ -1773,7 +1773,7 @@ export function LocationFields({
     </div>
   ) : (
     <CardNotice tone="info">
-      Add NEXT_PUBLIC_MAPTILER_API_KEY to enable map pointing. Coordinates can still be entered manually.
+      The map isn&apos;t available right now. Type the coordinates instead.
     </CardNotice>
   );
 
@@ -1797,8 +1797,8 @@ export function LocationFields({
             <strong className="font-semibold text-ink-700">
               Pointing at a place on the map fills the state, district and pincode in for you
             </strong>{" "}
-            — and says so, so you can put it back. A GPS fix only ever OFFERS them, for you to accept or
-            refuse, because the device is very often at a desk in another state from {subjectLabel}.
+            — and says so, so you can put it back. A GPS reading only suggests them, because the device may be
+            somewhere other than {subjectLabel}.
           </p>
         </div>
 
@@ -1823,7 +1823,7 @@ export function LocationFields({
                     outside, and reading it would tell the next editor that such a write is intended. */}
                 Filled in from the place you pointed at:{" "}
                 <strong className="font-semibold">{FIELD_NAMES(autofill.applied)}</strong>. Check it, and
-                change anything that is wrong — you know this place and the geocoder does not.
+                correct anything that is wrong.
               </span>
             </p>
             <div>
@@ -1852,8 +1852,8 @@ export function LocationFields({
               {[review.found.district, review.found.state].filter(Boolean).join(", ")}
             </strong>
             , but the place recorded is &ldquo;{review.stated}&rdquo;. Those coordinates are where the device was when
-            the record was made, not where {subjectLabel} is — which is exactly the gap these fields now close. Nothing
-            has been changed and nothing will be until you save. Set the state and district below if you know them.
+            the record was made, not necessarily where {subjectLabel} is. Nothing changes until you save. Set the state
+            and district below if you know them.
           </CardNotice>
         ) : null}
 
@@ -1979,7 +1979,7 @@ export function LocationFields({
             ) : null}
             {stateName && reference && districtOptions.length === 0 ? (
               <p className="text-xs text-ink-500">
-                No districts are listed for {stateName} — save without one and report the gap.
+                No districts are listed for {stateName}. You can save without one.
               </p>
             ) : null}
             {/*
@@ -2005,8 +2005,8 @@ export function LocationFields({
               // are the one part of this card that genuinely needs the network — say so, say the
               // record saves anyway, and let them get on with the interview.
               <p className="text-xs text-ink-500">
-                The district list has not loaded — it needs a connection, unlike the states. The state above is enough
-                to save this record; add the district when there is signal.
+                The district list needs a connection. The state above is enough to save this record; add the district
+                when you are back online.
               </p>
             ) : null}
           </Field>
@@ -2111,18 +2111,16 @@ export function LocationFields({
            * district arriving from a 2.5 km circle with a one-tap Yes beside it.
            */
           <CardNotice tone="warn" icon={<TriangleAlert className="h-4 w-4" aria-hidden />}>
-            No district was suggested: this device&apos;s fix is only accurate to{" "}
-            {accuracyLabel(coarseFixMetres)}, which is its network estimate of where it is rather than a satellite
-            reading, and a circle that wide covers more than one district. The coordinates have been kept with their
-            radius, so nothing is lost. Choose the state and district yourself, or step outside for a real fix.
+            No district was suggested: this device&apos;s location is only accurate to{" "}
+            {accuracyLabel(coarseFixMetres)}, which can cover more than one district. The coordinates have been kept.
+            Choose the state and district yourself, or step outside for a better GPS reading.
           </CardNotice>
         ) : null}
 
         {lookupFailed ? (
           <CardNotice tone="info">
-            Could not look up where this device is — no suggestion this time. The coordinates are saved either way, and
-            the lookup is retried by itself when there is signal again. The two fields above are yours to fill in
-            regardless; they need no network.
+            Could not look up where this device is. The coordinates are saved, and the lookup will try again when you
+            are back online. You can fill in the two fields above yourself.
           </CardNotice>
         ) : null}
 
@@ -2209,8 +2207,8 @@ export function LocationFields({
 
           <div className="grid gap-3 border-t border-line-200 px-4 py-3">
             <p className="text-sm text-ink-500">
-              Provenance, not an address. These values say where the device was and how well it knew, so that anybody
-              reading this record later can judge it. They are never used as the location of {subjectLabel}.
+              Provenance, not an address. These values show where the device was and how accurate that was. They are
+              never used as the location of {subjectLabel}.
             </p>
 
             {/*
@@ -2240,9 +2238,8 @@ export function LocationFields({
                 <CardNotice tone="warn" icon={<TriangleAlert className="h-4 w-4" aria-hidden />}>
                   This browser is blocking location, so nothing could be captured
                   {mandatory ? ", and a coordinate is required" : ""}. Use <strong>Pick on map</strong> below to drop a
-                  pin where you are — that satisfies it exactly as a GPS fix does. To use the GPS instead, allow
-                  location for this site in the address bar and press <strong>Use current GPS</strong>. The state and
-                  district above are unaffected: they never came from the GPS.
+                  pin where you are. To use the GPS instead, allow location for this site in the address bar and press{" "}
+                  <strong>Use current GPS</strong>.
                 </CardNotice>
               ) : null}
               {captureStatus === "unavailable" ? (
@@ -2356,9 +2353,8 @@ export function LocationFields({
                * gap while they are here, and one who is at a desk should be told not to.
                */
               <CardNotice tone="info">
-                This record was created before a coordinate was required, so it still saves without one. If you are at
-                the place right now, press <strong>Use current GPS</strong> to fill the gap — do not add one from
-                somewhere else.
+                This record was created before a coordinate was required, so it can be saved without one. If you are at
+                the place right now, press <strong>Use current GPS</strong> — do not add one from somewhere else.
               </CardNotice>
             ) : null}
             {!mandatory && !hasCoordinate && hasStatedAddress ? (

@@ -108,7 +108,7 @@ export default function SettingsPage() {
       title="Settings"
       description={
         admin
-          ? "How this account looks and reads, plus the repository administration you are entitled to."
+          ? "How this account looks and reads, plus the administration you have access to."
           : "How this account looks and reads, and the workshops you can ask to work in."
       }
       icon={<SettingsIcon className="h-5 w-5" aria-hidden />}

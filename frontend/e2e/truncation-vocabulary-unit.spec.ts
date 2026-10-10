@@ -60,12 +60,12 @@ test("a cut list with a server-backed box points at the box and says the server 
   // picker in this app could have said truthfully, and sixteen of them effectively did — so it is
   // not the half that tells this box apart from those. A reader trained by those controls to
   // distrust a search box has to be told, in the sentence, that this one goes to the server.
-  expect(sentence).toContain("searched on the server");
+  expect(sentence).toContain("the search covers all 196");
 
   // §2.8's wording, byte for byte, because three other parcels and their specs are written against
   // the design document and a paraphrase here fails them for no reason a reader could see.
   expect(sentence).toBe(
-    "Showing 80 of 196 design workshops — type in the box above to reach the rest, which are searched on the server."
+    "Showing 80 of 196 design workshops — type in the box above to reach the rest; the search covers all 196."
   );
 });
 
@@ -120,7 +120,7 @@ test("a cut, a term that matched nothing, and an empty list are three different 
   //    answer a query the reader has already typed past, and seeing which term the answer is about
   //    is how they tell a stale panel from a real absence.
   expect(noMatch).toContain("ravi");
-  expect(noMatch, "the claim is only honest because the term went to the server").toContain("on the server");
+  expect(noMatch, "the claim is only honest because the term went to the server").toContain("anywhere in the full list");
   expect(noMatch, "a next action, or the reader is stuck in a list they cannot leave").toContain("Clear the box");
   expect(noMatch, "this is not a claim about the repository").not.toContain("recorded yet");
 
@@ -148,7 +148,7 @@ test("nothing loaded while the server says rows match is never reported as no ma
   // whole module exists to prevent.
   const sentence = searchCutNotice({ noun: "designers", loaded: 0, total: 431, term: "ravi" });
   expect(sentence).toContain("431");
-  expect(sentence).toContain("this is not an empty repository");
+  expect(sentence).toContain("but they do exist");
   expect(sentence, "no control on screen reaches those rows, so none is named").not.toContain("Clear the box");
   expect(sentence).not.toContain("No designers match");
   // One wording for one fact: `cappedListNotice`'s first arm owns it and is reached from here.

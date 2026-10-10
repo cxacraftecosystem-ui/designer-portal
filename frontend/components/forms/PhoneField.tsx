@@ -276,8 +276,8 @@ export function PhoneField({
           instruction. It is a `<p>` in reading order immediately after it. */}
       {unshown ? (
         <p className="text-xs leading-5 text-ink-500">
-          What is saved for this field is “{unshown}”, which this box cannot show — it holds a dial code and digits
-          only. Type the number to replace it.
+          This field holds “{unshown}”, which is not a phone number this box can show. Type the number to replace
+          it.
         </p>
       ) : null}
       {/* Zero-size (not hidden) mirror input: submits the single combined value under the existing

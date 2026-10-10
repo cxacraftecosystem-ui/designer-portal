@@ -434,7 +434,7 @@ function DataTablesPanel({
       const response = await fetch(`${API_BASE}/api/data/report${buildQuery({ path, format: "xlsx" })}`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {}
       });
-      if (!response.ok) throw new Error(`Report download failed (HTTP ${response.status})`);
+      if (!response.ok) throw new Error("The report download didn't finish. Please try again.");
       const blob = await response.blob();
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
@@ -574,7 +574,7 @@ function DataTablesPanel({
                       {sheet.truncated ? (
                         <p className="mx-4 mb-3 rounded-md bg-amber-100 px-3 py-2 text-xs text-amber-800">
                           {sheet.truncatedNote ??
-                            "This list hit the server row cap — browse a narrower folder to see the rest."}
+                            "This list is too long to show in full. Open a narrower folder to see the rest."}
                         </p>
                       ) : null}
 
@@ -1000,7 +1000,7 @@ function BrowseByTypePanel() {
       // A capped export that presents itself as complete is the worst outcome here — the researcher
       // archives it and never learns what is missing — so the server's flag is surfaced verbatim.
       const capNote = manifest.truncated
-        ? " This export hit the server's row cap, so it does NOT contain the whole data set — narrow it down or ask an admin for a full extract."
+        ? " This export was too large to include everything, so it is not the complete data set. Narrow it down, or ask an admin for a full extract."
         : "";
       // WHAT THIS ARCHIVE IS NOT, said once, to the readers for whom the absence is a question — and
       // as of 2026-08-31 that is a much smaller group, because `GET /export/dataset` now builds the
@@ -1281,7 +1281,7 @@ function TaxonomySwitcher({
       {/* The descriptions are the only place the folder shapes are spelled out, so keep
           the active one visible rather than hiding it in a tooltip. */}
       <p className="mt-3 text-xs leading-5 text-ink-500">
-        {current?.description ?? "Pick how the repository should be grouped."}
+        {current?.description ?? "Pick how the records should be grouped."}
       </p>
     </section>
   );
@@ -1636,21 +1636,21 @@ export default function DataBrowserPage() {
               // Conversion failed (odd codec, oversized, ffmpeg missing) — keep the original.
               const original = await fetch(file.url);
               if (!original.ok) {
-                throw new Error(`MP4 failed (HTTP ${response.status}); original failed (HTTP ${original.status})`);
+                throw new Error("Neither the converted audio nor the original file could be downloaded.");
               }
               zip.file(file.originalPath ?? file.path, await original.blob());
             } else {
-              throw new Error(`MP4 download failed (HTTP ${response.status})`);
+              throw new Error("The converted audio couldn't be downloaded.");
             }
           } else if (file.url) {
             const response = await fetch(file.url);
-            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            if (!response.ok) throw new Error("The file couldn't be downloaded.");
             zip.file(file.path, await response.blob());
           } else {
-            throw new Error("Manifest entry has neither content nor URL");
+            throw new Error("This file isn't available to download.");
           }
         } catch (err) {
-          failed.push({ path: file.path, reason: err instanceof Error ? err.message : "Fetch failed" });
+          failed.push({ path: file.path, reason: err instanceof Error ? err.message : "The file couldn't be downloaded." });
         }
         done += 1;
       }
@@ -1677,7 +1677,7 @@ export default function DataBrowserPage() {
       URL.revokeObjectURL(url);
       setFailures(failed);
       const truncatedNote = manifest.truncated
-        ? " Note: the listing hit the server cap — this folder holds more files than were included; download narrower subfolders for a complete archive."
+        ? " This folder holds more files than one archive can include, so some are missing. Download narrower subfolders for a complete set."
         : "";
       setDownloadNote(
         (failed.length
@@ -1704,7 +1704,7 @@ export default function DataBrowserPage() {
   const header = (
     <PageHeader
       title="Data Browser"
-      description="Browse the repository as a directory tree, preview media and transcripts, and download any folder as a zip with content-type filters."
+      description="Browse the records folder by folder, preview media and transcripts, and download any folder as a zip, choosing which kinds of content to include."
       icon={<Database className="h-5 w-5" aria-hidden />}
     />
   );
@@ -1883,7 +1883,7 @@ export default function DataBrowserPage() {
 
             {currentTree?.truncated ? (
               <div className="border-b border-amber-500/30 bg-amber-100 px-4 py-2 text-xs text-amber-800">
-                This listing was truncated at the server cap — open subfolders to see everything it holds.
+                This folder holds more than can be listed here. Open its subfolders to see everything in it.
               </div>
             ) : null}
 

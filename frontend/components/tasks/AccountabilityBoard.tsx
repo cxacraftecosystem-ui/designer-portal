@@ -125,7 +125,7 @@ export function AccountabilityBoard({
     return (
       <EmptyState
         title="Nobody has been given work here yet"
-        body="Assign work on the first tab and this becomes the accountability view: who has what, what they say they have done, and what the repository can actually find."
+        body="Assign work on the first tab and this becomes the accountability view: who has what, what they say they have done, and what the records actually show."
       />
     );
   }
@@ -142,14 +142,14 @@ export function AccountabilityBoard({
 
       {report.truncated ? (
         <p className="rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-sm text-amber-800">
-          This rollup hit its scan limit, so it is a partial picture. Pick a single workshop above to narrow it.
+          This view is too large to count in full, so it is a partial picture. Pick a single workshop above to narrow it.
         </p>
       ) : null}
 
       <p className="text-xs leading-5 text-ink-500">
         <span className="font-semibold text-ink-700">Reported</span> is what the person says they have done.{" "}
         <span className="font-semibold text-ink-700">In repository</span>{" "}
-        is what the database can find them having actually created inside the task&apos;s scope. Neither overwrites the
+        is what they have actually recorded inside the task&apos;s scope. Neither overwrites the
         other — a wide gap is the thing to ask about.
       </p>
 

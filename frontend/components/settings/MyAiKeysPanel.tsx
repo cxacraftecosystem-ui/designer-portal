@@ -248,8 +248,7 @@ function ProviderRow({
 
       {state.unreadable ? (
         <p className="mt-2 rounded-md bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-900">
-          This key can no longer be decrypted — the server&apos;s encryption key changed after it was
-          saved. Paste it again to fix it. Nothing is using it meanwhile.
+          This key can no longer be read. Paste it again to fix it; it is not being used until you do.
         </p>
       ) : null}
       {state.lastError && !state.unreadable ? (
@@ -257,8 +256,8 @@ function ProviderRow({
       ) : null}
       {!state.modelKnown ? (
         <p className="mt-2 rounded-md bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-900">
-          The model saved here is not one this app offers any more. Pick another below — until you
-          do, your key runs whichever current model fits each job.
+          The model saved here is no longer offered. Pick another below — until you do, your key uses
+          the best current model for each job.
         </p>
       ) : null}
 
@@ -366,8 +365,8 @@ function ProviderRow({
 
       {!transcribes ? (
         <p className="mt-2 text-xs leading-5 text-ink-500">
-          {provider.label} cannot transcribe audio — none of its models accepts a sound file — so
-          recordings keep using whatever this server is set up with, whatever you save here.
+          {provider.label} cannot transcribe audio, so recordings are transcribed with the portal&apos;s own
+          key.
         </p>
       ) : null}
 
@@ -414,7 +413,7 @@ function ProviderRow({
               run(
                 "remove",
                 () => apiFetch<KeyState>(`/me/ai-keys/${provider.provider}`, { method: "DELETE" }),
-                "Removed. This work goes back to the server's own key."
+                "Removed. This work goes back to using the portal's own key."
               )
             }
             className="inline-flex items-center gap-1.5 text-sm text-ink-500 hover:text-rose-700"
@@ -480,8 +479,8 @@ export function MyAiKeysPanel() {
       <p className="mt-1.5 text-sm leading-6 text-ink-500">
         Bring your own key and the AI work you ask for — proofreading, expanding, translating,
         transcribing and photo descriptions — runs on your account with your provider, at your
-        choice of model, and is billed to you. Leave this empty and everything works exactly as it
-        does now, on the key this server is set up with.
+        choice of model, and is billed to you. Leave this empty and everything works as it does now,
+        using the portal&apos;s own key.
       </p>
       <p className="mt-1.5 text-xs leading-5 text-ink-500">
         Your key is stored encrypted, is used only for work you personally ask for, and is never

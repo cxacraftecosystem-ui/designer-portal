@@ -106,7 +106,7 @@ test("stage 9 shows the findings panel, and the LOW band is legible in it", asyn
 
   // This browser has never opened stage 8, so the panel is honest about having asked the repository
   // — and about the fact that a server answer describes what has been SAVED, not what is on screen.
-  await expect(page.getByText(/Computed by the repository/i).first()).toBeVisible();
+  await expect(page.getByText(/Computed online/i).first()).toBeVisible();
 });
 
 test("no other stage grows a market findings panel", async ({ page }) => {

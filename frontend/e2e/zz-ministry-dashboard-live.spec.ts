@@ -121,7 +121,7 @@ test.describe("the ministry dashboard's people registers", () => {
       */
       const card = page.locator("section").filter({ has: toggle });
       await expect(
-        card.getByText(/could not be read/i),
+        card.getByText(/could not be read|couldn't be loaded/i),
         `"${title}" reported a failed read — the route is missing, refused or erroring`
       ).toHaveCount(0, { timeout: 20_000 });
 
@@ -191,6 +191,6 @@ test.describe("the ministry dashboard's people registers", () => {
     await expect(page.getByRole("heading", { name: /ministry dashboard/i }).first()).toBeVisible({
       timeout: 30_000
     });
-    await expect(page.getByText(/Read at /i).first()).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByText(/Updated at /i).first()).toBeVisible({ timeout: 30_000 });
   });
 });

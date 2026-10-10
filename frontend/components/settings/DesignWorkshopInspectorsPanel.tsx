@@ -662,17 +662,15 @@ export function DesignWorkshopInspectorsPanel({
       </div>
 
       <p className="mt-3 rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-xs leading-5 text-ink-500">
-        An inspection is READ-ONLY: whoever is assigned here can open every stage of this workshop and
-        change none of it — an admin appointed to inspect it loses their own write access to it for as
-        long as they hold the post. A Ministry Admin, an admin or the master admin decides who inspects
-        what, and never appoints themselves; the designers who run a workshop have no say in who
-        examines it, and cannot be its inspector themselves.
+        Inspection is read-only: whoever is assigned here can open every stage of this workshop but
+        change nothing — an admin appointed to inspect it cannot edit it while they hold the post. A
+        Ministry Admin, an admin or the master admin decides who inspects what, and cannot appoint
+        themselves. The designers who run a workshop cannot be its inspector.
       </p>
 
       {featureMissing ? (
         <p className="mt-3 rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-sm leading-5 text-amber-800">
-          This repository does not offer design workshop inspections yet. The controls below are hidden rather than
-          shown doing nothing — nobody has been assigned or unassigned, and every workshop is unaffected.
+          This isn&apos;t available right now.
         </p>
       ) : null}
 
@@ -765,12 +763,10 @@ export function DesignWorkshopInspectorsPanel({
                   label="Inspectors assigned to this workshop"
                   hint={
                     <p className="text-xs leading-5 text-ink-500">
-                      Inspector / Reviewer accounts are offered, and so are Ministry Admin, admin and master admin
-                      accounts — never you — and only those the platform access list still admits: assigning somebody
-                      who cannot sign in would leave this screen saying they are inspecting while they are shown a
-                      refusal at the door. Somebody who worked on this workshop, or who is its Assistant Director or
-                      Regional Director, is refused when you save, with the reason. Unticking somebody ends their
-                      inspection when you save. At most {MAX_DESIGN_WORKSHOP_INSPECTORS} accounts.
+                      Inspector / Reviewer, Ministry Admin, admin and master admin accounts are offered — never your
+                      own — if they can still sign in. Somebody who worked on this workshop, or who is its Assistant
+                      Director or Regional Director, cannot be assigned; you are told why when you save. Unticking
+                      somebody ends their inspection when you save. At most {MAX_DESIGN_WORKSHOP_INSPECTORS} accounts.
                     </p>
                   }
                 >
@@ -791,7 +787,7 @@ export function DesignWorkshopInspectorsPanel({
                       ariaLabel="Inspectors assigned to this workshop"
                       // Pointed at each notice only while it is on screen: `aria-describedby` naming
                       // an id that is not in the document is worse than naming nothing.
-                      capHint="Use the search box above to reach the rest — it asks the repository, so it sees every eligible account."
+                      capHint="Use the search box above to find the rest."
                       confirmLabel="Done"
                       describedBy={
                         [searchNotice ? searchNoticeId : null, readerInspects ? selfNoteId : null]
@@ -812,8 +808,8 @@ export function DesignWorkshopInspectorsPanel({
                         id={selfNoteId}
                         className="rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-xs leading-5 text-amber-800"
                       >
-                        {selfReleaseRefusal("INSPECTION")} Your own row stays ticked; everybody else on this
-                        workshop&rsquo;s panel is still yours to add or take off.
+                        {selfReleaseRefusal("INSPECTION")} Your own name stays ticked; you can still add or
+                        take off everybody else on this workshop&rsquo;s panel.
                       </p>
                     ) : null}
                   </div>
@@ -836,8 +832,7 @@ export function DesignWorkshopInspectorsPanel({
               <div className="mt-3">
                 {inspectors.length === 0 ? (
                   <p className="text-sm text-ink-500">
-                    This workshop is not under inspection. Nobody has been assigned to review it — and unlike the
-                    designers who can see it, there is nobody holding an inspection some other way.
+                    This workshop is not under inspection. Nobody has been assigned to review it.
                   </p>
                 ) : (
                   <ul className="grid gap-1.5">

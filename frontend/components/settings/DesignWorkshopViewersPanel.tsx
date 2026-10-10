@@ -866,15 +866,14 @@ export function DesignWorkshopViewersPanel({ refreshToken }: { refreshToken?: nu
       </div>
 
       <p className="mt-3 rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-xs leading-5 text-ink-500">
-        A design workshop is visible only to the designer who started it. A workshop is usually run by two designers
-        alongside a master craftsperson and a reviewing officer, and a colleague who opens it today is told the record
-        does not exist — so name the designers who should see this one.
+        A design workshop is visible only to the designer who started it and to the designers named here. A workshop is
+        usually run by two designers alongside a master craftsperson and a reviewing officer, so name the designers who
+        should see this one.
       </p>
 
       {featureMissing ? (
         <p className="mt-3 rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-sm leading-5 text-amber-800">
-          This repository does not offer design workshop visibility yet. The controls below are hidden rather than shown
-          doing nothing — nobody has been granted or removed, and an admin can still open any workshop themselves.
+          This isn&apos;t available right now.
         </p>
       ) : null}
 
@@ -987,8 +986,7 @@ export function DesignWorkshopViewersPanel({ refreshToken }: { refreshToken?: nu
           ) : null}
           {!typeKnown ? (
             <p className="mt-2 text-xs leading-5 text-ink-500">
-              The workshop list could not be read, so nothing is known about workshop types and the filter is turned
-              off. Every design workshop is offered.
+              The workshop list could not be loaded, so the type filter is off. Every design workshop is offered.
             </p>
           ) : null}
           {/* THE OTHER STAND-DOWN, SAID RATHER THAN PERFORMED. A control that keeps its value and
@@ -997,15 +995,13 @@ export function DesignWorkshopViewersPanel({ refreshToken }: { refreshToken?: nu
               because it is one keystroke away. */}
           {typeKnown && typeNarrowingSuspended ? (
             <p className="mt-2 text-xs leading-5 text-ink-500" aria-live="polite">
-              The type filter is off while you are searching. A workshop type comes from a separate list of at most{" "}
-              {WORKSHOP_PAGE} workshops, so applying it to a search of the whole archive would hide workshops the search
-              found without being able to say which. Empty the search box inside the design workshop picker to filter by
-              type again.
+              The type filter is off while you are searching. Empty the search box inside the design workshop picker to
+              filter by type again.
             </p>
           ) : null}
           {typeKnown && typeMapPartial ? (
             <p className="mt-2 text-xs leading-5 text-ink-500">
-              Only the first {WORKSHOP_PAGE} workshops were read, so a design workshop linked to an older one may show
+              Only the first {WORKSHOP_PAGE} workshops were loaded, so a design workshop linked to an older one may show
               no type and be left out of a filtered list.
             </p>
           ) : null}
@@ -1051,11 +1047,9 @@ export function DesignWorkshopViewersPanel({ refreshToken }: { refreshToken?: nu
                   label="Designers who may see this workshop"
                   hint={
                     <p className="text-xs leading-5 text-ink-500">
-                      Only accounts that could actually run a design workshop are offered — a designer whose roster row
-                      is suspended would be refused at the door — and never you. Somebody who inspects this workshop,
-                      or is its Assistant Director or Regional Director, is refused when you save, with the reason:
-                      nobody may change work they inspect or supervise. Unticking somebody removes their access when
-                      you save.
+                      Only accounts that can run a design workshop are offered, never your own. Somebody who inspects
+                      this workshop, or is its Assistant Director or Regional Director, cannot be added: nobody may
+                      change work they inspect or supervise. Unticking somebody removes their access when you save.
                     </p>
                   }
                 >
@@ -1105,7 +1099,7 @@ export function DesignWorkshopViewersPanel({ refreshToken }: { refreshToken?: nu
                         sentence whose whole job is to describe this list; pointing it at the wrong
                         control is worse than leaving it blank.
                       */
-                      capHint="Use the search box above to reach the rest — it asks the repository, so it sees every eligible account."
+                      capHint="Use the search box above to find the rest."
                       values={selected}
                     />
                   </div>

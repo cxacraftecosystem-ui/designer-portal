@@ -185,7 +185,7 @@ export const CAP_HINT_WITH_SEARCH = "Keep typing to narrow the list.";
  * pass its own `capHint` naming the control that does reach the rest — the viewers panel has a
  * server-backed search box above the picker and now says so.
  */
-export const CAP_HINT_WITHOUT_SEARCH = "The rest are not drawn — narrow the list to reach them.";
+export const CAP_HINT_WITHOUT_SEARCH = "Narrow the list to see the rest.";
 
 /**
  * The "N of M shown" sentence.
@@ -249,8 +249,8 @@ export function unknownTotalNoticeSentence({
   const plus = pinned > 0 ? `, plus ${pinned} already selected` : "";
   const trimmed = term.trim();
   const more = trimmed
-    ? `More match “${trimmed}” than are drawn, and the server did not say how many.`
-    : `There are more than are drawn, and the server did not say how many.`;
+    ? `More match “${trimmed}” than are shown.`
+    : `There are more than are shown.`;
   return `Showing the first ${shown}${plus}. ${more} ${hint}`;
 }
 
@@ -286,7 +286,7 @@ export const SEARCHING_LABEL = "Searching…";
  * absence.
  */
 export function serverNoMatchSentence(term: string): string {
-  return `No matches for “${term.trim()}”. This box searches the whole list, not only the rows drawn here.`;
+  return `No matches for “${term.trim()}” in the whole list.`;
 }
 
 /**
@@ -334,8 +334,8 @@ export function listAnnouncement({
   if (server) {
     const more = truncated
       ? trimmed
-        ? ", and more match than are drawn"
-        : ", and more exist than are drawn"
+        ? ", and more match than are shown"
+        : ", and more exist than are shown"
       : "";
     return trimmed ? `${total} options match ${trimmed}${more}` : `${total} options${more}`;
   }

@@ -275,7 +275,7 @@ test("a failed read says WHICH failure it was, because they need different thing
 
   // 1. Nothing reached the server. The section hint has already warned that this control needs one,
   //    so this reads as the stated limit rather than as a fault.
-  expect(gridFailureStatus(new TypeError("Failed to fetch"))).toContain("No connection");
+  expect(gridFailureStatus(new TypeError("Failed to fetch"))).toContain("You are offline");
 
   // 2. The server answered and refused, in its own words — the sentence names GEMINI_API_KEY, and no
   //    client could have guessed it. A generic "Analysis failed" here is the defect: it sends a
@@ -289,7 +289,7 @@ test("a failed read says WHICH failure it was, because they need different thing
   // 3. THIS DEVICE refused the file, so no request was made. Not "offline" — nothing about a
   //    connection can help a capture the camera never finished writing.
   expect(gridFailureStatus(new LocalRefusalError("That file is empty."))).toContain("empty");
-  expect(gridFailureStatus(new LocalRefusalError("That file is empty."))).not.toContain("No connection");
+  expect(gridFailureStatus(new LocalRefusalError("That file is empty."))).not.toContain("You are offline");
 
   // 4. AND A 503 WITH NO BODY BEHIND IT IS NOT THE UNCONFIGURED SENTENCE. A gateway in a deploy window
   //    answers with no `detail`, so `ApiError.message` is `apiFetch`'s own last resort — the literal
@@ -299,7 +299,7 @@ test("a failed read says WHICH failure it was, because they need different thing
   expect(gridFailureStatus(bodyless)).not.toContain("HTTP 503");
   expect(gridFailureStatus(bodyless)).not.toBe(GRID_FAILED_STATUS);
   // It still says the true thing — nobody has switched this on here, and it is not the photograph.
-  expect(gridFailureStatus(bodyless)).toContain("administers the server");
+  expect(gridFailureStatus(bodyless)).toContain("an administrator can turn it on");
 
   // And they are genuinely distinguishable, which is the whole claim.
   const said = [

@@ -783,7 +783,7 @@ export function ProcessForm({
       if (outcome.source === "none") {
         setArtisanProducts([]);
         setProductLoadError(
-          "Couldn't load this artisan's products, and this browser has not been given them before. Tap the artisan again to retry."
+          "Couldn't load this artisan's products. Check your connection and tap the artisan again to retry."
         );
         return;
       }

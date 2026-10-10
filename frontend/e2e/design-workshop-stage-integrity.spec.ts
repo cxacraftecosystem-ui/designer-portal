@@ -287,7 +287,7 @@ test("opening a stage on a slow connection banks nothing and erases nothing", as
   // is not offline-first, it is a lie — and it is the surface the designer would have typed into
   // while the real answers were still in flight.
   await expect(
-    page.getByText(/Reading this stage from the repository/i),
+    page.getByText(/Loading this stage\. It isn't on this device yet/i),
     "a stage this device has never downloaded waits for the repository instead of drawing blank"
   ).toBeVisible({ timeout: 5_000 });
 
@@ -347,7 +347,7 @@ test("a saved stage stays saved: the sent readout appears and the unsent chip do
   // THE READOUT A DESIGNER PACKS UP ON. It was unreachable: `setRemovedFrom([])` re-dirtied the
   // stage within 800ms of every successful save, so the amber chip always won this race.
   await expect(
-    page.getByText(/Sent to the repository at/),
+    page.getByText(/Uploaded at/),
     "the stage says it reached the repository"
   ).toBeVisible({ timeout: 15_000 });
 
@@ -357,7 +357,7 @@ test("a saved stage stays saved: the sent readout appears and the unsent chip do
     page.getByText("Saved on this device only", { exact: true }),
     "the unsent chip does not come back on a stage that has just landed"
   ).toHaveCount(0);
-  await expect(page.getByText(/Sent to the repository at/)).toBeVisible();
+  await expect(page.getByText(/Uploaded at/)).toBeVisible();
 
   const banked = await localStage(page, workshopId);
   expect(banked!.dirtyAt, "the store agrees: nothing is outstanding").toBeNull();
@@ -384,7 +384,7 @@ test("a repository that answers with a 500 is reported as a refusal, not as a lo
   await page.getByRole("button", { name: "Save stage", exact: true }).click();
 
   await expect(
-    page.getByText(/The repository refused to save/),
+    page.getByText(/couldn't be saved:/),
     "a 5xx is named as a refusal, and the stage is named with it"
   ).toBeVisible({ timeout: 30_000 });
   await expect(

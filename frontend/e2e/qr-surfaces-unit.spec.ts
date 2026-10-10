@@ -555,8 +555,8 @@ test("a code that resolves to nothing gets one sentence that cannot be read as a
   // BOTH possibilities in one sentence, neither confirmed. The API answers 404 for "no such record"
   // and for "not yours" on purpose — `lib/workshopCodeLookup.ts` carries the argument — and a picker
   // that told them apart would undo it one photographed card at a time.
-  expect(missing.message).toContain("may not be in the repository");
-  expect(missing.message).toContain("cannot open");
+  expect(missing.message).toContain("may not be in the records");
+  expect(missing.message).toContain("don't have access to");
   expect(missing.message).toContain("artisan");
 
   // A cascaded box adds the third possibility, because the server's out-of-scope probe KEEPS the

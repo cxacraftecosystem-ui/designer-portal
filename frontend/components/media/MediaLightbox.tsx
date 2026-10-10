@@ -518,7 +518,7 @@ export function MediaLightbox({ item, onClose }: { item: PreviewMedia; onClose: 
           ) : (
             <div className="grid gap-3 text-center text-ink-muted">
               {iconForType(kind)}
-              <p>No preview URL is available yet.</p>
+              <p>No preview is available yet.</p>
             </div>
           )}
         </div>

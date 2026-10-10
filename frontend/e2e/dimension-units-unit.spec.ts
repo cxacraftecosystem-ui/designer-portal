@@ -215,7 +215,7 @@ test("the on-screen note states the pairing instead of the instruction it revers
   const note = TOOL_FORM.slice(TOOL_FORM.indexOf("<p id={`${formId}-heights`}"), TOOL_FORM.indexOf("</p>", TOOL_FORM.indexOf("<p id={`${formId}-heights`}")));
   expect(note, "the note must say the two boxes are one measurement").toContain("the same measurement in two units");
   expect(note, "and that filling either fills the other").toContain("filling either fills the other");
-  expect(note, "and it must stay honest about the rows that disagree").toContain("two numbers that disagree");
+  expect(note, "and it must stay honest about the rows that disagree").toContain("If two paired boxes disagree");
   // THE INSTRUCTION THAT IS NOW FALSE. It read "Fill one of the two, not both", which is the exact
   // opposite of what the form does — a designer following it would be avoiding the pairing.
   expect(note, "the reversed instruction is still on screen").not.toContain("Fill one of the two");

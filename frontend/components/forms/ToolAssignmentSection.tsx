@@ -188,7 +188,7 @@ export function ToolAssignmentSection() {
       const missing = [toolOutcome, craftOutcome, artisanOutcome].some((outcome) => outcome.source === "none");
       setReferenceState(missing ? "unavailable" : "loaded");
       if (missing) {
-        setError("Failed to load options, and this browser has not been given them before. Reconnect and reload.");
+        setError("Couldn't load the options. Check your connection and reload.");
       }
     })();
     return () => {

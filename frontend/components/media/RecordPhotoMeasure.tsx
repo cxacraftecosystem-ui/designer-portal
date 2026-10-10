@@ -1184,8 +1184,7 @@ function MeasurementReadout({
     return (
       <p className="text-xs leading-5 text-ink-500">
         {remaining.length} of {needed.length} marks still to place ({remaining.map((id) => MARK_LABELS[id].badge).join(", ")}
-        ). Nothing is measured until every mark is where it belongs — a reading off the marks as they were laid out
-        would be a confident number about nothing.
+        ). Nothing is measured until every mark is in place.
       </p>
     );
   }
@@ -1285,9 +1284,8 @@ function MeasurementReadout({
           })}
         </div>
         <p className="text-xs leading-5 text-ink-500">
-          The figure is rounded to the precision its own error bar reaches, because once it is in the box the error bar
-          is gone — the record has a column for the dimension and none for the doubt, so the number of digits is the
-          only thing left saying how well it was measured.
+          The figure is rounded to the precision its error bar supports. The record keeps the figure but not the error
+          bar, so the number of digits is what shows how precisely it was measured.
         </p>
       </div>
     </div>

@@ -115,8 +115,8 @@ export class ApiUnconfiguredError extends ApiError {
   constructor() {
     super(
       503,
-      "This site was published without the address of its data service, so it cannot sign you in or load any records. " +
-        "Refreshing or signing in again will not help — an administrator needs to redeploy the site with its API address configured.",
+      "The service isn't available right now, so you can't sign in or load records. " +
+        "Please try again later, or contact your administrator if this continues.",
       null
     );
     this.name = "ApiUnconfiguredError";
@@ -397,7 +397,7 @@ export async function apiFetchWithHeaders<T>(
     const detail = typeof body === "object" && body && "detail" in body ? (body as { detail: unknown }).detail : undefined;
     // `statusText` is empty over HTTP/2 — which every deployed request is — so it cannot be the last
     // resort on its own, or a body-less failure reaches the screen as a blank error box.
-    const message = describeApiDetail(detail, response.statusText || `The server refused the request (HTTP ${response.status}).`);
+    const message = describeApiDetail(detail, response.statusText || "Something went wrong. Please try again.");
     const error = new ApiError(response.status, message, body, response.headers);
     // About a token this tab has since replaced — see `sessionReplacedSince`. The caller still hears
     // the refusal; the session that replaced the token is neither cleared, nor gated, nor navigated.

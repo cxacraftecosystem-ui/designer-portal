@@ -187,7 +187,7 @@ test.describe("design workshop report history", () => {
     // WHERE THE FILE CAME FROM. An export a phone made offline exists on exactly one device until
     // somebody copies it off; the server's is in the repository. Both must be distinguishable.
     await expect(history.getByText("Made on a phone, offline")).toHaveCount(1);
-    await expect(history.getByText("Made by the repository")).toHaveCount(2);
+    await expect(history.getByText("Made online")).toHaveCount(2);
 
     // WHO GENERATED IT. `GET /{id}/exports` never returned this, so before the new endpoint every
     // row fell through to the "no account" wording — this assertion fails against the old payload.
@@ -230,7 +230,7 @@ test.describe("design workshop report history", () => {
     // AND THE CAVEAT THAT MAKES "2 rewritten" HONEST: only one of those two rows actually has a
     // different description. A stage is saved whole, so the count is rows saved, not answers that
     // differ, and the screen has to say so or the number is a claim it cannot support.
-    await expect(diff.getByText(/counts rows saved, not answers that differ/)).toBeVisible();
+    await expect(diff.getByText(/counts entries saved, not answers that differ/)).toBeVisible();
 
     // THE STAGE THAT DID NOT MOVE, AND THE CLAIM MADE ABOUT IT. This is the answer to "did you
     // change the cost sheet?" — not "we found no evidence" but "both files carried the same data",

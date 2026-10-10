@@ -267,7 +267,7 @@ function FeedbackReportFormBody({
           sentence is in reading order immediately beside it.
         */}
         <p className="text-xs text-ink-500" id={`${reactId}-capture`}>
-          Sends your browser, build and current screen too.
+          Also sends your browser, app version and current screen.
         </p>
       </div>
     </form>

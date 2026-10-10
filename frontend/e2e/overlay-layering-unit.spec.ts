@@ -176,8 +176,8 @@ test("the panel has a building state, a failed state with a retry, and an empty 
 
 test("the header description stops saying Loading for the life of the tab", () => {
   const page = read(REPORT);
-  expect(page).toContain("This workshop could not be loaded. The panel at the foot of the page offers a retry.");
-  expect(page).toContain("This workshop has not reached the repository yet, and the report is written by the server");
+  expect(page).toContain("This workshop couldn't be loaded. Use Try again at the foot of the page.");
+  expect(page).toContain("This workshop hasn't been uploaded yet. The report can be generated once it has.");
 });
 
 /* ────────────────────────────────────────────────────────────────────────────

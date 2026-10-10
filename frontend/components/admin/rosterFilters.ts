@@ -383,12 +383,12 @@ export function emptyRosterFilters(kind: RosterKind): RosterFilters {
  * institution. Naming the columns is the difference between a box you trust and a box you try twice.
  */
 export const ROSTER_LABELS = {
-  accessSearch: "Search the allow-list by email, name or note",
+  accessSearch: "Search the list by email, name or note",
   designerSearch: "Search the roster by email, name or institution",
   accessStatus: "Standing",
-  accessRoles: "Tier they join at",
+  accessRoles: "Role they join with",
   designerStanding: "Standing",
-  designerRoles: "Tier of the linked account",
+  designerRoles: "Role of the linked account",
   designerInstitutions: "Institution",
   dateField: "Which date",
   dateRange: "Date range",
@@ -409,7 +409,7 @@ export const ROSTER_LABELS = {
  * draws a conclusion about their own access control from a list that does not govern it.
  */
 export const DESIGNER_ROLE_HINT =
-  "Matched by email. An admin's row is not gated by this roster, so filtering for Admin lists empanelled addresses that belong to admins.";
+  "Matched by email. Admins do not need to be on this roster, so filtering for Admin lists empanelled addresses that belong to admins.";
 
 /**
  * THE ONE LINE THE ACCESS FILTER ROW CARRIES ABOUT A CONTROL THAT IS NOT THERE.
@@ -422,7 +422,7 @@ export const DESIGNER_ROLE_HINT =
  * absence is explained rather than left to look like an oversight somebody should "fix".
  */
 export const ACCESS_INSTITUTION_NOTE =
-  "Institution is not recorded on the allow-list — it is a designer-roster field. Filter by it on the designer roster.";
+  "Institution is recorded on the designer roster, not on this list. Filter by it there.";
 
 /* ────────────────────────────────────────────────────────────────────────────
  * The option vocabularies
@@ -512,8 +512,8 @@ export function roleOptions(kind: RosterKind): RosterOption[] {
     kind === "access"
       ? {
           value: ADMIT_ROLE_DEFAULT,
-          label: "At the default joining tier",
-          hint: "No tier was named when this address was admitted"
+          label: "With the default role",
+          hint: "No role was chosen when this address was admitted"
         }
       : {
           value: ROLE_NEVER_SIGNED_IN,
@@ -657,7 +657,7 @@ export function sortActionLabel(
   // Said on the control that produces it, because a table opening on ten blank cells in the column
   // you just sorted by reads as a broken screen rather than as the answer to "who has never turned
   // up". Postgres puts NULLs first on `desc`; on this column that IS the outstanding-invitation view.
-  return spec.nullable && dir === "desc" ? `${action} — rows with no date sort first` : action;
+  return spec.nullable && dir === "desc" ? `${action} — entries with no date sort first` : action;
 }
 
 /* ────────────────────────────────────────────────────────────────────────────
@@ -998,9 +998,9 @@ export function institutionCutNotice(truncated: boolean | undefined, offered: nu
   // guard, same reason, as `cappedList.flagCutNotice`'s.
   if (!truncated) return "";
   if (offered <= 0) {
-    return "There are more institutions than this list can hold, so some cannot be ticked here. Type the institution into the search box above instead — it is searched on the server.";
+    return "Not every institution fits in this list. Type the institution into the search box above instead.";
   }
-  return `Only the first ${offered} institutions are offered here and there are more, so an institution past that point cannot be ticked. Type its name into the search box above instead — it is searched on the server, over the whole roster.`;
+  return `Showing the first ${offered} institutions. Type an institution's name into the search box above to find the rest.`;
 }
 
 /**
@@ -1036,6 +1036,6 @@ export function roleMatchCutNotice(truncated: boolean | undefined, limit?: numbe
   const bound =
     typeof limit === "number" && Number.isFinite(limit) && limit > 0
       ? `more than ${limit} accounts`
-      : "more accounts than this filter reads in one pass";
-  return `Some designers holding the selected tiers are missing from this list. Matching a tier means reading the accounts that hold it, and ${bound} do — the ones past that point were not read, so their roster rows cannot appear on any page of this filter. Choosing fewer tiers reads fewer accounts and gives a complete answer.`;
+      : "too many accounts";
+  return `Some designers with the selected roles are missing from this list, because ${bound} have those roles. Choose fewer roles to see the complete list.`;
 }

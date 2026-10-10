@@ -209,7 +209,7 @@ export function DeadEndWayBack({
               You are signed in as <span className="font-medium text-ink-700">{roleLabel(user.role)}</span>.
             </>
           ) : (
-            "You are not signed in. Records in the repository are only visible to a signed-in account."
+            "You are not signed in. Sign in to see records."
           )}
         </p>
       ) : null}

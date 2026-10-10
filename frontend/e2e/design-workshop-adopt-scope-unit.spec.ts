@@ -65,7 +65,7 @@ test("the search box is the SERVER'S, and the picker's own filter is off", () =>
   expect(dialog).toContain("<SearchInput");
   expect(dialog).toContain("search: term || undefined");
   expect(dialog).toContain("searchable={false}");
-  expect(dialog).toContain('capHint="Use the search box above to reach the rest');
+  expect(dialog).toContain('capHint="Use the search box above to find the rest');
 });
 
 test("it asks for exactly as many rows as the control draws", () => {
@@ -107,8 +107,8 @@ test("with no connection the list is still READ from the device, and says what i
   */
   expect(dialog).toContain("setCandidates(knownRef.current);");
   expect(dialog).toContain("setPartial(true);");
-  expect(dialog).toContain("cannot check whether");
-  expect(dialog).toContain("Moving waits for signal");
+  expect(dialog).toContain("can&rsquo;t check whether");
+  expect(dialog).toContain("You can move it once you&rsquo;re back online");
 });
 
 test("A FAILED FETCH DOES NOT UNLOCK THE MOVE — the list may be read offline and never acted on", () => {
@@ -169,7 +169,7 @@ test("the dialog does not offer itself where it would do nothing", () => {
     can never be enabled is a dead control with an explanation somewhere else on the screen.
   */
   expect(dialog).toContain("const nothingToMoveInto =");
-  expect(dialog).toContain("No design workshop is open to this account yet");
+  expect(dialog).toContain("No design workshop is open to you");
   expect(dialog).toContain("{nothingToMoveInto ? null : (");
 });
 

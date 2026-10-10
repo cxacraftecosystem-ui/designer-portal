@@ -167,38 +167,32 @@ export type MeasurementFailure = {
  */
 export const MEASUREMENT_FALLBACKS: Readonly<Record<MeasurementFailureKind, string>> = {
   "provider-unconfigured":
-    "Reading a photograph is not switched on for this repository, so nothing here can measure the object for " +
-    "you. Your photograph is fine and there is nothing to re-take — whoever administers the server can turn it " +
-    "on, and nothing on this device can. Measure the object and enter the value manually meanwhile.",
+    "Measuring from a photo isn't available right now. Your photograph is fine and there is nothing to re-take — " +
+    "an administrator can turn it on. Measure the object and enter the value manually.",
   "provider-failed":
-    "The service that reads these photographs was reached and did not answer usefully, so there is no " +
-    "measurement to show. Nothing is wrong with your photograph. Try again in a minute, or measure the object " +
-    "and enter the value manually.",
+    "The photo could not be read just now. Nothing is wrong with your photograph. Try again in a minute, or " +
+    "measure the object and enter the value manually.",
   "app-unconfigured":
-    "This site was published without the address of its data service, so no photograph can be sent anywhere to " +
-    "be read. An administrator needs to redeploy it. Measure the object and enter the value manually meanwhile.",
+    "Measuring from a photo isn't available right now. Measure the object and enter the value manually.",
   offline:
-    "No connection — reading the photo needs one, and nothing reached the server. Nothing has been queued: a " +
-    "reading nobody has checked is not something to bank for later. Measure the object and enter the value " +
-    "manually, or try again in signal.",
+    "You are offline, and reading the photo needs a connection. Measure the object and enter the value " +
+    "manually, or try again when you are back online.",
   "timed-out":
-    "The photo was sent but no answer came back before the wait ran out, so there is no measurement to show and " +
-    "nothing was written anywhere. Try again on a steadier connection, or measure the object and enter the " +
-    "value manually.",
+    "The photo was sent but no reading came back in time. Try again on a steadier connection, or measure the " +
+    "object and enter the value manually.",
   refused:
-    "The server would not accept this request and did not say why. Try a smaller JPEG or PNG straight from the " +
-    "camera, or measure the object and enter the value manually.",
+    "This photo could not be read. Try a smaller JPEG or PNG straight from the camera, or measure the object " +
+    "and enter the value manually.",
   // WORDED TO BE TRUE OF A 429 AS WELL AS A 5xx, which is why it says "busy or briefly out of order"
   // rather than "failed". `verdict.kind === "transient"` covers both — the server was reached and
   // asked for time, explicitly or by falling over — and one more kind for the difference would be a
   // row whose only distinction is a word nobody acts on differently.
   "server-failed":
-    "The server was reached and did not read the photo — it is busy or briefly out of order. Nothing is wrong " +
-    "with your photograph and nothing was written anywhere. Try again in a minute, or measure the object and " +
-    "enter the value manually.",
+    "The measuring service is busy or briefly out of order. Nothing is wrong with your photograph. Try again in " +
+    "a minute, or measure the object and enter the value manually.",
   unsendable:
-    "This photo could not be sent to be read — the file itself is unusable, which usually means the camera did " +
-    "not finish writing it. Take the photo again, or measure the object and enter the value manually."
+    "This photo could not be sent — the file is unusable, which usually means the camera did not finish " +
+    "saving it. Take the photo again, or measure the object and enter the value manually."
 };
 
 /**

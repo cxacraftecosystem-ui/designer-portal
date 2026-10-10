@@ -175,7 +175,7 @@ export function FirstPasswordGate({
       // talking — and the offline notice stays off this screen, so this is the only place it is said.
       setError(
         isUnreachable(err)
-          ? "Could not reach the server. Check the connection and try again."
+          ? "Couldn't connect. Check your connection and try again."
           : err instanceof Error
             ? err.message
             : "Could not set the password."

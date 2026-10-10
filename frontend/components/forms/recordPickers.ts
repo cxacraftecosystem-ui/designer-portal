@@ -1012,14 +1012,14 @@ export function craftSelectionVerdict({
     return {
       refuse: false,
       notice:
-        `Still ${next.length} characters of craft name, and the longest this record stores is ` +
+        `Still ${next.length} characters of craft name, and the most allowed is ` +
         `${CRAFT_NAME_MAX_LENGTH}. Keep unticking, or this tool cannot be saved.`
     };
   }
   return {
     refuse: true,
     notice:
-      `The craft name this selection makes is ${next.length} characters and the longest this record stores is ` +
+      `The craft name this selection makes is ${next.length} characters and the most allowed is ` +
       `${CRAFT_NAME_MAX_LENGTH}. The selection is unchanged — untick a craft, or link fewer of them, and record ` +
       `the rest as a second tool.`
   };

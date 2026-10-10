@@ -112,7 +112,7 @@ test("a FAILED read never claims this account has no workshops", () => {
 test("offline is its own sentence, and does not promise a cache these lists never keep", () => {
   const offline = view({ list: FAILED, online: false });
   expect(offline.notice).toContain("has not received the workshops list yet");
-  expect(offline.notice).toContain("That is not a claim that there are none.");
+  expect(offline.notice).toContain("so there is nothing to pick here.");
   // §3.3 rules "disable with a reason, never cache" for an ACCESS list: a stored copy of who may
   // file where reads a grant revoked in March as a grant in September.
   expect(offline.notice).toContain("never kept on the device");

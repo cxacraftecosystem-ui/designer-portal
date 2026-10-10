@@ -87,7 +87,7 @@ test("a phrase in stage 21 is found and navigated to from the overview page, wit
 
   await expect(searchBox(page), "the search is usable from the local copy alone").toBeEnabled({ timeout: 60_000 });
   await expect(
-    page.getByText("There is no connection, so this is the copy saved in this browser.", { exact: false }),
+    page.getByText("You're offline, so this is the copy saved on this device.", { exact: false }),
     "the page knows it is offline, so what follows is genuinely being answered from the device"
   ).toBeVisible();
 

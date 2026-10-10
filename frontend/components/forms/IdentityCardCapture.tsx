@@ -274,7 +274,7 @@ export function IdentityCardCapture({
         // tried. The photograph is gone by now (see `read`), so this is an instruction to take
         // another one — which is what "try again" already meant, with one box to untick first.
         (locally && offered === true
-          ? " The reader on the server handles a worn or angled card better: untick “Read it on this computer” and photograph it again to use it."
+          ? " Reading it online handles a worn or angled card better: untick “Read it on this computer” and photograph it again."
           : "")
     );
   }
@@ -306,8 +306,8 @@ export function IdentityCardCapture({
         // silence this control exists to end.
         setKept(
           error instanceof Error
-            ? `That photograph could NOT be kept: ${error.message} The number can still be read below.`
-            : "That photograph could NOT be kept. The number can still be read below."
+            ? `That photograph could not be kept: ${error.message} The number can still be read below.`
+            : "That photograph could not be kept. The number can still be read below."
         );
       }
     }
@@ -346,7 +346,7 @@ export function IdentityCardCapture({
       // `photographWasNotStored` is false for a deployment too old to have the field, and a promise
       // about regulated data must not be made out of a missing key.
       if (!willKeep && photographWasNotStored(result)) {
-        setKept("The server confirmed it kept nothing: the photograph was read and discarded.");
+        setKept("Nothing was kept: the photograph was read and discarded.");
       }
       offer(identityChoices(result, kind, aadhaarProblem), false, result.rejectedAadhaarCount ?? 0);
     } catch (error) {
@@ -368,7 +368,7 @@ export function IdentityCardCapture({
     // capability withheld for no reason — which is the whole of what reading here buys.
     if (!useLocal && typeof navigator !== "undefined" && !navigator.onLine) {
       setProblem(
-        "Reading a card needs a connection and there is none. Type the number in now — and if you photograph the card, you can come back here in signal and check what you typed against it. Nothing is queued: a queued identity photograph is one nobody remembers is on the laptop."
+        "Reading a card needs a connection. Type the number in now; if you photograph the card, you can check what you typed against it when you are back online."
       );
       return;
     }
@@ -392,7 +392,7 @@ export function IdentityCardCapture({
           ? "You have asked for the photograph to be kept on this record. It is a photograph of an identity document, so it is stored unmasked."
           : useLocal
             ? "The photograph is read on this computer and is not sent anywhere or stored."
-            : "The photograph is not stored — here or on the server."}
+            : "The photograph is not stored anywhere."}
       </p>
 
       {/*
@@ -452,7 +452,7 @@ export function IdentityCardCapture({
           />
           <span>
             Read it on this computer — the photograph is not sent anywhere, and this works with no connection. Unticked,
-            the photograph is sent to the reader on the server, which reads a worn or angled card better.
+            the photograph is read online, which handles a worn or angled card better.
           </span>
         </label>
       ) : null}
@@ -500,9 +500,8 @@ export function IdentityCardCapture({
           <p className="flex items-start gap-2 rounded-md border border-amber-500 bg-amber-100 px-2 py-1.5 text-xs leading-5 text-amber-800">
             <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
             <span>
-              Read it off the card itself, not off this screen. A single wrong digit produces a number that belongs to
-              nobody, so it creates a second record for an artisan already in the system and nothing downstream can
-              detect it.
+              Check it against the card itself, not this screen. A single wrong digit creates a second record for the
+              same artisan.
             </span>
           </p>
           {currentValue ? (

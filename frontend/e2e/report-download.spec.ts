@@ -58,7 +58,7 @@ for (const format of ["DOCX", "PDF"] as const) {
 
     // If the handler threw, the friendly-but-wrong offline sentence appears. Surface the REAL
     // cause in the failure message rather than the sentence, which is the whole point.
-    const offline = page.getByText(/cannot be generated without a connection/i);
+    const offline = page.getByText(/Connect to the internet to generate the/i);
     const outcome = await Promise.race([
       downloadPromise.then(() => "download" as const),
       offline.waitFor({ state: "visible", timeout: 90_000 }).then(() => "offline" as const)

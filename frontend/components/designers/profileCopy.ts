@@ -167,7 +167,7 @@ export const DESIGNER_PROFILE_HELP: Partial<Record<DesignerProfileField, string>
   // registry field yet (see this file's header). Promising a report line the document will not
   // contain is the mistake `cvMediaId` and `signatureMediaId` below each had to have corrected.
   experienceYears:
-    "Years 0 to 70 and months 0 to 11, chosen separately — leave a box on “Not recorded” rather than answering 0, which means something different. The years are the range the report’s own field accepts; the months are kept on your profile and are not printed on a report yet.",
+    "Years 0 to 70 and months 0 to 11, chosen separately — leave a box on “Not recorded” rather than answering 0, which means something different. Reports print the years; the months are kept on your profile.",
   biography: "The paragraph that appears as “Designer’s profile” in stage 3 of every report.",
   // ── ADDED 2026-08-30, WITH THE EDITOR, AND EVERY CLAUSE OF IT IS CHECKED CODE ──────────────────
   //
@@ -210,7 +210,7 @@ export const DESIGNER_PROFILE_HELP: Partial<Record<DesignerProfileField, string>
   // Three surfaces carried this same promise: here, the registry's `designerCv` help, and the
   // Android profile screen. All three now say the true thing, which is also the more useful thing:
   // it tells the designer to send the file alongside the report.
-  "One document — PDF, .docx or .odt. A PDF is shown on this page as soon as it uploads; other formats are stored and downloadable. Your reports NAME it rather than carrying it, so send the file alongside the report.",
+  "One document — PDF, .docx or .odt. A PDF is shown on this page as soon as it uploads; other formats can be downloaded. Reports name the CV without including it, so send the file with the report.",
   empanelmentDate: "The date on the empanelment order, if the order carries one."
 };
 
@@ -278,7 +278,7 @@ export const DESIGNER_PROFILE_GROUPS: DesignerProfileGroup[] = [
   {
     key: "empanelment",
     title: "Empanelment",
-    blurb: "The identifiers a government report is expected to carry. Not the same thing as the roster row that lets you sign in.",
+    blurb: "The identifiers a government report is expected to carry. These are separate from the designer roster entry that lets you sign in.",
     fields: ["empanelmentNo", "empanelmentDate"]
   },
   // THE CV JOINS THE IMAGES GROUP RATHER THAN GETTING ONE OF ITS OWN, and the group is retitled to
@@ -299,7 +299,6 @@ export const DESIGNER_PROFILE_GROUPS: DesignerProfileGroup[] = [
  * ticket: editing the profile does not touch a workshop that already exists.
  */
 export const DESIGNER_PROFILE_COPY_NOTICE =
-  "These details are copied into a design workshop’s stages when the workshop is created, and never read again after that. " +
-  "Correcting something here changes the reports of workshops you start from now on — a workshop already under way keeps " +
-  "what it was created with, because a report is a record of who ran a workshop at the time and not of who they are today. " +
-  "Edit the stage itself to change an existing one.";
+  "These details are copied into a design workshop’s stages when the workshop is created. Changes here apply to " +
+  "workshops you start from now on; a workshop already under way keeps the details it started with. To change those, " +
+  "edit the stage itself.";

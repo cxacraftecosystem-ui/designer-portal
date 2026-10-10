@@ -98,13 +98,12 @@ const ROUTING_CHOICES = [
   {
     value: false,
     title: "Ordinary workshop",
-    detail: "The Workshop dropdown lists field-documentation workshops, and the record saves to workshopId."
+    detail: "The Workshop dropdown lists field-documentation workshops."
   },
   {
     value: true,
     title: "Design & prototype workshop",
-    detail:
-      "The Workshop dropdown lists 22-stage design workshops, and the record saves to designWorkshopId."
+    detail: "The Workshop dropdown lists 22-stage design workshops."
   }
 ] as const;
 
@@ -177,7 +176,7 @@ export default function WorkshopTypesPage() {
   const header = (
     <PageHeader
       title="Types of workshop"
-      description="The first dropdown on every record form — and, for each type, which table its workshops come from and where a record saves the one it is given."
+      description="The first dropdown on every record form, and which kind of workshop each type lists."
       icon={<Tags className="h-5 w-5" aria-hidden />}
     />
   );
@@ -197,7 +196,7 @@ export default function WorkshopTypesPage() {
         {header}
         <RestrictedPanel
           title="Admin access required"
-          body="The types of workshop are a shared vocabulary — renaming one renames it under everybody — so admins and the master admin manage them. The list itself is readable by every signed-in account, because every record form draws it."
+          body="Types of workshop are shared by everyone — renaming one renames it for everybody — so admins and the master admin manage them."
         />
       </>
     );
@@ -319,7 +318,7 @@ export default function WorkshopTypesPage() {
       // The note is where the refusal is announced BEFORE it happens, so an administrator with
       // twelve workshops under this type learns the rule from the dialog rather than from a red
       // banner after pressing the red button.
-      note: "A type with workshops filed under it cannot be deleted — the workshops would be left holding a type nothing can resolve. If that is the case here, this will be refused and will say how many are in the way; retire the type instead and it leaves the dropdowns with nothing else touched.",
+      note: "A type with workshops filed under it cannot be deleted, and you will be told how many there are. Retire it instead to take it out of the dropdowns.",
       confirmLabel: "Delete",
       tone: "danger"
     });
@@ -354,20 +353,15 @@ export default function WorkshopTypesPage() {
       ) : null}
 
       <section className="panel mb-5 p-4">
-        <h2 className="font-display text-base font-bold text-ink-900">How a type decides where a record saves</h2>
+        <h2 className="font-display text-base font-bold text-ink-900">How a type decides which workshops are listed</h2>
         <p className="mt-2 max-w-3xl text-sm leading-6 text-ink-500">
-          A record form asks for a type first, then for a workshop of that type. Exactly one of these
-          types is normally marked <strong>Design &amp; prototype workshop</strong>: its workshops come
-          from the 22-stage design workshop table, and a record filed under it saves to{" "}
-          <code className="rounded bg-surface-50 px-1 py-0.5 text-xs">designWorkshopId</code>. Every
-          other type lists ordinary field-documentation workshops and saves to{" "}
-          <code className="rounded bg-surface-50 px-1 py-0.5 text-xs">workshopId</code>. The type
-          itself is not stored on the record — the workshop it points at already knows its own type.
+          A record form asks for a type first, then for a workshop of that type. One type is normally
+          marked <strong>Design &amp; prototype workshop</strong>: it lists the 22-stage design
+          workshops. Every other type lists field-documentation workshops.
         </p>
         <p className="mt-2 max-w-3xl text-sm leading-6 text-ink-500">
-          A type&rsquo;s <strong>key</strong> is permanent. It is the token stored on every workshop
-          already filed under it and in every export ever taken, so it is chosen once and only the
-          label changes afterwards.
+          A type&rsquo;s <strong>code</strong> can&rsquo;t be changed once created. Only the label can
+          be changed afterwards.
         </p>
       </section>
 
@@ -389,7 +383,7 @@ export default function WorkshopTypesPage() {
             </Field>
 
             {editing === "new" ? (
-              <Field label="Key (permanent)" required>
+              <Field label="Code (permanent)" required>
                 <TextInput
                   value={draft.key}
                   onChange={(event) => setDraft((d) => ({ ...d, key: event.target.value.toUpperCase() }))}
@@ -405,21 +399,20 @@ export default function WorkshopTypesPage() {
               </Field>
             ) : (
               <div className="grid min-w-0 gap-1">
-                <span className="field-label">Key</span>
+                <span className="field-label">Code</span>
                 <p className="text-sm text-ink-700">
                   <code className="rounded bg-surface-50 px-1.5 py-1 text-xs">{draft.key}</code>
                 </p>
                 <p className="text-xs leading-5 text-ink-500">
-                  Permanent. Workshops already filed under this type store this token, so it cannot be
-                  changed here. To use a different one, add a new type and retire this one — both keys
-                  stay resolvable, which is what the existing workshops need.
+                  The code can&rsquo;t be changed once created. To use a different one, add a new type
+                  and retire this one.
                 </p>
               </div>
             )}
           </div>
 
           <fieldset className="grid gap-2">
-            <legend className="field-label">Where a workshop chosen under this type saves</legend>
+            <legend className="field-label">Which workshops this type lists</legend>
             {ROUTING_CHOICES.map((choice) => (
               <label
                 key={String(choice.value)}
@@ -487,7 +480,7 @@ export default function WorkshopTypesPage() {
         ) : rows.length === 0 ? (
           <EmptyState
             title="No types of workshop"
-            body="This list is seeded with six types when the database migration runs, so an empty list means the migration has not been applied to this server. Add one here to unblock the record forms in the meantime."
+            body="There are no workshop types. Add one so records can be filed."
           />
         ) : (
           <div className="overflow-x-auto">
@@ -501,10 +494,10 @@ export default function WorkshopTypesPage() {
                     Label
                   </th>
                   <th scope="col" className="px-4 py-2 font-medium">
-                    Key
+                    Code
                   </th>
                   <th scope="col" className="px-4 py-2 font-medium">
-                    Where a workshop saves
+                    Workshops listed
                   </th>
                   <th scope="col" className="px-4 py-2 font-medium">
                     In the dropdown
@@ -555,12 +548,10 @@ export default function WorkshopTypesPage() {
                       {type.routesToDesignWorkshop ? (
                         <>
                           Design &amp; prototype workshop
-                          <span className="block text-xs text-ink-500">designWorkshopId</span>
                         </>
                       ) : (
                         <>
                           Ordinary workshop
-                          <span className="block text-xs text-ink-500">workshopId</span>
                         </>
                       )}
                     </td>
