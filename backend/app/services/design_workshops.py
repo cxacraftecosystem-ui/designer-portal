@@ -643,8 +643,12 @@ def workshop_summary(record: Any) -> dict[str, Any]:
         # none of them — absent there means "this device does not know", as the four keys above.
         "approvedById": getattr(record, "approvedById", None),
         "approvedAt": _iso_or_none(getattr(record, "approvedAt", None)),
+        "approvedRound": getattr(record, "approvedRound", None),
         "handedOnById": getattr(record, "handedOnById", None),
         "handedOnAt": _iso_or_none(getattr(record, "handedOnAt", None)),
+        "handedOnTo": getattr(record, "handedOnTo", None),
+        "handedOnExportId": getattr(record, "handedOnExportId", None),
+        "lastHandedInAt": _iso_or_none(getattr(record, "lastHandedInAt", None)),
         # Tier 3 consent: may this workshop's recordings leave the device? Three keys — the answer, the
         # moment the ARTISAN gave it, and who took it down. The acceptor's display NAME is deliberately
         # not here: this dict is serialised once per row by the paged list, and resolving a name would

@@ -1069,6 +1069,11 @@ def test_exactly_three_call_sites_and_only_the_designer_route_claims_the_party()
                 )
 
 
+def _where_names(call: ast.Call) -> list[str]:
+    where = _keyword(call, "where")
+    return [k.value for k in where.keys if isinstance(k, ast.Constant)] if isinstance(where, ast.Dict) else []
+
+
 def test_the_promoted_columns_are_written_by_id_and_never_under_the_status_predicate():
     """**THE CONTENT IS NOT GATED ON THE RACE. ONLY THE COUNTER IS.**
 
@@ -1094,10 +1099,14 @@ def test_the_promoted_columns_are_written_by_id_and_never_under_the_status_predi
         and isinstance(call.func.value, ast.Attribute)
         and call.func.value.attr == "designworkshop"
     ]
-    plain = [c for c in writes if c.func.attr == "update"]
-    guarded = [c for c in writes if c.func.attr == "update_many"]
-    assert len(plain) == 1 and len(guarded) == 1, (
-        f"save_stage should make exactly two header writes; found {len(plain)} plain and "
+    # SINCE 2026-10-10 THE CONTENT WRITE CARRIES ONE PREDICATE, AND IT IS NOT THE STATUS: "not
+    # frozen" (an approved or handed-on report), and a zero count RAISES rather than dropping the
+    # corrections in silence — the whole save rolls back with the frozen 403. So both writes are
+    # `update_many`, told apart by what their WHERE names.
+    plain = [c for c in writes if c.func.attr == "update_many" and "NOT" in _where_names(c)]
+    guarded = [c for c in writes if c.func.attr == "update_many" and "status" in _where_names(c)]
+    assert len(plain) == 1 and len(guarded) == 1 and len(writes) == 2, (
+        f"save_stage should make exactly two header writes; found {len(plain)} content and "
         f"{len(guarded)} guarded. One statement carrying both is the merged form that dropped the "
         "promoted columns whenever the predicate missed."
     )
@@ -1107,9 +1116,9 @@ def test_the_promoted_columns_are_written_by_id_and_never_under_the_status_predi
         assert isinstance(where, ast.Dict), "the header write's `where` must be a literal dict"
         return [k.value for k in where.keys if isinstance(k, ast.Constant)]
 
-    assert _where_keys(plain[0]) == ["id"], (
-        "the content write must be addressed by id alone. Any predicate on it means a designer's "
-        "corrections are dropped in silence whenever it misses."
+    assert _where_keys(plain[0]) == ["id", "NOT"], (
+        "the content write must be addressed by id and the frozen guard alone. Any other predicate "
+        "means a designer's corrections are dropped in silence whenever it misses."
     )
     assert sorted(_where_keys(guarded[0])) == ["id", "status"], (
         "the guarded write must keep its status predicate — it is what stops the round counter "

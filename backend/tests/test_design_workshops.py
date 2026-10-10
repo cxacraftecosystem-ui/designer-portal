@@ -957,7 +957,10 @@ def test_every_key_the_header_serialises_is_either_writable_or_refused_by_name()
     assert {"reviewNotes", "reviewedById", "reviewedAt", "submissionRound"} <= set(
         routes._NEVER_PATCHABLE
     )
-    assert len(workshop_summary(record)) == 30, (
+    # 38 since 2026-10-10: the approving authority's eight sign-off keys, refused by name above
+    # (`_SIGN_OFF_HAS_ITS_OWN_SCREEN`); the docstring's 30 is the count before them.
+    assert {"approvedById", "approvedAt", "handedOnAt", "lastHandedInAt"} <= set(routes._NEVER_PATCHABLE)
+    assert len(workshop_summary(record)) == 38, (
         "the header dict changed size; the counts in this test's docstring are the two sentences a "
         "reader trusts, and they are wrong the moment this number moves"
     )
