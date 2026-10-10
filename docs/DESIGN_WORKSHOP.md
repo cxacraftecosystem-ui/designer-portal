@@ -569,6 +569,7 @@ flowchart LR
   RD --> PREV["GET …/report/preview<br/>blocks[] → HTML"]
   RD --> KDOCX["<b>DocxWriter.kt</b><br/>same OOXML, offline"]
   RD --> KPDF["<b>PdfWriter.kt</b><br/>android.graphics.pdf, offline"]
+  RD -.->|"port, held by a parity fixture"| WEB["<b>lib/offlineReport</b><br/>preview, .docx, .pdf<br/>in the browser, offline"]
 ```
 
 `ReportDocument` is the waist of the hourglass. It is a plain tree of frozen dataclasses describing
@@ -689,6 +690,10 @@ thing it is part of, and the sub-headings join the numbering the table of conten
 its blocks to JSON for the web to render as HTML. It is not a fourth traversal of the data. A preview
 that walked the data itself would be the first thing to drift, and it would drift in the one place a
 designer trusts most — the screen they approve before they press Export.
+
+With no connection the web builds the same blocks itself (§8.1) — a second traversal, which is
+exactly the drift this paragraph warns about, and why it is held to the server's output by a parity
+fixture rather than by hope.
 
 ### Generation returns bytes, not a link
 
@@ -911,6 +916,54 @@ singleton, and hoisted once for `_custom`.
 
 Two writes are deliberately **not** version-guarded — the sweep, and the `DesignWorkshop` header
 write. [DATA_MODEL.md](DATA_MODEL.md) carries the argument for each.
+
+### 8.1 Reports built in the browser (2026-10-10)
+
+The web builds a workshop's report — the paginated preview, the .docx and the .pdf — with no
+connection. Until this date the report screen disabled both downloads offline and told the designer
+the browser "deliberately has no renderer of its own"; that was a missing feature narrated on the
+screen, and it is gone.
+
+**Where it lives.** `frontend/lib/offlineReport/`: `builder.ts` is a port of `report_builder.py`
+(with `templates.ts`, `richText.ts`, `annexures.ts` and `geocode.ts` porting `report_templates.py`,
+the report half of `rich_text.py`, the four annexure modules and `_geocode`); `assemble.ts` ports the
+loaders and `_build_only` / `render_report`; `docx.ts` writes the file with the `docx` package and
+`pdf.ts` with pdfmake, set in the Noto faces under `frontend/public/report-fonts/` (SIL OFL, licence
+beside them) — the same families `report_pdf.py` binds. The report screen and the per-stage document
+panel use it when the device is offline, when the request never arrives, and for a workshop that has
+never been uploaded; with a connection they use the server exactly as before.
+
+**What it is built from.** The stages come from the draft `lib/designWorkshopStore` already keeps.
+Everything else the builder reads comes from `GET /api/design-workshops/{id}/report/sources`, fetched
+while the report screen is open with a connection and kept in IndexedDB by
+`lib/offlineReport/reportCache.ts`: the records a REF names, the district anchors, each photograph's
+size, and the questionnaire sittings, transcripts and accepted AI layers — each loaded by the same
+`attach_*` function as the preview, as the same reader, with the same warnings. Photographs are the
+draft's own unsynced bytes, or bytes the report screen kept when it showed them (`putMedia`).
+Limits: 200 MB of photographs, 16 MB each, least-recently-used out first, nothing kept past 45 days
+unused; one sources record per workshop. Every record is stamped with the account and both stores
+are emptied on sign-out. `frontend/public/sw.js` keeps the application's own files (build output,
+fonts, map borders, visited pages) so the screen opens again with no connection; it never caches API
+responses. It registers in production builds only.
+
+**Which copy is authoritative: the server's.** Whenever there is a connection the screen asks the
+server, and the server's file is the one a ministry should receive: it is built from the record the
+office holds, it draws charts as native Word charts (the browser draws every chart and the map as a
+picture), and it is the one recorded in the report history. The device's copy exists so a designer
+with no signal is never without their report, and it includes stages not yet uploaded, which the
+server's cannot. This is said here, for maintainers; the screen describes what each copy contains
+and does not argue the point with a designer. Two known differences besides the charts: the map
+places a district-only address with the district anchors the sources carried (or the atlas's own,
+when no sources were ever kept), and a file written offline is not added to the report history.
+
+**How the two are held together.** `shared/report-parity/workshop.json` is a fixture workshop that
+reaches every branch the builder has. `backend/tools/report_offline_parity.py --write` builds every
+case in it with the server's code into `shared/report-parity/expected.json` and exports the
+geocoder's tables into `frontend/lib/offlineReport/gazetteer.json`;
+`backend/tests/test_report_offline_parity.py` fails when either file is stale, and
+`frontend/e2e/offline-report-parity-unit.spec.ts` fails when the browser's blocks, meta, theme or
+warnings differ from the server's by a character. A change to the server's builder therefore lands
+with a regenerated fixture and the matching change in the port, in one commit.
 
 ---
 

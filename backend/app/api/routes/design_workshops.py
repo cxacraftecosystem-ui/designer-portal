@@ -4850,6 +4850,79 @@ async def preview_report(
     }
 
 
+@router.get("/{workshop_id}/report/sources")
+async def report_sources(
+    workshop_id: str,
+    current_user: Any = Depends(get_current_user),
+) -> dict[str, Any]:
+    """What the report is built from BESIDES the stage entries, for the browser to keep offline.
+
+    The web builds the same document in the browser when there is no connection
+    (``frontend/lib/offlineReport``): the stages come from the draft the browser already holds,
+    and everything else the builder reads — the records a REF names, the district anchors the map
+    places a stated address with, each photograph's size and orientation, and the three annexures'
+    sources (questionnaire sittings, transcripts, accepted AI layers) — comes from here, fetched
+    while the report screen is open with a connection and kept on the device.
+
+    THE SAME LOADERS AS THE PREVIEW, NOT A SECOND READ OF THE SAME TABLES. Every list below is
+    produced by the ``attach_*`` function ``_report_inputs`` calls, as THIS reader — so a
+    photograph or a recording the caller may not download is withheld here exactly as it is from
+    the preview and the file, and the device never holds what the server would not print for them.
+    The transcripts and the AI layers are loaded as if asked for, because whether a particular file
+    carries them is decided per download; the browser applies that switch itself.
+
+    Each source's warnings travel with it, verbatim, so a document built offline says what the
+    server would have said about the same source.
+    """
+    from dataclasses import asdict
+
+    from app.services.report_ai_layers import ai_layers_of
+    from app.services.report_annexures import transcripts_of
+    from app.services.report_questionnaires import questionnaires_of
+
+    record = await load_workshop_or_404(workshop_id, current_user)
+    entries = await entry_rows(workshop_id)
+    data = assemble_workshop_data(record, entries)
+    results = await gather_reads(
+        attach_report_references(data, entries),
+        attach_district_anchors(data),
+        attach_report_questionnaires(data, workshop_id),
+        attach_report_transcripts(data, entries, viewer=current_user, requested=True),
+        attach_report_ai_layers(
+            data,
+            workshop_id,
+            viewer=current_user,
+            readable_media=lambda ids: _readable_media_ids(ids, current_user),
+            requested=True,
+        ),
+    )
+    reference_photos = results[0]
+    resolver = await media_resolver(entries, viewer=current_user, extra_ids=reference_photos)
+    media_warnings: list[str] = []
+    if resolver.withheld:
+        # The sentence `_report_inputs` writes, word for word — see there.
+        media_warnings.append(
+            f"{len(resolver.withheld)} attached file(s) could not be included: they were "
+            "uploaded by another account, or the file is gone."
+        )
+    return {
+        "workshopId": workshop_id,
+        "builtAt": datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z"),
+        "references": {key: asdict(value) for key, value in data.references.items()},
+        "districtPoints": {key: [lat, lon] for key, (lat, lon) in data.district_points.items()},
+        "media": {key: asdict(value) for key, value in resolver.known_refs().items()},
+        "questionnaires": [asdict(item) for item in questionnaires_of(data)],
+        "transcripts": [asdict(item) for item in transcripts_of(data)],
+        "aiLayers": [asdict(item) for item in ai_layers_of(data)],
+        "warnings": {
+            "questionnaires": list(results[2]),
+            "transcripts": list(results[3]),
+            "aiLayers": list(results[4]),
+            "media": media_warnings,
+        },
+    }
+
+
 @router.post("/{workshop_id}/report")
 async def generate_report(
     workshop_id: str,

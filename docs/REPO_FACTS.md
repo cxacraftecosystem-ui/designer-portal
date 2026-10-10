@@ -27,13 +27,13 @@ Enums: `UserRole`, `AuthProvider`, `RecordStatus`, `WorkshopType`, `MediaType`, 
 
 ## API surface
 
-**361 operations** in the working tree — 180 GET, 109 POST, 28 DELETE,
+**362 operations** in the working tree — 181 GET, 109 POST, 28 DELETE,
 24 PATCH, 20 PUT. 2 of them (`/health`, `/health/ready`) are declared
 on the app rather than on a router; the rest are spread across `backend/app/api/routes/`:
 
 | Route module | Operations |
 |---|---|
-| `design_workshops.py` | 46 |
+| `design_workshops.py` | 47 |
 | `questionnaire.py` | 21 |
 | `workshops.py` | 21 |
 | `media.py` | 20 |
@@ -123,8 +123,8 @@ no key is skipped wherever it sits.
 
 | Surface | Files | Cases | Runner |
 |---|---|---|---|
-| Backend unit (`backend/tests/`) | 244 | 5044 `def test_` | `python -m pytest -rf --durations=15` from `backend/` |
-| Web end-to-end (`frontend/e2e/`) | 214 | 2696 `test(` | Playwright, `frontend/playwright.config.ts` |
+| Backend unit (`backend/tests/`) | 245 | 5049 `def test_` | `python -m pytest -rf --durations=15` from `backend/` |
+| Web end-to-end (`frontend/e2e/`) | 217 | 2731 `test(` | Playwright, `frontend/playwright.config.ts` |
 | Android unit (`android/app/src/test/`) | 245 | 3288 `@Test` | `./gradlew :app:testDebugUnitTest` from `android/` |
 | Android instrumented (`android/app/src/androidTest/`) | 9 | 25 `@Test` | needs a device; on demand only (`.github/workflows/android-emulator.yml`), never a gate |
 
@@ -151,10 +151,10 @@ and this one asserted an absence it had never looked for.
 
 | Area | Tracked files | Tracked lines | Tree files | Tree lines |
 |---|---|---|---|---|
-| `backend/app` | 211 | 159,688 | 211 | 159,688 |
-| `frontend/app` | 97 | 55,734 | 97 | 55,734 |
-| `frontend/components` | 304 | 131,458 | 304 | 131,458 |
-| `frontend/lib` | 130 | 68,363 | 130 | 68,363 |
+| `backend/app` | 211 | 159,781 | 211 | 159,781 |
+| `frontend/app` | 97 | 55,833 | 97 | 55,833 |
+| `frontend/components` | 305 | 131,547 | 305 | 131,547 |
+| `frontend/lib` | 146 | 74,646 | 146 | 74,646 |
 | `android/app/src/main/java` | 274 | 233,127 | 274 | 233,127 |
 
 Two columns because the two numbers get quoted interchangeably and disagree by however much work is

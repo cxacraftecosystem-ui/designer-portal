@@ -1,0 +1,2014 @@
+{
+ "_comment": "The workshop both report builders are run over. backend/tools/report_offline_parity.py builds every case with the server's own code and writes expected.json beside this file; frontend/e2e/offline-report-parity-unit.spec.ts builds the same cases in the browser's builder and compares. Edit this file, then run the tool with --write.",
+ "generatedAt": "2026-10-10T09:30:00Z",
+ "workshop": {
+  "id": "cmgworkshop00000000000001",
+  "title": "Sambalpuri ikat design workshop",
+  "templateId": "DCH_STANDARD",
+  "workshopCode": "DW-OD-2026-014",
+  "craftName": "Sambalpuri Ikat",
+  "clusterName": "Barpali",
+  "state": "Odisha",
+  "designerName": "Ananya Rao",
+  "implementingAgency": "Odisha State Handloom Weavers' Cooperative"
+ },
+ "stages": {
+  "WORKSHOP_SETUP": {
+   "singleton": {
+    "_entryId": "cmgentry00000000000000001",
+    "workshopTitle": "Design and prototype workshop, Sambalpuri ikat",
+    "workshopKind": "DESIGN_PROTOTYPE_DEVELOPMENT",
+    "schemeName": "National Handicraft Development Programme",
+    "craftName": "Sambalpuri Ikat",
+    "craftLocalName": "ସମ୍ବଲପୁରୀ ଇକତ",
+    "clusterName": "Barpali",
+    "state": "Odisha",
+    "district": "Bargarh",
+    "block": "Barpali",
+    "village": "Barpali",
+    "venue": "Weavers' Service Centre",
+    "startDate": "2026-07-06",
+    "endDate": "2026-07-20",
+    "durationDays": 15,
+    "designerName": "Ananya Rao",
+    "designerInstitution": "IIT Kharagpur",
+    "implementingAgency": "Odisha State Handloom Weavers' Cooperative",
+    "sponsor": "Office of the Development Commissioner (Handicrafts)",
+    "sanctionOrderNo": "DCH/NHDP/2026/0412",
+    "sanctionOrderDate": "2026-05-14",
+    "workshopCode": "DW-OD-2026-014",
+    "sanctionDocument": "cmgmedia00000000000000090",
+    "venueLocation": {
+     "lat": 21.1918,
+     "lon": 83.5906,
+     "accuracy": 12
+    },
+    "coverPhoto": "cmgmedia00000000000000001",
+    "coverPhotoCaption": "The pit looms of Barpali on the first morning"
+   },
+   "collections": {}
+  },
+  "INTRODUCTORY_ADMIN_DOCUMENTATION": {
+   "singleton": {
+    "_entryId": "cmgentry00000000000000002",
+    "acknowledgement": {
+     "blocks": [
+      {
+       "kind": "PARAGRAPH",
+       "spans": [
+        {
+         "text": "The designer thanks the weavers of Barpali."
+        }
+       ]
+      }
+     ]
+    },
+    "briefIntroduction": {
+     "blocks": [
+      {
+       "kind": "PARAGRAPH",
+       "spans": [
+        {
+         "text": "Barpali sits on the western edge of the Bargarh district, where the Mahanadi bends north. Nearly every household in the village keeps a pit loom, and the tie-and-dye of the warp and weft is done by the family before a single pick is thrown."
+        }
+       ]
+      },
+      {
+       "kind": "PARAGRAPH",
+       "spans": [
+        {
+         "text": "The workshop ran for "
+        },
+        {
+         "text": "fifteen days",
+         "marks": [
+          "BOLD"
+         ]
+        },
+        {
+         "text": " and closed with "
+        },
+        {
+         "text": "eleven",
+         "marks": [
+          "ITALIC"
+         ]
+        },
+        {
+         "text": " of twelve artisans completing it."
+        }
+       ]
+      }
+     ]
+    },
+    "purpose": {
+     "blocks": [
+      {
+       "kind": "PARAGRAPH",
+       "spans": [
+        {
+         "text": "To develop contemporary products from the tie-and-dye tradition."
+        }
+       ]
+      }
+     ]
+    },
+    "programmeObjectives": {
+     "blocks": [
+      {
+       "kind": "BULLET_ITEM",
+       "spans": [
+        {
+         "text": "Document the traditional process"
+        }
+       ]
+      },
+      {
+       "kind": "BULLET_ITEM",
+       "spans": [
+        {
+         "text": "Develop ten new prototypes"
+        }
+       ]
+      },
+      {
+       "kind": "ORDERED_ITEM",
+       "spans": [
+        {
+         "text": "Link the cluster to two buyers"
+        }
+       ]
+      }
+     ]
+    },
+    "institutionalText": {
+     "blocks": [
+      {
+       "kind": "PARAGRAPH",
+       "spans": [
+        {
+         "text": "Advanced-tier institutional note."
+        }
+       ]
+      }
+     ]
+    }
+   },
+   "collections": {}
+  },
+  "WORKSHOP_PLAN_PARTICIPANTS_OPENING": {
+   "singleton": {
+    "_entryId": "cmgentry00000000000000003",
+    "designerProfile": {
+     "blocks": [
+      {
+       "kind": "PARAGRAPH",
+       "spans": [
+        {
+         "text": "Ananya Rao is a textile designer with twelve years of practice."
+        }
+       ]
+      }
+     ]
+    },
+    "designerExperience": 12,
+    "designerCv": "cmgmedia00000000000000091",
+    "totalArtisans": 12,
+    "womenParticipants": 7,
+    "openingPhotos": [
+     "cmgmedia00000000000000002",
+     "cmgmedia00000000000000003"
+    ],
+    "openingPhotosCaption": "Opening session"
+   },
+   "collections": {
+    "workshopScheduleDay": [
+     {
+      "_entryId": "cmgentry00000000000000010",
+      "dayNumber": 1,
+      "date": "2026-07-06",
+      "session": "Morning",
+      "activity": "Opening and introductions",
+      "conductedBy": "Ananya Rao"
+     },
+     {
+      "_entryId": "cmgentry00000000000000011",
+      "dayNumber": 2,
+      "date": "2026-07-07",
+      "session": "Full day",
+      "activity": "Documenting the bandha process at three looms",
+      "conductedBy": "Ananya Rao"
+     }
+    ],
+    "participant": [
+     {
+      "_entryId": "cmgentry00000000000000020",
+      "artisanRef": "cmgartisan000000000000001",
+      "serialNo": 1,
+      "name": "Kamla Devi",
+      "localName": "କମଳା ଦେବୀ",
+      "artisanCardNo": "OD-BRG-2231",
+      "specialisation": "Tie-and-dye",
+      "experienceYears": 22,
+      "isMasterCraftsperson": true,
+      "dos": "Keep the ikat register; Use natural dyes",
+      "photo": "cmgmedia00000000000000004",
+      "photoCaption": "Kamla Devi at her loom"
+     },
+     {
+      "_entryId": "cmgentry00000000000000021",
+      "serialNo": 2,
+      "name": "Bhagaban Meher",
+      "specialisation": "Weaving",
+      "experienceYears": 30,
+      "isMasterCraftsperson": false,
+      "village": "Sohela",
+      "district": "Bargarh",
+      "state": "Odisha"
+     },
+     {
+      "_entryId": "cmgentry00000000000000022",
+      "serialNo": 3,
+      "name": "Sarojini Meher",
+      "specialisation": "Dyeing",
+      "experienceYears": 9,
+      "village": "Remunda",
+      "state": "Odisha",
+      "subjectLocation": {
+       "lat": 21.2167,
+       "lon": 83.6833
+      }
+     },
+     {
+      "_entryId": "cmgentry00000000000000023",
+      "serialNo": 4,
+      "name": "Pradeep Bhuyan",
+      "specialisation": "Warping"
+     }
+    ]
+   }
+  },
+  "CLUSTER_CRAFT_BACKGROUND": {
+   "singleton": {
+    "_entryId": "cmgentry00000000000000004",
+    "clusterIntroduction": {
+     "blocks": [
+      {
+       "kind": "HEADING",
+       "level": 2,
+       "spans": [
+        {
+         "text": "The cluster today"
+        }
+       ]
+      },
+      {
+       "kind": "PARAGRAPH",
+       "spans": [
+        {
+         "text": "Some "
+        },
+        {
+         "text": "struck",
+         "marks": [
+          "STRIKETHROUGH"
+         ]
+        },
+        {
+         "text": " and "
+        },
+        {
+         "text": "underlined",
+         "marks": [
+          "UNDERLINE"
+         ]
+        },
+        {
+         "text": " words, H"
+        },
+        {
+         "text": "2",
+         "marks": [
+          "SUBSCRIPT"
+         ]
+        },
+        {
+         "text": "O and "
+        },
+        {
+         "text": "marked",
+         "marks": [
+          "HIGHLIGHT"
+         ]
+        },
+        {
+         "text": " text."
+        }
+       ]
+      },
+      {
+       "kind": "QUOTE",
+       "spans": [
+        {
+         "text": "We weave what our mothers wove."
+        }
+       ]
+      },
+      {
+       "kind": "TABLE",
+       "spans": [],
+       "rows": [
+        [
+         [
+          {
+           "text": "Item"
+          }
+         ],
+         [
+          {
+           "text": "Count"
+          }
+         ]
+        ],
+        [
+         [
+          {
+           "text": "Pit looms"
+          }
+         ],
+         [
+          {
+           "text": "412"
+          }
+         ]
+        ],
+        [
+         [
+          {
+           "text": "Frame looms"
+          }
+         ],
+         [
+          {
+           "text": "38"
+          }
+         ]
+        ]
+       ]
+      },
+      {
+       "kind": "IMAGE",
+       "spans": [
+        {
+         "text": "The dye yard"
+        }
+       ],
+       "media": "cmgmedia00000000000000005",
+       "widthPct": 55
+      },
+      {
+       "kind": "PARAGRAPH",
+       "align": "CENTER",
+       "spans": [
+        {
+         "text": "Centred closing line."
+        }
+       ]
+      }
+     ]
+    },
+    "craftIntroduction": {
+     "blocks": [
+      {
+       "kind": "PARAGRAPH",
+       "spans": [
+        {
+         "text": "Ikat is resist-dyed before weaving."
+        }
+       ]
+      }
+     ]
+    },
+    "history": {
+     "blocks": [
+      {
+       "kind": "PARAGRAPH",
+       "spans": [
+        {
+         "text": "The craft is recorded in Barpali from the nineteenth century."
+        }
+       ]
+      }
+     ]
+    },
+    "traditionalProducts": {
+     "blocks": [
+      {
+       "kind": "BULLET_ITEM",
+       "spans": [
+        {
+         "text": "Saree"
+        }
+       ]
+      },
+      {
+       "kind": "BULLET_ITEM",
+       "spans": [
+        {
+         "text": "Bichitrapuri"
+        }
+       ]
+      }
+     ]
+    },
+    "giStatus": "REGISTERED",
+    "artisanHouseholds": 12500,
+    "motifPhotos": [
+     "cmgmedia00000000000000006",
+     "cmgmedia00000000000000007",
+     "cmgmedia00000000000000008"
+    ],
+    "motifPhotosCaption": "Traditional motifs",
+    "clusterPhotos": [
+     "cmgmedia00000000000000009"
+    ]
+   },
+   "collections": {},
+   "custom": {
+    "_entryId": "cmgentry00000000000000200",
+    "dyeSource": "Indigofera from Sambalpur",
+    "vatCount": 4,
+    "mordant": "ALUM",
+    "vatNotes": "The vat is fed every morning.\n\nIt rests on Sundays.",
+    "oldQuestion": "Well water"
+   }
+  },
+  "TRADITIONAL_PROCESS_BASELINE": {
+   "singleton": {
+    "_entryId": "cmgentry00000000000000005",
+    "processOverview": {
+     "blocks": [
+      {
+       "kind": "PARAGRAPH",
+       "spans": [
+        {
+         "text": "Tie, dye, untie, re-tie, weave."
+        }
+       ]
+      }
+     ]
+    },
+    "totalMakingTime": 4.5,
+    "documentedSteps": "Warping\nTying\nDyeing"
+   },
+   "collections": {
+    "processStep": [
+     {
+      "_entryId": "cmgentry00000000000000030",
+      "stepNumber": 1,
+      "name": "Warping",
+      "localName": "ତାନି",
+      "description": "The warp is laid on pegs.",
+      "timeTaken": 2.5,
+      "toolsUsed": [
+       "cmgtool00000000000000001",
+       "Hand peg"
+      ]
+     },
+     {
+      "_entryId": "cmgentry00000000000000031",
+      "stepNumber": 2,
+      "name": "Tying",
+      "description": "Sections are tied with rubber strips.",
+      "timeTaken": 16
+     }
+    ],
+    "tool": [
+     {
+      "_entryId": "cmgentry00000000000000032",
+      "name": "Pit loom",
+      "toolType": "Loom",
+      "usedFor": "Weaving the ikat",
+      "source": "Local carpenter",
+      "cost": 1850.5,
+      "photo": "cmgmedia00000000000000010"
+     }
+    ],
+    "rawMaterial": [
+     {
+      "_entryId": "cmgentry00000000000000033",
+      "name": "Mercerised cotton",
+      "family": "COTTON",
+      "source": "Bargarh market",
+      "cost": 120000,
+      "availability": "HIGH"
+     },
+     {
+      "_entryId": "cmgentry00000000000000034",
+      "name": "Natural indigo",
+      "family": "NATURAL_DYE",
+      "cost": "450",
+      "availability": "SEASONAL"
+     }
+    ]
+   }
+  },
+  "EXISTING_PRODUCTS_BASELINE": {
+   "singleton": {},
+   "collections": {
+    "existingProduct": [
+     {
+      "_entryId": "cmgentry00000000000000040",
+      "name": "Pasapali saree",
+      "category": "SAREE",
+      "price": 8500,
+      "material": {
+       "blocks": [
+        {
+         "kind": "PARAGRAPH",
+         "spans": [
+          {
+           "text": "Cotton warp, "
+          }
+         ]
+        },
+        {
+         "kind": "PARAGRAPH",
+         "spans": [
+          {
+           "text": "silk weft"
+          }
+         ]
+        }
+       ]
+      },
+      "dimensionsNote": "5.5 m",
+      "productPhotos": [
+       "cmgmedia00000000000000011"
+      ]
+     },
+     {
+      "_entryId": "cmgentry00000000000000041",
+      "name": "Ikat stole",
+      "category": "DUPATTA_STOLE",
+      "price": 1200.75
+     }
+    ]
+   }
+  },
+  "SURVEY_PLANNING": {
+   "singleton": {
+    "_entryId": "cmgentry00000000000000006",
+    "objectives": {
+     "blocks": [
+      {
+       "kind": "BULLET_ITEM",
+       "spans": [
+        {
+         "text": "Understand urban demand"
+        }
+       ]
+      }
+     ]
+    },
+    "questionnaire": {
+     "blocks": [
+      {
+       "kind": "PARAGRAPH",
+       "spans": [
+        {
+         "text": "A twelve-question form for retailers and consumers."
+        }
+       ]
+      }
+     ]
+    },
+    "respondentGroups": [
+     "CONSUMER",
+     "RETAILER"
+    ]
+   },
+   "collections": {
+    "surveyPlace": [
+     {
+      "_entryId": "cmgentry00000000000000050",
+      "name": "Ekamra Haat",
+      "placeType": "Haat",
+      "cityDistrict": "Bhubaneswar",
+      "plannedDate": "2026-07-10",
+      "respondentGroup": "CONSUMER"
+     }
+    ]
+   }
+  },
+  "MARKET_SURVEY_CAPTURE": {
+   "singleton": {
+    "_entryId": "cmgentry00000000000000007",
+    "notes": {
+     "blocks": [
+      {
+       "kind": "PARAGRAPH",
+       "spans": [
+        {
+         "text": "Buyers want lighter weights and smaller formats."
+        }
+       ]
+      }
+     ]
+    },
+    "responsesCollected": 9,
+    "marketPhotos": [
+     "cmgmedia00000000000000012"
+    ]
+   },
+   "collections": {
+    "surveyResponse": [
+     {
+      "_entryId": "cmgentry00000000000000060",
+      "respondentName": "Store manager",
+      "respondentGroup": "RETAILER",
+      "place": "Bhubaneswar",
+      "response": "Stoles sell faster than sarees.",
+      "priceExpectation": 1500
+     },
+     {
+      "_entryId": "cmgentry00000000000000061",
+      "respondentName": "Visitor",
+      "respondentGroup": "CONSUMER",
+      "response": "Would buy a cushion cover.",
+      "priceExpectation": 650
+     },
+     {
+      "_entryId": "cmgentry00000000000000062",
+      "respondentGroup": "CONSUMER",
+      "response": "Too heavy for summer.",
+      "priceExpectation": 2400
+     },
+     {
+      "_entryId": "cmgentry00000000000000063",
+      "respondentName": "Exporter",
+      "respondentGroup": "EXPORTER",
+      "response": "Needs consistent colour.",
+      "priceExpectation": 4200
+     },
+     {
+      "_entryId": "cmgentry00000000000000064",
+      "respondentName": "Walk-in",
+      "response": "No group recorded."
+     }
+    ],
+    "competitorProduct": [
+     {
+      "_entryId": "cmgentry00000000000000065",
+      "name": "Printed ikat-look stole",
+      "seller": "Mall store",
+      "category": "DUPATTA_STOLE",
+      "material": "Polyester",
+      "price": 499,
+      "origin": "Surat"
+     }
+    ]
+   }
+  },
+  "MARKET_ANALYSIS_DIRECTION": {
+   "singleton": {
+    "_entryId": "cmgentry00000000000000008",
+    "surveyFindings": {
+     "blocks": [
+      {
+       "kind": "PARAGRAPH",
+       "spans": [
+        {
+         "text": "Demand for lighter products is strong."
+        }
+       ]
+      }
+     ]
+    },
+    "mainOpportunities": {
+     "blocks": [
+      {
+       "kind": "BULLET_ITEM",
+       "spans": [
+        {
+         "text": "Home furnishing"
+        }
+       ]
+      },
+      {
+       "kind": "BULLET_ITEM",
+       "spans": [
+        {
+         "text": "Stoles"
+        }
+       ]
+      }
+     ]
+    },
+    "demandLevel": "HIGH"
+   },
+   "collections": {
+    "swotPoint": [
+     {
+      "_entryId": "cmgentry00000000000000070",
+      "kind": "STRENGTH",
+      "point": "A living tie-and-dye skill",
+      "evidence": "Every household ties"
+     }
+    ],
+    "priceBand": [
+     {
+      "_entryId": "cmgentry00000000000000071",
+      "category": "HOME_FURNISHING",
+      "lowPrice": 400,
+      "highPrice": 2500,
+      "demand": "MEDIUM"
+     }
+    ],
+    "designOpportunity": []
+   }
+  },
+  "DESIGN_BRIEF": {
+   "singleton": {
+    "_entryId": "cmgentry00000000000000009",
+    "concept": {
+     "blocks": [
+      {
+       "kind": "PARAGRAPH",
+       "spans": [
+        {
+         "text": "Lighter cottons, smaller formats, the same motifs."
+        }
+       ]
+      }
+     ]
+    },
+    "targetCategories": [
+     "HOME_FURNISHING",
+     "DUPATTA_STOLE"
+    ],
+    "intendedPriceLow": 450,
+    "intendedPriceHigh": 3200
+   },
+   "collections": {},
+   "custom": {
+    "_entryId": "cmgentry00000000000000201",
+    "colourNote": "Muted indigo only."
+   }
+  },
+  "SKETCH_DEVELOPMENT": {
+   "singleton": {},
+   "collections": {
+    "sketch": [
+     {
+      "_entryId": "cmgentry00000000000000080",
+      "sketchNo": "S-01",
+      "name": "Cushion cover, fish motif",
+      "image": "cmgmedia00000000000000013",
+      "imageCaption": "Fish motif",
+      "category": "HOME_FURNISHING",
+      "materials": [
+       "Cotton",
+       "Natural indigo"
+      ],
+      "expectedPrice": 650,
+      "designerNotes": {
+       "blocks": [
+        {
+         "kind": "PARAGRAPH",
+         "spans": [
+          {
+           "text": "Scaled-down fish motif."
+          }
+         ]
+        }
+       ]
+      }
+     },
+     {
+      "_entryId": "cmgentry00000000000000081",
+      "sketchNo": "S-02",
+      "name": "Stole, temple border",
+      "image": "cmgmedia00000000000000014",
+      "category": "DUPATTA_STOLE",
+      "materials": [
+       "Cotton"
+      ]
+     },
+     {
+      "_entryId": "cmgentry00000000000000082",
+      "sketchNo": "S-03",
+      "name": "Table runner",
+      "image": "cmgmedia00000000000000015",
+      "category": "TABLE_LINEN"
+     }
+    ]
+   }
+  },
+  "SKETCH_REVIEW": {
+   "singleton": {},
+   "collections": {
+    "sketchReview": [
+     {
+      "_entryId": "cmgentry00000000000000090",
+      "sketchRef": "cmgentry00000000000000080",
+      "decision": "SELECTED",
+      "reason": "Strong market fit.",
+      "reviewedBy": "Panel"
+     },
+     {
+      "_entryId": "cmgentry00000000000000091",
+      "sketchRef": "cmgdeleted000000000000001",
+      "decision": "REJECTED",
+      "reason": "Too costly."
+     }
+    ]
+   }
+  },
+  "PROTOTYPE_DEVELOPMENT": {
+   "singleton": {},
+   "collections": {
+    "prototype": [
+     {
+      "_entryId": "cmgentry00000000000000100",
+      "prototypeCode": "P-01",
+      "name": "Fish cushion cover",
+      "sketchRef": "cmgentry00000000000000080",
+      "artisanRef": "cmgentry00000000000000020",
+      "materials": [
+       "Cotton"
+      ],
+      "prototypePhotos": [
+       "cmgmedia00000000000000016",
+       "cmgmedia00000000000000017"
+      ],
+      "prototypePhotosCaption": "First weave",
+      "makingTimeDays": 3,
+      "processSummary": {
+       "blocks": [
+        {
+         "kind": "PARAGRAPH",
+         "spans": [
+          {
+           "text": "Woven on the pit loom in three days."
+          }
+         ]
+        }
+       ]
+      }
+     },
+     {
+      "_entryId": "cmgentry00000000000000101",
+      "prototypeCode": "P-02",
+      "name": "Temple-border stole",
+      "sketchRef": "cmgentry00000000000000081",
+      "artisanRef": "cmgentry00000000000000021",
+      "materials": [
+       "Cotton",
+       "Silk"
+      ],
+      "makingTimeDays": 5.5
+     }
+    ],
+    "prototypeStageLog": [
+     {
+      "_entryId": "cmgentry00000000000000102",
+      "prototypeRef": "cmgentry00000000000000100",
+      "logDate": "2026-07-12",
+      "stageName": "Tying",
+      "notes": "Tied in two days."
+     },
+     {
+      "_entryId": "cmgentry00000000000000103",
+      "prototypeRef": "cmgentry00000000000000101",
+      "logDate": "2026-07-13",
+      "stageName": "Dyeing",
+      "notes": "Indigo vat."
+     }
+    ],
+    "materialUsage": [
+     {
+      "_entryId": "cmgentry00000000000000104",
+      "prototypeRef": "cmgentry00000000000000100",
+      "material": "Cotton yarn",
+      "quantity": 1.2,
+      "unit": "kg",
+      "rate": 640,
+      "amount": 768
+     }
+    ]
+   }
+  },
+  "PROTOTYPE_ITERATION": {
+   "singleton": {},
+   "collections": {
+    "prototypeIteration": [
+     {
+      "_entryId": "cmgentry00000000000000110",
+      "prototypeRef": "cmgentry00000000000000100",
+      "versionNo": 2,
+      "changesMade": "Reduced the motif repeat.",
+      "designerComments": "Better balance."
+     },
+     {
+      "_entryId": "cmgentry00000000000000111",
+      "versionNo": 1,
+      "changesMade": "Trial weave with no prototype linked."
+     }
+    ]
+   }
+  },
+  "PROTOTYPE_VALIDATION": {
+   "singleton": {},
+   "collections": {
+    "prototypeValidation": [
+     {
+      "_entryId": "cmgentry00000000000000120",
+      "prototypeRef": "cmgentry00000000000000100",
+      "decision": "SELECTED",
+      "technicalQuality": "4",
+      "aesthetics": "5",
+      "reason": {
+       "blocks": [
+        {
+         "kind": "PARAGRAPH",
+         "spans": [
+          {
+           "text": "Strong."
+          }
+         ]
+        }
+       ]
+      }
+     },
+     {
+      "_entryId": "cmgentry00000000000000121",
+      "prototypeRef": "cmgentry00000000000000101",
+      "decision": "REVISE",
+      "technicalQuality": "3"
+     },
+     {
+      "_entryId": "cmgentry00000000000000122",
+      "prototypeRef": "cmgentry00000000000000101",
+      "decision": "SELECTED"
+     }
+    ]
+   }
+  },
+  "FINAL_PROTOTYPE_DOCUMENTATION": {
+   "singleton": {},
+   "collections": {
+    "finalProduct": [
+     {
+      "_entryId": "cmgentry00000000000000130",
+      "productCode": "FP-01",
+      "name": "Fish cushion cover",
+      "finalPhotos": [
+       "cmgmedia00000000000000018",
+       "cmgmedia00000000000000019",
+       "cmgmedia00000000000000020",
+       "cmgmedia00000000000000024",
+       "cmgmedia00000000000000025",
+       "cmgmedia00000000000000026",
+       "cmgmedia00000000000000027",
+       "cmgmedia00000000000000028"
+      ],
+      "finalPhotosCaption": "Final cushion",
+      "dimensionsNote": "40 × 40 cm",
+      "materials": [
+       "Cotton",
+       "Natural indigo"
+      ],
+      "technique": "Single ikat",
+      "sellingPrice": 750,
+      "description": {
+       "blocks": [
+        {
+         "kind": "PARAGRAPH",
+         "spans": [
+          {
+           "text": "A cushion cover in the fish motif."
+          }
+         ]
+        }
+       ]
+      },
+      "makingProcess": {
+       "blocks": [
+        {
+         "kind": "PARAGRAPH",
+         "spans": [
+          {
+           "text": "Tied, dyed and woven at Barpali."
+          }
+         ]
+        }
+       ]
+      }
+     },
+     {
+      "_entryId": "cmgentry00000000000000131",
+      "productCode": "FP-02",
+      "name": "Temple-border stole",
+      "finalPhotos": [
+       "cmgmedia00000000000000021"
+      ],
+      "materials": [
+       "Cotton"
+      ],
+      "technique": "Double ikat",
+      "sellingPrice": 2200
+     }
+    ]
+   }
+  },
+  "COSTING_MARKET_LINKAGE": {
+   "singleton": {},
+   "collections": {
+    "costSheet": [
+     {
+      "_entryId": "cmgentry00000000000000140",
+      "productRef": "cmgentry00000000000000130",
+      "materialCost": 220,
+      "labourCost": 300,
+      "packagingCost": 40,
+      "transportCost": 25,
+      "totalCost": 585,
+      "expectedPrice": 750,
+      "retailPrice": 850,
+      "marketingStrategy": {
+       "blocks": [
+        {
+         "kind": "PARAGRAPH",
+         "spans": [
+          {
+           "text": "Sell through the state emporium."
+          }
+         ]
+        }
+       ]
+      }
+     },
+     {
+      "_entryId": "cmgentry00000000000000141",
+      "productRef": "cmgentry00000000000000131",
+      "materialCost": 600,
+      "labourCost": 900,
+      "packagingCost": 60,
+      "totalCost": 1560,
+      "expectedPrice": 2200
+     },
+     {
+      "_entryId": "cmgentry00000000000000142",
+      "productRef": "cmgdeleted000000000000002",
+      "materialCost": 150,
+      "labourCost": 180,
+      "expectedPrice": 5200
+     }
+    ],
+    "costMaterialLine": [
+     {
+      "_entryId": "cmgentry00000000000000143",
+      "costSheetRef": "cmgentry00000000000000140",
+      "item": "Cotton yarn",
+      "quantity": 0.3,
+      "unit": "kg",
+      "rate": 640,
+      "amount": 192
+     },
+     {
+      "_entryId": "cmgentry00000000000000144",
+      "costSheetRef": "cmgentry00000000000000141",
+      "item": "Silk yarn",
+      "quantity": 0.2,
+      "unit": "kg",
+      "rate": 3000,
+      "amount": 600
+     }
+    ],
+    "costLabourLine": [],
+    "buyerLink": [
+     {
+      "_entryId": "cmgentry00000000000000145",
+      "buyerName": "Utkalika",
+      "buyerType": "EMPORIUM",
+      "contact": "Bhubaneswar",
+      "interest": "A trial order of forty cushions."
+     }
+    ]
+   }
+  },
+  "WORKSHOP_OUTCOMES": {
+   "singleton": {
+    "_entryId": "cmgentry00000000000000015",
+    "achievements": {
+     "blocks": [
+      {
+       "kind": "PARAGRAPH",
+       "spans": [
+        {
+         "text": "Ten prototypes, six selected."
+        }
+       ]
+      }
+     ]
+    },
+    "problems": {
+     "blocks": [
+      {
+       "kind": "PARAGRAPH",
+       "spans": [
+        {
+         "text": "Monsoon delayed the dyeing."
+        }
+       ]
+      }
+     ]
+    },
+    "artisanFeedback": {
+     "blocks": [
+      {
+       "kind": "PARAGRAPH",
+       "spans": [
+        {
+         "text": "The weavers asked for a second workshop."
+        }
+       ]
+      }
+     ]
+    },
+    "designerComments": {
+     "blocks": [
+      {
+       "kind": "PARAGRAPH",
+       "spans": [
+        {
+         "text": "The cluster is ready for market."
+        }
+       ]
+      }
+     ]
+    },
+    "designsCountOverride": 5,
+    "countOverrideReason": "Two sketches were drawn on paper and not photographed.",
+    "skillsTransferred": {
+     "blocks": [
+      {
+       "kind": "BULLET_ITEM",
+       "spans": [
+        {
+         "text": "Colour planning"
+        }
+       ]
+      },
+      {
+       "kind": "BULLET_ITEM",
+       "spans": [
+        {
+         "text": "Pricing"
+        }
+       ]
+      }
+     ]
+    },
+    "materialsTested": [
+     "Organic cotton",
+     "Tussar"
+    ]
+   },
+   "collections": {}
+  },
+  "INSPECTION_CLOSING": {
+   "singleton": {
+    "_entryId": "cmgentry00000000000000012",
+    "finalInspectionNote": {
+     "blocks": [
+      {
+       "kind": "PARAGRAPH",
+       "spans": [
+        {
+         "text": "Inspected on the closing day; all prototypes were seen."
+        }
+       ]
+      }
+     ]
+    },
+    "closingDate": "2026-07-20",
+    "inspectingOfficer": "S. Mohanty",
+    "participantsCompleted": 11,
+    "closingPhotos": [
+     "cmgmedia00000000000000022"
+    ]
+   },
+   "collections": {
+    "official": [
+     {
+      "_entryId": "cmgentry00000000000000150",
+      "name": "R. Panda",
+      "designation": "Assistant Director",
+      "organisation": "DC (Handicrafts)"
+     }
+    ],
+    "certificate": [
+     {
+      "_entryId": "cmgentry00000000000000151",
+      "participantRef": "cmgentry00000000000000020",
+      "certificateNo": "C-001",
+      "issued": true,
+      "issueDate": "2026-07-20",
+      "daysAttended": 15
+     },
+     {
+      "_entryId": "cmgentry00000000000000152",
+      "participantRef": "cmgentry00000000000000022",
+      "issued": false
+     }
+    ]
+   }
+  },
+  "REPORT_GENERATION": {
+   "singleton": {
+    "_entryId": "cmgentry00000000000000013",
+    "templateId": "DCH_STANDARD",
+    "letterheadText": "Weavers' Service Centre\nBarpali, Bargarh",
+    "logo": "cmgmedia00000000000000023",
+    "submittedTo": "Development Commissioner (Handicrafts)",
+    "submissionDate": "2026-08-01"
+   },
+   "collections": {}
+  },
+  "POST_WORKSHOP_FOLLOWUP": {
+   "singleton": {
+    "_entryId": "cmgentry00000000000000014",
+    "continuedProductionNote": {
+     "blocks": [
+      {
+       "kind": "PARAGRAPH",
+       "spans": [
+        {
+         "text": "Three weavers continue to make the cushion cover."
+        }
+       ]
+      }
+     ]
+    }
+   },
+   "collections": {
+    "followUp": [
+     {
+      "_entryId": "cmgentry00000000000000160",
+      "productRef": "cmgentry00000000000000130",
+      "interval": "M3",
+      "followUpDate": "2026-10-20",
+      "adoptionStatus": "ADOPTED_IN_PRODUCTION",
+      "unitsProduced": 40,
+      "unitsSold": 32,
+      "revenue": 24000
+     },
+     {
+      "_entryId": "cmgentry00000000000000161",
+      "productRef": "cmgentry00000000000000131",
+      "interval": "M3",
+      "followUpDate": "2026-10-20",
+      "adoptionStatus": "TRIAL"
+     },
+     {
+      "_entryId": "cmgentry00000000000000162",
+      "productRef": "cmgentry00000000000000130",
+      "interval": "M6",
+      "followUpDate": "2027-01-20",
+      "adoptionStatus": "ADOPTED_ON_ORDER",
+      "unitsProduced": 90
+     }
+    ]
+   }
+  }
+ },
+ "customDefinition": {
+  "customSchemaVersion": "cs-parity-1",
+  "fetchedAt": "2026-10-10T09:00:00Z",
+  "sections": [
+   {
+    "id": "cs1",
+    "key": "dyeBath",
+    "stageKey": "CLUSTER_CRAFT_BACKGROUND",
+    "title": "Dye bath log",
+    "description": "Recorded at each vat.",
+    "sortOrder": 1,
+    "revision": 1,
+    "retired": false,
+    "fields": [
+     {
+      "id": "cf1",
+      "key": "dyeSource",
+      "label": "Dye source",
+      "type": "TEXT",
+      "tier": "BASIC",
+      "required": true,
+      "help": "",
+      "unit": "",
+      "options": [],
+      "maxLength": 0,
+      "minValue": null,
+      "maxValue": null,
+      "sortOrder": 1,
+      "retired": false,
+      "supersededById": null
+     },
+     {
+      "id": "cf2",
+      "key": "vatCount",
+      "label": "Vats in use",
+      "type": "INT",
+      "tier": "BASIC",
+      "required": false,
+      "help": "",
+      "unit": "vats",
+      "options": [],
+      "maxLength": 0,
+      "minValue": null,
+      "maxValue": null,
+      "sortOrder": 2,
+      "retired": false,
+      "supersededById": null
+     },
+     {
+      "id": "cf3",
+      "key": "mordant",
+      "label": "Mordant",
+      "type": "ENUM",
+      "tier": "STANDARD",
+      "required": false,
+      "help": "",
+      "unit": "",
+      "options": [
+       {
+        "value": "ALUM",
+        "label": "Alum"
+       },
+       {
+        "value": "IRON",
+        "label": "Iron"
+       }
+      ],
+      "maxLength": 0,
+      "minValue": null,
+      "maxValue": null,
+      "sortOrder": 3,
+      "retired": false,
+      "supersededById": null
+     },
+     {
+      "id": "cf4",
+      "key": "vatNotes",
+      "label": "Vat notes",
+      "type": "LONG_TEXT",
+      "tier": "BASIC",
+      "required": false,
+      "help": "",
+      "unit": "",
+      "options": [],
+      "maxLength": 0,
+      "minValue": null,
+      "maxValue": null,
+      "sortOrder": 4,
+      "retired": false,
+      "supersededById": null
+     },
+     {
+      "id": "cf5",
+      "key": "oldQuestion",
+      "label": "Water source",
+      "type": "TEXT",
+      "tier": "BASIC",
+      "required": false,
+      "help": "",
+      "unit": "",
+      "options": [],
+      "maxLength": 0,
+      "minValue": null,
+      "maxValue": null,
+      "sortOrder": 5,
+      "retired": true,
+      "supersededById": null
+     }
+    ]
+   },
+   {
+    "id": "cs2",
+    "key": "buyerVisits",
+    "stageKey": "COSTING_MARKET_LINKAGE",
+    "title": "Buyer visits",
+    "description": "",
+    "sortOrder": 2,
+    "revision": 1,
+    "retired": false,
+    "fields": [
+     {
+      "id": "cf6",
+      "key": "visitCount",
+      "label": "Visits",
+      "type": "INT",
+      "tier": "BASIC",
+      "required": false,
+      "help": "",
+      "unit": "",
+      "options": [],
+      "maxLength": 0,
+      "minValue": null,
+      "maxValue": null,
+      "sortOrder": 1,
+      "retired": false,
+      "supersededById": null
+     }
+    ]
+   },
+   {
+    "id": "cs3",
+    "key": "standardOnly",
+    "stageKey": "DESIGN_BRIEF",
+    "title": "Advanced colour notes",
+    "description": "",
+    "sortOrder": 3,
+    "revision": 1,
+    "retired": false,
+    "fields": [
+     {
+      "id": "cf7",
+      "key": "colourNote",
+      "label": "Colour note",
+      "type": "TEXT",
+      "tier": "ADVANCED",
+      "required": false,
+      "help": "",
+      "unit": "",
+      "options": [],
+      "maxLength": 0,
+      "minValue": null,
+      "maxValue": null,
+      "sortOrder": 1,
+      "retired": false,
+      "supersededById": null
+     }
+    ]
+   }
+  ]
+ },
+ "sources": {
+  "workshopId": "cmgworkshop00000000000001",
+  "builtAt": "2026-10-10T09:00:00Z",
+  "references": {
+   "cmgartisan000000000000001": {
+    "model": "Artisan",
+    "label": "Kamla Devi (OD-BRG-2231)",
+    "photo": "cmgmedia00000000000000030",
+    "place": "Barpali",
+    "district": "Bargarh",
+    "state": "Odisha"
+   },
+   "cmgtool00000000000000001": {
+    "model": "ToolDocumentation",
+    "label": "Ikat tying frame",
+    "photo": "",
+    "place": "",
+    "district": "",
+    "state": ""
+   }
+  },
+  "districtPoints": {
+   "Odisha|Bargarh": [
+    21.3335,
+    83.619
+   ]
+  },
+  "media": {
+   "cmgmedia00000000000000001": {
+    "source": "cmgmedia00000000000000001",
+    "width_px": 1600,
+    "height_px": 1200,
+    "rotation_deg": 0,
+    "mime_type": "image/jpeg"
+   },
+   "cmgmedia00000000000000002": {
+    "source": "cmgmedia00000000000000002",
+    "width_px": 1600,
+    "height_px": 1200,
+    "rotation_deg": 0,
+    "mime_type": "image/jpeg"
+   },
+   "cmgmedia00000000000000003": {
+    "source": "cmgmedia00000000000000003",
+    "width_px": 1600,
+    "height_px": 1200,
+    "rotation_deg": 0,
+    "mime_type": "image/jpeg"
+   },
+   "cmgmedia00000000000000004": {
+    "source": "cmgmedia00000000000000004",
+    "width_px": 3000,
+    "height_px": 4000,
+    "rotation_deg": 0,
+    "mime_type": "image/jpeg"
+   },
+   "cmgmedia00000000000000005": {
+    "source": "cmgmedia00000000000000005",
+    "width_px": 1600,
+    "height_px": 1200,
+    "rotation_deg": 0,
+    "mime_type": "image/jpeg"
+   },
+   "cmgmedia00000000000000006": {
+    "source": "cmgmedia00000000000000006",
+    "width_px": 1600,
+    "height_px": 1200,
+    "rotation_deg": 0,
+    "mime_type": "image/jpeg"
+   },
+   "cmgmedia00000000000000007": {
+    "source": "cmgmedia00000000000000007",
+    "width_px": 1600,
+    "height_px": 1200,
+    "rotation_deg": 0,
+    "mime_type": "image/jpeg"
+   },
+   "cmgmedia00000000000000008": {
+    "source": "cmgmedia00000000000000008",
+    "width_px": 1600,
+    "height_px": 1200,
+    "rotation_deg": 0,
+    "mime_type": "image/jpeg"
+   },
+   "cmgmedia00000000000000009": {
+    "source": "cmgmedia00000000000000009",
+    "width_px": 1600,
+    "height_px": 1200,
+    "rotation_deg": 0,
+    "mime_type": "image/jpeg"
+   },
+   "cmgmedia00000000000000010": {
+    "source": "cmgmedia00000000000000010",
+    "width_px": 1600,
+    "height_px": 1200,
+    "rotation_deg": 0,
+    "mime_type": "image/jpeg"
+   },
+   "cmgmedia00000000000000011": {
+    "source": "cmgmedia00000000000000011",
+    "width_px": 1600,
+    "height_px": 1200,
+    "rotation_deg": 0,
+    "mime_type": "image/jpeg"
+   },
+   "cmgmedia00000000000000012": {
+    "source": "cmgmedia00000000000000012",
+    "width_px": 1600,
+    "height_px": 1200,
+    "rotation_deg": 0,
+    "mime_type": "image/jpeg"
+   },
+   "cmgmedia00000000000000013": {
+    "source": "cmgmedia00000000000000013",
+    "width_px": 1600,
+    "height_px": 1200,
+    "rotation_deg": 0,
+    "mime_type": "image/jpeg"
+   },
+   "cmgmedia00000000000000014": {
+    "source": "cmgmedia00000000000000014",
+    "width_px": 1600,
+    "height_px": 1200,
+    "rotation_deg": 0,
+    "mime_type": "image/jpeg"
+   },
+   "cmgmedia00000000000000015": {
+    "source": "cmgmedia00000000000000015",
+    "width_px": 1600,
+    "height_px": 1200,
+    "rotation_deg": 0,
+    "mime_type": "image/jpeg"
+   },
+   "cmgmedia00000000000000016": {
+    "source": "cmgmedia00000000000000016",
+    "width_px": 4032,
+    "height_px": 3024,
+    "rotation_deg": 90,
+    "mime_type": "image/jpeg"
+   },
+   "cmgmedia00000000000000017": {
+    "source": "cmgmedia00000000000000017",
+    "width_px": 1600,
+    "height_px": 1200,
+    "rotation_deg": 0,
+    "mime_type": "image/jpeg"
+   },
+   "cmgmedia00000000000000018": {
+    "source": "cmgmedia00000000000000018",
+    "width_px": 1600,
+    "height_px": 1200,
+    "rotation_deg": 0,
+    "mime_type": "image/jpeg"
+   },
+   "cmgmedia00000000000000019": {
+    "source": "cmgmedia00000000000000019",
+    "width_px": 1600,
+    "height_px": 1200,
+    "rotation_deg": 0,
+    "mime_type": "image/jpeg"
+   },
+   "cmgmedia00000000000000020": {
+    "source": "cmgmedia00000000000000020",
+    "width_px": 1600,
+    "height_px": 1200,
+    "rotation_deg": 0,
+    "mime_type": "image/jpeg"
+   },
+   "cmgmedia00000000000000022": {
+    "source": "cmgmedia00000000000000022",
+    "width_px": 1600,
+    "height_px": 1200,
+    "rotation_deg": 0,
+    "mime_type": "image/jpeg"
+   },
+   "cmgmedia00000000000000023": {
+    "source": "cmgmedia00000000000000023",
+    "width_px": 600,
+    "height_px": 200,
+    "rotation_deg": 0,
+    "mime_type": "image/png"
+   },
+   "cmgmedia00000000000000024": {
+    "source": "cmgmedia00000000000000024",
+    "width_px": 1600,
+    "height_px": 1200,
+    "rotation_deg": 0,
+    "mime_type": "image/jpeg"
+   },
+   "cmgmedia00000000000000025": {
+    "source": "cmgmedia00000000000000025",
+    "width_px": 1600,
+    "height_px": 1200,
+    "rotation_deg": 0,
+    "mime_type": "image/jpeg"
+   },
+   "cmgmedia00000000000000026": {
+    "source": "cmgmedia00000000000000026",
+    "width_px": 1600,
+    "height_px": 1200,
+    "rotation_deg": 0,
+    "mime_type": "image/jpeg"
+   },
+   "cmgmedia00000000000000027": {
+    "source": "cmgmedia00000000000000027",
+    "width_px": 1600,
+    "height_px": 1200,
+    "rotation_deg": 0,
+    "mime_type": "image/jpeg"
+   },
+   "cmgmedia00000000000000028": {
+    "source": "cmgmedia00000000000000028",
+    "width_px": 1600,
+    "height_px": 1200,
+    "rotation_deg": 0,
+    "mime_type": "image/jpeg"
+   },
+   "cmgmedia00000000000000030": {
+    "source": "cmgmedia00000000000000030",
+    "width_px": 800,
+    "height_px": 800,
+    "rotation_deg": 0,
+    "mime_type": "image/jpeg"
+   }
+  },
+  "questionnaires": [
+   {
+    "questionnaire_id": "cmgq00000000000000000001",
+    "title": "Retailer interview",
+    "description": "Asked at each store.",
+    "version": 2,
+    "source_filename": "retailer.xlsx",
+    "kind": "MARKET_SURVEY",
+    "question_count": 3,
+    "sittings": [
+     {
+      "entry_id": "cmgsit000000000000000001",
+      "title": "Store A",
+      "respondent_name": "Store manager",
+      "source": "APP",
+      "notes": "Busy afternoon.",
+      "recorded_at": "2026-07-10T11:20:00Z",
+      "recorded_by": "Ananya Rao",
+      "answers": [
+       {
+        "prompt": "What sells best?",
+        "answer_text": "Stoles",
+        "notes": "",
+        "section_code": "A",
+        "section_title": "Demand",
+        "is_required": true,
+        "is_retired": false
+       },
+       {
+        "prompt": "Price range?",
+        "answer_text": "{\"blocks\":[{\"kind\":\"PARAGRAPH\",\"spans\":[{\"text\":\"₹500 to ₹2,000\",\"marks\":[\"BOLD\"]}]}]}",
+        "notes": "Asked twice",
+        "section_code": "A",
+        "section_title": "Demand",
+        "is_required": false,
+        "is_retired": false
+       },
+       {
+        "prompt": "Old wording",
+        "answer_text": "Yes",
+        "notes": "",
+        "section_code": "B",
+        "section_title": "",
+        "is_required": false,
+        "is_retired": true
+       },
+       {
+        "prompt": "Contact?",
+        "answer_text": "",
+        "notes": "",
+        "section_code": "B",
+        "section_title": "",
+        "is_required": true,
+        "is_retired": false
+       }
+      ]
+     },
+     {
+      "entry_id": "cmgsit000000000000000002",
+      "title": "Store B",
+      "respondent_name": "",
+      "source": "UPLOAD",
+      "notes": "",
+      "recorded_at": "",
+      "recorded_by": "",
+      "answers": [
+       {
+        "prompt": "What sells best?",
+        "answer_text": "",
+        "notes": "",
+        "section_code": "",
+        "section_title": "",
+        "is_required": false,
+        "is_retired": false
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "questionnaire_id": "cmgq00000000000000000002",
+    "title": "Workshop interview",
+    "description": "",
+    "version": 1,
+    "source_filename": "",
+    "kind": "WORKSHOP_INTERVIEW",
+    "question_count": 0,
+    "sittings": [
+     {
+      "entry_id": "cmgsit000000000000000003",
+      "title": "",
+      "respondent_name": "",
+      "source": "",
+      "notes": "",
+      "recorded_at": "",
+      "recorded_by": "",
+      "answers": [
+       {
+        "prompt": "How long have you woven?",
+        "answer_text": "Since I was nine.",
+        "notes": "",
+        "section_code": "",
+        "section_title": "",
+        "is_required": false,
+        "is_retired": false
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "questionnaire_id": "cmgq00000000000000000003",
+    "title": "Empty form",
+    "description": "",
+    "version": 1,
+    "source_filename": "",
+    "kind": "",
+    "question_count": 0,
+    "sittings": []
+   }
+  ],
+  "transcripts": [
+   {
+    "media_id": "cmgmedia00000000000000040",
+    "stage_key": "TRADITIONAL_PROCESS_BASELINE",
+    "stage_number": 5,
+    "stage_title": "Traditional Process, Tools & Raw Materials",
+    "entity_key": "traditionalProcess",
+    "field_key": "artisanAudio",
+    "field_label": "Artisan audio",
+    "filename": "audio.m4a",
+    "recorded_at": "2026-07-08T10:00:00Z",
+    "duration_seconds": 754,
+    "status": "DONE",
+    "text": "**Speaker 1:** We tie the warp first.\n**Speaker 2:** And then the **dye**.\n\n---\n# Second part\n- the *loom* is ready\n`code` text"
+   },
+   {
+    "media_id": "cmgmedia00000000000000041",
+    "stage_key": "WORKSHOP_OUTCOMES",
+    "stage_number": 18,
+    "stage_title": "Workshop Outcomes, Problems & Feedback",
+    "entity_key": "outcomes",
+    "field_key": "feedbackAudio",
+    "field_label": "Feedback audio",
+    "filename": "fb.m4a",
+    "recorded_at": "",
+    "duration_seconds": null,
+    "status": "PROCESSING",
+    "text": ""
+   }
+  ],
+  "aiLayers": [
+   {
+    "layer_id": "cmglayer0000000000000001",
+    "kind": "CLEANED_TRANSCRIPT",
+    "tier": "TIER_3",
+    "provider": "anthropic",
+    "model_id": "model-x",
+    "model_version": "2026-01",
+    "language": "or",
+    "source_language": "",
+    "target_language": "",
+    "produced_at": "2026-07-09T10:00:00Z",
+    "accepted": true,
+    "accepted_at": "2026-07-09T12:00:00Z",
+    "accepted_by": "Ananya Rao",
+    "accepted_by_id": "u1",
+    "source_kind": "MEDIA",
+    "source_id": "cmgmedia00000000000000040",
+    "source_label": "audio.m4a",
+    "text": "**Speaker 1:** We tie the warp first.",
+    "text_withheld": false
+   },
+   {
+    "layer_id": "cmglayer0000000000000002",
+    "kind": "EXPANDED",
+    "tier": "TIER_1",
+    "provider": "UNRECORDED",
+    "model_id": "UNRECORDED",
+    "model_version": "",
+    "language": "multi",
+    "source_language": "",
+    "target_language": "",
+    "produced_at": "",
+    "accepted": true,
+    "accepted_at": "",
+    "accepted_by": "",
+    "accepted_by_id": "u2",
+    "source_kind": "SUPPLIED_TEXT",
+    "source_id": "",
+    "source_label": "weavers want lighter cloth",
+    "text": "The weavers asked for a lighter cloth for summer wear.",
+    "text_withheld": false
+   },
+   {
+    "layer_id": "cmglayer0000000000000003",
+    "kind": "TRANSLATION",
+    "tier": "TIER_3",
+    "provider": "x",
+    "model_id": "m",
+    "model_version": "",
+    "language": "",
+    "source_language": "multi",
+    "target_language": "English",
+    "produced_at": "",
+    "accepted": true,
+    "accepted_at": "",
+    "accepted_by": "Ananya Rao",
+    "accepted_by_id": "",
+    "source_kind": "MEDIA",
+    "source_id": "cmgmedia00000000000000042",
+    "source_label": "",
+    "text": "",
+    "text_withheld": true
+   },
+   {
+    "layer_id": "cmglayer0000000000000004",
+    "kind": "SUMMARY",
+    "tier": "TIER_3",
+    "provider": "x",
+    "model_id": "m",
+    "model_version": "",
+    "language": "en",
+    "source_language": "",
+    "target_language": "",
+    "produced_at": "",
+    "accepted": false,
+    "accepted_at": "",
+    "accepted_by": "",
+    "accepted_by_id": "",
+    "source_kind": "",
+    "source_id": "",
+    "source_label": "",
+    "text": "Unaccepted.",
+    "text_withheld": false
+   }
+  ],
+  "warnings": {
+   "questionnaires": [
+    "1 questionnaire(s) attached to this workshop have no recorded answers and were left out of the questionnaire annexure (Empty form)."
+   ],
+   "transcripts": [
+    "1 recording(s) have no transcript and were left out of the transcript annexure (1 still being transcribed)."
+   ],
+   "aiLayers": [
+    "1 machine-generated layer(s) were left out of the annexure because nobody has accepted them yet. Open the workshop's AI layers, read each one against its source, and accept the ones this report should carry."
+   ],
+   "media": [
+    "1 attached file(s) could not be included: they were uploaded by another account, or the file is gone."
+   ]
+  }
+ },
+ "cases": [
+  {
+   "name": "dch-preview",
+   "kind": "PREVIEW"
+  },
+  {
+   "name": "dch-file-with-annexures",
+   "kind": "FILE",
+   "options": {
+    "includeTranscripts": true,
+    "includeAiLayers": true
+   }
+  },
+  {
+   "name": "dic",
+   "kind": "FILE",
+   "options": {
+    "templateId": "DIC_STANDARD"
+   }
+  },
+  {
+   "name": "agency",
+   "kind": "FILE",
+   "options": {
+    "templateId": "IMPLEMENTING_AGENCY",
+    "includeTranscripts": true
+   }
+  },
+  {
+   "name": "compact",
+   "kind": "FILE",
+   "options": {
+    "templateId": "COMPACT_SUMMARY",
+    "themeAccent": "#7a1f3d"
+   }
+  },
+  {
+   "name": "detailed",
+   "kind": "FILE",
+   "options": {
+    "templateId": "DETAILED_TECHNICAL",
+    "pageSize": "LETTER",
+    "headerText": "Custom head"
+   }
+  },
+  {
+   "name": "catalogue",
+   "kind": "FILE",
+   "options": {
+    "templateId": "PHOTO_CATALOGUE"
+   }
+  },
+  {
+   "name": "settings-shaped",
+   "kind": "FILE",
+   "settings": {
+    "numberHeadings": false,
+    "photoColumns": 3,
+    "excludedStages": [
+     "SURVEY_PLANNING",
+     "MARKET_ANALYSIS_DIRECTION"
+    ],
+    "includeTableOfContents": false,
+    "includeCompletenessAnnexure": true,
+    "includePhotographs": true,
+    "themePreset": "FOREST",
+    "fontPreset": "GEORGIA",
+    "reportTitle": "Barpali ikat: the workshop",
+    "organisationLine": "Weavers' Service Centre, Barpali"
+   }
+  },
+  {
+   "name": "no-photographs",
+   "kind": "FILE",
+   "options": {
+    "templateId": "DETAILED_TECHNICAL",
+    "includePhotographs": false
+   }
+  }
+ ]
+}

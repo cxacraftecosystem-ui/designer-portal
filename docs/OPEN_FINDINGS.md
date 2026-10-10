@@ -1,6 +1,6 @@
 # Open findings
 
-**Status: 32 open, 1 decision recorded and 1 deferral, 109 closed.** Every count re-counted by
+**Status: 32 open, 1 decision recorded and 1 deferral, 110 closed.** Every count re-counted by
 heading on 2026-10-10: main's 31 open and 106 closed that day (the 15 open of 2026-10-09, plus 18
 opened by the Android copy sweep, less the 2 of those closed the same day), plus the toolchain
 upgrade's 2 opened and 2 closed, merged the same day. The entries closed on 2026-10-09 were
@@ -1116,6 +1116,36 @@ the Ministry Admin's. Assistant Directors are unchanged. Pinned by
 `backend/tests/test_annual_plan_regional_scope.py` (a Regional Director of the row's state and of a
 different state, one with none, an Assistant Director, a Designer, a Ministry Admin and an Admin) and
 `backend/tests/test_annual_plan_routes.py`.
+
+## Closed on 2026-10-10
+
+### [HIGH] The web report could not be previewed or generated without a connection, and the screens narrated the gap (frontend) — **CLOSED 2026-10-10**
+
+**What was wrong.** With no signal the report screen disabled both downloads and told the designer the
+preview, the .docx and the .pdf "are all produced by the server … and this browser deliberately has no
+renderer of its own"; a workshop started offline could not be previewed at all, the per-stage document
+panel said the same, and the public landing page and FAQ said "generating the report is the one part of
+the web half that needs the server" and "the browser's report … needs the API". The handset had built
+its report offline for months. Found by the 2026-10-10 copy sweep (item F17).
+
+**What closed it.** `frontend/lib/offlineReport/` ports the server's builder and writes the files in the
+browser (`docx`, pdfmake, Noto faces under `frontend/public/report-fonts/`); `GET
+/api/design-workshops/{id}/report/sources` hands the device what the builder reads besides the stages,
+kept in IndexedDB with limits and cleared on sign-out; `frontend/public/sw.js` keeps the application's
+files so the screen opens offline. The report screen, the per-stage panel, the landing page and the FAQ
+now describe what happens. [DESIGN_WORKSHOP.md](DESIGN_WORKSHOP.md) §8.1 says which copy is
+authoritative (the server's, whenever there is a connection) and what differs.
+
+**The tests that fail without it.** `frontend/e2e/offline-report-parity-unit.spec.ts` (every block,
+the meta, the theme and every warning of nine template and settings cases against the server's own
+output for `shared/report-parity/workshop.json`); `frontend/e2e/offline-report-files-unit.spec.ts`
+(the .docx and .pdf written from that fixture open and carry its text, Odia included);
+`frontend/e2e/offline-report-behaviour-unit.spec.ts` (the cache's limits and ownership, and the
+service worker's rules); `backend/tests/test_report_offline_parity.py` (the expected output is what
+the server builds today); and the two `/report/sources` tests in `backend/tests/test_media_entitlement.py`
+(no photograph the caller may not download, and nothing at all for a stranger).
+
+---
 
 ## Closed on 2026-10-09
 
