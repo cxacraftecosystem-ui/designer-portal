@@ -428,6 +428,10 @@ SANCTION_LINK_NOT_THIS_REGISTERS_ACCOUNT = (
     "register did not create is an administrator's act: ask an admin to send one from the users "
     "screen."
 )
+#: The re-issue arm asked for a designer this order does not name.
+SANCTION_LINK_NOT_ON_THIS_ORDER = (
+    "That designer is not named on this sanction order, so it cannot issue them a sign-in link."
+)
 SANCTION_LINK_OUTRANKS_OFFICER = (
     "The account this order names is now a {role}, and a sanction order cannot issue a sign-in "
     "link for an account senior to the officer re-issuing it. Ask an admin to send a password link "
@@ -1683,8 +1687,8 @@ async def create_from_sanction(payload: Any, officer: Any) -> dict[str, Any]:
         # THE LINK IS SHOWN ONCE AND NOTHING CAN SHOW IT AGAIN — the table stores only a SHA-256
         # digest — so an order that mints four accounts and returns one link is an order that leaves
         # three designers unable to sign in, with no screen in the product able to say so. The
-        # re-issue button on each row is the remedy and it is keyed on the ORDER, not on the person,
-        # which is why this list carries the designer each link belongs to.
+        # re-issue button beside each designer on the row is the remedy, keyed on the order AND the
+        # person, which is why this list carries the designer each link belongs to.
         "credentialLinks": credential_links_out,
     }
 
@@ -1769,8 +1773,10 @@ def _link_payload(delivered: Any) -> dict[str, Any]:
     }
 
 
-async def reissue_credential_link(row: Any, officer: Any) -> dict[str, Any]:
-    """Mint another sign-in link for the designer this order names.
+async def reissue_credential_link(
+    row: Any, officer: Any, designer_user_id: str | None = None
+) -> dict[str, Any]:
+    """Mint another sign-in link for a designer this order names — the lead by default.
 
     **THE USER ROW IS RE-READ HERE AND THAT IS NOT BELT-AND-BRACES.** ``issue_link`` binds the token
     to ``user.passwordHash``: minting against a stale object produces a link that is already spent
@@ -1832,17 +1838,41 @@ async def reissue_credential_link(row: Any, officer: Any) -> dict[str, Any]:
     ``PasswordResetToken`` row records ``issuedById`` — rather than a reason to strand a designer.
     Raise it with the owner before treating the current behaviour as settled.
 
-    THE LEAD, AND ONLY THE LEAD. ``row.designerUserId`` is the lead scalar, so a co-designer's first
-    link cannot be re-issued from here at all; the officer's screen says so at the call site rather
-    than implying otherwise. That gap is named in ``frontend/app/(protected)/sanction-orders`` and
-    closing it is a route change, not a wording one.
+    ANY DESIGNER THE ORDER NAMES, CO-DESIGNERS INCLUDED (2026-10-10). It re-issued the LEAD's link
+    only — ``row.designerUserId`` — until then, so a co-designer whose first link was lost had no
+    remedy short of an administrator. ``designer_user_id`` names the person; ``None`` is the lead, the
+    shape every client sent before. EVERY REFUSAL ABOVE IS ASKED OF THAT PERSON AND NOT OF THE ORDER:
+    ``accountCreated`` is read off THEIR ``SanctionOrderDesigner`` row (the lead scalar describes only
+    the lead), and the master-mailbox, rank and Google refusals are asked of their account. An id
+    that is not on this order is a 404 — the order is the authority, and a link for somebody it does
+    not name is not this register's to issue.
     """
-    if not bool(getattr(row, "accountCreated", False)):
+    target_id = designer_user_id or row.designerUserId
+    member = next(
+        (
+            named
+            for named in (getattr(row, "designers", None) or [])
+            if getattr(named, "designerUserId", None) == target_id
+        ),
+        None,
+    )
+    if member is None and target_id != row.designerUserId:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=SANCTION_LINK_NOT_ON_THIS_ORDER
+        )
+    # THIS PERSON'S FLAG. The lead's join row carries the same value as the scalar; an order recorded
+    # before the join table existed has no row, and the scalar is then the lead's only record.
+    created_by_this_order = (
+        bool(getattr(member, "accountCreated", False))
+        if member is not None
+        else bool(getattr(row, "accountCreated", False))
+    )
+    if not created_by_this_order:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=SANCTION_LINK_NOT_THIS_REGISTERS_ACCOUNT,
         )
-    user = await db.user.find_unique(where={"id": row.designerUserId})
+    user = await db.user.find_unique(where={"id": target_id})
     if user is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

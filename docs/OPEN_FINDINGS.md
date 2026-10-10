@@ -1,8 +1,16 @@
 # Open findings
 
-**Status: 15 open, 1 decision recorded and 1 deferral, 95 closed.** Every count re-counted by
+**Status: 15 open, 1 decision recorded and 1 deferral, 98 closed.** Every count re-counted by
 heading on 2026-10-09; the entries closed on 2026-10-09 were checked against the tree that day, and
 the older closed sections were last re-checked on 2026-09-03.
+
+**Three screens that narrated a missing feature got the feature on 2026-10-10.** The AI layers panel
+said a layer's decision history and one layer's text could not be read on their own; the sanction
+register's guide said a co-designer's first sign-in link could not be re-issued and that an import
+issued no links; the annual plan's guide said a Regional Director could not correct their own state's
+rows. None was recorded here as open — each lived only in the screen's own copy — so they enter as
+three closed entries under *Closed on 2026-10-10*. Counted by heading: 15 open, and 95 + 3 = 98
+closed.
 
 **Moving a set-password link's token off the web's request lines narrowed one entry the same day,
 and moved neither number.** The web now checks a link with `POST /api/auth/set-password/check`, the
@@ -638,6 +646,52 @@ not one is answered `200` with `"valid": false` and the reason `malformed`), so 
 new build goes out in a body. The entry stays open until that build has replaced the shipped ones,
 0.0.6 to 0.0.15, which still ask with the GET and read only the query; `link_for`'s switch waits on
 the same, and neither form closes the browser's history.
+
+---
+
+## Closed on 2026-10-10
+
+Each was a sentence on a customer's screen admitting a missing feature (the copy sweep's F9, F10 and
+F11). The feature was built, the sentence removed, and the test named in each entry fails without it.
+
+### [MEDIUM] AI layers: no decision history and no single-layer text read (backend, frontend) — **CLOSED 2026-10-10**
+
+The panel said earlier decisions "cannot be read from this screen", and "Show the full text" fetched
+every layer's text in one request because one layer's could not be read alone. Two reads now exist,
+both on the workshop's own gate: `GET /api/design-workshops/{id}/ai-layers/decisions` (who accepted,
+withdrew or declined which layer, and when, newest first, with the actor's name — a decline read off
+the layer's own `deletedAt`/`deletedById`) and `GET /api/design-workshops/{id}/ai-layers/{layer_id}`
+(one layer with its full text, withheld exactly as the list withholds it, and its own history). The
+panel offers "Read this layer" and "Show its decision history" per row and the workshop's whole
+history at the top. Pinned by `backend/tests/test_ai_layer_history.py` (the designer, an admin, and a
+designer with no access to the workshop) and `frontend/e2e/admin-gap-features-unit.spec.ts`.
+
+### [MEDIUM] A co-designer's first sign-in link could not be re-issued, and an import issued none (backend, frontend) — **CLOSED 2026-10-10**
+
+`POST /api/sanction-orders/{id}/credential-link` takes `designerUserId` and re-issues for any designer
+the order names; left out, it is the lead, as before. Every existing rule is asked of THAT person:
+their own `accountCreated` on the order, their rank against the officer (an account since promoted to
+the officer's tier or above is refused), the master admin's mailbox, Google sign-in; the issuer is
+recorded and re-checked at redemption (`issuer_still_manages`), and a promotion still withdraws the
+link. Somebody the order does not name is a 404. The import (`POST /api/sanction-orders/upload/confirm`)
+now hands back the INVITE links `create_from_sanction` mints — per order, with the order beside them —
+and counts them in `credentialLinksIssued`; a throttled link is a warning against its Excel row. The
+register draws one re-issue button per created account. Pinned by
+`backend/tests/test_sanction_reissue_codesigner.py` (Assistant Director, Regional Director, Ministry
+Admin and Admin allowed; Designer and Inspector refused) and `backend/tests/test_sanction_import.py`.
+
+### [MEDIUM] A Regional Director could not correct their own state's annual-plan rows (backend, frontend) — **CLOSED 2026-10-10**
+
+The plan had no record of which state was a Regional Director's, so admitting one would have handed
+them the national directory. `RegionalDirectorState` (migration `20261010120000`) is that scope,
+assigned by a Ministry Admin and above (`GET`/`PUT /api/annual-plan/regional-directors`) and only to a
+Regional Director. Through `require_annual_plan_reader` a Regional Director reaches the year list, the
+list, one row and the remarks correction, each narrowed to their states; a row in another state is the
+same 404 as no row. Upload, export, the pro-forma, promote, withdraw, reinstate and the assignment stay
+the Ministry Admin's. Assistant Directors are unchanged. Pinned by
+`backend/tests/test_annual_plan_regional_scope.py` (a Regional Director of the row's state and of a
+different state, one with none, an Assistant Director, a Designer, a Ministry Admin and an Admin) and
+`backend/tests/test_annual_plan_routes.py`.
 
 ---
 
