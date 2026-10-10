@@ -3577,6 +3577,14 @@ class WorkshopRepository(
         return response.user
     }
 
+    /** Microsoft or Yahoo, once AppAuth has brought the code back. The backend redeems it. */
+    suspend fun loginWithOidc(body: OidcLoginRequest): UserDto {
+        val response = api.oidcLogin(body)
+        tokenStore.setToken(response.accessToken)
+        tokenStore.setUser(response.user)
+        return response.user
+    }
+
     /**
      * End the session AND forget what this device remembered on that person's behalf.
      *

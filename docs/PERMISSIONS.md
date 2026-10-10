@@ -163,7 +163,10 @@ permission error:
    `401 Invalid email or password` for a wrong credential. **The `MASTER_ADMIN` exemption is what
    makes gating everybody safe**: it lives in the gate, not in the table, so there is always one
    account that can reach the roster and let people back in. Google sign-in is gated too; an address
-   that is not admitted becomes a pending request instead of an account.
+   that is not admitted becomes a pending request instead of an account. So are Microsoft and Yahoo
+   sign-in (2026-10-10), by the same function and with the same answers, once the provider has
+   verified the address ([SECURITY.md](SECURITY.md) §3.3A); a new account they create starts at the
+   tier the allow-list row names, exactly as a Google one does.
 2. **The designer empanelment** (`backend/app/services/designers.py` → `roster_allows`) still gates
    `DESIGNER` accounts only, and still answers in its own words. `User.role = DESIGNER` is not by
    itself what admits a designer. Admins are deliberately not empanelment-gated — an admin

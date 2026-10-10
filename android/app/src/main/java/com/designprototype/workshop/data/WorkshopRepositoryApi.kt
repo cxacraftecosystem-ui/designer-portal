@@ -31,6 +31,10 @@ interface WorkshopRepositoryApi {
     @POST("auth/login")
     suspend fun googleLogin(@Body body: GoogleLoginRequest): TokenResponse
 
+    /** Microsoft or Yahoo: an authorization code for the backend to redeem. See `OidcSignIn.kt`. */
+    @POST("auth/login")
+    suspend fun oidcLogin(@Body body: OidcLoginRequest): TokenResponse
+
     @GET("me")
     suspend fun me(): UserDto
 

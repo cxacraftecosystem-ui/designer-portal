@@ -641,6 +641,26 @@ the same, and neither form closes the browser's history.
 
 ---
 
+## Closed on 2026-10-10
+
+### [P0] "Continue with Microsoft" and "Continue with Yahoo" were dead buttons with a "Coming soon" badge on the sign-in screen (frontend, backend, android) — **CLOSED 2026-10-10**
+
+The web sign-in card drew both buttons with a "Coming soon" badge and a toast ("… sign-in is coming
+soon — use Google, or your email and password, for now"), over a code comment saying the providers
+had nothing behind them; the handset drew neither. Both providers are now built end to end: an
+authorization code with PKCE and a nonce, redeemed by the backend with the client secret, the ID token
+verified against the provider's keys (issuer, audience, expiry, nonce), the address accepted only when
+the provider verified it, then exactly the Google path's allow-list admission and account linking —
+without its Gmail-spelling fold ([SECURITY.md](SECURITY.md) §3.3A). Each button is drawn only when its
+client ID is configured for that client; there is no badge and no disabled placeholder. Pinned by
+`backend/tests/test_oidc_sign_in.py` (verification against a fake JWKS, every refusal),
+`backend/tests/test_oidc_sign_in_admission.py` (admission, linking, refusals, through the real route),
+`frontend/e2e/oidc-sign-in-unit.spec.ts` and
+`android/app/src/test/java/com/designprototype/workshop/data/OidcSignInTest.kt`. Live once the owner
+registers the two apps and sets the values [ENVIRONMENT.md](ENVIRONMENT.md) lists.
+
+---
+
 ## Closed on 2026-10-09
 
 Found by the read-only investigation that preceded the account-provisioning and serve-as change, while
