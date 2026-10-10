@@ -208,6 +208,12 @@ import com.designprototype.workshop.data.DashboardStats
 import com.designprototype.workshop.data.DashboardStatsMine
 import com.designprototype.workshop.data.WorkshopRepository
 import com.designprototype.workshop.data.GoogleAuthClient
+import com.designprototype.workshop.data.OidcAuthClient
+import com.designprototype.workshop.data.OidcLoginRequest
+import com.designprototype.workshop.data.OidcProvider
+import com.designprototype.workshop.data.OidcProviderId
+import com.designprototype.workshop.data.oidcCallbackErrorMessage
+import com.designprototype.workshop.ui.OidcProviderMark
 import com.designprototype.workshop.data.LocationRequest
 import com.designprototype.workshop.data.ProductCreateRequest
 import com.designprototype.workshop.data.QuestionnaireInterviewCreateRequest
@@ -744,6 +750,9 @@ class MainActivity : ComponentActivity() {
         val tokenStore = TokenStore(applicationContext)
         val repository = WorkshopRepository(ApiClient.create(tokenStore), tokenStore)
         val googleAuthClient = GoogleAuthClient(this)
+        // Microsoft and Yahoo. Created here, with the activity, because AppAuth binds the browser's
+        // custom-tab service to it; the client disposes of that binding when the activity goes.
+        val oidcAuthClient = OidcAuthClient(this)
         // Appearance is read SYNCHRONOUSLY, before the first frame is composed. That is the whole
         // point of the device-local copy: the account's row arrives over the network, and deciding
         // the theme from it would flash a light app at somebody who chose Dark. The store outlives
@@ -761,6 +770,7 @@ class MainActivity : ComponentActivity() {
                         RepositoryApp(
                             repository = repository,
                             googleAuthClient = googleAuthClient,
+                            oidcAuthClient = oidcAuthClient,
                             incomingQuestionnaire = incomingQuestionnaire.value,
                             onIncomingQuestionnaireConsumed = { incomingQuestionnaire.value = null },
                             incomingPasswordLink = incomingPasswordLink.value,
@@ -1413,6 +1423,8 @@ private fun EntryMode.icon(): ImageVector = when (this) {
 private fun RepositoryApp(
     repository: WorkshopRepository,
     googleAuthClient: GoogleAuthClient,
+    /** Microsoft and Yahoo sign-in; its `providers` is empty when this build configures neither. */
+    oidcAuthClient: OidcAuthClient,
     /** A `.dpwq` file handed to this app by another phone. See `MainActivity.incomingQuestionnaire`. */
     incomingQuestionnaire: Uri?,
     onIncomingQuestionnaireConsumed: () -> Unit,
@@ -1503,6 +1515,58 @@ private fun RepositoryApp(
     // the token, and that needs a Context. See its KDoc for what a sign-out used to leave behind for
     // the next person to sign in on a shared handset.
     val appContext = LocalContext.current.applicationContext
+
+    /*
+     * ── MICROSOFT AND YAHOO: THE ANSWER FROM THE BROWSER TAB ─────────────────────────────────────
+     *
+     * The provider and the RAW nonce of the sign-in in flight, as "PROVIDER|nonce". Saveable, so the
+     * activity being recreated while the tab is open (a rotation, or the system reclaiming memory on a
+     * small handset) does not lose the half the backend needs; AppAuth keeps the PKCE verifier on its
+     * own request for the same reason. Cleared the moment an answer arrives, whatever it was.
+     */
+    var pendingOidc by rememberSaveable { mutableStateOf<String?>(null) }
+    val oidcLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        val started = pendingOidc?.split('|', limit = 2)
+        pendingOidc = null
+        val provider = started?.getOrNull(0)?.let { name -> OidcProviderId.entries.firstOrNull { it.name == name } }
+        val rawNonce = started?.getOrNull(1)
+        if (provider == null || rawNonce == null) {
+            loading = false
+            return@rememberLauncherForActivityResult
+        }
+        when (val outcome = oidcAuthClient.finish(result.data)) {
+            is OidcAuthClient.Outcome.Failed -> {
+                refusal = AccessRefusal.NOT_REFUSED
+                signInHint = SignInHint.NONE
+                error = oidcCallbackErrorMessage(provider, outcome.error)
+                loading = false
+            }
+            is OidcAuthClient.Outcome.Code -> scope.launch {
+                runCatching {
+                    repository.loginWithOidc(
+                        OidcLoginRequest(
+                            oidcProvider = provider.name,
+                            oidcCode = outcome.code,
+                            oidcCodeVerifier = outcome.codeVerifier,
+                            oidcRedirectUri = outcome.redirectUri,
+                            oidcNonce = rawNonce,
+                        )
+                    )
+                }
+                    // The Google path's one line, for the Google path's reason: the consent the door
+                    // took is recorded only if the server still says this account owes one.
+                    .onSuccess { user = usageAnswerAtTheDoor(appContext, repository, it, consentDoor) }
+                    // Classified from the headers first, then the server's own sentence — a person
+                    // waiting on an administrator must read that, not "sign-in failed".
+                    .onFailure { failure ->
+                        refusal = failure.accessRefusal()
+                        signInHint = failure.signInHint()
+                        error = failure.signInErrorMessage()
+                    }
+                loading = false
+            }
+        }
+    }
 
     /*
      * ── A TAPPED SET-PASSWORD LINK OPENS THE REDEEM SCREEN, WITH THE LINK ALREADY IN IT ───────────
@@ -1824,6 +1888,24 @@ private fun RepositoryApp(
                 hint = signInHint,
                 busy = loading,
                 consentDoor = consentDoor,
+                oidcProviders = oidcAuthClient.providers,
+                onOidcLogin = { provider ->
+                    loading = true
+                    error = null
+                    refusal = AccessRefusal.NOT_REFUSED
+                    signInHint = SignInHint.NONE
+                    // No password on this path either — see the Google handler below.
+                    doorPassword = ""
+                    runCatching { oidcAuthClient.start(provider) }
+                        .onSuccess { started ->
+                            pendingOidc = "${provider.id.name}|${started.rawNonce}"
+                            oidcLauncher.launch(started.intent)
+                        }
+                        .onFailure {
+                            loading = false
+                            error = oidcCallbackErrorMessage(provider.id, null)
+                        }
+                },
                 onOpenSetPasswordLink = { redeemingLink = true },
                 onLogin = { email, password ->
                     scope.launch {
@@ -2136,7 +2218,7 @@ private fun RepositoryApp(
  * `ui/AuthScreen.kt` was 756 lines of a sign-in screen rebuilt against the web login
  * (`frontend/app/login/page.tsx`): a purple brand band with the logo tile, a gold eyebrow, a
  * gold-gradient headline and the three `BRAND_POINTS` bullets; a frosted card on a mesh backdrop; a
- * 52dp/12dp control system; and Microsoft and Yahoo buttons that raised a "coming soon" toast. Its
+ * 52dp/12dp control system; and Microsoft and Yahoo buttons that did nothing but raise a toast. Its
  * own header enumerated four deliberate phone-versus-web differences, so it was finished work.
  * NOTHING EVER CALLED IT. `MainActivity` has rendered this composable the whole time, a repo-wide
  * grep for the name returned the declaration and one comment, and no comment anywhere deferred its
@@ -2152,9 +2234,10 @@ private fun RepositoryApp(
  *
  * SO THE BRAND PARITY IS A GAP AND IS NAMED AS ONE. Anyone bringing it back should port `BrandBand`,
  * `BRAND_POINTS`, the `AuthControlHeight`/`AuthControlShape`/`AuthCardShape` system and the provider
- * buttons INTO this function — keeping [refusal] and the panel below untouched, and keeping the two
- * dead providers visibly badged unavailable as the web's `ComingSoonBadge` does rather than looking
- * live. The deleted file is in this repository's history under
+ * buttons INTO this function — keeping [refusal] and the panel below untouched. Microsoft and Yahoo
+ * are live since 2026-10-10 (`data/OidcSignIn.kt`) and are drawn here only when this build carries
+ * their client IDs, so nothing from the old file's provider row needs reviving. The deleted file is in
+ * this repository's history under
  * `android/app/src/main/java/com/designprototype/workshop/ui/AuthScreen.kt` and is the starting
  * point; it is not a thing to resurrect wholesale.
  *
@@ -2174,6 +2257,12 @@ private fun LoginScreen(
     busy: Boolean,
     onLogin: (String, String) -> Unit,
     onGoogleLogin: () -> Unit,
+    /**
+     * Microsoft and Yahoo, ONLY those this build is configured for — an empty list draws nothing.
+     * Gated by the same tick as the other two ways in.
+     */
+    oidcProviders: List<OidcProvider> = emptyList(),
+    onOidcLogin: (OidcProvider) -> Unit = {},
     /**
      * The usage-recording consent this screen must take before either credential is offered.
      *
@@ -2403,6 +2492,22 @@ private fun LoginScreen(
                         )
                         Spacer(Modifier.width(8.dp))
                         Text(if (busy) "Please wait..." else "Sign in with Google")
+                    }
+                }
+                // MICROSOFT AND YAHOO, each only when configured, under the same consent gate as the
+                // two buttons above — a third credential is exactly what this screen's KDoc says must
+                // carry `enabled` too.
+                for (provider in oidcProviders) {
+                    OutlinedButton(
+                        enabled = !busy && consentDoor.mayProceed,
+                        onClick = { onOidcLogin(provider) },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+                            OidcProviderMark(provider.id)
+                            Spacer(Modifier.width(8.dp))
+                            Text(if (busy) "Please wait..." else "Sign in with ${provider.label}")
+                        }
                     }
                 }
                 // Steer researchers to Google sign-in. Many were typing into the email/password fields

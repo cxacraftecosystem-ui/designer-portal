@@ -1,6 +1,6 @@
 # Open findings
 
-**Status: 31 open, 1 decision recorded and 1 deferral, 99 closed.** Every count re-counted by
+**Status: 31 open, 1 decision recorded and 1 deferral, 100 closed.** Every count re-counted by
 heading on 2026-10-10 (15 + 18 opened by the Android copy sweep that day, less the 2 of those closed
 the same day); earlier counts on 2026-10-09; the entries closed on 2026-10-09 were checked against the tree that day, and
 the older closed sections were last re-checked on 2026-09-03.
@@ -14,6 +14,10 @@ recorded already closed. 33 − 2 = 31 open; 95 + 3 = 98 closed.
 walkthrough told directorate officers and inspectors so, and a correction suggestion could sit unread
 until somebody opened the workshop. It is under *Closed on 2026-10-10*, recorded and closed in the same
 change. Counted by heading: still 31 open, and 98 + 1 = 99 closed.
+
+**And "Continue with Microsoft" and "Continue with Yahoo" were built the same day** (item F3 of the
+copy sweep): the sign-in screen had admitted them as "Coming soon" with no entry here, so the gap is
+recorded already closed. Counted by heading: 31 open; 99 + 1 = 100 closed.
 
 **Moving a set-password link's token off the web's request lines narrowed one entry the same day,
 and moved neither number.** The web now checks a link with `POST /api/auth/set-password/check`, the
@@ -844,6 +848,27 @@ Pinned by `tests/test_mailer.py` (the SES request and the retry classification, 
 link or address in a log line), `tests/test_review_note_triggers.py` (both inspection doors notify
 after their write, and a refused send-back notifies nobody) and `tests/test_email_db.py` (the
 preference routes, an e-mailed link against a real database, and the drain).
+
+And one sign-in gap the web admitted on its front door (item F3 of the same sweep), closed by building
+the two providers.
+
+### [P0] "Continue with Microsoft" and "Continue with Yahoo" were dead buttons with a "Coming soon" badge on the sign-in screen (frontend, backend, android) — **CLOSED 2026-10-10**
+
+The web sign-in card drew both buttons with a "Coming soon" badge and a toast ("… sign-in is coming
+soon — use Google, or your email and password, for now"), over a code comment saying the providers
+had nothing behind them; the handset drew neither. Both providers are now built end to end: an
+authorization code with PKCE and a nonce, redeemed by the backend with the client secret, the ID token
+verified against the provider's keys (issuer, audience, expiry, nonce), the address accepted only when
+the provider verified it, then exactly the Google path's allow-list admission and account linking —
+without its Gmail-spelling fold ([SECURITY.md](SECURITY.md) §3.3A). Each button is drawn only when its
+client ID is configured for that client; there is no badge and no disabled placeholder. Pinned by
+`backend/tests/test_oidc_sign_in.py` (verification against a fake JWKS, every refusal),
+`backend/tests/test_oidc_sign_in_admission.py` (admission, linking, refusals, through the real route),
+`frontend/e2e/oidc-sign-in-unit.spec.ts` and
+`android/app/src/test/java/com/designprototype/workshop/data/OidcSignInTest.kt`. Live once the owner
+registers the two apps and sets the values [ENVIRONMENT.md](ENVIRONMENT.md) lists.
+
+---
 
 ## Closed on 2026-10-09
 
