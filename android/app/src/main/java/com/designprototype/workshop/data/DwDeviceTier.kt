@@ -179,7 +179,7 @@ enum class DwAiTier {
     /** On this handset, offline: ASR. Not built — see [DwTierRefusal.NO_RUNTIME_IN_THIS_BUILD]. */
     TIER_1,
 
-    /** On this handset, offline: a small language model. No artifact has been weighed. */
+    /** On this handset, offline: a small language model (Gemma 4 on LiteRT-LM), downloaded on demand. */
     TIER_2,
 
     /** The server provider chain, which has worked since long before any of this. Needs signal. */
@@ -880,10 +880,8 @@ data class DwModelPlan(
  *     LOCAL MEASUREMENT.** The figures in them are Google's, taken on an S26 Ultra at exactly that 2K
  *     cap, and each row says so in the field that gets printed. Nothing has been run on this fleet.
  *
- * ADDING A ROW HERE IS STILL NOT THE LAST STEP. [DW_TIER2_RUNTIME_PRESENT] is still `false` — there is
- * no LiteRT-LM in this APK, because the published runtime's Kotlin metadata is newer than this
- * project's compiler and adding it does not compile. So the rows are listed, judged and never offered
- * for download; `dwTier2InstallMayBeOffered` is the gate that says so, and it reads this same constant.
+ * SINCE 2026-10-10 THE RUNTIME IS IN THE APK ([DW_TIER2_RUNTIME_PRESENT]), so a row a phone's reading
+ * admits is offered for download through `dwTier2InstallMayBeOffered`, which reads this same constant.
  * "We have numbers" and "we can run it" stay two separate questions, which is what this split was for.
  */
 val DW_TIER2_CATALOGUE: List<DwModelPlan> = DW_TIER2_PLANS
@@ -1400,8 +1398,17 @@ val DW_TIER1_CATALOGUE: List<DwModelPlan> = listOf(
  */
 const val DW_TIER1_RUNTIME_PRESENT: Boolean = true
 
-/** Whether this APK contains an on-device language-model runtime (LiteRT / ONNX). **IT DOES NOT.** */
-const val DW_TIER2_RUNTIME_PRESENT: Boolean = false
+/**
+ * Whether this APK contains an on-device language-model runtime. **IT DOES, SINCE 2026-10-10.**
+ *
+ * `com.google.ai.edge.litertlm:litertlm-android:0.18.0` is an `implementation` dependency of `:app`,
+ * so `liblitertlm_jni.so` ships in the package for arm64-v8a (and x86_64, for the emulator), loaded by
+ * `DwTier2Engine.kt`. It is a fact about the BUILD, as [DW_TIER1_RUNTIME_PRESENT] is: what a particular
+ * handset may run is still decided per row — a 32-bit-only phone fails [DwModelPlan.abi], a small one
+ * fails [dwModelFit], and a load that fails on a phone is recorded and never retried there. The
+ * `DwTier2RuntimeProbeTest` instrumentation test loads the native library on the x86_64 emulator.
+ */
+const val DW_TIER2_RUNTIME_PRESENT: Boolean = true
 
 // ---------------------------------------------------------------------------------------------
 // The margins the fit arithmetic keeps — chosen, and labelled as chosen
@@ -1609,10 +1616,9 @@ data class DwTierRecommendation(
      * which holds two. This said "Empty today, because [DW_TIER2_CATALOGUE] is" and was corrected
      * 2026-08-22 alongside [tier1Choices]; the catalogue stopped being empty on 2026-08-13.
      *
-     * A NON-EMPTY LIST IS NOT AN OFFER. [tier2] is still [DwTierOffer.None] on every handset, because
-     * [DW_TIER2_RUNTIME_PRESENT] is `false` and [dwTier2Offer] checks it — so nothing here is ever
-     * drawn with a download control beside it. `DwTier2ModelsTest` pins that for every row against
-     * every connection, and it is that constant, not the length of this list, that holds the line.
+     * A NON-EMPTY LIST IS NOT AN OFFER. A row is drawn with a download control only when
+     * `dwTier2InstallMayBeOffered` says so — the fit verdict, a connection and the runtime — and a
+     * phone where no row may be installed is shown no Tier 2 list at all.
      */
     val tier2Choices: List<DwModelChoice> = emptyList(),
 ) {
@@ -1732,9 +1738,9 @@ internal fun dwBestPlan(
 }
 
 /**
- * What this handset is offered for Tier 2 — **nothing, on every device today**, and since 2026-08-13
- * the reason is [DwTierRefusal.NO_RUNTIME_IN_THIS_BUILD] rather than a missing measurement:
- * [DW_TIER2_CATALOGUE] holds two weighed rows and this APK still has nothing that can load one.
+ * What this handset is offered for Tier 2 — **the best weighed row its own reading admits**, since the
+ * LiteRT-LM runtime landed in the APK on 2026-10-10. Until then every handset got
+ * [DwTierRefusal.NO_RUNTIME_IN_THIS_BUILD], which is now reached only by a build without the runtime.
  *
  * ── THE LOW-RAM SHORTCUT MOVED, AND THE ARGUMENT FOR ITS OLD POSITION IS WHY ───────────────────
  *
@@ -1759,9 +1765,11 @@ internal fun dwTier2Offer(
     deviceClass: DwDeviceClass,
     catalogue: List<DwModelPlan>,
     failures: List<DwLoadFailureNote>,
+    /** Whether LiteRT-LM is in the package. Production passes nothing; a caller that passes it is a test. */
+    runtimeInApk: Boolean = DW_TIER2_RUNTIME_PRESENT,
 ): DwTierOffer {
     if (catalogue.isEmpty()) return DwTierOffer.None(DwTierRefusal.NO_MEASURED_MODEL)
-    if (!DW_TIER2_RUNTIME_PRESENT) return DwTierOffer.None(DwTierRefusal.NO_RUNTIME_IN_THIS_BUILD)
+    if (!runtimeInApk) return DwTierOffer.None(DwTierRefusal.NO_RUNTIME_IN_THIS_BUILD)
     // Android's own verdict about the build still outranks the arithmetic — `isLowRamDevice` knows
     // things a memory total does not — and `dwPlanFits` checks it first for exactly that reason. The
     // CLASS, which is a band this file computed from a byte count, does not get to pre-empt the row.
@@ -1938,11 +1946,13 @@ fun dwRecommendTiers(
     artifacts: List<DwAsrArtifact> = DW_ASR_ARTIFACTS,
     /** See [dwTier1Offer]. Production passes nothing; a caller that passes it is writing a test. */
     runtimeInApk: Boolean = DW_TIER1_RUNTIME_PRESENT,
+    /** The same, for LiteRT-LM. See [dwTier2Offer]. */
+    tier2RuntimeInApk: Boolean = DW_TIER2_RUNTIME_PRESENT,
 ): DwTierRecommendation {
     val deviceClass = dwDeviceClass(measurement)
     val tier1 =
         dwTier1Offer(measurement, catalogue1, failures, runtime, connection, artifacts, runtimeInApk)
-    val tier2 = dwTier2Offer(measurement, deviceClass, catalogue2, failures)
+    val tier2 = dwTier2Offer(measurement, deviceClass, catalogue2, failures, tier2RuntimeInApk)
     return DwTierRecommendation(
         deviceClass = deviceClass,
         measurement = measurement,
@@ -2428,7 +2438,8 @@ fun dwTierOfferSentence(tier: DwAiTier, offer: DwTierOffer): String = when (offe
         append(" to download, and this phone would have ")
         append(dwBytesLabel(offer.headroomBytes))
         append(" of memory to spare. Nothing is fetched unless you ask for it.")
-        append(dwModelSpeedClause(offer.plan))
+        // The speed clause is about transcribing a recording, which a language model does not do.
+        if (tier == DwAiTier.TIER_1) append(dwModelSpeedClause(offer.plan))
         append(dwModelBackgroundingClause(offer.plan))
     }
 
@@ -2511,6 +2522,8 @@ fun dwTierRefusalSentence(tier: DwAiTier, refusal: DwTierRefusal): String = when
                 "Android's own and still works, and other languages are written online when there " +
                 "is signal."
 
+        // Reached only by a build without the LiteRT-LM runtime, which no production build is. Said
+        // as what the phone does instead, not as an account of the app's own construction.
         DwAiTier.TIER_2, DwAiTier.TIER_3 ->
             "This phone sends this work online, and it is done whenever there is signal."
     }
@@ -2531,7 +2544,8 @@ fun dwTierRefusalSentence(tier: DwAiTier, refusal: DwTierRefusal): String = when
                 "installed, dictation works as usual. Nothing is fetched unless you ask for it."
 
         DwAiTier.TIER_2, DwAiTier.TIER_3 ->
-            "Nothing needs to be installed for this, and nothing is fetched without asking you."
+            "This runs once one of the language models below is downloaded to this phone, and " +
+                "nothing is fetched without asking you."
     }
 
     /*

@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1.7
+# syntax=docker/dockerfile:1
 # ---------------------------------------------------------------------------------------------
 # Design Prototype Workshop API — multi-stage image.
 #
@@ -16,7 +16,14 @@
 # time can reach.
 # ---------------------------------------------------------------------------------------------
 
-ARG PYTHON_VERSION=3.12
+# The interpreter the EC2 box, CI and the lock all run (3.14 since 2026-10-09), on Debian 13
+# (trixie). The minor tag, not a patch, so every build takes the newest 3.14.x.
+ARG PYTHON_VERSION=3.14
+
+# The Node major the Prisma CLI runs on, matching the box's pinned nodeenv (deploy-backend.yml,
+# PRISMA_CLI_NODE_VERSION). Copied from the official image in the `prisma` stage, never from apt:
+# trixie's own nodejs package is 20.x, past its upstream end of life.
+ARG NODE_MAJOR=26
 
 # Install ffmpeg into the runtime image. OFF by default because it costs ~180 MB and nothing on
 # the request path needs it: pydub is imported lazily inside the two functions that convert audio
@@ -29,7 +36,9 @@ ARG INSTALL_FFMPEG=false
 # =============================================================================================
 # Stage 1 — builder: resolve dependencies into a self-contained virtualenv.
 # =============================================================================================
-FROM python:${PYTHON_VERSION}-slim-bookworm AS builder
+FROM node:${NODE_MAJOR}-trixie-slim AS node
+
+FROM python:${PYTHON_VERSION}-slim-trixie AS builder
 
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_NO_CACHE_DIR=1 \
@@ -50,21 +59,22 @@ ENV PATH="/opt/venv/bin:${PATH}" \
 
 WORKDIR /build
 
-# Only pyproject.toml, so this layer — the slow one — is reused on every source-only change.
-COPY backend/pyproject.toml ./pyproject.toml
+# Only the lock, so this layer — the slow one — is reused on every source-only change.
+COPY backend/requirements.lock ./requirements.lock
 
 # Install the DEPENDENCIES, not the project. `pip install .` would also copy an `app` package into
 # site-packages, and `app/data/questionnaire_questions.json` is not declared as package data, so
 # that copy would silently ship without it and the questionnaire seed would fail at runtime. The
 # source tree is mounted into the runtime image as a plain directory instead, which cannot lose a
-# file. tomllib is stdlib on 3.11+, so reading the list needs nothing installed first.
+# file.
 #
-# The core [project.dependencies] list ONLY. Optional extras (dev, and any future cache/ai extras)
-# are deliberately not installed: this image is meant to weigh what the EC2 t3.micro weighs.
-RUN python -c "import tomllib, pathlib; \
-print('\n'.join(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['dependencies']))" \
-      > /tmp/requirements.txt \
- && pip install --no-cache-dir -r /tmp/requirements.txt
+# FROM THE LOCK, SINCE 2026-10-09, AND NOT FROM pyproject's RANGES. Installing the ranges let this
+# image resolve whatever the index offered on the day it was built, so it could run different
+# versions from CI and the EC2 box with nothing in the diff to say so. The lock is the one set all
+# three install. It is compiled with the `dev` extra (docs/CI.md), so pytest, ruff and pypdf come
+# along, as they do on the box: this image weighs what the box weighs, which is what it was always
+# meant to. The `ai`, `ai-local` and `cache` extras are not in the lock and stay out.
+RUN pip install --no-cache-dir -r requirements.lock
 
 
 # =============================================================================================
@@ -81,12 +91,25 @@ print('\n'.join(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['proje
 # =============================================================================================
 FROM builder AS prisma
 
-# Node is what runs the Prisma CLI. bookworm's nodejs is 18.x, comfortably above the CLI's
-# documented floor of 16.13. npm comes along because prisma-client-py's node resolver can reach
-# for either binary.
+# Node is what runs the Prisma CLI, COPIED FROM THE OFFICIAL IMAGE at the box's major (see
+# NODE_MAJOR at the top) rather than installed from apt. This read `apt-get install nodejs npm`,
+# which on bookworm was Node 18 and on trixie would be Node 20 — both past upstream end of life,
+# and neither what the box runs. Only the binary and npm's own tree are copied, never all of
+# /usr/local, which would overwrite this image's Python. npm comes along because prisma-client-py's
+# node resolver reaches for it the first time it installs the CLI.
+#
+# libatomic1 BECAUSE NODE 26 LINKS AGAINST IT and trixie-slim does not ship it — the official
+# node:26-trixie-slim image installs it for the same reason. Measured 2026-10-09: without it the
+# first `npm` the CLI install runs dies with "libatomic.so.1: cannot open shared object file", which
+# prisma-client-py reports only as npm exiting 127. `node --version` here is the build-time proof.
+COPY --from=node /usr/local/bin/node /usr/local/bin/node
+COPY --from=node /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/npm
 RUN apt-get update \
- && apt-get install -y --no-install-recommends nodejs npm \
- && rm -rf /var/lib/apt/lists/*
+ && apt-get install -y --no-install-recommends libatomic1 \
+ && rm -rf /var/lib/apt/lists/* \
+ && ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
+ && ln -s ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx \
+ && node --version && npm --version
 
 # Pin every cache prisma-client-py writes to, so the artefacts land in known directories that the
 # runtime stage can copy. Left at their defaults they go to $HOME/.cache, and $HOME differs
@@ -105,9 +128,13 @@ ENV PRISMA_BINARY_CACHE_DIR=/opt/prisma-engines \
 ENV DATABASE_URL=postgresql://placeholder:placeholder@127.0.0.1:5432/placeholder
 
 COPY backend/prisma ./prisma
+COPY backend/scripts/generate_prisma_client.py ./scripts/generate_prisma_client.py
 
+# `generate_prisma_client.py` and not a bare `prisma generate`: it adds the one line that keeps the
+# generated client importable in seconds on Python 3.14 rather than in tens of minutes and gigabytes
+# (the script's docstring has the measurements). The import check below is what would show it.
 RUN python -m prisma py fetch \
- && python -m prisma generate --schema=./prisma/schema.prisma \
+ && python scripts/generate_prisma_client.py --schema=./prisma/schema.prisma \
  && python -c "from prisma import Prisma; Prisma; print('prisma client import OK')"
 
 # Lift the ONE file the runtime needs out of the 81 MB `py fetch` left behind. That cache is an npm
@@ -150,7 +177,7 @@ ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 # =============================================================================================
 # Stage 3 — runtime.
 # =============================================================================================
-FROM python:${PYTHON_VERSION}-slim-bookworm AS runtime
+FROM python:${PYTHON_VERSION}-slim-trixie AS runtime
 
 ARG INSTALL_FFMPEG
 

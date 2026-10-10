@@ -1656,6 +1656,20 @@ class WorkshopRepository(
     }
 
     /**
+     * Record what a language model ON THIS PHONE wrote, as a TIER_2 layer — inert until a person
+     * accepts it, exactly as a cloud layer is. **Not [runVerb]:** nothing reached a paid provider, so
+     * the allowance mirror is neither read nor written, and no cap refusal can come back.
+     */
+    suspend fun designWorkshopOnDeviceLayer(
+        workshopId: String,
+        draft: DwTier2Draft,
+    ): DwAiVerbResultDto = try {
+        api.designWorkshopOnDeviceLayer(dwVerbWorkshopId(workshopId), dwTier2LayerBody(draft))
+    } catch (e: HttpException) {
+        throw e.asVerbFailure(DwAiVerb.PROOFREAD)
+    }
+
+    /**
      * Write a designer's terse note out into prose. **The riskiest thing this API does.**
      *
      * **THERE IS NO LAYER PARAMETER AND THERE MUST NEVER BE ONE**, and no caller may offer a control
@@ -3877,6 +3891,14 @@ class WorkshopRepository(
 
     suspend fun loginWithGoogle(idToken: String): UserDto {
         val response = api.googleLogin(GoogleLoginRequest(googleIdToken = idToken))
+        tokenStore.setToken(response.accessToken)
+        tokenStore.setUser(response.user)
+        return response.user
+    }
+
+    /** Microsoft or Yahoo, once AppAuth has brought the code back. The backend redeems it. */
+    suspend fun loginWithOidc(body: OidcLoginRequest): UserDto {
+        val response = api.oidcLogin(body)
         tokenStore.setToken(response.accessToken)
         tokenStore.setUser(response.user)
         return response.user

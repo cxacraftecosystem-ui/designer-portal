@@ -204,13 +204,13 @@ class ArtisanCreate(APIModel):
     _clean_pehchan = field_validator("pehchanCardNumber")(lambda cls, v: validate_pehchan(v))
 
     @model_validator(mode="after")
-    def require_craft(self) -> "ArtisanCreate":
+    def require_craft(self) -> ArtisanCreate:
         if not self.craftId and not self.craftName:
             raise ValueError("Artisan must be assigned to a craft")
         return self
 
     @model_validator(mode="after")
-    def reconcile_pehchan(self) -> "ArtisanCreate":
+    def reconcile_pehchan(self) -> ArtisanCreate:
         """Keep the "card available?" answer and the card number consistent, three ways.
 
         - **Yes** must come with a number. Answering yes and leaving the number blank is the one
@@ -324,7 +324,7 @@ class ArtisanUpdate(APIModel):
     )
 
     @model_validator(mode="after")
-    def reconcile_pehchan(self) -> "ArtisanUpdate":
+    def reconcile_pehchan(self) -> ArtisanUpdate:
         """Answering "No" on an edit clears the stored card number in the same request.
 
         Unlike the create path this cannot demand a number when the answer is Yes: a PATCH carrying
@@ -415,7 +415,7 @@ class WorkshopCreate(APIModel):
     _location_required = model_validator(mode="after")(require_location)
 
     @model_validator(mode="after")
-    def _known_workshop_type(self) -> "WorkshopCreate":
+    def _known_workshop_type(self) -> WorkshopCreate:
         """Reject a kind the database does not have.
 
         `workshopType` reaches a Postgres enum column, so an unknown value is not merely stored
@@ -454,7 +454,7 @@ class WorkshopUpdate(APIModel):
     _location_kept = model_validator(mode="after")(forbid_clearing_location)
 
     @model_validator(mode="after")
-    def _known_workshop_type(self) -> "WorkshopUpdate":
+    def _known_workshop_type(self) -> WorkshopUpdate:
         """Omitted keeps the stored kind; a value must be one the database has."""
         if self.workshopType is not None and self.workshopType not in WORKSHOP_TYPES:
             raise ValueError(f"workshopType must be one of {', '.join(sorted(WORKSHOP_TYPES))}")

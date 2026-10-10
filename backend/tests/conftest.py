@@ -33,6 +33,34 @@ import pytest
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND_ROOT))
 
+
+# --------------------------------------------------------------------------------------
+# The two async plugins, in the one order under which an anyio test's async fixtures share its loop
+# --------------------------------------------------------------------------------------
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    """Refuse to run with pytest-asyncio registered before anyio's plugin.
+
+    In that order anyio's ``pytest_fixture_setup`` wrapper is the outermost, so an async fixture of
+    an anyio-marked test is set up on an anyio event loop while the test runs on pytest-asyncio's,
+    and the first query a test makes through a connection its fixture opened fails with "... is
+    bound to a different event loop". That is how 37 integration tests failed on every CI run from
+    2026-10-01 to 2026-10-09: the order was decided by how site-packages happened to list the two
+    plugins. ``addopts`` in backend/pyproject.toml fixes the order; this turns the day somebody
+    removes that line into one clear error at startup instead of a module failing for a reason that
+    names neither plugin. The three modules that failed then no longer depend on the order (see
+    "reaching the database" below); the forty-nine that still open ``db`` in an async fixture do.
+    """
+    names = [name for name, _plugin in config.pluginmanager.list_name_plugin()]
+    if "anyio" in names and "asyncio" in names and names.index("asyncio") < names.index("anyio"):
+        raise pytest.UsageError(
+            "pytest-asyncio is registered before anyio's pytest plugin, so async fixtures of "
+            "anyio-marked tests would run on a different event loop from their tests. Keep "
+            '`addopts = ["-p", "anyio"]` in backend/pyproject.toml, or pass `-p anyio` first on '
+            "the command line."
+        )
+
 #: Whether the SHELL exported a DSN, captured before anything here could have loaded ``.env``.
 #: Recorded rather than inferred because it is the difference between "the publish below is what
 #: makes twenty-eight modules work" (a developer machine, where the DSN exists only in ``backend/.env``)
@@ -624,6 +652,8 @@ def _clear_account_credential_budget():
 # `python -m pytest -p asyncio -p anyio <the three modules>`, failed the same 37 (measured
 # 2026-10-09), as `httpx.WriteTimeout` rather than the RuntimeError: the same connection,
 # stranded on the fixture's loop, stalling on its write instead of being refused on its read.
+# (That command no longer forces anything: `addopts` in `backend/pyproject.toml` now loads anyio's
+# plugin before any `-p` on the command line is read — see the last paragraph.)
 #
 # THE RULE ABOVE ANSWERS IT, CLIENT OR NO CLIENT. A module that calls services directly writes SYNC
 # tests, and each test's database work is ONE `asyncio.run` of a coroutine that connects `db`, does
@@ -637,5 +667,14 @@ def _clear_account_credential_budget():
 # loop those fixtures run on flipped with the order too. They stayed green in both orders only
 # because none of their async tests awaits the shared `db` — each reaches the database through
 # its `TestClient`, a private `Prisma()` of its own, or a fake — so nothing else ever uses the
-# fixture's connection. The first `await db.…` added to an async test in one of them is this
-# failure again, which is the strongest argument there is for moving them onto the pattern.
+# fixture's connection. Were the order to flip again, the first `await db.…` added to an async test
+# in one of them would be this failure again, which is the strongest argument there is for moving
+# them onto the pattern.
+#
+# THE ORDER IS PINNED NOW, AS A SECOND LINE (2026-10-09, the toolchain upgrade).
+# `backend/pyproject.toml` loads anyio's plugin first (`addopts = ["-p", "anyio"]`), so
+# pytest-asyncio registers last and its wrapper takes every async fixture onto the loop its test
+# runs on, however site-packages is listed; `pytest_configure` at the top of this file refuses to
+# start in the other order, and `tests/test_async_plugin_order.py` checks that a fixture and its
+# test share a loop. The pattern above stays the rule all the same: it is correct with or without
+# the pin.

@@ -150,7 +150,7 @@ test("the workshop read clears the spinner when it fails", () => {
   expect(page).toContain('setError(err instanceof Error ? err.message : "Unable to load this design workshop");');
   expect(page).toContain("        setPreviewing(false);\n        setPreviewFailed(true);");
   // Re-runnable: without this dep "Try again" has nothing to re-fire, `remoteId` never changing.
-  expect(page).toContain("  }, [remoteId, retryToken]);");
+  expect(page).toContain("  }, [remoteId, retryToken, adoptDraftForReport]);");
 });
 
 test("a workshop that names no template does not spin either", () => {
@@ -177,7 +177,8 @@ test("the panel has a building state, a failed state with a retry, and an empty 
 test("the header description stops saying Loading for the life of the tab", () => {
   const page = read(REPORT);
   expect(page).toContain("This workshop could not be loaded. The panel at the foot of the page offers a retry.");
-  expect(page).toContain("This workshop has not reached the repository yet, and the report is written by the server");
+  // A workshop with no server copy, or a read with no connection, is built on the device and says so.
+  expect(page).toContain('"Built on this device from everything saved on it."');
 });
 
 /* ────────────────────────────────────────────────────────────────────────────

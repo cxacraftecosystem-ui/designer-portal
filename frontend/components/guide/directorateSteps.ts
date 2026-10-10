@@ -196,8 +196,8 @@ export const DIRECTORATE_STEPS: GuideStep[] = [
   },
   {
     // SECOND, because a workshop exists on paper before it exists in this product — and because this
-    // is the one screen among the acts that a Regional Director and an Assistant Director cannot
-    // open at all. Leading the ACTS with it means the tier difference inside the directorate is the
+    // is the one screen among the acts that an Assistant Director cannot open at all, and a Regional
+    // Director opens only for the states assigned to them. Leading the ACTS with it means the tier difference inside the directorate is the
     // first thing the reader meets once the register above has shown them the programme, rather than
     // something they discover at a padlock.
     id: "ministry-annual-plan",
@@ -229,7 +229,7 @@ export const DIRECTORATE_STEPS: GuideStep[] = [
       "Designers this workshop is for — on Open workshop, with the lead chooser under it once two are ticked"
     ],
     watch: [
-      "THIS SCREEN IS THE MINISTRY ADMIN'S ALONE, and its gate is the only rank floor in this deck rather than a set: an Assistant Director and a Regional Director are both below it and are refused. The reason is written into the server (`can_manage_annual_plan`) and is worth knowing rather than resenting — the plan is a national instrument and the table carries no per-region column, so the change that let a Regional Director correct their own state's rows would hand them the whole directory. If regional editing is ever wanted it is a scope table, not a promotion.",
+      "THIS SCREEN IS THE MINISTRY ADMIN'S, WITH ONE NARROW DOOR FOR A REGIONAL DIRECTOR. Uploading, exporting, opening a workshop from a row, withdrawing and reinstating are the Ministry Admin's and above: the plan is a national instrument. A Regional Director sees only the rows of the states a Ministry Admin has assigned to them — under “Regional Directors' states” on this screen — and may correct the remarks on those rows and on no others; with no state assigned, they see an empty plan. An Assistant Director cannot open it.",
       "Upload the WHOLE sheet every time. Rows already in the plan are corrected, new rows are added, and uploading the same sheet twice changes nothing at all — that is how you confirm an earlier upload landed. The report afterwards lists every field it changed, from what to what.",
       "The tickbox is the destructive-looking one and it is not destructive. Ticking it marks every planned row the sheet does not mention as withdrawn; nothing is deleted, and a withdrawn row comes back the moment a later sheet names it. Leave it unticked when the sheet is a partial correction.",
       "OPENING A WORKSHOP FROM A ROW CAN ONLY BE DONE ONCE, AND IT MAY NAME THE DESIGNERS AS IT OPENS. Everything in the row is copied onto the new workshop and into its stage 1, and the dialog carries a designer picker: everybody you name is given access to the workshop as it is created, and the one marked lead has their designer profile copied into stage 1 and stage 3. Naming nobody is still a real answer and not a failure — the designer block of stage 1 is then left empty, which is the right empty, and designers are added afterwards.",
@@ -277,10 +277,10 @@ export const DIRECTORATE_STEPS: GuideStep[] = [
     watch: [
       "ASSISTANT DIRECTOR AND ABOVE, AND THIS IS THE ONE PLACE IN THE DESIGN-WORKSHOP FAMILY THAT REALLY IS A RANK FLOOR. All three directorate tiers can record an order. Reading the register is the same gate as writing it — every route on it, the list included, is behind the same dependency, because the register is a list of named people and the amounts sanctioned against them.",
       "YOU SEND EACH SIGN-IN LINK YOURSELF. One link appears on screen per account the order created, together with a message you can copy; send each one by whatever you already use. A link works once and it expires — the screen prints the exact moment. Send them while they are on screen: a link cannot be shown a second time.",
-      "RE-ISSUING FROM THE ROW IS THE LEAD'S LINK AND ONLY THE LEAD'S. The button on the register re-mints for the first designer named on the order, which is the one the register holds. There is no route in this product that can re-issue a CO-DESIGNER'S first link, so if you lose one of those the remedy is an administrator on Users, not this screen. The button is drawn only on an order that actually created an account: one naming somebody who was already here issued nothing, so there is nothing to re-issue.",
+      "RE-ISSUE A LOST LINK FROM THE ROW, FOR ANY DESIGNER THE ORDER NAMES. Each designer whose account the order created has their own “Re-issue” button, the lead and every co-designer alike, and it mints a fresh link for that person only. A button is drawn only for an account the order actually created: somebody who was already here was issued nothing, so there is nothing to re-issue. It is refused for an account that has since been promoted to your tier or above, and for one that signs in with Google — ask an administrator on Users for those.",
       "AN ORDER MAY NAME SEVERAL DESIGNERS, AND THE FIRST IS THE LEAD. Everybody named gets the same five things — the allow-list admission, the empanelment, an account if that mailbox has none, a profile and access to the workshop — but only ONE name reaches the document: the lead's profile is what is copied into stage 1 and stage 3, and the lead is whose name the report carries. The picker prints who that is, and lets you change it, from two designers upward.",
       "A SHEET RECORDS NOTHING UNTIL YOU CONFIRM IT. “Pro-forma” downloads the blank workbook to type the office's orders into; “Upload a sheet” reads one back and shows you every row it found and every row it could not, and not one order exists until you press the confirm on that review. Correct the sheet and upload it again as often as you like before then — nothing has happened yet.",
-      "AN IMPORT ISSUES NO SIGN-IN LINKS AT ALL, and this is the one cost of doing it by sheet. Two hundred one-time credentials on one screen is a screen whose accidental closure strands two hundred designers, so the import throws them away: every imported designer whose account was newly created needs their link re-issued by hand from their row.",
+      "AN IMPORT ISSUES THE SAME FIRST SIGN-IN LINKS THE FORM DOES. Every account the sheet creates gets its link, drawn above the import's report one panel each, with the message to send it in. Copy them before you leave the page — a link is shown once — and re-issue any you missed from that designer's button on the register.",
       "If that Gmail address already has an account, no link is issued at all and none is needed: they sign in as they always do and the new workshop is simply on their list. The screen says so instead of showing you a link that would not work.",
       "⚠ YOU CANNOT AUTHOR THE WORKSHOP YOUR OWN ORDER OPENED. You may read every stage of it and generate its report, and the moment you try to SAVE one the server answers 403 by name: \"You recorded the sanction order that opened this workshop, so you cannot also author it.\" It is a test on the rows and not on the tier — it fires only where the same account both recorded the order and opened the workshop — so a Regional Director filling in a workshop somebody else sanctioned is untouched. The work belongs to the designer the order names.",
       "YOU CANNOT NAME YOURSELF AS THE DESIGNER. It is refused before anything at all is written — it is the first of the checks, because it is the only one that needs no lookup — so nothing is half-created when it fires.",
@@ -391,12 +391,13 @@ export const DIRECTORATE_STEPS: GuideStep[] = [
       "Venue",
       "Required fields answered — a percentage across every stage",
       "Who supervises this workshop",
-      "All 22 stages, read-only, with who wrote each field"
+      "Files — the workshop's photographs, recordings and attachments",
+      "All 22 stages, read-only, with who wrote each field and the answers to the workshop's own questions"
     ],
     watch: [
       "AN ADMIN CAN HAVE ROWS HERE TOO, NAMED BY SOMEBODY ELSE. A Ministry Admin, an admin or the master admin can be named a workshop's Assistant Director or Regional Director by somebody else, and then reads it here exactly as an officer does — scoped to the workshops they were named on, never every workshop. Until somebody names them this screen says they hold no posts.",
       "AN EMPTY PAGE IS A REAL ANSWER AND THE SCREEN SAYS WHICH KIND IT IS. Nothing assigned reads “You do not hold any … posts”, naming the post or posts you may hold; a list that could not be read says so instead and keeps whatever was already on screen — because a correct empty state and a silent failure look identical, and there is no other surface here to cross-check against.",
-      "PHOTOGRAPHS, RECORDINGS AND ATTACHMENTS ARE COUNTED, NOT SHOWN — “3 files recorded here”. An empty gallery would look like a file that failed to load, which is not what happened.",
+      "YOU CAN SEE AND HEAR THE FILES, AND CHANGE NONE OF THEM. Photographs, recordings, videos and attachments open here and under each media field; there is no upload, replace or delete control. The links stop working a few minutes after the page loads — Refresh files renews them.",
       "THERE IS NO SAVE, NO SUBMIT AND NO DELETE ON THIS PAGE, and none of them is missing: this screen is for reading. If a stage is wrong, the people who can change it are its designers; approving the report and handing it on to the office are the Ministry Admin's, on Reports to approve."
     ]
   },

@@ -348,6 +348,15 @@ class Settings(BaseSettings):
 
     google_client_id: str | None = Field(default=None, alias="GOOGLE_CLIENT_ID")
     google_android_client_id: str | None = Field(default=None, alias="GOOGLE_ANDROID_CLIENT_ID")
+    # Microsoft and Yahoo sign-in (app/services/oidc_sign_in.py). Each provider is live only when
+    # BOTH its client ID and its secret are set: the client brings back an authorization code and
+    # this server redeems it, which needs the secret. MICROSOFT_TENANT is common, organizations,
+    # consumers or one tenant's ID, and must match the account types the app registration allows.
+    microsoft_client_id: str | None = Field(default=None, alias="MICROSOFT_CLIENT_ID")
+    microsoft_client_secret: str | None = Field(default=None, alias="MICROSOFT_CLIENT_SECRET")
+    microsoft_tenant: str = Field(default="common", alias="MICROSOFT_TENANT")
+    yahoo_client_id: str | None = Field(default=None, alias="YAHOO_CLIENT_ID")
+    yahoo_client_secret: str | None = Field(default=None, alias="YAHOO_CLIENT_SECRET")
     master_admin_email: str = Field(alias="MASTER_ADMIN_EMAIL")
     master_admin_name: str = Field(default="Ankit Kumar", alias="MASTER_ADMIN_NAME")
     # Role given to brand-new self-registered Google accounts. Defaults to the lowest tier so an
@@ -572,7 +581,7 @@ class Settings(BaseSettings):
         """Pin the signing algorithm to a symmetric HMAC one, loudly rejecting anything else.
 
         This is the configuration half of the algorithm-confusion defence; the decode half is in
-        app.core.security, which passes exactly this one algorithm to jose. Failing here (at
+        app.core.security, which passes exactly this one algorithm to PyJWT. Failing here (at
         startup) rather than at token-verification time means a bad JWT_ALGORITHM can never quietly
         weaken authentication in production.
         """
@@ -584,7 +593,7 @@ class Settings(BaseSettings):
         return algorithm
 
     @model_validator(mode="after")
-    def _harden_database_url(self) -> "Settings":
+    def _harden_database_url(self) -> Settings:
         """Make database TLS explicit as soon as settings load, so every consumer inherits it.
 
         The rewrite lives here rather than in core/db.py because ``database_url`` is what the

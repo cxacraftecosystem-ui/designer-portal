@@ -13,6 +13,29 @@ Its companion documents: `DEVICE-TIER-MEASUREMENT.md` (the handset, the probe, t
 
 ---
 
+## 0. Built, 2026-10-10
+
+Tier 2 now runs on the handset. What was built, and where:
+
+| part | where |
+|---|---|
+| Runtime: `com.google.ai.edge.litertlm:litertlm-android:0.18.0` (newest on Google's Maven that day; Kotlin metadata 2.4, read by the project's 2.4.21 compiler), R8 keeps in `proguard-rules.pro` | `android/app/build.gradle.kts`, `data/DwTier2Engine.kt` — CPU backend, `maxNumTokens` = the plan's 2,048-token cap, greedy sampling |
+| `DW_TIER2_RUNTIME_PRESENT = true` | `data/DwDeviceTier.kt` |
+| Models: the two ungated Gemma 4 files (§1), fetched on demand from Hugging Face URLs **pinned to a revision** (E2B `b3ca0d2f…`, E4B `2eee7ac3…`; the LFS sha256 at both revisions equals the digests below, re-checked 2026-10-10), verified by size AND SHA-256 before anything opens them; resumable (`Range`, checked with `dwRangeHonoured`), pause keeps the part-file, cancel deletes it, remove deletes the model. The `adb push` staging route of §5 goes through the same verify | `data/DwTier2Install.kt`, `ui/designworkshop/DwTier2ModelInstallUi.kt`, `ui/designworkshop/DwTier2ModelUi.kt` |
+| Eligibility: `dwModelFit`'s verdict plus the plan's device-tier row — a low-RAM-flagged phone, or one whose total memory cannot hold the model with the 512 MiB margin, is **not offered** it (`dwTier2Eligible`); a 32-bit-only phone fails on ABI. TIGHT (free memory right now) is offered behind `dwModelOverrideSentence`. A phone that may take no model shows no Tier 2 line and no list | `DwTier2Models.kt`, `SpeechAndAiScreen.kt` |
+| Verbs: PROOFREAD and TRANSLATION (§6's "ship first" pair) run on the phone from the AI card under a prose field, for a paragraph of up to 1,500 characters, never beside capture or on a hot phone (`dwTier2RunWindow`). The result is recorded through `POST /api/design-workshops/{id}/ai-layers/on-device` as a **TIER_2** layer — inert until accepted, behind neither money gate — and reviewed in the same sheet as a cloud layer | `DwAiVerbsPanel.kt`, backend `record_on_device_ai_layer`, `ai_verbs.on_device`, `AiOnDeviceLayerIn` |
+| Fallback: a model that will not load is recorded (`DwTier2FailureStore`) and never tried again on that handset; the verb then takes the cloud path unchanged. EXPAND and CAPTION stay cloud-only | same |
+| The Gemma 3n rows are gone: their repositories need a person to accept a licence, so no phone could ever be offered them | `DwTier2Models.kt` |
+
+Still **unmeasured**, and nothing above claims otherwise: peak RSS on a fleet handset, tokens/sec on
+the Helio G85, the GPU path, backgrounding with a model resident, which of the nineteen languages the
+models write well. The emulator probe `DwTier2RuntimeProbeTest` proves the runtime is packaged and
+loads (x86_64), and that a file that is not a model comes back as a load failure rather than a crash.
+
+What the device-layer route cannot establish is that a handset rather than another signed-in client
+produced the words (§6, "What is undecided"); it fixes the tier, admits only the two pinned model ids,
+and the layer still needs a person's acceptance before any report prints it.
+
 ## 1. What exists, weighed
 
 Four mobile exports exist. `hf download <repo> --dry-run`, authenticated:

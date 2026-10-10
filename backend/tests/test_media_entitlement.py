@@ -423,6 +423,42 @@ def test_an_admin_may_still_be_handed_every_file(env, admin_client):
     assert env["foreign_photo"] in str(payload["blocks"])
 
 
+def _sources(client, workshop_id: str) -> dict:
+    response = client.get(f"/api/design-workshops/{workshop_id}/report/sources")
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def test_the_offline_report_sources_carry_no_photograph_the_caller_may_not_download(env, client):
+    """THE SAME LEAK, THROUGH THE DOOR THE BROWSER USES TO KEEP A REPORT OFFLINE.
+
+    `/report/sources` hands the device every photograph's size and orientation so a report built
+    with no connection places each one as the server would. It is built by the same resolver as the
+    preview, so a stranger's photograph pasted into a stage must be absent here too — and named in
+    the warning the device repeats beside a file it writes — while the designer's own still travels.
+    """
+    workshop_id = _workshop(env)
+    _save(client, workshop_id, PHOTO_STAGE, PHOTO_ENTITY,
+          {"workshopTitle": "Ikat", PHOTO_FIELD: env["foreign_photo"]})
+    payload = _sources(client, workshop_id)
+    assert env["foreign_photo"] not in payload["media"]
+    assert "could not be included" in " ".join(payload["warnings"]["media"])
+
+    _save(client, workshop_id, PHOTO_STAGE, PHOTO_ENTITY,
+          {"workshopTitle": "Ikat", PHOTO_FIELD: env["own_photo"]})
+    payload = _sources(client, workshop_id)
+    assert env["own_photo"] in payload["media"]
+    assert payload["media"][env["own_photo"]]["source"] == env["own_photo"]
+    assert set(payload) >= {"references", "districtPoints", "questionnaires", "transcripts", "aiLayers"}
+
+
+def test_the_offline_report_sources_are_refused_to_a_stranger(env, client, stranger_client):
+    """Nothing about a workshop reaches a device whose account may not open it."""
+    workshop_id = _workshop(env)
+    response = stranger_client.get(f"/api/design-workshops/{workshop_id}/report/sources")
+    assert response.status_code in (403, 404), response.text
+
+
 # --------------------------------------------------------------------------------------
 # 2. Recordings and their transcripts
 # --------------------------------------------------------------------------------------

@@ -278,7 +278,12 @@ first because it is the one that changed under this document's feet.
   the project's plan, not this repository, decides whether provider-side backups exist at all. No
   application configuration is required or possible either way. Re-confirm on the next provider
   move, with a date, as before.
-- Passwords are stored as bcrypt hashes (`passlib`, `CryptContext(schemes=["bcrypt"])`). An account
+- Passwords are stored as bcrypt hashes — `$2b$`, cost 12 — written by `bcrypt` itself since 2026-10-09
+  (`backend/app/core/security.py`; until then through passlib, which is unmaintained and could not run on
+  bcrypt 5). The new code truncates to bcrypt's 72 bytes explicitly and keeps passlib's two refusals (a
+  NUL character, more than 4096 bytes of UTF-8 — passlib measured the encoded secret, not its
+  characters), so every stored hash verifies exactly as before —
+  `backend/tests/test_password_hash_compat.py` checks hashes passlib wrote. An account
   CREATED by Google sign-in has no password hash at all; an account that has a password keeps it when
   its owner later signs in with Google (§3.3).
 - **Nothing is encrypted at the column level.** Artisan names, phone numbers, addresses, GPS
@@ -297,7 +302,7 @@ first because it is the one that changed under this document's feet.
 | Media object keys / public URLs | `MediaFile.url` in Postgres, and in every client | Plaintext, and the URL alone grants read access |
 | Auth token (web) | `localStorage["field_repo_token"]` | Plaintext, readable by any script on the origin |
 | Auth token (Android) | `SharedPreferences("field_repository_auth")`, `MODE_PRIVATE` | Plaintext file in app-private storage; readable on a rooted device, and `android:allowBackup="true"` means it can leave the device in a backup |
-| `.env` on EC2 | `/home/ubuntu/app/current/backend/.env`, `EnvironmentFile=` | Plaintext on an unencrypted-by-default EBS volume; holds `DATABASE_URL`, `JWT_SECRET`, AWS keys, every AI provider key. `current` is a symlink to the live release ([CI.md](CI.md) §1.2), and **each release directory keeps the `.env` it was deployed with** — three retained releases, plus any directory a failed deploy attempt left behind since 2026-09-17, so the number of plaintext copies is `ls /home/ubuntu/app/releases \| wc -l` and not a constant |
+| `.env` on EC2 | `/home/ubuntu/app/current/backend/.env`, `EnvironmentFile=` | Plaintext on the EBS root volume — unencrypted on the box running on 2026-10-09, encrypted at rest on the Ubuntu 26.04 rebuild `infra/terraform/main.tf` declares that day (§5 P3); holds `DATABASE_URL`, `JWT_SECRET`, AWS keys, every AI provider key. `current` is a symlink to the live release ([CI.md](CI.md) §1.2), and **each release directory keeps the `.env` it was deployed with** — three retained releases, plus any directory a failed deploy attempt left behind since 2026-09-17, so the number of plaintext copies is `ls /home/ubuntu/app/releases \| wc -l` and not a constant |
 | Temporary media during processing | `tempfile` on the EC2 disk (ffmpeg/transcription) | Plaintext; removed after the job |
 | CSV / dataset exports | Streamed to the downloader | Plaintext; once downloaded the data is outside every control in this document |
 
@@ -311,8 +316,9 @@ first because it is the one that changed under this document's feet.
 |---|---|---|
 | Algorithm | HS256 (HMAC), **pinned on decode** | `decode_access_token(..., algorithms=[settings.jwt_algorithm])` |
 | Allowed algorithms | HS256 / HS384 / HS512 only | `Settings._normalise_jwt_algorithm` — `JWT_ALGORITHM=none` refuses to start |
-| Expiry | `JWT_EXPIRES_MINUTES`, default 10080 (7 days) | `create_access_token`; `verify_exp` + `require_exp` on decode |
-| Subject | `sub` = user id, required | `require_sub` on decode, re-checked in `deps.get_current_user` |
+| Expiry | `JWT_EXPIRES_MINUTES`, default 10080 (7 days) | `create_access_token`; `verify_exp` + `require: ["exp", …]` on decode |
+| Subject | `sub` = user id, required, a string | `require: [… "sub"]` on decode (PyJWT also refuses a non-string `sub`), re-checked in `deps.get_current_user` |
+| Library | PyJWT since 2026-10-09 (python-jose before: its last release depends on `ecdsa`, CVE-2024-23342). Tokens are byte-identical to jose's; jose-minted tokens stay valid | `backend/tests/test_jwt_compat.py` holds tokens jose minted and the byte comparison |
 | Password binding | `cred` = 16 hex characters of a SHA-256 of the account's `passwordHash` as it stood when the token was minted, on every token minted since 2026-10-09 (§3.6) | `create_access_token(credential=…)`, which reserves the claim; compared with the row in `deps._user_from_bearer` |
 | Secret | ≥ 32 characters, never the example placeholder | `verify_jwt_configuration()` at `create_app()` |
 
@@ -481,6 +487,50 @@ An account Google created, with no password, behaves exactly as it always did. *
 lasts as long as the account's password does not change** (§3.6): it carries the fingerprint of
 whatever password the account held when it signed in, so a password set by any door afterwards ends
 it, and a name or avatar correction does not.
+
+### 3.3A Microsoft and Yahoo sign-in (2026-10-10)
+
+Both are OpenID Connect, driven as an **authorization code with PKCE (S256) and a nonce**, and
+**redeemed by the backend** with the client secret (`backend/app/services/oidc_sign_in.py`). Yahoo's
+token endpoint accepts only a client secret and answers no cross-origin request, so no phone and no
+browser could redeem a Yahoo code without holding a secret it must not hold; Microsoft is driven the
+same way so there is one path. Each provider is live only when its client ID and secret are both set
+(`MICROSOFT_CLIENT_ID`/`_SECRET`, `YAHOO_CLIENT_ID`/`_SECRET`); the clients draw a button only when
+their own build carries the client ID — never a disabled one.
+
+- **One redirect URI**, the web app's `/login/callback` (a route handler). A web `state` goes back to
+  `/login` with the answer in the URL **fragment**, so the code reaches no server log and no
+  `Referer`; the page removes it from the address bar before using it. A `state` starting `app.` is
+  handed to the Android app on `com.designprototype.workshop.signin://oidc/callback`, where AppAuth
+  refuses any `state` it did not send. A code intercepted on that hop is useless without the PKCE
+  verifier, which never leaves the app (or the browser tab) that started the flow.
+- **The ID token is verified even though it arrived on the TLS back channel**: signature against the
+  provider's JWKS (RS256 or ES256 only — `none` and HMAC are refused before a key is looked up), issuer
+  (Yahoo's fixed one; Microsoft's per-tenant one, bound to the token's `tid` and to `MICROSOFT_TENANT`),
+  audience (with several, `azp` must be ours), `exp`/`nbf`/`iat` with a minute of leeway, and the
+  **nonce**: the provider is sent `base64url(sha256(raw))` and the backend is sent the raw value, so a
+  token is accepted only from whoever started the flow that minted it. Keys are cached for an hour and
+  refetched for an unknown `kid` at most once a minute.
+- **The address must be verified by the provider.** Yahoo: `email_verified` true. Microsoft: a
+  personal account (tenant `9188040d-…`) carries an address Microsoft verified; a work or school
+  account's `email` is whatever its tenant says, so it counts only with the optional claim
+  `xms_edov` true — the owner must add `email` and `xms_edov` to the registration's ID token
+  (Token configuration). This is what closes the "nOAuth" takeover, where a tenant administrator sets
+  somebody else's address on an account they control. An unverified address is a 401 before admission
+  is consulted, so nothing is written.
+- **Admission and linking are Google's** (§3.3, through the one function both paths end in,
+  `auth._sign_in_verified_mailbox`): the allow-list decides before any write, the same tiers, the
+  same master-admin rules, a password account stays a password account. **One difference: no Gmail
+  spelling is folded to find an account.** That fold rests on Google running Gmail and publishing its
+  spelling rule; Microsoft and Yahoo promise nothing about other spellings of the address they
+  verified, so their sign-in finds an account at the literal address or creates one. (The allow-list
+  itself still reads a Gmail mailbox's spellings, as it does for a password sign-in.) A new account is
+  recorded with `authProvider` `MICROSOFT` or `YAHOO`; a second provider on an existing account
+  changes neither the provider nor the avatar.
+- **Logged**: the provider and a reason tag (`nonce-mismatch`, `wrong-audience`,
+  `redemption-refused` with the provider's fixed error code, …). Never a code, verifier, nonce,
+  token, secret or response body. The person reads one sentence per provider — "did not complete",
+  "was cancelled", or "has not confirmed the email address".
 
 ### 3.4 Provisioned passwords, and the forced change
 
@@ -1393,6 +1443,13 @@ credential along with the old code.
 1. **EC2 console → Volumes:** check *Encrypted*. If `Not encrypted`, snapshot → copy snapshot with
    encryption enabled → create a volume from the copy → attach (requires a stop/start window). Set
    *Account attributes → EBS encryption by default* so future volumes are covered.
+   **Status 2026-10-09:** the running box's root volume reads `Encrypted: false`, and EBS encryption by
+   default is off in `ap-south-1` (both read that day). The Ubuntu 26.04 rebuild declared in
+   `infra/terraform/main.tf` the same day gives the replacement box `encrypted = true` on its root
+   (the AWS-managed `aws/ebs` key), so the snapshot route is not needed for this box — the old volume
+   stops mattering once the old instance is retired. Its plaintext `.env` copies are still on it while
+   it sits stopped as the rollback, so terminate it, with its volume, once the rebuild has held.
+   The account-level default is still worth setting.
 2. Move secrets to **AWS Systems Manager Parameter Store (SecureString)** or Secrets Manager and
    have the deploy fetch them at start, rather than writing a plaintext `.env`.
 3. `chmod 600 /home/ubuntu/app/releases/*/backend/.env` (systemd `EnvironmentFile=` reads it as

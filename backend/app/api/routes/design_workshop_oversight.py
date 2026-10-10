@@ -108,7 +108,8 @@ from app.services.artisan_xlsx import (
     pro_forma_filename,
 )
 from app.services.concurrency import gather_reads
-from app.services.custom_sections import load_definition_or_empty
+from app.services.custom_sections import definition_payload, load_definition_or_empty
+from app.services.design_workshop_reader_media import workshop_media_for_reader
 from app.services.design_workshops import (
     entry_rows,
     named_designer_team,
@@ -619,11 +620,11 @@ async def read_overseen_workshop(
     * Anything that writes. There is no ``for_edit``, no PATCH twin, no stage save and no report
       route on this prefix, and ``load_overseen_workshop_or_404`` takes no ``for_edit`` parameter.
 
-    Whether an officer SHOULD see the workshop's photographs and recordings is an owner's decision
-    that has not been made. It is deliberately not made here by accident: today the answer is no,
-    stated in one place, rather than yes by inheritance from a predicate written for co-designers.
-    The inspector surface one scope over carries the identical non-decision and it is the same
-    question.
+    THE WORKSHOP'S OWN FILES ARE A SECOND READ, NOT A KEY HERE (owner's ruling, sweep item F5,
+    2026-10-10): ``GET /assigned/{workshop_id}/media`` behind the same loader, signed and read-only
+    — see ``services/design_workshop_reader_media``. The inspector surface one scope over took the
+    same ruling the same day. The workshop's custom QUESTIONS travel here as ``customSections``, so
+    the ``custom`` answers are read with their wording.
 
     Provenance names ARE resolved, because "who wrote this field" is most of what supervision is
     for, and the ids without them are unreadable.
@@ -637,6 +638,7 @@ async def read_overseen_workshop(
     summary["completeness"] = workshop_completeness(entries, definition=definition)
     summary["schemaVersion"] = registry_version()
     summary["customSchemaVersion"] = definition.version
+    summary["customSections"] = definition_payload(definition)
     summary["oversight"] = await oversight.oversight_rows(workshop_id)
     # WHO SIGNED IT OFF, as names (2026-10-09): a supervisor reading a report that has been approved
     # or handed on is owed who did it. One query, and none until somebody has.
@@ -648,6 +650,19 @@ async def read_overseen_workshop(
     # cheaper than the bug report.
     summary["readOnly"] = True
     return summary
+
+
+@router.get("/assigned/{workshop_id}/media")
+async def read_overseen_workshop_media(
+    workshop_id: str, current_user: Any = Depends(require_officer)
+) -> dict[str, Any]:
+    """The photographs, recordings and attachments of one workshop this officer supervises. READ-ONLY.
+
+    ``load_overseen_workshop_or_404`` first — a post holder not posted to this workshop gets the 404
+    a missing id gets — then ``workshop_media_for_reader``, which signs every URL it keeps.
+    """
+    await oversight.load_overseen_workshop_or_404(workshop_id, current_user)
+    return await workshop_media_for_reader(workshop_id, current_user)
 
 
 # --------------------------------------------------------------------------------------

@@ -288,7 +288,7 @@ test("the way into a stage is a link, and the preview says what it is showing", 
   const completeness = page.slice(page.indexOf("Required fields across all 22 stages"));
   // The sentence that tells a designer WHY correcting a value means opening the stage: what is on
   // the page is the stage entry's frozen copy, not the record it was copied from.
-  expect(completeness).toContain("not the repository records they were");
+  expect(completeness).toContain("not the artisan or product records they were");
   // And the way in is a navigation to the stage, not a control on the sheet.
   expect(completeness).toContain("href={`/design-workshops/${id}/stages/${stage.key}`}");
 });

@@ -44,7 +44,7 @@ The app is split into:
 - `backend/`: Python FastAPI REST API, JWT auth, Prisma ORM schema/client, PostgreSQL metadata, S3-compatible signed uploads, CSV export.
 - `frontend/`: Next.js TypeScript + Tailwind CSS web interface for admins and researchers.
 - `android/`: Kotlin + Jetpack Compose Android client using the same REST API.
-- `docker-compose.yml`: local PostgreSQL and MinIO object storage.
+- `docker-compose.yml`: local PostgreSQL 17 and S3-compatible object storage (Silo, a maintained MinIO fork).
 
 ## Architecture
 
@@ -120,14 +120,18 @@ docker compose ps
 
 This starts:
 
-- PostgreSQL at `localhost:55432` on the host, mapped to `5432` inside the container
-- MinIO API at `localhost:9000`
-- MinIO console at `localhost:9001`
+- PostgreSQL 17 at `localhost:55432` on the host, mapped to `5432` inside the container
+- S3-compatible object storage at `localhost:9000` — Silo, a maintained fork of MinIO
+  (`docker.io/pgsty/silo`); the compose service is still called `minio`
+- its console at `localhost:9001`
 - A one-shot bucket initializer for the local media bucket `design-workshop` (it must stay in step
   with `AWS_S3_BUCKET`; the production bucket is a different, pre-rebrand name that cannot be
   renamed — see `docs/ENVIRONMENT.md`)
 
 ### 2. Configure And Run Backend
+
+Python **3.14** (`backend/pyproject.toml` requires `>= 3.14`; production, the Dockerfile and CI all
+run it):
 
 ```powershell
 cd backend
@@ -136,7 +140,7 @@ python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.lock
 pip install -e . --no-deps
-python -m prisma generate --schema=prisma/schema.prisma
+python scripts/generate_prisma_client.py
 python -m prisma migrate deploy --schema=prisma/schema.prisma
 python scripts/seed_admin.py
 uvicorn app.main:app --reload --port 8000
@@ -148,8 +152,10 @@ a `prisma migrate dev --name init` that used to be here:
 - **The lock, then the project with `--no-deps`.** `requirements.lock` is the pinned resolution CI and
   the EC2 deploy install from; `--no-deps` stops pip re-resolving the project's own ranges past it, so
   a laptop runs the versions production runs ([docs/CI.md](docs/CI.md) §1.3).
-- **`prisma generate`** writes the client every module that reaches the database imports, and talks to
-  no database.
+- **`scripts/generate_prisma_client.py`** runs `prisma generate` — which writes the client every
+  module that reaches the database imports, and talks to no database — and then adds one line to the
+  generated `types.py` without which importing that client on Python 3.14 takes many minutes and
+  gigabytes. Every automated generate (CI, the deploy, the Dockerfile) runs the same script.
 - **`prisma migrate deploy`, never `prisma migrate dev`.** Migrations in this repository are
   hand-written, forward-only files under `backend/prisma/migrations/`; `deploy` applies them in order.
   `dev` would try to author a new migration from any drift it detects, and may offer to reset the
@@ -214,7 +220,7 @@ npm run dev -- -H 127.0.0.1 -p 3000
 
 - Web app: `http://localhost:3000`
 - API docs: `http://localhost:8000/docs`
-- MinIO console: `http://localhost:9001`
+- Object-storage console (Silo, a MinIO fork): `http://localhost:9001`
 
 The local admin account is seeded by `backend/scripts/seed_admin.py` from `backend/.env`:
 
@@ -642,7 +648,7 @@ build time**: none can be a secret, and changing one on Vercel needs a redeploy 
 
 The application requires **PostgreSQL and nothing more specific**. `backend/prisma/schema.prisma`
 declares `provider = "postgresql"`, no migration installs an extension, and `docker-compose.yml`
-runs `postgres:16-alpine` locally. Any managed PostgreSQL, or a server you run yourself, is a
+runs `postgres:17-alpine` locally — production's major. Any managed PostgreSQL, or a server you run yourself, is a
 candidate; which one is deployed is a property of the environment, not of the code.
 
 To point a deployment at a different one, set `DATABASE_URL` in `backend/.env` (or the deployment's

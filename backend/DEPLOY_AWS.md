@@ -6,7 +6,7 @@ Architecture for the cheapest durable setup:
 |----------------|------------------------|-------------|
 | Database       | **Managed PostgreSQL** (not provisioned here) | Already persistent. This guide provisions no database and names no provider: the box only needs a `DATABASE_URL`. Which provider is deployed is recorded once, under "The database" in [../docs/ENVIRONMENT.md](../docs/ENVIRONMENT.md). |
 | Object storage | **AWS S3**             | Durable, 11 9's |
-| API server     | **AWS EC2 (t3.micro)** | The only piece you host |
+| API server     | **AWS EC2 (t3.medium)** | The only piece you host |
 | Web frontend   | **Vercel** (free) or the same EC2 | — |
 
 Keep the database off the box and media on S3, so the EC2 box is stateless and can be rebuilt
@@ -16,8 +16,12 @@ anytime without data loss. That is the whole reason this guide provisions no dat
 
 ## 1. Which EC2 instance
 
-- **Recommended: `t3.small`** — 2 vCPU (burstable), **2 GiB RAM**, **not free-tier eligible**
-  (~$0.0224/hr, ~$16/month in `ap-south-1`). This is what production runs on as of 2026-09-17.
+- **Recommended: `t3.medium`** — 2 vCPU (burstable), **4 GiB RAM**, **not free-tier eligible**
+  ($0.0448/hr on demand in `ap-south-1`, ~$33/month; AWS price list, read 2026-10-09). This is what
+  `infra/terraform/main.tf` declares since 2026-10-09 for the Ubuntu 26.04 rebuild: Python 3.14 holds
+  ~170 MiB more per process than 3.12, ~356 MB across uvicorn and the queue worker, and on 2 GiB that
+  comes out of the memory the app sizes its media reads by ([docs/OPEN_FINDINGS.md](../docs/OPEN_FINDINGS.md)).
+  Production has run on a **`t3.small`** (2 GiB, $0.0224/hr) since 2026-09-17, until that rebuild replaces it.
 - **`t3.micro` (1 GiB, free-tier eligible) is no longer enough, and that is a measurement rather
   than caution.** It was the recommendation here until 2026-09-17, when a deploy failed with the
   API unable to answer `/health` on its own loopback for five minutes. The box was thrashing —
@@ -31,7 +35,9 @@ anytime without data loss. That is the whole reason this guide provisions no dat
   disabled, and expect to tune the ceilings below downwards.
 - **Do NOT** try to `npm run build` the Next.js frontend on this box either way — deploy the
   frontend to **Vercel**, which is what this project does (see `docs/DEPLOYMENT_VERCEL.md`).
-- AMI: **Ubuntu Server 24.04 LTS**. Storage: **30 GiB gp3** (free-tier max).
+- AMI: **Ubuntu Server 26.04 LTS** (resolute) for a new box — what `infra/terraform/main.tf` selects
+  since 2026-10-09; the box running today is 24.04 (noble), and both are covered below. Storage:
+  **30 GiB gp3** (free-tier max).
 - Add a **2 GiB swap file** (below) so `pip install` / `prisma generate` don't get OOM-killed.
 
 > The "Free tier eligible" badge on larger types (m7i-flex.large etc.) refers to the new account
@@ -43,7 +49,8 @@ anytime without data loss. That is the whole reason this guide provisions no dat
 
 ## 2. Launch + network
 
-1. **Launch instance** → Ubuntu 24.04, `t3.micro`, new key pair (download the `.pem`).
+1. **Launch instance** → Ubuntu 26.04, `t3.medium`, an **encrypted** gp3 root volume, new key pair
+   (download the `.pem`).
 2. **Elastic IP**: Allocate one and **associate it** with the instance. This gives a *stable* public
    IP (DHCP-style changes were exactly the LAN problem earlier — don't repeat it in the cloud).
 3. **Security group (inbound rules):**
@@ -62,7 +69,32 @@ ssh -i your-key.pem ubuntu@<ELASTIC_IP>
 sudo fallocate -l 2G /swapfile && sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
 echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
 
-sudo apt update && sudo apt install -y python3.12-venv python3-pip git
+# libatomic1 is for the Node 26 the deploy pins for the Prisma CLI; curl and ca-certificates fetch the
+# interpreter below. No Python package from apt: neither Ubuntu's own python3.14 nor a PPA.
+sudo apt update
+sudo apt install -y git libatomic1 curl ca-certificates openssl
+
+# UPSTREAM CPYTHON 3.14.8 — what every release venv is built with, the same pinned python-build-standalone
+# build the deploy installs (BOX_PYTHON_* in .github/workflows/deploy-backend.yml; take the four values
+# from there, never from memory). These are that step's own commands: a private root-owned staging
+# directory beside the target, the digest checked BEFORE anything is unpacked, the standard library
+# byte-compiled as root (the units' user cannot write __pycache__ there), and one rename into a
+# root-owned directory named for the version and the build.
+PY_VERSION=3.14.8 PY_BUILD=20261009
+PY_URL="https://github.com/astral-sh/python-build-standalone/releases/download/${PY_BUILD}/cpython-${PY_VERSION}%2B${PY_BUILD}-x86_64-unknown-linux-gnu-install_only.tar.gz"
+PY_SHA256=83f9cb480b702548c592443f86209cf0fc03448d90692df257f095c01791dccc
+PY_HOME="/opt/cpython/${PY_VERSION}+${PY_BUILD}"
+sudo install -d -o root -g root -m 0755 /opt/cpython
+STAGE="$(sudo mktemp -d /opt/cpython/.incoming.XXXXXX)"
+sudo curl -fsSL -o "$STAGE/python.tar.gz" "$PY_URL"
+echo "${PY_SHA256}  $STAGE/python.tar.gz" | sudo sha256sum -c -   # stop here if this says FAILED
+sudo tar -xzf "$STAGE/python.tar.gz" -C "$STAGE" --no-same-owner && sudo rm -f "$STAGE/python.tar.gz"
+sudo "$STAGE/python/bin/python3.14" -I -m compileall -q "$STAGE/python/lib/python3.14"
+echo "$PY_SHA256" | sudo tee "$STAGE/python/.pbs-sha256" >/dev/null   # the deploy checks this marker
+echo "$PY_URL" | sudo tee "$STAGE/python/.pbs-url" >/dev/null
+sudo chown -R root:root "$STAGE/python" && sudo chmod -R go-w "$STAGE/python"
+sudo mv -T "$STAGE/python" "$PY_HOME" && sudo rm -rf "$STAGE"
+"$PY_HOME/bin/python3.14" -VV
 
 # The release layout the deploy expects. See §3.1 — do not clone into /home/ubuntu/app/backend.
 mkdir -p /home/ubuntu/app/releases/manual/backend
@@ -78,15 +110,32 @@ cp -a /tmp/repo/backend/. /home/ubuntu/app/releases/manual/backend/
 ln -sfn /home/ubuntu/app/releases/manual /home/ubuntu/app/current
 cd /home/ubuntu/app/current/backend
 
-python3.12 -m venv .venv
+"$PY_HOME/bin/python3.14" -m venv .venv
 # FROM THE LOCK, and then the project with NO dependency resolution. `pip install -e .` on its own
 # re-resolves this project's declared ranges and can lift a pin the lock had settled, which is the
 # whole property the lock exists to have — CI, this box and a developer's venv resolving to the same
 # versions. See docs/CI.md §1.3 for how the lock is refreshed (in a container, deliberately).
 ./.venv/bin/pip install -r requirements.lock
 ./.venv/bin/pip install -e . --no-deps
-PATH="$PWD/.venv/bin:$PATH" ./.venv/bin/python -m prisma generate
+# Through the script, not a bare `prisma generate`: it adds the one line that keeps the generated
+# client importable in seconds on Python 3.14 (without it, minutes and well over a gigabyte).
+PATH="$PWD/.venv/bin:$PATH" ./.venv/bin/python scripts/generate_prisma_client.py
 ```
+
+**Running the Prisma CLI by hand** (`migrate status`, `migrate deploy`) — use the Node the deploy
+pinned, the same way the deploy does, or prisma-client-py falls back to whatever older nodeenv it
+finds in `~/.cache/prisma-python/nodeenv`:
+
+```bash
+cd /home/ubuntu/app/current/backend
+export PRISMA_NODEENV_CACHE_DIR="$HOME/.cache/prisma-python/nodeenv-26.11.1"   # = PRISMA_CLI_NODE_VERSION
+export PRISMA_USE_GLOBAL_NODE=false PRISMA_USE_NODEJS_BIN=false
+set -a; . ./.env; set +a
+./.venv/bin/python -m prisma migrate status
+```
+
+Do NOT set `PRISMA_NODEENV_EXTRA_ARGS` to pin Node instead: prisma-client-py 0.15.0 passes it to
+pydantic 2 as a raw string, it fails validation, and every `prisma` command dies before it starts.
 
 Create `backend/.env` (see template in section 5) **inside the release**, at
 `/home/ubuntu/app/current/backend/.env`.
@@ -118,6 +167,19 @@ ls -lt /home/ubuntu/app/releases                   # newest first; the one below
 ln -sfn /home/ubuntu/app/releases/<older-release> /home/ubuntu/app/current
 sudo systemctl restart fieldrepo fieldrepo-queue
 ```
+
+**A release runs the interpreter it was built with, and a rollback needs that interpreter still
+installed.** Releases built before 2026-10-09 run Python 3.12 — their venvs symlink
+`/usr/bin/python3.12`, Ubuntu 24.04's own interpreter. A release built from the deadsnakes PPA's
+`python3.14` — which this runbook and the deploy named on 24.04 for a few hours of 2026-10-09, before
+any deploy ran it — would run `/usr/bin/python3.14`. Every release since runs the pinned upstream
+CPython under `/opt/cpython/<version>+<build>`. So do not remove `python3.12`, a deadsnakes
+`python3.14`, or an older `/opt/cpython/*` build while a release in `releases/` still runs it —
+`readlink -f releases/*/backend/.venv/bin/python` says which, and the deploy's install step prints the
+same list and warns about any that will not run. The deploy keeps three released trees, so old ones
+age out on their own three deploys later. A 24.04 box that has the deadsnakes PPA keeps it until then;
+the deploy neither adds it nor upgrades from it any more, and the step's comment has the one-line
+removal for afterwards.
 
 Seconds, no network fetch. **The one thing a flip cannot undo is an applied migration** — if the
 release you are rolling back to predates a migration that has run, the old code meets a schema it was
@@ -395,8 +457,10 @@ Everything below is codified in the repo so the only manual inputs are credentia
 ### 8.1 Provision with Terraform (`infra/terraform/`)
 
 Creates the **S3 bucket** (public-read `media/*` + CORS), an **IAM user** with
-`PutObject/GetObject/DeleteObject` and a fresh **access key**, and a **t3.small**
-(a `t3.micro` until 2026-09-17; §1 says why) EC2 box with an **Elastic IP**, a 2 GiB swap file, **nginx** (reverse proxy on 80,
+`PutObject/GetObject/DeleteObject` and a fresh **access key**, and a **t3.medium**
+(a `t3.micro` until 2026-09-17 and a `t3.small` until the 2026-10-09 rebuild; §1 says why) EC2 box
+on Ubuntu 26.04 with an encrypted root volume, an **Elastic IP**, a 2 GiB swap file, the pinned
+upstream CPython the release venvs are built with, **nginx** (reverse proxy on 80,
 so port 8000 is never exposed) and **ffmpeg** (needed for Whisper long-audio
 chunking), plus the `fieldrepo` systemd unit. It creates **no database** — that stays off the box.
 
@@ -423,6 +487,15 @@ terraform output -raw media_secret_access_key   # -> AWS_SECRET_ACCESS_KEY (sens
 
 `terraform.tfstate` and `*.tfvars` are gitignored — they hold the generated
 secret key; never commit them.
+
+**Rebuilding THIS deployment's box is not an `apply`.** Since 2026-10-09 `aws_instance.api` declares
+the Ubuntu 26.04 `t3.medium` with an encrypted root, and an encrypted root cannot be added to the
+running instance, so every plan proposes replacing it — terminating production and moving the Elastic
+IP onto an empty box. `prevent_destroy` makes that plan an error. The blue/green procedure that
+replaces it (forget the old instance in the state, create the new one with `-target`, wait for its
+first boot to finish — `cloud-init status --wait` over SSM — deploy to it, move the Elastic IP, stop
+the old one) is written out on the `lifecycle` block of `aws_instance.api` in
+`infra/terraform/main.tf`.
 
 ### 8.2 GitHub Actions secrets (auto-deploy on push)
 

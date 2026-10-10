@@ -23,7 +23,7 @@ from app.services.report_builder import sign_off_lines
 
 BACKEND = Path(__file__).resolve().parents[1]
 SCHEMA = BACKEND / "prisma" / "schema.prisma"
-MIGRATION = BACKEND / "prisma" / "migrations" / "20261009120000_design_workshop_approvals" / "migration.sql"
+MIGRATION = BACKEND / "prisma" / "migrations" / "20261010160000_design_workshop_approvals" / "migration.sql"
 AT = datetime(2026, 10, 10, 9, 30, tzinfo=UTC)
 
 

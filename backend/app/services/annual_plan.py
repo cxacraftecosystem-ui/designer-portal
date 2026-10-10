@@ -98,7 +98,8 @@ from typing import Any
 from fastapi import HTTPException, status
 
 from app.core.db import db
-from app.core.deps import has_rank
+from app.core.deps import has_rank, role_value
+from app.services.address import INDIAN_STATES_AND_UNION_TERRITORIES, normalize_state
 from app.services.annual_plan_xlsx import (
     MAX_PLAN_ROWS,
     ParsedAnnualPlan,
@@ -117,11 +118,14 @@ __all__ = [
     "MAX_REPORTED_CHANGES",
     "apply_parsed_plan",
     "can_manage_annual_plan",
+    "can_read_annual_plan",
     "entry_payload",
+    "plan_scope",
     "plan_year_label",
     "promote_entry",
     "promotion_title",
     "reinstate_entry",
+    "set_regional_states",
     "standing_of",
     "withdraw_entry",
 ]
@@ -148,12 +152,11 @@ def can_manage_annual_plan(user: Any) -> bool:
     403 that reads as a bug.
 
     A FLOOR AND NOT A SET, which is the other half of the choice. The tiers immediately below —
-    REGIONAL_DIRECTOR (45) and ASSISTANT_DIRECTOR (42) — are deliberately OUTSIDE it. The annual
-    plan is a national instrument issued once a year; a regional director correcting the row for
-    their own state would be correcting a document they did not issue, and this table has no
-    per-region column an edit could be narrowed to. If regional editing is ever wanted it is a
-    SCOPE TABLE and not a rank change — the same distinction `DesignWorkshopViewer` draws against
-    `DESIGN_WORKSHOP_ROLES`.
+    REGIONAL_DIRECTOR (45) and ASSISTANT_DIRECTOR (42) — are deliberately OUTSIDE it: the annual plan
+    is a national instrument issued once a year. Since 2026-10-10 a Regional Director reaches the
+    directory through :func:`can_read_annual_plan` instead, narrowed by a SCOPE table
+    (``RegionalDirectorState``) to their own states' rows — not by a rank change, which would hand
+    them the whole directory.
 
     READ IS THE SAME GATE AS WRITE, for the reason the access roster's is: the directory is a list
     of named places and dates the ministry has not announced yet, so reading it is administrative
@@ -161,6 +164,132 @@ def can_manage_annual_plan(user: Any) -> bool:
     the unannounced plan browsable by people who cannot be told apart from those who may change it.
     """
     return has_rank(user, "MINISTRY_ADMIN")
+
+
+# --------------------------------------------------------------------------------------
+# The Regional Director's scope — their own states' rows, and nothing else (2026-10-10)
+# --------------------------------------------------------------------------------------
+
+#: The one tier below the floor that may reach the directory at all, and only through a scope.
+REGIONAL_PLAN_ROLE = "REGIONAL_DIRECTOR"
+
+
+def can_read_annual_plan(user: Any) -> bool:
+    """May this account open the annual plan at all — the Ministry Admin and above, whole; a
+    Regional Director, narrowed to the states assigned to them (:func:`plan_scope`).
+
+    NOT A WIDER FLOOR. An Assistant Director (42) sits between nobody here and stays refused; a
+    Regional Director is admitted by NAME, and what they then see and correct is decided row by row
+    by ``RegionalDirectorState``, which a Ministry Admin writes. A director with no state assigned
+    reads an empty directory and corrects nothing. Upload, export, the pro-forma, promotion,
+    withdrawal and reinstatement stay :func:`can_manage_annual_plan`'s — those act on the national
+    instrument, not on one state's rows.
+    """
+    return can_manage_annual_plan(user) or role_value(user) == REGIONAL_PLAN_ROLE
+
+
+async def plan_scope(user: Any) -> list[str] | None:
+    """``None`` for the whole directory (a manager), else the states this director answers for.
+
+    Read per request rather than cached on the account, so a Ministry Admin's change takes effect on
+    the director's next request. Sorted, so the list on the wire is stable.
+    """
+    if can_manage_annual_plan(user):
+        return None
+    if role_value(user) != REGIONAL_PLAN_ROLE:
+        # Unreachable behind the route gate; an empty scope is the fail-closed answer regardless.
+        return []
+    rows = await db.regionaldirectorstate.find_many(where={"userId": str(user.id)})
+    return sorted({str(row.state) for row in rows})
+
+
+def in_scope(row: Any, scope: list[str] | None) -> bool:
+    """Is this plan row inside the caller's scope? ``None`` is the whole directory."""
+    if scope is None:
+        return True
+    return getattr(row, "state", None) in set(scope)
+
+
+REGIONAL_TARGET_REFUSAL = (
+    "States are assigned to Regional Directors only. This account is not a Regional Director, so "
+    "the annual plan has no state of theirs to narrow to."
+)
+
+
+def _unknown_states_detail(unknown: list[str]) -> str:
+    names = ", ".join(f"'{name}'" for name in unknown)
+    verb = (
+        "is not an Indian state or union territory"
+        if len(unknown) == 1
+        else "are not Indian states or union territories"
+    )
+    return f"{names} {verb}. Choose from the state list."
+
+
+async def regional_directors() -> list[dict[str, Any]]:
+    """Every Regional Director account, with the states assigned to each — for the Ministry Admin."""
+    users = await db.user.find_many(
+        where={"role": REGIONAL_PLAN_ROLE}, order=[{"name": "asc"}, {"id": "asc"}]
+    )
+    ids = [str(user.id) for user in users]
+    rows = (
+        await db.regionaldirectorstate.find_many(where={"userId": {"in": ids}}) if ids else []
+    )
+    states: dict[str, list[str]] = {}
+    for row in rows:
+        states.setdefault(str(row.userId), []).append(str(row.state))
+    return [
+        {
+            "id": str(user.id),
+            "name": getattr(user, "name", None) or "",
+            "email": getattr(user, "email", None) or "",
+            "states": sorted(states.get(str(user.id), [])),
+        }
+        for user in users
+    ]
+
+
+async def set_regional_states(target: Any, states: list[str], *, actor: Any) -> list[str]:
+    """Replace the states a Regional Director answers for. Returns the stored list.
+
+    422 for an account that is not a Regional Director (:data:`REGIONAL_TARGET_REFUSAL`) and for a
+    name that is not on the canonical state list — a scope must match ``AnnualPlanEntry.state``
+    exactly, and an unrecognised spelling would grant nothing while looking like a grant. Every
+    accepted spelling is folded through ``normalize_state`` first, which is how the plan's own rows
+    are stored. One transaction: the old set and the new one are never both half-present.
+    """
+    if role_value(target) != REGIONAL_PLAN_ROLE:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=REGIONAL_TARGET_REFUSAL
+        )
+    wanted: list[str] = []
+    unknown: list[str] = []
+    for raw in states:
+        name = normalize_state(raw)
+        if name is None:
+            continue
+        if name not in INDIAN_STATES_AND_UNION_TERRITORIES:
+            unknown.append(name)
+        elif name not in wanted:
+            wanted.append(name)
+    if unknown:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=_unknown_states_detail(unknown)
+        )
+    async with db.tx() as tx:
+        await tx.regionaldirectorstate.delete_many(where={"userId": str(target.id)})
+        if wanted:
+            await tx.regionaldirectorstate.create_many(
+                data=[
+                    {
+                        "userId": str(target.id),
+                        "state": name,
+                        "assignedById": getattr(actor, "id", None),
+                    }
+                    for name in wanted
+                ]
+            )
+    return sorted(wanted)
 
 
 # --------------------------------------------------------------------------------------

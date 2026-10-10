@@ -31,6 +31,10 @@ interface WorkshopRepositoryApi {
     @POST("auth/login")
     suspend fun googleLogin(@Body body: GoogleLoginRequest): TokenResponse
 
+    /** Microsoft or Yahoo: an authorization code for the backend to redeem. See `OidcSignIn.kt`. */
+    @POST("auth/login")
+    suspend fun oidcLogin(@Body body: OidcLoginRequest): TokenResponse
+
     @GET("me")
     suspend fun me(): UserDto
 
@@ -1694,6 +1698,15 @@ interface WorkshopRepositoryApi {
     suspend fun designWorkshopProofread(
         @Path("id") id: String,
         @Body body: DwProofreadBody
+    ): DwAiVerbResultDto
+
+    // A LAYER A MODEL ON THIS PHONE PRODUCED (Tier 2). The body is `dwTier2LayerBody`'s map — the
+    // contract `DwTier2LayerTest` pins and `AiOnDeviceLayerIn` mirrors. Nothing here runs a model and
+    // neither money gate stands in front of it: the run happened on the phone and spent nothing.
+    @POST("design-workshops/{id}/ai-layers/on-device")
+    suspend fun designWorkshopOnDeviceLayer(
+        @Path("id") id: String,
+        @Body body: Map<String, String>
     ): DwAiVerbResultDto
 
     // NO `sourceLayerId` ON THIS BODY AND THERE MUST NEVER BE ONE. `AiExpandIn` has no such field so

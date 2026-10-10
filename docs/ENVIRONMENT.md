@@ -28,7 +28,7 @@ Read it top to bottom once; after that use it as a lookup table. Deployment clic
 Setup, in order, for a fresh machine:
 
 ```powershell
-docker compose up -d                                    # Postgres :55432, MinIO :9000
+docker compose up -d                                    # Postgres 17 :55432, object store (Silo) :9000
 cd backend;  Copy-Item .env.example .env                # then edit
 cd ..\frontend; Copy-Item .env.local.example .env.local # then edit
 ```
@@ -154,7 +154,7 @@ below the line is a property of one deployment and changes without a code change
 | | |
 |---|---|
 | Engine | **PostgreSQL**. Any provider, any host, managed or self-run. |
-| Version | 16 is what `docker-compose.yml` runs locally (`postgres:16-alpine`) and what the migrations are developed against. Nothing in the schema needs a 16-only feature. |
+| Version | 17 — production's major (the managed database) and, since 2026-10-09, what `docker-compose.yml` runs locally (`postgres:17-alpine`) and CI's integration job applies every migration to (`postgres:17`). It was 16 locally and in CI until then. Nothing in the schema needs a version-specific feature. 18 is not supported yet: the pinned prisma-client-py 0.15.0 carries Prisma 5.17 engines that predate it (docs/OPEN_FINDINGS.md). |
 | Extensions | **None.** `grep -r "CREATE EXTENSION" backend/prisma/migrations/` returns one hit and it is inside a comment explaining why `pg_trgm` was *not* adopted. A stock server is enough. |
 | Connection | One `DATABASE_URL` in libpq/Prisma form. TLS for any non-loopback host — see `DATABASE_REQUIRE_SSL` below. |
 | Pooling | The application does not require an external pooler. Prisma opens `DATABASE_CONNECTION_LIMIT` connections per worker; whether those land on a pooler or on the server is the deployment's business. |
@@ -310,6 +310,11 @@ Emitted by `app.main.SecurityHeadersMiddleware`. Defaults are correct for local 
 |---|---|---|---|---|
 | `GOOGLE_CLIENT_ID` | No | unset | No | Google **web** OAuth client ID; ID tokens from web and Android are verified against it. Same value as the frontend's `NEXT_PUBLIC_GOOGLE_CLIENT_ID`. Unset ⇒ Google login rejected. |
 | `GOOGLE_ANDROID_CLIENT_ID` | No | unset | No | Extra accepted audience if Android tokens arrive with the Android client ID. |
+| `MICROSOFT_CLIENT_ID` | No | unset | No | Application (client) ID of the Microsoft Entra app registration. With `MICROSOFT_CLIENT_SECRET` it turns Microsoft sign-in on (`app/services/oidc_sign_in.py`): the clients bring back an authorization code and this server redeems it and verifies the ID token against Microsoft's keys. Either one unset ⇒ every Microsoft sign-in is refused with "not available here". Same value as the frontend's `NEXT_PUBLIC_MICROSOFT_CLIENT_ID` and Android's `microsoftClientId`. |
+| `MICROSOFT_CLIENT_SECRET` | With the above | unset | **Yes** | A client secret of that registration (Certificates & secrets). Backend only — never in a client. It expires (24 months at most); a lapsed one turns every Microsoft sign-in into "did not complete" and logs `redemption-refused` with `invalid_client`. |
+| `MICROSOFT_TENANT` | No | `common` | No | `common` (work, school and personal accounts), `organizations` (work and school only), `consumers` (personal only) or one tenant's ID. Must match "Supported account types" on the registration, and `NEXT_PUBLIC_MICROSOFT_TENANT` / Android's `microsoftTenant`. A tenant given by domain name is refused (Microsoft sign-in stays off and an ERROR is logged): tokens name their tenant by ID. |
+| `YAHOO_CLIENT_ID` | No | unset | No | Client ID (Consumer Key) of the Yahoo app. With `YAHOO_CLIENT_SECRET` it turns Yahoo sign-in on. Same value as `NEXT_PUBLIC_YAHOO_CLIENT_ID` and Android's `yahooClientId`. |
+| `YAHOO_CLIENT_SECRET` | With the above | unset | **Yes** | Client Secret (Consumer Secret) of that app. Yahoo's token endpoint accepts nothing but a secret, which is why the code is redeemed here and never on a phone or in a browser. |
 | `MASTER_ADMIN_EMAIL` | **Yes** | — | No | Google account permanently at `MASTER_ADMIN` (rank 60). The app will not start without it. It is also the break-glass for the forced password change: the one account the API never holds while it carries `mustChangePassword` (`deps.is_configured_master_admin`, since 2026-10-09) — any other `MASTER_ADMIN` is held like everybody else. **Pointing it at an address that already holds a password account needs `scripts/seed_admin.py` first** (since 2026-10-09): the master's Google sign-in makes an existing account the master's only when it already is one or has no password, and answers anything else with a 409 that names the script ([DOCKER.md](DOCKER.md), [SECURITY.md](SECURITY.md) §3.3). |
 | `MASTER_ADMIN_NAME` | No | `Ankit Kumar` | No | Display name for that account. |
 | `DEFAULT_SIGNUP_ROLE` | No | `CROWDSOURCE_VOLUNTEER` | No | Tier given to brand-new self-registered Google accounts on the eleven-tier ladder. Set `RESEARCHER` to restore the old open-signup behaviour. |
@@ -424,8 +429,10 @@ The names, so this file remains a complete index of what `config.py` reads:
 
 ## Frontend — Next.js (`frontend/.env.local`, or the Vercel dashboard)
 
-**Three** variables are read by application code, and **all of them are public** (see rule 1 above):
-`NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_GOOGLE_CLIENT_ID` and `NEXT_PUBLIC_MAPTILER_API_KEY`. A fourth,
+**Six** variables are read by application code, and **all of them are public** (see rule 1 above):
+`NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_GOOGLE_CLIENT_ID`, `NEXT_PUBLIC_MAPTILER_API_KEY`, and since
+2026-10-10 `NEXT_PUBLIC_MICROSOFT_CLIENT_ID`, `NEXT_PUBLIC_MICROSOFT_TENANT` and
+`NEXT_PUBLIC_YAHOO_CLIENT_ID` (`lib/oidcSignIn.ts`). A seventh,
 `NEXT_PUBLIC_APP_URL`, is documented here because the **backend** reads it — no frontend code does.
 
 Re-verify the list rather than trusting it, since a new page can add one at any time:
@@ -445,8 +452,13 @@ bundled.
 | `NEXT_PUBLIC_APP_URL` | No (frontend) | n/a — **no frontend code reads it** | `http://localhost:3000` | your Vercel/custom domain | No | Shares its name with the backend variable so one `.env` can feed both; only the backend (`config.py`) actually reads it. Setting it in Vercel changes nothing today — it is there so the value stays in sync with the backend and with `BACKEND_CORS_ORIGINS`. |
 | `NEXT_PUBLIC_GOOGLE_CLIENT_ID` | No | none | blank | Google web client ID | No | Blank hides the Google button and leaves email/password login. Must equal the backend's `GOOGLE_CLIENT_ID`, and the origin must be an "Authorized JavaScript origin" on that client or GSI returns 403. |
 | `NEXT_PUBLIC_MAPTILER_API_KEY` | No | none | blank | MapTiler key | No (restrict by domain) | Blank ⇒ the map coordinate picker degrades to manual latitude/longitude entry. Never blocks data entry. |
+| `NEXT_PUBLIC_MICROSOFT_CLIENT_ID` | No | none | blank | the Entra app's client ID | No | Blank ⇒ **no** "Continue with Microsoft" button at all. Must equal the backend's `MICROSOFT_CLIENT_ID`, and `https://<this domain>/login/callback` must be a **Web** redirect URI on that registration. Set it only once the backend has the client ID and the secret, or the button signs nobody in. |
+| `NEXT_PUBLIC_MICROSOFT_TENANT` | No | `common` | blank | as the backend's `MICROSOFT_TENANT` | No | The tenant segment of the authorize URL. Anything but `common`, `organizations`, `consumers` or a tenant ID hides the Microsoft button. |
+| `NEXT_PUBLIC_YAHOO_CLIENT_ID` | No | none | blank | the Yahoo app's client ID | No | Blank ⇒ **no** "Continue with Yahoo" button. Must equal the backend's `YAHOO_CLIENT_ID`; `https://<this domain>/login/callback` must be the app's redirect URI. |
 
-On Vercel these three must exist as **Encrypted** variables on Production, Preview and Development,
+On Vercel the first three must exist as **Encrypted** variables (the three sign-in ones too, once the
+owner registers the apps — Production at least, and Preview only if a preview domain is registered as
+a redirect URI), on Production, Preview and Development,
 and `NEXT_PUBLIC_APP_URL` need not exist there at all, because nothing in the bundle would use it.
 ~~They do; it is not set.~~ Measured 2026-10-09, the Preview copies of the three were Sensitive and
 `NEXT_PUBLIC_APP_URL` was present (Sensitive on Production and Preview). Production was unaffected,
@@ -455,8 +467,10 @@ Never re-create any of them as **Sensitive** — see rule 3 above. That mistake 
 as a failed build or a failed deploy; it surfaces as a live site that cannot authenticate, days
 later, with every error message pointing at Google or the backend instead.
 
-There are no server-side environment variables in the frontend: no route handlers, no server
-actions, nothing reads a non-`NEXT_PUBLIC_` value.
+There are no server-side environment variables in the frontend: no server actions, and nothing reads
+a non-`NEXT_PUBLIC_` value. There is one route handler, `app/login/callback/route.ts`, the Microsoft
+and Yahoo redirect URI: it reads only the request's query and redirects (to `/login` with the answer in
+the fragment, or to the Android app's scheme for a `state` the app minted).
 
 `frontend/scripts/pw-smoke.mjs` (a Playwright smoke script, never bundled into the app) reads
 `PW_BASE` (default `http://localhost:3000`), `PW_EMAIL` (default `admin@example.com`) and
@@ -481,6 +495,19 @@ Gradle properties, not environment variables — one line, gitignored.
 Each also reads from the environment for CI: `ANDROID_RELEASE_KEYSTORE`,
 `ANDROID_RELEASE_KEYSTORE_PASSWORD`, `ANDROID_RELEASE_KEY_ALIAS`, `ANDROID_RELEASE_KEY_PASSWORD`.
 
+**Microsoft and Yahoo sign-in** (since 2026-10-10, `data/OidcSignIn.kt`). Public values, compiled
+into `BuildConfig`; each provider's button is drawn only when its client ID AND `oidcRedirectUri` are
+set. Read from `local.properties` or, for CI, the environment variable named in brackets —
+`publish-android.yml` passes the repository **variables** (Settings → Secrets and variables → Actions
+→ Variables) of those names.
+
+| Property | Required | Default | Secret | Notes |
+|---|---|---|---|---|
+| `microsoftClientId` (`MICROSOFT_CLIENT_ID`) | No | blank | No | The backend's `MICROSOFT_CLIENT_ID`. |
+| `microsoftTenant` (`MICROSOFT_TENANT`) | No | `common` | No | The backend's `MICROSOFT_TENANT`. |
+| `yahooClientId` (`YAHOO_CLIENT_ID`) | No | blank | No | The backend's `YAHOO_CLIENT_ID`. |
+| `oidcRedirectUri` (`OIDC_REDIRECT_URI`) | With either | blank | No | The web app's callback, e.g. `https://designer-repository.vercel.app/login/callback` — the same URI the providers hold for the web. The browser tab returns there and the route hands the code to the app on `com.designprototype.workshop.signin://oidc/callback` (AppAuth's receiver, `AndroidManifest.xml`). |
+
 **The signing key is the one secret in this project that cannot be rotated.** Everything else here can
 be reissued: a token, a database password, an API key. An Android signing key cannot — Android
 identifies an app by its signature, so an update signed with a different key is refused by every
@@ -503,7 +530,7 @@ Fixed values, listed so nothing looks mysterious. Change them only if you also c
 | Service | Setting | Value |
 |---|---|---|
 | postgres | `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | `postgres` / `postgres` / `design_workshop`, published on host port **55432** |
-| minio | `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD` | `minioadmin` / `minioadmin`, API on **9000**, console on **9001** |
+| minio | `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD` | `minioadmin` / `minioadmin`, API on **9000**, console on **9001**. The image is Silo (`docker.io/pgsty/silo`), a maintained fork of MinIO, since 2026-10-09; the service keeps its name |
 | create-bucket | — | one-shot job creating the public-download bucket `design-workshop` |
 
 ---
@@ -581,8 +608,14 @@ from your shell — use an IAM admin user's key pair, never root keys. `terrafor
 
 ```bash
 cd backend
-PATH="$PWD/.venv/Scripts:$PATH" PYTHONUTF8=1 .venv/Scripts/python.exe -m prisma generate --schema prisma/schema.prisma
+PATH="$PWD/.venv/Scripts:$PATH" PYTHONUTF8=1 .venv/Scripts/python.exe scripts/generate_prisma_client.py
 ```
+
+`scripts/generate_prisma_client.py` runs exactly `prisma generate --schema prisma/schema.prisma` and
+then adds `from __future__ import annotations` to the generated `types.py`. That line is what makes
+the client importable in seconds on Python 3.14 rather than in the ten-plus minutes this machine used
+to spend (or a `MemoryError`); the script's docstring has the measurements and the cause. A bare
+`prisma generate` still works, and gives you the slow client.
 
 `prisma/generator/generator.py` writes the packaged schema with `pathlib.write_text()` and no
 `encoding=`, so it encodes at the **locale default** — cp1252 on a standard Windows install.

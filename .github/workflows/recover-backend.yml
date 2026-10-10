@@ -49,7 +49,7 @@ concurrency:
 
 jobs:
   recover:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     env:
       AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -196,8 +196,14 @@ jobs:
             if ssh -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=no \
                  "ubuntu@${HOST}" 'echo alive' >/dev/null 2>&1; then
               echo "back after $((i * 15))s"
+              # THE UNITS BY THEIR REAL NAMES. This read `systemctl is-active design-workshop-api`,
+              # a unit that has never existed on this box, so the one line meant to say whether the
+              # API came back after the reboot always answered `inactive`. The box runs the API as
+              # `fieldrepo` and the media queue as `fieldrepo-queue` — the pre-rebrand names that
+              # infra/terraform/user_data.sh explains keeping, and that deploy-backend.yml restarts.
+              # `is-active` prints one state per unit, in order, so both are named on the line.
               ssh -o BatchMode=yes -o StrictHostKeyChecking=no "ubuntu@${HOST}" \
-                'uptime; free -h; systemctl is-active design-workshop-api || true'
+                'uptime; free -h; echo "fieldrepo / fieldrepo-queue:"; systemctl is-active fieldrepo fieldrepo-queue || true'
               exit 0
             fi
             echo "  attempt $i: still closed"

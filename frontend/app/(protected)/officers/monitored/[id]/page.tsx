@@ -34,13 +34,14 @@
  * deliberate, and a second copy here would be two renderers of one registry drifting the first time
  * either is corrected. **If it is ever promoted to `lib/designWorkshops`, this import follows it.**
  *
- * ── MEDIA IS COUNTED AND EXPLAINED, NEVER DRAWN AS AN EMPTY FRAME ────────────────────────────
+ * ── THE WORKSHOP'S FILES AND ITS OWN QUESTIONS ARE SHOWN, READ-ONLY (sweep item F5, 2026-10-10) ──
  *
- * An oversight read carries no photographs, recordings or attachments. "No photograph" and "a
- * photograph this read does not carry" are different facts and the reader has no other way to tell
- * them apart, so the count is printed with the sentence. Whether an officer SHOULD see them is an
- * owner's decision that has not been made — today the answer is no, stated once, rather than yes by
- * inheritance from a predicate written for co-designers.
+ * The files come from this surface's own second read,
+ * `GET /design-workshop-oversight/assigned/{id}/media`, behind the same loader as the workshop, with
+ * short-lived signed links and no control that writes — the same components the inspection screen
+ * draws them with (`components/designworkshop/ReaderWorkshopMedia.tsx`). The workshop's questions
+ * travel on the read as `customSections`, so each stage's custom answers are printed with their
+ * wording and their author.
  */
 
 import Link from "next/link";
@@ -49,9 +50,17 @@ import { Binoculars, Lock } from "lucide-react";
 
 import { useAuth } from "@/components/AuthProvider";
 import { FieldProvenance } from "@/components/designworkshop/FieldProvenance";
+import {
+  ReaderCustomAnswers,
+  ReaderFilesPanel,
+  ReaderMediaProvider,
+  ReaderMediaValue,
+  useReaderMedia
+} from "@/components/designworkshop/ReaderWorkshopMedia";
 import { PageHeader } from "@/components/PageHeader";
 import { StatusBadge } from "@/components/StatusBadge";
 import { ApiError } from "@/lib/api";
+import type { DwCustomDefinition } from "@/lib/customSections";
 import { inspectionFieldReading } from "@/lib/designWorkshopInspections";
 import {
   fetchStageRegistry,
@@ -117,10 +126,7 @@ function ReadField({
     <div className="grid gap-0.5 py-2">
       <span className="field-label">{field.label}</span>
       {reading.kind === "media" ? (
-        <span className="text-sm text-ink-500">
-          {reading.count} file{reading.count === 1 ? "" : "s"} recorded here. An oversight read does
-          not carry photographs, recordings or attachments.
-        </span>
+        <ReaderMediaValue value={row[field.key]} />
       ) : (
         <span className="whitespace-pre-wrap text-sm leading-6 text-ink-900">{reading.text}</span>
       )}
@@ -181,11 +187,14 @@ function ReadStage({
   registry,
   stage,
   data,
-  score
+  score,
+  definition
 }: {
   registry: DwRegistry;
   stage: DwStage;
   data: DwStageData | undefined;
+  /** The workshop's own questions, off the same read — see `customSections`. */
+  definition: DwCustomDefinition | null | undefined;
   /**
    * THIS STAGE'S SCORE, PASSED IN FROM THE WORKSHOP-LEVEL MAP AND NOT READ OFF `data`.
    *
@@ -198,13 +207,7 @@ function ReadStage({
   const singleton: DwEntryData = data?.singleton ?? {};
   const provenance = data?.provenance;
 
-  /**
-   * The answers to this workshop's own questions, counted and no more.
-   *
-   * The keys are the designer's field ids and the labels live behind a route this account is
-   * refused, so printing the keys would put `q_7f3c: "yes"` in front of an officer and call it an
-   * answer. Counting the FILLED ones is the honest maximum.
-   */
+  /** Whether this stage holds any answer to the workshop's own questions — printed below with them. */
   const customAnswers = Object.entries(data?.custom ?? {}).filter(([, value]) =>
     isFilled(value)
   ).length;
@@ -299,13 +302,12 @@ function ReadStage({
           })}
 
           {customAnswers > 0 ? (
-            <p className="rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-xs leading-5 text-ink-500">
-              {customAnswers} answer{customAnswers === 1 ? "" : "s"} to question
-              {customAnswers === 1 ? "" : "s"} this workshop&apos;s designer added to this stage{" "}
-              {customAnswers === 1 ? "is" : "are"} recorded. The questions themselves are read
-              through a route an oversight read does not reach, so the answers are not shown without
-              them.
-            </p>
+            <ReaderCustomAnswers
+              definition={definition}
+              stageKey={stage.key}
+              stamps={provenance?.custom}
+              values={data?.custom}
+            />
           ) : null}
         </div>
       )}
@@ -325,6 +327,8 @@ export default function WorkshopUnderOversightPage({
   const [registry, setRegistry] = useState<DwRegistry | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [registryError, setRegistryError] = useState<string | null>(null);
+  /* The workshop's files, asked for once the workshop itself has been read. */
+  const media = useReaderMedia("oversight", id, detail !== null);
 
   useEffect(() => {
     if (loading || !canReadWorkshopOversight(user)) return;
@@ -460,8 +464,8 @@ export default function WorkshopUnderOversightPage({
         <p className="mb-4 rounded-md border border-ministry-300 bg-ministry-50 px-3 py-2 text-xs leading-5 text-ink-700 dark:border-ministry-900 dark:bg-ministry-950/40">
           <span className="font-semibold text-ministry-700 dark:text-ministry-300">Read-only.</span>{" "}
           Every stage below is shown as the designers recorded it, with who wrote each field, and
-          nothing here can be edited, submitted or deleted. Photographs, recordings and attachments
-          are not carried on an oversight read.
+          nothing here can be edited, submitted or deleted — the photographs, recordings and
+          attachments included.
         </p>
       ) : null}
 
@@ -519,6 +523,12 @@ export default function WorkshopUnderOversightPage({
             )}
           </section>
 
+          <ReaderFilesPanel
+            failure={media.failure}
+            list={media.list}
+            onRetry={media.retry}
+            state={media.state}
+          />
           {/* WHERE THE REPORT STANDS, AND WHO DECIDED — the sign-off is the Ministry Admin's, and a
               supervisor reading the workshop is owed who approved it, who handed it on, and every
               decision on the way. */}
@@ -554,17 +564,20 @@ export default function WorkshopUnderOversightPage({
               <section className="panel p-4 text-sm text-ink-700">Loading the field list…</section>
             )
           ) : (
-            <div className="grid gap-4">
-              {stages.map((stage) => (
-                <ReadStage
-                  data={detail.stages?.[stage.key]}
-                  key={stage.key}
-                  registry={registry}
-                  score={detail.completeness?.[stage.key]}
-                  stage={stage}
-                />
-              ))}
-            </div>
+            <ReaderMediaProvider list={media.list} state={media.state}>
+              <div className="grid gap-4">
+                {stages.map((stage) => (
+                  <ReadStage
+                    data={detail.stages?.[stage.key]}
+                    definition={detail.customSections}
+                    key={stage.key}
+                    registry={registry}
+                    score={detail.completeness?.[stage.key]}
+                    stage={stage}
+                  />
+                ))}
+              </div>
+            </ReaderMediaProvider>
           )}
         </>
       ) : null}

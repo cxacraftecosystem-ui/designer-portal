@@ -147,6 +147,19 @@
     native <methods>;
 }
 
+# ── LiteRT-LM, the Tier 2 language-model runtime, kept whole for the sherpa-onnx reasons ──────────
+#
+# `liblitertlm_jni.so` resolves `Java_com_google_ai_edge_litertlm_*` by name and constructs/reads the
+# config and message classes from native code, and the Kotlin side serialises tool and message JSON
+# through gson by reflection. The AAR ships no consumer rules (0.18.0 has no `proguard.txt`), so the
+# package is kept whole: it is ~0.5 MB of dex against 21.5 MB of native code R8 cannot touch anyway.
+-keep class com.google.ai.edge.litertlm.** { *; }
+-keepclasseswithmembernames class com.google.ai.edge.litertlm.** {
+    native <methods>;
+}
+-keepattributes Signature,*Annotation*
+-dontwarn com.google.ai.edge.litertlm.**
+
 # ── What R8 removed, written down where a human can read it ─────────────────────────────────────
 #
 # Not diagnostics for their own sake: the ONLY way to check a shrunk build without a device is to

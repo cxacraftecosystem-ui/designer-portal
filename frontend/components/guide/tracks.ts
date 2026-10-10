@@ -355,7 +355,7 @@ export const INSPECTOR_TRACK: GuideTrack = {
     "Your note says what is wrong AND what it should say. The designers read it exactly as written, with no conversation attached.",
     "You picked the right stage, or chose “The report as a whole” on purpose rather than by leaving the box alone.",
     "You pressed the button you meant. Filing a suggestion leaves the report where it is; only sending it back puts it on the designers' desks.",
-    "You are not deciding on a photograph you could not see. Media is counted on an inspection read, never carried.",
+    "You have looked at the photographs and listened to the recordings your note is about — they are on the inspection page, under Files and under each stage.",
     "A value that looks wrong may be a copy taken when the stage was saved — the record it came from may have been corrected since, and the stage would not have changed.",
     "A stage reading 100% means every required field was answered. It is arithmetic, not a verdict, and it is not evidence that the answers are right."
   ],

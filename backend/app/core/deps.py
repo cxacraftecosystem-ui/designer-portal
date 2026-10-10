@@ -1090,10 +1090,10 @@ _USER_CACHE_INFLIGHT_WAIT_SECONDS = 5.0
 
 # id -> (monotonic expiry, user row). Ordered so eviction is LRU: the oldest touched identity goes
 # first when the cap is reached.
-_user_cache: "OrderedDict[str, tuple[float, Any]]" = OrderedDict()
+_user_cache: OrderedDict[str, tuple[float, Any]] = OrderedDict()
 # id -> (event loop, future). The loop is stored because a future can only be awaited on the loop
 # that created it, and the test suite runs each case in its own ``asyncio.run``.
-_user_cache_inflight: dict[str, tuple[Any, "asyncio.Future[Any]"]] = {}
+_user_cache_inflight: dict[str, tuple[Any, asyncio.Future[Any]]] = {}
 # Bumped by every invalidation. A query that was already in flight when someone revoked a role would
 # otherwise be free to write the pre-revocation row back into the cache and undo the invalidation;
 # comparing this before and after the query closes that race by declining to store the result.

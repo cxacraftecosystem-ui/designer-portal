@@ -127,6 +127,12 @@ const nextConfig: NextConfig = {
   async headers() {
     return [
       {
+        // The service worker (`public/sw.js`) must be revalidated on every load, or a browser keeps
+        // running the old worker's caching rules for as long as an HTTP cache allows.
+        source: "/sw.js",
+        headers: [{ key: "Cache-Control", value: "no-cache, no-store, must-revalidate" }]
+      },
+      {
         source: "/:path*",
         headers: [
           ...securityHeaders,

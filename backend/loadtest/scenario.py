@@ -73,7 +73,7 @@ class Step:
 
     name: str
     weight: float
-    build: Callable[["Session"], tuple[str, str, Any]]
+    build: Callable[[Session], tuple[str, str, Any]]
     expect: frozenset[int] = frozenset({200})
     #: Steps that must not run before warm-up has given the identity a workshop to point at.
     needs_workshop: bool = False
@@ -114,14 +114,14 @@ class Session:
 # ────────────────────────────────────────────────────────────────────────────────────────────────
 
 
-def _sign_in(s: "Session") -> tuple[str, str, Any]:
+def _sign_in(s: Session) -> tuple[str, str, Any]:
     # A REAL sign-in with the real password, so bcrypt actually runs. A deliberately-wrong password
     # would be cheaper to seed but would exercise the credential-failure budget instead of the
     # success path, and would spend the address's 20-failure allowance in the first four seconds.
     return "POST", "/api/auth/login", {"email": s.email, "password": LOAD_PASSWORD}
 
 
-def _dashboard(s: "Session") -> tuple[str, str, Any]:
+def _dashboard(s: Session) -> tuple[str, str, Any]:
     # The web app's landing call. Documented in routes/dashboard.py as the endpoint that used to
     # issue fourteen sequential reads and now issues one gathered wave — which makes it the best
     # single probe for "is the database round trip or the box the constraint", because its cost is
@@ -129,20 +129,20 @@ def _dashboard(s: "Session") -> tuple[str, str, Any]:
     return "GET", "/api/dashboard/stats", None
 
 
-def _workshop_list(s: "Session") -> tuple[str, str, Any]:
+def _workshop_list(s: Session) -> tuple[str, str, Any]:
     # Paged, and the page VARIES with the session counter. A fixed ?page=1 for every caller is the
     # classic way to accidentally benchmark a warm buffer cache instead of the query.
     page = 1 + (s.seq % 5)
     return "GET", f"/api/design-workshops?page={page}&pageSize=20", None
 
 
-def _workshop_read(s: "Session") -> tuple[str, str, Any]:
+def _workshop_read(s: Session) -> tuple[str, str, Any]:
     # THE HEAVIEST READ in the mix and the one a designer opens most: one workshop with every stage,
     # every entry, provenance display names resolved and completeness recomputed.
     return "GET", f"/api/design-workshops/{s.workshop_id}", None
 
 
-def _record_create(s: "Session") -> tuple[str, str, Any]:
+def _record_create(s: Session) -> tuple[str, str, Any]:
     # Adding a participant to a workshop — the app's canonical "create a record". `replaceCollections`
     # is FALSE on purpose: true is the phone's wholesale-replace sync, and using it here would make
     # every create also a delete of everything the previous iteration wrote, which is a different
@@ -163,27 +163,27 @@ def _record_create(s: "Session") -> tuple[str, str, Any]:
     return "PUT", f"/api/design-workshops/{s.workshop_id}/stages/{PARTICIPANT_STAGE}", body
 
 
-def _questionnaire(s: "Session") -> tuple[str, str, Any]:
+def _questionnaire(s: Session) -> tuple[str, str, Any]:
     # The artisan questionnaire's field list. A pure read of a small, hot table — in the mix because
     # a benchmark made only of heavy endpoints tells you nothing about whether the CHEAP calls stay
     # cheap while the heavy ones are running, which is the actual user-visible symptom of saturation.
     return "GET", "/api/questionnaire/questions", None
 
 
-def _task_list(s: "Session") -> tuple[str, str, Any]:
+def _task_list(s: Session) -> tuple[str, str, Any]:
     # "My tasks". withDerived defaults to true and that is what the clients send, so it is what is
     # measured — the derived progress counts are part of this endpoint's real cost.
     return "GET", "/api/tasks?view=assigned&page=1&pageSize=20", None
 
 
-def _search(s: "Session") -> tuple[str, str, Any]:
+def _search(s: Session) -> tuple[str, str, Any]:
     # Five buckets, five counts, five paged reads. docs/SCALABILITY.md records 8.9 s per call against
     # the cross-region production database; the term varies per call so nothing is served twice.
     term = _SEARCH_TERMS[s.seq % len(_SEARCH_TERMS)]
     return "GET", f"/api/search?q={term}&page=1&pageSize=10", None
 
 
-def _metadata_write(s: "Session") -> tuple[str, str, Any]:
+def _metadata_write(s: Session) -> tuple[str, str, Any]:
     # The small, frequent write: renaming a workshop / editing its notes. Distinct from the record
     # create above because it is a single-row UPDATE with no transaction and no collection sweep, and
     # the two behave completely differently under contention.
@@ -193,7 +193,7 @@ def _metadata_write(s: "Session") -> tuple[str, str, Any]:
     }
 
 
-def _media_presign(s: "Session") -> tuple[str, str, Any]:
+def _media_presign(s: Session) -> tuple[str, str, Any]:
     # THE SIGNED UPLOAD CREATION, and it is in the mix precisely because it is NOT a byte proxy: the
     # API signs a URL and the client PUTs to object storage directly. Measuring it proves that claim
     # (this call should stay flat under load because it touches no database), and it is the step that
@@ -207,7 +207,7 @@ def _media_presign(s: "Session") -> tuple[str, str, Any]:
     }
 
 
-def _schema_fetch(s: "Session") -> tuple[str, str, Any]:
+def _schema_fetch(s: Session) -> tuple[str, str, Any]:
     # The field registry: 149,465 bytes of JSON, 22,875 gzipped (MEASURED, routes/design_workshops.py).
     # Every cold client start fetches it. Included because it is the largest body the API serves to a
     # cold client and therefore the biggest single lump of gzip CPU on a single-worker box — and
@@ -216,7 +216,7 @@ def _schema_fetch(s: "Session") -> tuple[str, str, Any]:
     return "GET", "/api/design-workshops/schema", None
 
 
-def _control(s: "Session") -> tuple[str, str, Any]:
+def _control(s: Session) -> tuple[str, str, Any]:
     # NOT PRODUCT TRAFFIC. See the module docstring: this is the harness's own instrument.
     return "GET", "/health", None
 

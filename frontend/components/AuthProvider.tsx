@@ -2,6 +2,9 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 
+import { forgetOfflinePages } from "@/components/OfflineAppShell";
+import { clearReportCache } from "@/lib/offlineReport/reportCache";
+
 import {
   ApiError,
   apiFetch,
@@ -11,8 +14,11 @@ import {
   setSessionOwesPasswordChange,
   setToken
 } from "@/lib/api";
+import type { loginBody } from "@/lib/oidcSignIn";
 import { mustChangePassword } from "@/lib/signIn";
 import type { User } from "@/lib/types";
+
+type OidcLoginBody = ReturnType<typeof loginBody>;
 
 type AuthContextValue = {
   user: User | null;
@@ -28,6 +34,8 @@ type AuthContextValue = {
    */
   login: (email: string, password: string) => Promise<User>;
   loginWithGoogle: (googleIdToken: string) => Promise<User>;
+  /** Microsoft or Yahoo: the code the provider sent back, with this tab's half of the flow. See `lib/oidcSignIn.ts`. */
+  loginWithOidc: (body: OidcLoginBody) => Promise<User>;
   logout: () => Promise<void>;
   refreshMe: () => Promise<void>;
   /**
@@ -187,12 +195,30 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     [adopt]
   );
 
+  const loginWithOidc = useCallback(
+    async (body: OidcLoginBody) => {
+      const result = await apiFetch<{ accessToken: string; user: User }>("/auth/login", {
+        method: "POST",
+        body: JSON.stringify(body)
+      });
+      setToken(result.accessToken);
+      adopt(result.user);
+      return result.user;
+    },
+    [adopt]
+  );
+
   const logout = useCallback(async () => {
     try {
       await apiFetch("/auth/logout", { method: "POST" });
     } finally {
       setToken(null);
       adopt(null);
+      // The copies kept for a report built with no connection are this account's; a shared laptop
+      // must not hand them to the next person who signs in. Drafts are NOT touched — see
+      // `setDraftSessionUser`.
+      void clearReportCache();
+      forgetOfflinePages();
     }
   }, [adopt]);
 
@@ -221,13 +247,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       loading,
       login,
       loginWithGoogle,
+      loginWithOidc,
       logout,
       refreshMe,
       passwordChangeRequired,
       markPasswordChanged,
       clearSession
     }),
-    [user, loading, login, loginWithGoogle, logout, refreshMe, passwordChangeRequired, markPasswordChanged, clearSession]
+    [user, loading, login, loginWithGoogle, loginWithOidc, logout, refreshMe, passwordChangeRequired, markPasswordChanged, clearSession]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

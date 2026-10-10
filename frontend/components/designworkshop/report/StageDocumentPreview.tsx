@@ -103,7 +103,9 @@ import {
   useReportMediaUrls
 } from "@/components/designworkshop/report/ReportBlock";
 import type { PreviewBlock } from "@/components/designworkshop/report/previewModel";
-import { previewDesignWorkshopReport, type DwRun } from "@/lib/designWorkshops";
+import { previewDesignWorkshopReport, type DwPreview, type DwRun } from "@/lib/designWorkshops";
+import { draftSessionUserId } from "@/lib/designWorkshopStore";
+import { buildPreviewOnDevice } from "@/lib/offlineReport/devicePreview";
 import { readableError } from "@/components/review/reviewErrors";
 import { isUnreachable } from "@/lib/failureTriage";
 
@@ -270,7 +272,25 @@ export function StageDocumentPreview({
       generation.current = mine;
       setState({ kind: "loading" });
       try {
-        const payload = await previewDesignWorkshopReport(workshopId);
+        /*
+          ON THIS DEVICE WHEN THERE IS NO SERVER COPY OR NO CONNECTION, from the server otherwise.
+          `buildPreviewOnDevice` builds the same document from the draft (see `lib/offlineReport`),
+          so a workshop started offline, or a stage edited on a train, still shows its pages.
+        */
+        const fromDevice = () => buildPreviewOnDevice(workshopId, draftSessionUserId());
+        const offline = typeof navigator !== "undefined" && navigator.onLine === false;
+        let payload: DwPreview | null;
+        if (localOnly === true || offline) payload = await fromDevice();
+        else {
+          try {
+            payload = await previewDesignWorkshopReport(workshopId);
+          } catch (error) {
+            if (!isUnreachable(error)) throw error;
+            payload = await fromDevice();
+            if (!payload) throw error;
+          }
+        }
+        if (!payload) throw new Error("This workshop is not saved on this device, so its document cannot be built here.");
         // THE LATE ANSWER IS DROPPED, INCLUDING ITS TOKEN. Writing `drawn` here unconditionally was
         // the second half of the defect: a superseded attempt would mark its own older token as
         // drawn, and since the effect's dependencies had not moved, nothing would ever correct it.
@@ -302,7 +322,7 @@ export function StageDocumentPreview({
     // the wrong way to close the same hole: it would re-BUILD a document the server has not changed —
     // every stage loaded, every media row resolved, every figure rasterised — because a title string
     // arrived.
-    [workshopId]
+    [workshopId, localOnly]
   );
 
   useEffect(() => {
@@ -311,7 +331,7 @@ export function StageDocumentPreview({
     // would issue the build while `workshopId` is still the route's own `dwlocal-…` id, and
     // `load_workshop_or_404` answers that with "Record not found": the panel would report a failure
     // about a workshop nobody has looked up yet, which is the opposite of what the resolved id is for.
-    if (!open || localOnly !== false) return;
+    if (!open || localOnly === null) return;
     if (drawn.current === refreshToken) return;
     void load(refreshToken);
     // NO CLEANUP THAT RELEASES ANYTHING, and that is correct here rather than an omission. Nothing is
@@ -398,19 +418,7 @@ export function StageDocumentPreview({
             which is rule 10 in one paragraph.
           */}
           {localOnly === null ? (
-            <p className="text-sm leading-6 text-ink-700">
-              What there is to draw is not settled yet: the preview is built by the repository from the
-              record it holds, and this page has not established whether the repository holds this
-              workshop at all. This panel will not claim either way — it draws the document, or says
-              the workshop is still only on this device, as soon as that is known. If something stopped
-              this page reading the workshop, the banners above say so.
-            </p>
-          ) : localOnly ? (
-            <p className="text-sm leading-6 text-ink-700">
-              This workshop is still only on this device. The preview, the .docx and the .pdf are all
-              built by the repository from the record it holds, so there is nothing to draw until this
-              workshop has synced. Everything captured so far is safe in this browser.
-            </p>
+            <p className="text-sm leading-6 text-ink-700">Getting the document ready…</p>
           ) : (
             <>
               {/* THE HONEST FRAMING, ABOVE THE DOCUMENT AND NOT BURIED UNDER IT. See the header: this
@@ -418,7 +426,7 @@ export function StageDocumentPreview({
                   would take a missing last sentence for a report that had dropped it. */}
               <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-md bg-surface-50 px-3 py-2">
                 <p className="min-w-0 text-xs leading-5 text-ink-500">
-                  Built by the repository from what has been <strong className="font-medium text-ink-700">saved</strong>
+                  Built from what has been <strong className="font-medium text-ink-700">saved</strong>
                   {" "}— the same document the .docx and .pdf are written from. It refreshes when the stage
                   saves, so anything still being typed is not in it yet.
                 </p>
@@ -486,9 +494,9 @@ export function StageDocumentPreview({
                 {state.kind === "loading" ? (
                   <>
                     <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden />
-                    Building the document from what has been saved. The repository loads every stage,
-                    resolves the media and draws the figures, so this takes a few seconds — longer on a
-                    weak connection. Nothing captured is at risk while it runs.
+                    Building the document from what has been saved. Every stage is read, the photographs
+                    are placed and the figures drawn, so this takes a few seconds. Nothing captured is at
+                    risk while it runs.
                   </>
                 ) : state.kind === "ready" ? (
                   "The document is ready below."
@@ -500,7 +508,7 @@ export function StageDocumentPreview({
               {state.kind === "failed" ? (
                 <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
                   {state.offline
-                    ? "There is no connection, so the repository could not build the document. Everything captured is safe; try again when you have signal."
+                    ? "The document could not be built just now. Everything captured is safe; it is built again on the next save."
                     : state.message}
                 </p>
               ) : null}
@@ -559,8 +567,8 @@ export function StageDocumentPreview({
                         the panel cannot keep the moment somebody tries a different template next door.
                       */}
                       <p className="mt-2 text-xs leading-5">
-                        Each one is a sentence the repository wrote, and most of them name the stage they came
-                        from; nothing in the payload says which stage a warning belongs to, so all of them are
+                        Most of them name the stage they came from; nothing says which stage every warning
+                        belongs to, so all of them are
                         listed here rather than a subset chosen by guesswork. This is the workshop’s saved
                         template, so the report page shows this same list unless you try a different template
                         there. None of it is carried inside the .docx or the .pdf — this screen and that one

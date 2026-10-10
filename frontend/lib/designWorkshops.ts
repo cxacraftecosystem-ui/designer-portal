@@ -3343,6 +3343,15 @@ export function identityChoices(
   return out;
 }
 
+/**
+ * What a report is built from besides the stages — the records a REF names, the map's district
+ * anchors, each photograph's size, and the questionnaire, transcript and AI-layer sources — for the
+ * browser to keep and build the same report from with no connection. See `lib/offlineReport`.
+ */
+export function fetchReportSources(id: string) {
+  return apiFetch<import("@/lib/offlineReport/assemble").ReportSources>(`/design-workshops/${id}/report/sources`);
+}
+
 export function previewDesignWorkshopReport(id: string, templateId?: string | null) {
   return apiFetch<DwPreview>(`/design-workshops/${id}/report/preview${buildQuery({ templateId: templateId ?? undefined })}`);
 }

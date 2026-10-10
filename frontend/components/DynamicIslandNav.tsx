@@ -74,7 +74,7 @@ import {
   canDownloadDataset,
   canInspectDesignWorkshops,
   canManageAccessRoster,
-  canManageAnnualPlan,
+  canReadAnnualPlan,
   canManageCrafts,
   canManageDesignerRoster,
   canManageUsers,
@@ -650,7 +650,7 @@ export const NAV_ITEMS: NavItem[] = [
     label: "Annual plan",
     icon: CalendarRange,
     group: "Admin",
-    can: canManageAnnualPlan,
+    can: canReadAnnualPlan,
     gate: "require_annual_plan_manager"
   },
   // NO DESIGNER ROSTER ENTRY HERE. It is reached from the settings hub — "Settings hub" above —

@@ -67,15 +67,24 @@ from fastapi.responses import Response
 
 from app.core.db import db
 from app.core.deps import get_current_user
-from app.schemas.annual_plan import AnnualPlanEntryUpdate, AnnualPlanPromoteRequest
+from app.schemas.annual_plan import (
+    AnnualPlanEntryUpdate,
+    AnnualPlanPromoteRequest,
+    RegionalDirectorStatesIn,
+)
 from app.services.annual_plan import (
     ANNUAL_PLAN_REFUSAL,
     apply_parsed_plan,
     can_manage_annual_plan,
+    can_read_annual_plan,
     entry_payload,
+    in_scope,
+    plan_scope,
     plan_year_label,
     promote_entry,
+    regional_directors,
     reinstate_entry,
+    set_regional_states,
     standing_of,
     withdraw_entry,
 )
@@ -140,6 +149,31 @@ async def require_annual_plan_manager(current_user: Any = Depends(get_current_us
     if not can_manage_annual_plan(current_user):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=ANNUAL_PLAN_REFUSAL)
     return current_user
+
+
+async def require_annual_plan_reader(current_user: Any = Depends(get_current_user)) -> Any:
+    """The four arms a Regional Director may also reach: the year list, the list, one row and the
+    remarks correction — each NARROWED to the states assigned to them (``annual_plan.plan_scope``).
+
+    The same refusal sentence as :func:`require_annual_plan_manager` for everybody else. What a
+    director may see and correct is decided per row by the scope, never by this gate alone: an
+    out-of-scope row is the same 404 as a row that does not exist (:func:`_entry_in_scope_or_404`).
+    """
+    if not can_read_annual_plan(current_user):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=ANNUAL_PLAN_REFUSAL)
+    return current_user
+
+
+async def _entry_in_scope_or_404(entry_id: str, user: Any) -> Any:
+    """One row the caller's scope covers, or the standard 404.
+
+    "Record not found" for a row in ANOTHER state as well as for no row at all, byte for byte: a
+    director must not learn from a refusal that a row they cannot see exists in another state.
+    """
+    entry = await _entry_or_404(entry_id)
+    if not in_scope(entry, await plan_scope(user)):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Record not found")
+    return entry
 
 
 def _flag(value: str | None) -> bool:
@@ -226,14 +260,18 @@ async def download_pro_forma(_: Any = Depends(require_annual_plan_manager)) -> R
 
 
 @router.get("/years")
-async def list_plan_years(_: Any = Depends(require_annual_plan_manager)) -> list[dict[str, Any]]:
+async def list_plan_years(
+    current_user: Any = Depends(require_annual_plan_reader),
+) -> list[dict[str, Any]]:
     """Every year the directory holds, newest first, with its standing counted.
 
     ONE READ AND A COUNT IN PYTHON, deliberately. The alternative is four `group_by` round trips or a
     raw-SQL aggregate, and this table is bounded at `MAX_PLAN_ROWS` rows per year over a handful of
     years — the whole directory is smaller than one workshop's stage entries.
     """
-    rows = await db.annualplanentry.find_many(order={"planYear": "desc"})
+    scope = await plan_scope(current_user)
+    where: dict[str, Any] = {} if scope is None else {"state": {"in": scope}}
+    rows = await db.annualplanentry.find_many(where=where, order={"planYear": "desc"})
     years: dict[int, dict[str, Any]] = {}
     for row in rows:
         bucket = years.setdefault(
@@ -539,9 +577,13 @@ async def list_annual_plan(
     standing: str = Query(default="all"),
     sort: str = Query(default="plannedStartDate"),
     dir: str = Query(default="asc"),
-    _: Any = Depends(require_annual_plan_manager),
+    current_user: Any = Depends(require_annual_plan_reader),
 ) -> dict[str, Any]:
     """One year of the directory, filtered, sorted and paged BY THE SERVER.
+
+    A REGIONAL DIRECTOR'S LIST IS NARROWED IN THE QUERY to the states assigned to them, and the
+    answer says which (``regionalStates``; ``null`` for the whole directory), so the screen can say
+    whose rows these are rather than leave a short list to read as a short plan.
 
     NO CLIENT-SIDE FILTERING OR SORTING ANYWHERE, which is the rule the designer roster screen
     states: a table that sorts the fifty rows it happens to be holding is a table that lies about
@@ -549,6 +591,11 @@ async def list_annual_plan(
     """
     clean_page, clean_size, skip = normalize_pagination(page, pageSize)
     where = _list_where(planYear, search, state, district, standing)
+    scope = await plan_scope(current_user)
+    if scope is not None:
+        # AND-composed with whatever state the caller asked for, so a director filtering on another
+        # state is answered with nothing rather than with that state's rows.
+        where = {"AND": [where, {"state": {"in": scope}}]}
     total = await db.annualplanentry.count(where=where)
     rows = await db.annualplanentry.find_many(
         where=where,
@@ -557,7 +604,40 @@ async def list_annual_plan(
         take=clean_size,
         include={"designWorkshop": True},
     )
-    return page_payload([entry_payload(row) for row in rows], total, clean_page, clean_size)
+    payload = page_payload([entry_payload(row) for row in rows], total, clean_page, clean_size)
+    payload["regionalStates"] = scope
+    return payload
+
+
+@router.get("/regional-directors")
+async def list_regional_directors(
+    _: Any = Depends(require_annual_plan_manager),
+) -> dict[str, Any]:
+    """Every Regional Director, with the states whose plan rows each may read and correct.
+
+    The Ministry Admin's half of the scope: only an annual-plan manager sees or changes who answers
+    for which state.
+    """
+    return {"items": await regional_directors()}
+
+
+@router.put("/regional-directors/{user_id}")
+async def assign_regional_director_states(
+    user_id: str,
+    payload: RegionalDirectorStatesIn,
+    current_user: Any = Depends(require_annual_plan_manager),
+) -> dict[str, Any]:
+    """Replace the states one Regional Director answers for. The whole set, not a delta.
+
+    422 for an account that is not a Regional Director and for a name off the state list; 404 for no
+    such account. An empty list withdraws every state, after which the director reads an empty
+    directory and corrects nothing.
+    """
+    target = await db.user.find_unique(where={"id": user_id}) if user_id.isprintable() else None
+    if target is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Record not found")
+    states = await set_regional_states(target, list(payload.states), actor=current_user)
+    return {"id": target.id, "states": states}
 
 
 # --------------------------------------------------------------------------------------
@@ -567,19 +647,24 @@ async def list_annual_plan(
 
 @router.get("/{entry_id}")
 async def get_annual_plan_entry(
-    entry_id: str, _: Any = Depends(require_annual_plan_manager)
+    entry_id: str, current_user: Any = Depends(require_annual_plan_reader)
 ) -> dict[str, Any]:
     """One planned row, with the title of the workshop it became when it became one."""
-    return entry_payload(await _entry_or_404(entry_id))
+    return entry_payload(await _entry_in_scope_or_404(entry_id, current_user))
 
 
 @router.patch("/{entry_id}")
 async def update_annual_plan_entry(
     entry_id: str,
     payload: AnnualPlanEntryUpdate,
-    current_user: Any = Depends(require_annual_plan_manager),
+    current_user: Any = Depends(require_annual_plan_reader),
 ) -> dict[str, Any]:
     """Correct the REMARKS on one row. Nothing else is editable here — see the body's own docstring.
+
+    A REGIONAL DIRECTOR MAY, ON A ROW OF A STATE ASSIGNED TO THEM (2026-10-10), and on no other: a
+    row in another state is the same 404 as no row. This is the one per-row correction the
+    directory has; every other column belongs to the ministry's workbook and is corrected by
+    re-uploading it, which stays the Ministry Admin's.
 
     ``revision`` IS NOT INCREMENTED BY THIS. That counter answers "how many uploads have changed
     this row", which is provenance about the WORKBOOK; a hand-typed remark is not an upload and
@@ -604,7 +689,7 @@ async def update_annual_plan_entry(
     ``updatedById`` is not restamped, which it was: a no-op request used to leave a fingerprint
     saying somebody edited a row nobody had edited.
     """
-    entry = await _entry_or_404(entry_id)
+    entry = await _entry_in_scope_or_404(entry_id, current_user)
     values = payload.model_dump(exclude_unset=True)
     if not values:
         return entry_payload(entry)

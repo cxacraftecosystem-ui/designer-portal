@@ -1082,6 +1082,11 @@ export function setDraftSessionUser(userId: string | null, role: UserRole | null
   void refreshDrafts();
 }
 
+/** The account this store was last told is signed in, or null — see {@link setDraftSessionUser}. */
+export function draftSessionUserId(): string | null {
+  return sessionUserId;
+}
+
 /** True while nobody has told this store who is signed in — see {@link setDraftSessionUser}. */
 export function draftSessionUnknown(): boolean {
   return !sessionKnown;

@@ -4,8 +4,7 @@ package com.designprototype.workshop.data
  * **WHAT A TIER 2 MODEL WOULD BE ALLOWED TO PRODUCE, AND THE SHAPE THE PHONE WOULD HAVE TO SEND. THE
  * LAYERING LAW, WRITTEN DOWN ON THE DEVICE SIDE BEFORE ANY DEVICE CAN RUN A MODEL.**
  *
- * Nothing here runs a model — [DW_TIER2_RUNTIME_ABSENCE] says why in one sentence — and nothing here
- * makes a network call. What it is: the payload a handset-produced layer would be posted as, the
+ * Nothing here runs a model (`DwTier2Engine.kt` does) and nothing here makes a network call. What it is: the payload a handset-produced layer would be posted as, the
  * provenance that is mandatory in it, and the two gates that must NOT be in front of it. Written now,
  * with tests, because the order the brief gives is deliberate: the runtime was a Kotlin upgrade away
  * (made on 2026-10-09, so it is now build work alone) and the write path is a decision nobody has
@@ -28,7 +27,14 @@ package com.designprototype.workshop.data
  *  5. **NO PATH NAMES A STAGE ENTRY AS WRITABLE.** A layer is a row beside the designer's words, never
  *     over them. The test reads this file's own source and fails if `DwStageEntry` appears in it.
  *
- * ── THE ONE THING THAT IS STILL UNDECIDED, AND IT IS NOT DECIDED HERE ─────────────────────────
+ * ── SETTLED 2026-10-10: THE ROUTE EXISTS ────────────────────────────────────────────────────
+ *
+ * `POST /api/design-workshops/{id}/ai-layers/on-device` takes [dwTier2LayerBody] for a supplied-text
+ * run, fixes the tier at TIER_2 and admits only the two pinned Gemma 4 ids. The paragraphs below are
+ * the argument that shaped it and are kept as written; [DW_TIER2_DEVICE_LAYER_ROUTE_EXISTS] records
+ * the outcome.
+ *
+ * ── WHAT WAS UNDECIDED UNTIL THEN ──────────────────────────────────────────────────────────────
  *
  * **THERE IS NO ROUTE ON THE SERVER THAT ACCEPTS A LAYER A PHONE PRODUCED.** Read rather than assumed:
  * `backend/app/api/routes/design_workshops.py` sets `_SERVER_TIER = ai_layers.AiTier.TIER_3` as a
@@ -349,16 +355,27 @@ fun dwTier2WriteBlocker(
 }
 
 /**
- * Whether the server has a route that accepts a layer produced on a device. **It does not.**
+ * Whether the deployment has a route that accepts a layer produced on a device. **It does:
+ * `POST /api/design-workshops/{id}/ai-layers/on-device`, added with the runtime on 2026-10-10.**
  *
- * A constant rather than a probe because it is a property of the deployment's code and not of the
- * network: asking a server at runtime whether it has the route would turn a design decision nobody has
- * taken into a 404 a designer sees.
+ * The decision this constant used to wait on was taken the way this file argued for: the route fixes
+ * the tier at TIER_2 exactly as the cloud routes fix TIER_3, it admits only the two model ids this
+ * app pins (`ai_verbs.ON_DEVICE_MODEL_IDS`), it sets no acceptance, and it is behind neither money
+ * gate. What it still cannot prove is that a handset rather than another client produced the words;
+ * the layer is inert until a person accepts it and the annexure names it as on-device output, which
+ * are the protections every layer has.
  */
-const val DW_TIER2_DEVICE_LAYER_ROUTE_EXISTS: Boolean = false
+const val DW_TIER2_DEVICE_LAYER_ROUTE_EXISTS: Boolean = true
 
-/** One sentence for a surface that has to explain why a verb it could run has nowhere to put a result. */
-const val DW_TIER2_NO_WRITE_PATH_SENTENCE: String =
-    "Even with a model on the phone there is nowhere yet to record what it produced: this app's " +
-        "server accepts model output only from its own cloud chain. That is one decision away, and it " +
-        "is a decision about how a phone proves what produced a row — not a limitation of the phone."
+/** The last path segment of that route, under `/design-workshops/{id}/ai-layers/`. */
+const val DW_TIER2_LAYER_ROUTE_SEGMENT: String = "on-device"
+
+/** The provider an on-device run records: the runtime, which is the app itself and not a paid service. */
+const val DW_TIER2_PROVIDER: String = "litert-lm"
+
+/**
+ * The runtime build that loads the model — the AAR named in `app/build.gradle.kts`. A defect found
+ * in one LiteRT-LM release is traceable only if the row says which one ran, so a dependency bump
+ * moves this string in the same commit (`DwTier2LayerTest` reads both).
+ */
+const val DW_TIER2_RUNTIME_VERSION: String = "litertlm-android 0.18.0"

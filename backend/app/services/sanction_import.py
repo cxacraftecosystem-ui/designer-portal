@@ -163,19 +163,25 @@ recorded twice.
 ``MAX_SANCTION_ROWS`` is what bounds the loop; see the parser for why that number is 200 and not the
 annual plan's 600.
 
-══ NO SIGN-IN LINKS ARE MINTED BY AN IMPORT ═════════════════════════════════════════════════════
+══ AN IMPORT ISSUES FIRST SIGN-IN LINKS EXACTLY AS THE FORM DOES (2026-10-10) ═══════════════════
 
-``create_from_sanction`` mints one per account it creates and returns them in its answer. This
-module **throws them away**, deliberately, and the officer re-issues each from the per-row button on
-the register.
+``create_from_sanction`` mints one INVITE link per account it creates and returns it; this module
+used to throw them away and leave every imported designer to be re-issued a link by hand from the
+register. The owner ruled that out: an import is the same door as the form, so it hands the links
+back the same way — ``created[].credentialLinks`` per recorded order, and ``credentialLinksIssued``
+counting them. Nothing about the issuance itself differs, because nothing here mints anything: the
+issuer is the officer pressing confirm (``issuedById``, re-checked at redemption by
+``account_provisioning.issuer_still_manages``), the purpose is INVITE for an account this order just
+created and NO link at all for an account that already existed, the master admin's mailbox is
+refused before any row is written, and a promotion afterwards withdraws the link
+(``credential_links.revoke_outstanding``).
 
-Two hundred one-time credentials returned on one screen changes the SECURITY posture of the feature
-rather than its ergonomics: the link is shown once, cannot be shown again, and the officer's
-clipboard is the only transport there is, so a screen holding two hundred of them is a screen whose
-accidental closure strands two hundred designers — and whose accidental screenshot is two hundred
-live credentials. The 4-per-hour-per-designer throttle would also refuse most of a sheet that names
-one designer repeatedly. The cost of this decision is real and is stated on the officer's screen:
-every imported designer whose account was created needs their link re-issued by hand.
+THE COST THE OLD HEADER NAMED IS ANSWERED RATHER THAN DENIED. Many live credentials on one screen:
+each is shown once, the screen says so beside each, and every one of them can be withdrawn there or
+re-issued later from its designer's own button on the register — so a closed tab strands nobody. The
+throttle cannot refuse a sheet that names one designer on many rows, because only the row that
+CREATES the account mints a link; the rows after it find the account and mint none. A link the
+throttle does refuse comes back as a warning against its Excel row, and the order still stands.
 """
 
 from __future__ import annotations
@@ -908,6 +914,7 @@ async def apply_confirmed_rows(body: SanctionImportConfirm, officer: Any) -> dic
     # screen beside this report; what is added here is only the arithmetic.
     refused = body.refusedBeforeConfirm
     accounts_created = 0
+    links_issued = 0
 
     for row in body.rows[:MAX_SANCTION_ROWS]:
         if row.action == "skip":
@@ -1000,6 +1007,23 @@ async def apply_confirmed_rows(body: SanctionImportConfirm, officer: Any) -> dic
             if designer.get("accountCreated")
         ]
         accounts_created += len(minted)
+        # THE LINKS THE ORDER MINTED, HANDED BACK AS THE FORM HANDS THEM BACK — see the header. A
+        # link the throttle refused is that designer's warning, against this Excel row; the order
+        # stands either way.
+        links = list(created.get("credentialLinks") or [])
+        links_issued += sum(1 for entry in links if entry.get("link"))
+        for entry in links:
+            if entry.get("problem"):
+                problems.append(
+                    _problem(
+                        row.sheetRow,
+                        "warning",
+                        f"{entry.get('designerName') or entry.get('signInEmail')}: "
+                        f"{entry['problem']}",
+                        body.sheet,
+                        row.sanctionOrderNo,
+                    )
+                )
         recorded.append(
             {
                 "sheetRow": row.sheetRow,
@@ -1008,6 +1032,10 @@ async def apply_confirmed_rows(body: SanctionImportConfirm, officer: Any) -> dic
                 "designWorkshopId": order["designWorkshopId"],
                 "designers": order.get("designers", []),
                 "accountsCreated": len(minted),
+                # The whole order, so the officer's screen can write the prewritten message that
+                # names it beside each link, as it does for an order typed on the form.
+                "sanctionOrder": order,
+                "credentialLinks": links,
             }
         )
 
@@ -1032,12 +1060,11 @@ async def apply_confirmed_rows(body: SanctionImportConfirm, officer: Any) -> dic
         "recorded": len(recorded),
         "skipped": skipped,
         "refused": refused,
-        # HOW MANY PEOPLE THIS PRESS LET IN. Not derivable from the row counts — one order can mint
-        # three accounts and the next none — and it is the number an officer most needs, because
-        # every one of them needs a sign-in link re-issued by hand. See the module header for why no
-        # links are minted here.
+        # HOW MANY PEOPLE THIS PRESS LET IN, and how many first sign-in links came back for them.
+        # Not derivable from the row counts — one order can mint three accounts and the next none.
+        # The two differ only where the throttle refused a link, and that row carries a warning.
         "accountsCreated": accounts_created,
-        "credentialLinksIssued": 0,
+        "credentialLinksIssued": links_issued,
         "created": recorded,
         "importId": ledger,
         "problems": [problem.payload() for problem in problems],
