@@ -4,13 +4,15 @@ import Link from "next/link";
 import { ArrowUpRight } from "lucide-react";
 
 import {
+  AWAITING_APPROVAL_BADGE_HREF,
   AWAITING_SANCTION_BADGE_CLASS,
   AWAITING_SANCTION_BADGE_HREF,
-  MINISTRY_APPROVAL_GAP,
+  awaitingApprovalSentence,
   awaitingSanctionSentence,
   ministryDeskFor
 } from "@/components/dashboard/ministryDesk";
 import { useAuth } from "@/components/AuthProvider";
+import { useAwaitingApprovalCount } from "@/components/hooks/useAwaitingApprovalCount";
 import { useAwaitingSanctionCount } from "@/components/hooks/useAwaitingSanctionCount";
 import { canSeeMinistryDesk } from "@/lib/permissions";
 
@@ -83,12 +85,14 @@ import { canSeeMinistryDesk } from "@/lib/permissions";
  * ministry orange is grounds, borders and chips. There is no button on this card, so nothing here
  * had to be argued about — with one exception, at the focus ring, which is argued where it sits.
  *
- * ── AND ONE ROW WEARS A COUNT ───────────────────────────────────────────────────────────────────
+ * ── AND TWO ROWS WEAR A COUNT ───────────────────────────────────────────────────────────────────
  *
  * "Sanction orders" carries the number of orders whose designer has not filled stage 1 in yet, from
- * `useAwaitingSanctionCount` — the same store the nav's badge reads, so the two cannot disagree.
- * Everything pure about that pill (the destination, the sentence, the class string, and why it is
- * amber rather than orange) is in `ministryDesk.ts` beside the table.
+ * `useAwaitingSanctionCount`, and "Reports to approve" the number of reports waiting for the Ministry
+ * Admin's decision, from `useAwaitingApprovalCount` — each the same store the nav's badge reads, so
+ * the two surfaces cannot disagree. Everything pure about those pills (the destinations, the
+ * sentences, the class string, and why it is amber rather than orange) is in `ministryDesk.ts`
+ * beside the table.
  */
 export function MinistryDeskCard() {
   const { user } = useAuth();
@@ -117,6 +121,10 @@ export function MinistryDeskCard() {
   */
   const awaitingCount =
     useAwaitingSanctionCount(open.some((destination) => destination.href === AWAITING_SANCTION_BADGE_HREF)) ?? 0;
+  /* The reports waiting for a decision, on the row the decision is taken from — gated the same way,
+     on the row being drawn, which folds in `canApproveDesignWorkshops`. */
+  const awaitingApprovalCount =
+    useAwaitingApprovalCount(open.some((destination) => destination.href === AWAITING_APPROVAL_BADGE_HREF)) ?? 0;
 
   if (!audience) return null;
 
@@ -141,11 +149,6 @@ export function MinistryDeskCard() {
     since then any of the three administering tiers may be named to monitor a workshop, and the master
     admin's desk carries that row.) The walkthrough below is where the rules are explained, and it is
     one click away.
-
-    WHAT IS NOT SILENT IS A STEP THAT DOES NOT EXIST. `MINISTRY_APPROVAL_GAP` is rendered under the
-    grid because these rows are drawn "in the order a workshop reaches them", and an ordered sequence
-    reads as a complete one. The argument, the verification and the instruction to delete it are all
-    on that constant.
   */
   if (open.length === 0) return null;
 
@@ -226,6 +229,18 @@ export function MinistryDeskCard() {
                     <span className="sr-only">{awaitingSanctionSentence(awaitingCount)}</span>
                   </span>
                 ) : null}
+                {destination.href === AWAITING_APPROVAL_BADGE_HREF && awaitingApprovalCount > 0 ? (
+                  <span
+                    title={awaitingApprovalSentence(awaitingApprovalCount)}
+                    className={`ml-auto ${AWAITING_SANCTION_BADGE_CLASS}`}
+                  >
+                    <span aria-hidden>{awaitingApprovalCount}</span>
+                    <span aria-hidden className="font-medium">
+                      waiting
+                    </span>
+                    <span className="sr-only">{awaitingApprovalSentence(awaitingApprovalCount)}</span>
+                  </span>
+                ) : null}
               </span>
               <span className="mt-0.5 block text-xs leading-5 text-ink-500">{destination.note}</span>
             </span>
@@ -233,15 +248,11 @@ export function MinistryDeskCard() {
         ))}
       </div>
 
-      {/* The step this journey does not have yet. See `MINISTRY_APPROVAL_GAP` for why it is on
-          screen, why it names no tier and no release, and the test that will demand its removal. */}
-      <p className="mt-3 text-xs leading-5 text-ink-500">{MINISTRY_APPROVAL_GAP}</p>
-
       {/*
-        THE WALKTHROUGH IS A FOOTER LINE AND NOT A SIXTH TILE, for two reasons that both matter. It
-        is not a ministry screen — it is the page that explains the five above — so a tile would put
+        THE WALKTHROUGH IS A FOOTER LINE AND NOT ANOTHER TILE, for two reasons that both matter. It
+        is not a ministry screen — it is the page that explains the screens above — so a tile would put
         a lesson in a row of destinations. And the grid above is asserted, row for row and in order,
-        against the directorate walkthrough's own deck; a sixth tile pointing AT that deck would have
+        against the directorate walkthrough's own deck; a tile pointing AT that deck would have
         to be special-cased out of the assertion, which is how an assertion starts drifting from what
         it claims to check.
 
@@ -268,8 +279,8 @@ export function MinistryDeskCard() {
         </Link>{" "}
         — it carries a deck for the ministry posts that says, screen by screen, which post each one is
         for, and for the three posts it is the deck that opens. The three do not have the same powers:
-        two of these screens refuse a Regional Director even though they outrank an Assistant
-        Director.
+        some of these screens refuse a Regional Director even though they outrank an Assistant
+        Director, and approving a report is the Ministry Admin&apos;s.
       </p>
     </section>
   );

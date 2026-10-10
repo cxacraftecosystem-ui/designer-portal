@@ -1,9 +1,10 @@
 # Open findings
 
-**Status: 32 open, 1 decision recorded and 1 deferral, 110 closed.** Every count re-counted by
+**Status: 34 open, 1 decision recorded and 0 deferrals, 111 closed.** Every count re-counted by
 heading on 2026-10-10: main's 31 open and 106 closed that day (the 15 open of 2026-10-09, plus 18
 opened by the Android copy sweep, less the 2 of those closed the same day), plus the toolchain
-upgrade's 2 opened and 2 closed, merged the same day. The entries closed on 2026-10-09 were
+upgrade's 2 opened and 2 closed, merged the same day, and the design-workshop approvals' 2 opened and
+1 closed (the deferral). The entries closed on 2026-10-09 were
 checked against the tree that day, and the older closed sections were last re-checked on 2026-09-03.
 
 **The toolchain upgrade of 2026-10-09 opened two and closed two.** Moving the EC2 box, the image and
@@ -20,6 +21,13 @@ inspectors and directorate monitors could not see a workshop's files or the word
 questions, the inspection list had no filters, and Design review had no list of the workshops open to
 the pool. The web side had no open entry, so the open count does not move; the two handset entries for the
 same screens stay open. Counted by heading: still 31 open, and 100 + 3 = 103 closed.
+
+**Design-workshop approvals landed on 2026-10-10 and moved three numbers.** The deferral recorded on
+2026-09-16 is closed — the approvals router is built, and its entry is under `## Closed on 2026-10-10`
+with the tests that pin it — so deferrals go from 1 to 0 and closed by one. Two entries were
+opened by the same change for what it deliberately leaves standing: the media doors are not frozen
+with an approved report, and the handset warns on a frozen report rather than locking its forms.
+Counted by heading: 34 open, 111 closed.
 
 **Three Android gaps were closed on 2026-10-10 by building them**: correction suggestions on the
 handset, its own review queue, and inspections that work without signal. Two of them had been opened
@@ -361,62 +369,26 @@ is now a cheaper trade than it was.** It was not changed in this wave on purpose
 parameter moved as a silent constant edit is a change nobody reviewed. It belongs in the next
 deployment review. The full argument is in [SECURITY.md §4.1](SECURITY.md).
 
-### [DEFERRED TO 0.0.13] Design-workshop approvals were not built, and `APPROVED` has been unreachable since the review loop shipped — recorded 2026-09-16
+### [LOW] An approved or handed-on report's photographs and recordings can still be changed (backend) — opened 2026-10-10
 
-**The deferral is a decision. The unreachability is the fact that comes with it, and it is written
-here so the next reader does not rediscover it as a novel bug.** Owner's ruling, 2026-09-15: design
-workshop approvals (the S6 workstream) ship in **0.0.13**. Nothing was half-built — there is no
-`design_workshop_approvals.py` in `backend/app/api/routes/`, no partial router, no dead frontend
-route, and nobody is part-way through this. (That filename is written without its directory on
-purpose: `docs/tools/check-docs.mjs` asserts that every repository path a document names EXISTS, and
-the whole point of this entry is a file that does not.)
+Since 2026-10-10 an APPROVED report, and one handed on to the office, is frozen: every write of its
+CONTENT answers 403 at `load_workshop_or_404(for_edit=True)`, and the stage save and the header edit
+carry the same predicate on their writes (`FROZEN_WHERE` in
+`backend/app/schemas/design_workshop_approvals.py`). The media doors are not covered: deleting or
+relinking a photograph the report prints, and a transcript's edits, are asked who holds the workshop
+(rule 5) but not whether it is frozen, because freezing them means resolving every file's workshops
+(`design_workshop_posts.media_design_workshop_ids`) for every caller, where today a designer skips it.
+A designer can therefore change a picture in a report after it was approved. Closing it is that
+resolution at the media doors, with the frozen sentence.
 
-**What is missing is three verbs on one router**, each named in `DECISION_EDGES` in
-`backend/app/schemas/design_workshop_review_loop.py` against a module that does not exist:
-`POST /design-workshop-approvals/{id}/approve`, `…/revise` and `…/hand-on`.
+### [LOW] The handset warns on a frozen report rather than locking its stage forms (android) — opened 2026-10-10
 
-**The consequence, read straight off `LEGAL_TRANSITIONS` rather than inferred.** Two of the eight
-statuses cannot be entered by anything in this deployment:
-
-* `APPROVED` has exactly one inbound edge, `PRE_SUBMISSION → APPROVED`, and that edge is a
-  `DECISION_EDGE` owned by `/approve`.
-* `SUBMITTED` — which since 2026-09-13 means *the approved report has been handed on* — has exactly
-  one inbound edge, `APPROVED → SUBMITTED`, owned by `/hand-on`. It is therefore unreachable
-  **transitively**, which is the half a reader does not see by scanning the table for the word.
-
-So a report today goes `DRAFT → IN_PROGRESS → PRE_SUBMISSION`, can be sent back to `NEEDS_REVISION`
-by an inspector and resubmitted as often as anyone likes, **and stops there.** The only rows that read
-`APPROVED` or `SUBMITTED` are ones that carried the pre-2026-09-13 meaning of `SUBMITTED`, and they
-can still leave those states (`SUBMITTED → IN_PROGRESS | PRE_SUBMISSION | ARCHIVED`) — they simply
-cannot be re-entered.
-
-**This is deliberate and it is the safe direction**, which is why it is filed as a deferral and not as
-a defect. `DECISION_EDGES`' own comment says it: *"until it lands `APPROVED` is simply unreachable.
-That is the safe direction and the honest one: nothing can be approved by accident, and no header edit
-can manufacture an approval in the meantime."* A `PATCH` carrying one of the four decision edges is
-refused with a sentence that names the route which would make it, so the failure mode is a legible
-refusal rather than a 500 or a silent no-op.
-
-**It is said on screen, once, where the gap is met.** `MINISTRY_APPROVAL_GAP` in
-`frontend/components/dashboard/ministryDesk.ts` prints it under the ministry desk's five rows —
-*"Reading a report back is where this sequence stops today… none of the rows above is waiting on a
-signature from you"* — because five rows listed in the order a workshop reaches them read as a
-COMPLETE order. It names no tier and no release, and it is tied to the existence of the approvals
-router on disk, so it removes itself the day 0.0.13 lands rather than becoming a lie that has to be
-noticed.
-
-**What 0.0.13 owes beyond the three verbs**, listed so the scope is not rediscovered either: a gate
-(nothing in `deps.py` today names a sanctioning authority, and §2's matrix has no row for one); a
-`ReviewLog` row written in the same transaction as each status move, which is the whole reason these
-are routes and not header edits; the `round >= 1` CHECK the send-back path already has to satisfy; and
-a decision about whether an approval may be withdrawn after the report has been handed on — today
-`APPROVED → SUBMITTED` is one-way, and `APPROVED → ARCHIVED` was deleted from the graph on purpose
-because with `ARCHIVED → PRE_SUBMISSION` legal it was a two-hop laundering path out of an approval.
-
-**Not to be "fixed" in the meantime by widening the PATCH.** The four decision edges are subtracted
-from `LEGAL_TRANSITIONS` rather than listed twice, so re-admitting one to the header edit takes a
-deliberate edit to `DECISION_EDGES` — and what it would buy is a status change with no audit row,
-which is a decision that appears to have made itself.
+The stage index and the stage screen show the server's frozen sentence for an approved or handed-on
+report, from the workshop's single read; they do not disable the form, because a stage read carries no
+status and locking on an hour-old answer could hold a report the authority has since returned. The
+server refuses the save with the same sentence (403), and the handset holds the refused item rather
+than dropping it. The memo the warning is drawn from lives in memory, so after a cold start it is
+absent until the workshop screen is opened again with a connection.
 
 ### [LOW] A workshop appointment is validated and then written, not both in one transaction (backend) — opened 2026-10-09
 
@@ -940,6 +912,35 @@ Three Android parity gaps that the handset's own screens and walkthrough admitte
 found by the sweep of customer-visible copy (items F6, F7 and F12 of that sweep) and closed by
 building the features. None moved a permission: the handset calls the routes the web calls, behind
 the same doors.
+
+### [DEFERRED TO 0.0.13] Design-workshop approvals were not built, and `APPROVED` has been unreachable since the review loop shipped — **CLOSED 2026-10-10**
+
+Recorded 2026-09-16: nothing could approve a report, withdraw an approval or hand an approved report on
+to the office — the three verbs `DECISION_EDGES` named had no router — so `APPROVED` and `SUBMITTED`
+were unreachable and the ministry desk said so on screen. Built on 2026-10-10 in
+`backend/app/api/routes/design_workshop_approvals.py`, planned in
+`backend/app/schemas/design_workshop_approvals.py`, read through
+`backend/app/services/design_workshop_approvals.py`, with migration
+`20261010160000_design_workshop_approvals`. The four things this entry said were owed beyond the verbs:
+
+* **The gate.** `deps.APPROVAL_AUTHORITY_ROLES` = the Ministry Admin and the master admin, estate-wide,
+  by role — not the Assistant or Regional Director posts (view-and-monitor by the 2026-10-09 ruling) and
+  not ADMIN (platform administration). On one workshop, rule 7 of
+  `backend/app/services/design_workshop_posts.py`: whoever authored it or inspects it may not decide.
+  [PERMISSIONS.md](PERMISSIONS.md) §2.
+* **A `ReviewLog` row in the same transaction as each status move**, behind a compare-and-set update;
+  two approvals at once produce one.
+* **The `round >= 1` CHECK** the send-back satisfies: a withdrawal or a return files its sentence as a
+  correction row against the round the report was approved in, which is at least 1 by construction.
+* **Withdrawal after hand-on**: the owner's default, yes — the approving authority may return a
+  handed-on report with a reason (`SUBMITTED -> NEEDS_REVISION`, the fifth decision edge). A designer
+  may not: a handed-on report loses every header edge, and an approved or handed-on report is frozen.
+
+The ministry desk's notice of the missing step and the paragraph that rendered it are deleted; the desk ends with "Reports to
+approve". Pinned by `backend/tests/test_design_workshop_approvals.py`,
+`backend/tests/test_design_workshop_approvals_db.py` (every role, rule 7, the states, the freeze,
+finality, one audit row per decision, the race), `backend/tests/test_design_workshop_review_loop.py`,
+`backend/tests/test_role_ladder_parity.py` and `frontend/e2e/ministry-desk-unit.spec.ts`.
 
 ### [MEDIUM] An inspector on the handset could not read the correction suggestions on a workshop, file one, or send a report back (android) — **CLOSED 2026-10-10**
 

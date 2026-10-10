@@ -55,10 +55,12 @@ import { PageHeader } from "@/components/PageHeader";
 import { StatusBadge } from "@/components/StatusBadge";
 import {
   dwFeedbackRounds,
+  dwFrozenReason,
   dwPatchableFrom,
   getDesignWorkshop,
   overallPercent,
   patchDesignWorkshop,
+  type DwDecision,
   type DwInspectionFeedback,
   type DwRegistry,
   type DwStage,
@@ -79,7 +81,8 @@ import {
 import { ApiError } from "@/lib/api";
 import { formatDate } from "@/lib/format";
 import { isUnreachable } from "@/lib/offline";
-import { canRunDesignWorkshops, isAdmin } from "@/lib/permissions";
+import { canApproveDesignWorkshops, canRunDesignWorkshops, isAdmin } from "@/lib/permissions";
+import { decisionKindLabel, signOffLines, type DwSignOffFacts } from "@/lib/designWorkshopApprovals";
 import { readinessSummary, workshopReadiness, type WorkshopReadiness } from "@/lib/submissionReadiness";
 import { neverReconciled } from "@/lib/workshopOpenability";
 import { buildWorkshopSearchIndex, emptyWorkshopSearchIndex } from "@/lib/workshopSearch";
@@ -206,6 +209,9 @@ function draftHeader(draft: DwDraft): Omit<DwSummary, "id"> {
     sponsor: null,
     notes: draft.header.notes,
     workshopId: draft.header.workshopId,
+    // When it was handed on to the office, as the last server read said — what tells a report that is
+    // final from a SUBMITTED row written before approvals existed.
+    handedOnAt: draft.header.handedOnAt ?? null,
     // The artisan's answer as THIS DEVICE holds it, so the consent row states what is on record with
     // no connection. See `DwDraft.consent` — a local answer is what the screen reads and is NOT what
     // the server's gate reads, which is why the row says whether it has been sent.
@@ -339,14 +345,13 @@ function readRegisterProvenance(payload: unknown): DwRegisterProvenance {
 function submissionScope(stagesTotal: number | null): string {
   const stages =
     stagesTotal === null
-      ? "Every stage stays editable afterwards"
-      : `All ${stagesTotal} stages stay editable afterwards`;
+      ? "Every stage stays editable"
+      : `All ${stagesTotal} stages stay editable`;
   return (
-    `Marking a workshop complete or submitted does not lock it. ${stages} and saving one does not ` +
-    "undo it — the repository checks only that a workshop has not been deleted, never what its status " +
-    "says. It also produces and sends nothing: the .docx or .pdf is still made on the Report screen, " +
-    "and no file leaves this system until somebody sends one. What changes is the word on this record, " +
-    "and where the workshop appears in the status filter on the workshops list."
+    `Marking a workshop complete or handing it in does not lock it. ${stages} until the Ministry Admin ` +
+    "approves the report; from then on it can no longer be changed unless the approval is withdrawn. " +
+    "Nothing is sent anywhere by this step: the .docx or .pdf is made on the Report screen, and the " +
+    "approved report is handed on to the office by the Ministry Admin."
   );
 }
 
@@ -370,10 +375,9 @@ function submissionScope(stagesTotal: number | null): string {
  * approved report cannot be archived either until it has been handed on or the approval withdrawn.
  */
 const SUBMISSION_IS_REVERSIBLE =
-  "Handing the report in can be withdrawn from this card while nobody has acted on it, and Reopen for " +
-  "editing still brings a submitted or archived workshop back to In progress. What is not undone here: " +
-  "sending a report back, approving it, withdrawing an approval and handing an approved report on are " +
-  "decisions taken elsewhere by the office that takes them, each recorded with a name and a note.";
+  "Handing the report in can be withdrawn from this card while nobody has acted on it. What is not undone " +
+  "here: an inspector sending the report back, and the Ministry Admin approving it, withdrawing an approval " +
+  "or handing the approved report on to the office — each is recorded with a name and a note.";
 
 /** The eight members of `DesignWorkshopStatus`, in the order a workshop travels through them. */
 const DW_STATUSES: DwStatus[] = [
@@ -566,7 +570,13 @@ function actionsFor(status: string): SubmissionAction[] {
  * move belongs to somebody else (APPROVED), and a status this build has never heard of. The first is
  * the product working; the second is a client one deploy behind. They must not look the same.
  */
-function noActionsReason(status: string): string | null {
+function noActionsReason(status: string, signOff: string[] = [], handedOn = false): string | null {
+  // A REPORT HANDED ON TO THE OFFICE IS FINAL: no header edit moves it, so the card has nothing to
+  // offer and says who signed it off and what to do if it is wrong.
+  if (handedOn && status === "SUBMITTED") {
+    const said = signOff.length ? `${signOff.join(" ")} ` : "This report has been handed on to the office. ";
+    return `${said}It can no longer be edited; if something needs correcting, ask the Ministry Admin to return it.`;
+  }
   if (actionsFor(status).length > 0) return null;
   // A THIRD reason exists since the mirror started filtering (2026-09-14) and it must not be read as
   // either of the two below: a status this build DOES know, whose every candidate the graph now
@@ -584,9 +594,10 @@ function noActionsReason(status: string): string | null {
     );
   }
   if (status === "APPROVED") {
+    const said = signOff.length ? `${signOff.join(" ")} ` : "This report has been approved. ";
     return (
-      "This report is approved. Handing it on to the office and withdrawing the approval are both the " +
-      "sanctioning authority's acts, taken on their own screen — so there is nothing to press here."
+      `${said}It can no longer be edited; if something needs correcting, ask the Ministry Admin to withdraw ` +
+      "the approval."
     );
   }
   return (
@@ -632,7 +643,7 @@ function InspectionFeedbackPanel({
   return (
     <section className="panel mb-5 grid gap-3 p-4">
       <div className="flex flex-wrap items-center gap-3">
-        <h2 className="text-sm font-medium text-ink-900">What the inspecting officers asked for</h2>
+        <h2 className="text-sm font-medium text-ink-900">What the officers asked for</h2>
         <span className="text-xs text-ink-500">
           {rows.length} suggestion{rows.length === 1 ? "" : "s"} on record
         </span>
@@ -660,6 +671,7 @@ function InspectionFeedbackPanel({
                       can simply be blank, and guessing would attribute an instruction to somebody
                       who did not write it. */}
                   {row.actorName?.trim() || "An officer no longer named"}
+                  {row.byApprovingAuthority ? " · the Ministry Admin" : ""}
                   {row.stageKey ? ` · about ${row.stageKey}` : " · about the report as a whole"}
                   {row.sentBack ? " · this is the one that sent the report back" : ""}
                 </p>
@@ -719,7 +731,9 @@ function SubmissionCard({
   unsentStages,
   offline,
   onStatusChanged,
-  readOnlyReason = null
+  readOnlyReason = null,
+  signOff = [],
+  handedOn = false
 }: {
   /** The id to PATCH — the server's, never a local draft id. */
   workshopId: string;
@@ -762,6 +776,10 @@ function SubmissionCard({
    * refuses it to whoever inspects or supervises the workshop through the admin routes as well.
    */
   readOnlyReason?: string | null;
+  /** "Approved by … on …" and "Handed on to … by … on …", from the single read. See `signOffLines`. */
+  signOff?: string[];
+  /** The row records a hand-on to the office, so no header edit may move it. */
+  handedOn?: boolean;
 }) {
   const { user } = useAuth();
   const confirm = useConfirm();
@@ -773,7 +791,9 @@ function SubmissionCard({
   const mayDecide = canRunDesignWorkshops(user) && !readOnlyReason;
   const token = (status ?? "").trim().toUpperCase();
   const known = (DW_STATUSES as string[]).includes(token);
-  const actions = actionsFor(token);
+  // A HANDED-ON REPORT OFFERS NOTHING. `actionsFor` reads the status alone and would offer a legacy
+  // SUBMITTED row's Reopen; the row's own hand-on is what the server refuses every header edit for.
+  const actions = handedOn && token === "SUBMITTED" ? [] : actionsFor(token);
   const outstanding = readiness ? readiness.blocking.length : null;
   /* One sentence, printed in two places — the dialog body and the card's footer — and they must not
      be able to disagree about how many stages there are. See {@link submissionScope}. */
@@ -1078,7 +1098,7 @@ function SubmissionCard({
               report because both of its remaining moves are the sanctioning authority's, and a row
               of no buttons with no sentence is what a broken page looks like. */}
           {actions.length === 0 ? (
-            <p className="text-sm leading-6 text-ink-700">{noActionsReason(token)}</p>
+            <p className="text-sm leading-6 text-ink-700">{noActionsReason(token, signOff, handedOn)}</p>
           ) : null}
           <dl className="grid gap-1">
             {actions.map((action) => (
@@ -1268,6 +1288,13 @@ export default function DesignWorkshopStagesPage({ params }: { params: Promise<{
    * the draft's copy, which is by then knowingly stale.
    */
   const [confirmedStatus, setConfirmedStatus] = useState<string | null>(null);
+  /**
+   * WHO SIGNED THIS REPORT OFF, AND EVERY DECISION TAKEN ON IT — off the single read, held apart from
+   * the draft for the reason the suggestions above are: they are other accounts' acts, and a stale copy
+   * on this device would be a question nothing here needs to ask. Null and `[]` until the read answers.
+   */
+  const [signOff, setSignOff] = useState<DwSignOffFacts | null>(null);
+  const [decisions, setDecisions] = useState<DwDecision[]>([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1315,6 +1342,18 @@ export default function DesignWorkshopStagesPage({ params }: { params: Promise<{
         // it — and it is the only place on the web a designer can see what was asked for.
         setInspectionFeedback(detail.inspectionFeedback ?? []);
         setFeedbackTruncated(detail.inspectionFeedbackTruncated === true);
+        // WHO SIGNED IT OFF, AND THE DECISIONS, OFF THE SAME READ.
+        setSignOff({
+          status: String(detail.status ?? ""),
+          approvedAt: detail.approvedAt ?? null,
+          approvedById: detail.approvedById ?? null,
+          approvedByName: detail.approvedByName ?? null,
+          handedOnAt: detail.handedOnAt ?? null,
+          handedOnById: detail.handedOnById ?? null,
+          handedOnByName: detail.handedOnByName ?? null,
+          handedOnTo: detail.handedOnTo ?? null
+        });
+        setDecisions(detail.decisions ?? []);
         // WHERE THIS WORKSHOP CAME FROM, OFF THE SAME READ AND AT NO EXTRA REQUEST. The server puts
         // a key here for each ministry register THIS reader keeps, so what arrives is an
         // entitlement answer as much as a data one and nothing on this page has to guess at either.
@@ -1456,6 +1495,17 @@ export default function DesignWorkshopStagesPage({ params }: { params: Promise<{
    * the same question — and says why above them. See `HeldPostNotice`.
    */
   const postRefusal = useHeldPostRefusal(id);
+  /**
+   * WHY THIS REPORT CAN NO LONGER BE CHANGED BY ANYBODY, or null — it is approved, or handed on to the
+   * office. The server refuses every content write with this same sentence; it is said here, above the
+   * cards, before anybody opens a stage and types into it.
+   */
+  const frozenReason = detail
+    ? dwFrozenReason({
+        status: confirmedStatus ?? detail.status,
+        handedOnAt: signOff?.handedOnAt ?? detail.handedOnAt ?? null
+      })
+    : null;
 
   if (unopenable) {
     /*
@@ -1549,7 +1599,7 @@ export default function DesignWorkshopStagesPage({ params }: { params: Promise<{
                 screen is a write the server refuses them, and the notice below says why. Not while
                 the answer is out either (`null` is "none known"), so the link never appears and then
                 withdraws under the pointer. */}
-            {canRunDesignWorkshops(user) && !neverSent && postRefusal === null ? (
+            {canRunDesignWorkshops(user) && !neverSent && postRefusal === null && frozenReason === null ? (
               <Link href={`/design-workshops/${id}/edit`} className="field-button-secondary">
                 <SquarePen className="h-4 w-4" aria-hidden />
                 Edit details
@@ -1648,6 +1698,12 @@ export default function DesignWorkshopStagesPage({ params }: { params: Promise<{
           control: it is the reason three controls on this page are missing and the forms one click
           away are switched off. */}
       <HeldPostNotice refusal={postRefusal} />
+
+      {frozenReason ? (
+        <p className="mb-4 rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-sm leading-6 text-ink-700">
+          {frozenReason}
+        </p>
+      ) : null}
 
       {offline || unsentStages ? (
         // The two facts a designer needs before they decide anything on this page, and neither is
@@ -1812,7 +1868,45 @@ export default function DesignWorkshopStagesPage({ params }: { params: Promise<{
           offline={offline}
           onStatusChanged={setConfirmedStatus}
           readOnlyReason={heldPostReason(postRefusal)}
+          signOff={signOffLines(signOff)}
+          handedOn={Boolean(signOff?.handedOnAt ?? detail.handedOnAt)}
         />
+      ) : null}
+
+      {/*
+        THE SIGN-OFF SCREEN, FOR THE ONE READER WHO TAKES IT — a link and never buttons. A Ministry Admin
+        who opened this workshop reaches this page as its creator, and the decision is taken on the
+        report's own screen, beside the stages read for it.
+      */}
+      {detail && !neverSent && canApproveDesignWorkshops(user) ? (
+        <p className="mb-5 text-sm leading-6 text-ink-700">
+          <Link className="font-medium text-purple-700 underline" href={`/design-workshop-approvals/${draft?.remoteId ?? id}`}>
+            Open this report on Reports to approve
+          </Link>{" "}
+          to approve it, send it back or hand it on to the office.
+        </p>
+      ) : null}
+
+      {/* EVERY DECISION TAKEN ON THE REPORT, newest first — an inspector's send-back, and the Ministry
+          Admin's approval, withdrawal, return and hand-on. Drawn only when there is one. */}
+      {decisions.length ? (
+        <section className="panel mb-5 grid gap-3 p-4">
+          <h2 className="text-sm font-medium text-ink-900">Decisions on this report</h2>
+          <ul className="grid gap-2">
+            {decisions.map((decision) => (
+              <li className="rounded-md border border-line-200 bg-field-50 px-3 py-2" key={decision.id}>
+                <p className="text-sm font-medium text-ink-900">{decisionKindLabel(decision.kind)}</p>
+                {decision.note?.trim() ? (
+                  <p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-ink-700">{decision.note}</p>
+                ) : null}
+                <p className="mt-1 text-xs leading-5 text-ink-500">
+                  {decision.actorName?.trim() || "Somebody no longer on record"}
+                  {decision.at ? ` · ${formatDate(decision.at)}` : ""}
+                </p>
+              </li>
+            ))}
+          </ul>
+        </section>
       ) : null}
 
       {/* DIRECTLY UNDER THE SUBMISSION CARD, because it is the answer to the question that card's

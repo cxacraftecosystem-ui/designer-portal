@@ -289,6 +289,15 @@ export type DwDraftHeader = {
   workshopCode: string | null;
   venue: string | null;
   designerName: string | null;
+  /**
+   * Display only — WHEN THE MINISTRY ADMIN HANDED THIS REPORT ON TO THE OFFICE, as the last server read
+   * this device took said. With `status` it answers "is this report signed off, so no longer writable"
+   * (`dwIsFrozen`) on a screen that holds only the draft — a SUBMITTED row with it set was handed on,
+   * one without it is a row from before approvals existed. Never sent: the outbox PATCH lists its keys.
+   * Optional because every draft written before this key existed has none, which reads as "not known
+   * on this device" and leaves the server's refusal as the last word.
+   */
+  handedOnAt?: string | null;
 };
 
 /** Why something has not reached the server, and whether waiting will help. */
@@ -3471,7 +3480,9 @@ function headerOf(summary: DwSummary): DwDraftHeader {
     notes: summary.notes,
     workshopCode: summary.workshopCode,
     venue: summary.venue,
-    designerName: summary.designerName
+    designerName: summary.designerName,
+    // Display only, like the three above: the hand-on as the server last said. See the header type.
+    handedOnAt: summary.handedOnAt ?? null
   };
 }
 
@@ -3698,6 +3709,7 @@ export function draftSummary(draft: DwDraft): DwSummary {
     sponsor: null,
     notes: draft.header.notes,
     workshopId: draft.header.workshopId,
+    handedOnAt: draft.header.handedOnAt ?? null,
     // Read off this device's own record so the answer is on screen with no connection. NOT_RECORDED
     // is the honest floor and is what `consent_of` fails closed to server-side, so the two ends
     // agree about a workshop nobody has answered for.

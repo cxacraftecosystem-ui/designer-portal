@@ -402,6 +402,36 @@ MIRRORS: tuple[Mirror, ...] = (
             "defaulting OUT is a ministry post shown a users table it cannot add anybody to."
         ),
     ),
+    # WHO APPROVES A DESIGN WORKSHOP'S REPORT, 2026-10-10. The twin of
+    # `app/core/deps.py::APPROVAL_AUTHORITY_ROLES`, and `partial` for the reason the rows above are: a
+    # new tier must be DECIDED onto one side of the approving authority.
+    Mirror(
+        path="frontend/lib/permissions.ts",
+        binding="APPROVAL_AUTHORITY_ROLES",
+        kind="partial",
+        pattern=r"export const APPROVAL_AUTHORITY_ROLES: readonly UserRole\[\] = \[([\s\S]*?)\];",
+        absent=frozenset(
+            {
+                "CROWDSOURCE_VOLUNTEER",
+                "FIELD_CONTRIBUTOR",
+                "RESEARCHER",
+                "DESIGNER",
+                "INSPECTOR",
+                "PROFESSOR",
+                "ASSISTANT_DIRECTOR",
+                "REGIONAL_DIRECTOR",
+                "ADMIN",
+            }
+        ),
+        why=(
+            "Who is shown Reports to approve — the desk row, the nav entry, the route guard and the "
+            "approve, send back, withdraw and hand-on buttons. Mirrors `APPROVAL_AUTHORITY_ROLES` in "
+            "app/core/deps.py, which gates every /api/design-workshop-approvals route. ADMIN IS OUT ON "
+            "PURPOSE, as it is from the ministry dashboard: platform administration is not the "
+            "ministry. A new tier defaulting IN is shown buttons the API answers with a 403; one "
+            "defaulting OUT is a ministry post that cannot find the reports waiting on it."
+        ),
+    ),
     # WHO MAY HOLD A POST ON ONE WORKSHOP, 2026-10-09 (owner's ruling D3). Three holder sets, each the
     # twin of a server set in `services/design_workshop_inspectors.py` / `design_workshop_oversight.py`
     # and each `partial` for the reason the rows above are. They are DOORS on the web — the inspector
@@ -1170,6 +1200,23 @@ def test_the_web_provisioner_set_is_the_servers() -> None:
     assert offered == set(ACCOUNT_PROVISIONER_ROLES), (
         f"frontend/lib/permissions.ts offers account provisioning to {sorted(offered)}; "
         f"app/core/deps.py grants it to {sorted(ACCOUNT_PROVISIONER_ROLES)}"
+    )
+
+
+def test_the_web_approving_authority_is_the_servers() -> None:
+    """``APPROVAL_AUTHORITY_ROLES`` on the web against the server's frozenset, directly.
+
+    The same reason as the provisioner test above: the ``partial`` row holds the web literal to its own
+    ``absent`` list, and this holds the two sets that actually decide to each other. A disagreement is a
+    Reports to approve entry the API refuses, or an approving officer who cannot find the screen.
+    """
+    from app.core.deps import APPROVAL_AUTHORITY_ROLES
+
+    (mirror,) = [m for m in MIRRORS if m.binding == "APPROVAL_AUTHORITY_ROLES"]
+    offered = _named_tiers(_body(mirror)) & TIERS
+    assert offered == set(APPROVAL_AUTHORITY_ROLES), (
+        f"frontend/lib/permissions.ts offers the approvals screen to {sorted(offered)}; "
+        f"app/core/deps.py makes {sorted(APPROVAL_AUTHORITY_ROLES)} the approving authority"
     )
 
 

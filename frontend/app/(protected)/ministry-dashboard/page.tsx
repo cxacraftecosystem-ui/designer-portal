@@ -1154,6 +1154,16 @@ function DesignTable({ rows }: { rows: DesignRegisterPage["items"] }) {
             </td>
             <td className="px-4 py-3">
               <StatusBadge status={row.status} />
+              {/* The sign-off, where the register carries it: when it was approved, and when it went
+                  to the office. Nothing is printed for a register that does not say. */}
+              {row.handedOnAt ? (
+                <span className="mt-1 block text-xs text-ink-500">
+                  Handed on {formatDate(row.handedOnAt)}
+                  {row.handedOnTo?.trim() ? ` to ${row.handedOnTo.trim()}` : ""}
+                </span>
+              ) : row.approvedAt ? (
+                <span className="mt-1 block text-xs text-ink-500">Approved {formatDate(row.approvedAt)}</span>
+              ) : null}
             </td>
             <td className="px-4 py-3">
               <ProgressCell progress={row.progress} />

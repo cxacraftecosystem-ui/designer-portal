@@ -3,7 +3,16 @@ import { join } from "node:path";
 
 import { expect, test } from "@playwright/test";
 
-import { DW_LEGAL_TRANSITIONS, dwPatchableFrom, type DwStatus } from "@/lib/designWorkshops";
+import {
+  DW_DECISION_EDGES,
+  DW_FROZEN_APPROVED,
+  DW_FROZEN_HANDED_ON,
+  DW_LEGAL_TRANSITIONS,
+  dwFrozenReason,
+  dwIsFrozen,
+  dwPatchableFrom,
+  type DwStatus
+} from "@/lib/designWorkshops";
 
 /**
  * THE THREE PLACES A `DesignWorkshopStatus` SURFACES, PROVED TO KNOW ABOUT ALL EIGHT OF THEM.
@@ -211,4 +220,35 @@ test("no button the record page offers is an edge a header edit may not take", (
       expect(offered.length, `every candidate from ${from} was struck out by the graph`).toBeGreaterThan(0);
     }
   }
+});
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * The sign-off: a handed-on report is final, an approved one is frozen
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+test("a report handed on to the office takes no header edit; a legacy SUBMITTED row keeps its way back", () => {
+  expect(dwPatchableFrom("SUBMITTED", { handedOn: true })).toEqual([]);
+  expect(dwPatchableFrom("SUBMITTED")).toEqual(expect.arrayContaining(["IN_PROGRESS", "PRE_SUBMISSION", "ARCHIVED"]));
+  // The return from the office is a decision edge, never a header edit.
+  expect(dwPatchableFrom("SUBMITTED")).not.toContain("NEEDS_REVISION");
+  expect(DW_LEGAL_TRANSITIONS.SUBMITTED).toContain("NEEDS_REVISION");
+  expect(DW_DECISION_EDGES.some(([a, b]) => a === "SUBMITTED" && b === "NEEDS_REVISION")).toBe(true);
+  expect(dwPatchableFrom("APPROVED")).toEqual([]);
+});
+
+test("the record page draws no button on a handed-on report, and names who signed an approved one off", () => {
+  expect(RECORD_PAGE_SRC).toMatch(/handedOn && token === "SUBMITTED" \? \[\] : actionsFor\(token\)/);
+  expect(RECORD_PAGE_SRC).toContain("ask the Ministry Admin to withdraw ");
+  expect(RECORD_PAGE_SRC).toContain("ask the Ministry Admin to return it");
+  expect(RECORD_PAGE_SRC).not.toMatch(/taken on their own screen/);
+});
+
+test("approved and handed-on reports are frozen, a legacy SUBMITTED row is not", () => {
+  expect(dwIsFrozen({ status: "APPROVED" })).toBe(true);
+  expect(dwIsFrozen({ status: "SUBMITTED", handedOnAt: "2026-10-09T10:00:00Z" })).toBe(true);
+  expect(dwIsFrozen({ status: "SUBMITTED", handedOnAt: null })).toBe(false);
+  expect(dwIsFrozen({ status: "PRE_SUBMISSION" })).toBe(false);
+  expect(dwFrozenReason({ status: "APPROVED" })).toBe(DW_FROZEN_APPROVED);
+  expect(dwFrozenReason({ status: "SUBMITTED", handedOnAt: "2026-10-09T10:00:00Z" })).toBe(DW_FROZEN_HANDED_ON);
+  expect(dwFrozenReason({ status: "IN_PROGRESS" })).toBeNull();
 });

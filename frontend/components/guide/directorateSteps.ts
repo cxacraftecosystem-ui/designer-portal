@@ -4,6 +4,7 @@ import {
   DraftingCompass,
   FileSignature,
   LayoutDashboard,
+  Stamp,
   UserCheck
 } from "lucide-react";
 
@@ -126,16 +127,17 @@ import type { GuideStep } from "@/components/guide/steps";
  */
 
 /**
- * The screens the directorate works on: the register first, then the five acts in the order the
- * work happens.
+ * The screens the directorate works on: the register first, then the acts in the order the work
+ * happens.
  *
  * THE ORDER IS THE LIFECYCLE OF ONE WORKSHOP AS A MINISTRY SEES IT, which is a different order from
  * the designer's: a workshop is PLANNED (the annual directory), then SANCTIONED (the order that
  * opens it and mints the designer's account), then STAFFED (the designer, the two supervising
- * officers, the artisan roster), then FILLED IN, then READ BACK. Two of those five acts are the
- * two ways a workshop comes into existence at all for these tiers, and they are alternatives rather
- * than a sequence — a Ministry Admin promotes a planned row, an Assistant Director records an order
- * — so they sit adjacent and each says which of the two doors it is.
+ * officers, the artisan roster), then FILLED IN, then READ BACK, then SIGNED OFF — approved and
+ * handed on to the office. Two of those acts are the two ways a workshop comes into existence at
+ * all for these tiers, and they are alternatives rather than a sequence — a Ministry Admin promotes
+ * a planned row, an Assistant Director records an order — so they sit adjacent and each says which
+ * of the two doors it is.
  *
  * ⚠ NO COUNT IS WRITTEN IN THIS COMMENT OR ANYWHERE A READER SEES, for the reason `steps.ts`
  * spends a paragraph on: the hero and the page header both derive theirs from `steps.length`, and a
@@ -147,15 +149,15 @@ export const DIRECTORATE_STEPS: GuideStep[] = [
       FIRST, AND IT IS NOT A STEP IN THE LIFECYCLE THE OTHERS DESCRIBE.
 
       Everything below this card is something an officer DOES to one workshop, in the order it
-      happens. This one is the register of every workshop the other five have already been done to,
+      happens. This one is the register of every workshop the others have already been done to,
       so it teaches a reading rather than an act — and it leads because an officer arriving at this
-      deck for the first time does not yet know which of the five acts is theirs. The dashboard is
+      deck for the first time does not yet know which of the acts is theirs. The dashboard is
       where that question is answered: it names each workshop's designer, its standing and how far
       through the stages it is, so the reader can see the shape of the programme before being taught
       how to move one row of it.
 
-      IT IS ALSO THE ONE SCREEN OF THE SIX THAT EVERY TIER IN THIS DECK CAN OPEN. The five below have
-      five different gates, three of them non-monotonic in rank — the file header spends a paragraph
+      IT IS ALSO THE ONE SCREEN HERE THAT EVERY TIER IN THIS DECK CAN OPEN. The ones below have
+      different gates, several of them non-monotonic in rank — the file header spends a paragraph
       on why that is why this deck exists at all — and leading with the one nobody is refused means a
       reader meets a working screen before they meet a padlock.
 
@@ -396,7 +398,41 @@ export const DIRECTORATE_STEPS: GuideStep[] = [
       "AN ADMIN CAN HAVE ROWS HERE TOO, NAMED BY SOMEBODY ELSE. A Ministry Admin, an admin or the master admin can be named a workshop's Assistant Director or Regional Director by somebody else, and then reads it here exactly as an officer does — scoped to the workshops they were named on, never every workshop. Until somebody names them this screen says they hold no posts.",
       "AN EMPTY PAGE IS A REAL ANSWER AND THE SCREEN SAYS WHICH KIND IT IS. Nothing assigned reads “You do not hold any … posts”, naming the post or posts you may hold; a list that could not be read says so instead and keeps whatever was already on screen — because a correct empty state and a silent failure look identical, and there is no other surface here to cross-check against.",
       "YOU CAN SEE AND HEAR THE FILES, AND CHANGE NONE OF THEM. Photographs, recordings, videos and attachments open here and under each media field; there is no upload, replace or delete control. The links stop working a few minutes after the page loads — Refresh files renews them.",
-      "THERE IS NO SAVE, NO SUBMIT AND NO DELETE ON THIS PAGE, and none of them is missing: there is no route behind it that would accept one. If a stage is wrong, the people who can change it are its designers."
+      "THERE IS NO SAVE, NO SUBMIT AND NO DELETE ON THIS PAGE, and none of them is missing: this screen is for reading. If a stage is wrong, the people who can change it are its designers; approving the report and handing it on to the office are the Ministry Admin's, on Reports to approve."
+    ]
+  },
+  {
+    // LAST, because it is the end of the sequence: the report has been filled in, inspected and read
+    // back, and the Ministry Admin signs it off. `MINISTRY_DESK` carries the matching row at this
+    // same index and `e2e/ministry-desk-unit.spec.ts` holds the two lists to each other.
+    //
+    // An Assistant or Regional Director reading this deck meets the screen's lock panel if they press
+    // the button — the bargain every card in this deck makes — so the card says plainly whose it is.
+    id: "ministry-sign-off",
+    label: "Reports to approve",
+    action: "Approve a report and hand it on",
+    icon: Stamp,
+    href: "/design-workshop-approvals",
+    summary:
+      "Every report its designers have handed in, waiting for the Ministry Admin's decision: approve it or send it back with a reason, then hand the approved report on to the office.",
+    why:
+      "The inspecting officers read a report and ask for corrections; somebody then has to say it is finished and send it on. That is the sanctioning authority's decision, and here it is the Ministry Admin's — and the master admin's — because the report is the ministry's. An Assistant or Regional Director post is for reading a workshop and following its progress; it does not sign the report off.",
+    // The screen's own controls, in screen order: the four lists, then the report and the register it
+    // is read with, then what each decision asks for.
+    fields: [
+      "Waiting for approval · Approved, not yet handed on · Handed on · Returned — the four lists",
+      "The report, stage by stage, with who wrote each field",
+      "What the officers asked for, round by round, and every decision taken on the report",
+      "Approve — with a note, if you want one on the record",
+      "What needs correcting (required) — when you send a report back, withdraw an approval or return one from the office",
+      "Hand on to the office — the office, a note, and the exported report file that went"
+    ],
+    watch: [
+      "YOU DO NOT DECIDE ON A REPORT YOU WORKED ON OR INSPECT. If you hold designer access to the workshop, have written its stages, or inspect it, the decisions are switched off on its screen and the sentence beside them says why. Opening the workshop from the annual plan or a sanction order is not working on it.",
+      "AN APPROVED REPORT CAN NO LONGER BE CHANGED. Its stages lock for everybody the moment it is approved. If something needs correcting, withdraw the approval with a reason: the report goes back to its designers as Needs revision and has to be approved again.",
+      "A REPORT THAT CHANGED AFTER YOU OPENED IT IS NOT APPROVED. If its designers save a stage while you are reading, the approval is refused and the screen asks you to reload and read it again.",
+      "HANDING ON IS RECORDED, NOT SENT. The product sends nothing to the office itself: it records who handed the report on, when, to which office and which exported file. Download the report on the same screen and send it the way that office receives reports.",
+      "A REPORT HANDED ON CAN STILL BE RETURNED, with a reason, if the office sends it back. The approval and the hand-on before it stay on the record."
     ]
   }
 ];

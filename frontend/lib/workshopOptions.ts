@@ -667,7 +667,9 @@ export function designWorkshopOptions<Row extends DesignWorkshopRow>(
           ? "Submitted"
           : status === "ARCHIVED"
             ? "Archived"
-            : "";
+            : status === "APPROVED"
+              ? "Approved"
+              : "";
     return {
       option: {
         value: row.id,
@@ -687,7 +689,9 @@ export function designWorkshopOptions<Row extends DesignWorkshopRow>(
 
   const entries: Classified[] = listed.map((row) => {
     const status = present(row.status).toUpperCase();
-    const closed = status === "SUBMITTED" || status === "ARCHIVED";
+    // APPROVED sorts with the closed ones: an approved report can no longer be changed, so no new
+    // fieldwork is filed under it — the handset's `designWorkshopStanding` says the same.
+    const closed = status === "SUBMITTED" || status === "ARCHIVED" || status === "APPROVED";
     return classify(row, closed ? GROUP_SUBMITTED_AND_ARCHIVED : GROUP_OPEN);
   });
 

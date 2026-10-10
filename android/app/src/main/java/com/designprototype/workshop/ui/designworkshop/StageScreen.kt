@@ -80,6 +80,7 @@ import com.designprototype.workshop.data.DraftMedia
 import com.designprototype.workshop.data.DraftRow
 import com.designprototype.workshop.data.DwCustomCache
 import com.designprototype.workshop.data.DwDictationRun
+import com.designprototype.workshop.data.DwReportFreeze
 import com.designprototype.workshop.data.DwTier3Consent
 import com.designprototype.workshop.data.DwImageQuality
 import com.designprototype.workshop.data.DwStageFocus
@@ -1343,6 +1344,35 @@ fun StageScreen(
             // printed "saved and synced" directly above a card saying two answers had not been stored.
             notStored = refusals?.droppedCustomKeys?.size ?: 0,
         )
+
+        /*
+          THE REPORT IS SIGNED OFF, said above the form rather than discovered at the save.
+
+          The server refuses every change to an approved report, and to one handed on to the office,
+          with this sentence; the sync records that refusal against the item and deletes nothing. So
+          what this card saves is the designer's afternoon: without it the boxes below look exactly as
+          open as they always do, and the first word that anything was wrong arrives after the edits.
+
+          READ FROM [DwReportFreeze], which the workshop's own screen fills from the workshop header —
+          a stage read carries no status, and the device's draft holds none. The boxes stay live on
+          purpose: the server is the authority, and a client that locked a form on a sentence it read
+          an hour ago would hold a report its authority had since reopened.
+        */
+        DwReportFreeze.sentenceFor(workshopId)?.let { sentence ->
+            ElevatedCard(
+                colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.field.warningContainer),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    sentence,
+                    color = MaterialTheme.field.onWarningContainer,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(12.dp),
+                )
+            }
+        }
 
         // SAID OUT LOUD, because the alternative is a blank stage that looks exactly like an empty
         // one. A designer who opens stage 5 in a courtyard with no signal and is shown nothing

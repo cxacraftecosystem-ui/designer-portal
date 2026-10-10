@@ -115,6 +115,7 @@ import {
   type DwStageData
 } from "@/lib/designWorkshops";
 import { formatDate } from "@/lib/format";
+import { signOffLines } from "@/lib/designWorkshopApprovals";
 import { isUnreachable } from "@/lib/offline";
 import { canInspectDesignWorkshops, roleLabel } from "@/lib/permissions";
 import type { User } from "@/lib/types";
@@ -354,6 +355,22 @@ function ReadStage({
 }
 
 /**
+ * Why the box is closed, by the report's status — the server's refusal, said before the press.
+ *
+ * An approved report and one handed on to the office HAVE been handed in, so "it has not been handed
+ * in yet" would be false about them: what has happened is that the inspection is over.
+ */
+function closedInspectionSentence(status: string, handedOnAt: string | null): string {
+  if (status === "APPROVED") {
+    return "This report has been approved, so its inspection is over and nothing more can be filed against it. If something in it is wrong, the Ministry Admin can withdraw the approval and send it back to its designers.";
+  }
+  if (status === "SUBMITTED" && handedOnAt) {
+    return "This report has been handed on to the office, so its inspection is over and nothing more can be filed against it.";
+  }
+  return "This report has not been handed in for inspection yet, so there is nothing to comment on. Its designers hand it in from the workshop's own screen; the box opens then.";
+}
+
+/**
  * THE FEEDBACK BOX — the whole of what an inspection can WRITE, and the register it writes into.
  *
  * ── TWO BUTTONS, BECAUSE THEY ARE TWO ACTS ────────────────────────────────────────────────────
@@ -508,8 +525,7 @@ function FeedbackPanel({
            one yet. Printing it here saves the officer typing a paragraph into a box that cannot
            take it. */
         <p className="rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-sm leading-6 text-amber-800">
-          This report has not been handed in for inspection yet, so there is nothing to comment on. Its designers hand
-          it in from the workshop&apos;s own screen; the box opens then.
+          {closedInspectionSentence(status, detail.handedOnAt ?? null)}
         </p>
       ) : (
         <div className="grid gap-2">
@@ -726,6 +742,14 @@ export default function WorkshopUnderInspectionPage({ params }: { params: Promis
           <span className="font-semibold text-purple-700">Read-only.</span> This is an inspection: every stage below is
           shown as the designers recorded it, with who wrote each field, and nothing here can be edited, submitted or
           deleted — the photographs, recordings and attachments included.
+        </p>
+      ) : null}
+
+      {/* WHO SIGNED IT OFF — an officer reading a report that has been approved or handed on is owed
+          who did it, beside the closed box that says the inspection is over. */}
+      {detail && signOffLines(detail).length ? (
+        <p className="mb-4 rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-sm leading-6 text-ink-700">
+          {signOffLines(detail).join(" ")}
         </p>
       ) : null}
 

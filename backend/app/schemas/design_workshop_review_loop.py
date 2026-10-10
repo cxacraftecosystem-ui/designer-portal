@@ -5,6 +5,14 @@ correction suggestions directly in a feedback box. The designer will edit the fi
 suggestions and resubmit them. This iterative review loop continues until the sanctioning authority
 is satisfied and clicks 'approve'."*
 
+**BOTH HALVES OF THAT SENTENCE ARE BUILT (2026-10-09).** The inspector's half — a suggestion, and a
+send-back — is ``api/routes/design_workshop_inspections.py``. The approving authority's half —
+approve, send back or withdraw an approval, hand an approved report on to the office — is
+``api/routes/design_workshop_approvals.py``, planned in ``schemas/design_workshop_approvals.py`` and
+gated by ``core/deps.APPROVAL_AUTHORITY_ROLES`` and rule 7 of ``services/design_workshop_posts``.
+Both build their writes from :class:`InspectionWritePlan`, which refuses a ``ReviewLog`` row the
+shared enum would reject at construction, so no builder in any module can.
+
 =======================================================================================
 IT IS NOT A SECOND REVIEW MECHANISM, AND THE THREE REFUSALS THAT MADE IT ITS OWN MODULE
 =======================================================================================
@@ -65,7 +73,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from enum import Enum
 from typing import Any
 
@@ -123,6 +131,36 @@ NOT_UNDER_REVIEW_REFUSAL = (
     "revisions — its designers hand it in from the workshop's own screen."
 )
 
+#: The same refusal for the two states the sentence above would be FALSE about (2026-10-09). An
+#: approved report and one handed on to the office have both been handed in — what has happened is
+#: that the inspection is over — so telling the officer "it has not been handed in yet" would be a
+#: sentence about a different report. :func:`review_closed_refusal` picks.
+REVIEW_CLOSED_APPROVED = (
+    "This report has been approved, so its inspection is over and nothing more can be filed against "
+    "it. If something in it is wrong, the Ministry Admin can withdraw the approval and send it back to "
+    "its designers."
+)
+REVIEW_CLOSED_HANDED_ON = (
+    "This report has been handed on to the office, so its inspection is over and nothing more can be "
+    "filed against it."
+)
+
+
+def review_closed_refusal(status_value: str, *, handed_on: bool = False) -> str:
+    """What an officer is told on filing against a report that is not under review, by its state.
+
+    :data:`NOT_UNDER_REVIEW_REFUSAL` for everything but the two states it would be false about: an
+    APPROVED report, and a SUBMITTED one the approving authority handed on. A LEGACY SUBMITTED row —
+    the word's meaning before 2026-09-13, never handed on through this product — keeps the old
+    sentence, which is true of it: its designers can hand it in again.
+    """
+    current = str(status_value or "")
+    if current == APPROVED:
+        return REVIEW_CLOSED_APPROVED
+    if current == SUBMITTED and handed_on:
+        return REVIEW_CLOSED_HANDED_ON
+    return NOT_UNDER_REVIEW_REFUSAL
+
 
 # ── THE GRAPH ────────────────────────────────────────────────────────────────────────────────────
 
@@ -168,13 +206,37 @@ NOT_UNDER_REVIEW_REFUSAL = (
 #: the web has shipped since the SubmissionCard landed, and taking them away would break a promise a
 #: designer has been shown. SUBMITTED -> PRE_SUBMISSION is added so that the rows already carrying
 #: the OLD meaning of SUBMITTED have a way into the loop without a backfill nobody can justify.
+#:
+#: ── AND WHAT THE ROW, NOT THE TABLE, NOW REFUSES (2026-10-09) ─────────────────────────────────
+#:
+#: **A REPORT HANDED ON TO THE OFFICE LOSES EVERY HEADER EDGE.** The three SUBMITTED header edges
+#: above stay in the table for the legacy rows the paragraph above is about, and
+#: :func:`handed_on_refusal` refuses every one of them for a row whose ``handedOnAt`` is set — the
+#: hand-on is the only writer of that column, so a set value means the approving authority really
+#: did hand THIS report on. Without the refusal "Reopen for editing" would be a header edit that
+#: silently undid a hand-on, with no audit row and a stale "approved by" on the row, after which the
+#: report could be approved and handed on a second time in a different shape: the APPROVED ->
+#: ARCHIVED laundering path below, one status later. It is a refusal on the ROW and not an edge
+#: removed from the table because the table cannot tell the two meanings of SUBMITTED apart and the
+#: column can.
+#:
+#: **AND ONE DECISION EDGE LEADS OUT OF A HANDED-ON REPORT: SUBMITTED -> NEEDS_REVISION (R1).** The
+#: approving authority may return a handed-on report to its designers, with a reason, through the
+#: same ``/revise`` that withdraws an approval — the deferral recorded in docs/OPEN_FINDINGS.md left
+#: "may an approval be withdrawn after hand-on" open, and the owner's default is yes, by the
+#: authority and on the record. ``ReviewLog`` keeps both the hand-on and the return, and the export
+#: ledger keeps the file that went. The approvals route refuses the edge for a LEGACY SUBMITTED row,
+#: which was never approved here and has nothing to return.
 LEGAL_TRANSITIONS: Mapping[str, frozenset[str]] = {
     DRAFT: frozenset({IN_PROGRESS, COMPLETE, PRE_SUBMISSION, ARCHIVED}),
     IN_PROGRESS: frozenset({COMPLETE, PRE_SUBMISSION, ARCHIVED}),
     COMPLETE: frozenset({IN_PROGRESS, PRE_SUBMISSION, ARCHIVED}),
     PRE_SUBMISSION: frozenset({IN_PROGRESS, NEEDS_REVISION, APPROVED}),
     NEEDS_REVISION: frozenset({IN_PROGRESS, PRE_SUBMISSION}),
-    SUBMITTED: frozenset({IN_PROGRESS, PRE_SUBMISSION, ARCHIVED}),
+    # NEEDS_REVISION is R1's decision edge — a handed-on report returned by the approving authority —
+    # and is never a header edit; the other three are a LEGACY row's way back into the loop, refused
+    # for a handed-on row by `handed_on_refusal`.
+    SUBMITTED: frozenset({IN_PROGRESS, PRE_SUBMISSION, ARCHIVED, NEEDS_REVISION}),
     # TWO EDGES, AND BOTH OF THEM ARE DECISIONS. `APPROVED` is therefore the one token the graph
     # leaves with NOTHING a header edit may do, which is why the web card needs a sentence for it
     # rather than an empty button row — see `noActionsReason` in the record page.
@@ -187,17 +249,22 @@ LEGAL_TRANSITIONS: Mapping[str, frozenset[str]] = {
 #: Subtracted from the table above rather than written out as a second table, so the two cannot
 #: disagree about an edge — the failure ``_CREATE_OPTIONAL_COLUMNS`` is derived to avoid.
 #:
-#: ⚠ THREE OF THE FOUR NAME A ROUTER THIS WORKSTREAM DOES NOT BUILD. ``POST …/send-back`` ships here,
-#: on the inspection router. The approvals router — ``/design-workshop-approvals`` and its approve,
-#: revise and hand-on verbs — is the sanctioning-authority workstream's, and until it lands APPROVED
-#: is simply unreachable. That is the safe direction and the honest one: nothing can be approved by
-#: accident, and no header edit can manufacture an approval in the meantime.
+#: FIVE EDGES, AND BOTH ROUTERS THAT OWN THEM EXIST (2026-10-09). The send-back is the inspector's,
+#: on ``api/routes/design_workshop_inspections.py`` — and since that date the approving authority's
+#: too, sending a report back without approving it through ``/revise``. Approve, revise (withdraw an
+#: approval, or return a handed-on report) and hand-on are on
+#: ``api/routes/design_workshop_approvals.py``. Until that router landed APPROVED was unreachable —
+#: the deferral recorded in docs/OPEN_FINDINGS.md, closed the same day. Every one of the five writes
+#: its ``ReviewLog`` row in the same transaction as its status, which is the reason none of them may
+#: ever be re-admitted to the header edit.
 DECISION_EDGES: frozenset[tuple[str, str]] = frozenset(
     {
-        (PRE_SUBMISSION, NEEDS_REVISION),  # POST /design-workshop-inspections/{id}/send-back
+        # POST /design-workshop-inspections/{id}/send-back, and /design-workshop-approvals/{id}/revise
+        (PRE_SUBMISSION, NEEDS_REVISION),
         (PRE_SUBMISSION, APPROVED),  # POST /design-workshop-approvals/{id}/approve
         (APPROVED, NEEDS_REVISION),  # POST /design-workshop-approvals/{id}/revise
         (APPROVED, SUBMITTED),  # POST /design-workshop-approvals/{id}/hand-on
+        (SUBMITTED, NEEDS_REVISION),  # POST /design-workshop-approvals/{id}/revise (handed on only)
     }
 )
 
@@ -222,7 +289,8 @@ _DECISION_ROUTES: Mapping[tuple[str, str], str] = {
     (PRE_SUBMISSION, NEEDS_REVISION): (
         "Sending a report back is a decision that is recorded with the officer's name, the "
         "correction suggestions and an audit entry, so it is POST "
-        "/design-workshop-inspections/{id}/send-back and never a header edit."
+        "/design-workshop-inspections/{id}/send-back — or, for the approving authority, POST "
+        "/design-workshop-approvals/{id}/revise — and never a header edit."
     ),
     (PRE_SUBMISSION, APPROVED): (
         "Approving a report is the sanctioning authority's decision, recorded with their name and "
@@ -238,6 +306,11 @@ _DECISION_ROUTES: Mapping[tuple[str, str], str] = {
         "Handing an approved report on to the office is the sanctioning authority's act, not the "
         "designer's, so it is POST /design-workshop-approvals/{id}/hand-on and never a header edit."
     ),
+    (SUBMITTED, NEEDS_REVISION): (
+        "Returning a report that has been handed on to the office is the sanctioning authority's "
+        "decision and needs a sentence saying why, so it is POST "
+        "/design-workshop-approvals/{id}/revise and never a header edit."
+    ),
 }
 
 
@@ -250,6 +323,28 @@ def patchable_from(current: str) -> frozenset[str]:
     """
     allowed = LEGAL_TRANSITIONS.get(current, frozenset())
     return frozenset(nxt for nxt in allowed if (current, nxt) not in DECISION_EDGES)
+
+
+#: What a header edit is told about a report the approving authority has handed on. See the
+#: paragraph above ``LEGAL_TRANSITIONS`` on why the row decides this and the table cannot.
+HANDED_ON_REFUSAL = (
+    "This report has been approved and handed on to the office, so it cannot be reopened, handed in "
+    "again or archived from here. If something in it needs correcting, ask the Ministry Admin to "
+    "return it to its designers."
+)
+
+
+def handed_on_refusal(current: str, nxt: str, *, handed_on: bool) -> str | None:
+    """The refusal for any HEADER EDIT out of a handed-on report, or ``None``.
+
+    ``handed_on`` is whether the ROW records a hand-on (``handedOnAt`` is set). Asked by
+    ``PATCH /design-workshops/{id}`` BEFORE :func:`transition_refusal`, and never by a decision
+    route — the return of a handed-on report (R1) is a decision and is refused or allowed on its own
+    route. A no-op is never a refusal; a legacy SUBMITTED row and every other status pass through.
+    """
+    if handed_on and current == SUBMITTED and nxt != current:
+        return HANDED_ON_REFUSAL
+    return None
 
 
 def transition_refusal(current: str, nxt: str, *, by_decision_route: bool = False) -> str | None:
@@ -313,8 +408,31 @@ def _dead_end_or_list(current: str, nxt: str) -> str:
     )
 
 
-def presubmission_header(current_status: str) -> dict[str, Any]:
+#: THE APPROVING AUTHORITY'S CACHE ON THE WORKSHOP (2026-10-10): who approved it, in which round, and
+#: when; and who handed it on, to which office, with which exported file. Kept HERE, in the
+#: vocabulary module, because :func:`presubmission_header` clears them and
+#: ``schemas/design_workshop_approvals`` — which writes them — imports this module, not the other
+#: way round. Every key is a column on ``DesignWorkshop``; a test holds the two together.
+APPROVAL_CACHE_KEYS: tuple[str, ...] = ("approvedById", "approvedAt", "approvedRound")
+HAND_ON_CACHE_KEYS: tuple[str, ...] = (
+    "handedOnById",
+    "handedOnAt",
+    "handedOnTo",
+    "handedOnExportId",
+)
+
+
+def presubmission_header(current_status: str, *, at: datetime | None = None) -> dict[str, Any]:
     """The header write that puts a workshop into PRE_SUBMISSION, or ``{}`` when it is already there.
+
+    **AND, SINCE 2026-10-10, IT CLEARS THE APPROVING AUTHORITY'S CACHE AND STAMPS THE HAND-IN.** A
+    report entering PRE_SUBMISSION is waiting for a decision nobody has taken, so no screen may read
+    "approved by X" or "handed on" off it: every key of :data:`APPROVAL_CACHE_KEYS` and
+    :data:`HAND_ON_CACHE_KEYS` is nulled in the same statement as the review trio. They are already
+    null on every path that can reach this — a withdrawal or a return clears them, and a handed-on
+    report has no header edge back — so this is the guarantee rather than the mechanism.
+    ``lastHandedInAt`` is ``at`` (the server's clock when the caller does not pass one) and is what
+    the approvals queue orders its waiting reports by: ``reviewedAt`` is cleared here and cannot.
 
     **ONE RULE, TWO WRITE SITES, AND THIS IS WHY IT IS A FUNCTION.** ``PATCH /design-workshops/{id}``
     and ``save_stage``'s in-transaction header write both move a workshop into PRE_SUBMISSION, and
@@ -348,6 +466,9 @@ def presubmission_header(current_status: str) -> dict[str, Any]:
         "reviewNotes": None,
         "reviewedById": None,
         "reviewedAt": None,
+        **dict.fromkeys(APPROVAL_CACHE_KEYS),
+        **dict.fromkeys(HAND_ON_CACHE_KEYS),
+        "lastHandedInAt": at if at is not None else datetime.now(UTC),
     }
 
 
@@ -374,6 +495,16 @@ class Operation(Enum):
 #: knows one knows the other.
 WRITABLE_TABLES = frozenset({"DesignWorkshop", "DwInspectionFeedback", "ReviewLog"})
 
+#: ``schema.prisma::RecordStatus``, mirrored for the module docstring's reason — this file may not
+#: need a generated client. ``ReviewLog.status`` is typed by it, so a decision row carrying any other
+#: word raises inside ``db.tx()`` and rolls the decision back with it: the officer presses the button,
+#: is told the server failed, and the report appears not to have moved. ``InspectionWritePlan``
+#: refuses such a row AT CONSTRUCTION, which is the repair
+#: ``test_every_review_log_status_a_plan_builder_writes_is_a_recordstatus_token`` asked for — it
+#: holds for a builder in any module, not only the ones that test can sweep. A test pins this set to
+#: the schema in both directions.
+RECORD_STATUSES = frozenset({"DRAFT", "PENDING", "APPROVED", "REJECTED", "NEEDS_REVISION"})
+
 
 @dataclass(frozen=True, slots=True)
 class InspectionWritePlan:
@@ -382,6 +513,16 @@ class InspectionWritePlan:
     A PLAN AND NOT A CALL, for ``RatingWritePlan``'s reason: the rules below are then assertable
     with no database, no event loop and no generated client, and the route that applies them is a
     loop over three plans rather than three hand-written writes that can each drift.
+
+    THE NAME SAYS "INSPECTION" AND THE TYPE NOW CARRIES EVERY DECISION — the approving authority's
+    as well as the inspector's send-back — because the rules are the same rules: the same three
+    tables, one named row per update, and an audit row the shared enum will accept.
+
+    **A ``ReviewLog`` ROW IS REFUSED HERE UNLESS ITS ``status`` IS A ``RecordStatus`` TOKEN.** The
+    mistake would otherwise surface as the driver refusing the INSERT inside the transaction — the
+    decision rolled back, the officer told the server failed — and it is the mistake the natural
+    spelling of a hand-on row (``SUBMITTED``) makes. The approvals module says what a decision did
+    with the ``notes`` prefixes ``api/routes/review.py`` already uses for a reviewer's edit.
     """
 
     table: str
@@ -403,6 +544,16 @@ class InspectionWritePlan:
             raise InspectionRuleViolation("An update must name the single row it changes.")
         if self.operation is Operation.CREATE and self.where:
             raise InspectionRuleViolation("A create names no existing row. Drop the where clause.")
+        if (
+            self.table == "ReviewLog"
+            and self.operation is Operation.CREATE
+            and self.data.get("status") not in RECORD_STATUSES
+        ):
+            raise InspectionRuleViolation(
+                f"A ReviewLog row's status is the shared review vocabulary — one of "
+                f"{', '.join(sorted(RECORD_STATUSES))} — and {self.data.get('status')!r} is not in "
+                f"it. Say what the decision was with a notes prefix, as a reviewer's edit does."
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -479,8 +630,12 @@ def feedback_plan(
     field_key: str | None = None,
     recorded_at: datetime | None = None,
     sent_back: bool = False,
+    by_approving_authority: bool = False,
 ) -> InspectionWritePlan:
     """One correction suggestion, as a row.
+
+    ``by_approving_authority`` marks a sentence the approving authority wrote — a report sent back
+    without approval, an approval withdrawn, a handed-on report returned — rather than an inspector.
 
     ``round`` IS COPIED FROM THE WORKSHOP AND NEVER SENT BY A CLIENT. Zero is refused here as well
     as by the CHECK constraint, and the refusal says which copy was skipped — because a zero can
@@ -517,6 +672,7 @@ def feedback_plan(
             "fieldKey": (field_key or "").strip() or None,
             "note": _clean_note(note),
             "sentBack": sent_back,
+            "byApprovingAuthority": by_approving_authority,
             "actorId": actor_id,
             "recordedAt": recorded_at,
         },
@@ -533,8 +689,15 @@ def send_back_plans(
     stage_key: str | None = None,
     field_key: str | None = None,
     recorded_at: datetime | None = None,
+    by_approving_authority: bool = False,
+    log_prefix: str | None = None,
 ) -> SendBackPlans:
     """The whole of a send-back: the suggestion, the decision cache, the audit row.
+
+    ``by_approving_authority`` and ``log_prefix`` are the approving authority's send-back without an
+    approval (2026-10-09): the same three writes, the suggestion marked as the authority's and the
+    audit row's note prefixed so the decision history can tell it from an inspector's. Both default
+    to the inspector's send-back, which is unchanged.
 
     **THE WORKSHOP WRITE IS ``records.review_update`` VERBATIM AND IS NOT REBUILT HERE.** That is
     the reuse this wave promised: the same four-key dict six record types already write, so a
@@ -564,6 +727,7 @@ def send_back_plans(
         field_key=field_key,
         recorded_at=recorded_at,
         sent_back=True,
+        by_approving_authority=by_approving_authority,
     )
     workshop = InspectionWritePlan(
         table="DesignWorkshop",
@@ -578,7 +742,7 @@ def send_back_plans(
             "recordType": "DESIGN_WORKSHOP",
             "recordId": workshop_id,
             "status": NEEDS_REVISION,
-            "notes": note_text,
+            "notes": f"{log_prefix}: {note_text}" if log_prefix else note_text,
             "reviewerId": actor_id,
         },
     )
@@ -593,7 +757,10 @@ def _iso(moment: Any) -> str | None:
 
 
 def feedback_payload(row: Any) -> dict[str, Any]:
-    """One correction suggestion as the clients read it. ELEVEN KEYS, AND THEY ARE THE CONTRACT.
+    """One correction suggestion as the clients read it. TWELVE KEYS, AND THEY ARE THE CONTRACT.
+
+    The twelfth, ``byApprovingAuthority`` (2026-10-09), says the approving authority wrote it rather
+    than an inspector; it is false on every row written before that date.
 
     SYNCHRONOUS, AND THE NAME ARRIVES ON THE ROW. ``actorName`` is read off ``row.actor``, which the
     two detail reads fetch with ``include={"actor": True}`` — so this stays a pure function over a
@@ -618,6 +785,7 @@ def feedback_payload(row: Any) -> dict[str, Any]:
         "fieldKey": getattr(row, "fieldKey", None),
         "note": getattr(row, "note", ""),
         "sentBack": bool(getattr(row, "sentBack", False)),
+        "byApprovingAuthority": bool(getattr(row, "byApprovingAuthority", False)),
         "actorId": getattr(row, "actorId", ""),
         "actorName": getattr(actor, "name", None) if actor is not None else None,
         "recordedAt": _iso(getattr(row, "recordedAt", None)),

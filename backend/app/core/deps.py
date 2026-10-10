@@ -768,6 +768,50 @@ def can_provision_accounts(user: Any) -> bool:
     return role_value(user) in ACCOUNT_PROVISIONER_ROLES
 
 
+#: THE APPROVING AUTHORITY: who approves a design workshop's report, sends it back without approving
+#: it or withdraws an approval, and hands an approved report on to the office (2026-10-10). The owner's
+#: requirement calls them "the sanctioning authority" — "this iterative review loop continues until
+#: the sanctioning authority is satisfied and clicks 'approve'" — and until this set existed nothing
+#: in this file named one, which is the deferral docs/OPEN_FINDINGS.md recorded and closed that day.
+#:
+#: MINISTRY_ADMIN AND MASTER_ADMIN, ESTATE-WIDE, BY ROLE — the product's own evidence, set out in
+#: ``services/design_workshop_approvals``' header and docs/PERMISSIONS.md §2:
+#:
+#: * NOT THE ASSISTANT OR REGIONAL DIRECTOR POSTS. The owner's ruling of 2026-10-09 made both posts
+#:   view-and-monitor, and docs/PERMISSIONS.md §4.8 says no approval route is to be built for either;
+#:   a post holder is neither given nor refused the approval by the post (rule 7c in
+#:   ``services/design_workshop_posts``) — the role decides.
+#: * THE MINISTRY'S ADMINISTERING TIER. MINISTRY_ADMIN reads the whole estate, staffs every workshop
+#:   and appoints its inspectors; the ministry desk lays a workshop out as planned, sanctioned, staffed,
+#:   filled in and read back, and the signature at the end of that sequence is the ministry's. The
+#:   office a report goes to is the Development Commissioner (Handicrafts)'s.
+#: * NOT ADMIN, for the reason :data:`MINISTRY_DASHBOARD_ROLES` gives for leaving it out: ADMIN is
+#:   platform administration, not the ministry. The master admin is in, as the break-glass.
+#:
+#: A SET BESIDE ``is_admin`` AND NOT A WIDENING OF IT — the shape every new power in this file takes.
+#: On ONE workshop the role is necessary and not sufficient: whoever authored the workshop or
+#: inspects it may not decide on it (rule 7 in ``services/design_workshop_posts``).
+#: ``frontend/lib/permissions.ts::APPROVAL_AUTHORITY_ROLES`` is the twin, and
+#: ``tests/test_role_ladder_parity.py`` holds it to this one. Web only: the handset has no approval
+#: screen, by the standing rule that ministry work is web-only.
+APPROVAL_AUTHORITY_ROLES = frozenset({"MINISTRY_ADMIN", "MASTER_ADMIN"})
+
+#: What every other account is told on the approvals surface (403). Byte-identical to the web's
+#: ``ROUTE_GUARDS`` message for ``/design-workshop-approvals``, the house pattern for a gate's sentence.
+APPROVAL_AUTHORITY_REFUSAL = (
+    "Reports to approve belongs to the Ministry Admin and the master admin: they approve a design "
+    "workshop's report, send it back or withdraw an approval, and hand it on to the office. Assistant "
+    "and Regional Directors read the workshops they are named on in Workshops I monitor, and "
+    "inspectors file their corrections in Workshops to inspect."
+)
+
+
+def can_approve_design_workshops(user: Any) -> bool:
+    """Is this account the approving authority? See :data:`APPROVAL_AUTHORITY_ROLES`. SET MEMBERSHIP,
+    so a tier inserted later between 48 and 60 is admitted by nobody's accident."""
+    return role_value(user) in APPROVAL_AUTHORITY_ROLES if user is not None else False
+
+
 def can_read_usage(user: Any) -> bool:
     """Read the platform-usage aggregates — which screens are reached, and where they are slow:
     Admin and above.
@@ -1711,6 +1755,17 @@ async def require_account_provisioner(current_user: Any = Depends(get_current_us
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail=ACCOUNT_PROVISIONER_REQUIRED_DETAIL
         )
+    return current_user
+
+
+async def require_approving_authority(current_user: Any = Depends(get_current_user)) -> Any:
+    """Gates ``/api/design-workshop-approvals`` — see :data:`APPROVAL_AUTHORITY_ROLES`.
+
+    Decided from the role alone, before any read. Whether this account may decide on ONE workshop is
+    asked of that workshop's rows inside the route (rule 7 of ``services/design_workshop_posts``).
+    """
+    if not can_approve_design_workshops(current_user):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=APPROVAL_AUTHORITY_REFUSAL)
     return current_user
 
 

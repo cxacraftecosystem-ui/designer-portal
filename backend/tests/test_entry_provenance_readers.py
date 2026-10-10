@@ -57,6 +57,7 @@ from fastapi import HTTPException
 import app.services.stage_definitions  # noqa: F401  - installs the registry
 from app.api.routes import (
     data_browser as browser,
+    design_workshop_approvals as approval_routes,
     design_workshop_inspections as inspections,
     design_workshop_oversight as oversight_routes,
     design_workshops as routes,
@@ -158,6 +159,12 @@ async def _no_feedback(*_a, **_k):
     return ([], False)
 
 
+#: The decision history the single reads add since 2026-10-10, stubbed for `_no_feedback`'s reason: a
+#: file about field authorship must not need the audit log to exist.
+async def _no_decisions(*_a, **_k):
+    return []
+
+
 @pytest.fixture
 def reader(monkeypatch):
     """Everything the three stage routes touch besides the lines under test.
@@ -190,6 +197,7 @@ def reader(monkeypatch):
     monkeypatch.setattr(routes, "workshop_summary", lambda record: {"id": record.id})
     monkeypatch.setattr(routes, "workshop_completeness", lambda *_a, **_k: {})
     monkeypatch.setattr(routes, "_inspection_feedback_payload", _no_feedback)
+    monkeypatch.setattr(routes.design_workshop_approvals, "decision_history", _no_decisions)
     return SimpleNamespace(users=users, entries=entries)
 
 
@@ -1119,7 +1127,70 @@ def supervision(reader, monkeypatch):
     monkeypatch.setattr(oversight_routes, "load_definition_or_empty", _definition)
     monkeypatch.setattr(oversight_routes, "workshop_summary", lambda record: {"id": record.id})
     monkeypatch.setattr(oversight_routes, "workshop_completeness", lambda *_a, **_k: {})
+    monkeypatch.setattr(oversight_routes.design_workshop_approvals, "decision_history", _no_decisions)
     return SimpleNamespace(users=reader.users, entries=fresh)
+
+
+# --------------------------------------------------------------------------------------
+# Reader 17: the approving authority's read — NOT exempt (2026-10-10)
+# --------------------------------------------------------------------------------------
+#
+# ``GET /design-workshop-approvals/{id}`` serves every stage's values to a Ministry Admin deciding
+# whether to approve a report none of whose fields they wrote, so who wrote each field is part of
+# what they judge. Classified by these two tests, as the tripwire's docstring requires.
+
+
+@pytest.fixture
+def sign_off(supervision, monkeypatch):
+    """The approvals route's own doubles, over the supervision fixture's rows and name lookup."""
+
+    async def _load(*_a, **_k):
+        return SimpleNamespace(id="dw_1", title="Bagru 2026", deletedAt=None, status="PRE_SUBMISSION",
+                               handedOnAt=None)
+
+    async def _rows(_workshop_id, *, stage_key=None):
+        return [r for r in supervision.entries if stage_key is None or r.stageKey == stage_key]
+
+    async def _definition(*_a, **_k):
+        return SimpleNamespace(version="v1", sections=(), fields_by_stage={}, fields=())
+
+    async def _empty(*_a, **_k):
+        return []
+
+    async def _none(*_a, **_k):
+        return None
+
+    async def _names(*_a, **_k):
+        return {"approvedByName": None, "approvedByRole": None, "handedOnByName": None}
+
+    monkeypatch.setattr(approval_routes.approvals, "load_approvable_workshop_or_404", _load)
+    monkeypatch.setattr(approval_routes.approvals, "decision_history", _empty)
+    monkeypatch.setattr(approval_routes.approvals, "approval_names", _names)
+    monkeypatch.setattr(approval_routes.approvals, "latest_export", _none)
+    monkeypatch.setattr(approval_routes.posts, "decision_refusal", _none)
+    monkeypatch.setattr(approval_routes.oversight, "oversight_rows", _empty)
+    monkeypatch.setattr(approval_routes, "inspector_rows", _empty)
+    monkeypatch.setattr(approval_routes, "_inspection_feedback_payload", _no_feedback)
+    monkeypatch.setattr(approval_routes, "entry_rows", _rows)
+    monkeypatch.setattr(approval_routes, "load_definition_or_empty", _definition)
+    monkeypatch.setattr(approval_routes, "workshop_summary", lambda record: {"id": record.id})
+    monkeypatch.setattr(approval_routes, "workshop_completeness", lambda *_a, **_k: {})
+    return supervision
+
+
+async def test_the_approving_authoritys_read_resolves_the_overlay(sign_off):
+    out = await approval_routes.read_report_to_approve("dw_1", current_user=ADMIN)
+    _assert_resolved(
+        out["stages"][COLLECTION_STAGE]["provenance"]["collections"]["participant"]["ent_p1"],
+        where="GET /design-workshop-approvals/{id}",
+    )
+    assert sign_off.users.calls == [[MEENA.id]], "one lookup for the whole workshop"
+
+
+async def test_the_approving_authoritys_read_says_it_is_read_only(sign_off):
+    out = await approval_routes.read_report_to_approve("dw_1", current_user=ADMIN)
+    assert out["readOnly"] is True
+    assert out["mayRecordFeedback"] is False
 
 
 async def test_the_officer_supervision_read_resolves_the_overlay(supervision):
@@ -1646,6 +1717,9 @@ def test_no_new_reader_of_stage_entries_appeared_without_resolving_provenance():
         # is the one reader whose audience is every ministry and directorate account, over the
         # whole estate, none of them holding a grant on a single workshop in it.
         "app/services/ministry_dashboard.py",
+        # Classified 2026-10-10 with the approvals router. NOT exempt: it resolves provenance, and
+        # the two tests under "Reader 17" above are the classification.
+        "app/api/routes/design_workshop_approvals.py",
     }
     root = Path(__file__).resolve().parents[1] / "app"
     found = set()

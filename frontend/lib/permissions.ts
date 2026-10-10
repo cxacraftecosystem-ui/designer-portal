@@ -505,6 +505,17 @@ const RECORD_CREATOR_GUARD = {
     "comment on existing records — browse the repository to find an entry to add to."
 } as const;
 
+/**
+ * What every account outside {@link APPROVAL_AUTHORITY_ROLES} is told at Reports to approve —
+ * BYTE-IDENTICAL to `APPROVAL_AUTHORITY_REFUSAL` in `backend/app/core/deps.py`, which is the 403 the
+ * approvals routes answer, so the lock panel and a refused request say one thing.
+ *
+ * DECLARED ABOVE `ROUTE_GUARDS` AND NOT BESIDE ITS PREDICATE, because the table is evaluated when this
+ * module loads and a `const` declared below it would still be in its temporal dead zone there.
+ */
+export const APPROVAL_AUTHORITY_REFUSAL =
+  "Reports to approve belongs to the Ministry Admin and the master admin: they approve a design workshop's report, send it back or withdraw an approval, and hand it on to the office. Assistant and Regional Directors read the workshops they are named on in Workshops I monitor, and inspectors file their corrections in Workshops to inspect.";
+
 export const ROUTE_GUARDS: RouteGuard[] = [
   {
     path: "/users",
@@ -909,6 +920,29 @@ export const ROUTE_GUARDS: RouteGuard[] = [
     title: "Officer access required",
     message:
       "Workshops I monitor lists the design & prototype workshops this account has been named on as Assistant Director or Regional Director, so it opens for whoever may be named: the Assistant Director and Regional Director posts, a Ministry Admin, an admin and the master admin. Designers read design & prototype workshops on Design workshops instead; who monitors a workshop is chosen on Workshop oversight."
+  },
+  {
+    /*
+      THE SANCTIONING AUTHORITY'S OWN SCREEN — the reports waiting for a sign-off, one report read for
+      it, and the decisions: approve, send back or withdraw an approval, hand on to the office.
+
+      A SIBLING OF `/design-workshops` AND NOT A CHILD, for the reason every row in this family gives:
+      its reader is very often somebody that tree refuses — a Ministry Admin who neither opened the
+      workshop nor holds designer access to it — and the API's prefix is separate for the same reason.
+      `routeMatches` compares whole segments, so the `/design-workshops` row cannot reach this path.
+
+      A SET OF TWO, {@link APPROVAL_AUTHORITY_ROLES}: the Ministry Admin and the master admin. NOT an
+      admin, for the reason the ministry dashboard's row gives, and NOT the Assistant or Regional
+      Director tiers — a director post is reading and monitoring, and the sign-off is the ministry's.
+      Who may decide on ONE report (nobody signs off work they authored or inspected) is the server's
+      question, asked per workshop and said on the report's own screen.
+    */
+    path: "/design-workshop-approvals",
+    can: canApproveDesignWorkshops,
+    gate: "require_approving_authority (APPROVAL_AUTHORITY_ROLES, core/deps.py)",
+    ministry: true,
+    title: "Ministry Admin access required",
+    message: APPROVAL_AUTHORITY_REFUSAL
   },
   {
     /*
@@ -1799,4 +1833,29 @@ export const MINISTRY_DASHBOARD_ROLES: readonly UserRole[] = [
 
 export function canSeeMinistryDashboard(user: User | null | undefined) {
   return !!user && MINISTRY_DASHBOARD_ROLES.includes(user.role);
+}
+
+/**
+ * THE SANCTIONING AUTHORITY — who approves a design workshop's report, sends it back or withdraws an
+ * approval, and hands an approved report on to the office. Mirrors `APPROVAL_AUTHORITY_ROLES` in
+ * `backend/app/core/deps.py`, which `require_approving_authority` reads; both are registered in
+ * `backend/tests/test_role_ladder_parity.py`.
+ *
+ * A SET OF TWO, AND NO FLOOR PRODUCES IT: MINISTRY_ADMIN (48) is in, ADMIN (50) is out, MASTER_ADMIN
+ * (60) is in — the hole the ministry dashboard's set has, for the same reason. An admin administers
+ * the platform; the sign-off is the ministry's. The Assistant and Regional Director TIERS are out as
+ * well: a director post on a workshop is for reading and monitoring it (the owner's ruling of
+ * 2026-10-09), and the approval comes from the ministry's administering office.
+ *
+ * NECESSARY, NOT SUFFICIENT, ON ONE REPORT. The server also refuses this account on a workshop it
+ * authored or inspects, with a sentence the report's screen prints; this predicate only decides
+ * whether the screen opens and the nav entry is drawn.
+ */
+export const APPROVAL_AUTHORITY_ROLES: readonly UserRole[] = [
+  "MINISTRY_ADMIN",
+  "MASTER_ADMIN"
+];
+
+export function canApproveDesignWorkshops(user: User | null | undefined) {
+  return !!user && APPROVAL_AUTHORITY_ROLES.includes(user.role);
 }

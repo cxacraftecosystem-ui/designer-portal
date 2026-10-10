@@ -64,10 +64,10 @@ const PAGE_HEADER = join(ROOT, "components", "PageHeader.tsx");
 const TAILWIND = join(ROOT, "tailwind.config.ts");
 
 /**
- * The five, written out rather than derived.
+ * The six, written out rather than derived.
  *
  * ⚠ NOT `ROUTE_GUARDS.filter((g) => g.ministry)`, which would make the first test a restatement of
- * the thing it is testing. Five paths, typed on purpose, so a sixth ministry surface has to be typed
+ * the thing it is testing. Six paths, typed on purpose, so a seventh ministry surface has to be typed
  * here too and is therefore a decision somebody made rather than one that happened.
  *
  * `/ministry-dashboard` joined on 2026-09-20 — the ministry's whole-estate register. It is TOP-LEVEL
@@ -78,6 +78,7 @@ const TAILWIND = join(ROOT, "tailwind.config.ts");
  */
 const MINISTRY_PATHS = [
   "/annual-plan",
+  "/design-workshop-approvals",
   "/ministry-dashboard",
   "/officers",
   "/officers/monitored",
@@ -167,7 +168,7 @@ test("no ministry row is gated on canRunDesignWorkshops", () => {
   expect(ministrySurface("/design-workshops/ckq12345")).toBe(false);
 });
 
-test("the guard table still has twenty-five rows", () => {
+test("the guard table still has twenty-six rows", () => {
   /*
     TWENTY-FIVE since 2026-09-20, and updating this literal is supposed to be a deliberate act
     rather than a formality. It is what keeps MINISTRY_PATHS above honest: a literal set over a table that grew
@@ -182,7 +183,7 @@ test("the guard table still has twenty-five rows", () => {
     The length of the array is the only honest count, which is why this asserts the array and never
     a grep. Do not "correct" it back down.
   */
-  expect(ROUTE_GUARDS.length).toBe(25);
+  expect(ROUTE_GUARDS.length).toBe(26);
 });
 
 test("the scoped block never reaches a utility class", () => {

@@ -1079,23 +1079,18 @@ Two consequences worth stating:
   sentence those columns ever held is a row in the register, which is what the designer's panel is
   built from.
 
-Approving is the sanctioning authority's act on its own route and is **not** part of this table yet —
-`PRE_SUBMISSION → APPROVED`, `APPROVED → NEEDS_REVISION` and `APPROVED → SUBMITTED` are declared as
-decision edges, so a header edit is refused all three with a sentence naming the route, and until
-that router lands `APPROVED` is simply unreachable. That is the safe direction: nothing can be
-approved by accident and no header edit can manufacture an approval in the meantime. True as of
-«2026-09-13»; check `grep -rn "design-workshop-approvals" backend/app/api/`.
-
-**The router was RULED into 0.0.13 on 2026-09-15, so the sentence above is now a scheduled state
-rather than a race**, and one consequence of it is worth spelling out because the table does not show
-it. `SUBMITTED` — which since 2026-09-13 means *the approved report has been handed on* — has exactly
-one inbound edge, `APPROVED → SUBMITTED`, and that edge is one of the three above. So **`SUBMITTED` is
-unreachable too, transitively**, and a report's forward journey today ends at `PRE_SUBMISSION`, with
-`NEEDS_REVISION` and back as often as anyone likes. Rows that still read `SUBMITTED` are ones carrying
-the pre-2026-09-13 meaning of the word; they can still leave that state and cannot re-enter it. The
-deferral, what 0.0.13 owes beyond the three verbs, and why the gap is stated on the ministry desk
-rather than left to be discovered are in [OPEN_FINDINGS.md](OPEN_FINDINGS.md) under
-*Design-workshop approvals were not built*.
+Approving is the approving authority's act, on Reports to approve (`/api/design-workshop-approvals`,
+since 2026-10-10): the Ministry Admin and the master admin, by role, with rule 7 of
+[PERMISSIONS.md](PERMISSIONS.md) §4.8 refusing whoever authored or inspects the workshop. Five decision
+edges, each refused to a header edit and taken on its own route with a `ReviewLog` row in the same
+transaction: the inspector's send-back, and the authority's approve (`PRE_SUBMISSION → APPROVED`,
+for exactly the round and the content the approver read), revise (`PRE_SUBMISSION`/`APPROVED`/
+handed-on `SUBMITTED → NEEDS_REVISION`, with a mandatory sentence filed in the designers' register)
+and hand-on (`APPROVED → SUBMITTED`, recording who, when, to which office and which exported file —
+nothing is transmitted). An approved or handed-on report is frozen to every content write; a handed-on
+report loses every header edge, and a `SUBMITTED` row carrying the word's pre-2026-09-13 meaning
+(`handedOnAt` null) keeps them. The approver's name and date print under the report's Certification.
+True as of «2026-10-10»; check `grep -n "DECISION_EDGES" backend/app/schemas/design_workshop_review_loop.py`.
 
 Operation counts for the whole API are generated into [REPO_FACTS.md](REPO_FACTS.md).
 
