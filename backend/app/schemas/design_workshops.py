@@ -905,7 +905,7 @@ class AiOnDeviceLayerIn(APIModel):
     sourceText: str = Field(min_length=1, max_length=MAX_VERB_TEXT_CHARS)
 
     @model_validator(mode="after")
-    def _a_real_moment_and_a_pinned_model(self) -> "AiOnDeviceLayerIn":
+    def _a_real_moment_and_a_pinned_model(self) -> AiOnDeviceLayerIn:
         """Refuse an unparseable time and a model nobody pinned, before any gate is read."""
         try:
             datetime.fromisoformat(str(self.producedAt))
