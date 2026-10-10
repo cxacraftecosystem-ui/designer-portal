@@ -564,6 +564,46 @@ async def test_the_ranked_list_loader_takes_a_label_and_a_gate_and_no_third_fiel
     assert order == {"ordinal": "asc"}
 
 
+async def test_the_pool_directory_takes_the_gate_and_serves_no_stage_field(monkeypatch):
+    """``design_ratings.pool_directory`` — the third read of this table, added for sweep item F8.
+
+    The same fence as the two loaders above, narrower still: it takes the GATE off each row and
+    nothing else — not even the label — and what it serves is the workshop's title and dates and a
+    count per kind. Neither the gate's value (the day a piece was opened), nor any other stage value,
+    nor any stamp may reach the payload, because the directory is read by designers holding no grant
+    on the workshops it names.
+    """
+    rows = [_sketch_row("ent_sk1"), _sketch_row("ent_sk2", ordinal=1)]
+    closed = _sketch_row("ent_sk3", ordinal=2)
+    closed.data.pop(dr.POOL_OPENS_WHEN_FIELD)
+    rows.append(closed)
+    entries = _Entries(rows)
+    workshop = SimpleNamespace(
+        id="dw_1", title="Bagru 2026", startDate=None, endDate=None, deletedAt=None,
+        craftName="Block printing", workshopCode="DW-7",
+    )
+
+    async def _workshops(where=None):
+        wanted = set((where or {}).get("id", {}).get("in", []))
+        return [workshop] if workshop.id in wanted else []
+
+    monkeypatch.setattr(dr, "db", SimpleNamespace(
+        dwstageentry=entries, designworkshop=SimpleNamespace(find_many=_workshops),
+    ))
+    listed = await dr.pool_directory()
+    assert [item.workshop_id for item in listed] == ["dw_1"]
+    payload = dr.pool_workshop_payload(listed[0])
+    assert set(payload) == {"workshopId", "title", "startDate", "endDate", "openCounts"}
+    assert payload["openCounts"] == {"prototype": 0, "sketch": 2}
+    served = repr(payload)
+    for value in (*NOT_THE_LABEL, SKETCH_DATA["name"], SKETCH_DATA[dr.POOL_OPENS_WHEN_FIELD]):
+        assert value not in served, f"{value!r} came off a stage row into the pool directory"
+    assert "Block printing" not in served and "DW-7" not in served, "a workshop_summary field leaked"
+    assert "byName" not in served and "fieldProvenance" not in served
+    (where, _order) = entries.many_calls[0]
+    assert where == {"entityKey": {"in": sorted(dr.RATEABLE_ENTITIES)}, "deletedAt": None}
+
+
 def test_no_stage_entry_field_and_no_identity_reaches_the_ranked_payload():
     """``ranked_payload`` — the wire shape, fenced at its WIDEST.
 

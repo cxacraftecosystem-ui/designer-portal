@@ -27,7 +27,7 @@ Enums: `UserRole`, `AuthProvider`, `RecordStatus`, `WorkshopType`, `MediaType`, 
 
 ## API surface
 
-**351 operations** in the working tree — 173 GET, 108 POST, 28 DELETE,
+**354 operations** in the working tree — 176 GET, 108 POST, 28 DELETE,
 24 PATCH, 18 PUT. 2 of them (`/health`, `/health/ready`) are declared
 on the app rather than on a router; the rest are spread across `backend/app/api/routes/`:
 
@@ -38,7 +38,7 @@ on the app rather than on a router; the rest are spread across `backend/app/api/
 | `workshops.py` | 21 |
 | `media.py` | 20 |
 | `questionnaire_forms.py` | 19 |
-| `design_workshop_oversight.py` | 15 |
+| `design_workshop_oversight.py` | 16 |
 | `usage.py` | 13 |
 | `data_access.py` | 12 |
 | `sanction_orders.py` | 11 |
@@ -48,10 +48,10 @@ on the app rather than on a router; the rest are spread across `backend/app/api/
 | `auth.py` | 9 |
 | `feedback.py` | 9 |
 | `ministry_dashboard.py` | 9 |
+| `design_workshop_inspections.py` | 8 |
 | `tools.py` | 8 |
 | `artisans.py` | 7 |
 | `design_workshop_access.py` | 7 |
-| `design_workshop_inspections.py` | 7 |
 | `access.py` | 6 |
 | `ai_keys.py` | 5 |
 | `crafts.py` | 5 |
@@ -65,9 +65,9 @@ on the app rather than on a router; the rest are spread across `backend/app/api/
 | `settings.py` | 5 |
 | `users.py` | 5 |
 | `workshop_types.py` | 5 |
+| `design_ratings.py` | 4 |
 | `app_release.py` | 3 |
 | `asr_models.py` | 3 |
-| `design_ratings.py` | 3 |
 | `design_workshop_viewers.py` | 3 |
 | `map_points.py` | 2 |
 | `preferences.py` | 2 |
@@ -123,8 +123,8 @@ no key is skipped wherever it sits.
 
 | Surface | Files | Cases | Runner |
 |---|---|---|---|
-| Backend unit (`backend/tests/`) | 227 | 4894 `def test_` | `python -m pytest -rf --durations=15` from `backend/` |
-| Web end-to-end (`frontend/e2e/`) | 211 | 2662 `test(` | Playwright, `frontend/playwright.config.ts` |
+| Backend unit (`backend/tests/`) | 228 | 4913 `def test_` | `python -m pytest -rf --durations=15` from `backend/` |
+| Web end-to-end (`frontend/e2e/`) | 212 | 2675 `test(` | Playwright, `frontend/playwright.config.ts` |
 | Android unit (`android/app/src/test/`) | 241 | 3231 `@Test` | `./gradlew :app:testDebugUnitTest` from `android/` |
 | Android instrumented (`android/app/src/androidTest/`) | 8 | 24 `@Test` | needs a device; on demand only (`.github/workflows/android-emulator.yml`), never a gate |
 
@@ -151,10 +151,10 @@ and this one asserted an absence it had never looked for.
 
 | Area | Tracked files | Tracked lines | Tree files | Tree lines |
 |---|---|---|---|---|
-| `backend/app` | 206 | 157,137 | 206 | 157,137 |
-| `frontend/app` | 95 | 54,879 | 95 | 54,879 |
-| `frontend/components` | 302 | 130,960 | 302 | 130,960 |
-| `frontend/lib` | 126 | 67,738 | 126 | 67,738 |
+| `backend/app` | 208 | 157,525 | 208 | 157,525 |
+| `frontend/app` | 95 | 55,179 | 95 | 55,179 |
+| `frontend/components` | 303 | 131,248 | 303 | 131,248 |
+| `frontend/lib` | 128 | 67,986 | 128 | 67,986 |
 | `android/app/src/main/java` | 265 | 230,597 | 265 | 230,597 |
 
 Two columns because the two numbers get quoted interchangeably and disagree by however much work is

@@ -101,7 +101,7 @@ export const INSPECTOR_STEPS: GuideStep[] = [
     fields: [
       "Search — by title, craft, cluster or workshop code, across your assignments only",
       "Each row: the workshop's title, its code, craft and cluster, its dates and its status",
-      "Nothing else — there is no filter by designer, district or date on this list"
+      "Filters — status, submission round, state, type of workshop, and the days it started between; each narrows your assignments and none can add one, and Clear filters puts them all back"
     ],
     watch: [
       "YOU DO NOT ASK FOR AN INSPECTION AND YOU CANNOT GIVE YOURSELF ONE. A Ministry Admin, an admin or the master admin appoints them, one workshop at a time, on Workshop oversight — a screen you cannot open. There is no request route, no “ask to inspect” button, and nothing here is hidden behind one.",
@@ -125,14 +125,15 @@ export const INSPECTOR_STEPS: GuideStep[] = [
       "Required fields answered — a percentage across every stage",
       "Each stage, numbered and titled, with its own required-field count",
       "Under each value: who wrote it, and where it was copied from",
-      "Media fields, as a count — “3 files recorded here”"
+      "Files — every photograph, recording and attachment filed with the workshop, and under each media field the files it holds",
+      "Under a stage: the answers to the workshop's own questions, with the questions they answer"
     ],
     watch: [
       "READ-ONLY IS STRUCTURAL, NOT A SETTING. There is no stage form on this page, no Save and no delete, and none of them is missing: there is no route behind this page that would accept one. The loader this surface uses has no edit path at all and its own docstring forbids one being added.",
-      "PHOTOGRAPHS, RECORDINGS AND ATTACHMENTS ARE COUNTED AND NOT CARRIED. The sentence under a media field says how many files are recorded there and that an inspection read does not carry them. That is deliberate — an empty gallery would read as a file that failed to load, which is not what happened — and it means a judgement that turns on seeing a photograph is one this screen cannot settle.",
+      "YOU CAN SEE AND HEAR THE FILES, AND CHANGE NONE OF THEM. Photographs open full size, recordings and videos play, and attachments open in a new tab. There is no upload, replace, caption or delete control here. The links stop working a few minutes after the page loads — Refresh files renews them, so a link copied out of the page is not a way to pass a file on.",
       "A COMPLETENESS FIGURE IS AN ARITHMETIC, NOT A VERDICT. It counts required fields answered. A stage can read 100% and still be wrong, and a stage the source document marks as one a workshop may legitimately skip says so beside its own count.",
       "VALUES COPIED FROM A RECORD ARE COPIES, TAKEN WHEN THE STAGE WAS SAVED. The artisan record may have been corrected since. The line under the value tells you which record it came from; it does not tell you that the record still says that.",
-      "ANSWERS TO A WORKSHOP'S OWN CUSTOM QUESTIONS ARE COUNTED AND NOT SHOWN, because the questions themselves are read through a route an inspection does not reach, and answers without their questions are not evidence of anything."
+      "A WORKSHOP'S OWN QUESTIONS ARE SHOWN WITH THEIR ANSWERS, under the stage they belong to and with who answered them. A question the designers have since stopped asking still shows its answer, marked as no longer asked, because the answer was given under that wording."
     ]
   },
   {
