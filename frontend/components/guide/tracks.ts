@@ -264,15 +264,17 @@ export const DIRECTORATE_TRACK: GuideTrack = {
   audience: "Assistant Director, Regional Director, Ministry Admin",
   description:
     "What a ministry post actually does in this product: the annual plan, the sanction register, " +
-    "naming a workshop's designer and its two supervising officers, writing inside a workshop, and " +
-    `reading one back. ${DIRECTORATE_STEPS.length} screens, in the order a workshop reaches them.`,
-  headline: "Plan it, sanction it, staff it, read it back.",
+    "naming a workshop's designer and its two supervising officers, writing inside a workshop, " +
+    "reading one back, and approving the report and handing it on to the office. " +
+    `${DIRECTORATE_STEPS.length} screens, in the order a workshop reaches them.`,
+  headline: "Plan it, sanction it, staff it, read it back, sign it off.",
   intro:
     "Your screens are not the designer's screens, and most of them are not on the designer's " +
     "walkthrough at all. This deck is the lifecycle of one workshop as a ministry sees it — the row " +
     "in the directory, the order that opens it, the postings that staff it, the stages you can now " +
-    "write in, and the read-back afterwards. Three of the five gates below are not rank thresholds, " +
-    "so each card says who its screen is for in its own words rather than borrowing one sentence.",
+    "write in, the read-back afterwards, and the sign-off at the end. Most of the gates below are not " +
+    "rank thresholds, so each card says who its screen is for in its own words rather than borrowing " +
+    "one sentence.",
   facts: [
     { icon: FileSignature, text: "A sanction order opens a workshop and mints its designer's account" },
     { icon: ListOrdered, text: `${DIRECTORATE_STEPS.length} screens, in the order a workshop reaches them` },
@@ -281,9 +283,9 @@ export const DIRECTORATE_TRACK: GuideTrack = {
   steps: DIRECTORATE_STEPS,
   recapTitle: "A workshop's life, in one line",
   recapLead:
-    "Planned, sanctioned, staffed, filled in, read back. Four of these five screens are on the web " +
-    "only — the Android app carries no annual plan, no sanction register and no oversight screens " +
-    "at all. Design workshops is the exception, and a handset runs it exactly as this browser does.",
+    "Planned, sanctioned, staffed, filled in, read back, approved and handed on to the office. Every " +
+    "screen here but Design workshops is used on the web, and a handset runs Design workshops exactly " +
+    "as this browser does.",
   checklistTitle: "Before you sign it off",
   checklistLead:
     "Each of these is cheap now and expensive or impossible later — an account minted against the " +
@@ -293,6 +295,7 @@ export const DIRECTORATE_TRACK: GuideTrack = {
     "The sign-in link has actually been sent. Nothing is emailed by this product; the link is on screen once, works once, and expires.",
     "Every workshop you opened has a designer named on it. Until it does, nobody can fill in a single stage of it.",
     "Both officer slots are filled. A workshop with no Assistant Director and no Regional Director is nobody's to read back.",
+    "Before you approve a report, read what the inspecting officers asked for and check the corrections were made. An approved report can no longer be changed, and a correction found afterwards means withdrawing the approval.",
     "The artisan list's refused rows were corrected and re-uploaded, not left — the report names each one and why.",
     "The filled-in artisan pro-forma has been deleted from wherever you saved it. It carries Aadhaar numbers and it is not stored here.",
     "Anything you corrected in the annual plan for a workshop that is ALREADY open was also corrected on the workshop. The plan and the workshop stop being the same document the moment a row is opened."

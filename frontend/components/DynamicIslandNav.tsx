@@ -39,6 +39,7 @@ import {
   Settings as SettingsIcon,
   Share2,
   SlidersHorizontal,
+  Stamp,
   Star,
   UserCheck,
   UserCog,
@@ -51,11 +52,14 @@ import {
 import { useAdminView } from "@/components/AdminViewProvider";
 import { useAuth } from "@/components/AuthProvider";
 import {
+  AWAITING_APPROVAL_BADGE_HREF,
   AWAITING_SANCTION_BADGE_CLASS,
   AWAITING_SANCTION_BADGE_HREF,
+  awaitingApprovalSentence,
   awaitingSanctionSentence
 } from "@/components/dashboard/ministryDesk";
 import { useAppReducedMotion } from "@/components/guide/useAppReducedMotion";
+import { useAwaitingApprovalCount } from "@/components/hooks/useAwaitingApprovalCount";
 import { useAwaitingSanctionCount } from "@/components/hooks/useAwaitingSanctionCount";
 import { useOpenTaskCount } from "@/components/hooks/useOpenTaskCount";
 import { usePendingAccessCount } from "@/components/hooks/usePendingAccessCount";
@@ -64,6 +68,7 @@ import { HoveredLink, MenuItem } from "@/components/ui/navbar-menu";
 import { WorkshopLogo } from "@/components/WorkshopLogo";
 import { canRecordSanctionOrders } from "@/lib/sanctionOrders";
 import {
+  canApproveDesignWorkshops,
   canAssignWorkshopOversight,
   canCreateRecords,
   canDownloadDataset,
@@ -199,6 +204,27 @@ function AwaitingSanctionBadge({ count }: { count: number }) {
       <span aria-hidden>{count}</span>
       <span aria-hidden className="font-medium">
         awaiting
+      </span>
+      <span className="sr-only">{sentence}</span>
+    </span>
+  );
+}
+
+/**
+ * HOW MANY REPORTS ARE WAITING FOR THE MINISTRY ADMIN'S DECISION — the badge on "Reports to approve".
+ *
+ * The sanction badge above, one destination over: the same pill class, a whole sentence for a pointer
+ * and a screen reader, and one store shared with the ministry desk's row
+ * (`components/hooks/useAwaitingApprovalCount.ts`), so the nav and the desk cannot disagree.
+ */
+function AwaitingApprovalBadge({ count }: { count: number }) {
+  if (count <= 0) return null;
+  const sentence = awaitingApprovalSentence(count);
+  return (
+    <span title={sentence} className={`ml-auto ${AWAITING_SANCTION_BADGE_CLASS}`}>
+      <span aria-hidden>{count}</span>
+      <span aria-hidden className="font-medium">
+        waiting
       </span>
       <span className="sr-only">{sentence}</span>
     </span>
@@ -573,6 +599,20 @@ export const NAV_ITEMS: NavItem[] = [
     can: canReadWorkshopOversight,
     gate: "assert_oversight_surface (OVERSIGHT_HOLDER_ROLES, services/design_workshop_oversight.py)"
   },
+  // ── THE SIGN-OFF ───────────────────────────────────────────────────────────────────────────────
+  //
+  // Beside "Workshops I monitor" because it is the next step of the same sequence: read back, then
+  // signed off. `canApproveDesignWorkshops` is the mirror of `require_approving_authority` — the
+  // Ministry Admin and the master admin — and its `ROUTE_GUARDS` row was written in the same change.
+  // `Stamp` is used by no other entry, so no glyph means two destinations in one menu.
+  {
+    href: "/design-workshop-approvals",
+    label: "Reports to approve",
+    icon: Stamp,
+    group: "Browse",
+    can: canApproveDesignWorkshops,
+    gate: "require_approving_authority (APPROVAL_AUTHORITY_ROLES, core/deps.py)"
+  },
   { href: "/tools?assign=1", label: "Assign tools to artisans", icon: Wrench, group: "Browse", can: canCreateRecords, gate: "get_current_user + owner/EDIT-grant/admin per artisan" },
 
   // Admin — capability holders below admin (professors, grantees) keep these permanently; admins,
@@ -884,6 +924,9 @@ export function DynamicIslandNav() {
    */
   const sanctionEntryVisible = visibleItems.some((item) => item.href === AWAITING_SANCTION_BADGE_HREF);
   const awaitingSanctionCount = useAwaitingSanctionCount(sanctionEntryVisible) ?? 0;
+  /** The reports waiting for a decision — gated on the badged entry being drawn, as the three above. */
+  const approvalEntryVisible = visibleItems.some((item) => item.href === AWAITING_APPROVAL_BADGE_HREF);
+  const awaitingApprovalCount = useAwaitingApprovalCount(approvalEntryVisible) ?? 0;
 
   if (!user) return null;
 
@@ -985,6 +1028,9 @@ export function DynamicIslandNav() {
                             {item.href === OPEN_TASK_BADGE_HREF ? <OpenTaskBadge count={openTaskCount} /> : null}
                             {item.href === AWAITING_SANCTION_BADGE_HREF ? (
                               <AwaitingSanctionBadge count={awaitingSanctionCount} />
+                            ) : null}
+                            {item.href === AWAITING_APPROVAL_BADGE_HREF ? (
+                              <AwaitingApprovalBadge count={awaitingApprovalCount} />
                             ) : null}
                           </span>
                         </HoveredLink>
@@ -1094,6 +1140,9 @@ export function DynamicIslandNav() {
                     {item.href === OPEN_TASK_BADGE_HREF ? <OpenTaskBadge count={openTaskCount} /> : null}
                     {item.href === AWAITING_SANCTION_BADGE_HREF ? (
                       <AwaitingSanctionBadge count={awaitingSanctionCount} />
+                    ) : null}
+                    {item.href === AWAITING_APPROVAL_BADGE_HREF ? (
+                      <AwaitingApprovalBadge count={awaitingApprovalCount} />
                     ) : null}
                   </Link>
                 ))}

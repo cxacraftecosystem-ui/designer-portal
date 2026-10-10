@@ -180,7 +180,9 @@ def test_the_four_decision_edges_are_refused_to_a_header_patch():
     decision routes and by nobody else. Each refusal names the route, because a client told
     "invalid transition" retries the same body.
     """
-    assert len(loop.DECISION_EDGES) == 4
+    # FIVE since 2026-10-10: the approving authority's return of a handed-on report (R1) joined the
+    # four, on the same terms — refused to a header edit, named route and all.
+    assert len(loop.DECISION_EDGES) == 5
     for current, nxt in loop.DECISION_EDGES:
         refusal = loop.transition_refusal(current, nxt)
         assert refusal, f"{current} -> {nxt} is not refused to a header patch"
@@ -255,12 +257,18 @@ def test_presubmission_header_clears_the_decision_cache():
     sentence they ever held is also a ``DwInspectionFeedback`` row, which is the register the
     designer's panel is built from.
     """
-    assert loop.presubmission_header(loop.APPROVED) == {
+    at = datetime(2026, 10, 10, 9, 0, tzinfo=UTC)
+    assert loop.presubmission_header(loop.APPROVED, at=at) == {
         "status": "PRE_SUBMISSION",
         "submissionRound": {"increment": 1},
         "reviewNotes": None,
         "reviewedById": None,
         "reviewedAt": None,
+        # The approving authority's cache, cleared in the same statement (2026-10-10), and the stamp
+        # the approvals queue orders its waiting reports by.
+        **dict.fromkeys(loop.APPROVAL_CACHE_KEYS),
+        **dict.fromkeys(loop.HAND_ON_CACHE_KEYS),
+        "lastHandedInAt": at,
     }
 
 
@@ -272,7 +280,12 @@ def test_the_cleared_keys_are_exactly_the_cached_decision():
     """
     from app.services import records
 
-    cleared = set(loop.presubmission_header(loop.NEEDS_REVISION)) - {"status", "submissionRound"}
+    cleared = (
+        set(loop.presubmission_header(loop.NEEDS_REVISION))
+        - {"status", "submissionRound", "lastHandedInAt"}
+        - set(loop.APPROVAL_CACHE_KEYS)
+        - set(loop.HAND_ON_CACHE_KEYS)
+    )
     cached = set(records.review_update("X", None, "y")) - {"status"}
     assert cleared == cached
 
@@ -750,6 +763,7 @@ def test_feedback_payload_has_the_eleven_keys_the_clients_decode():
         "fieldKey",
         "note",
         "sentBack",
+        "byApprovingAuthority",
         "actorId",
         "actorName",
         "recordedAt",

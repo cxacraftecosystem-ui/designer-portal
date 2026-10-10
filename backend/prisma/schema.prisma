@@ -380,6 +380,11 @@ model User {
   /// pairing the two consent relations above are.
   dwWorkshopsReviewed         DesignWorkshop[]            @relation("DesignWorkshopReviewedBy")
   dwInspectionFeedback        DwInspectionFeedback[]      @relation("DwInspectionFeedbackActor")
+  /// The approving authority's sign-off: the workshops whose standing approval, and whose hand-on
+  /// to the office, this account is named on (SetNull — pointers; the acts themselves are
+  /// `ReviewLog` rows under `reviews` above, which are Restrict).
+  dwWorkshopsApproved         DesignWorkshop[]            @relation("DesignWorkshopApprovedBy")
+  dwWorkshopsHandedOn         DesignWorkshop[]            @relation("DesignWorkshopHandedOnBy")
   /// The sketches and prototypes this account has rated. RESTRICT on the far side, joining the two
   /// relations above rather than the meters below: a rating is a named judgement of a colleague's
   /// work that is shown to admins with the name on it and counted into a ranking the maker sees, so
@@ -2543,6 +2548,45 @@ model DesignWorkshop {
   submissionRound Int @default(0)
 
   /// ==================================================================================
+  /// THE APPROVING AUTHORITY'S SIGN-OFF: WHO APPROVED IT, AND WHO HANDED IT ON. Added 2026-10-09.
+  /// ==================================================================================
+  ///
+  /// COLUMNS AND A LOG, the pattern the review trio above and the consent record below both use:
+  /// these are the CURRENT answer every list reads without walking a log, and the `ReviewLog` rows
+  /// the decisions write (`api/routes/design_workshop_approvals.py`) are what HAS BEEN decided. Not a
+  /// second copy of the review trio, for three reasons:
+  ///
+  /// 1. The trio holds the LAST decision of any kind and a hand-on overwrites it, but "approved by X
+  ///    on the 11th" has to survive into SUBMITTED.
+  /// 2. **`handedOnAt` is the only thing that tells a handed-on SUBMITTED from a row carrying the
+  ///    word's OLD meaning** (20260913130000 redefined it and backfilled nothing). A handed-on row is
+  ///    frozen and loses every header edge; a legacy row keeps "Reopen" and "Hand in".
+  /// 3. A list reads the header, never the log.
+  ///
+  /// ALL NULL UNTIL THE AUTHORITY ACTS, and cleared together — every approval key and every hand-on
+  /// key — when an approval is withdrawn or a handed-on report is returned, and again on every entry
+  /// into PRE_SUBMISSION (`review_loop.presubmission_header`). Two CHECK constraints in migration
+  /// 20261009120000 hold the pairing Prisma cannot express: an APPROVED row has an `approvedAt`, and a
+  /// row with a `handedOnAt` has one too.
+  ///
+  /// `approvedRound` is the `submissionRound` the approval was given in. `handedOnTo` is the office
+  /// the report went to, as recorded (stage 20's "Submitted to", else the Office of the Development
+  /// Commissioner (Handicrafts)). `handedOnExportId` pins the exported file the office received, by
+  /// its `DwReportExport` row, when the authority chose one. Nothing is transmitted: there is no
+  /// mailer, and the hand-on records the forwarding rather than performing it.
+  ///
+  /// `lastHandedInAt` is stamped on every entry into PRE_SUBMISSION and is what the approvals queue
+  /// orders "waiting since" by — `reviewedAt` is cleared on that same entry and cannot.
+  approvedById     String?
+  approvedAt       DateTime?
+  approvedRound    Int?
+  handedOnById     String?
+  handedOnAt       DateTime?
+  handedOnTo       String?
+  handedOnExportId String?
+  lastHandedInAt   DateTime?
+
+  /// ==================================================================================
   /// TIER 3 CONSENT: may THIS workshop's recordings leave the device? Plan §6 answer 3.
   /// ==================================================================================
   ///
@@ -2687,6 +2731,13 @@ model DesignWorkshop {
   /// delete or a silently un-sent-back report.
   reviewedBy User? @relation("DesignWorkshopReviewedBy", fields: [reviewedById], references: [id], onDelete: SetNull)
 
+  /// The approving authority's two acts, as pointers. SetNull for `reviewedBy`'s reason just
+  /// above: the record of each act is a `ReviewLog` row whose reviewer is Restrict.
+  approvedBy     User?           @relation("DesignWorkshopApprovedBy", fields: [approvedById], references: [id], onDelete: SetNull)
+  handedOnBy     User?           @relation("DesignWorkshopHandedOnBy", fields: [handedOnById], references: [id], onDelete: SetNull)
+  /// The exported file the hand-on pinned. SetNull: the hand-on must outlive an export row.
+  handedOnExport DwReportExport? @relation("DesignWorkshopHandedOnExport", fields: [handedOnExportId], references: [id], onDelete: SetNull)
+
   /// Every correction suggestion ever filed against this workshop, in order. The columns above say
   /// what the last decision WAS; this says what has been ASKED FOR, round by round, and it is the
   /// only thing the designer's "what was sent back" screen can be built from.
@@ -2744,6 +2795,11 @@ model DesignWorkshop {
   /// DELETE SET NULL, so deleting a user makes Postgres find every workshop naming them. Same
   /// reasoning as `@@index([dictationConsentById])` above.
   @@index([reviewedById])
+  /// The three sign-off pointers, indexed for the ON DELETE SET NULL they are on the wrong end of,
+  /// exactly as `reviewedById` above is.
+  @@index([approvedById])
+  @@index([handedOnById])
+  @@index([handedOnExportId])
   /// The account pointer, indexed for the onDelete action it is on the wrong end of rather than
   /// for a read. See the long note on `DwStageEntry.createdById` for the decision this follows.
   @@index([deletedById])
@@ -4039,6 +4095,11 @@ model DwReportExport {
   designWorkshop DesignWorkshop @relation(fields: [designWorkshopId], references: [id], onDelete: Cascade)
   generatedBy    User?          @relation("DwReportExportGeneratedBy", fields: [generatedById], references: [id], onDelete: SetNull)
 
+  /// The workshops whose hand-on to the office pinned THIS file (`DesignWorkshop.handedOnExportId`):
+  /// which exported document the office received, identified by its checksum. At most one in
+  /// practice — a file belongs to one workshop — and a list only because the far side is the FK.
+  handedOnWorkshops DesignWorkshop[] @relation("DesignWorkshopHandedOnExport")
+
   @@index([designWorkshopId, generatedAt])
   @@index([generatedById])
 }
@@ -4591,6 +4652,13 @@ model DwInspectionFeedback {
   /// has no reader. One boolean makes "which of these four suggestions was the one that sent it
   /// back" answerable on the screen the designer is standing in front of.
   sentBack Boolean @default(false)
+
+  /// TRUE WHEN THE APPROVING AUTHORITY WROTE THIS SENTENCE AND NOT AN INSPECTOR (2026-10-09): the
+  /// reason a report was sent back without being approved, an approval withdrawn, or a handed-on
+  /// report returned. The designer reads it in the same register, round by round, because it is a
+  /// correction to make like any other — but it is not an inspection, so the ministry register's
+  /// per-inspector counts leave these rows out, and the screens label them as the authority's.
+  byApprovingAuthority Boolean @default(false)
 
   /// WHO said it.
   actorId String

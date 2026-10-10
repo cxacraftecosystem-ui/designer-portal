@@ -235,7 +235,7 @@ const SCREENS: ReadonlyArray<{ screen: string; path: string[]; must: string[]; m
       "const postRefusal = useHeldPostRefusal(id);",
       "<HeldPostNotice refusal={postRefusal} />",
       // Not while the answer is out either: `null` is the one value that means "none known".
-      "canRunDesignWorkshops(user) && !neverSent && postRefusal === null ?",
+      "canRunDesignWorkshops(user) && !neverSent && postRefusal === null && frozenReason === null ?",
       "const mayDecide = canRunDesignWorkshops(user) && !readOnlyReason;",
       "readOnlyReason={heldPostReason(postRefusal)}"
     ],
@@ -247,9 +247,9 @@ const SCREENS: ReadonlyArray<{ screen: string; path: string[]; must: string[]; m
     must: [
       "const postRefusal = useHeldPostRefusal(serverId);",
       // `writesHeld` and not `Boolean(...)`: the lock covers the pending state as well as a refusal.
-      "const locked = saving || writesHeld(postRefusal);",
+      "const locked = saving || writesHeld(postRefusal) || frozenReason !== null;",
       "<HeldPostNotice refusal={postRefusal} id={heldNoticeId} sayPending />",
-      "if (!stage || writesHeld(postRefusal)) return;",
+      "if (!stage || writesHeld(postRefusal) || frozenReason !== null) return;",
       "aria-describedby={postRefusal ? heldNoticeId : undefined}"
     ],
     // Every box and both Save buttons are held by `locked`; one left on `saving` is one reopened.
@@ -795,7 +795,7 @@ test("the identity decision is held by the stage form's lock, which covers the p
   const field = read("components", "designworkshop", "FieldInput.tsx");
   expect(field.slice(field.indexOf("<IdentityCardReader")).slice(0, 400)).toContain("disabled={disabled}");
   const stage = read("app", "(protected)", "design-workshops", "[id]", "stages", "[stageKey]", "page.tsx");
-  expect(stage).toContain("const locked = saving || writesHeld(postRefusal);");
+  expect(stage).toContain("const locked = saving || writesHeld(postRefusal) || frozenReason !== null;");
   expect(stage.slice(stage.indexOf("<EntityForm")).slice(0, 600)).toContain("disabled={locked}");
 });
 

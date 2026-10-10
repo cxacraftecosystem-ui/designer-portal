@@ -16,6 +16,7 @@ from app.api.routes import (
     datasets,
     design_ratings,
     design_workshop_access,
+    design_workshop_approvals,
     design_workshop_inspections,
     design_workshop_oversight,
     design_workshop_viewers,
@@ -153,6 +154,17 @@ api_router.include_router(design_workshop_inspections.router)
 # GET /{workshop_id} — see that file's ⚠ paragraph. Moving this line will not fix a 404 on this
 # prefix, and treating it as the cause wastes a debugging session.
 api_router.include_router(design_workshop_oversight.router)
+# THE SANCTIONING AUTHORITY'S SURFACE, /api/design-workshop-approvals: the reports waiting for a
+# sign-off, one report read for it, and the three decisions the review loop's DECISION_EDGES name —
+# approve, revise (withdraw an approval) and hand-on. ITS OWN PREFIX for the deciding reason the
+# routers above give: its callers are very often somebody `load_workshop_or_404` turns away (a
+# Ministry Admin who neither opened the workshop nor holds designer access to it), and a route
+# sharing /design-workshops invites widening that loader, which grants STAGE WRITES. Mounted beside
+# the inspection and oversight routers because it is the last member of the same family: the
+# inspector reads and sends back, the directors read and monitor, the sanctioning authority signs
+# off. Like the oversight line above, the position is not load-bearing — different prefixes cannot
+# swallow each other. See app/services/design_workshop_approvals.py for who may decide and why.
+api_router.include_router(design_workshop_approvals.router)
 # The empanelment roster that gates a designer's sign-in, and the profile their reports are
 # prefilled from. Next to design_workshops because it is the same product surface, and separate
 # from users because the two facts it keeps are deliberately not the role column — see

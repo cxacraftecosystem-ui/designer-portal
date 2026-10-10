@@ -975,7 +975,10 @@ async def inspection_feedback_counts(workshop_ids: list[str]) -> dict[str, dict[
     """
     if not workshop_ids:
         return {"filed": {}, "sentBack": {}}
-    where: dict[str, Any] = {"designWorkshopId": {"in": workshop_ids}}
+    # THE APPROVING AUTHORITY'S SENTENCES ARE NOT AN INSPECTOR'S WORK (2026-10-10): a report the
+    # Ministry Admin sent back, an approval withdrawn, a handed-on report returned all land in the same
+    # register, marked `byApprovingAuthority`, and are left out of these per-inspector counts.
+    where: dict[str, Any] = {"designWorkshopId": {"in": workshop_ids}, "byApprovingAuthority": False}
     filed, sent_back = await gather_reads(
         db.dwinspectionfeedback.group_by(by=["actorId"], count=True, where=where),
         db.dwinspectionfeedback.group_by(

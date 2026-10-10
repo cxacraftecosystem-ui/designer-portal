@@ -29,6 +29,22 @@ write paths and one loader have to agree about them:
    through the admin arm's read.
 6. **SO DESIGNER ACCESS IS REFUSED TO ANYBODY HOLDING ONE OF THOSE POSTS**, which is rule 5 enforced
    at the grant as well as at the write.
+7. **THE APPROVING AUTHORITY DOES NOT DECIDE ON A REPORT IT WORKED ON OR INSPECTS** (2026-10-10,
+   :func:`approval_refusals` and :func:`decision_refusal`). Approving a report, sending it back or
+   withdrawing an approval, and handing it on are ``deps.APPROVAL_AUTHORITY_ROLES``' acts, by role;
+   on one workshop they are refused (403) to:
+
+   a. anybody who AUTHORED it, by rule 4's evidence — designer access or written stages, never
+      merely having opened it or the prefill that opening writes: nobody approves their own work;
+   b. anybody who INSPECTS it: the officer who inspects a report is not the one who signs it off.
+
+   And these are deliberately NOT refusals, so nobody adds them by analogy: (c) holding the
+   workshop's Assistant or Regional Director post neither grants the decision nor bars it — the role
+   decides; (d) having recorded the workshop's sanction order is allowed, since that officer is the
+   sanctioning authority in the plainest sense and is already barred from authoring it; (e) the same
+   person may approve a report and then hand it on — production has one Ministry Admin, and the two
+   acts are recorded separately; (f) any member of the authority who passes (a) and (b) may withdraw
+   an approval or return a report, not only the one who gave it.
 
 WHAT A POST HOLDER KEEPS, decided with the same ruling (2026-10-09) so nobody narrows it by analogy:
 every read; appointing OTHER people to posts — and taking OTHER people off them — under rules 1-4;
@@ -43,8 +59,9 @@ allow-list bars — stay 422, and when both kinds arise in one request the 422 c
 so the administrator still makes one trip (:func:`raise_refusals`).
 
 WHAT HOLDING A POST DOES **NOT** CONFER, so nobody reads it in: an Assistant or Regional Director
-post is view-and-monitor. The approve, revise and hand-on edges have no route
-(``schemas/design_workshop_review_loop.DECISION_EDGES``) and none is built here.
+post is view-and-monitor. Approving the report, sending it back or withdrawing an approval, and
+handing it on are the approving authority's, BY ROLE (``deps.APPROVAL_AUTHORITY_ROLES``: the Ministry
+Admin and the master admin); no post confers them, and a post does not take them away (rule 7c).
 
 THE INSPECTION TABLE IS READ THROUGH ITS OWN MODULE. ``tests/test_dw_inspector_scope_gate.py`` keeps
 that table's name out of every file but the inspection feature's own, so this module asks
@@ -206,6 +223,57 @@ def self_release_refusal(posts: Iterable[str]) -> str:
         f"You are this workshop's {_labels(posts)}, and nobody takes themselves off a post: another "
         f"administrator has to take you off. Nothing was changed."
     )
+
+
+def _worked_on(authored: frozenset[str]) -> str:
+    if authored >= {DESIGNER_ACCESS, STAGE_WRITES}:
+        return "you hold designer access to it and have written its stages"
+    if DESIGNER_ACCESS in authored:
+        return "you hold designer access to it"
+    return "you have written its stages"
+
+
+def approval_refusals(*, posts: Iterable[str], authored: Iterable[str]) -> list[str]:
+    """Rule 7: the sentences that bar this account from deciding on this workshop's report. PURE.
+
+    ``posts`` are the supervisory posts the account holds on the workshop and ``authored`` its rule-4
+    evidence. An empty list means it may decide as far as WHO it is goes — the role is the caller's
+    question (``deps.can_approve_design_workshops``) and the report's state is the route's. Holding
+    the Assistant or Regional Director post is not in here, on purpose (rule 7c).
+    """
+    held = frozenset(posts)
+    evidence = frozenset(authored)
+    refusals: list[str] = []
+    if evidence:
+        refusals.append(
+            f"You worked on this workshop — {_worked_on(evidence)} — so you cannot decide on its "
+            f"report: nobody approves their own work."
+        )
+    if INSPECTOR in held:
+        refusals.append(
+            "You inspect this workshop, so you cannot decide on its report: the officer who inspects "
+            "a report is not the one who signs it off."
+        )
+    return refusals
+
+
+async def decision_refusal(workshop_id: str, user: Any) -> str | None:
+    """Rule 7 at the decision: the one sentence (403) that bars this account here, or ``None``.
+
+    Two gathered reads — this account's posts and its authorship on the workshop — through the two
+    readers every rule in this module already uses, the inspection one included as a refusal input.
+    """
+    user_id = str(getattr(user, "id", "") or "")
+    if not workshop_id or not user_id:
+        return None
+    held, authored = await gather_reads(
+        supervisory_posts_among(workshop_id, [user_id]),
+        authorship_among(workshop_id, [user_id]),
+    )
+    refusals = approval_refusals(
+        posts=held.get(user_id, frozenset()), authored=authored.get(user_id, frozenset())
+    )
+    return " ".join(refusals) if refusals else None
 
 
 def raise_refusals(account_refusals: list[str], separation: list[str]) -> None:

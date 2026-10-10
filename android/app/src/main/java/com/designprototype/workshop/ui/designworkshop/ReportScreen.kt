@@ -50,10 +50,12 @@ import com.designprototype.workshop.data.DwFieldType
 import com.designprototype.workshop.data.DwQuestionnaireCache
 import com.designprototype.workshop.data.DwQuestionnaireStore
 import com.designprototype.workshop.data.DwReadinessCheck
+import com.designprototype.workshop.data.DwReportFreeze
 import com.designprototype.workshop.data.DwSubmissionReadiness
 import com.designprototype.workshop.data.DwTier
 import com.designprototype.workshop.data.DwReferenceStore
 import com.designprototype.workshop.data.DwValues
+import com.designprototype.workshop.data.dwReportSignOffLines
 import com.designprototype.workshop.data.designWorkshopQuestionnaires
 import com.designprototype.workshop.data.DwCustomCache
 import com.designprototype.workshop.data.DwCustomSectionStore
@@ -559,6 +561,8 @@ fun ReportScreen(
                     serverCopyUnread = serverCopyUnread,
                     questionnaires = dwQuestionnaireCopy(questionnaires),
                     customSections = customSections,
+                    // The same sign-off the export prints — see the export's plan below.
+                    signOff = DwReportFreeze.signOffFor(workshopId),
                 )
                 // COLLECTED ON THE RENDER THREAD AND READ BACK ON THIS ONE, after `withContext`
                 // returns, exactly as `export` does it: assigning the Compose states from inside
@@ -655,6 +659,11 @@ fun ReportScreen(
                     // decides WHERE each of the designer's blocks prints, and a second read could
                     // straddle a definition edit.
                     customSections = customSections,
+                    // WHO APPROVED IT AND WHERE IT WENT, as the workshop's own screen last read it off
+                    // the server (see [DwReportFreeze]) — printed in the Certification section, the
+                    // server's `_render_signatures` lines. Null for a report nobody has signed off and
+                    // for a device that has not read one this run, which then prints none.
+                    signOff = DwReportFreeze.signOffFor(workshopId),
                 )
                 exportNotes = plan.warnings
                 // Collected on the render thread and read back on this one AFTER `withContext`
@@ -2830,6 +2839,11 @@ private fun renderSignatures(
             "developed during the period stated on the cover of this report."
     )
     builder.add(SignatureBlock(signatories = signatories))
+    // THE SANCTIONING AUTHORITY'S SIGN-OFF, AFTER THE SIGNATURES — "Approved by … on …." and, once
+    // it has gone, "Handed on to … on …." — line for line the server's `_render_signatures`, so the
+    // office's copy and the phone's copy of one approved report say the same thing. Nothing at all
+    // for a report nobody has signed off: the plan carries no sign-off then. See [ReportPlan.signOff].
+    dwReportSignOffLines(plan.signOff).forEach { builder.para(it) }
 }
 
 /**

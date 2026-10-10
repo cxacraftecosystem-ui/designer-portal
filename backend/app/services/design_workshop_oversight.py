@@ -862,8 +862,8 @@ def _now() -> Any:
 #: ``{"SUBMITTED", "ARCHIVED"}`` — the whole of "filed" under the FIVE-token vocabulary this
 #: product had before 2026-09-13. That wave redefined ``SUBMITTED`` to mean "the APPROVED report
 #: has been handed on", reachable only through ``(APPROVED, SUBMITTED)`` in
-#: ``design_workshop_review_loop.DECISION_EDGES``, whose approvals router is not built yet — and it
-#: made ``PRE_SUBMISSION`` the designer's hand-in. So the guard was protecting a state nothing
+#: ``design_workshop_review_loop.DECISION_EDGES``, whose approvals router did not exist until
+#: 2026-10-09 — and it made ``PRE_SUBMISSION`` the designer's hand-in. So the guard was protecting a state nothing
 #: could reach while ``PRE_SUBMISSION`` and ``NEEDS_REVISION``, the two states in which officers
 #: are actually holding the report, walked straight through it. Two concrete consequences, both
 #: silent: a report under inspection had its authorship rewritten under the officers reading it,
@@ -1282,12 +1282,31 @@ def assert_the_report_is_not_filed(workshop: Any) -> None:
     if workshop_status not in _CLOSED_STATUSES:
         return
     spoken = design_workshop_review_loop._LABELS.get(workshop_status, workshop_status)
+    # THE REMEDY DEPENDS ON THE STATUS SINCE THE SIGN-OFF LANDED (2026-10-09). "Withdraw it from
+    # inspection — or reopen it" was the whole answer while nothing could be approved; an approved
+    # report can be neither until its approval is withdrawn, and one handed on to the office is final.
+    if workshop_status == design_workshop_review_loop.APPROVED:
+        remedy = (
+            "It has been approved, so ask the Ministry Admin to withdraw the approval first if "
+            "the designer on it is genuinely wrong."
+        )
+    elif (
+        workshop_status == design_workshop_review_loop.SUBMITTED
+        and getattr(workshop, "handedOnAt", None) is not None
+    ):
+        remedy = (
+            "It has been handed on to the office, so ask the Ministry Admin to return it first if "
+            "the designer on it is genuinely wrong."
+        )
+    elif workshop_status in design_workshop_review_loop.UNDER_REVIEW:
+        remedy = "Withdraw it from inspection first if the designer on it is genuinely wrong."
+    else:
+        remedy = "Reopen it first if the designer on it is genuinely wrong."
     raise HTTPException(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
         detail=(
             f"This workshop is {spoken}, and its report already names a designer. Changing it "
-            f"now would re-attribute a filed document. Withdraw it from inspection first — or "
-            f"reopen it — if the designer on it is genuinely wrong."
+            f"now would re-attribute a filed document. {remedy}"
         ),
     )
 

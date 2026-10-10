@@ -571,7 +571,11 @@ export const DW_LEGAL_TRANSITIONS: Record<DwStatus, DwStatus[]> = {
   COMPLETE: ["IN_PROGRESS", "PRE_SUBMISSION", "ARCHIVED"],
   PRE_SUBMISSION: ["IN_PROGRESS", "NEEDS_REVISION", "APPROVED"],
   NEEDS_REVISION: ["IN_PROGRESS", "PRE_SUBMISSION"],
-  SUBMITTED: ["IN_PROGRESS", "PRE_SUBMISSION", "ARCHIVED"],
+  // NEEDS_REVISION here is the Ministry Admin RETURNING a report that was handed on to the office —
+  // a decision, so it is in DW_DECISION_EDGES below and never a button on the designer's card. The
+  // other three are the legacy rows' way back; a handed-on row may take none of them (see
+  // `dwPatchableFrom`'s `handedOn`).
+  SUBMITTED: ["IN_PROGRESS", "PRE_SUBMISSION", "ARCHIVED", "NEEDS_REVISION"],
   // Both of APPROVED's edges are decisions, so a header edit may make neither. That is why
   // `noActionsReason` on the record page exists: an empty button row reads as a broken page.
   APPROVED: ["SUBMITTED", "NEEDS_REVISION"],
@@ -579,27 +583,67 @@ export const DW_LEGAL_TRANSITIONS: Record<DwStatus, DwStatus[]> = {
 };
 
 /**
- * The four edges a DECISION ROUTE owns, which `PATCH /design-workshops/{id}` answers 422 to.
+ * The five edges a DECISION ROUTE owns, which `PATCH /design-workshops/{id}` answers 422 to.
  *
- * Sending a report back, approving it, withdrawing an approval and handing it on each write an
- * audit row in the same transaction as the status. A status change with no audit entry is a
- * decision that appears to have made itself, so none of these is a button on the designer's card —
- * not even a disabled one, which would be a control that cannot ever work.
+ * Sending a report back, approving it, withdrawing an approval, handing it on to the office and
+ * returning a handed-on report each write an audit row in the same transaction as the status. A
+ * status change with no audit entry is a decision that appears to have made itself, so none of these
+ * is a button on the designer's card — not even a disabled one, which would be a control that cannot
+ * ever work. The Ministry Admin takes the last four on Reports to approve.
  */
 export const DW_DECISION_EDGES: ReadonlyArray<readonly [DwStatus, DwStatus]> = [
   ["PRE_SUBMISSION", "NEEDS_REVISION"],
   ["PRE_SUBMISSION", "APPROVED"],
   ["APPROVED", "NEEDS_REVISION"],
-  ["APPROVED", "SUBMITTED"]
+  ["APPROVED", "SUBMITTED"],
+  ["SUBMITTED", "NEEDS_REVISION"]
 ];
 
-/** The statuses a HEADER EDIT may set from here — the graph less the decision edges. */
-export function dwPatchableFrom(status: string): DwStatus[] {
+/**
+ * The statuses a HEADER EDIT may set from here — the graph less the decision edges.
+ *
+ * `handedOn` IS THE ROW'S FACT AND NOT THE STATUS'S. A SUBMITTED row the Ministry Admin handed on to
+ * the office (`handedOnAt` set) accepts no header edit at all — reopening it, handing it in again or
+ * archiving it would take an approved report back into editing with no audit entry, the laundering
+ * path the server refuses. A SUBMITTED row from before approvals existed (`handedOnAt` null) keeps
+ * its way back. Optional so every existing caller reads the legacy answer unchanged.
+ */
+export function dwPatchableFrom(status: string, options?: { handedOn?: boolean }): DwStatus[] {
+  if (options?.handedOn && status === "SUBMITTED") return [];
   const from = DW_LEGAL_TRANSITIONS[status as DwStatus];
   if (!from) return [];
   return from.filter(
     (next) => !DW_DECISION_EDGES.some(([a, b]) => a === (status as DwStatus) && b === next)
   );
+}
+
+/**
+ * The two sentences the server refuses every content write with while a report is signed off,
+ * word for word — so the banner a screen draws before the press and the 403 that would answer it
+ * say the same thing.
+ */
+export const DW_FROZEN_APPROVED =
+  "This report has been approved, so it can no longer be changed. If something in it needs correcting, ask the Ministry Admin to withdraw the approval; it then comes back to its designers to correct and hand in again.";
+export const DW_FROZEN_HANDED_ON =
+  "This report has been approved and handed on to the office, so it can no longer be changed. If something in it needs correcting, ask the Ministry Admin to return it to its designers.";
+
+/**
+ * IS THIS REPORT SIGNED OFF, AND SO NO LONGER WRITABLE? APPROVED, or a SUBMITTED row that was handed
+ * on (`handedOnAt` set). A legacy SUBMITTED row — handed in before approvals existed — is not.
+ *
+ * Takes the two facts rather than a summary so the offline draft header (which carries `status` and,
+ * once a server read has reached it, `handedOnAt`) can ask it too. An unknown status is not frozen:
+ * the server is the authority, and its 403 says so if this device is behind.
+ */
+export function dwIsFrozen(row: { status?: string | null; handedOnAt?: string | null }): boolean {
+  const status = String(row.status ?? "").trim().toUpperCase();
+  return status === "APPROVED" || (status === "SUBMITTED" && Boolean(row.handedOnAt));
+}
+
+/** The sentence for a frozen report, or null when it is writable. See {@link dwIsFrozen}. */
+export function dwFrozenReason(row: { status?: string | null; handedOnAt?: string | null }): string | null {
+  if (!dwIsFrozen(row)) return null;
+  return String(row.status ?? "").trim().toUpperCase() === "APPROVED" ? DW_FROZEN_APPROVED : DW_FROZEN_HANDED_ON;
 }
 
 /**
@@ -697,6 +741,26 @@ export type DwSummary = {
    *  predates the column, and never sent by a client: the server counts it. */
   submissionRound?: number;
   /**
+   * THE SIGN-OFF, AS IDS AND MOMENTS. The Ministry Admin's approval (`approvedById`, `approvedAt`, and
+   * the submission round it was given in) and its hand-on to the office (who, when, to which office,
+   * and which exported file it was). Names are never on a summary — the single reads resolve
+   * `approvedByName` and `handedOnByName` — for `reviewedById`'s reason above.
+   *
+   * OPTIONAL FOR THE REASON THE FOUR ABOVE ARE: a summary built from this device's draft does not carry
+   * them, and absent there means "this device does not know", never "not approved". `handedOnAt` set is
+   * also what tells a report handed on to the office from a SUBMITTED row written before approvals
+   * existed; see {@link dwIsFrozen}.
+   */
+  approvedById?: string | null;
+  approvedAt?: string | null;
+  approvedRound?: number | null;
+  handedOnById?: string | null;
+  handedOnAt?: string | null;
+  handedOnTo?: string | null;
+  handedOnExportId?: string | null;
+  /** When the report last entered Pre-submission — how long it has been waiting for a decision. */
+  lastHandedInAt?: string | null;
+  /**
    * WHO DELETED IT — **on the trash listing alone**, and optional for that reason rather than as a
    * hedge against an older server.
    *
@@ -743,10 +807,37 @@ export type DwInspectionFeedback = {
   note: string;
   /** True for the one suggestion that moved the report to Needs revision. */
   sentBack: boolean;
+  /**
+   * True when the sentence is the Ministry Admin's rather than an inspecting officer's — a report sent
+   * back without being approved, an approval withdrawn, or a report returned after it was handed on.
+   * The twelfth key; optional so a server that predates it reads as an officer's row, which is what
+   * every row it can hold is.
+   */
+  byApprovingAuthority?: boolean;
   actorId: string;
   actorName: string | null;
   recordedAt: string | null;
   createdAt: string | null;
+};
+
+/** What one decision on a report was, as the server decodes it off the audit row. */
+export type DwDecisionKind = "APPROVED" | "APPROVAL_WITHDRAWN" | "RETURNED" | "SENT_BACK" | "HANDED_ON";
+
+/**
+ * ONE DECISION ON THE REPORT — an inspector's send-back, or one of the Ministry Admin's: an approval,
+ * a return without approving, a withdrawn approval, a hand-on to the office. Newest first on the wire.
+ *
+ * `kind` is widened with `string` for `DwStatus`'s reason: a server one release ahead may record a
+ * verb this build has never heard of, and the screen must say "a decision" rather than drop the row.
+ * `actorName` can be null for the reason `DwInspectionFeedback.actorName` can.
+ */
+export type DwDecision = {
+  id: string;
+  kind: DwDecisionKind | string;
+  note: string | null;
+  actorId: string;
+  actorName: string | null;
+  at: string | null;
 };
 
 /**
@@ -821,6 +912,17 @@ export type DwDetail = DwSummary &
    * which is what it must then say instead of guessing.
    */
   dictationConsentByName?: string | null;
+  /**
+   * WHO SIGNED THE REPORT OFF, RESOLVED — the single read only, for `dictationConsentByName`'s reason.
+   * Null until somebody has, and null beside an id when the account has since gone; a screen then
+   * says "somebody no longer on record" and never guesses. `approvedByRole` is the approver's role
+   * token, for the report's approval line. Optional so an older server reads as absent.
+   */
+  approvedByName?: string | null;
+  approvedByRole?: string | null;
+  handedOnByName?: string | null;
+  /** Every decision taken on this report, newest first. See {@link DwDecision}. */
+  decisions?: DwDecision[];
   stages: Record<string, DwStageData>;
   completeness: Record<string, DwStageCompleteness>;
   schemaVersion: string;
@@ -3300,14 +3402,25 @@ const REPORT_FALLBACK_NAME: Record<string, string> = { DOCX: "report.docx", PDF:
  * makes surfacing them the CALLER'S JOB, and a caller that drops them ships a report with four
  * empty stages while telling the designer it worked.
  */
-export async function downloadDesignWorkshopReport(id: string, body: DwReportBody): Promise<DwReportFile> {
+export async function downloadDesignWorkshopReport(
+  id: string,
+  body: DwReportBody,
+  /**
+   * `"approvals"` asks the Ministry Admin's own report door, `POST /design-workshop-approvals/{id}/report`
+   * — the same file, the same headers, the same export ledger row — for a reader the designer's door
+   * does not admit. Everything else about the request and its failure is identical, which is why it
+   * is a parameter here rather than a second copy of this function.
+   */
+  options?: { via?: "approvals" }
+): Promise<DwReportFile> {
   assertApiConfigured();
 
   const headers = new Headers({ "Content-Type": "application/json" });
   const token = getToken();
   if (token) headers.set("Authorization", `Bearer ${token}`);
 
-  const response = await fetch(`${API_BASE}/api/design-workshops/${id}/report`, {
+  const prefix = options?.via === "approvals" ? "design-workshop-approvals" : "design-workshops";
+  const response = await fetch(`${API_BASE}/api/${prefix}/${id}/report`, {
     method: "POST",
     headers,
     body: JSON.stringify(body),

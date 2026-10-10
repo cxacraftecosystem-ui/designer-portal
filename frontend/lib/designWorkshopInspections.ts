@@ -290,6 +290,9 @@ export type DwInspectionDetail = DwSummary & {
    * thing that should ever read this key directly.
    */
   readOnly?: boolean;
+  /** Who approved the report and who handed it on, resolved on this read; null until somebody has. */
+  approvedByName?: string | null;
+  handedOnByName?: string | null;
 };
 
 export type DwInspectableListParams = {

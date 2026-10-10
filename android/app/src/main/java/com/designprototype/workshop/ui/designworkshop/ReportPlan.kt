@@ -2,6 +2,7 @@ package com.designprototype.workshop.ui.designworkshop
 
 import com.designprototype.workshop.data.DwCustomCache
 import com.designprototype.workshop.data.DwQuestionnaireCopy
+import com.designprototype.workshop.data.DwReportSignOff
 import com.designprototype.workshop.data.DwValues
 import com.designprototype.workshop.data.SchemaResponse
 import com.designprototype.workshop.data.WorkshopDraft
@@ -56,6 +57,17 @@ data class ReportPlan(
      * False whenever the server answered — which is the ordinary case, and prints nothing.
      */
     val serverCopyUnread: Boolean = false,
+    /**
+     * WHO APPROVED THIS REPORT, AND WHERE IT WAS HANDED ON — the lines the Certification section
+     * prints after its signatures, the twin of the server's `_render_signatures` (see
+     * [com.designprototype.workshop.data.dwReportSignOffLines]).
+     *
+     * Read off the workshop's single read as its own screen last received it (see
+     * [com.designprototype.workshop.data.DwReportFreeze]), and null whenever no read answered this run
+     * or the report is not signed off: a copy built in a courtyard says nothing about a sign-off this
+     * device has not seen, rather than repeating one that may since have been withdrawn.
+     */
+    val signOff: DwReportSignOff? = null,
 )
 
 /**
@@ -104,6 +116,8 @@ internal fun reportPlanFor(
      * a definition" answer, which splices nothing and prints exactly what it always printed.
      */
     customSections: DwCustomCache? = null,
+    /** See [ReportPlan.signOff]. Defaulted null, so every existing caller and test prints no sign-off. */
+    signOff: DwReportSignOff? = null,
 ): ReportPlan {
     val settings = draft?.stages?.get("REPORT_GENERATION")?.values.orEmpty()
     val templateId = resolveTemplateId(requestedTemplateId, settings, draft?.templateId.orEmpty())
@@ -158,6 +172,7 @@ internal fun reportPlanFor(
         settings = settings,
         warnings = warnings,
         serverCopyUnread = serverCopyUnread,
+        signOff = signOff,
     )
 }
 

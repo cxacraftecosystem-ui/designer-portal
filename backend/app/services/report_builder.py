@@ -251,6 +251,11 @@ class WorkshopData:
     #: so it is loaded on both sides now, while the shape is one line, rather than retrofitted onto
     #: two builders later. ``services/entry_provenance`` says what a stamp means.
     field_provenance: dict[str, dict[str, Any]] = field(default_factory=dict)
+    #: THE APPROVING AUTHORITY'S SIGN-OFF, as the lines the Certification section prints after its
+    #: signatures (2026-10-10) — "Approved by … on …." and, once handed on, "Handed on to … on …." —
+    #: built by :func:`sign_off_lines` from the workshop's header. Empty for a report nobody has
+    #: approved. Android's `dwReportSignOffLines` is the twin, line for line.
+    sign_off_lines: tuple[str, ...] = ()
 
     def singleton(self, stage_key: str) -> dict[str, Any]:
         return self.singletons.get(stage_key) or {}
@@ -430,6 +435,39 @@ def format_value(spec: FieldSpec, value: Any) -> str:
 
 
 _MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+
+
+def sign_off_lines(
+    *,
+    approved_at: Any,
+    approved_by_name: str | None,
+    approver_role_label: str | None,
+    handed_on_at: Any,
+    handed_on_to: str | None,
+) -> tuple[str, ...]:
+    """The Certification section's sign-off lines. Nothing at all until the report is approved.
+
+    A blank name keeps the fact — "Approved on …" — rather than guessing whose approval it was; a
+    blank office reads "the office". Dates through :func:`_format_date`, as the cover's are.
+    """
+    def _iso(moment: Any) -> str:
+        return moment.isoformat() if hasattr(moment, "isoformat") else str(moment or "")
+
+    if not approved_at:
+        return ()
+    on = _format_date(_iso(approved_at))
+    name = (approved_by_name or "").strip()
+    role = (approver_role_label or "").strip()
+    if not name:
+        lines = [f"Approved on {on}."]
+    elif not role:
+        lines = [f"Approved by {name} on {on}."]
+    else:
+        lines = [f"Approved by {name} ({role}) on {on}."]
+    if handed_on_at:
+        office = (handed_on_to or "").strip() or "the office"
+        lines.append(f"Handed on to {office} on {_format_date(_iso(handed_on_at))}.")
+    return tuple(lines)
 
 
 def _format_date(iso: str) -> str:
@@ -2961,6 +2999,8 @@ class ReportBuilder:
             "developed during the period stated on the cover of this report."
         )
         self.doc.add(SignatureBlock(signatories=tuple(signatories)))
+        for line in self.data.sign_off_lines:
+            self.doc.para(line)
 
     def _render_media_annexure(self, section: TemplateSection) -> None:
         """Every photograph in the record, in stage order, as a contact sheet."""

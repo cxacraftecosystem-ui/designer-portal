@@ -96,6 +96,7 @@ import com.designprototype.workshop.ui.FieldPermissions
 import com.designprototype.workshop.ui.SearchableMultiSelectField
 import com.designprototype.workshop.ui.SearchableSelectField
 import com.designprototype.workshop.ui.Text
+import com.designprototype.workshop.ui.designWorkshopStatusLabel
 import com.designprototype.workshop.ui.field
 import com.designprototype.workshop.ui.requiredMarked
 import com.designprototype.workshop.ui.workshopKindOptions
@@ -493,7 +494,10 @@ fun WorkshopListScreen(
                     title = dto.title,
                     subtitle = listOfNotNull(
                         dto.craftName, dto.clusterName, dto.district, dto.state,
-                        dto.status.takeIf { it.isNotBlank() }?.lowercase()?.replace('_', ' ')
+                        // The plain word, from the one mapping the picker and the inspector's list
+                        // print from — never the raw token, and "Handed on" only for a report the
+                        // sanctioning authority actually handed on. See [designWorkshopStatusLabel].
+                        dto.status.takeIf { it.isNotBlank() }?.let { designWorkshopStatusLabel(it, dto.handedOnAt) }
                     ).joinToString(" · "),
                     updatedAt = dto.updatedAt.orEmpty(),
                     schema = registry,

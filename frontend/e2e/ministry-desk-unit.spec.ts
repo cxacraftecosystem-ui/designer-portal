@@ -4,16 +4,19 @@ import { join } from "node:path";
 import { expect, test } from "@playwright/test";
 
 import {
+  AWAITING_APPROVAL_BADGE_HREF,
   AWAITING_SANCTION_BADGE_CLASS,
   AWAITING_SANCTION_BADGE_HREF,
-  MINISTRY_APPROVAL_GAP,
   MINISTRY_DESK,
+  awaitingApprovalSentence,
   awaitingSanctionSentence,
   ministryDeskFor
 } from "@/components/dashboard/ministryDesk";
 import { DIRECTORATE_STEPS } from "@/components/guide/directorateSteps";
 import {
+  APPROVAL_AUTHORITY_ROLES,
   MINISTRY_DESK_ROLES,
+  canApproveDesignWorkshops,
   ROLES_BY_RANK,
   canAccessRoute,
   canSeeMinistryDesk,
@@ -74,9 +77,10 @@ import type { User, UserRole } from "@/lib/types";
  *     `canRecordSanctionOrders` — the card's row by identity, the nav's entry as text, because
  *     `NAV_ITEMS` is module-private. A surface that asked the count without the permission would be
  *     403'd on every page load, and logged as an authorisation failure by an innocent account.
- *  8. THE DESK DOES NOT IMPLY AN ACT THAT DOES NOT EXIST. Two guards: every row resolves to a real
- *     page.tsx, and the missing approvals hop is stated on screen for exactly as long as the
- *     approvals router is missing — the day it lands, the notice's own test demands its removal.
+ *  8. THE DESK ENDS WHERE A WORKSHOP ENDS — approved and handed on to the office. "Reports to
+ *     approve" is the last row; its predicate is the same one its nav entry, its walkthrough card and
+ *     its route guard carry; and no note on the desk may talk in the product's plumbing (routes,
+ *     endpoints, HTTP verbs) or promise a step for later — a standing guard, below.
  */
 
 const ROOT = join(__dirname, "..");
@@ -85,21 +89,12 @@ const CARD = join(ROOT, "components", "dashboard", "MinistryDeskCard.tsx");
 const PROTECTED = join(ROOT, "app", "(protected)");
 
 /**
- * The router that would make a workshop approvable, and does not exist.
- *
- * Reached from a frontend spec because the fact being checked is a fact about the PRODUCT rather
- * than about either half of it — the idiom `role-ladder-parity-unit.spec.ts` and three other specs
- * in this folder already use to read `backend/`.
- */
-const APPROVALS_ROUTER = join(ROOT, "..", "backend", "app", "api", "routes", "design_workshop_approvals.py");
-
-/**
  * The file with its comments taken out — WHAT IS RENDERED, not what is explained.
  *
  * ⚠ EVERY POSITIVE SOURCE ASSERTION BELOW READS THIS AND NOT THE RAW TEXT, and the reason is a
  * failure this file actually had: these components are documented at length in this repository's
  * house style, so `MinistryDeskCard.tsx` quotes `data-surface="ministry"` and names
- * `MINISTRY_APPROVAL_GAP` in prose several lines before it uses either. A `toContain` over the raw
+ * the card's constants in prose several lines before it uses either. A `toContain` over the raw
  * file therefore passed with the attribute deleted from the element — verified by deleting it. A
  * test that a comment can satisfy is a test of the comment.
  *
@@ -255,41 +250,72 @@ test("every row on the desk opens a route that exists", () => {
   }
 });
 
-test("the missing approvals hop is stated on the card, and stops being stated the day it lands", () => {
+test("the desk ends with the sign-off, and the sign-off row, nav entry, deck card and guard share one predicate", () => {
   /*
-    THE NOTICE IS TIED TO THE THING IT IS ABOUT, so it cannot outlive it. The ministry's own terminus
-    — read the report back and sign it off — has no router: `design_workshop_approvals.py` does not
-    exist, `DECISION_EDGES` names its three verbs against a router "this workstream does not build",
-    and `PATCH /design-workshops/{id}` refuses all three edges so no header edit can manufacture an
-    approval either. The five rows are drawn "in the order a workshop reaches them" and an ordered
-    sequence reads as a complete one, so the card says the sequence stops.
-
-    When the approvals workstream lands, this test goes red and the sentence must come out in the
-    same commit. A "not built yet" notice that outlives the thing not being built teaches the reader
-    that the product's own copy cannot be trusted, which is more expensive than never having said it.
+    THE SEQUENCE IS COMPLETE NOW, and the last row is where it ends: a report approved and handed on to
+    the office. Asserted by IDENTITY for the row (`canApproveDesignWorkshops`, the mirror of
+    `require_approving_authority`), by `canAccessRoute` for the guard over every tier, and as text for
+    the nav entry, which is module-private. The deck card is held to the row by the order test above.
   */
-  const rendered = withoutComments(readFileSync(CARD, "utf8"));
-  if (existsSync(APPROVALS_ROUTER)) {
-    expect(
-      rendered,
-      "the approvals router exists now — delete MINISTRY_APPROVAL_GAP and the paragraph that renders it"
-    ).not.toContain("MINISTRY_APPROVAL_GAP");
-    return;
+  const last = MINISTRY_DESK[MINISTRY_DESK.length - 1];
+  expect(last.href).toBe("/design-workshop-approvals");
+  expect(last.label).toBe("Reports to approve");
+  expect(last.can).toBe(canApproveDesignWorkshops);
+  expect(AWAITING_APPROVAL_BADGE_HREF).toBe(last.href);
+  for (const role of ROLES_BY_RANK) {
+    expect(canAccessRoute(user(role), last.href), role).toBe(canApproveDesignWorkshops(user(role)));
   }
-  // The INTERPOLATION, not the identifier: an import left behind after the paragraph was deleted
-  // satisfies a bare `toContain` and says nothing on screen. Verified by deleting the paragraph.
-  expect(rendered, "the card must say on screen that the sequence stops short").toContain(
-    "{MINISTRY_APPROVAL_GAP}"
-  );
+  expect([...APPROVAL_AUTHORITY_ROLES].sort()).toEqual(["MASTER_ADMIN", "MINISTRY_ADMIN"]);
 
-  // The SHAPE of the sentence, not its wording: it must name the act that is missing, name what an
-  // officer can still do instead, and promise nothing. Who may approve at all is an open product
-  // question, so copy naming a tier or a release would be this card inventing the answer.
-  expect(MINISTRY_APPROVAL_GAP).toMatch(/approve/i);
-  expect(MINISTRY_APPROVAL_GAP).toMatch(/send(ing)? a report back/i);
-  expect(MINISTRY_APPROVAL_GAP, "no promises: no date, no version, no tier").not.toMatch(
-    /soon|shortly|next release|coming|0\.0\.\d|will be able/i
-  );
+  const nav = withoutComments(readFileSync(NAV, "utf8"));
+  const after = nav.split(`href: "${AWAITING_APPROVAL_BADGE_HREF}"`)[1];
+  expect(after, `NAV_ITEMS has no entry for ${AWAITING_APPROVAL_BADGE_HREF}`).toBeTruthy();
+  const entry = after.split("href:")[0];
+  expect(entry).toContain("can: canApproveDesignWorkshops");
+  expect(entry).toContain("require_approving_authority");
+});
+
+test("the sign-off row is a Ministry Admin's and the master admin's, and no director's", () => {
+  expect(ministryDeskFor(user("MINISTRY_ADMIN")).map((d) => d.href)).toContain("/design-workshop-approvals");
+  expect(ministryDeskFor(user("MASTER_ADMIN")).map((d) => d.href)).toContain("/design-workshop-approvals");
+  expect(ministryDeskFor(user("REGIONAL_DIRECTOR")).map((d) => d.href)).not.toContain("/design-workshop-approvals");
+  expect(ministryDeskFor(user("ASSISTANT_DIRECTOR")).map((d) => d.href)).not.toContain("/design-workshop-approvals");
+});
+
+test("STANDING GUARD: nothing on the desk talks plumbing or promises a step for later", () => {
+  /*
+    The card once carried a sentence admitting a missing step, naming an endpoint and a router. It is
+    gone, and this keeps the class from coming back: no note and no rendered text on the desk may
+    mention a route, an endpoint, a router, an HTTP verb, "not built", "yet" or "coming soon".
+  */
+  const forbidden = /not built|\byet\b|endpoint|router|coming soon|\b(GET|POST|PUT|PATCH|DELETE)\b/i;
+  for (const destination of MINISTRY_DESK) {
+    expect(destination.note, destination.label).not.toMatch(forbidden);
+    expect(destination.label, destination.label).not.toMatch(forbidden);
+  }
+  // The rendered JSX text of the card, comments out.
+  const rendered = withoutComments(readFileSync(CARD, "utf8")).replace(/\{\/\*[\s\S]*?\*\/\}/g, "");
+  const text = [...rendered.matchAll(/>([^<>{}]+)</g)].map((m) => m[1]).join(" ");
+  expect(text).not.toMatch(forbidden);
+  expect(rendered).not.toMatch(/APPROVAL_GAP/);
+});
+
+test("the approval count's sentence says what it counts, in both plurals", () => {
+  expect(awaitingApprovalSentence(1)).toBe("1 report is waiting for approval");
+  expect(awaitingApprovalSentence(3)).toBe("3 reports are waiting for approval");
+  expect(awaitingApprovalSentence(0)).toBe("0 reports are waiting for approval");
+});
+
+test("the approval badge is drawn by both renderers, each gated on its own row being on screen", () => {
+  const nav = withoutComments(readFileSync(NAV, "utf8"));
+  const card = withoutComments(readFileSync(CARD, "utf8"));
+  for (const [name, source] of [
+    ["the nav", nav],
+    ["the desk card", card]
+  ] as const) {
+    expect(source, `${name} draws the badge`).toContain("useAwaitingApprovalCount");
+    expect(source, `${name} must not fetch the count unconditionally`).not.toMatch(/useAwaitingApprovalCount\(\s*true\s*\)/);
+  }
 });
 
 test("the badged destination is a real desk row, and its predicate is the endpoint's own mirror", () => {

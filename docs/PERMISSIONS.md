@@ -537,6 +537,7 @@ this table is that "grep `deps.py`" is no longer a complete way to check a row.
 | Edit a record created by someone **ranked below**¹⁷ | `can_edit_others_record` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Open the **review queue** | `require_reviewer` | grant | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Approve / reject / send back a **specific** record | `can_review_record` | ⬜ | vol only | below only | below only | below only⁴ | below only | below only⁶ | below only⁶ | below only⁶ | below only | ✅ everyone |
+| Approve a design workshop's **report**, send it back without approving, withdraw an approval, hand it on to the office, return a handed-on report¹⁹ | `require_approving_authority` (`APPROVAL_AUTHORITY_ROLES`) + rule 7 (`design_workshop_posts.decision_refusal`) | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ✅¹⁹ | ⬜ | ✅¹⁹ |
 | Approve a **late** (out-of-window) submission | `set_review_status` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ✅ | ✅ |
 | Create or edit a **craft** | `require_craft_manager` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | **Open** a workshop | `require_workshop_opener` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ✅ | ✅ | ✅ |
@@ -726,6 +727,17 @@ Two asymmetries in that table are deliberate and easy to misread:
   the repository matrix it is a designer with *less*, plus a judgement it may pass on the designer.
   That is the tier working as intended, and it is also why counting privilege by rank number is the
   wrong instrument on this table.
+
+¹⁹ **The approving authority (2026-10-10).** The owner's "sanctioning authority" is the Ministry Admin
+and the master admin, estate-wide, by role (`deps.APPROVAL_AUTHORITY_ROLES`, twin
+`APPROVAL_AUTHORITY_ROLES` in `frontend/lib/permissions.ts`), on Reports to approve
+(`/api/design-workshop-approvals`). Not the Assistant or Regional Director posts — view-and-monitor by
+the 2026-10-09 ruling — and not ADMIN, which is platform administration. On one workshop rule 7 of
+§4.8 refuses (403) whoever authored it (designer access or written stages; opening it is not authoring)
+and whoever inspects it; a director post neither grants nor bars it, recording the workshop's sanction
+order does not bar it, and one person may approve and then hand on. Every decision is one transaction
+with a compare-and-set update and a `ReviewLog` row. An approved or handed-on report is frozen: every
+write of its content answers 403, except recording a report export and the dictation consent.
 
 ### 2.1 Create, edit, delete — as a decision tree
 
@@ -1012,9 +1024,10 @@ stateDiagram-v2
   PRE_SUBMISSION --> APPROVED: the sanctioning authority approves
   APPROVED --> NEEDS_REVISION: the approval is withdrawn
   APPROVED --> SUBMITTED: handed on to the office
+  SUBMITTED --> NEEDS_REVISION: returned by the approving authority
 
-  SUBMITTED --> IN_PROGRESS: reopen for editing
-  SUBMITTED --> PRE_SUBMISSION: hand in again
+  SUBMITTED --> IN_PROGRESS: reopen (legacy rows only)
+  SUBMITTED --> PRE_SUBMISSION: hand in again (legacy rows only)
   ARCHIVED --> IN_PROGRESS: reopen for editing
   ARCHIVED --> PRE_SUBMISSION: hand in again
   IN_PROGRESS --> ARCHIVED: archive
@@ -1882,7 +1895,8 @@ scores, and the per-field provenance names — and it appears in their own list 
 `GET /api/design-workshop-oversight/assigned`. That is all. For a holder whose role could otherwise
 write the workshop — an administrator — the row also TAKES AWAY writing its content and its designer
 team while it is held (§4.8).
-There is no approval route for either post, and none is planned: the posts are view and monitor.
+Neither post approves: the posts are view and monitor. Approving a report is the approving
+authority's, by role (§2's ¹⁹), and holding a post neither grants it nor bars it.
 
 **What it deliberately does not confer.** No stage write. No report generation. No dictation consent.
 No AI-layer verb. No delete and no restore. No re-granting — an officer cannot put another officer on
@@ -2264,13 +2278,26 @@ scanner is told so in a sentence of its own — that the card was not used up, w
 (`_INELIGIBLE_DETAIL` in `backend/app/services/design_workshop_grants.py`, since later that day; it
 used to get a spent card's sentence, which opens "That card had already been used").
 
-**WHAT A POST LEAVES ITS HOLDER.** The two director posts are view and monitor: no approval route
-exists for either, and none is to be built. No read is ever refused by these rules, and neither is
+**WHAT A POST LEAVES ITS HOLDER.** The two director posts are view and monitor: neither confers the
+approval of a report, which is the approving authority's by role (§2's ¹⁹ and rule 7 below). No read is ever refused by these rules, and neither is
 appointing somebody else to the workshop's posts or taking somebody else off them (appointing
 yourself, or taking yourself off, is rule 1's 409, whatever post you hold), restoring it, generating
 its report, recording that report's export at
 `POST /api/design-workshops/{id}/exports`, or approving, rejecting or sending back a record filed
 under it.
+
+**RULE 7 — THE APPROVING AUTHORITY ON ONE WORKSHOP (2026-10-10).** Approving a report, sending it
+back or withdrawing an approval, and handing it on are refused (403) to an authority member who
+authored the workshop — designer access or written stages, never merely opening it — or who inspects
+it: nobody approves their own work, and the officer who inspects a report is not the one who signs it
+off. A director post neither grants nor bars it; the officer who recorded the sanction order is not
+barred; one person may approve and then hand on; any member who passes may withdraw or return.
+`design_workshop_posts.approval_refusals` and `decision_refusal`.
+
+**A HANDED-ON OR APPROVED REPORT IS FROZEN.** Every write of its content answers 403 with a sentence
+naming the Ministry Admin as the next move, except recording a report export and the dictation consent.
+A handed-on report also loses every header edge (reopen, hand in again, archive); a `SUBMITTED` row
+written before 2026-09-13's redefinition — `handedOnAt` null — keeps them.
 
 **WHERE A HOLDER READS.** `/design-workshop-inspections` and `/officers/monitored` open to every role
 that may hold the post and list only the workshops a row names — an administrator appointed nowhere
@@ -2475,6 +2502,7 @@ are one-liners spread with `RECORD_CREATOR_GUARD` and that pattern does not see 
 | `/design-workshop-inspections` | `canInspectDesignWorkshops` — the **holder set** `INSPECTION_HOLDER_ROLES`: the Inspector / Reviewer tier and, since 2026-10-09, the three administering tiers, because they may be appointed to inspect (§4.8). Each sees only the workshops its rows name, so an administrator appointed nowhere gets an empty list that says so. A professor, the two director tiers and a designer are refused. (It was a set of ONE until that date, and an ADMIN was refused by name.) A sibling of the workshop tree and not a child, mirroring the API's own separate prefix: a shared prefix invites widening `load_workshop_or_404`, which grants stage WRITES | `assert_inspection_surface` (`INSPECTION_HOLDER_ROLES` in `services/design_workshop_inspectors.py`) |
 | `/officers` | `canAssignWorkshopOversight` — a **set**, `{MINISTRY_ADMIN, ADMIN, MASTER_ADMIN}`, and the second rule in this table whose refusal is **not monotonic in rank**: a **REGIONAL DIRECTOR (45) is refused** although an Assistant Director (42) they may be asked to name is not. The supervised do not choose the supervisor — the same rule the row above states one rung down. A designer is refused for the same reason one rung the other way. A sibling of the workshop tree and not a child, mirroring the API's own separate prefix | `assert_may_assign_oversight` (`OVERSIGHT_ASSIGNER_ROLES` in `services/design_workshop_oversight.py`) |
 | `/officers/monitored` | `canReadWorkshopOversight` — whoever may be NAMED in either post: the Assistant Director and Regional Director tiers and, since 2026-10-09, the three administering tiers (§4.8), each scoped to the workshops its rows name. An ADMIN and the master admin were refused by name until that date; an empty list now says "You do not hold any … posts" instead. Declared AFTER `/officers` and the order does not matter — `routeGuardFor` picks the LONGEST matching path, and the two gate different, overlapping audiences: the administering tiers reach both | `assert_oversight_surface` (`OVERSIGHT_HOLDER_ROLES` in `services/design_workshop_oversight.py`) |
+| `/design-workshop-approvals` | `canApproveDesignWorkshops` — a **set**, `APPROVAL_AUTHORITY_ROLES` = {MINISTRY_ADMIN, MASTER_ADMIN}: Reports to approve. **ADMIN is refused** (platform administration, as on `/ministry-dashboard`), and so are both director tiers, whose posts are view-and-monitor. Rule 7 (§4.8) then refuses an authority member, per workshop, who authored or inspects it; the page draws its buttons from the server's `mayDecide` and prints `decisionRefusal` rather than deciding that itself. A ministry surface | `require_approving_authority` (`deps.APPROVAL_AUTHORITY_ROLES`), on every route of the approvals router; `APPROVAL_AUTHORITY_REFUSAL` is the 403 detail and this row's message, byte for byte |
 | `/sanction-orders` | `canRecordSanctionOrders` — a **rank floor at 42**, and the only one in this table: Assistant Director, Regional Director, Ministry Admin, Admin, Master Admin. A **designer is refused**, and so is a professor (40) and an inspector (37) — the person who does the work does not authorise their own budget. A sibling of the workshop tree and deliberately NOT a child of `/admin`, whose `isAdmin` set is NARROWER than this rule: a wider rule nested under a narrower prefix would win the longest match and leave a ministry officer a page the hub itself refuses to link to | `require_sanction_recorder` (`can_record_sanction_orders` in `app/services/sanction_orders.py`) |
 | `/design-workshops` | `canRunDesignWorkshops` — a **set**, not a rank threshold: Designer, the three directorate tiers (since 2026-09-14, §2's ¹²), Admin, Master Admin — so a **professor is refused** and an **inspector is refused**, while three tiers ABOVE the professor are admitted. This row read "Designer, Admin, Master Admin" until 2026-09-16 | `can_run_design_workshops` |
 | `/questionnaires` (**plural** — see below) | `canRunDesignWorkshops` — the same set, so a **professor is refused** | `can_run_design_workshops` (`_require_designer`) |

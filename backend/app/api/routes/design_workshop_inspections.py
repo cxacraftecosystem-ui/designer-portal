@@ -131,6 +131,7 @@ from app.schemas.design_workshop_inspections import (
     DwInspectionFeedbackIn,
     DwInspectionSendBackIn,
 )
+from app.services import design_workshop_approvals
 from app.services.concurrency import gather_reads
 from app.services.custom_sections import load_definition_or_empty
 from app.services.design_workshop_inspectors import (
@@ -387,6 +388,9 @@ async def read_workshop_under_inspection(
     # question — it is refused at the write with a sentence, rather than by hiding the box, because
     # "this report has not been handed in yet" is something an officer needs to be told.
     summary["mayRecordFeedback"] = True
+    # WHO APPROVED IT AND WHO HANDED IT ON (2026-10-10), as names: an inspection that is over because
+    # the report was approved says by whom. One query, none until the approving authority acts.
+    summary.update(await design_workshop_approvals.approval_names(record))
     return summary
 
 
@@ -421,9 +425,14 @@ def _under_review_or_422(record: Any) -> str:
     """
     current = str(getattr(record, "status", "") or "")
     if current not in design_workshop_review_loop.UNDER_REVIEW:
+        # BY STATUS, since 2026-10-09: an APPROVED report and one handed on to the office HAVE been
+        # handed in, so "it has not been handed in yet" would be false about them. The sentence for
+        # those two says the inspection is over instead — see `review_closed_refusal`.
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=design_workshop_review_loop.NOT_UNDER_REVIEW_REFUSAL,
+            detail=design_workshop_review_loop.review_closed_refusal(
+                current, handed_on=getattr(record, "handedOnAt", None) is not None
+            ),
         )
     return current
 
@@ -667,10 +676,16 @@ async def send_workshop_back_for_revision(
             # transaction back, INCLUDING the suggestion row: a correction filed against a round
             # that is no longer open would sit in the register naming a cycle nobody can answer,
             # because `round` is copied at write time and never recomputed. The officer gets the
-            # same sentence they would have got a second earlier, which is the true one.
+            # same sentence they would have got a second earlier, which is the true one — read off
+            # the row as it stands now, because since 2026-10-09 the move in the gap can also be the
+            # sanctioning authority approving the report, and "not handed in yet" is false of that.
+            moved = await tx.designworkshop.find_unique(where={"id": workshop_id})
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=design_workshop_review_loop.NOT_UNDER_REVIEW_REFUSAL,
+                detail=design_workshop_review_loop.review_closed_refusal(
+                    str(getattr(moved, "status", "") or ""),
+                    handed_on=getattr(moved, "handedOnAt", None) is not None,
+                ),
             )
         # RE-READ INSIDE THE TRANSACTION. `update_many` answers a count, and `_feedback_answer`
         # needs the row as this transaction has just left it — read outside, it would be the row as

@@ -41,6 +41,7 @@ import com.designprototype.workshop.data.WorkshopRepository
 import com.designprototype.workshop.data.canInspectDesignWorkshops
 import com.designprototype.workshop.data.dwInspectorSearchTerm
 import com.designprototype.workshop.ui.Text
+import com.designprototype.workshop.ui.designWorkshopStatusLabel
 import com.designprototype.workshop.ui.field
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
@@ -382,7 +383,9 @@ private fun InspectableWorkshopCard(workshop: DesignWorkshopDto, onOpen: () -> U
             }
             val second = listOfNotNull(
                 workshop.workshopCode?.takeIf { it.isNotBlank() },
-                workshop.status.takeIf { it.isNotBlank() },
+                // The plain word and not the column's token — the same mapping the designer's own
+                // list prints from, so an inspector and a designer read one word for one state.
+                workshop.status.takeIf { it.isNotBlank() }?.let { designWorkshopStatusLabel(it, workshop.handedOnAt) },
                 listOfNotNull(
                     workshop.startDate?.takeIf { it.isNotBlank() }?.take(10),
                     workshop.endDate?.takeIf { it.isNotBlank() }?.take(10),
