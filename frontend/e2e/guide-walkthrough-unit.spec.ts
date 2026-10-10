@@ -151,7 +151,7 @@ test("the workshop arc says the stage carries a COPY, and never that the report 
   const stages = GUIDE_STEPS.find((step) => step.id === "design-workshop-stages");
   expect(stages, "the stage step is where the rule belongs").toBeTruthy();
   const prose = [stages!.summary, stages!.why, ...stages!.fields, ...stages!.watch].join(" ");
-  expect(prose, "the copy rule is stated, not implied").toMatch(/COPIES its values/);
+  expect(prose, "the copy rule is stated, not implied").toMatch(/copies its values into this stage when you save it/i);
   expect(prose).toMatch(/report prints that copy/i);
   // The wordings that would invert it.
   const arc = GUIDE_STEPS.filter((step) => WORKSHOP_ARC.includes(step.id));

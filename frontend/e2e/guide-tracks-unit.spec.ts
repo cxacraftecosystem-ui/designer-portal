@@ -530,8 +530,9 @@ test("STANDING TRIPWIRE: the directorate deck never promises every tier a notice
     expect(sentence, "a notice above the stages is promised only to the tier that sees it").toMatch(/Ministry Admin/);
   }
   expect(everything).not.toMatch(/the page says so above the stages/i);
-  // And the two tiers it does not reach are told where they DO learn it.
-  expect(everything).toMatch(/Assistant or Regional Director is told by the save itself/);
+  // And the rule itself is stated to all three tiers, without narrating how the other two meet it.
+  expect(everything).toMatch(/A workshop you supervise or inspect is read-only to you here/);
+  expect(everything).not.toMatch(/told by the save itself/i);
 });
 
 test("STANDING TRIPWIRE: nothing claims an inspector cannot change a workshop, full stop", () => {

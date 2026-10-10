@@ -501,6 +501,55 @@ def test_the_handset_carries_the_inspector_cards_it_says_it_carries():
     )
 
 
+# ── THE HANDSET'S SIDE OF ONE WEB COPY REWRITE, NAMED WHILE IT IS IN FLIGHT ──────────────────────
+#
+# On 2026-10-10 the web's walkthrough lost the field lines that narrated a missing feature or a
+# known defect, and four that spoke in developer terms were reworded (branch copy/dp-web). The
+# handset's twin, `WALKTHROUGH_FIELDS` / `WALKTHROUGH_INSPECTOR_FIELDS` in
+# android/app/src/main/java/com/designprototype/workshop/ui/WalkthroughJourney.kt, is rewritten on
+# its own branch (copy/dp-android), and this repository's rule is that nobody edits the Kotlin from
+# a web change. So the difference is written down HERE, line for line, instead of being tolerated:
+# every other line is still compared character for character, and
+# `test_every_pending_handset_line_is_still_pending` fails the day the handset catches up, so these
+# rows are deleted rather than left to license drift that no longer exists.
+#
+# Key: (step id, the handset's current line). Value: the web's line, or None where the web dropped it.
+HANDSET_COPY_PENDING: dict[tuple[str, str], str | None] = {
+    ("design-workshop-stages", "Basic fields — what “Save and check required fields” refuses this one stage without"):
+        "Basic fields — the ones “Save and check required fields” checks",
+    ("design-workshop-stages", "Your own sections and questions, added to the workshop with no deployment"):
+        "Your own sections and questions, added to the workshop",
+    ("design-workshop-readiness", "Report checks — they change the delivered file without refusing it"):
+        "Report checks — notes on the finished file, never a block",
+    ("design-workshop-readiness", "Standard and Advanced gaps — counts, behind a disclosure"):
+        "Standard and Advanced gaps — counts you can expand",
+    ("inspection-list", "Nothing else — there is no filter by designer, district or date on this list"): None,
+    ("inspection-review-queue", "Edit — offered on the row, and see the caution below before you use it"): None,
+}
+
+
+def _as_web_will_read(step_id: str, fields: list[str]) -> list[str]:
+    """The handset's list with each pending row replaced by the web's line, or dropped."""
+    out: list[str] = []
+    for field in fields:
+        key = (step_id, field)
+        if key not in HANDSET_COPY_PENDING:
+            out.append(field)
+        elif HANDSET_COPY_PENDING[key] is not None:
+            out.append(HANDSET_COPY_PENDING[key])
+    return out
+
+
+def test_every_pending_handset_line_is_still_pending():
+    """A row in HANDSET_COPY_PENDING whose old line the handset no longer carries is finished work."""
+    android = {**dict(android_fields()), **dict(android_inspector_fields())}
+    stale = [key for key in HANDSET_COPY_PENDING if key[1] not in android.get(key[0], [])]
+    assert not stale, (
+        "The handset has taken over these lines, so delete their HANDSET_COPY_PENDING rows: "
+        + "; ".join(f"{step} · {line!r}" for step, line in stale)
+    )
+
+
 def test_every_inspector_field_matches_the_web_word_for_word_and_in_screen_order():
     """The same comparison as the designer deck's, for the deck the web keeps in another file.
 
@@ -516,7 +565,7 @@ def test_every_inspector_field_matches_the_web_word_for_word_and_in_screen_order
     drifted = {
         step_id: {"web": fields, "android": android[step_id]}
         for step_id, fields in web.items()
-        if step_id in android and android[step_id] != fields
+        if step_id in android and _as_web_will_read(step_id, android[step_id]) != fields
     }
     assert drifted == {}, "the two copies of the inspector field lists have drifted:\n" + "\n".join(
         _report(step_id, pair["web"], pair["android"]) for step_id, pair in drifted.items()
@@ -545,7 +594,7 @@ def test_every_field_matches_the_web_word_for_word_and_in_screen_order():
     drifted = {
         step_id: {"web": fields, "android": android[step_id]}
         for step_id, fields in web.items()
-        if step_id in android and android[step_id] != fields
+        if step_id in android and _as_web_will_read(step_id, android[step_id]) != fields
     }
     assert drifted == {}, "the two copies of the field lists have drifted:\n" + "\n".join(
         _report(step_id, pair["web"], pair["android"]) for step_id, pair in drifted.items()

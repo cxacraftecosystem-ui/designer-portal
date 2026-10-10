@@ -169,9 +169,9 @@ export const DIRECTORATE_STEPS: GuideStep[] = [
     icon: LayoutDashboard,
     href: "/ministry-dashboard",
     summary:
-      "Every workshop on the platform in one register — ongoing, completed and newly registered — with each designer's progress through the stages, and the lists to download.",
+      "One register of workshops — ongoing, completed and newly registered — with each designer's progress through the stages, and lists to download.",
     why:
-      "Every other screen in this deck is about ONE workshop: one plan row, one sanction order, one posting, one report. Nothing in the product answered \"how is the programme going?\" — which workshops are moving, which have stalled on a designer who has not opened stage 1, which are finished and waiting to be read back. Answering it meant opening workshops one at a time and remembering. This screen is that question asked once, and it is the register the ministry's own downloads are taken from, so the number on screen and the number in the spreadsheet cannot disagree.",
+      "Every workshop's progress in one place. See which workshops are moving, which have stalled and which are finished; the downloads come from the same register, so the figures always agree.",
     // Read off `app/(protected)/ministry-dashboard/page.tsx` in screen order. The type switch is two
     // buttons rather than a dropdown, so it is named as the pair it draws; the standing switch is
     // the same shape. The downloads are actions and are named in `watch` rather than here.
@@ -182,14 +182,14 @@ export const DIRECTORATE_STEPS: GuideStep[] = [
       "Refresh now — beside the line saying when the register was last read"
     ],
     watch: [
-      "WHAT YOU SEE HERE DEPENDS ON YOUR POST, AND THE PAGE SAYS WHICH. A Ministry Administrator and the master admin read every workshop on the platform. An Assistant Director and a Regional Director read the workshops they were named on — the same scope as Workshops I monitor — because a posting is what gives an officer a workshop, and no screen in this product hands an officer workshops nobody named them on. The sentence under the heading says which of the two you are reading, so an empty register is never mistaken for an empty programme.",
-      "“ONGOING”, “COMPLETED” AND “NEWLY REGISTERED” ARE GROUPS OF STANDINGS, NOT NEW ONES, and the page lists the standings inside each. A workshop's own standing is the badge on its row and is the word the designer, the inspector and the report all use; these three are only a way of asking for several at once. Nothing is filed under a standing it does not have.",
-      "PROGRESS IS THE SAME ARITHMETIC THE DESIGNER'S OWN SCREEN USES and not a second opinion — required fields answered, out of required fields asked, rolled up across the stages. It is printed as stages done and fields outstanding as well as a percentage, because a percentage alone cannot tell one missing date from a whole stage nobody has opened, and those are different afternoons' work.",
-      "A ROW WITH NO PROGRESS FIGURE IS NOT A ROW AT ZERO. Where the register could not read a workshop's stages the cell says so in words instead of printing 0%, because “nothing has been done” and “we could not ask” are the two things this screen must never say in place of each other.",
-      "THE REGISTER RE-READS ITSELF WHILE YOU WATCH IT, and the line above the table says when it last did and lets you ask again. It stops while the tab is in the background and reads once when you come back, so a screen left open overnight shows this morning's figures rather than last night's. If a re-read fails, the rows you are looking at stay on screen and the line says the last read failed — the table is never emptied by a dropped connection.",
-      "THE DOWNLOADS ARE A COPY OF THIS REGISTER AND NOT OF THE WORKSHOPS. “Download workshops” carries the columns on screen — the workshop, where and when, its designer, its standing and its progress — and no stage content at all: no answers, no photographs, no recordings, no consent decisions. Taking THOSE out of the product is an admin's, and the page says so where the button is rather than answering you with a refusal after you press it.",
-      "“Download beneficiaries” IS THE ARTISAN LIST, AND THE IDENTITY NUMBERS IN IT ARE MASKED — the last four characters only, which is enough to confirm the right person and useless as an identifier. That is the same masking every shared surface in this product applies and there is no setting here that lifts it.",
-      "EVERY DOWNLOAD SAYS WHETHER IT IS THE WHOLE LIST. Where a file stops at the row cap it says so inside the file as well as on screen, because a spreadsheet outlives the page it came from and a file that quietly stops short reads a year later as a programme that was that small."
+      "What you see depends on your post. A Ministry Admin sees every workshop; an Assistant Director or Regional Director sees the workshops they have been named on. The line under the heading says which you are seeing.",
+      "Ongoing, Completed and Newly registered each group several standings, and the page lists which. A workshop's own standing is the badge on its entry.",
+      "Progress is the share of required fields answered across all stages — the same figure the designer sees. Stages done and fields outstanding are shown too, so you can tell one missing date from an unopened stage.",
+      "A blank progress cell is not 0%. If a workshop's progress couldn't be read, the cell says so in words.",
+      "The register refreshes itself while the page is open, and the line above the table says when it was last updated. Use Refresh now to update it straight away. If an update fails, the workshops stay on screen and the line says so.",
+      "“Download workshops” saves the register as you see it: each workshop, where and when, its designer, standing and progress. It doesn't include stage answers, photographs, recordings or consent decisions — exporting those is done by an Admin.",
+      "“Download beneficiaries” is the whole artisan list, not only the workshops shown here. Identity numbers in it show only their last four characters.",
+      "Every download says whether it holds the whole list. If it was cut short, the file says so as well as the screen."
     ]
   },
   {
@@ -206,7 +206,7 @@ export const DIRECTORATE_STEPS: GuideStep[] = [
     summary:
       "The ministry's directory of the workshops planned for the year — uploaded as one spreadsheet, corrected by uploading it again.",
     why:
-      "A row here is a plan and not a workshop: it carries the number, the date, the state, the district and the venue, and nothing in this product acts on it until somebody opens it. That distinction is the whole value of the screen. It lets the directory be corrected all year — a venue moves, a district is re-cut, a date slips — without any of those corrections reaching a workshop that is already running, and it gives a Ministry Admin one place to answer \"is this one planned, opened, or withdrawn?\" for the whole year at once.",
+      "Each entry is a planned workshop, not a running one: its number, date, state, district and venue. You can correct the plan all year without affecting workshops that are already open, and see at a glance which are planned, opened or withdrawn.",
     // Read off `app/(protected)/annual-plan/page.tsx` in screen order (the filter row, which is the
     // only labelled form on the page), then the two controls inside `UploadPlanDialog.tsx`, then the
     // one inside `PromoteDialog.tsx`. The three header buttons are named in `watch` rather than
@@ -227,12 +227,12 @@ export const DIRECTORATE_STEPS: GuideStep[] = [
       "Designers this workshop is for — on Open workshop, with the lead chooser under it once two are ticked"
     ],
     watch: [
-      "THIS SCREEN IS THE MINISTRY ADMIN'S ALONE, and its gate is the only rank floor in this deck rather than a set: an Assistant Director and a Regional Director are both below it and are refused. The reason is written into the server (`can_manage_annual_plan`) and is worth knowing rather than resenting — the plan is a national instrument and the table carries no per-region column, so the change that let a Regional Director correct their own state's rows would hand them the whole directory. If regional editing is ever wanted it is a scope table, not a promotion.",
-      "Upload the WHOLE sheet every time. Rows already in the plan are corrected, new rows are added, and uploading the same sheet twice changes nothing at all — that is how you confirm an earlier upload landed. The report afterwards lists every field it changed, from what to what.",
-      "The tickbox is the destructive-looking one and it is not destructive. Ticking it marks every planned row the sheet does not mention as withdrawn; nothing is deleted, and a withdrawn row comes back the moment a later sheet names it. Leave it unticked when the sheet is a partial correction.",
-      "OPENING A WORKSHOP FROM A ROW CAN ONLY BE DONE ONCE, AND IT MAY NAME THE DESIGNERS AS IT OPENS. Everything in the row is copied onto the new workshop and into its stage 1, and the dialog carries a designer picker: everybody you name is given access to the workshop as it is created, and the one marked lead has their designer profile copied into stage 1 and stage 3. Naming nobody is still a real answer and not a failure — the designer block of stage 1 is then left empty, which is the right empty, and designers are added afterwards.",
-      "“AFTERWARDS” IS Workshop oversight, WHICH IS THE NEXT CARD, AND NOT THE WORKSHOP'S OWN SCREEN. Adding a designer to a workshop that is already open is the Designers panel on that screen. The one on the workshop itself — “Designers on a workshop” — is an admin's, and a Ministry Admin is redirected away from it, so the promotion is the one moment you can seed stage 1 with the lead's profile without leaving the annual plan. That is why the picker is worth using rather than skipping.",
-      "AFTER A ROW IS OPENED, CORRECTING THE PLAN CORRECTS THE DIRECTORY AND NOTHING ELSE. The workshop is not touched, and the screen says so twice — once in the toast, once in an amber banner on the upload report naming the rows this happened to. If the venue on a running workshop is wrong, it is wrong on the workshop, and that is where it is fixed.",
+      "Only a Ministry Admin, an Admin or the Master Admin can open the annual plan.",
+      "Upload the whole sheet every time. Workshops already in the plan are updated and new ones are added; uploading the same sheet again changes nothing. The upload report lists every change, from what to what.",
+      "The tickbox marks every planned workshop the sheet leaves out as withdrawn. Nothing is deleted, and a withdrawn workshop returns as soon as a later sheet includes it. Leave it unticked when the sheet is only a partial correction.",
+      "Open workshop can be used once per entry. It copies the entry into the new workshop's stage 1, and you can name the designers as you open it: each gets access, and the lead's profile fills stages 1 and 3.",
+      "You can also name nobody now and add designers later on Workshop oversight, the next card.",
+      "Once a workshop is open, correcting the plan doesn't change the workshop — the upload report names the workshops affected. Fix details such as a wrong venue on the workshop itself.",
       "A workshop that has already been opened is never withdrawn, whatever the sheet says."
     ]
   },
@@ -247,9 +247,9 @@ export const DIRECTORATE_STEPS: GuideStep[] = [
     icon: FileSignature,
     href: "/sanction-orders",
     summary:
-      "The ministry's sanction register. Recording an order opens the workshop, creates the designer's account and issues their sign-in link, in one act.",
+      "The ministry's sanction register. Recording an order opens the workshop, creates the designer's account and issues their sign-in link, in one step.",
     why:
-      "Everything else in this product assumes the designer is already here. A sanction order is the moment they are not: a name and a Gmail address on a signed document, and no account, no empanelment and no workshop anywhere in the system. Recording the order does all of it at once and in one transaction — the address is admitted to the platform allow-list, the designer is empanelled, an account is created if that mailbox has none, a workshop is opened in their name, and a one-time sign-in link is minted. Doing those five by hand on five screens is five chances to do four of them.",
+      "A sanction order is where a designer's work begins: a name and a Gmail address on a signed document. Recording it does everything at once — it admits the address, empanels the designer, creates their account if they don't have one, opens the workshop in their name and issues a one-time sign-in link.",
     // Read off `app/(protected)/sanction-orders/page.tsx` in screen order. `Field required` renders
     // the red asterisk, so "(required)" here is the same fact the box shows.
     //
@@ -273,17 +273,17 @@ export const DIRECTORATE_STEPS: GuideStep[] = [
       "Pro-forma and Upload a sheet — the two buttons in the page header"
     ],
     watch: [
-      "ASSISTANT DIRECTOR AND ABOVE, AND THIS IS THE ONE PLACE IN THE DESIGN-WORKSHOP FAMILY THAT REALLY IS A RANK FLOOR. All three directorate tiers can record an order. Reading the register is the same gate as writing it — every route on it, the list included, is behind the same dependency, because the register is a list of named people and the amounts sanctioned against them.",
-      "NOTHING IS EMAILED, BY ANYBODY, EVER. This product has no mail sender. One link appears on screen per account the order created, together with a message you can copy, and you send each one yourself by whatever you already use. A link works once and it expires — the screen prints the exact moment. Send them while they are on screen: nothing can show a link again, because the server keeps only a digest of it.",
-      "RE-ISSUING FROM THE ROW IS THE LEAD'S LINK AND ONLY THE LEAD'S. The button on the register re-mints for the first designer named on the order, which is the one the register holds. There is no route in this product that can re-issue a CO-DESIGNER'S first link, so if you lose one of those the remedy is an administrator on Users, not this screen. The button is drawn only on an order that actually created an account: one naming somebody who was already here issued nothing, so there is nothing to re-issue.",
-      "AN ORDER MAY NAME SEVERAL DESIGNERS, AND THE FIRST IS THE LEAD. Everybody named gets the same five things — the allow-list admission, the empanelment, an account if that mailbox has none, a profile and access to the workshop — but only ONE name reaches the document: the lead's profile is what is copied into stage 1 and stage 3, and the lead is whose name the report carries. The picker prints who that is, and lets you change it, from two designers upward.",
-      "A SHEET RECORDS NOTHING UNTIL YOU CONFIRM IT. “Pro-forma” downloads the blank workbook to type the office's orders into; “Upload a sheet” reads one back and shows you every row it found and every row it could not, and not one order exists until you press the confirm on that review. Correct the sheet and upload it again as often as you like before then — nothing has happened yet.",
-      "AN IMPORT ISSUES NO SIGN-IN LINKS AT ALL, and this is the one cost of doing it by sheet. Two hundred one-time credentials on one screen is a screen whose accidental closure strands two hundred designers, so the import throws them away: every imported designer whose account was newly created needs their link re-issued by hand from their row.",
-      "If that Gmail address already has an account, no link is issued at all and none is needed: they sign in as they always do and the new workshop is simply on their list. The screen says so instead of showing you a link that would not work.",
-      "⚠ YOU CANNOT AUTHOR THE WORKSHOP YOUR OWN ORDER OPENED. You may read every stage of it and generate its report, and the moment you try to SAVE one the server answers 403 by name: \"You recorded the sanction order that opened this workshop, so you cannot also author it.\" It is a test on the rows and not on the tier — it fires only where the same account both recorded the order and opened the workshop — so a Regional Director filling in a workshop somebody else sanctioned is untouched. The work belongs to the designer the order names.",
-      "YOU CANNOT NAME YOURSELF AS THE DESIGNER. It is refused before anything at all is written — it is the first of the checks, because it is the only one that needs no lookup — so nothing is half-created when it fires.",
-      "A RECORDED ORDER CANNOT BE DELETED. There is no delete route on the register, at all: a mistaken order is corrected by recording the correct one and leaving the record of what happened intact.",
-      "The workshop opens as a placeholder titled after the order, and the starred fields on Workshop Setup — State, District, Craft, Cluster, Venue, the dates — are the designer's to fill in. The row tells you which are still missing, so you can chase the right ones."
+      "Assistant Directors, Regional Directors and Ministry Admins can all record orders and read the register.",
+      "When an order creates an account, its sign-in link appears on screen with a ready-written message to copy. Send each link to its designer while it is on screen — a link is shown only once, works once, and expires at the time shown.",
+      "Re-issue sign-in link, on an order's entry, gives the lead designer a new link. If another designer on the order needs one, a Ministry Admin or an Admin can set them a temporary password from Manage users.",
+      "An order can name several designers, and the first is the lead. Everyone named is admitted and given access to the workshop, but only the lead's profile fills stages 1 and 3 and appears on the report. Once two are ticked, the picker shows the lead and lets you change it.",
+      "Pro-forma downloads a blank workbook for the office's orders. Upload a sheet shows every order it found and any it couldn't read, and nothing is recorded until you confirm — you can correct the sheet and upload it again as often as you need.",
+      "After an import, use Re-issue sign-in link on each order's entry when you are ready to send its designer a link.",
+      "If a designer already has an account, no link is needed. They sign in as usual and find the new workshop on their list.",
+      "You can't fill in a workshop your own order opened. You can read every stage and generate its report, but you can't save its stages — the work belongs to the designer the order names. This applies only to orders you recorded yourself.",
+      "You can't name yourself as a designer on an order you record.",
+      "Recorded orders stay on the register. If one is wrong, record the correct order.",
+      "The workshop opens with a placeholder title taken from the order. The designer fills in the starred fields on Workshop Setup — State, District, Craft, Cluster, Venue and the dates — and the order's entry shows which are still missing."
     ]
   },
   {
@@ -297,9 +297,9 @@ export const DIRECTORATE_STEPS: GuideStep[] = [
     icon: UserCheck,
     href: "/officers",
     summary:
-      "One workshop at a time: who it is for, who supervises it, and who is on its artisan roster.",
+      "One workshop at a time: who it is for, who supervises and inspects it, and who is on its artisan list.",
     why:
-      "A workshop with no designer named on it cannot be opened by anybody and its stage 1 and stage 3 start empty; a workshop with no Assistant Director and no Regional Director is nobody's to read back. Those three postings are what turn an opened workshop into one somebody is accountable for, and they are deliberately not the designer's to make — nobody chooses who supervises their own work. The artisan roster is on the same screen because it is the same act of staffing: it is the list of people the fortnight is for.",
+      "Until a designer is named, the designer's work on a workshop can't begin; until its Assistant Director and Regional Director are named, nobody is supervising it. The artisan list on the same screen records the people the workshop is for.",
     // NOT the real form labels: this screen's only labelled text boxes are search boxes, and
     // everything that changes anything is a picker with a button under it. So the rows are the FIVE
     // panel headings and the control that commits each — every one of them a thing a reader can
@@ -319,13 +319,14 @@ export const DIRECTORATE_STEPS: GuideStep[] = [
       "Earlier uploads — every artisan list this workshop has had, with what each one did"
     ],
     watch: [
-      "A REGIONAL DIRECTOR IS REFUSED THIS SCREEN, AND THEY OUTRANK AN ASSISTANT DIRECTOR. Every rank instinct is wrong about it, which is why the rule is a set and not a threshold: the supervised must not choose the supervisor. Naming officers is a Ministry Admin's act, or an admin's. A Regional Director who genuinely needs to assign is a Ministry Admin, which is a role change on Users — not a widening here.",
-      "A MINISTRY ADMIN, AN ADMIN OR THE MASTER ADMIN CAN BE NAMED IN EITHER SLOT, OR AS AN INSPECTOR — BY SOMEBODY ELSE. Nobody names themselves, so you are never offered in your own pickers. One person is never both the Assistant Director and the Regional Director of one workshop, never supervises a workshop they also inspect, and never supervises or inspects one they hold designer access to or have written stages in — opening a workshop does not count as writing it. The server refuses each of these with the rule in the sentence, and nothing is changed when it does.",
-      "WHOEVER SUPERVISES OR INSPECTS A WORKSHOP DOES NOT WRITE IT. Holding either post, or an inspection, takes that workshop's writes away from you for as long as you hold it — its stages, its details, its artisan list and who its designers are — on this screen and every other, admin or not. You can still read all of it, name OTHER people to its posts, and generate its report. Ask whoever appointed you to take you off the post if you need to work on it.",
-      "NAMING A DESIGNER IS ALSO GIVING THEM ACCESS. It copies their profile — name, institution, biography, experience, contact details — into stages 1 and 3, and overwrites nothing else those stages already hold. A designer with no profile of their own leaves those boxes empty rather than borrowing yours, so it is worth asking them to fill their profile in first.",
-      "AN OVERSIGHT ROW IS NOT ACCESS TO THE WORKSHOP. The two officers can READ every stage and save nothing — they read it on Workshops I monitor, which is a different screen from the one the designers use.",
-      "⚠ THE ARTISAN PRO-FORMA CARRIES AADHAAR NUMBERS, which are regulated personal data. Do not email the filled-in file and do not leave it in a shared folder; delete it once the upload is confirmed. The workbook itself is never stored here — only its name, the counts, and the rows that could not be read.",
-      "NOBODY IS CREATED TWICE. An artisan already in the repository is linked to this workshop and their existing record is left exactly as it is — INCLUDING anywhere the spreadsheet disagreed with it. The upload report says how many were created and how many were linked, so the two are never confused."
+      "Only a Ministry Admin, an Admin or the Master Admin can name a workshop's designers, officers and inspectors, or upload its artisan list.",
+      "Nobody names themselves, so you won't appear in your own pickers. A Ministry Admin, an Admin or the Master Admin can be named as an officer or inspector by someone else.",
+      "One person holds one post per workshop, and nobody supervises or inspects a workshop they have worked on as a designer (opening it doesn't count). If a choice breaks these rules, you'll see why and nothing changes.",
+      "While you supervise or inspect a workshop, you can't change it — its stages, details, artisan list or designers. You can still read it, name other people to its posts and generate its report. If you need to work on it, ask whoever appointed you to remove you from the post.",
+      "Naming a designer gives them access and copies their profile — name, institution, biography, experience and contact details — into stages 1 and 3, without overwriting anything else there. Ask designers to complete their profile first, or those fields stay empty.",
+      "An Assistant Director or Regional Director reads every stage of the workshop on Workshops I monitor, but can't edit it.",
+      "The filled-in artisan pro-forma contains Aadhaar numbers. Don't email it or leave it in a shared folder, and delete it once the upload is confirmed — the portal keeps only the upload summary, not the file.",
+      "Nobody is added twice. An artisan already in the records is linked to the workshop and their record is left as it is, even where the sheet differs. The upload report shows how many were added and how many were linked."
     ]
   },
   {
@@ -339,30 +340,31 @@ export const DIRECTORATE_STEPS: GuideStep[] = [
     icon: DraftingCompass,
     href: "/design-workshops",
     summary:
-      "The workshops you can open, and the 22-stage form inside each one. You write in these, not only read them.",
+      "The workshops you can open, and the 22-stage form inside each one. You can fill these in, not only read them.",
     why:
-      "You were given this because the alternative was absurd: a Ministry Admin could open a workshop from the annual plan and then not save a single stage in the workshop they had just created. So all three directorate posts are inside the set that runs a workshop — the stage saves, the custom sections, the capture aids, the consent record and the report are all open to you, exactly as they are to the designer. What it does NOT make you is the designer: the fortnight is theirs, and most of what you do here is finishing, correcting or standing in.",
+      "Ministry posts can fill in workshop stages too. You can save stages, add custom sections, record consent and generate the report, just as the designer can. The workshop is still the designer's, so most of your work here is finishing, correcting or standing in.",
     // The registry exception, identical to `design-workshop-stages` in `steps.ts`: the stage form is
     // built from the schema the server publishes, so its boxes are hundreds of labels across 22
     // stages and are not this file's to copy. These rows name the parts of the screen instead.
     fields: [
       "The workshop list — everything you may open, searchable",
       "Workshop Setup and the other 21 stages, each with its own required-field count",
-      "The stage form's boxes, which the server publishes — they differ per stage and per craft",
+      "The stage form's boxes — they differ per stage and per craft",
       "Record pickers inside a stage (artisan, product, process, tool)",
       "The report, generated from the stages"
     ],
     watch: [
-      "THIS IS SET MEMBERSHIP AND NOT A RANK, and the ladder gives the wrong answer for it every time. A PROFESSOR sits below all three of your tiers and is still refused, because being senior to a designer is not being one; an INSPECTOR is refused for a sharper reason — they would be authoring the stages they later review.",
-      "YOU CANNOT START A BARE WORKSHOP. Creating one from nothing is an admin's and the master admin's. Your two doors are the two cards above this one: a Ministry Admin opens a planned row on Annual plan, an Assistant Director or Regional Director records a sanction order. Both create a real workshop; neither is the “New workshop” button, and you will not see that button.",
-      "⚠ IF YOU RECORDED THE SANCTION ORDER THAT OPENED A WORKSHOP, YOU CANNOT SAVE A STAGE IN IT. The workshop is on your list, every stage opens, the report generates — and the first save answers 403 with that sentence. Read the Sanction orders card above for the whole rule; the short version is that signing for the work and doing the work are two people.",
+      "Professors and Inspector / Reviewers don't fill in workshops. An inspector reviews the stages instead.",
+      "Your workshops start from the two screens above: a Ministry Admin opens a planned workshop on Annual plan, and a sanction order opens one too. Starting a blank workshop with “New workshop” is for Admins, so you won't see that button.",
+      "If you recorded the sanction order that opened a workshop, you can read it and generate its report but can't save its stages. Signing for the work and doing it are two different people's jobs.",
       // WHO IS TOLD, AND WHERE, DIFFERS BY TIER — and this said "the page says so above the stages" to
       // all three until 2026-10-09. The notice above the stages asks the staffing reads, which are the
       // appointers' (`readHeldWorkshopPosts`): a Ministry Admin sees it, an Assistant or Regional
       // Director never does and learns it from the refused save — and, on a workshop their own
       // sanction order opened, from the sanction-order sentence, which the server checks first.
-      "BEING NAMED AS A WORKSHOP'S ASSISTANT DIRECTOR OR REGIONAL DIRECTOR DOES NOT PUT IT HERE. An oversight assignment is a reading posting and lives on Workshops I monitor. You reach a workshop here by having created it, or by being added to it on the workshop's own screen — and a workshop you hold a post on is read-only to you here as well. A Ministry Admin is told so above the stages; an Assistant or Regional Director is told by the save itself, which is refused with a sentence naming the post (or, on a workshop your own sanction order opened, with the sanction-order sentence above).",
-      "CHOOSING A RECORD IN A STAGE COPIES ITS VALUES ONTO THE STAGE, and the report prints that copy. Correcting the artisan record next week does not change a report generated last month — which is the point, and the reason a correction has to be made on the stage as well if the document has already gone."
+      "Being named a workshop's Assistant Director or Regional Director doesn't add it here — you'll find it on Workshops I monitor. Workshops appear here when you created them or were added to them.",
+      "A workshop you supervise or inspect is read-only to you here. As a Ministry Admin, you'll see a note saying so above the stages.",
+      "Choosing a record in a stage copies its values onto the stage, and the report prints that copy. Correcting the record later doesn't change the stage or a report already generated, so make the correction on the stage too."
     ]
   },
   {
@@ -377,9 +379,9 @@ export const DIRECTORATE_STEPS: GuideStep[] = [
     icon: Binoculars,
     href: "/officers/monitored",
     summary:
-      "The workshops you were named on as Assistant Director or Regional Director: every stage readable, none of it editable.",
+      "The workshops you were named on as Assistant Director or Regional Director: every stage to read, nothing to edit.",
     why:
-      "Supervising is reading somebody else's work and being able to say what is in it. That is a different act from authoring, and it needs a different screen rather than the same screen with the buttons hidden — a form with disabled controls invites the reading that the values are yours to fix, and they are not. So this one has no Save anywhere on it, and it draws the same authorship line under every value that the designer's own stage form draws under every box, because the supervisor and the supervised must never be reading two different accounts of who wrote what.",
+      "Supervising means reading the designers' work and knowing what is in it. Every value shows who wrote it, exactly as the designer sees it on their own form.",
     // No form and no labels of its own — it draws a workshop it did not author. These are the four
     // summary captions the page prints above the stages, plus the two sections below them. Same
     // exception, same reason, as `design-workshop-inspection` in `steps.ts`.
@@ -392,10 +394,9 @@ export const DIRECTORATE_STEPS: GuideStep[] = [
       "All 22 stages, read-only, with who wrote each field"
     ],
     watch: [
-      "AN ADMIN CAN HAVE ROWS HERE TOO, NAMED BY SOMEBODY ELSE. A Ministry Admin, an admin or the master admin can be named a workshop's Assistant Director or Regional Director by somebody else, and then reads it here exactly as an officer does — scoped to the workshops they were named on, never every workshop. Until somebody names them this screen says they hold no posts.",
-      "AN EMPTY PAGE IS A REAL ANSWER AND THE SCREEN SAYS WHICH KIND IT IS. Nothing assigned reads “You do not hold any … posts”, naming the post or posts you may hold; a list that could not be read says so instead and keeps whatever was already on screen — because a correct empty state and a silent failure look identical, and there is no other surface here to cross-check against.",
-      "PHOTOGRAPHS, RECORDINGS AND ATTACHMENTS ARE COUNTED, NOT SHOWN — “3 files recorded here”. An empty gallery would look like a file that failed to load, which is not what happened.",
-      "THERE IS NO SAVE, NO SUBMIT AND NO DELETE ON THIS PAGE, and none of them is missing: there is no route behind it that would accept one. If a stage is wrong, the people who can change it are its designers."
+      "A Ministry Admin, an Admin or the Master Admin can also be named to these posts by someone else, and then sees those workshops here — only the ones they were named on.",
+      "If you haven't been named on any workshop yet, the page says so. If the list couldn't be loaded, it says that instead.",
+      "This page is read-only. If a stage is wrong, ask its designers to correct it."
     ]
   }
 ];

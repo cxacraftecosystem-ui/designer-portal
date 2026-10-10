@@ -95,19 +95,18 @@ export const INSPECTOR_STEPS: GuideStep[] = [
     icon: FileSearch,
     href: "/design-workshop-inspections",
     summary:
-      "Your own list: the design & prototype workshops an admin has assigned you, and nothing else in the repository.",
+      "Your list of the design & prototype workshops you have been assigned to inspect.",
     why:
-      "An inspection is scoped one workshop at a time, by a row an admin creates, and that scoping is the whole design rather than a limitation. The alternative — an inspector who can read every workshop in the archive — would make this a second full read of the repository and a second place to look when somebody has access they should not. So the list is exactly your assignments: if a workshop is not here, you have not been given it, and no search on this page will find it.",
+      "Inspections are assigned one workshop at a time, so you see only the workshops you are responsible for. If a workshop isn't here, it hasn't been assigned to you.",
     fields: [
       "Search — by title, craft, cluster or workshop code, across your assignments only",
-      "Each row: the workshop's title, its code, craft and cluster, its dates and its status",
-      "Nothing else — there is no filter by designer, district or date on this list"
+      "Each row: the workshop's title, its code, craft and cluster, its dates and its status"
     ],
     watch: [
-      "YOU DO NOT ASK FOR AN INSPECTION AND YOU CANNOT GIVE YOURSELF ONE. A Ministry Admin, an admin or the master admin appoints them, one workshop at a time, on Workshop oversight — a screen you cannot open. There is no request route, no “ask to inspect” button, and nothing here is hidden behind one.",
-      "THIS SURFACE IS NOT “INSPECTOR AND ABOVE”. It is your tier's by role. A Ministry Admin, an admin or the master admin can open it too, because any of them may be appointed to inspect a workshop by somebody else — and reads on it only the workshops they were appointed to, exactly as you do. A professor, an Assistant Director and a Regional Director are refused it. The rank ladder is what misleads here: 37 sits between Designer and Professor, so every threshold instinct admits the tiers above by rank, and none of them is admitted that way.",
-      "YOU CANNOT BE ASSIGNED A WORKSHOP YOU WORKED ON. The server refuses it with the reason spelled out — an independent review by somebody who worked on it is not a review — so if a workshop you expected is missing, that is one possible cause worth checking before reporting a fault.",
-      "AN EMPTY LIST IS A REAL ANSWER AND THE SCREEN SAYS WHICH KIND IT IS. Nothing assigned reads “You do not hold any inspection posts” and says in as many words that the page is not hiding anything; a list that could not be loaded says that instead, and keeps whatever rows were already on screen. A correct empty state and a silent failure look identical, and there is no other surface here to cross-check against."
+      "Inspections are assigned by a Ministry Admin, an Admin or the Master Admin, one workshop at a time. To be assigned a workshop, ask one of them.",
+      "A Ministry Admin, an Admin or the Master Admin can also be assigned to inspect a workshop. Like you, they see only the workshops assigned to them.",
+      "You can't be assigned a workshop you worked on, because an inspection has to be independent. If a workshop you expected is missing, that may be why.",
+      "If no workshop has been assigned to you yet, the page says so. If the list couldn't be loaded, it says that instead."
     ]
   },
   {
@@ -119,7 +118,7 @@ export const INSPECTOR_STEPS: GuideStep[] = [
     summary:
       "One workshop opened: all 22 stages as the designers recorded them, with who wrote each field and how complete it is.",
     why:
-      "A report that reaches a Development Commissioner's office is read by somebody who did not run the fortnight, and “who wrote this field, and when” is most of what that reading is for. So this page draws the same authorship line under every value that the designer's own stage form draws under every box — the same component producing the same sentence — because an inspector and the designer being inspected must never be reading two different accounts of who did what.",
+      "The report goes to the Development Commissioner's office, where its readers didn't attend the workshop, so who wrote each field matters. Each value shows its author exactly as the designer sees it on their own form.",
     fields: [
       "Dates, Designer, Venue — as stage 1 recorded them",
       "Required fields answered — a percentage across every stage",
@@ -128,11 +127,9 @@ export const INSPECTOR_STEPS: GuideStep[] = [
       "Media fields, as a count — “3 files recorded here”"
     ],
     watch: [
-      "READ-ONLY IS STRUCTURAL, NOT A SETTING. There is no stage form on this page, no Save and no delete, and none of them is missing: there is no route behind this page that would accept one. The loader this surface uses has no edit path at all and its own docstring forbids one being added.",
-      "PHOTOGRAPHS, RECORDINGS AND ATTACHMENTS ARE COUNTED AND NOT CARRIED. The sentence under a media field says how many files are recorded there and that an inspection read does not carry them. That is deliberate — an empty gallery would read as a file that failed to load, which is not what happened — and it means a judgement that turns on seeing a photograph is one this screen cannot settle.",
-      "A COMPLETENESS FIGURE IS AN ARITHMETIC, NOT A VERDICT. It counts required fields answered. A stage can read 100% and still be wrong, and a stage the source document marks as one a workshop may legitimately skip says so beside its own count.",
-      "VALUES COPIED FROM A RECORD ARE COPIES, TAKEN WHEN THE STAGE WAS SAVED. The artisan record may have been corrected since. The line under the value tells you which record it came from; it does not tell you that the record still says that.",
-      "ANSWERS TO A WORKSHOP'S OWN CUSTOM QUESTIONS ARE COUNTED AND NOT SHOWN, because the questions themselves are read through a route an inspection does not reach, and answers without their questions are not evidence of anything."
+      "This page is read-only: you can read every stage but not change it.",
+      "The completeness figure counts required fields answered — it doesn't say the answers are right. A stage that a workshop may skip is marked beside its count.",
+      "Values chosen from a record are copied when the stage is saved, so the record may have been corrected since. The line under the value names the record it came from.",
     ]
   },
   {
@@ -142,9 +139,9 @@ export const INSPECTOR_STEPS: GuideStep[] = [
     icon: MessageSquare,
     href: "/design-workshop-inspections",
     summary:
-      "The one place an inspector writes: a note about a stage or about the report as a whole, and the button that puts it on the designers' desks.",
+      "Where you write a note about a stage or about the whole report, and send the report back to its designers if it needs work.",
     why:
-      "An inspection that ends in a verdict nobody can read is not a review. This panel is what turns reading into an act: your note is recorded against this submission round under your name, and one of the two buttons decides whether the report stays where it is or goes back. Both are permanent — neither can be edited or withdrawn afterwards — because a correction record that can be quietly revised is not a record.",
+      "Your note is recorded under your name against this round of submission, and you decide whether the report stays where it is or goes back to its designers. Notes are permanent, so the record of corrections stays complete.",
     // The one card on this surface whose `fields` ARE real labels, because this panel is the only
     // place on it that asks an inspector for anything. Read off the panel in screen order.
     fields: [
@@ -154,11 +151,10 @@ export const INSPECTOR_STEPS: GuideStep[] = [
       "“Send the report back” — moves it to Needs revision"
     ],
     watch: [
-      "⚠ THE TWO BUTTONS DO DIFFERENT THINGS AND ONLY ONE OF THEM MOVES ANYTHING. Filing a suggestion records your note and leaves the report exactly where it is. Sending it back records the same note AND moves the report to Needs revision, which is what actually puts it on its designers' desks. A suggestion filed on its own may sit unread until somebody opens the workshop.",
-      "NEITHER CAN BE EDITED OR WITHDRAWN. An officer who changes their mind files another one, and both stay on the record. The screen says so under the buttons.",
-      "THE BOX IS CLOSED UNTIL THE REPORT IS HANDED IN. If a workshop has not been submitted for inspection yet there is nothing to comment on, and the panel says so rather than accepting a note that would belong to no round. Its designers hand it in from the workshop's own screen.",
-      "NOTHING YOU DO HERE CHANGES THE WORKSHOP'S CONTENT — not a stage value, not a photograph, not the completeness figure, not a record. What a send-back changes is the report's STATUS, and the designers are the ones who act on it next: they hand it back in by correcting the stages, and it returns to Pre-submission for a fresh pass.",
-      "THERE IS NO OFFLINE QUEUE ON AN INSPECTION. If the repository cannot be reached, nothing is filed and what you typed is still in the box — unlike a designer's stage save, which banks itself and syncs later. Try again when you have signal."
+      "The two buttons do different things. File a suggestion records your note and leaves the report where it is. Send the report back records the note and moves the report to Needs revision, so its designers act on it.",
+      "A note can't be edited or withdrawn once it is filed. If you change your mind, file another; both stay on the record.",
+      "You can file notes once the designers have handed the report in for inspection. Until then, the panel says it hasn't been handed in yet.",
+      "Nothing you do here changes a workshop's content — no stage value, photograph or record. Sending a report back changes only its status; the designers correct the stages, and it returns to Pre-submission for another look.",
     ]
   },
   {
@@ -168,22 +164,20 @@ export const INSPECTOR_STEPS: GuideStep[] = [
     icon: Eye,
     href: "/review",
     summary:
-      "The repository-wide queue of submitted records waiting on a decision — the other half of “Inspector / Reviewer”.",
+      "The queue of submitted records waiting for a decision — the “Reviewer” half of your role.",
     why:
-      "The inspection surface is four workshops somebody assigned you. This is the standing job: artisans, products, processes, tools and interviews submitted by anybody ranked below you, waiting to be approved, rejected or sent back for revision. It is the one place in this product where the tier's RANK buys something rather than its set membership — at 37 you outrank a designer, so a designer's records reach your queue, which is the reason the tier sits where it does on the ladder.",
+      "Besides your assigned workshops, you review records — artisans, products, processes, tools and interviews — and approve them, reject them or send them back for revision.",
     fields: [
       "The queue, newest first, with the record's type, title and who submitted it",
       "Approve · Reject · Send for revision",
-      "A comment — mandatory on Send for revision",
-      "Edit — offered on the row, and see the caution below before you use it"
+      "A comment — mandatory on Send for revision"
     ],
     watch: [
-      "THIS SCREEN IS NOT THE INSPECTION SURFACE AND IS NOT GATED LIKE IT. Review opens for Field Contributor and above — everybody with somebody ranked below them — so the people beside you in the queue are not inspectors. What your tier changes is WHOSE records you see.",
-      "YOU REVIEW STRICTLY BELOW YOU, NEVER ACROSS. A record submitted by another Inspector / Reviewer is not yours to decide, and neither is one from a professor or a directorate post.",
-      "⚠ YOU MAY REVIEW A RECORD AND YOU MAY NOT REWRITE IT, AND THE TWO LADDERS ARE NOT THE SAME ONE. Reviewing is “strictly below me”, which at 37 reaches a designer. Editing somebody else's record is that same comparison narrowed to Professor and above, and 37 is below 40 — so the server refuses your edit. The queue still draws an Edit control on the row, because this client does not mirror that second rule, so pressing it is a refusal rather than a hidden button. Review it, send it back with what to fix, and let the person who recorded it correct it — which is what the rule is for.",
-      "SEND FOR REVISION NEEDS A COMMENT AND IS THE USEFUL VERDICT. A rejection ends the record; a revision request puts it back in front of the person who recorded it with what to fix. They resubmit by editing it.",
-      "BULK APPROVAL EXISTS AND BULK REJECTION DELIBERATELY DOES NOT. A shared note across twenty-five rejections is not feedback, so the screen offers Approve in bulk and nothing else.",
-      "THESE ARE REPOSITORY RECORDS, NOT WORKSHOP STAGES. Approving an artisan here does not touch any design & prototype workshop that copied that artisan onto a stage — the stage holds a copy taken when it was saved."
+      "Your queue holds records submitted by Designers, Researchers, Field Contributors and Crowdsource Volunteers — not by other Inspector / Reviewers or more senior roles.",
+      "You review other people's records but don't edit them. To get something fixed, use Send for revision and say what to change; the person who recorded it corrects it and resubmits.",
+      "Send for revision needs a comment. Reject ends the record, so if it can be fixed, Send for revision is usually the better choice.",
+      "You can tick several records and approve them together. Reject and Send for revision are done one record at a time, each with its own note.",
+      "These are archive records, not workshop stages. Approving an artisan here doesn't change any workshop stage that copied that artisan — the stage keeps the copy taken when it was saved."
     ]
   }
 ];

@@ -368,7 +368,7 @@ export type GuideStep = {
  * WITHIN a table: it chooses which table the box below reads from, and nothing else.
  */
 const DESIGN_WORKSHOP_FIELD =
-  "The workshop question is two boxes and one answer. “Type of workshop” chooses which list the “Workshop” box below it shows — pick “Design & Prototype Development” and it lists your design and prototype workshops, pick any other type and it lists the recorded workshops you may submit to. The type itself is not saved on the record; the workshop you choose already carries its own type. On a new record it opens on the most recent workshop you can reach and prints one line underneath saying why it filled itself in — change it if this record belongs somewhere else, or leave it on “Not linked to a workshop”.";
+  "Choose the workshop in two steps. “Type of workshop” sets which workshops the “Workshop” box lists: “Design & Prototype Development” lists your design and prototype workshops, and any other type lists the recorded workshops you can add to. A new record starts on your most recent workshop, with a note saying so. Change it if the record belongs elsewhere, or choose “Not linked to a workshop”.";
 
 /**
  * THE MEDIA FORM'S OWN SENTENCE, because that form is the one place this control stands alone.
@@ -382,7 +382,7 @@ const DESIGN_WORKSHOP_FIELD =
  * second screen's worth of drift.
  */
 const MEDIA_DESIGN_WORKSHOP_FIELD =
-  "“Design & prototype workshop” is the only workshop question on this screen, because a loose upload can be filed under a design and prototype workshop and under nothing else. On a new upload it opens on the design workshop you were most recently added to and prints one line underneath saying why — change it if this file belongs somewhere else, or leave it on “Not filed under a design workshop”.";
+  "“Design & prototype workshop” is the only workshop question here. A new upload starts on the design workshop you were most recently added to, with a note saying so. Change it if the file belongs elsewhere, or choose “Not filed under a design workshop”.";
 
 /**
  * THE MICROPHONE SENTENCE, likewise one wording rather than one paraphrase per card.
@@ -430,7 +430,7 @@ const MEDIA_DESIGN_WORKSHOP_FIELD =
  * array was one of the two, which is the worst place for it: it is open on arrival.
  */
 const DICTATION_ON_THIS_FORM =
-  "The prose boxes on this form each carry a microphone. Speech is turned into text by the browser on THIS device — nothing is recorded, nothing is uploaded, and it works with no signal. Numbers and codes are deliberately left bare, because a recogniser hands back the nearest dictionary word for a string that is not one.";
+  "Each text box on this form has a microphone. Your speech is turned into text on this device: nothing is recorded or uploaded, and it works without signal. Boxes for numbers and codes have no microphone, so type those.";
 
 export const GUIDE_STEPS: GuideStep[] = [
   {
@@ -440,9 +440,9 @@ export const GUIDE_STEPS: GuideStep[] = [
     icon: UsersRound,
     href: "/workshops?new=1",
     summary:
-      "Open the workshop you are documenting under — or create it — before you record anything else.",
+      "Open the workshop you are documenting, or create it, before you record anything else.",
     why:
-      "Every record you make is scoped to a workshop. Products, tools and interviews all carry a linked workshop, and the Data Browser opens on \"By workshop\", which files the whole repository under the workshop it was recorded in. On a create form the most recent workshop you have access to is preselected, so getting this right once saves you picking it on every screen afterwards.",
+      "Every record you make belongs to a workshop. Products, tools and interviews all link to one, and View Data files records under the workshop they were made in. New records start on your most recent workshop, so setting it up once saves you choosing it on every screen.",
     // TWO REAL CONTROLS WERE MISSING FROM THIS LIST SINCE THE FILE WAS FIRST WRITTEN, and the
     // provenance is worth stating so the next reader does not go hunting for the wave that broke it:
     // `git log -S'Kind of workshop'` returns one commit, the one that ADDED the control, and this
@@ -464,9 +464,9 @@ export const GUIDE_STEPS: GuideStep[] = [
       "Location (GPS fix or map pin)"
     ],
     watch: [
-      "Create the workshop before you leave for the field — it is the container everything else drops into.",
-      "“Kind of workshop” is the box that decides whether this record can be picked up later by a design & prototype workshop. Mark it as one and it appears in that page’s “Start from a recorded workshop” list; anything else stays out of it, which is what stops that list offering every craft-documentation visit ever recorded.",
-      "Records created outside a workshop's date window are flagged as out-of-window and need a reviewer's approval.",
+      "Create the workshop before you leave for the field. Everything else you record is filed under it.",
+      "“Kind of workshop” decides whether a design & prototype workshop can start from this record. Only workshops of that kind appear in the “Start from a recorded workshop” list.",
+      "Records made outside the workshop's dates are flagged and need a reviewer's approval.",
       // THE SILENT-EMPTINESS BULLET, AND IT IS ON THIS CARD BECAUSE THIS IS THE ONE PLACE A READER
       // IS STILL EARLY ENOUGH TO ACT ON IT.
       //
@@ -489,7 +489,7 @@ export const GUIDE_STEPS: GuideStep[] = [
       // gives them the panel's exact on-screen heading — "Records not filed under a workshop" — to
       // say it with. A caution the reader cannot act on is worth writing only when it tells them who
       // can.
-      "A record saved with “Not linked to a workshop” is not lost, but it stops counting towards every workshop-scoped view — and because those screens open on your most recent workshop, the effect is a page that says nothing was documented rather than a filter hiding it. Pick the workshop while you are on the form. If some are already saved that way, an admin can re-file them in one press from “Records not filed under a workshop” at the top of this screen.",
+      "A record saved as “Not linked to a workshop” is kept, but it won't appear when you look at a workshop's records. Choose the workshop while you are on the form. An admin can file such records later from “Records not filed under a workshop” on this screen.",
       // NO `DESIGN_WORKSHOP_FIELD` HERE, and its absence is a fact about the schema rather than an
       // oversight: a Workshop has no `designWorkshopId` column and `DesignWorkshopSelect` is not
       // mounted on this page. A workshop is not filed under a design workshop — it is CHOSEN BY one,
@@ -504,9 +504,9 @@ export const GUIDE_STEPS: GuideStep[] = [
     action: "Add craft",
     icon: Brush,
     href: "/crafts?new=1",
-    summary: "Add the craft being documented so artisans, products and tools have something to hang off.",
+    summary: "Add the craft you are documenting so artisans, products and tools can be linked to it.",
     why:
-      "Craft is the shared vocabulary of the repository: artisans link to a craft, products and tools inherit the craft name from it, and the Data Browser groups every workshop's contents by craft. Adding it once keeps spellings consistent across everyone's records.",
+      "Artisans link to a craft, and products and tools take their craft name from it. Adding it once keeps the spelling the same in everyone's records.",
     // Read off `app/(protected)/crafts/page.tsx` in screen order. `Workshop` WAS MISSING and it is
     // the FIRST control on the form (`:411`), above the craft name — the page's own comment says
     // why it leads: "the workshop leads every other dropdown: it is the context the record belongs
@@ -525,8 +525,8 @@ export const GUIDE_STEPS: GuideStep[] = [
       "Craft media"
     ],
     watch: [
-      "Check the list first — if the craft already exists, reuse it instead of creating a near-duplicate spelling.",
-      "The local name matters as much as the English one; record what the community actually calls it.",
+      "Check the list first. If the craft is already there, use it rather than adding a second spelling.",
+      "The local name matters as much as the English one. Record what the community calls it.",
       // THE MICROPHONE UNDER "Local name" IS THE REASON THIS CARD NEEDS THE SENTENCE MORE THAN MOST,
       // and the reason is in the box's own comment on `crafts/page.tsx`: that field is Devanagari or
       // Gujarati, it is deliberately NOT title-cased because capitalising means nothing there, and
@@ -546,7 +546,7 @@ export const GUIDE_STEPS: GuideStep[] = [
     href: "/artisans/new",
     summary: "Record the person: who they are, where they work, how to reach them, and what they have learnt.",
     why:
-      "The artisan is the anchor of the dataset. Products, processes, tools and questionnaire interviews all link back to an artisan record, and the Do's and Don'ts are the artisan's own hard-won craft knowledge — the part of the archive that cannot be reconstructed later.",
+      "Products, processes, tools and interviews all link back to the artisan. The Do's and Don'ts are the artisan's own craft knowledge, and they can't be recovered once you have left.",
     // ⚠ SIX REAL BOXES WERE MISSING FROM THIS LIST AND TWO OF THEM ARE THE REGULATED ONES, which is
     // the worst shape this card could have taken. `fields[]` is declared as the real form labels in
     // screen order, so a designer plans a sitting from it — and it named neither identity number.
@@ -606,19 +606,19 @@ export const GUIDE_STEPS: GuideStep[] = [
       "Location (GPS fix or map pin)"
     ],
     watch: [
-      "Do's and Don'ts are required. Press Enter for each new point — one lesson per line.",
-      "You must either select an existing craft or type a new craft name; the form will not save with neither.",
-      "Photo EXIF is retained and summarised into the notes automatically — you do not need to transcribe camera details by hand.",
+      "Do's and Don'ts are required. Press Enter for each new point, one lesson per line.",
+      "Choose an existing craft or type a new craft name. The form can't be saved without one.",
+      "Camera details from your photos are added to the notes automatically, so you don't need to copy them.",
       // ── THE FOUR BULLETS THE SIX NEW FIELDS OWE THE READER ────────────────────────────────────
       // A field named on a card and left unexplained is worse than one omitted where the field has
       // rules a researcher cannot infer from the box: they meet the mask, or the disabled number, and
       // read it as the form being broken. Every clause below is `ArtisanForm.tsx`, `AadhaarField.tsx`
       // or `PehchanFields`, not the printed guide — the doc says most of this and copy written from
       // copy is the failure this whole file exists to prevent.
-      "The Aadhaar number is what stops the same artisan being recorded twice. It is checked as you type and again on save, and if the person is already in the archive you are shown their record — that is the field working. Add to that record rather than opening a second one. It is required on a new artisan; a record entered before the rule still saves without one.",
-      "Wherever the number is shared or exported it appears masked, as “XXXX XXXX 9012”. If a box opens on a mask, leave it alone — saving with the mask still in it is recognised as “unchanged”, so you never have to retype a number you were not shown.",
-      "The Pehchan card is two answers and the order matters. Answer “Artisan Pehchan Card available” first: Yes makes the number required, No clears the number and locks the box. There is no way to store a card number for an artisan who says they hold no card.",
-      "“Date of birth” and “Practising since” are DATES, and the age and the years of experience are worked out from them every time they are read — here, in the workshop’s participant table, and in the report. There is deliberately no age box: a number typed today is wrong within a year with nothing anywhere to say so. The “Experience” pair beside them is the stated fallback, read only while “Practising since” is empty.",
+      "The Aadhaar number stops the same artisan being recorded twice. If the person is already recorded, you are shown their record — add to it instead of starting a new one. The number is required for a new artisan.",
+      "Wherever the number is shared or exported it is masked, as “XXXX XXXX 9012”. If a box shows the mask, leave it as it is; the saved number stays unchanged.",
+      "Answer “Artisan Pehchan Card available” first. Yes makes the card number required; No clears and locks the number box.",
+      "Enter “Date of birth” and “Practising since” as dates. Age and years of experience are worked out from them, so they stay correct. Use “Experience” only when you don't know when they started practising.",
       DESIGN_WORKSHOP_FIELD,
       DICTATION_ON_THIS_FORM
     ]
@@ -631,7 +631,7 @@ export const GUIDE_STEPS: GuideStep[] = [
     href: "/products/new",
     summary: "Record one thing this artisan makes, with its measurements, economics and photographs.",
     why:
-      "The product record is where the craft becomes measurable: dimensions, cost of making, selling price and market demand are the fields researchers compare across regions. Link it to the artisan and the craft and the whole chain stays navigable.",
+      "Dimensions, cost of making, selling price and market demand are what researchers compare across regions. Link the product to its artisan and craft so the records stay connected.",
     // Read off `components/forms/ProductForm.tsx` in screen order. THE WORKSHOP PAIR WAS LISTED
     // THIRD AND FOURTH AND IS DRAWN FIRST AND SECOND (`:849`, `:855`) — the same drift the artisan
     // card carried, from the same wave that put the workshop at the head of every record form. No
@@ -666,7 +666,7 @@ export const GUIDE_STEPS: GuideStep[] = [
       "Location (GPS fix or map pin)"
     ],
     watch: [
-      "Pick the linked craft first — the artisan dropdown stays disabled until a craft is chosen, then only lists that craft's artisans.",
+      "Choose the linked craft first. The artisan list opens once a craft is chosen and shows only that craft's artisans.",
       // ⚠ ONE BULLET DESCRIBED THE FALLBACK AS IF IT WERE THE ONLY ROUTE, AND IT NAMED THE WRONG
       // ONE. It read: 'Use "Document using grid" to photograph the piece against the measuring grid:
       // it fills length, breadth and height for you and stores the photo as evidence.' Two things in
@@ -680,10 +680,10 @@ export const GUIDE_STEPS: GuideStep[] = [
       // person accepts. Teaching the estimate as the primary path is the expensive half of the
       // error: it sends a designer in a courtyard with no signal to the one control that cannot work
       // there, past the one that can.
-      "“Measure from a photograph” is the first of the two measuring panels and the one to reach for: lay the piece on the one-inch grid sheet, mark across a known number of squares, and it works out the inches on THIS device — no connection, no cost, and an error bar that narrows visibly as you zoom in to place a mark more carefully.",
-      "Neither panel writes a dimension. Each one PROPOSES a number and you press the button that accepts it into a box, because a figure that filled itself in would be saved under the name of whoever pressed Save — asserting that a person measured it. The photograph you measured on is uploaded with the record either way, so the number can be checked against the picture it came from.",
-      "“Document using grid” underneath is the fallback, and it is a different instrument: it asks a vision model to ESTIMATE the inches, so it needs a connection, has no retry, and cannot show its working. It is there for the piece that will not lie flat or the frame you cannot mark.",
-      "Choosing a linked artisan fills the artisan name and place; choosing a linked craft fills the craft name.",
+      "Use “Measure from a photograph” first. Lay the piece on the one-inch grid sheet and mark across a known number of squares; the inches are worked out on this device, without signal. Zoom in to place marks more precisely.",
+      "The measuring panels suggest a number and you choose whether to accept it into a box. The photograph you measured on is saved with the record, so the figure can be checked later.",
+      "“Document using grid” gives an automatic estimate and needs a connection. Use it for a piece that won't lie flat or can't be marked.",
+      "Choosing a linked artisan fills in the artisan name and place; choosing a linked craft fills in the craft name.",
       DESIGN_WORKSHOP_FIELD,
       DICTATION_ON_THIS_FORM
     ]
@@ -694,9 +694,9 @@ export const GUIDE_STEPS: GuideStep[] = [
     action: "Document process",
     icon: GitBranch,
     href: "/processes?new=1",
-    summary: "Walk through how that product is made, one step at a time, filming each step as it happens.",
+    summary: "Walk through how the product is made, one step at a time, filming each step as it happens.",
     why:
-      "The process is the craft itself. A product photograph shows the result; the step-by-step record with per-step media shows the knowledge — the sequence, the hand movements, the judgement calls that a text description always loses.",
+      "A product photograph shows the result. The step-by-step record shows the knowledge: the sequence, the hand movements and the judgement calls that a written description misses.",
     // Read off `components/forms/ProcessForm.tsx` in screen order. FOUR CONTROLS WERE MISSING and
     // one of them is the field this whole card exists to feed: "What happens in this process"
     // (`:1312`) is the box the design-workshop report prints under “What happens”, in the
@@ -727,10 +727,10 @@ export const GUIDE_STEPS: GuideStep[] = [
       "Status"
     ],
     watch: [
-      "Add a step with \"Add Another Step\" and pick Sequential for an ordered stage, or Group of activities for things done together.",
-      "Video is the preferred format for steps — capture the action as it happens rather than posing the result.",
-      "Document the process against the product you already recorded, so the two stay linked.",
-      "“What happens in this process” is the one box on this form a design-workshop report prints verbatim. Write the sequence in your own words there, not only as step names — the steps are the record, that paragraph is the document.",
+      "Add a step with \"Add Another Step\". Choose Sequential for steps done in order, or Group of activities for things done together.",
+      "Video works best for steps. Film the action as it happens instead of posing the result.",
+      "Link the process to the product you already recorded, so the two stay connected.",
+      "A design workshop report prints “What happens in this process” word for word. Describe the sequence there in your own words, not only as step names.",
       DESIGN_WORKSHOP_FIELD,
       DICTATION_ON_THIS_FORM
     ]
@@ -743,7 +743,7 @@ export const GUIDE_STEPS: GuideStep[] = [
     href: "/tools/new",
     summary: "Record the toolkit the artisan uses: what it is made of, how big it is, who made it, what it costs to replace.",
     why:
-      "Tools are the most quietly endangered part of a craft — the maker of a tool often disappears before the craft does. Replacement cost, maker and tradition type are the fields that record whether the toolchain behind the craft is still alive.",
+      "Toolmakers often disappear before the craft does. The maker, tradition type and replacement cost show whether the tools behind the craft can still be had.",
     // Read off `components/forms/ToolForm.tsx` in screen order. Every label matched on a re-read of
     // 2026-08-31 except the position of the workshop pair, which is drawn first and second (`:958`,
     // `:964`) and was listed fourth and fifth — the artisan and product cards carried the same drift.
@@ -783,7 +783,7 @@ export const GUIDE_STEPS: GuideStep[] = [
       "Location (GPS fix or map pin)"
     ],
     watch: [
-      "Fill only the dimensions that make sense for the tool — a blade has a length and thickness, a wheel has a radius.",
+      "Fill in only the dimensions that suit the tool: a blade has a length and thickness, a wheel has a radius.",
       // The same pair of panels as the product form, and the same correction — see that card for
       // what the sentence used to say. The one difference is worth its own clause and is not
       // cosmetic, and it REVERSED in 0.0.12: this form used to have a plain “Height” box
@@ -797,10 +797,10 @@ export const GUIDE_STEPS: GuideStep[] = [
       // the one the panel actually measured into. A card that still promised the plain box was the
       // designer's alone would send them hunting for a control that no longer exists and then
       // contradict the screen when its partner filled itself in.
-      "“Measure from a photograph” is the first of the two measuring panels: lay the tool on the one-inch grid sheet, mark across a known number of squares, and it works out the inches on THIS device with no connection. It accepts into Length (inches), Breadth (inches) and Height (inches) — and each accepted inch reading then fills its centimetre partner by conversion, so Height (cm) and Width (cm) move with them. Only the inch box carries the marker recording that a panel produced the figure.",
-      "“Document using grid” underneath is the fallback: it asks a vision model to ESTIMATE the inches, needs a connection, and cannot show its working. Use it for the tool that will not lie flat. Neither panel writes a number by itself — both propose, you press the button that accepts, and the photograph you measured on is uploaded with the record so the figure can be checked against it.",
-      "\"Process stages\" archives your captures in order as STAGE_STEP_1, STAGE_STEP_2, … so shoot them in sequence.",
-      "You can also hand tools to specific artisans later from \"Assign tools to artisans\" — for your own artisans, ones shared with you for editing, or any artisan if you are an admin.",
+      "Use “Measure from a photograph” first: lay the tool on the one-inch grid sheet and mark across a known number of squares. It works without signal and fills Length, Breadth and Height in inches; the centimetre boxes are filled in to match.",
+      "“Document using grid” gives an automatic estimate and needs a connection. Use it for a tool that won't lie flat. Either way, you choose whether to accept the number, and the photograph is saved with the record.",
+      "\"Process stages\" keeps your photos in the order you take them, so photograph the stages in sequence.",
+      "You can also give tools to artisans later from \"Assign tools to artisans\": your own artisans, ones shared with you for editing, or any artisan if you are an admin.",
       DESIGN_WORKSHOP_FIELD,
       DICTATION_ON_THIS_FORM
     ]
@@ -813,7 +813,7 @@ export const GUIDE_STEPS: GuideStep[] = [
     href: "/questionnaire?new=1",
     summary: "Sit down with the artisan and work through the interview sections, recording each answer as audio.",
     why:
-      "The questionnaire is the artisan speaking in their own voice and their own language. Recorded audio is auto-transcribed on the server, so you get both the original recording and searchable text without typing during the interview.",
+      "The questionnaire is the artisan speaking in their own voice and language. Recordings are transcribed automatically after they upload, so you get the audio and searchable text without typing during the interview.",
     // ⚠ THIS LIST INVENTED A CONTROL AND DROPPED FOUR REAL ONES, which is precisely the failure the
     // labels rule at the top of this file exists to prevent, and the invented one is the worse half.
     // There is NO "Date" box on the interview form and there never has been: `questionnaire/page.tsx`
@@ -857,17 +857,17 @@ export const GUIDE_STEPS: GuideStep[] = [
       "Interview notes"
     ],
     watch: [
-      "There is one interview per exact set of artisans. If an entry already exists for that set, saving adds your answers to it — it never creates a duplicate.",
-      "There is no date to fill in. The interview is dated from when it was actually recorded, so there is nothing here to tab past and nothing to get wrong.",
-      "Language is a closed list of twenty-four, in the same order as the handset, with Hindi and English at the top because that is what most interviews are conducted in. If an older interview holds something not on the list — a dialect, or somebody’s own spelling — it is offered first and never overwritten.",
+      "There is one interview for each group of artisans. If one already exists for the same artisans, saving adds your answers to it.",
+      "The interview is dated automatically from when it was recorded.",
+      "Choose the language from the list; Hindi and English are at the top. If an older interview has a language not on the list, it is kept and shown first.",
       // THE DEFAULT THAT READS AS A BROKEN SCREEN. `DEFAULT_CAPTURE_PREFS` has `hideAnswers` ON, and
       // the toggle's own hint says so — "On by default — show only the record button." A researcher
       // who came to type finds no box to type in and no reason given, which is the one state on this
       // form a card can spare somebody entirely.
-      "“Do not display answer text boxes” is ON when you first open the screen, so each question shows only its record button. Turn it off to type written answers. “Recording mode” beside it decides whether a take covers one question or a whole section — set both before the artisan sits down.",
-      "Answer only the questions actually asked; empty questions stay open for whoever picks the interview up next.",
-      "Questions already answered by someone else can only be changed by that contributor or an admin.",
-      "Use \"Check completion\" at the top of the screen to see the artisans × sections matrix and find the gaps.",
+      "“Do not display answer text boxes” is on at first, so each question shows only its record button. Turn it off to type answers. “Recording mode” sets whether one recording covers a question or a whole section. Set both before the artisan sits down.",
+      "Answer only the questions you asked. Empty questions stay open for whoever continues the interview.",
+      "An answer given by someone else can be changed only by them or an admin.",
+      "Use \"Check completion\" at the top of the screen to see which artisans and sections still have gaps.",
       DESIGN_WORKSHOP_FIELD
     ]
   },
@@ -879,7 +879,7 @@ export const GUIDE_STEPS: GuideStep[] = [
     href: "/media",
     summary: "Upload the photographs, video, audio and files that do not belong to any single record.",
     why:
-      "Field work produces context that no form has a slot for: the road into the village, the market, an unplanned conversation. Miscellaneous Media keeps that material inside the repository instead of on a phone that gets wiped.",
+      "Field work produces material no form has a place for: the road into the village, the market, an unplanned conversation. Upload it here so it is kept with the records and not only on a phone.",
     fields: [
       "Capture media — images, video, audio and documents",
       "Media title / object name",
@@ -890,9 +890,9 @@ export const GUIDE_STEPS: GuideStep[] = [
       "Location (GPS fix or map pin)"
     ],
     watch: [
-      "Upload stays disabled until you pick a Linked record type. If the file belongs to nothing in particular, pick \"Miscellaneous Media\" and leave the entry blank.",
-      "Audio uploaded here is queued for transcription after upload, exactly like interview audio.",
-      "If the file does turn out to belong to a record, link it — misc media can be attached to a record afterwards.",
+      "Choose a Linked record type before you upload. If the file doesn't belong to a particular record, choose \"Miscellaneous Media\" and leave the entry blank.",
+      "Audio uploaded here is transcribed after upload, just like interview audio.",
+      "If a file turns out to belong to a record, you can link it to that record later.",
       // THE MEDIA FORM'S OWN WORDING AND NOT THE RECORD FORMS', since 2026-09-16. This screen draws
       // ONE workshop box and no type box; the record-form sentence is entirely about choosing
       // between two lists, and printing it here would send a reader hunting for a box that is not
@@ -909,7 +909,7 @@ export const GUIDE_STEPS: GuideStep[] = [
     href: "/review",
     summary: "Everything you submit goes into the review queue and comes back Approved, Rejected, or Sent for revision.",
     why:
-      "Review is what turns a pile of field notes into a dataset anyone can cite. It also means you are never the last check on your own work — a reviewer above your tier reads every record before it counts as final.",
+      "Review turns field notes into a dataset others can cite. A more senior reviewer reads every record before it counts as final, so you are never the only check on your own work.",
     fields: [
       "Pending — submitted, waiting for a reviewer",
       "Approved — final, counted in the dataset",
@@ -917,9 +917,9 @@ export const GUIDE_STEPS: GuideStep[] = [
       "Rejected — not going into the dataset"
     ],
     watch: [
-      "Below Professor the status chip is locked: whatever you create is submitted as Pending. That is normal, not an error.",
-      "\"Send for revision\" always carries mandatory comments — read them, fix the record, and saving resubmits it as Pending.",
-      "Reviewers only see submissions from contributors ranked strictly below them; the master admin sees everyone."
+      "Unless you are a Professor or above, new records are submitted as Pending. That is normal.",
+      "\"Send for revision\" always comes with comments. Read them, fix the record, and save to resubmit it.",
+      "Reviewers see submissions from people junior to them; the master admin sees everyone's."
     ]
   },
   {
@@ -928,9 +928,9 @@ export const GUIDE_STEPS: GuideStep[] = [
     action: "Browse records",
     icon: Eye,
     href: "/data",
-    summary: "Browse the whole repository as a directory tree and export a report of any subtree.",
+    summary: "Browse all the records as folders and download a report of any folder.",
     why:
-      "This is where the documentation stops being data entry and starts being research material: the same records, filed three different ways, previewable in place and downloadable as a spreadsheet.",
+      "This is where your documentation becomes research material: the same records filed three ways, viewable in place and downloadable as a spreadsheet.",
     fields: [
       "By workshop — every record filed under the workshop it was made in (the view it opens on)",
       "By uploader — a workshop's records filed under the researcher who uploaded them",
@@ -939,9 +939,9 @@ export const GUIDE_STEPS: GuideStep[] = [
       "Download any folder as a zip, with content-type filters"
     ],
     watch: [
-      "Pick a folder, then use the breadcrumb to move back up — the tree loads lazily as you expand it.",
-      "Transcripts and AI text render as formatted Markdown in the preview pane, not raw text.",
-      "Dataset download is a granted permission. If your role does not have it the browser shows a restricted notice — use Search to find records instead."
+      "Open a folder, then use the path at the top to move back up. Folders load as you open them.",
+      "Transcripts and AI text are shown formatted in the preview.",
+      "Downloading the dataset needs permission. If you don't have it, use Search to find records instead."
     ]
   },
   {
@@ -956,9 +956,9 @@ export const GUIDE_STEPS: GuideStep[] = [
     icon: QrCode,
     href: "/scan",
     summary:
-      "Point the camera at an artisan card or a prototype tag — or read the code out of a picture somebody sent you — and open the record it names.",
+      "Point the camera at an artisan card or a prototype tag, or read the code from a picture someone sent you, and open the record it names.",
     why:
-      "Every card and every tag carries a code, and typing a name to find the record behind it is where the wrong record gets opened. This is a door named after the thing in your hand rather than after reading a list: it was reachable only by opening Browse records and noticing a panel above the search box, which is three steps, none of them named after what you are doing.",
+      "Every card and tag carries a code. Scanning it opens the right record straight away, where searching by name can open the wrong one.",
     fields: [
       "Scan with the camera",
       "Upload a picture — or drop one here, or paste it with Ctrl+V",
@@ -966,11 +966,11 @@ export const GUIDE_STEPS: GuideStep[] = [
       "The record it resolved to, with one press to open it"
     ],
     watch: [
-      "A picture works as well as the card itself — a screenshot, a photo taken earlier, or one forwarded to you. That is the case this screen was widened for: a code arriving over a messaging app does not have to be saved to disk first.",
-      "Hold the card 10–15 cm from the lens with the whole square in view. If the camera will not open, the screen says which of the three reasons it is and offers the picture and the typed code instead of failing silently.",
-      "This page asks the repository, so it wants a connection. A design workshop’s own Cards & tags page reads that workshop’s codes out of the draft held on this device first, which is why a prototype tag still resolves there in a village with no signal.",
-      "A scan inside a stage form is doing a different job: there it LINKS a record to the box you are filling in, rather than opening it.",
-      "A code for a record you may not read answers “not found” rather than “not allowed”, on purpose — so a code can never be used to find out what exists."
+      "A picture works as well as the card: a screenshot, an earlier photo, or one forwarded to you. You can paste it straight in.",
+      "Hold the card 10–15 cm from the lens with the whole square in view. If the camera won't open, the screen says why and lets you use a picture or type the code.",
+      "Scanning here needs a connection. Without signal, scan from the workshop's own Cards & tags page, which works offline.",
+      "Scanning inside a stage form links the record to the box you are filling in, instead of opening it.",
+      "A code for a record you don't have access to shows “not found”."
     ]
   },
 
@@ -1022,9 +1022,9 @@ export const GUIDE_STEPS: GuideStep[] = [
     icon: IdCard,
     href: "/designers/profile",
     summary:
-      "Your own standing details, kept in one place — name, institution, qualification, empanelment, photograph, signature and CV — rather than typed into a stage form.",
+      "Your own details in one place: name, institution, qualification, empanelment, photograph, signature and CV.",
     why:
-      "These are the values a new design workshop's stage 1 and stage 3 start pre-filled with, and they stay editable inside the workshop. The report is printed from the stages and never from this page, which is what makes the pre-fill a COPY rather than a link — and it has to be one: a report records who ran a workshop at the time, so moving institution next year must not rewrite a report already submitted. A designer signing in for the first time is brought here once, with that reason on the screen.",
+      "A new design workshop's stage 1 and stage 3 start filled in from this page, and you can still edit them inside the workshop. The workshop keeps its own copy, so a report always shows your details as they were at the time. You are brought here when you first sign in.",
     fields: [
       // FOUR OF THE TWENTY-ONE ARE MARKED, AS OF 2026-08-27, and the marks are not decoration on this
       // card: `fields[]` is documented as the real form labels in screen order with "(required)"
@@ -1082,8 +1082,8 @@ export const GUIDE_STEPS: GuideStep[] = [
       // gone from true to the opposite of true on the one card a designer reads BEFORE opening the
       // page. The fallback it described still exists for rows saved before the rule; what stopped
       // being true is that skipping those four is free.
-      "Five boxes carry an asterisk — name, qualification, phone, email and the empanelment number — because they are what a report is submitted under, how the person who signed it is reached, and the identifier a government document is expected to carry. The rest of the twenty-one are optional, and none of them is guessed for you.",
-      "The Postal address group asks twice and the two halves do not fill each other in. The four boxes at the top — address line, city or town, state, pincode — are what a report prints. The location card under them is where the district and the map point live, and nothing on it reaches the document. Fill in both, or a report goes out with no address on it.",
+      "Name, qualification, phone, email and empanelment number are required. Everything else is optional.",
+      "In Postal address, the report prints the four boxes at the top: address line, city or town, state and pincode. The location card below holds the district and map point. Fill in both.",
       // ⚠ THIS BULLET ENDED "Either way it reaches your reports as an annexure." AND THAT WAS FALSE —
       // the FIFTH surface to carry the sentence, and the fourth time it was written from a neighbour's
       // copy rather than from the code. No branch of this codebase puts a FILE in a report annexure:
@@ -1095,7 +1095,7 @@ export const GUIDE_STEPS: GuideStep[] = [
       // not inside it. The true sentence is also the useful one, because it tells the designer the one
       // thing they have to do about it. Wording taken from `designers/profileCopy.ts`'s `cvMediaId`
       // help so the guide and the box it teaches say the same thing.
-      "A PDF CV is shown on this page as soon as it uploads; a .docx or .odt is stored and downloadable instead. Your reports NAME it rather than carrying it, so send the file alongside the report.",
+      "A PDF CV is shown on this page once it uploads; a .docx or .odt can be downloaded. Reports mention your CV but don't include the file, so send it with the report.",
       // The mechanism deliberately not described — AND THE RESTRAINT HAS NOW PAID FOR ITSELF, which is
       // worth recording because it is why this bullet needed no edit on 2026-08-26.
       //
@@ -1115,7 +1115,7 @@ export const GUIDE_STEPS: GuideStep[] = [
       // `hero/DesignerWorkbench.tsx`'s header sets the same restraint for the landing page ("ONE
       // WORDING CHECKED AND DELIBERATELY LEFT VAGUE … Do not tighten it back") — same reason, and it
       // is still the right instruction: whose profile is seeded has moved once and can move again.
-      "A workshop already under way keeps what it was created with. Correcting something here never reaches back into it — stage 1 and stage 3 of that workshop are where its own copy is edited.",
+      "Changes here don't reach workshops already under way. To correct one, edit its stage 1 and stage 3.",
       // ⚠ THIS SENTENCE COUNTED THE CARDS BELOW IT — "This screen and the eight below it" — and it was
       // wrong in BOTH directions at once by the time anybody read it back. There are ten cards below
       // this one, not eight (`design-workshop-questionnaires` and `design-workshop-inspection` were
@@ -1132,7 +1132,7 @@ export const GUIDE_STEPS: GuideStep[] = [
       // carry, one per gated route, which is the arrangement the top of this file says the repeated
       // wording IS: one predicate (`canRunDesignWorkshops`), stated on each card whose own route
       // answers to it, and never a position or a tally that a later insertion silently invalidates.
-      "This screen opens for designers, admins and the master admin. If you are reading the guide without that access you can still learn the process here, but the link will show you a “Designer access required” panel."
+      "Only designers, admins and the master admin can open this screen. Without that access, the link shows “Designer access required”."
     ]
   },
   {
@@ -1142,7 +1142,7 @@ export const GUIDE_STEPS: GuideStep[] = [
     icon: Layers,
     href: "/design-workshops",
     summary:
-      "Open the design & prototype development workshop you have been added to — everything below hangs off it.",
+      "Open the design & prototype development workshop you have been added to. The steps below all happen inside it.",
     why:
       // ⚠ THIS SENTENCE NUMBERED TWO STEPS — "the Workshop record in step 1 … the records you made in
       // steps 2–10" — and it was the last place in this file that did. The other two were struck out
@@ -1159,7 +1159,7 @@ export const GUIDE_STEPS: GuideStep[] = [
       // (`backend/app/services/design_workshops.py`) exactly — Artisan, Craft, ProductDocumentation,
       // ToolDocumentation, Process and QuestionnaireInterview — which is the list a stage's reference
       // pickers really offer, and the same six the stage card's own picker row names.
-      "This is the fortnight itself: 22 stages of capture that end in a report submitted to a Development Commissioner’s office. It is a different thing from the Workshop record the guide opens with, and it points AT the artisans, crafts, products, tools, processes and interview sittings you recorded above rather than replacing them. A DESIGNER DOES NOT START ONE — an admin creates it and adds you — and everything inside it is then yours.",
+      "This is the fortnight itself: 22 stages that end in a report submitted to a Development Commissioner’s office. It is separate from the Workshop record at the start of this guide, and it links to the artisans, crafts, products, tools, processes and interviews you recorded. An admin creates the workshop and adds you to it.",
     // §9.9's rule — fields[] is the real labels in screen order — read off the only form on this
     // screen, `design-workshops/page.tsx`'s "Start a design workshop" panel (`:715`–`:830`). It
     // replaces a paraphrase that invented two rows and dropped two real ones: "Craft and place" is
@@ -1196,12 +1196,12 @@ export const GUIDE_STEPS: GuideStep[] = [
       "Notes"
     ],
     watch: [
-      "This list is empty until an admin creates a workshop and adds you to it, and for a newly empanelled designer that is the ordinary state rather than a fault. The screen says who to ask.",
-      "Link it to a Workshop record early. The pickers inside the stages are narrowed to that workshop’s artisans, products and tools, and an unlinked workshop offers the whole repository instead — the screen says which you are looking at. Only a Workshop record marked as a design & prototype workshop on its own form appears in that list.",
-      "Being NAMED on the create is how you get in. A design workshop is visible to its creator, to admins, and to whoever is named — so “Designers this workshop is for” is not a nicety, it is the door. Several people can be named and all of them can fill in the stages.",
-      "One of those names is the LEAD, and the screen says which. That is the designer whose profile is copied into stage 1 and stage 3 and whose name the report carries — a .docx has one author field and cannot hold a list, so whose name lands on a ministry document is decided in the open rather than by a tick order nobody can see.",
-      "It opens and fills with no signal. Everything is kept on the device and sent up when there is a connection.",
-      "Every stage saves on its own, into a draft on this device, as you go. That is what makes a fortnight of fieldwork survivable: you resume exactly where you left off, and nothing is waiting on one long save at the end.",
+      "The list stays empty until an admin creates a workshop and adds you. That is normal for a new designer; the screen says who to ask.",
+      "Link the workshop to a Workshop record early. The choices inside the stages then show only that workshop’s artisans, products and tools; otherwise they show all records. Only Workshop records marked as design & prototype workshops can be linked.",
+      "You can see a design workshop if you created it, are an admin, or are named in “Designers this workshop is for”. Everyone named can fill in the stages.",
+      "One named designer is the lead, and the screen shows who. The lead's profile fills stage 1 and stage 3, and the report carries the lead's name.",
+      "It opens and can be filled in without signal. Your work is kept on this device and uploads when you are back online.",
+      "Each stage is saved on this device as you go, so you can pick up exactly where you left off.",
       // ⚠ "THIS SCREEN AND THE ONES BELOW IT" REACHED ONE CARD TOO FAR, and the card it reached is
       // the single one in this arc the claim is false for. Everything under this one answers to
       // `canRunDesignWorkshops` — except `design-workshop-inspection`, which answers to who may be
@@ -1218,7 +1218,7 @@ export const GUIDE_STEPS: GuideStep[] = [
       // where counting was not: the five are defined by sharing this card's href, so a step added
       // anywhere in the arc changes nothing here, and a SIXTH screen joining that href is an edit
       // somebody has to make on purpose rather than a number going quietly stale.
-      "This screen opens for designers, admins and the master admin, and so do the five it leads to — Cards & tags, Stages, Readiness, Report and Report history. If you are reading the guide without that access you can still learn the process here, but the link will show you a “Designer access required” panel."
+      "Only designers, admins and the master admin can open this screen and the five it leads to: Cards & tags, Stages, Readiness, Report and Report history. Without that access, the link shows “Designer access required”."
     ]
   },
   {
@@ -1227,7 +1227,7 @@ export const GUIDE_STEPS: GuideStep[] = [
     action: "Print the code cards",
     icon: QrCode,
     href: "/design-workshops",
-    summary: "Print a code card for every artisan on the roster and a tag for every prototype, and tie the tag to the object.",
+    summary: "Print a code card for every artisan on the roster and a tag for every prototype, and tie each tag to its object.",
     // ⚠ "a list of twenty-five" WAS HERE AND HAS NO SOURCE. `stage_definitions` declares prototypes
     // as `many("prototype", "DwPrototype", …)` and `many()` takes no `max_items` at all, so the list
     // is as long as the fortnight made it. The only twenty-five in the registry is on
@@ -1236,7 +1236,7 @@ export const GUIDE_STEPS: GuideStep[] = [
     // in a neighbour's comment becomes a fact in help text. The point the sentence is making — that
     // choosing from a long list is where the mistake happens — does not need a number to land.
     why:
-      "Stages 14, 15 and 16 each begin by choosing a prototype from a list as long as the fortnight made it. Scanning a tag removes the choosing — and choosing wrong is how two days of measurements end up attached to somebody else’s work, with nothing downstream able to tell.",
+      "Stages 14, 15 and 16 each begin by choosing a prototype from a long list. Scanning its tag picks the right one, so measurements are never attached to someone else's work by mistake.",
     fields: [
       "Artisan cards — one per roster entry",
       "Prototype tags — one per prototype",
@@ -1244,10 +1244,9 @@ export const GUIDE_STEPS: GuideStep[] = [
       "Scan a code back — camera, an uploaded picture, a dropped or pasted picture, or typed"
     ],
     watch: [
-      "Print them at the START of the fortnight, before the prototypes exist in numbers. A tag tied on afterwards is a tag tied on from memory.",
-      "The codes are on the stage index too — you do not need this screen to scan one. Scan a code, further up this guide, opens whatever record a card or a tag names from anywhere in the app; this screen is the one that still resolves its own workshop’s codes with no signal.",
-      "The sheet prints from the browser off the local draft, and the code is decoded in the browser as well, so both halves work with no signal.",
-      "A JOIN CARD is a different code doing a different job: one person creates the workshop and the others scan a card to join THE SAME one, which is what stops a team ending the fortnight with four parallel workshops. It is minted and scanned on the handset — there is no join card on the web — and a card is good for one person unless an admin makes it good for more. A late-comer whose card was already spent is not turned away: the ask is filed for an admin to decide, so their work is not orphaned while they wait."
+      "Print them at the start of the fortnight, before there are many prototypes, so every tag is tied on straight away.",
+      "You can also scan codes from the stage index, or from Scan a code anywhere in the app. This screen reads its own workshop's codes even without signal.",
+      "Printing the sheet and scanning a code here both work without signal."
     ]
   },
   {
@@ -1270,9 +1269,9 @@ export const GUIDE_STEPS: GuideStep[] = [
     icon: FileSpreadsheet,
     href: "/questionnaires",
     summary:
-      "Build the research instrument this workshop needs in a spreadsheet: download the pro-forma, type your questions into it, upload it back, and record the answers here.",
+      "Build the questionnaire this workshop needs in a spreadsheet: download the pro-forma, type your questions into it, upload it, and record the answers here.",
     why:
-      "The artisan questionnaire further up this guide is one global instrument, shared by the whole repository, and it cannot be changed for your cluster. This is the other kind — a form you write yourself and attach to your design workshop — and every one of the six report templates prints its answers at the back as “Annexure — Questionnaire responses”. The spreadsheet is the point rather than a convenience: building a questionnaire box by box in a browser is the slow path, and it is offered third and quietly for that reason.",
+      "The artisan questionnaire earlier in this guide is the same for everyone. This one you write yourself and attach to your design workshop, and every report template prints its answers at the back as “Annexure — Questionnaire responses”. The spreadsheet is the quickest way to build it.",
     fields: [
       // "Kind" WAS MISSING AND IT IS NOT A COSMETIC BOX. Added to the create form on 2026-08-30 at
       // the owner's request ("they also do market survey interviews, so create that differentiation
@@ -1290,12 +1289,12 @@ export const GUIDE_STEPS: GuideStep[] = [
       "Download question set, or Download .xlsx"
     ],
     watch: [
-      "THIS IS NOT THE QUESTIONNAIRE FURTHER UP. “Take interview” is the repository’s one shared artisan questionnaire, open to every signed-in researcher; this is a designer’s own instrument, attached to one design workshop. The two are separate features with separate tables, and answering in the wrong one is not a mistake either screen can catch for you.",
-      "The sheet may come back with answers already typed into it, or with none at all — both are ordinary. The upload reports what it read before anything is saved.",
-      "“Reuse at another workshop” COPIES. Two rows, two question trees, two histories: correcting a typo on one never touches the other, and no sitting and no answer comes across. The dialog says so while you are choosing the target, rather than reporting it afterwards.",
-      "Creating one works with no signal: the row is banked on this device and lands when there is a connection. What is queued is the questionnaire ITSELF and not its sections and questions — those need the id the server mints — so write them once the row has landed, and the screen says as much.",
-      "A questionnaire published as the standard form appears in everybody’s list, badged so a row you did not upload cannot read as somebody else’s work leaking in. Publishing and withdrawing are on the questionnaire’s own page.",
-      "This screen opens for designers, admins and the master admin. If you are reading the guide without that access you can still learn the process here, but the link will show you a “Designer access required” panel."
+      "This is not the “Take interview” questionnaire, which is shared by all researchers. This one belongs to one design workshop, so make sure you are answering in the right one.",
+      "The sheet can come back with or without answers typed in. The upload shows what it read before anything is saved.",
+      "“Reuse at another workshop” makes a separate copy of the questions. Later edits to one don't change the other, and no answers are copied.",
+      "You can create a questionnaire without signal; it uploads when you are back online. Add its sections and questions once it has uploaded — the screen tells you when.",
+      "A questionnaire published as the standard form appears in everyone's list with a badge. Publish or withdraw it from the questionnaire's own page.",
+      "Only designers, admins and the master admin can open this screen. Without that access, the link shows “Designer access required”."
     ]
   },
   {
@@ -1305,9 +1304,9 @@ export const GUIDE_STEPS: GuideStep[] = [
     icon: ClipboardList,
     href: "/design-workshops",
     summary:
-      "Work through the 22 stages. The stage index shows a completeness figure against each one; open a stage and the form is built from the registry the server publishes.",
+      "Work through the 22 stages. The stage index shows how complete each one is; open a stage to fill in its form.",
     why:
-      "The stages ARE the report: every section of the printed document is one of them. The web and the phone draw the same boxes in the same order because both read the same registry, so a stage half-filled on a handset in the village is the stage you finish on a laptop that evening.",
+      "The stages are the report: each section of the printed document comes from one of them. The phone and the web show the same form, so a stage started on a phone in the village can be finished on a laptop that evening.",
     fields: [
       // ⚠ THIS READ "the ones a submit is refused without", WHICH IS THE SENTENCE THIS FILE ALREADY
       // CORRECTED ON THE `design-workshop-readiness` CARD and left standing here, so one page said
@@ -1322,7 +1321,7 @@ export const GUIDE_STEPS: GuideStep[] = [
       // second button at the foot of ONE stage, which saves either way and then refuses that stage
       // alone. Both constants are rendered verbatim on the readiness screen and the Submission card;
       // this list is what that button asks about, and must name that button and no other act.
-      "Basic fields — what “Save and check required fields” refuses this one stage without",
+      "Basic fields — the ones “Save and check required fields” checks",
       "Standard and Advanced fields — depth, never a blocker",
       // ⚠ THIS ROW READS AS AN EXHAUSTIVE LIST AND WAS SHORT BY TWO. `REFERENCE_MODELS`
       // (`backend/app/services/design_workshops.py:1467`) has exactly six members — Artisan, Craft,
@@ -1339,18 +1338,18 @@ export const GUIDE_STEPS: GuideStep[] = [
       "Photograph galleries that say how many are wanted, with a bar counting what you hold",
       "A microphone on every narrative box",
       "This stage in the document — the report’s own pages, beside the form",
-      "Your own sections and questions, added to the workshop with no deployment"
+      "Your own sections and questions, added to the workshop"
     ],
     watch: [
-      "Choosing a record COPIES its values onto this stage. The report prints that copy, so editing the artisan next week does not rewrite a report already handed over — re-pick the record here if you want the newer values.",
-      "Point a row at a different record and every box it filled is cleared first, so two records can never be half-mixed on one row.",
-      "Anything you typed yourself is never overwritten by a pick — only blanks are filled.",
-      "Attaching a photograph that is ALREADY in the repository copies no bytes and moves nothing. The file stays on the record that holds it and this stage points at it as well, which is why the same loom, photographed once, no longer has to exist twice. The list is closed until you open it, so it costs nothing on a stage you fill from the camera.",
-      "Every photograph is checked on THIS device before it uploads — for focus, for resolution, and for being the identical file twice. Exposure and subject are not checked; judge those by eye. A refused file names itself and its own reason, and nothing was sent, so it can simply be taken again.",
-      "A gallery that states a number still saves with fewer, and nothing you attach is ever at risk. What falling short costs is the stage being scored incomplete and the generated report saying so. Attached is not saved either: the count reaches the workshop when you save the stage.",
-      "Stage 9 and stage 17 compute findings BESIDE what you typed (your price bands against the survey; each cost sheet against its own lines). Neither ever changes your figures: you were in the room and the arithmetic was not.",
-      "The preview panel beside the form follows the SAVES, not the keystrokes — it is the real document built by the server, not a sketch of one, so it cannot show an edit you have not saved yet and says so on itself.",
-      "Add your own sections and questions on the workshop’s own screen rather than here: a definition is replaced as one whole set, and it tells you what an edit will cost a question somebody has already answered before you press anything."
+      "Choosing a record copies its values into this stage when you save it, and the report prints that copy. Later edits to the record don't change the stage or a report you have handed in; choose the record again here to take the newer values.",
+      "Choosing a different record clears the boxes the first one filled, so two records never get mixed in one entry.",
+      "Choosing a record only fills empty boxes. Anything you typed yourself is kept.",
+      "You can attach a photograph that is already in the records instead of uploading it again. It stays with its original record and appears in this stage too.",
+      "Each photograph is checked on this device for focus, resolution and duplicates before it uploads. Check exposure and subject yourself. If a photo isn't accepted, the reason is shown; take it again.",
+      "A gallery that asks for a number of photos still saves with fewer, but the stage then shows as incomplete and the report notes it. Photos count once you save the stage.",
+      "Stage 9 and stage 17 show calculated findings beside your entries (price bands against the survey, and each cost sheet against its lines). Your own figures are never changed.",
+      "The preview beside the form shows the report pages as of your last save. Save the stage to see your latest changes.",
+      "Add your own sections and questions on the workshop's own screen. Before you save a change, it tells you how it affects questions that already have answers."
     ]
   },
   {
@@ -1360,9 +1359,9 @@ export const GUIDE_STEPS: GuideStep[] = [
     icon: PencilRuler,
     href: "/sketches-and-prototypes",
     summary:
-      "Pick a workshop, then work on its sketches (stage 11) and prototypes (stage 13) from one screen instead of walking into each stage form to find them.",
+      "Choose a workshop, then work on its sketches (stage 11) and prototypes (stage 13) from one screen.",
     why:
-      "It is the same screen as the workshop’s own tab, entered from the other end: it asks WHICH WORKSHOP first, which is what you actually know when you are standing there with the drawing in your hand. Two tabs — Upload and Review — so the piece is added and rated in the same place, and the review tab here is the FIRST of the two rounds: the workshop’s own designers on each other’s work.",
+      "Start by choosing the workshop, then add and rate the work on the Upload and Review tabs. The Review tab here is the first of two rounds: the workshop's own designers rate each other's work.",
     fields: [
       "Which workshop",
       "Upload / Review",
@@ -1377,7 +1376,7 @@ export const GUIDE_STEPS: GuideStep[] = [
       "3D model"
     ],
     watch: [
-      "The tracing is arithmetic on this device. The crop and the sharpening feed the TRACE and nothing else — they cannot re-encode your photograph, so the original file stays the artifact, EXIF and all.",
+      "Tracing happens on this device. Cropping and sharpening only affect the trace; your original photograph is kept unchanged.",
       // ⚠ THE FEATURE THIS CARD OMITTED, and the omission was written in on purpose — see the ⚠ in
       // this file's header for how a search scoped to `lib/trace/` became a claim about the product.
       // IT IS DESCRIBED HERE AND ATTRIBUTED TO THE STAGE FORM, which is where it actually is:
@@ -1387,12 +1386,12 @@ export const GUIDE_STEPS: GuideStep[] = [
       // two different surfaces, which is exactly why naming the surface matters: a reader who looks
       // for four draggable corners on THIS screen and does not find them concludes the guide lies.
       // Do not move this bullet onto this screen's own controls without moving the mount first.
-      "Straightening a photographed sheet into a plate is a second panel and it is on the stage 11 form, not here: drag the four corners of the sheet on the photograph, and a local threshold turns it into black line on white paper. It writes the plate into the same “Line art / vector file” slot this screen fills — a new file, never over your photograph — and every step of it is arithmetic on the device, so it works where the sketch was drawn.",
-      "A 3D model file is stored and downloadable and nothing in either client draws it. “360° capture” is the view a reviewer actually sees and the one the report prints; a model file prints as the words “1 document attached”.",
-      "The comparator has four views, and they are the handset’s own chips by name: Drawing, Wipe, Photograph and Difference. The wipe is the one you reach for; Difference is the one you reach for when the wipe has left you unsure, and it is the only one that costs a third plate to draw.",
-      "The download offers five formats and only two of them can be attached to the record. SVG and PNG are what “Attach as” takes; PDF, EPS and DXF are take-away files — a print shop that will not accept an SVG accepts EPS, a laser cutter or CNC controller reads DXF R12 and nothing newer, and a PDF opens on any machine you could mail it to. A DOWNLOAD NEVER REACHES THE RECORD AT ALL, so which format you pick changes what you are holding and never what the officer reads.",
-      "Set-aside sketches count. Stage 11 exists to record the designs that were never prototyped, and they are rateable in both rounds — a wider pool picking one up is the reason to write them down.",
-      "This screen opens for designers, admins and the master admin. If you are reading the guide without that access you can still learn the process here, but the link will show you a “Designer access required” panel."
+      "To straighten a photographed sheet, use the stage 11 form: drag the four corners of the sheet, and it becomes black lines on white. The result is saved as a new “Line art / vector file”, never over your photograph, and it works without signal.",
+      "“360° capture” is what reviewers see and what the report prints.",
+      "The comparison has four views: Drawing, Wipe, Photograph and Difference. Start with Wipe; use Difference when you need a closer check.",
+      "“Attach as” saves SVG or PNG to the record. PDF, EPS and DXF are downloads for you to take away — EPS for print shops, DXF for laser cutters and CNC machines, PDF for sharing. A download doesn't change the record.",
+      "Record set-aside sketches too. Stage 11 is for designs that were never prototyped, and they can be rated in both rounds.",
+      "Only designers, admins and the master admin can open this screen. Without that access, the link shows “Designer access required”."
     ]
   },
   {
@@ -1402,9 +1401,9 @@ export const GUIDE_STEPS: GuideStep[] = [
     icon: Star,
     href: "/design-review",
     summary:
-      "Score a colleague’s sketches and prototypes out of five, say what you would change, and put them in an order.",
+      "Score a colleague’s sketches and prototypes out of five, say what you would change, and put them in order.",
     why:
-      "This is the SECOND round. The workshop’s own designers rate each other first, on the Review tab of the step above; then the wider pool ranks the pieces a workshop has finished — including workshops the reviewer was never added to, which is the whole difference between the two levels. A pool reviewer sees the rateable rows and their scores and nothing else about the workshop: they are not a member of it and cannot write to its stages.",
+      "This is the second round. The workshop's own designers rate each other first, on the Review tab of the step above. Then a wider group of reviewers rates the finished pieces, including from workshops they were not added to. They see only the pieces and their scores, and can't change the workshop.",
     fields: [
       "A workshop you can open yourself",
       "Or any other workshop, from its link or its id",
@@ -1415,11 +1414,11 @@ export const GUIDE_STEPS: GuideStep[] = [
       "Move up / Move down, or drag to reorder"
     ],
     watch: [
-      "The two ways in are not two spellings of one control. The dropdown lists the workshops YOU can open; the box takes any workshop’s link or id, because the pool round is by design about workshops you were never added to.",
-      "A piece reaches the pool only once its peer round is closed — “Peer review closed on”, on the piece itself. A workshop with nothing open in the kind you chose says so in one sentence rather than showing you an empty list.",
-      "The comment and the suggestion are two boxes on purpose. “What you would change” is the half a maker acts on, and it is unfindable if it is buried inside a paragraph of assessment.",
-      "The order you place is stored on the row, inside one workshop — which is why the round is asked one workshop at a time and there is no mixed cross-workshop list to rank.",
-      "This screen opens for designers, admins and the master admin. If you are reading the guide without that access you can still learn the process here, but the link will show you a “Designer access required” panel."
+      "The dropdown lists workshops you can open. To review another workshop, paste its link or id into the box.",
+      "A piece is ready for this round once its peer review has closed; the piece shows “Peer review closed on”. If a workshop has nothing ready, the screen says so.",
+      "Keep “What you would change” separate from your comments, so the designer can find it easily.",
+      "You rank pieces within one workshop at a time.",
+      "Only designers, admins and the master admin can open this screen. Without that access, the link shows “Designer access required”."
     ]
   },
   {
@@ -1430,11 +1429,11 @@ export const GUIDE_STEPS: GuideStep[] = [
     href: "/design-workshops",
     summary: "One screen answering: what is still outstanding on this workshop?",
     why:
-      "The alternative is opening all 22 stages on the last afternoon to find the four empty Basic fields, in three of them, that you meant to go back to. This lists them first, then the report’s own checks, then the Standard and Advanced gaps as counts — and every line links into the stage that holds it.",
+      "Instead of opening all 22 stages to find what you missed, this lists the empty Basic fields first, then the report checks, then counts of Standard and Advanced gaps. Every line links to the stage it belongs to.",
     fields: [
       "Unfilled Basic fields — what a stage check is waiting for",
-      "Report checks — they change the delivered file without refusing it",
-      "Standard and Advanced gaps — counts, behind a disclosure",
+      "Report checks — notes on the finished file, never a block",
+      "Standard and Advanced gaps — counts you can expand",
       "A link straight into the stage that holds each gap"
     ],
     watch: [
@@ -1444,10 +1443,10 @@ export const GUIDE_STEPS: GuideStep[] = [
       // 2026-09-14, one release after that button became “Hand in for inspection”. Name the buttons as
       // examples, never as a complete list — `actionsFor` offers a different pair from NEEDS_REVISION
       // and one button alone from PRE_SUBMISSION.
-      "A REPORT MAY BE HANDED IN PART-FILLED, and this is the fact to trust: the status buttons on the workshop’s own Submission card — “Mark complete” and “Hand in for inspection” among them — record where the whole workshop stands and are never refused for an empty field.",
-      "One act in the app IS refused by an empty required field, and it is not that one: “Save and check required fields”, the second button at the foot of any stage. It saves the stage either way, then refuses THAT ONE STAGE while any of its Basic fields is empty, and names the ones it is waiting for. This list is what that button will ask you about.",
-      "Use it on the FIRST afternoon as well as the last. It is a plan for the fortnight, not only a check at the end.",
-      "Standard and Advanced counts never block anything. They are there so a thin stage is a decision rather than an oversight."
+      "A report can be handed in before every field is filled. The status buttons on the workshop's Submission card, such as “Mark complete” and “Hand in for inspection”, work even with empty fields.",
+      "“Save and check required fields”, at the foot of each stage, saves the stage and then lists any Basic fields still empty in it. This screen shows the same gaps for every stage.",
+      "Use it on the first afternoon as well as the last, to plan the fortnight.",
+      "Standard and Advanced counts never block anything. They help you decide where to add more detail."
     ]
   },
   {
@@ -1459,7 +1458,7 @@ export const GUIDE_STEPS: GuideStep[] = [
     summary:
       "Choose the template, set what the document contains, read it back as real A4 or Letter pages, and download the .docx or .pdf.",
     why:
-      "This is the deliverable. Six templates, twelve named accent colours and a colour well, and picking one redraws every page on screen before a single file is made. The preview is drawn from the same document model the .docx and .pdf writers consume — and the two on-device writers as well — so what you read is what is generated, not an approximation of it.",
+      "This is the deliverable. Choose from six templates and twelve accent colours, or pick your own colour, and every page on screen updates straight away. The preview matches the .docx and .pdf you download.",
     // Read off `report/page.tsx` in screen order: `FieldBlock label="Report template"` (`:799`),
     // `label="Transcripts in this file"` (`:829`), the checkbox whose span is "Include
     // machine-assisted text" (`:874`), then `ReportAccentPicker`, whose own heading is "Report
@@ -1477,11 +1476,11 @@ export const GUIDE_STEPS: GuideStep[] = [
       "Print these pages"
     ],
     watch: [
-      "A WARNING NEVER STOPS A FILE BEING PRODUCED. A required field nobody filled in, a photograph that could not be embedded, a gallery over the template’s cap, an attached file the report names and does not contain — each is reported beside the download and the document is generated anyway, because the pages that ARE ready are the ones you need.",
-      "Those warnings never travel inside the document either. An officer opening the .docx next month must not find a note about what was missing on the day — which is also why the screen is the only place they can be read at all.",
-      "The accent ladder runs from navy to burnt orange by LIGHTNESS, not by hue, because these get printed on monochrome office lasers where hue is discarded. Twelve equally dark colours would come out of that tray as twelve identical reports.",
-      "Stage 20 is where these settings live — it configures the report and is one of the two stages that never print in it.",
-      "The preview is read-only on purpose. To correct something it shows, open the stage it came from: an edit has to land on the stage entry, and the printed value is the entry’s own frozen copy.",
+      "Warnings never stop the file being made. An empty required field, a photograph that couldn't be added, more photos than the template takes, or an attached file the report only names — each is listed beside the download, and the report is still generated.",
+      "Warnings appear only on this screen, never inside the document, so read them before you send the file.",
+      "The accent colours run from dark to light so they stay distinct when printed in black and white.",
+      "Stage 20 holds these settings. It sets up the report and is not printed in it.",
+      "To correct something in the preview, open the stage it came from and edit it there.",
       // ⚠ THIS LISTED QUESTIONNAIRE ANSWERS AS FLATLY IMPOSSIBLE OFFLINE AND THEY ARE NOT.
       // `report/ReportSettings.kt`'s `UNSUPPORTED_SECTIONS` keeps the ANNEXURE_QUESTIONNAIRES entry
       // and says why in its own comment: `renderQuestionnaireAnnexure` draws it on the handset now, so
@@ -1491,7 +1490,7 @@ export const GUIDE_STEPS: GuideStep[] = [
       // condition is the actionable half: one tap with a bar of signal fixes it for every export
       // afterwards, and a designer told it was impossible waits for the office instead.
       // `docs/WALKTHROUGH.md` has always stated the condition; this card had not.
-      "A report generated on the PHONE honours the same template and settings and needs no signal at all. Two annexures it cannot draw are named on the file itself: transcripts, which are produced after the audio reaches the server, and machine-assisted text. Questionnaire answers are drawn on the phone too, but only once that handset has opened the workshop’s questionnaire list at least once with a connection — until then the file says so."
+      "You can also generate the report on the phone app, with the same template and settings and without signal. To include questionnaire answers, open the workshop's questionnaire list on the phone once while you have a connection."
     ]
   },
   {
@@ -1501,9 +1500,9 @@ export const GUIDE_STEPS: GuideStep[] = [
     icon: History,
     href: "/design-workshops",
     summary:
-      "Every file ever generated for this workshop — including ones a phone produced offline — with its checksum, size, page count, template and timestamp, and a diff between any two.",
+      "Every file generated for this workshop, including ones made on a phone offline, with its checksum, size, page count, template and time, and a comparison between any two.",
     why:
-      "A report submitted to a ministry comes back for revision three or four times, and “did you update the cost sheet before you resubmitted?” needs an answer that is evidence rather than memory.",
+      "A report often comes back for revision several times. This history shows exactly what changed between versions, such as whether the cost sheet was updated before you resubmitted.",
     // The real labels, read off `report/history/page.tsx`: the per-file `<dl>` at `:421`–`:445`
     // ("Template", "Pages", "Size", "Generated by", "SHA-256 of the file") and the two dropdowns of
     // the comparison panel at `:549` and `:558` ("Compare", "With"). The previous list ran the five
@@ -1519,8 +1518,8 @@ export const GUIDE_STEPS: GuideStep[] = [
       "Compare … With — any two files"
     ],
     watch: [
-      "Nothing here can be tidied up. The checksum is what makes the record evidence, and evidence that can be edited is not evidence.",
-      "The comparison is between two GENERATED FILES. It is not a field-level history of the workshop — for who changed a value and when, open the stage’s provenance."
+      "Files here can't be edited or removed, so the history stays a reliable record.",
+      "The comparison is between two generated files. To see who changed a value and when, open the stage's provenance."
     ]
   },
   {
@@ -1545,9 +1544,9 @@ export const GUIDE_STEPS: GuideStep[] = [
     icon: FileSearch,
     href: "/design-workshop-inspections",
     summary:
-      "The inspector’s own list: the design & prototype workshops an admin has assigned them, every stage readable and none of it editable.",
+      "The inspector's own list: the design & prototype workshops they have been assigned, with every stage readable and nothing editable.",
     why:
-      "A report submitted to a Development Commissioner’s office is read by somebody who did not run the fortnight, and “who wrote this field” is most of what that reading is for. So an inspection draws the same authorship line under every value that the designer’s own stage form draws under every box — the same component producing the same sentence, because an inspector and the designer being inspected must never be reading two different accounts of who did what.",
+      "An inspector reads a workshop they did not run, and needs to know who wrote what. Every value shows the same line about who entered it and when that the designer sees on their own stage form.",
     fields: [
       "Workshops to inspect — the ones assigned to you, searchable by title, craft, cluster or workshop code",
       "Workshop under inspection — all 22 stages, read-only",
@@ -1555,9 +1554,9 @@ export const GUIDE_STEPS: GuideStep[] = [
       "How complete the workshop is"
     ],
     watch: [
-      "IT IS A SET AND NOT A RANK. This surface opens for the Inspector / Reviewer tier, and for a Ministry Admin, an admin or the master admin because any of them may be appointed to inspect a workshop by somebody else — each reading only the workshops they were appointed to. A professor is refused it, and so is a designer: if you are a designer, this step is here so you know what a colleague is looking at when they read your workshop back — not because you can open it.",
-      "A Ministry Admin, an admin or the master admin chooses who inspects a workshop, one workshop at a time, on Workshop oversight.",
-      "An empty page is a real answer and the screen says which kind it is. Nothing assigned reads “You do not hold any inspection posts”; a list that could not be loaded says so instead — because the correct empty state and a silent failure look identical, and there is no other surface to cross-check against.",
+      "This screen is for an Inspector / Reviewer, and for a Ministry Admin, an admin or the master admin appointed to inspect a workshop. Each sees only the workshops they were appointed to. Designers and professors can't open it; it is here so you know what an inspector sees when they read your workshop.",
+      "A Ministry Admin, an admin or the master admin chooses who inspects each workshop, on Workshop oversight.",
+      "If nothing is assigned to you, the page says so. If the list couldn't be loaded, it says that instead.",
       // ⚠ THIS ROW ENDED "Nothing an inspector does can change a workshop" UNTIL 2026-09-15, AND
       // THAT SENTENCE WAS TRUE WHEN IT WAS WRITTEN AND STOPPED BEING TRUE WITHOUT ANYTHING SAYING
       // SO. The inspection surface grew two write routes —
@@ -1572,8 +1571,7 @@ export const GUIDE_STEPS: GuideStep[] = [
       // photograph, no completeness figure, no record — because `load_inspectable_workshop_or_404`
       // has no edit path and its own docstring forbids one being added. Write that; never the
       // shorter thing.
-      "There is no Save and no stage form, and neither is missing: the loader behind this page has no edit path at all, and its own docstring says it must never grow one. What an inspector CAN write is a correction suggestion — a note about one stage or about the report as a whole — and the second of its two buttons sends the report back, which moves it to Needs revision. That changes the report's standing and never a workshop's contents: not a stage value, not a photograph, not the completeness figure, not a record.",
-      "Photographs, recordings and attachments are COUNTED rather than shown — “3 photographs are recorded here; an inspection read does not carry them”. An empty gallery would look like a file that failed to load, which is not what happened."
+      "The stages are read-only here. An inspector can write a correction suggestion about one stage or the whole report, or send the report back, which marks it Needs revision. Sending it back changes the report's status, never a workshop's contents."
     ]
   }
 ];

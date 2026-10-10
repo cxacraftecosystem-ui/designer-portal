@@ -263,43 +263,41 @@ export const DIRECTORATE_TRACK: GuideTrack = {
   name: "Running the scheme",
   audience: "Assistant Director, Regional Director, Ministry Admin",
   description:
-    "What a ministry post actually does in this product: the annual plan, the sanction register, " +
-    "naming a workshop's designer and its two supervising officers, writing inside a workshop, and " +
+    "What a ministry post does: the annual plan, the sanction register, naming a workshop's " +
+    "designer and its two supervising officers, filling in a workshop, and " +
     `reading one back. ${DIRECTORATE_STEPS.length} screens, in the order a workshop reaches them.`,
   headline: "Plan it, sanction it, staff it, read it back.",
   intro:
-    "Your screens are not the designer's screens, and most of them are not on the designer's " +
-    "walkthrough at all. This deck is the lifecycle of one workshop as a ministry sees it — the row " +
-    "in the directory, the order that opens it, the postings that staff it, the stages you can now " +
-    "write in, and the read-back afterwards. Three of the five gates below are not rank thresholds, " +
-    "so each card says who its screen is for in its own words rather than borrowing one sentence.",
+    "This walkthrough follows one workshop as the ministry sees it: the entry in the annual plan, " +
+    "the order that opens it, the postings that staff it, the stages you can fill in, and the " +
+    "read-back afterwards. Your three posts can do different things, so each card says who its " +
+    "screen is for.",
   facts: [
-    { icon: FileSignature, text: "A sanction order opens a workshop and mints its designer's account" },
+    { icon: FileSignature, text: "A sanction order opens a workshop and creates its designer's account" },
     { icon: ListOrdered, text: `${DIRECTORATE_STEPS.length} screens, in the order a workshop reaches them` },
-    { icon: UserCheck, text: "Your three posts do not have the same powers — every card says which" }
+    { icon: UserCheck, text: "Your three posts can do different things — each card says which" }
   ],
   steps: DIRECTORATE_STEPS,
   recapTitle: "A workshop's life, in one line",
   recapLead:
-    "Planned, sanctioned, staffed, filled in, read back. Four of these five screens are on the web " +
-    "only — the Android app carries no annual plan, no sanction register and no oversight screens " +
-    "at all. Design workshops is the exception, and a handset runs it exactly as this browser does.",
+    "Planned, sanctioned, staffed, filled in, read back. These screens are on the web, and Design " +
+    "workshops also works the same way in the Android app.",
   checklistTitle: "Before you sign it off",
   checklistLead:
-    "Each of these is cheap now and expensive or impossible later — an account minted against the " +
-    "wrong address, a link nobody sent, a correction made in the directory and not on the workshop.",
+    "Each of these is easy to get right now and hard to fix later — an account created for the " +
+    "wrong address, a link nobody sent, a correction made in the plan but not on the workshop.",
   checklist: [
-    "The Gmail address on the sanction order is the one on the signed document, character for character — it becomes the designer's sign-in identity and it cannot be edited afterwards.",
-    "The sign-in link has actually been sent. Nothing is emailed by this product; the link is on screen once, works once, and expires.",
-    "Every workshop you opened has a designer named on it. Until it does, nobody can fill in a single stage of it.",
-    "Both officer slots are filled. A workshop with no Assistant Director and no Regional Director is nobody's to read back.",
-    "The artisan list's refused rows were corrected and re-uploaded, not left — the report names each one and why.",
-    "The filled-in artisan pro-forma has been deleted from wherever you saved it. It carries Aadhaar numbers and it is not stored here.",
-    "Anything you corrected in the annual plan for a workshop that is ALREADY open was also corrected on the workshop. The plan and the workshop stop being the same document the moment a row is opened."
+    "The Gmail address on the sanction order matches the signed document exactly — it becomes the designer's sign-in address.",
+    "Each sign-in link has been sent to its designer. A link is shown only once, works once, and expires.",
+    "Every workshop you opened has a designer named on it. Without one, the designer's work can't begin.",
+    "Both officer posts are filled. Without an Assistant Director and a Regional Director, nobody is supervising the workshop.",
+    "Any artisan entries the upload couldn't read were corrected and uploaded again — the upload report names each one and why.",
+    "The filled-in artisan pro-forma has been deleted from wherever you saved it. It contains Aadhaar numbers, and the portal doesn't keep a copy.",
+    "Anything you corrected in the annual plan for a workshop that is already open was also corrected on the workshop itself. Once a workshop is open, changes to the plan don't reach it."
   ],
   next: [
     { label: "Dashboard", href: "/dashboard", icon: LayoutGrid, note: "Your ministry desk is the first card on it" },
-    { label: "Design workshops", href: "/design-workshops", icon: DraftingCompass, note: "Everything you may open, and write in" },
+    { label: "Design workshops", href: "/design-workshops", icon: DraftingCompass, note: "Every workshop you can open and fill in" },
     { label: "Manage users", href: "/users", icon: UserCog, note: "Where a ministry post is granted in the first place" },
     { label: "Review", href: "/review", icon: ClipboardCheck, note: "Records waiting on a decision" },
     { label: "My Activity", href: "/activity", icon: Activity, note: "Everything you have recorded so far" },
@@ -313,19 +311,15 @@ export const INSPECTOR_TRACK: GuideTrack = {
   name: "Inspecting a workshop",
   audience: "Inspector / Reviewer",
   description:
-    "The inspection surface: the workshops you have been assigned, how to read one, what you can " +
-    `file about it, and the record queue your tier opens. ${INSPECTOR_STEPS.length} screens, in the ` +
+    "The workshops assigned to you, how to read one, what you can file about it, and the queue of " +
+    `records waiting for your review. ${INSPECTOR_STEPS.length} screens, in the ` +
     "order an inspection happens.",
   headline: "Read it back, and say what is wrong.",
   intro:
-    "Your surface is not the designer's with the buttons removed — it is a different tree, behind a " +
-    "different gate, reached through an assignment an admin makes one workshop at a time. You cannot " +
-    "run a workshop, and that is the point of the tier rather than a limitation of it: an inspector " +
-    "who could fill in a stage would be reviewing their own work. What you can do is read every " +
-    "stage of a workshop you were given, see who wrote each field, and put a correction on the " +
-    "record under your name.",
+    "You inspect the workshops assigned to you, one at a time: read every stage, see who wrote " +
+    "each field, and put a correction on the record under your name.",
   facts: [
-    { icon: FileSearch, text: "You read the workshops an admin assigned you, and no others" },
+    { icon: FileSearch, text: "You read the workshops assigned to you, and no others" },
     { icon: ListOrdered, text: `${INSPECTOR_STEPS.length} screens, from the list to the verdict` },
     { icon: Eye, text: "Nothing you do changes a workshop's content — only its status" }
   ],
@@ -356,21 +350,17 @@ export const INSPECTOR_TRACK: GuideTrack = {
    * paragraph has to be re-read.
    */
   recapLead:
-    "Assigned, read, answered. The first two screens exist on the Android app as well and carry the " +
-    "same words; Correction suggestions is web-only — the handset can neither file a suggestion nor " +
-    "read the ones already on a workshop — so both the note and the send-back are done from a " +
-    "browser.",
+    "Assigned, read, answered. Learn this order and you can inspect without the guide.",
   checklistTitle: "Before you send a report back",
   checklistLead:
-    "A suggestion cannot be edited or withdrawn once it is filed, and a send-back moves a report " +
-    "onto somebody's desk. Both are worth one more minute.",
+    "A suggestion can't be edited or withdrawn once it is filed, and sending a report back puts it " +
+    "on its designers' desks. Both are worth one more minute.",
   checklist: [
-    "Your note says what is wrong AND what it should say. The designers read it exactly as written, with no conversation attached.",
-    "You picked the right stage, or chose “The report as a whole” on purpose rather than by leaving the box alone.",
+    "Your note says what is wrong and what it should say. The designers read it exactly as written.",
+    "You picked the right stage. “The report as a whole” is the default, so change it if your note is about one stage.",
     "You pressed the button you meant. Filing a suggestion leaves the report where it is; only sending it back puts it on the designers' desks.",
-    "You are not deciding on a photograph you could not see. Media is counted on an inspection read, never carried.",
-    "A value that looks wrong may be a copy taken when the stage was saved — the record it came from may have been corrected since, and the stage would not have changed.",
-    "A stage reading 100% means every required field was answered. It is arithmetic, not a verdict, and it is not evidence that the answers are right."
+    "A value that looks wrong may be a copy taken when the stage was saved; the record it came from may have been corrected since.",
+    "A stage reading 100% means every required field was answered, not that the answers are right."
   ],
   next: [
     { label: "Dashboard", href: "/dashboard", icon: LayoutGrid, note: "Where everything you can open is listed" },

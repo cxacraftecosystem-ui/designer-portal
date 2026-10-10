@@ -115,9 +115,8 @@ export function GuideTrackSwitch({
           instead. It states no count either — `tracks.length` is what the buttons below already say,
           and a number typed here is the "Ten steps" defect in a smaller font.
         */}
-        This one opened on the deck that matches your access, and you can read the others because an
-        admin account is not scoped to one. Every other tier sees only the walkthrough that matches
-        its own role.
+        This opened on the walkthrough for your role. As an admin you can also read the others;
+        everyone else sees only the walkthrough for their own role.
       </motion.p>
 
       {/*
