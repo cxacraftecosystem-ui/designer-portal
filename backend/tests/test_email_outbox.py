@@ -49,18 +49,20 @@ class _Messages:
 
     async def create(self, data: dict[str, Any]) -> SimpleNamespace:
         params = data.get("params")
-        row = SimpleNamespace(
-            id=f"msg_{len(self.rows) + 1}",
-            attempts=0,
-            runAfter=datetime.now(UTC) - timedelta(seconds=1),
-            lockedAt=None,
-            lockedBy=None,
-            sentAt=None,
-            providerMessageId=None,
-            error=None,
-            recipientId=None,
-            **{k: v for k, v in data.items() if k != "params"},
-        )
+        values: dict[str, Any] = {
+            "id": f"msg_{len(self.rows) + 1}",
+            "attempts": 0,
+            "runAfter": datetime.now(UTC) - timedelta(seconds=1),
+            "lockedAt": None,
+            "lockedBy": None,
+            "sentAt": None,
+            "providerMessageId": None,
+            "error": None,
+            "recipientId": None,
+            "sealed": None,
+        }
+        values.update({k: v for k, v in data.items() if k != "params"})
+        row = SimpleNamespace(**values)
         row.params = getattr(params, "data", params)
         self.rows.append(row)
         return row
