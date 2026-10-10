@@ -424,15 +424,15 @@ async def add_to_access_roster(
             ""
             if stored == typed
             else (
-                f" You typed {typed} and the row is stored as {stored}; Google delivers both to "
-                "the same mailbox, so this application treats them as one address."
+                f" You typed {typed} and it is saved as {stored}; Google delivers both to the "
+                "same mailbox, so they count as one address."
             )
         )
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=(
                 f"{stored} is already on the access roster as {access_roster.status_of(existing)}. "
-                f"Decide or update entry {existing.id} instead of adding it again.{same_mailbox}"
+                f"Decide or update that entry instead of adding it again.{same_mailbox}"
             ),
         )
     row = await access_roster.admit(

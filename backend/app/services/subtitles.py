@@ -142,9 +142,8 @@ class Cue:
         for name, value in (("start", self.start), ("end", self.end)):
             if not isinstance(value, (int, float)) or isinstance(value, bool):
                 raise SubtitleError(
-                    f"A cue's {name} must be a number of seconds; this one is {value!r}. The "
-                    f"provider's answer was not in the shape this reader expects — the run is in "
-                    f"the server log."
+                    f"A caption's {name} time must be a number of seconds; this one is {value!r}. "
+                    f"Make the subtitles again."
                 )
             if not math.isfinite(float(value)) or float(value) < 0:
                 raise SubtitleError(
@@ -195,8 +194,8 @@ def cue_of(raw: Any) -> Cue:
     """
     if not isinstance(raw, dict):
         raise SubtitleError(
-            "A subtitle cue must be an object with start, end and text. This layer's payload holds "
-            "something else and cannot be rendered — register the subtitles again."
+            "These subtitles can't be shown because a caption is missing its times or text. "
+            "Make the subtitles again."
         )
     return Cue(
         start=raw.get("start"),
@@ -252,8 +251,7 @@ def cues_of_payload(payload: Any) -> list[Cue]:
     raw = payload.get("cues") if isinstance(payload, dict) else payload
     if not isinstance(raw, (list, tuple)):
         raise SubtitleError(
-            "This layer carries no subtitle cues. Its payload is not a cue list, so there is "
-            "nothing to render as a subtitle file."
+            "This text has no subtitles in it, so there is nothing to save as a subtitle file."
         )
     return [cue_of(item) for item in raw]
 

@@ -65,8 +65,7 @@ SOURCE_USER = "user"
 SOURCE_APP = "app"
 
 _UNDECRYPTABLE_ERROR = (
-    "This key could not be decrypted — the server's encryption key changed after it was saved. "
-    "Paste it again to fix it. Nothing is using it meanwhile."
+    "This key can no longer be read. Paste it again to fix it. Nothing is using it meanwhile."
 )
 
 
@@ -367,7 +366,8 @@ def _probe(provider: AiProvider, value: str) -> tuple[bool, str | None]:
     try:
         ok, error = probes[provider](value)
     except Exception as exc:  # noqa: BLE001
-        return False, f"Could not be tested: {type(exc).__name__}"
+        logger.warning("Personal key probe failed: %s", type(exc).__name__)
+        return False, "The key couldn't be tested. Try again."
     return ok, error
 
 

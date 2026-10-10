@@ -302,7 +302,7 @@ async def test_the_tag_is_not_a_way_past_the_identity_dependency() -> None:
 
     assert refused.status_code == 401
     # Not a 304, and not the payload either: the body must be the refusal and nothing else.
-    assert refused.json() == {"detail": "Missing bearer token"}
+    assert refused.json() == {"detail": "Sign in to continue."}
     assert "stages" not in refused.text
 
 

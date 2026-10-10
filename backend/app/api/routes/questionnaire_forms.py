@@ -252,9 +252,8 @@ def _require_designer(user: Any) -> None:
             status_code=status.HTTP_403_FORBIDDEN,
             detail=(
                 "Questionnaires are for Designer, Assistant Director, Regional Director, Ministry "
-                "Admin, Admin and Master Admin accounts. This is a set of roles rather than a "
-                "seniority level, so other roles are outside it whatever their rank. Ask an "
-                "administrator if your role should change."
+                "Admin, Admin and Master Admin accounts. Ask an administrator if your role should "
+                "change."
             ),
         )
 

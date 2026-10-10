@@ -983,8 +983,8 @@ async def apply_confirmed_rows(body: SanctionImportConfirm, officer: Any) -> dic
                     row.sheetRow,
                     "error",
                     (
-                        f"Sanction order '{row.sanctionOrderNo}' could not be recorded because of a "
-                        "fault on the server. Nothing was written for this row. Every other row in "
+                        f"Sanction order '{row.sanctionOrderNo}' couldn't be recorded because "
+                        "something went wrong. Nothing was written for this row. Every other row in "
                         "this upload was handled independently; try this one on the form above."
                     ),
                     body.sheet,

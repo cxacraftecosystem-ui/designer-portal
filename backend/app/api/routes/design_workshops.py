@@ -411,14 +411,12 @@ _CREATE_ONLY_STAMPS = frozenset({"createdById", "schemaVersion"})
 
 
 _STAGE_ONE_OWNS = (
-    "this is filled in by saving stage 1 (Workshop Setup & Cover Information), which is the only "
-    "writer of the workshop's cover columns. Open the stage and correct it there"
+    "this comes from stage 1 (Workshop Setup & Cover Information). Open that stage and correct it "
+    "there"
 )
 
 _CONSENT_HAS_ITS_OWN_ROUTE = (
-    "consent is recorded through POST /design-workshops/{id}/dictation-consent, which also writes "
-    "the append-only decision log. A consent that could be set from a header edit would be a "
-    "consent that could be manufactured"
+    "the artisan's consent is recorded on the workshop's own page, where every answer is kept"
 )
 
 _DECISION_HAS_ITS_OWN_ROUTE = (
@@ -455,13 +453,11 @@ _NEVER_PATCHABLE: dict[str, str] = {
     # corrected them by hand for this workshop, and re-seeding would overwrite that with whatever
     # the profile says today. The PATCH handler's docstring states that in full.
     "designerUserId": (
-        "the lead designer is named when the workshop is created, because that is the moment their "
-        "profile is copied into stages 1 and 3. Correct the designer's details in stage 1 and "
-        "stage 3, or change who may open this workshop with PUT /design-workshops/{id}/viewers"
+        "the lead designer is chosen when the workshop is created. Correct the designer's details "
+        "in stages 1 and 3, or change the workshop's designers in its visibility settings"
     ),
     "designerUserIds": (
-        "the designers a workshop is for are granted with PUT /design-workshops/{id}/viewers, "
-        "which writes the DesignWorkshopViewer rows, and never through this body"
+        "the designers a workshop is for are changed in its visibility settings, not in this form"
     ),
     # ── THE SIX PROMOTED COLUMNS NOTHING BUT STAGE 1 COLLECTS ────────────────────────────────────
     # ``promoted_values`` in stage_schema.py is the single writer of the denormalised columns;
@@ -481,48 +477,29 @@ _NEVER_PATCHABLE: dict[str, str] = {
     "venue": _STAGE_ONE_OWNS,
     "scheme": _STAGE_ONE_OWNS,
     "designerName": (
-        "the designer's name is stage 1's, copied from their profile when the workshop was opened "
-        "and correctable in the stage. It is the authorship line a ministry document prints — on "
-        "the cover, in the certification block and in the .docx's own dc:creator — and a wrong "
-        "name in it passes every automatic check this product has: completeness scores it 100%, "
-        "readiness shows green and the report emits no warning, because the field is not missing, "
-        "it is filled with the wrong person"
+        "the designer's name comes from stage 1. Correct it there; it is the name the report "
+        "prints on the cover and in the certification block"
     ),
     "implementingAgency": _STAGE_ONE_OWNS,
     "sponsor": _STAGE_ONE_OWNS,
     "workshopCode": (
-        "the workshop code is stage 1's, it prints on the report cover, and it is what a scanned "
-        "card resolves to. A code that has been printed and stuck on a card is not a field"
+        "the workshop code comes from stage 1. It prints on the report cover and on the "
+        "workshop's cards, so it can't be changed here"
     ),
     # ── PROVENANCE STAMPS: WHO, WHEN, AND AGAINST WHICH REGISTRY ─────────────────────────────────
-    "id": "a workshop's id is its identity, not one of its fields",
-    "createdById": (
-        "who opened this workshop is the first thing load_workshop_or_404 tests, so a creator that "
-        "could be patched would make access grantable by the person being granted it"
-    ),
-    "createdAt": "when the workshop was opened is set by the database and is not an opinion",
-    "updatedAt": "the database sets this on every write",
-    "deletedAt": (
-        "deletion is DELETE /design-workshops/{id} and restoring is POST "
-        "/design-workshops/{id}/restore. deletedAt and deletedById are one fact in two columns — "
-        "deleted, by whom — and nothing else may write half of it"
-    ),
-    "deletedById": (
-        "deletion is DELETE /design-workshops/{id} and restoring is POST "
-        "/design-workshops/{id}/restore"
-    ),
-    "schemaVersion": (
-        "the digest of the field registry this workshop was last written against. It is what lets "
-        "a draft written by a phone under an older registry be detected rather than guessed at, "
-        "and a value a client can set is a detector that lies"
-    ),
+    "id": "a workshop's ID can't be changed",
+    "createdById": "who created the workshop can't be changed",
+    "createdAt": "when the workshop was created is recorded automatically",
+    "updatedAt": "this is recorded automatically each time the workshop is saved",
+    "deletedAt": "use Delete or Restore on the workshop instead",
+    "deletedById": "use Delete or Restore on the workshop instead",
+    "schemaVersion": "this is recorded automatically each time a stage is saved",
     # ── THE CONSENT RECORD ───────────────────────────────────────────────────────────────────────
     "dictationConsent": _CONSENT_HAS_ITS_OWN_ROUTE,
     "dictationConsentAt": _CONSENT_HAS_ITS_OWN_ROUTE,
     "dictationConsentById": _CONSENT_HAS_ITS_OWN_ROUTE,
     "dictationConsentByName": (
-        "a display name resolved for the single-record read, not a stored column. See "
-        "dictationConsentById"
+        "this is filled in automatically when the artisan's consent is recorded"
     ),
     # ── THE PRE-SUBMISSION DECISION ──────────────────────────────────────────────────────────────
     # Added 2026-09-13 IN THE SAME COMMIT as the four keys in `workshop_summary`, and not one commit
@@ -539,10 +516,8 @@ _NEVER_PATCHABLE: dict[str, str] = {
     "reviewedById": _DECISION_HAS_ITS_OWN_ROUTE,
     "reviewedAt": _DECISION_HAS_ITS_OWN_ROUTE,
     "submissionRound": (
-        "the submission cycle is counted by the server on every entry into Pre-submission and never "
-        "sent by a client. Hand the report in by setting status to PRE_SUBMISSION, or save a stage "
-        "on a report that was sent back — the counter moves once either way, and every correction "
-        "suggestion filed afterwards is filed against the number it moved to"
+        "the submission count goes up automatically each time the report is handed in for "
+        "inspection"
     ),
     # ── WHERE THIS WORKSHOP CAME FROM: A REGISTER'S ROW, READ BACK ───────────────────────────────
     # Not a column on this table at all, and refused by name for `dictationConsentByName`'s exact
@@ -550,9 +525,8 @@ _NEVER_PATCHABLE: dict[str, str] = {
     # cheapest way to submit is to post the object back. `extra="forbid"` would answer "Extra inputs
     # are not permitted" about a key whose true answer is "yes, but somewhere else".
     "sanctionOrder": (
-        "which sanction order opened this workshop is the ministry's own register and is recorded "
-        "by POST /sanction-orders. It is read back here so that a reader can see where the workshop "
-        "came from; a workshop's own body may not rewrite the instrument that authorised it"
+        "the sanction order that opened this workshop is recorded under Sanction orders and can't "
+        "be changed from the workshop"
     ),
 }
 
@@ -571,10 +545,7 @@ def _immutable_field_refusal(offending: list[str]) -> str:
         if len(offending) == 1
         else "These fields are not editable here"
     )
-    return (
-        f"{subject}: {reasons}. The whole request was refused and nothing was written, rather than "
-        "the fields being dropped and a 200 returned for a change that did not happen."
-    )
+    return f"{subject}: {reasons}. Nothing was saved."
 
 
 class DesignWorkshopPatch(DesignWorkshopUpdate):
@@ -660,11 +631,7 @@ def _header_patch_data(sent: Mapping[str, Any]) -> dict[str, Any]:
         if value is None and key in _HEADER_REQUIRED_COLUMNS:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=(
-                    f"{key} cannot be emptied. Every workshop has one, the column is NOT NULL, and "
-                    "an empty value would have been refused by the database rather than by this "
-                    "sentence."
-                ),
+                detail=f"{key} can't be left empty. Every workshop needs one.",
             )
         data[key] = value
     for key in _HEADER_DATE_COLUMNS:
@@ -686,8 +653,8 @@ def _header_patch_data(sent: Mapping[str, Any]) -> dict[str, Any]:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=(
-                    f"{key} is not a date this server can read. Send it as yyyy-mm-dd, or send "
-                    "null to clear it."
+                    f"{key} isn't a valid date. Enter it as yyyy-mm-dd, or leave it empty to "
+                    "clear it."
                 ),
             )
         data[key] = parsed
@@ -1523,12 +1490,7 @@ async def dictate(
         # still posts here, who needs the URL and the reason; and the designer holding that build in a
         # courtyard, who needs a next move that works this afternoon. It never says "try again" — no
         # retry of this request can ever succeed.
-        detail=(
-            "Dictation has moved: this address no longer accepts a recording. Send the same two parts "
-            "to POST /design-workshops/{workshop_id}/dictate, which checks that the artisan agreed to "
-            "their recordings being sent for transcription before it sends anything. An app that still "
-            "posts here needs updating; type the words in meanwhile."
-        ),
+        detail="Update the app to use dictation. You can type the answer instead.",
     )
 
 
@@ -2899,15 +2861,15 @@ def _spec_from_body(section: Any) -> CustomSectionSpec:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail={
-                    "message": "This section cannot be saved yet",
+                    "message": "This section can't be saved",
                     "problems": [
                         # THE TWELVE, AND NOT EVERY `FieldType` THIS SERVER HAS. Listing the whole
                         # enum offered the designer IMAGE, REF and RICH_TEXT as the way out of this
                         # refusal, and `validate_definition` then refuses all three on the next
                         # round trip — an error message that names a next move the next error takes
                         # away is worse than one that names none.
-                        f"Field {f.key!r} is a {f.type!r}, which is not a field type a custom "
-                        f"question may be. Choose one of: "
+                        f"Field {f.key!r}: a custom question can't be of type {f.type!r}. "
+                        f"Choose one of: "
                         + ", ".join(sorted(t.value for t in V1_FIELD_TYPES))
                     ],
                 },
@@ -2918,7 +2880,7 @@ def _spec_from_body(section: Any) -> CustomSectionSpec:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail={
-                    "message": "This section cannot be saved yet",
+                    "message": "This section can't be saved",
                     "problems": [
                         f"Field {f.key!r} names the tier {f.tier!r}. Choose BASIC, STANDARD or "
                         f"ADVANCED — only a BASIC field may be required."
@@ -3013,7 +2975,7 @@ async def save_custom_sections(
             # EVERY violation, not the first. The definition editor shows them against the rows they
             # name, and a designer who has to make six round trips to learn six things stops using
             # the feature after the third.
-            detail={"message": "This definition cannot be saved yet", "problems": problems},
+            detail={"message": "These questions can't be saved", "problems": problems},
         )
 
     stored = await load_definition(workshop_id)
@@ -3530,9 +3492,8 @@ async def register_ai_layer(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=(
-                f"This recording is already registered as a Tier 3 raw transcript by the same model "
-                f"(layer {duplicate.id}). Delete that layer if it is wrong — a second identical "
-                f"registration would put the same text in the annexure twice."
+                "This recording's transcript is already in the list, made by the same model. "
+                "Delete that one first if it is wrong."
             ),
         )
 
@@ -3705,9 +3666,8 @@ async def _verb_source_layer(workshop_id: str, layer_id: str, current_user: Any)
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=(
-                "You cannot read the recording this layer was made from, so this server will not "
-                "run a model over it for you — the result would put its words in front of you by "
-                "another route. Ask whoever uploaded the recording for access to their media."
+                "You can't open the recording this text was made from, so it can't be worked on. "
+                "Ask whoever uploaded the recording for access to their media."
             ),
         )
     text = str(getattr(row, "text", "") or "").strip()
@@ -3737,9 +3697,8 @@ def _verb_layer_kind(row: Any) -> Any:
         return ai_layers.LayerKind(token)
     except ValueError as exc:
         raise ai_verbs.VerbError(
-            f"That layer is of a kind this server does not recognise ({token or 'unnamed'}), so it "
-            f"cannot be worked on here. It was probably written by a newer build; choose another "
-            f"layer, or ask whoever administers the server to update it."
+            "That text can't be worked on here. Reload the page to update the app, or choose "
+            "another."
         ) from exc
 
 
@@ -3795,7 +3754,7 @@ async def _refuse_oversize_verb_source(media: Any, ceiling: int, *, what: str) -
     raise HTTPException(
         status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
         detail=(
-            f"That file is {size} bytes, over the {ceiling}-byte limit this server will {what}. "
+            f"That file is {size} bytes, over the {ceiling}-byte limit for files to {what}. "
             f"Nothing was sent anywhere and nothing was spent."
         ),
     )
@@ -3838,7 +3797,7 @@ async def _verb_source_media(
             status_code=status.HTTP_409_CONFLICT,
             detail=(
                 f"{verb.human.capitalize()} needs {in_words}, and that file is "
-                f"{stored.lower() or 'of a kind this server cannot identify'}. Choose another file "
+                f"{stored.lower() or 'of an unknown kind'}. Choose another file "
                 f"— nothing was sent anywhere and nothing was spent."
             ),
         )
@@ -4184,7 +4143,7 @@ async def caption_ai_layer(
     # right now, so calling it again forty lines down can hand back a smaller figure than the one the
     # 413 message quoted — a request refused against a limit the caller was never told about.
     ceiling = budget_bytes(MAX_CAPTION_BYTES)
-    await _refuse_oversize_verb_source(media, ceiling, what="caption in one piece")
+    await _refuse_oversize_verb_source(media, ceiling, what="caption")
     answer: Mapping[str, Any] | None = None
     try:
         language = ai_verbs.clean_language(payload.language, what="the caption")
@@ -4236,8 +4195,8 @@ async def caption_ai_layer(
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             detail=(
-                f"That file is {exc.size_bytes} bytes, over the {exc.limit_bytes}-byte limit this "
-                f"server will caption in one piece. Nothing was sent anywhere and nothing was spent."
+                f"That file is {exc.size_bytes} bytes, over the {exc.limit_bytes}-byte limit for "
+                f"files to caption. Nothing was sent anywhere and nothing was spent."
             ),
         ) from exc
     except (ai_verbs.VerbError, ai_layers.LayerRuleViolation) as exc:
@@ -4286,7 +4245,7 @@ async def subtitle_ai_layer(
     )
     # SIZE, WHICH `_verb_source_media` DOES NOT CHECK — see `MAX_SUBTITLE_FETCH_BYTES`. This verb
     # takes VIDEO as well as AUDIO, so it is the one most likely to be pointed at the 668 MiB object.
-    await _refuse_oversize_verb_source(media, MAX_SUBTITLE_FETCH_BYTES, what="spool for subtitling")
+    await _refuse_oversize_verb_source(media, MAX_SUBTITLE_FETCH_BYTES, what="subtitle")
     answer: Mapping[str, Any] | None = None
     source_path: str | None = None
     try:
@@ -4316,8 +4275,8 @@ async def subtitle_ai_layer(
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             detail=(
-                f"That file is {exc.size_bytes} bytes, over the {exc.limit_bytes}-byte limit this "
-                f"server will spool for subtitling. Nothing was sent anywhere and nothing was spent."
+                f"That file is {exc.size_bytes} bytes, over the {exc.limit_bytes}-byte limit for "
+                f"files to subtitle. Nothing was sent anywhere and nothing was spent."
             ),
         ) from exc
     except (ai_verbs.VerbError, ai_layers.LayerRuleViolation) as exc:

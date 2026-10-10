@@ -678,10 +678,8 @@ async def _assert_every_id_may_inspect(
         role = _role(user)
         if role not in INSPECTION_HOLDER_ROLES:
             refusals.append(
-                f"{user.name} ({user.email}) is a {role}, and only the Inspector / Reviewer tier, "
-                f"a Ministry Admin, an admin or the master admin can be assigned an inspection. An "
-                f"inspection is READ-ONLY by construction, so a row here would give this account "
-                f"nothing that its own role does not already decide."
+                f"{user.name} ({user.email}) is a {role}, and only an Inspector / Reviewer, a "
+                f"Ministry Admin, an admin or the master admin can be assigned an inspection."
             )
             # AND NOTHING FURTHER ABOUT THIS ACCOUNT, unlike the branches below, which stack. Those
             # name a state an administrator can change, so an admin deserves the whole list before
@@ -692,9 +690,7 @@ async def _assert_every_id_may_inspect(
         if not is_break_glass_master(user) and _normalised(user.email) in barred:
             refusals.append(
                 f"{user.name} ({user.email}) is barred by the platform access list, so they cannot "
-                f"sign in at all. Clear that on the access screen first; an inspection row on its "
-                f"own would leave this screen saying they are inspecting while they are shown a "
-                f"refusal at the door."
+                f"sign in at all. Restore their access on the access screen first."
             )
         separation.extend(
             posts.separation_refusals(
@@ -768,10 +764,7 @@ async def inspected_workshop_ids(user_id: str) -> set[str]:
 #: inline string: a designer told only "forbidden" on a READ surface will reasonably conclude the
 #: deployment is broken. Naming the door they want costs one clause and saves a support call.
 NOT_AN_INSPECTOR_DETAIL = (
-    "The inspection surface belongs to the accounts that may be appointed to inspect a workshop: "
-    "the Inspector / Reviewer tier, Ministry Admins, admins and the master admin. Designers read "
-    "design & prototype workshops through /api/design-workshops instead; who inspects a workshop "
-    "is chosen at /api/design-workshop-inspections/{id}/inspectors."
+    "This page is for inspectors. Sign out and back in, or ask an administrator."
 )
 
 

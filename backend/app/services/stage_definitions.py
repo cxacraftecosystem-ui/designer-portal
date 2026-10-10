@@ -2123,8 +2123,8 @@ STAGE_5 = StageSpec(
                     S,
                     ref_model="ToolDocumentation",
                     ref_scope=ALL_SCOPE,
-                    help="Choose the tools already documented in the repository. Anything typed "
-                    "here before this became a picker is kept and still prints.",
+                    help="Choose tools already documented in the records. Anything typed here "
+                    "earlier is kept and still prints.",
                 ),
                 f("problems", "Problems at this step", LT, S),
                 *photos("stepPhotos", "Step photographs", A, "Step photograph caption"),
@@ -2176,7 +2176,7 @@ STAGE_5 = StageSpec(
                     ref_model="ToolDocumentation",
                     ref_scope=ALL_SCOPE,
                     report_role=HIDDEN,
-                    help="Choose a tool already documented anywhere in the repository. Its details are "
+                    help="Choose a tool already documented anywhere in the records. Its details are "
                     "filled in below and can be corrected on this row.",
                 ),
                 fromref(
@@ -4394,8 +4394,8 @@ STAGE_13 = StageSpec(
                     S,
                     ref_model="ToolDocumentation",
                     ref_scope=ALL_SCOPE,
-                    help="Choose the tools already documented in the repository. Anything typed "
-                    "here before this became a picker is kept and still prints.",
+                    help="Choose tools already documented in the records. Anything typed here "
+                    "earlier is kept and still prints.",
                 ),
                 f("processSummary", "Process followed", RICH, S, report_role=NARR),
                 f(
@@ -5619,9 +5619,8 @@ STAGE_20 = StageSpec(
                     S,
                     enum="REPORT_FONT",
                     help="Applies to the Word document, which is the file that is submitted and the one "
-                    "an officer edits. The PDF embeds whichever face the server has that can draw "
-                    "Odia, Devanagari and the rupee sign, so a typeface chosen here is reported as "
-                    "a warning rather than silently substituted there.",
+                    "an officer edits. The PDF uses a standard typeface that prints Odia, "
+                    "Devanagari and the rupee sign correctly.",
                 ),
                 f(
                     "reportTitle",

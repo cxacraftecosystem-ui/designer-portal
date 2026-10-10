@@ -894,15 +894,15 @@ async def dataset_manifest(
         for item in unknown:
             if item.entity_key == dw.CUSTOM_ENTITY_KEY:
                 notes.append(
-                    f"{item.rows} row(s) hold this workshop's own designer-written questions and "
-                    "are not in this archive - naming their columns needs the workshop's own "
-                    "definition. Open the workshop in View Data (By design workshop) and read "
-                    "designer-questions.txt there."
+                    f"{item.rows} answer(s) to this workshop's own designer-written questions are "
+                    "not in this archive. Open the workshop in View Data (By design workshop) and "
+                    "read designer-questions.txt there."
                 )
             else:
                 notes.append(
-                    f"{item.rows} row(s) under '{item.entity_key}' were written against a newer "
-                    "version of the form and cannot be shown by this server."
+                    f"{item.rows} {'entry' if item.rows == 1 else 'entries'} under "
+                    f"'{item.entity_key}' come from a newer version of the form and can't be "
+                    "shown here."
                 )
         add_text(wbase, "not-shown.txt", "\n".join(notes))
 
@@ -953,7 +953,7 @@ async def dataset_manifest(
         add_text(
             DESIGN_WORKSHOP_FOLDER,
             DW_WITHHELD_FILE,
-            f"{dw_withheld} design workshop(s) are in this repository and are not in this "
+            f"{dw_withheld} design workshop(s) are not in this "
             "archive.\n\nOnly an admin can download design workshop data. You can read all of it on "
             "screen: View Data, then the By design workshop folder.\n",
         )

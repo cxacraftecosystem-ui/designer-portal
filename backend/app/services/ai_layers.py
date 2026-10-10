@@ -979,9 +979,7 @@ def _check_source(source: LayerSource) -> None:
     if len(supplied) > MAX_SOURCE_TEXT_CHARS:
         raise LayerRuleViolation(
             f"That is {len(supplied):,} characters and at most {MAX_SOURCE_TEXT_CHARS:,} can be "
-            f"worked on at once. Send the passage you want done rather than the whole stage — a "
-            f"result covering only the first part of what you sent, recorded as covering all of "
-            f"it, would be a layer whose source is not what it says it is."
+            f"worked on at once. Choose just the passage you want done."
         )
 
 
@@ -1143,8 +1141,8 @@ def _check_content(kind: LayerKind, *, text: str | None, payload: Any) -> None:
         )
     if kind in STRUCTURED_KINDS and not has_payload:
         raise LayerRuleViolation(
-            f"A {kind.value} is structured and this one carries no payload. Send the tags, fields "
-            f"or values the model produced; a human-readable rendering may come with it as text."
+            f"A {kind.value} needs the tags, details or values the model produced, and this one "
+            f"has none."
         )
 
 

@@ -432,7 +432,7 @@ def test_each_tier_mints_at_or_below_itself_and_is_refused_everything_above(tier
         expected = (
             "Only the master admin can grant master admin"
             if role == "MASTER_ADMIN"
-            else "You can only assign roles at or below your own tier"
+            else "You can only give a role at or below your own"
         )
         assert excinfo.value.detail == expected, (
             f"{tier} was refused {role} with the wrong sentence. The two refusals mean different "

@@ -498,7 +498,7 @@ async def test_two_entries_sharing_one_client_key_do_not_500_the_stage(client, w
          "data": {"_clientKey": "dup", "name": "B", "price": "2.00"}},
     ]})
     assert response.status_code == 200, response.text
-    assert any("duplicate in payload" in k for k in response.json()["droppedKeys"])
+    assert any("the same entry was sent twice" in k for k in response.json()["droppedKeys"])
     rows = client.get(path).json()["collections"]["existingProduct"]
     assert sorted(r["name"] for r in rows) == ["A", "B"], "neither row may be lost"
 
@@ -699,7 +699,7 @@ async def test_two_entries_sharing_one_entry_id_do_not_silently_overwrite_each_o
          "data": {"_clientKey": "t2", "name": "Warping drum"}},
     ]})
     assert duplicated.status_code == 200, duplicated.text
-    assert any("duplicate in payload" in k for k in duplicated.json()["droppedKeys"])
+    assert any("the same entry was sent twice" in k for k in duplicated.json()["droppedKeys"])
 
     rows = client.get(path).json()["collections"]["tool"]
     assert sorted(r["name"] for r in rows) == ["Pit loom", "Warping drum"], \

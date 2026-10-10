@@ -30,7 +30,7 @@ def _require_managed(key: str) -> str:
     if not managed_secrets.is_managed(key):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Unknown secret key {key!r}. Managed keys: {', '.join(managed_secrets.MANAGED_KEYS)}",
+            detail="That key isn't one that can be managed here.",
         )
     return key
 
@@ -93,7 +93,7 @@ async def set_secret(
     if not value:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="value must not be blank. Use DELETE to fall back to the environment value.",
+            detail="Enter a value, or clear the saved one to use the default.",
         )
     return await managed_secrets.set_secret(key, value, current_user.id)
 

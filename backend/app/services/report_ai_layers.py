@@ -109,7 +109,7 @@ _KIND_TITLES: dict[str, str] = {
 _TIER_WORDS: dict[str, str] = {
     "TIER_1": "on the handset, with no connection",
     "TIER_2": "on the handset, by a small model held on the device",
-    "TIER_3": "on the server, by a hosted model",
+    "TIER_3": "online, by a hosted model",
 }
 
 #: What a missing provider or model id is stored as. Not a placeholder this module invented — the
@@ -235,7 +235,7 @@ class AiLayerItem:
             return name
         account = (self.accepted_by_id or "").strip()
         if account:
-            return f"the account {account}, whose name this report could not resolve"
+            return f"a user whose name is not recorded (account {account})"
         # Neither, on an accepted layer, would mean the acceptance wrote no actor — which the
         # decision log makes impossible. Reachable only from a hand-built item, so it says so.
         return "somebody this report cannot identify"
@@ -449,8 +449,8 @@ def layer_body_blocks(item: AiLayerItem) -> list[Block]:
         kept.append(
             ParagraphBlock(
                 runs=runs_of(
-                    f"[Text truncated after {MAX_PARAGRAPHS_PER_LAYER} paragraphs. The full layer is "
-                    f"held against the workshop in the repository, under {item.layer_id}.]"
+                    f"[Shortened to the first {MAX_PARAGRAPHS_PER_LAYER} paragraphs. The full text "
+                    f"is in the online workshop record.]"
                 ),
                 style=ParaStyle.NOTE,
             )

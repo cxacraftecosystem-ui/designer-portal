@@ -168,7 +168,7 @@ def assignable_or_refuse(assigner: Any, assignee: Any | None) -> Any:
     if not is_master_admin(assigner) and role_rank(assignee) >= role_rank(assigner):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="You can only assign tasks to users below your own tier",
+            detail="You can only assign tasks to people with a role below your own",
         )
     return assignee
 
@@ -938,9 +938,7 @@ async def create_task_batch(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=(
-                f"Batch {batch_id} was written but read back {len(created)} of "
-                f"{len(assignee_ids)} rows. Check GET /tasks/batches before retrying — the "
-                "assignment may already have landed."
+                "Some assignments may already be saved. Refresh the list before trying again."
             ),
         )
 
@@ -1440,7 +1438,7 @@ async def update_task(
         if extra_fields:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="Assignees can only update the task status and report progressCount",
+                detail="As the assignee you can only update the task's status and progress.",
             )
         if new_status == "CANCELLED":
             raise HTTPException(

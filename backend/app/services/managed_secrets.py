@@ -119,9 +119,8 @@ SOURCE_ENVIRONMENT = "environment"
 SOURCE_UNSET = "unset"
 
 _UNDECRYPTABLE_ERROR = (
-    "Stored value could not be decrypted (SECRETS_ENCRYPTION_KEY changed, or JWT_SECRET was rotated "
-    "while no SECRETS_ENCRYPTION_KEY was set). Re-enter the key to fix it; the environment value is "
-    "being used meanwhile."
+    "The saved key can no longer be read. Enter it again to fix it; the default value is being "
+    "used meanwhile."
 )
 
 
@@ -245,16 +244,17 @@ def _probe_http(
             url, headers=headers or {}, params=params or {}, timeout=_PROBE_TIMEOUT_SECONDS
         )
     except requests.Timeout:
-        return False, f"No response within {_PROBE_TIMEOUT_SECONDS}s"
+        return False, "The provider didn't answer in time. Try again."
     except requests.RequestException as exc:
-        return False, _redact(f"Network error: {type(exc).__name__}", secret)
+        logger.warning("Key probe network error: %s", type(exc).__name__)
+        return False, "The provider couldn't be reached. Try again."
     if response.ok:
         return True, None
     if response.status_code in {401, 403}:
-        return False, f"Key rejected by the provider (HTTP {response.status_code})"
+        return False, "The provider didn't accept this key."
     if response.status_code == 429:
-        return False, "Key reached its rate limit (HTTP 429) — it is valid but throttled"
-    return False, f"Provider returned HTTP {response.status_code}"
+        return False, "The key works, but it has reached its usage limit. Try again later."
+    return False, "The provider had a problem checking this key. Try again later."
 
 
 def _redact(message: str, secret: str) -> str:
@@ -315,7 +315,7 @@ def _probe_gemini_pool(value: str) -> tuple[bool, str | None]:
     button click; the first one failing is already the signal the admin needs."""
     first = next((part.strip() for part in value.replace("\n", ",").split(",") if part.strip()), "")
     if not first:
-        return False, "No keys in the list"
+        return False, "Enter at least one key."
     return _probe_gemini(first)
 
 
@@ -336,7 +336,7 @@ def _probe_google_client_id(value: str) -> tuple[bool, str | None]:
     candidate = value.strip()
     if candidate.endswith(".apps.googleusercontent.com") and len(candidate) > 30:
         return True, None
-    return False, "Does not look like a Google OAuth client ID (…apps.googleusercontent.com)"
+    return False, "This doesn't look like a Google client ID — it should end in .apps.googleusercontent.com."
 
 
 MANAGED_KEYS: dict[str, ManagedKey] = {
@@ -408,8 +408,7 @@ MANAGED_KEYS: dict[str, ManagedKey] = {
             key="GOOGLE_CLIENT_ID",
             label="Google OAuth client ID",
             description=(
-                "Web client ID accepted for Google sign-in. Public by nature, but rotating it here "
-                "beats redeploying. (Format-checked only — a client ID has no test endpoint.)"
+                "Web client ID used for Google sign-in. Only its format can be checked."
             ),
             settings_attr="google_client_id",
             probe=_probe_google_client_id,
@@ -862,10 +861,10 @@ def _undecryptable_probe_note(ok: bool, error: str | None, *, configured: bool) 
     this and it is fine".
     """
     if not configured:
-        return f"{_UNDECRYPTABLE_ERROR} There is no environment value behind it either, so this key is unusable."
+        return f"{_UNDECRYPTABLE_ERROR} There is no default value either, so this key can't be used."
     if ok:
-        return f"{_UNDECRYPTABLE_ERROR} (Test ran against the environment value, which passed.)"
-    return f"{_UNDECRYPTABLE_ERROR} (Test ran against the environment value, which failed: {error})"
+        return f"{_UNDECRYPTABLE_ERROR} (The test used the default value, which passed.)"
+    return f"{_UNDECRYPTABLE_ERROR} (The test used the default value, which failed: {error})"
 
 
 async def test_secret(key: str) -> dict[str, Any]:
@@ -938,5 +937,6 @@ def _safe_probe(spec: ManagedKey, value: str) -> tuple[bool, str | None]:
     try:
         ok, error = spec.probe(value)
     except Exception as exc:  # noqa: BLE001 - any provider client quirk becomes a readable verdict
-        return False, _redact(f"Probe failed: {type(exc).__name__}", value)
+        logger.warning("Key probe failed: %s", type(exc).__name__)
+        return False, "The key couldn't be tested. Try again."
     return ok, _redact(error, value) if error else None

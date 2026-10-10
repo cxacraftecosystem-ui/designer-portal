@@ -318,9 +318,8 @@ async def assert_access_admits(email: str, *, is_master: bool) -> Any | None:
             email,
             admit_role="DESIGNER",
             note=(
-                "Admitted by an active designer-roster empanelment. An administrator empanelled "
-                "this address as a designer, which is an approval; this row records that the "
-                "platform allow-list agreed with it."
+                "Approved automatically because an administrator empanelled this address as a "
+                "designer."
             ),
             decided=False,
         )
@@ -418,7 +417,7 @@ def verify_google_token(token: str) -> dict[str, Any]:
     if not settings.google_client_ids:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Google OAuth is not configured on this server",
+            detail="Google sign-in isn't available right now. Sign in with your email and password.",
         )
     last_error: ValueError | None = None
     for client_id in settings.google_client_ids:
@@ -440,7 +439,7 @@ def verify_google_token(token: str) -> dict[str, Any]:
                 type(exc).__name__,
             )
     raise HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid Google ID token"
+        status_code=status.HTTP_401_UNAUTHORIZED, detail="Google sign-in didn't work. Try again."
     ) from last_error
 
 
@@ -459,10 +458,7 @@ GOOGLE_AMBIGUOUS_ACCOUNT_DETAIL = (
 #: password back. ``scripts/seed_admin.py`` can — it rewrites the hash, which also ends every session
 #: the old password opened — so the sentence names it. See :func:`_refuse_to_promote_a_password_account`.
 MASTER_ADDRESS_HOLDS_A_PASSWORD_ACCOUNT_DETAIL = (
-    "An account that signs in with a password somebody else set already sits at the master admin's "
-    "address, so signing in with Google cannot make it the master admin's account. Nothing was "
-    "changed. Whoever runs the server has to run scripts/seed_admin.py first: it gives that account "
-    "a new password and ends every session the old one opened. Then sign in again."
+    "This address can't sign in with Google. Contact your administrator."
 )
 
 
@@ -552,7 +548,7 @@ async def login_with_google(token: str) -> tuple[Any, Any | None]:
     if not id_info.get("email") or not id_info.get("email_verified"):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Google account email is not verified",
+            detail="This Google account's email address isn't verified. Verify it with Google, then try again.",
         )
 
     email = id_info["email"].lower()
@@ -1361,7 +1357,7 @@ async def change_password(
     invalidate_cached_user(current_user.id)
     if updated is None:  # deleted between authenticating this request and the write
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail="User no longer exists"
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="This account no longer exists. Sign in again."
         )
     # Minted from the row the write returned, so it carries the NEW password's fingerprint — the one
     # session the change does not end. In the header, never the body: see SESSION_TOKEN_HEADER.

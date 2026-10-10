@@ -328,7 +328,9 @@ async def test_the_ocr_route_503s_cleanly_with_no_provider(client):
         files={"file": ("card.jpg", b"\xff\xd8\xff\xe0not-a-real-jpeg", "image/jpeg")},
     )
     assert response.status_code == 503, response.text
-    assert "IDENTITY_OCR_ENABLED" in response.json()["detail"]
+    assert response.json()["detail"] == (
+        "Identity-card scanning isn't available right now. Type the number from the card."
+    )
 
 
 async def test_an_empty_upload_is_refused_before_any_provider_is_asked(client):
@@ -404,7 +406,9 @@ async def test_the_id_less_dictation_url_is_retired_against_a_real_server(client
         files={"file": ("dictation.webm", b"\x00" * 32, "audio/webm")},
     )
     assert response.status_code == 410, response.text
-    assert "{workshop_id}/dictate" in response.json()["detail"]
+    assert response.json()["detail"] == (
+        "Update the app to use dictation. You can type the answer instead."
+    )
 
 
 async def test_the_capability_probe_answers_on_the_mounted_application(client):

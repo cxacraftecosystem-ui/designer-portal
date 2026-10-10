@@ -1349,7 +1349,7 @@ def test_an_immutable_field_is_refused_by_name_and_nothing_beside_it_is_written(
         headers=_auth(header_world, "admin"),
     )
     assert team.status_code == 422, team.text
-    assert "viewers" in team.text
+    assert "visibility settings" in team.text
 
 
 @needs_db

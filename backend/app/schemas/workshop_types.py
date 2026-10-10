@@ -76,10 +76,9 @@ _KEY_PATTERN = re.compile(r"^[A-Z][A-Z0-9_]*$")
 #: wrote the regex. It says what is allowed AND gives an example, because "must match
 #: ^[A-Z][A-Z0-9_]*$" is a sentence that sends a reader to ask somebody else.
 KEY_SHAPE_MESSAGE = (
-    "A type's key is a token other tables already store, so it may only use capital letters, "
-    "digits and underscores, and must start with a letter — for example "
-    "DESIGN_PROTOTYPE_DEVELOPMENT. It is permanent once created; the label above it is the part "
-    "you can change later."
+    "A code may only use capital letters, digits and underscores, and must start with a letter — "
+    "for example DESIGN_PROTOTYPE_DEVELOPMENT. The code can't be changed once created; the label "
+    "can."
 )
 
 

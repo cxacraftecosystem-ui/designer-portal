@@ -1267,7 +1267,7 @@ async def _user_from_bearer(
     decision taken at each dependency, not something a caller can inherit by omission.
     """
     if not credentials:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing bearer token")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Sign in to continue.")
     try:
         payload = decode_access_token(credentials.credentials)
     except ValueError as exc:
@@ -1281,21 +1281,21 @@ async def _user_from_bearer(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=(
-                f"This token is scoped to '{scope}' and cannot be used on this endpoint. "
-                "Sign in normally for full API access."
+                "This sign-in can only be used to download datasets. Sign in with your email "
+                "and password to use the rest of the app."
             ),
         )
 
     user_id = payload.get("sub")
     if not user_id:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token subject"
+            status_code=status.HTTP_401_UNAUTHORIZED, detail=SESSION_ENDED_DETAIL
         )
 
     user = await resolve_user(user_id)
     if not user:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail="User no longer exists"
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="This account no longer exists. Sign in again."
         )
 
     # ── SESSION REVOCATION, AND WHY IT IS ONE COMPARISON AND NOT A SESSION TABLE ─────────────
@@ -1668,7 +1668,7 @@ async def require_dataset_admin(
     if not is_admin(user):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin access required for the bulk dataset API.",
+            detail="Only admins can download datasets.",
         )
     if not is_break_glass_master(user):
         row = await access_roster.access_row(getattr(user, "email", None))
@@ -1680,9 +1680,8 @@ async def require_dataset_admin(
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=(
-                    "This account's platform access has been withdrawn on the access screen, so "
-                    "its dataset credential is refused. Ask an administrator to restore the "
-                    "account's access; minting a new token will not help until they do."
+                    "This account's access has been withdrawn, so it can't download datasets. "
+                    "Ask an administrator to restore the account's access."
                 ),
             )
     return user
@@ -1760,8 +1759,7 @@ async def require_usage_reader(current_user: Any = Depends(get_current_user)) ->
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=(
-                "Reading how the platform is used requires Admin access or above. Your own usage is "
-                "at /api/usage/me and needs no permission."
+                "Only admins can see platform usage. Yours is in Settings."
             ),
         )
     return current_user
@@ -1785,10 +1783,8 @@ async def require_person_usage_reader(current_user: Any = Depends(get_current_us
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=(
-                "Reading another person's request-by-request trail is restricted to the master "
-                "admin. Per-screen aggregates, which answer almost every question about how the "
-                "platform is used, are at /api/usage/routes and need Admin. Anybody can read their "
-                "own trail at /api/usage/me/trail."
+                "Only the master admin can see one person's activity. Admins can see platform "
+                "totals, and yours is in Settings."
             ),
         )
     return current_user
@@ -1949,7 +1945,7 @@ def assert_can_contribute_fields(
     if locked_fields:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"Only the original contributor or an admin can change or clear populated field(s): {', '.join(sorted(locked_fields))}",
+            detail=f"Only the person who recorded it or an admin can change or clear these filled-in fields: {', '.join(sorted(locked_fields))}",
         )
 
 
@@ -1961,7 +1957,7 @@ def assert_can_contribute_relation(
     if populated:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"Only the original contributor or an admin can change populated relation: {field_name}",
+            detail=f"Only the person who recorded it or an admin can change this filled-in link: {field_name}",
         )
 
 

@@ -646,7 +646,7 @@ def test_a_ministry_admin_creates_at_its_own_tier_and_below_and_never_above(worl
 
     admin = _create(client, world, "ministry", _fresh(world, "over-admin"), role="ADMIN")
     assert admin.status_code == 403, admin.text
-    assert admin.json()["detail"] == "You can only assign roles at or below your own tier"
+    assert admin.json()["detail"] == "You can only give a role at or below your own"
 
     master = _create(client, world, "ministry", _fresh(world, "over-master"), role="MASTER_ADMIN")
     assert master.status_code == 403, master.text
@@ -955,7 +955,7 @@ def test_a_provisioner_cannot_touch_an_account_at_or_above_its_tier(world, clien
         client, world, "ministry", world["people"]["peerAdmin"].id, name="Renamed Upwards"
     )
     assert refused.status_code == 403, refused.text
-    assert refused.json()["detail"] == "You can only manage users below your own tier"
+    assert refused.json()["detail"] == "You can only manage accounts with a role below your own"
 
 
 # --------------------------------------------------------------------------------------
@@ -1214,7 +1214,7 @@ def test_the_password_comes_from_the_environment_and_is_never_echoed(world, clie
 def test_the_script_refuses_what_the_route_refuses_that_actor(world, client):
     code, out, err = world["script"]["overCeiling"]
     assert code == 1, out + err
-    assert "REFUSED (403)" in out and "at or below your own tier" in out
+    assert "REFUSED (403)" in out and "at or below your own" in out
 
     code, out, err = world["script"]["flaggedActor"]
     assert code == 1, out + err

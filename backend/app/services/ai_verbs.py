@@ -235,9 +235,9 @@ def clean_language(raw: str | None, *, what: str) -> str | None:
         return None
     if not _LANGUAGE_TOKEN.match(token):
         raise VerbError(
-            f"{token[:MAX_LANGUAGE_CHARS]!r} is not a language name this server can use for "
-            f"{what}. Send the language as a name or a code — 'Odia', 'or', 'Hindi', 'multi' — of "
-            f"at most {MAX_LANGUAGE_CHARS} characters, with no punctuation."
+            f"{token[:MAX_LANGUAGE_CHARS]!r} isn't a language that can be used for {what}. Give "
+            f"the language as a name or a code — 'Odia', 'or', 'Hindi', 'multi' — of at most "
+            f"{MAX_LANGUAGE_CHARS} characters, with no punctuation."
         )
     return token
 
@@ -269,15 +269,15 @@ def text_of_answer(answer: Mapping[str, Any], *, verb: Verb) -> str:
     message = str(answer.get("message") or "").strip()
     if status == "UNAVAILABLE" or answer.get("available") is False:
         raise VerbUnavailable(
-            message or f"{verb.human.capitalize()} is not configured on this server."
+            message or f"{verb.human.capitalize()} isn't available right now."
         )
     if status in {"EMPTY", "FAILED"}:
         raise VerbError(message or f"{verb.human.capitalize()} produced nothing.")
     text = str(answer.get("text") or "").strip()
     if not text:
         raise VerbError(
-            f"The model answered {verb.human} with no words at all. Nothing has been recorded — a "
-            f"layer with no content is a heading in the annexure with nothing underneath it."
+            f"{verb.human.capitalize()} came back with no words, so nothing was recorded. Try "
+            f"again."
         )
     return text
 
@@ -525,7 +525,7 @@ def subtitle(
     if status == "UNAVAILABLE" or answer.get("available") is False:
         raise VerbUnavailable(
             str(answer.get("message") or "").strip()
-            or "Subtitling is not configured on this server."
+            or "Subtitling isn't available right now."
         )
     fragments = answer.get("fragments") or []
     if not fragments:
@@ -625,7 +625,7 @@ def render_subtitles(row: Any, *, fmt: str, speakers: bool = False) -> tuple[str
     token = (fmt or "").strip().lower()
     if token not in SUBTITLE_FORMATS:
         raise VerbError(
-            f"{fmt!r} is not a subtitle format this server writes. Ask for "
+            f"{fmt!r} isn't a subtitle format that can be downloaded. Choose "
             f"{' or '.join(sorted(SUBTITLE_FORMATS))}."
         )
     if not ai_layers.is_kind(row, LayerKind.SUBTITLES):
@@ -638,11 +638,8 @@ def render_subtitles(row: Any, *, fmt: str, speakers: bool = False) -> tuple[str
         cues = subtitles.cues_of_payload(getattr(row, "payload", None))
         if speakers and not any(cue.speaker for cue in cues):
             raise VerbError(
-                "These subtitles carry no speaker labels, so a file with them in would be the same "
-                "file without. Either the recording was never separated into voices, or it was and "
-                "only one voice was heard — a single speaker is left unlabelled on purpose, because "
-                "'Speaker 1' on every line says a machine told two people apart when it did not. "
-                "Download it without the speaker labels."
+                "These subtitles have no speaker labels — only one voice was heard, or the "
+                "recording wasn't separated into voices. Download them without speaker labels."
             )
         return render(cues, speakers=speakers), mime, extension
     except subtitles.SubtitleError as exc:

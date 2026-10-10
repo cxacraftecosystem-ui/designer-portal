@@ -687,7 +687,7 @@ async def _assert_every_id_may_be_granted(
         if role not in DESIGN_WORKSHOP_ROLES:
             refusals.append(
                 f"{user.name} ({user.email}) is a {role} and cannot run a design & prototype "
-                f"workshop, so a viewer row would give them access their account refuses."
+                f"workshop, so they can't be given access to one."
             )
             # AND NOTHING FURTHER ABOUT THIS ACCOUNT, unlike the two branches below, which stack.
             # Those name a state an administrator can RESTORE, so an admin deserves the whole list
@@ -697,9 +697,8 @@ async def _assert_every_id_may_be_granted(
             continue
         if role == "DESIGNER" and normalise_email(user.email) not in allowed:
             refusals.append(
-                f"{user.name} ({user.email}) is not on the ACTIVE designer roster, so they cannot "
-                f"sign in at all. Restore their roster entry first; a viewer row on its own would "
-                f"leave this screen saying they have access while they are shown a refusal."
+                f"{user.name} ({user.email}) is not on the active designer roster, so they cannot "
+                f"sign in at all. Restore their roster entry first."
             )
         if not is_break_glass_master(user) and normalise_email(user.email) in barred:
             # THE THIRD REFUSAL, AND IT NAMES A DIFFERENT SCREEN ON PURPOSE. The branch above is
@@ -726,10 +725,8 @@ async def _assert_every_id_may_be_granted(
             # ``role != "MASTER_ADMIN"`` here would refuse exactly that account with a sentence
             # saying it is barred from signing in, which for that account is not true: it signs in.
             refusals.append(
-                f"{user.name} ({user.email}) is barred from signing in to this application: the "
-                f"platform access allow-list has them rejected or suspended. Restore them on the "
-                f"access screen first; a viewer row on its own would leave this screen saying they "
-                f"have access while they are shown a refusal."
+                f"{user.name} ({user.email}) can't sign in: their access has been rejected or "
+                f"suspended. Restore them on the access screen first."
             )
         separation.extend(
             posts.separation_refusals(

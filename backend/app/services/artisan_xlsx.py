@@ -1186,9 +1186,9 @@ _HELP_LINES: tuple[tuple[str, str], ...] = (
     ),
     (
         "b",
-        "Phone and Email are not checked. A malformed number is stored on the artisan record and "
-        "then DROPPED on the way into the workshop's participant table, so the contact box there "
-        "comes up blank with nothing said about why. Check them yourself before uploading.",
+        "Phone and Email are not checked here. A number that is not a valid phone number is kept "
+        "on the artisan record but left out of the workshop's participant list, so check them "
+        "before uploading.",
     ),
     (
         "b",

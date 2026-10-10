@@ -932,9 +932,9 @@ QUESTION_SET_CONTENTS = "Questions only — no answers, no respondents' names, n
 _QUESTION_SET_NOTE = (
     "This is a QUESTION SET: one questionnaire's questions and nothing else. It carries no answers, "
     "no respondents' names and no recorded sittings, which is what makes it safe to send to another "
-    "designer. 'Questionnaire ID' is blank and the Question ID column is empty ON PURPOSE — "
-    "uploading this file creates a NEW questionnaire that belongs to you, rather than editing the "
-    "one it came from. Type your own answers into the Answer column, or leave it empty and record "
+    "designer. 'Questionnaire ID' and the Question ID column are left blank, so uploading this "
+    "file creates a NEW questionnaire that belongs to you instead of editing the one it came "
+    "from. Type your own answers into the Answer column, or leave it empty and record "
     "them in the app."
 )
 

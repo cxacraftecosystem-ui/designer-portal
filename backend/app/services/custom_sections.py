@@ -686,11 +686,8 @@ def _field_problems(
     if f.type not in V1_FIELD_TYPES:
         allowed = ", ".join(sorted(t.value for t in V1_FIELD_TYPES))
         problems.append(
-            f"Field {where} is a {f.type.value}, which a custom field cannot be yet. Choose one of: "
-            f"{allowed}. Photographs, files, recordings, formatted text, coordinates and references "
-            f"to other records are deliberately not available: a photograph attached to a custom "
-            f"field would sync as a reference that resolves to nothing, the save would report "
-            f"success, and the picture would simply be absent from the report."
+            f"Field {where}: a custom question can't be of type {f.type.value}. "
+            f"Choose one of: {allowed}."
         )
 
     # Verbatim from `validate_registry` rule 3, and for its reason: the tiers exist so a workshop

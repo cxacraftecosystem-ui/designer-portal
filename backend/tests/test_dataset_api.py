@@ -311,7 +311,10 @@ def test_a_dataset_token_is_refused_by_every_other_route(api) -> None:
     response = api.get("/api/session-only", token=api.token("admin", scope=deps.DATASET_READ_SCOPE))
 
     assert response.status_code == 403
-    assert "scoped to 'dataset:read'" in response.json()["detail"]
+    assert response.json()["detail"] == (
+        "This sign-in can only be used to download datasets. Sign in with your email "
+        "and password to use the rest of the app."
+    )
 
 
 def test_an_ordinary_session_token_still_works_everywhere(api) -> None:

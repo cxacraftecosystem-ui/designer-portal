@@ -513,7 +513,7 @@ async def _resolve_craft_links(data: dict[str, Any], craft_ids: list[str] | None
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=(
                 f"These {len(craft_ids)} crafts make a craft name of {len(joined)} characters and "
-                f"the longest a tool record stores is {TOOL_CRAFT_NAME_MAX_LENGTH}. Link fewer "
+                f"a tool's craft name can be at most {TOOL_CRAFT_NAME_MAX_LENGTH}. Link fewer "
                 "crafts, and record the rest as a second tool."
             ),
         )
@@ -607,8 +607,8 @@ async def _resolve_artisan_links(
         ):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="Only the tool's owner, a professor above its author, an EDIT-grant "
-                "collaborator, or an admin can assign this tool to artisans created by "
+                detail="Only the tool's owner, a professor above its author, a collaborator "
+                "with edit access, or an admin can assign this tool to artisans created by "
                 "someone else; you may only assign it to your own artisans.",
             )
     data["artisanId"] = artisan_ids[0]
@@ -1218,8 +1218,8 @@ async def assign_tool_artisans(
         if not may_assign_any and getattr(artisan, "createdById", None) != current_user.id:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="Only the tool's owner, a professor above its author, an EDIT-grant "
-                "collaborator, or an admin can assign this tool to artisans created by "
+                detail="Only the tool's owner, a professor above its author, a collaborator "
+                "with edit access, or an admin can assign this tool to artisans created by "
                 "someone else; you may only assign it to your own artisans.",
             )
     await db.toolartisan.create_many(data=[{"toolId": tool_id, "artisanId": aid} for aid in wanted])
@@ -1243,7 +1243,7 @@ async def unassign_tool_artisan(
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Only the tool's owner, the artisan's creator, a professor above the "
-                "tool's author, an EDIT-grant collaborator, or an admin can unassign "
+                "tool's author, a collaborator with edit access, or an admin can unassign "
                 "artisans from this tool.",
             )
     # One statement, and still a no-op when the link is already gone — reading the row back first

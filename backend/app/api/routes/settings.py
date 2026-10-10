@@ -75,8 +75,8 @@ async def update_app_settings(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=(
-                f"batchTimezone {data['batchTimezone']!r} is not a timezone this server knows. "
-                f"Use an IANA name such as {DEFAULT_TIMEZONE!r} or 'UTC'."
+                f"{data['batchTimezone']!r} isn't a recognised time zone. Use a name such as "
+                f"{DEFAULT_TIMEZONE!r} or 'UTC'."
             ),
         )
     if "sttProviderOrder" in data:

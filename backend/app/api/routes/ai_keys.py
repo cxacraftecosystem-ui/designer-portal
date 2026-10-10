@@ -49,7 +49,7 @@ def _provider_or_404(provider: str) -> AiProvider:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=(
-                f"Unknown provider {provider!r}. This app supports: "
+                f"{provider!r} isn't a supported provider. Choose one of: "
                 + ", ".join(p.value for p in ai_providers.PROVIDERS)
             ),
         )
@@ -121,8 +121,8 @@ async def set_my_key(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=(
-                f"{model!r} is not a model this app offers for {target.value}. Choose one from the "
-                f"list, or leave it unset to use the provider's default."
+                f"{model!r} isn't a model offered for {target.value}. Choose one from the list, "
+                f"or leave it unset to use the provider's default."
             ),
         )
 
@@ -132,7 +132,7 @@ async def set_my_key(
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=(
-                    "There is no key saved for this provider yet, so there is no model to change. "
+                    "There is no key saved for this provider, so there is no model to change. "
                     "Paste a key first."
                 ),
             )
@@ -167,6 +167,6 @@ async def test_my_key(provider: str, user: Any = Depends(get_current_user)) -> d
     if result is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="There is no key saved for this provider yet, so there is nothing to test.",
+            detail="There is no key saved for this provider, so there is nothing to test.",
         )
     return result

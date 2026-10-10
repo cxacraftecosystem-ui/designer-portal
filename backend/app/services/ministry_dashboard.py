@@ -631,16 +631,14 @@ def people_scope_label(user: Any, *, noun: str, includes_unposted: bool) -> str:
     """
     if sees_whole_estate(user):
         head = (
-            f"Every {noun} holding a row on a design & prototype workshop on the platform. This "
-            "register is built FROM the workshops, so every figure counts workshops rather than "
-            "people."
+            f"Every {noun} on a design & prototype workshop on the platform. Every figure counts "
+            "workshops, not people."
         )
         tail = (
             f" It also names every {noun} account holding nothing at all, with a measured zero, so "
             "somebody who has been given no work is visible rather than absent."
             if includes_unposted
-            else f" An account with no workshop row at all does not appear here — which is not the "
-            f"same statement as there being no such {noun}."
+            else " An account with no workshop at all does not appear here."
         )
         return head + tail
     head = (

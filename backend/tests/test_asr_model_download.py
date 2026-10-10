@@ -373,7 +373,9 @@ async def test_the_manifest_says_so_when_this_deployment_hosts_no_models_at_all(
     artifact = _artifact_of(manifest.json())
     assert artifact["unavailableReason"] == ArtifactRefusal.NO_STORE_CONFIGURED.value
     assert download.status_code == 503
-    assert "ASR_MODEL_DIR" in download.json()["detail"]
+    assert download.json()["detail"] == (
+        "The offline speech model isn't available to download right now."
+    )
 
 
 async def test_the_manifest_never_hands_out_a_host_it_was_told(
@@ -581,7 +583,7 @@ async def test_a_truncated_file_is_refused_rather_than_served_short(
         assert response.status_code == 503
         assert MODEL_BYTES[:100] not in response.content
     detail = download.json()["detail"]
-    assert "900" in detail and f"{len(MODEL_BYTES):,}" in detail
+    assert detail == "The offline speech model can't be downloaded right now. Try again later."
 
 
 async def test_a_directory_standing_in_for_a_file_is_refused(

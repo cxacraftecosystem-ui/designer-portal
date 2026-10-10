@@ -5058,7 +5058,7 @@ class _StageVersionConflict(Exception):
 #: worth its cost when a client renders it, and this needs to be visible on builds that shipped
 #: before it existed. (2026-09-03)
 STAGE_ROW_CONFLICT_MESSAGE = (
-    "Someone else saved this row first — reopen the stage to see the latest before saving again."
+    "Someone else saved this entry first — reopen the stage to see the latest before saving again."
 )
 
 #: The reserved field key a row-level refusal is filed under inside its scope's error bucket.
@@ -5361,12 +5361,10 @@ async def save_stage(
             # the duplicate-clientKey branch chose and for the same reason. The refusal is
             # reported in `dropped`, which is the channel both clients already render.
             if row is not None and row.entityKey != entity.key:
-                dropped.append(
-                    f"{entity.key}._entryId={entry.entryId} (belongs to {row.entityKey})"
-                )
+                dropped.append(f"{entity.title}: an entry from a different list was sent here")
                 row = None
             elif row is not None and row.id in touched_ids:
-                dropped.append(f"{entity.key}._entryId={entry.entryId} (duplicate in payload)")
+                dropped.append(f"{entity.title}: the same entry was sent twice")
                 row = None
         client_key = str(entry.data["_clientKey"]) if entry.data.get("_clientKey") else None
         if row is None and client_key:
@@ -5377,7 +5375,7 @@ async def save_stage(
                 # produced a raw 500 that failed the whole stage. The row is still saved, under
                 # no client key, so the designer's work survives; the collision is reported so a
                 # client generating duplicate ids can be found and fixed.
-                dropped.append(f"{entity.key}._clientKey={client_key} (duplicate in payload)")
+                dropped.append(f"{entity.title}: the same entry was sent twice")
                 client_key = None
         if row is None and entity.cardinality is Cardinality.SINGLETON:
             # A stage's singleton is unique by entity, so a live one is preferred and a
@@ -5472,9 +5470,7 @@ async def save_stage(
             # collision is still REPORTED, because a client sending two entries for one singleton
             # is a bug somebody should be able to find.
             held.data.update(clean)
-            dropped.append(
-                f"{entity.key} (second singleton entry in payload, folded into the first)"
-            )
+            dropped.append(f"{entity.title}: the same answers were sent twice and were combined")
             continue
 
         item = PendingEntry(
@@ -8036,10 +8032,10 @@ def render_report(
     # are read in that order.
     if over_budget:
         warnings.append(
-            f"{len(over_budget)} of those photograph(s) were left out because embedding them would "
-            f"have taken this server past the memory it has available for one report. The record "
-            f"still holds every one of them; generating the report again when the server is less "
-            f"busy, or with a template that prints fewer pictures, will include more."
+            f"{len(over_budget)} of those photograph(s) were left out because this report already "
+            f"holds as many pictures as it can take at once. They are all still saved with the "
+            f"workshop. Generate the report again later, or choose a template that prints fewer "
+            f"pictures, to include more."
         )
     if fmt == "PDF":
         warnings.extend(_font_warnings())
@@ -8049,9 +8045,8 @@ def render_report(
         # is the same trap the seven stored-and-ignored settings were, arrived at from the other
         # direction. The .docx in the same download IS in their typeface.
         warnings.append(
-            f"The PDF is set in the server's own typeface, not {fonts[1]}. A PDF must embed a "
-            f"face that can draw Odia, Devanagari and the rupee sign, and that is chosen from "
-            f"what is installed on the server. The Word document does use {fonts[1]}."
+            f"The PDF uses a standard typeface, not {fonts[1]}, so that Odia, Devanagari and the "
+            f"rupee sign print correctly. The Word document uses {fonts[1]}."
         )
     return blob, warnings, page_count
 
@@ -8081,8 +8076,8 @@ def _font_warnings() -> list[str]:
             f"{character} — {purpose}" for character, purpose in fonts.missing_glyphs
         )
         said.append(
-            f"This PDF prints empty boxes where these characters belong: {listed}. The server has "
-            f"no font that can draw them. The Word document in the same download is correct."
+            f"This PDF prints empty boxes where these characters belong: {listed}. The Word "
+            f"document in the same download shows them correctly."
         )
     if fonts.missing_scripts:
         # NAMED, because "no Indic font" was true of a server that drew Devanagari perfectly and
@@ -8090,9 +8085,9 @@ def _font_warnings() -> list[str]:
         # designer needs to know whether theirs is the one that is missing.
         scripts = ", ".join(s.value.title() for s in fonts.missing_scripts)
         said.append(
-            f"This PDF prints empty boxes for text in these scripts: {scripts}. The server has no "
-            f"font for them, so a craft name in the local language will not be legible. The Word "
-            f"document in the same download is correct."
+            f"This PDF prints empty boxes for text in these scripts: {scripts}, so a craft name "
+            f"in the local language will not be legible. The Word document in the same download "
+            f"shows it correctly."
         )
     return said
 
@@ -8118,8 +8113,7 @@ def _dropped_warnings(dropped: list[str]) -> list[str]:
     if any(item.startswith("map:") for item in dropped):
         said.append(
             "The locator map could not be drawn, so the section that places the workshop and its "
-            "artisans is empty in this file. Nothing is wrong with the workshop's data — the "
-            "boundary geometry is missing on the server."
+            "artisans is empty in this file. Nothing is wrong with the workshop's details."
         )
     figures = sum(1 for item in dropped if item.startswith(("chart:", "figure:")))
     if figures:

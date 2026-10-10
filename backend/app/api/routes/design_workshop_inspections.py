@@ -517,8 +517,7 @@ def _parse_recorded_at(value: str | None) -> Any:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=(
-                "recordedAt must be an ISO-8601 moment (for example 2026-09-13T10:15:00Z). Leave "
-                "it out entirely when the suggestion is being filed straight against the server."
+                "The time on this suggestion couldn't be read. Update the app and file it again."
             ),
         ) from None
     return moment if moment.tzinfo else moment.replace(tzinfo=UTC)

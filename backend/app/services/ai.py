@@ -93,7 +93,17 @@ def _fault(exc: Exception) -> str:
     """How a provider failed, in the only terms safe to repeat: the status it answered with, or the
     class of transport error."""
     code = getattr(getattr(exc, "response", None), "status_code", None)
-    return f"HTTP {code}" if code else f"unreachable ({type(exc).__name__})"
+    if code in (401, 403):
+        return "the service did not accept the key"
+    if code in (429, 503):
+        return "the service was busy"
+    if code == 413:
+        return "the file was too large for the service"
+    if code and code >= 500:
+        return "the service had a problem"
+    if code:
+        return "the service turned the request down"
+    return "the service could not be reached"
 
 
 # HTTP statuses that mean "this key won't work right now" (quota, auth, bad key) -> rotate to next.
@@ -838,7 +848,7 @@ def _rate_limited_result(provider: str, response: Any, code: int) -> dict[str, A
             retry_after = float(header) if header else None
         except (TypeError, ValueError):
             retry_after = None
-    reason = "rate-limited" if code == 429 else "temporarily unavailable"
+    name = _PROVIDER_NAMES.get(provider, provider)
     return {
         "available": True,
         "status": "RATE_LIMITED",
@@ -846,7 +856,7 @@ def _rate_limited_result(provider: str, response: Any, code: int) -> dict[str, A
         "formattedTranscript": None,
         "retryAfter": retry_after,
         "provider": provider,
-        "message": f"{provider} transcription {reason} (HTTP {code}); will retry automatically.",
+        "message": f"{name} is busy just now; will retry automatically.",
     }
 
 
@@ -879,7 +889,7 @@ def _transcribe_sync(
     for provider in chain:
         call, max_bytes = _PROVIDER_CALLS[provider]
         if max_bytes is not None and size > max_bytes:
-            errors.append(f"{provider}: file larger than the provider limit")
+            errors.append(f"{_PROVIDER_NAMES.get(provider, provider)}: the file is too large")
             continue
         try:
             result = call(content, filename, mime_type, settings, source_path=source_path)
@@ -892,9 +902,9 @@ def _transcribe_sync(
                     "%s transcription throttled (HTTP %s); trying next provider", provider, code
                 )
             elif code in _AUTH_STATUSES:
-                key_name = _PROVIDER_KEYS.get(provider, "the provider key")
                 errors.append(
-                    f"{provider}: API key rejected (HTTP {code}); set a working {key_name} in Settings"
+                    f"{_PROVIDER_NAMES.get(provider, provider)}: the key was not accepted. "
+                    "An administrator can replace it in Settings."
                 )
                 logger.error(
                     "%s rejected the configured API key (HTTP %s); trying next provider",
@@ -902,7 +912,7 @@ def _transcribe_sync(
                     code,
                 )
             else:
-                errors.append(f"{provider}: {_fault(exc)}")
+                errors.append(f"{_PROVIDER_NAMES.get(provider, provider)}: {_fault(exc)}")
                 logger.warning(
                     "%s transcription failed (%s); trying next provider",
                     provider,
@@ -910,7 +920,7 @@ def _transcribe_sync(
                 )
             continue
         except requests.RequestException as exc:
-            errors.append(f"{provider}: {_fault(exc)}")
+            errors.append(f"{_PROVIDER_NAMES.get(provider, provider)}: {_fault(exc)}")
             logger.warning(
                 "%s transcription network error (%s); trying next provider",
                 provider,
@@ -1015,8 +1025,8 @@ async def transcribe_audio_bytes(
             "text": None,
             "formattedTranscript": None,
             "message": (
-                "Transcription unavailable: configure ELEVENLABS_API_KEY, DEEPGRAM_API_KEY, "
-                "or OPENAI_API_KEY."
+                "Transcription isn't available right now. An administrator can turn it on in "
+                "Settings."
             ),
         }
     try:
@@ -1052,7 +1062,7 @@ async def transcribe_audio_bytes(
                 "text": None,
                 "formattedTranscript": None,
                 "retryAfter": retry_after,
-                "message": f"Transcription rate-limited (HTTP {code}); will retry automatically.",
+                "message": "Transcription is busy just now; will retry automatically.",
             }
         logger.error("Transcription failed: %s", redact_secrets(str(exc)))
         return {
@@ -1060,7 +1070,7 @@ async def transcribe_audio_bytes(
             "status": "FAILED",
             "text": None,
             "formattedTranscript": None,
-            "message": f"Transcription failed ({_fault(exc)}). The provider's reply is in the server log.",
+            "message": f"Transcription failed: {_fault(exc)}. Try again later.",
         }
     except requests.RequestException as exc:
         logger.error("Transcription failed: %s", redact_secrets(str(exc)))
@@ -1069,7 +1079,7 @@ async def transcribe_audio_bytes(
             "status": "FAILED",
             "text": None,
             "formattedTranscript": None,
-            "message": f"Transcription failed ({_fault(exc)}). The provider's reply is in the server log.",
+            "message": f"Transcription failed: {_fault(exc)}. Try again later.",
         }
 
 
@@ -1160,7 +1170,10 @@ async def refine_transcript_text(
             "available": False,
             "status": "UNAVAILABLE",
             "refined": None,
-            "message": "Refinement unavailable because OPENAI_API_KEY is not configured.",
+            "message": (
+                "Refinement isn't available right now. An administrator can turn it on in "
+                "Settings."
+            ),
         }
     if not text or not text.strip():
         return {
@@ -1178,8 +1191,8 @@ async def refine_transcript_text(
             "status": "FAILED",
             "refined": None,
             "message": (
-                f"Refinement failed ({_fault(exc)}). The raw transcript is unchanged; the "
-                "provider's reply is in the server log."
+                f"Refinement failed: {_fault(exc)}. The raw transcript is unchanged. Try again "
+                "later."
             ),
         }
 
@@ -1233,7 +1246,7 @@ VERB_MAX_CHARS = 48_000
 VERB_TIMEOUT_SECONDS = 90
 
 
-def _verb_unavailable(what: str, setting: str) -> dict[str, Any]:
+def _verb_unavailable(what: str, setting: str, *, in_settings: bool = True) -> dict[str, Any]:
     """The one shape every verb answers with when this deployment cannot run it.
 
     NAMES THE SETTING, ALWAYS. The designer cannot fix it and the administrator can, and the sentence
@@ -1247,10 +1260,9 @@ def _verb_unavailable(what: str, setting: str) -> dict[str, Any]:
         "status": "UNAVAILABLE",
         "text": None,
         "message": (
-            f"{what} is unavailable because {setting} is not configured on this server. Whoever "
-            f"administers it can add the key in the Settings hub; nothing on this device can. Write "
-            f"the words yourself meanwhile — nothing is lost, and this never changes what you have "
-            f"already typed."
+            f"{what} isn't available right now."
+            + (" An administrator can turn it on in Settings." if in_settings else "")
+            + " You can write the words yourself — nothing you have typed is changed."
         ),
     }
 
@@ -1267,8 +1279,8 @@ def _verb_failed(what: str, exc: Exception) -> dict[str, Any]:
         "status": "FAILED",
         "text": None,
         "message": (
-            f"{what} failed ({_fault(exc)}). Nothing was changed and nothing was recorded; the "
-            f"provider's reply is in the server log. Try again, or write the words yourself."
+            f"{what} failed: {_fault(exc)}. Nothing was changed. Try again, or write the words "
+            f"yourself."
         ),
     }
 
@@ -1454,7 +1466,7 @@ async def _run_chat_verb(
         # only person who can act on this is whoever administers the server, and "Claude failed"
         # would send them looking at the key, which is fine.
         logger.error("%s could not run: the anthropic package is not installed", what)
-        return _verb_unavailable(what, "the anthropic package on this server")
+        return _verb_unavailable(what, "the anthropic package", in_settings=False)
     except requests.RequestException as exc:
         logger.error("%s failed: %s", what, redact_secrets(str(exc)))
         return _verb_failed(what, exc)
@@ -1952,7 +1964,7 @@ async def caption_image_bytes(
         except anthropic_verbs.AnthropicUnavailable:
             logger.error("Captioning could not run: the anthropic package is not installed")
             return _verb_unavailable(
-                "Describing a photograph", "the anthropic package on this server"
+                "Describing a photograph", "the anthropic package", in_settings=False
             )
         except Exception as exc:  # noqa: BLE001 - a personal key's failure is still a sentence
             logger.error("Captioning failed on a designer's own key: %s", redact_secrets(str(exc)))
@@ -2322,7 +2334,7 @@ def _transcribe_timed_sync(
         # so this is a real file size and not a hypothetical one.
         _call, max_bytes = _PROVIDER_CALLS[provider]
         if max_bytes is not None and size > max_bytes:
-            errors.append(f"{provider}: file larger than the provider limit")
+            errors.append(f"{_PROVIDER_NAMES.get(provider, provider)}: the file is too large")
             continue
         try:
             if provider == "elevenlabs":
@@ -2359,7 +2371,7 @@ def _transcribe_timed_sync(
                 # honest answer for what language the cues are in is "multi" and not a detection.
                 language = "multi"
         except requests.RequestException as exc:
-            errors.append(f"{provider}: {_fault(exc)}")
+            errors.append(f"{_PROVIDER_NAMES.get(provider, provider)}: {_fault(exc)}")
             logger.warning(
                 "%s timed transcription failed (%s); trying next provider",
                 provider,
@@ -2378,7 +2390,7 @@ def _transcribe_timed_sync(
         # A provider that answered with no timed fragments at all: either the clip is silent or it
         # returned a shape this parser does not know. The two are told apart by whether it returned
         # any text, which is why the next provider still gets a turn.
-        errors.append(f"{provider}: no timed words in the response")
+        errors.append(f"{_PROVIDER_NAMES.get(provider, provider)}: no timed words were found")
     return {
         "available": True,
         "status": "FAILED" if errors else "EMPTY",
@@ -2418,11 +2430,8 @@ async def transcribe_timed_bytes(
             "status": "UNAVAILABLE",
             "fragments": [],
             "message": (
-                "Subtitles are unavailable because no engine that returns timings is configured on "
-                "this server. Configure ELEVENLABS_API_KEY or DEEPGRAM_API_KEY in the Settings hub "
-                "— the transcription this deployment does have does not report when each word was "
-                "said, and subtitles are the timings. Whoever administers the server can add the "
-                "key; nothing on this device can."
+                "Subtitles aren't available right now. An administrator can turn them on in "
+                "Settings by adding an ElevenLabs or Deepgram key."
             ),
         }
     try:
@@ -2442,8 +2451,7 @@ async def transcribe_timed_bytes(
             "status": "FAILED",
             "fragments": [],
             "message": (
-                f"Subtitling failed ({_fault(exc)}). Nothing was recorded; the provider's reply is "
-                f"in the server log."
+                f"Subtitling failed: {_fault(exc)}. Nothing was recorded. Try again later."
             ),
         }
 
@@ -2671,9 +2679,8 @@ async def analyze_measurement_image_bytes(
             "status": "UNAVAILABLE",
             "analysis": None,
             "message": (
-                "Grid measurement is unavailable because no Gemini API key is configured. Measure the "
-                "object and type the value in, or ask whoever administers the server to add "
-                "GEMINI_API_KEY in the Settings hub."
+                "Grid measurement isn't available right now. Measure the object and type the "
+                "value in. An administrator can turn it on in Settings."
             ),
             **_measurement_provenance(None, settings).payload(),
         }
@@ -2692,8 +2699,8 @@ async def analyze_measurement_image_bytes(
             "status": "FAILED",
             "analysis": None,
             "message": (
-                f"Measurement analysis failed ({_fault(exc)}); measure the object and enter the "
-                "value manually. The provider's reply is in the server log."
+                f"Measurement analysis failed: {_fault(exc)}. Measure the object and enter the "
+                "value manually."
             ),
             **_measurement_provenance(None, settings).payload(),
         }

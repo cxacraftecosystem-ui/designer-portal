@@ -822,8 +822,7 @@ def decision_plans(
         raise ConsentRuleViolation(
             f"This answer says it was recorded at {recorded_at.isoformat()}, which is in the future — "
             f"the device's clock is wrong. Fix the date and time on the phone and sync again, or "
-            f"record the answer here so the server's own clock is used. It is not stored with a "
-            f"corrected time, because when somebody consented is not something this server may guess."
+            f"record the answer again here."
         )
 
     answered_at = recorded_at or at

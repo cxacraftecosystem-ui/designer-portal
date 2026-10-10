@@ -165,12 +165,12 @@ def wired(monkeypatch):
         (["w0", "ghost"], 404, "Assignee not found"),
         (["admin"], 422, "You cannot assign a task to yourself"),
         (["w0", "admin"], 422, "You cannot assign a task to yourself"),
-        (["peer"], 403, "You can only assign tasks to users below your own tier"),
+        (["peer"], 403, "You can only assign tasks to people with a role below your own"),
         # ORDER DECIDES, exactly as the per-assignee loop's did: the first id with a problem is the
         # one reported, even when a later id would have raised a different status.
         (["ghost", "admin"], 404, "Assignee not found"),
         (["admin", "ghost"], 422, "You cannot assign a task to yourself"),
-        (["peer", "ghost"], 403, "You can only assign tasks to users below your own tier"),
+        (["peer", "ghost"], 403, "You can only assign tasks to people with a role below your own"),
     ],
 )
 async def test_the_bulk_check_answers_exactly_as_the_per_assignee_one(wired, ids, code, detail):

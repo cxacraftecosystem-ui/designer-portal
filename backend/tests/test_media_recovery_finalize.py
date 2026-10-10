@@ -112,7 +112,7 @@ def test_a_job_with_attempts_remaining_is_requeued(monkeypatch):
     assert written["status"] == media_queue.QUEUED
     assert written["lockedAt"] is None
     assert written["lockedBy"] is None
-    assert written["error"] == "Recovered after worker interruption."
+    assert written["error"] == "Restarted after an interruption."
     assert db.mediafile.update_many_calls == []
 
 
@@ -150,7 +150,7 @@ def test_the_error_names_the_worker_that_did_not_survive(monkeypatch):
     reads "failed" and goes looking for an application bug instead of that unit's journal."""
     db = _recover(monkeypatch, [_stale(attempts=3, maxAttempts=3, lockedBy="queue-service")])
     error = _job_write(db)["error"]
-    assert "queue-service" in error
+    assert error == "Processing was interrupted and has stopped. Retry it to try again."
     assert len(error) <= 2000
 
 

@@ -383,10 +383,7 @@ def _ledger() -> Any:
     delegate = getattr(db, RATING_DELEGATE, None)
     if delegate is None:
         raise RatingLedgerUnavailable(
-            f"The rating ledger delegate db.{RATING_DELEGATE} does not exist in this build's "
-            f"Prisma client. Either the {RATING_TABLE} model has not been added to "
-            f"prisma/schema.prisma and generated yet, or it was renamed — in which case update "
-            f"design_ratings.RATING_DELEGATE and the model block in this module's docstring."
+            "Ratings aren't available right now. Please try later."
         )
     return delegate
 
@@ -1248,8 +1245,7 @@ def rating_plan(
         # protects the average from a row written by anything that is not this function, and this is
         # what turns the refusal into a sentence a designer can read instead of a 500.
         raise RatingRuleViolation(
-            f"A score of {score} is outside the {MIN_SCORE}–{MAX_SCORE} scale this product "
-            f"uses everywhere else."
+            f"A score of {score} is outside the {MIN_SCORE}–{MAX_SCORE} scale."
         )
     moment = _aware(rated_at)
     if moment is not None and moment - at > MAX_DEVICE_CLOCK_SKEW:

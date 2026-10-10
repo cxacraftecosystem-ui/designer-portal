@@ -735,10 +735,9 @@ def _sync_read(
             )
             continue
         return result_from_reply(reply, provider)
+    logger.warning("Identity OCR: every provider failed (%s)", "; ".join(errors))
     raise IdentityOcrUnavailable(
-        "No vision provider could read the card ("
-        + "; ".join(errors)
-        + "). Try again, or type the number from the card."
+        "The card couldn't be read just now. Try again, or type the number from the card."
     )
 
 
@@ -753,8 +752,7 @@ async def read_identity_card(content: bytes, mime_type: str) -> IdentityOcrResul
     settings = get_identity_ocr_settings()
     if not settings.enabled:
         raise IdentityOcrUnavailable(
-            f"Identity-card scanning is switched off. Set {ENABLE_VAR}=true to enable it, and "
-            f"configure a vision key (GEMINI_API_KEY or OPENAI_API_KEY) in Settings."
+            "Identity-card scanning isn't available right now. Type the number from the card."
         )
     # Prime the managed-secret cache on the event loop BEFORE the thread hop: ``peek_secret`` cannot
     # await, so without this both the provider list and the header read fall back to the environment.
@@ -762,8 +760,8 @@ async def read_identity_card(content: bytes, mime_type: str) -> IdentityOcrResul
     providers = available_providers()
     if not providers:
         raise IdentityOcrUnavailable(
-            "Identity-card scanning needs a vision model. Configure GEMINI_API_KEY (preferred) or "
-            "OPENAI_API_KEY in Settings, or type the number from the card."
+            "Identity-card scanning isn't available right now. Type the number from the card. "
+            "An administrator can turn it on in Settings."
         )
     return await asyncio.to_thread(
         _sync_read, content, mime_type, providers, settings.timeout_seconds

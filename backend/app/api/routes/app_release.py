@@ -210,7 +210,7 @@ async def download_latest_apk() -> RedirectResponse:
     if release is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="No Android build has been published yet, so there is nothing to download.",
+            detail="The Android app isn't available to download right now.",
             headers=_NO_STORE,
         )
 
@@ -234,7 +234,7 @@ async def download_latest_apk() -> RedirectResponse:
     if not target:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="The published Android build cannot be located in object storage right now.",
+            detail="The Android app couldn't be downloaded just now. Try again later.",
             headers=_NO_STORE,
         )
 

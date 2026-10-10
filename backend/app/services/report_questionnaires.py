@@ -604,8 +604,8 @@ def sitting_blocks(sitting: QuestionnaireSitting) -> list[Block]:
         blocks.append(
             ParagraphBlock(
                 runs=runs_of(
-                    f"[Answers truncated after {MAX_ROWS_PER_SITTING} questions. The full set is held "
-                    f"against the questionnaire in the repository.]"
+                    f"[Answers truncated after {MAX_ROWS_PER_SITTING} questions. The full set is in "
+                    f"the online workshop record.]"
                 ),
                 style=ParaStyle.NOTE,
             )
@@ -682,7 +682,7 @@ def append_questionnaire_annexure(
             if dropped > 0:
                 doc.para(
                     f"[{dropped} further sitting(s) were recorded against this questionnaire and "
-                    f"are not printed here. The full set is held in the repository.]",
+                    f"are not printed here. The full set is in the online workshop record.]",
                     style=ParaStyle.NOTE,
                 )
     return len(printed)

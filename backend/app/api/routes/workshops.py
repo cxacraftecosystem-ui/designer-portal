@@ -939,8 +939,7 @@ async def decide_workshop_access_request(
     if enum_str(row.status) != "PENDING":
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Only a PENDING request can be decided. Use the workshop's assignment endpoints to "
-            "change an already-decided row.",
+            detail="This request was already decided. Change access from the list.",
         )
     await db.workshopassignment.update(
         where={"id": row.id},

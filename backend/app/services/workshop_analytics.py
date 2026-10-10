@@ -899,11 +899,11 @@ _NOT_COMPUTED: tuple[dict[str, str], ...] = (
     {
         "question": "Prototypes produced against prototypes planned",
         "reason": (
-            "Nothing in the 496-field registry records a planned or target number of prototypes. "
+            "No stage records a planned or target number of prototypes. "
             "Stage 2's “Expected deliverables” is free prose (one per line), stage 18's "
             "“Performance against planned targets” is a rich-text narrative, and stage 18's "
-            "prototype count is an OVERRIDE of the rows recorded rather than a target set "
-            "beforehand. Parsing a sentence into a target would be inventing the denominator."
+            "prototype count corrects the number recorded rather than setting a target "
+            "beforehand, so there is no target to compare against."
         ),
     },
     {
@@ -1051,9 +1051,8 @@ def analyse_archive(
 
     if rows_without_status:
         cautions.append(
-            f"{rows_without_status} follow-up row(s) carry no adoption status and are excluded. "
-            f"The field is required at stage 22, so these came from a partial sync or an older "
-            f"client rather than from a visit that found nothing."
+            f"{rows_without_status} follow-up entr{'y' if rows_without_status == 1 else 'ies'} "
+            "have no adoption status and are excluded."
         )
 
     notes: list[str] = []

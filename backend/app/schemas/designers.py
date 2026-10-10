@@ -355,8 +355,8 @@ class DesignerProfileUpdate(APIModel):
         words = str(rich_text.plain_from_stored(value)).strip()
         if len(words) > ADDRESS_LINE_PLAIN_MAX:
             raise ValueError(
-                f"The address is {len(words)} characters long once its formatting is set aside, and "
-                f"the column stores {ADDRESS_LINE_PLAIN_MAX} — it is printed on a report cover. "
-                "Shorten it, or move part of it into the city, state and pincode boxes beside it."
+                f"The address is {len(words)} characters long, and it can be at most "
+                f"{ADDRESS_LINE_PLAIN_MAX} — it is printed on a report cover. Shorten it, or move "
+                "part of it into the city, state and pincode boxes beside it."
             )
         return value

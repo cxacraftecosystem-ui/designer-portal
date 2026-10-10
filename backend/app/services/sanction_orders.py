@@ -1120,7 +1120,7 @@ async def designer_standing_verdict(address: str, *, officer: Any) -> StandingVe
             user=None,
             refusal=Refusal(
                 status.HTTP_422_UNPROCESSABLE_ENTITY,
-                "That is not an address this system can use.",
+                "That email address can't be used.",
             ),
         )
 

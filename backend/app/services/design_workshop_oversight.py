@@ -301,10 +301,8 @@ def can_assign_workshop_oversight(user: Any) -> bool:
 #: inline string: a designer told only "forbidden" on a READ surface will reasonably conclude the
 #: deployment is broken.
 NOT_AN_OFFICER_DETAIL = (
-    "Workshops I monitor belongs to the accounts that may be named a workshop's Assistant Director "
-    "or Regional Director: those two posts, Ministry Admins, admins and the master admin. Designers "
-    "read design & prototype workshops through /api/design-workshops instead; who monitors a "
-    "workshop is chosen at /api/design-workshop-oversight/{id}."
+    "This page is for Assistant Directors and Regional Directors. Sign out and back in, or ask an "
+    "administrator."
 )
 
 #: What everybody else is told when they try to CHANGE who supervises a workshop.
@@ -656,9 +654,7 @@ async def assert_may_hold(
         if not is_break_glass_master(user) and _normalised(user.email) in barred:
             refusals.append(
                 f"{user.name} ({user.email}) is barred by the platform access list, so they cannot "
-                f"sign in at all. Clear that on the access screen first; an oversight row on its "
-                f"own would leave this screen saying they are monitoring while they are shown a "
-                f"refusal at the door."
+                f"sign in at all. Restore their access on the access screen first."
             )
         # Their posts AFTER the change: both slots as this request leaves them, plus an inspection
         # if they hold one. Read from ``after`` rather than from ``held`` for the oversight half, so

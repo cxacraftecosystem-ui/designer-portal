@@ -108,8 +108,7 @@ _CREDENTIAL_WINDOW_SECONDS = 300.0
 _CREDENTIAL_REFUSED_STATUS = 401
 
 _GENERIC_REFUSAL = (
-    "Too many requests. Wait a moment and try again — this limit exists to keep "
-    "the server responsive for everyone."
+    "Too many requests. Wait a moment and try again."
 )
 # Says out loud that a correct password costs nothing, because it is true (the refund) and because
 # the person most likely to read this sentence is a designer who mistyped, not an attacker.

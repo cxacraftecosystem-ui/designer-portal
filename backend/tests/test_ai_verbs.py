@@ -330,11 +330,12 @@ def test_no_key_configured_is_its_own_class_because_it_is_its_own_status_code():
                 "available": False,
                 "status": "UNAVAILABLE",
                 "text": None,
-                "message": "Proofreading is unavailable because OPENAI_API_KEY is not configured…",
+                "message": "Proofreading isn't available right now. An administrator can turn "
+                "it on in Settings.",
             },
             verb=Verb.PROOFREAD,
         )
-    assert "OPENAI_API_KEY" in str(refused.value)
+    assert "An administrator can turn it on in Settings." in str(refused.value)
 
 
 def test_an_empty_answer_and_a_failed_one_are_both_refused_but_are_not_the_same_thing():
@@ -1440,7 +1441,8 @@ def test_a_layer_kind_this_build_has_never_heard_of_is_a_sentence_and_not_a_500(
     assert _verb_layer_kind(SimpleNamespace(kind="RAW_TRANSCRIPT")) is LayerKind.RAW_TRANSCRIPT
     with pytest.raises(VerbError) as refused:
         _verb_layer_kind(SimpleNamespace(kind="A_KIND_FROM_THE_FUTURE"))
-    assert "newer build" in str(refused.value)
+    assert "newer build" not in str(refused.value)
+    assert "Reload the page to update the app" in str(refused.value)
 
 
 def test_the_speaker_flag_is_actually_wired_to_the_download_route():

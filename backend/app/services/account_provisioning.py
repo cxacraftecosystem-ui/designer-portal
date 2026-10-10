@@ -125,8 +125,8 @@ DUPLICATE_EMAIL_DETAIL = "Email already exists"
 #: logs the remedy at ERROR). 503 and nothing written: a duplicate this check could not rule out is
 #: exactly the one it exists to refuse.
 MAILBOX_UNCHECKED_DETAIL = (
-    "Could not check every spelling of this mailbox for an account that already uses it, so nothing "
-    "was saved. Try again; if this keeps happening, tell whoever runs the server."
+    "Couldn't check whether another account already uses this mailbox, so nothing was saved. "
+    "Try again in a moment."
 )
 
 OWN_CREDENTIALS_DETAIL = (
@@ -204,7 +204,7 @@ MASTER_EMAIL_DETAIL = "Only the master admin can assign the master admin email"
 #: same request" sent an administrator on a phone looking for a box that is not there.
 PROMOTION_WITH_A_TEMPORARY_PASSWORD_DETAIL = (
     "This account still has to replace a password somebody typed for it, and promoting it now would "
-    "hand that password to a higher tier than whoever typed it. Promote it once its owner has "
+    "hand that password to a higher role than whoever typed it. Promote it once its owner has "
     "chosen their own password, or set it a new temporary password on the website's Users page in "
     "the same change as the promotion."
 )
@@ -215,11 +215,9 @@ PROMOTION_WITH_A_TEMPORARY_PASSWORD_DETAIL = (
 #: beside its own confirmation. ``{email}`` is the approved address; ``{current}`` and ``{granted}``
 #: are tier labels (``deps.ROLE_LABELS``).
 APPROVAL_KEEPS_THE_TIER_DETAIL = (
-    "{email} is approved, but the account keeps its {current} tier for now: it still has to "
-    "replace a password somebody typed for it, and promoting it now would hand that password to a "
-    "higher tier than whoever typed it. Promote it to {granted} once its owner has chosen their "
-    "own password, or set it a new temporary password on the website's Users page in the same "
-    "change as the promotion."
+    "{email} is approved, but the account stays {current} until its owner replaces the password "
+    "somebody typed for it. Promote it to {granted} then, or set it a new temporary password on "
+    "the website's Users page in the same change as the promotion."
 )
 
 GOOGLE_ADMISSION_REQUIRES_ADMIN_DETAIL = (
@@ -229,8 +227,8 @@ GOOGLE_ADMISSION_REQUIRES_ADMIN_DETAIL = (
 
 #: What an allow-list row admitted from the command line says about itself on the access screen.
 GOOGLE_ADMISSION_NOTE = (
-    "Admitted for Google sign-in from the command line (scripts/provision_account.py). The account "
-    "is created at this tier the first time the person signs in with Google."
+    "Admitted for Google sign-in. The account is created with this role the first time the person "
+    "signs in with Google."
 )
 
 
@@ -288,15 +286,14 @@ def assert_role(role: str | None, current_user: Any) -> None:
     if ROLE_RANK[role] > role_rank(current_user):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="You can only assign roles at or below your own tier",
+            detail="You can only give a role at or below your own",
         )
 
 
 #: Refusing a master admin an action on ANOTHER master admin. Named so the routes and the tests
 #: assert the same sentence, and phrased to say what the reader can actually do about it.
 _MASTER_PEER_DETAIL = (
-    "Master admin accounts are peers: no master admin may change or remove another. "
-    "Demote the account from an environment with database access, or leave it in place."
+    "Master admin accounts can't change or remove each other."
 )
 
 
@@ -341,7 +338,7 @@ def assert_can_manage_target(current_user: Any, target_user: Any) -> None:
     if role_rank(target_user) >= role_rank(current_user):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="You can only manage users below your own tier",
+            detail="You can only manage accounts with a role below your own",
         )
 
 

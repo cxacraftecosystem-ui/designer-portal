@@ -115,7 +115,7 @@ def assert_not_demoting_master(
     if payload_role and payload_role != "MASTER_ADMIN":
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="The master admin must keep MASTER_ADMIN role",
+            detail="The master admin must keep the Master Admin role.",
         )
 
 

@@ -246,8 +246,11 @@ def test_every_tier_that_cannot_hold_an_inspection_is_refused_the_surface(api, p
     outcome = api.call("GET", path, as_role=role)
     assert outcome.status_code == 403, outcome
     assert api.tripwire.touched is False, "the refusal must fire before any database read"
-    assert "/api/design-workshops" in outcome.detail, (
-        "the refusal has to name the route this caller actually wants; see NOT_AN_INSPECTOR_DETAIL"
+    assert "/api/design-workshops" not in outcome.detail, (
+        "the refusal is field copy and must not name an API path; see NOT_AN_INSPECTOR_DETAIL"
+    )
+    assert outcome.detail == (
+        "This page is for inspectors. Sign out and back in, or ask an administrator."
     )
 
 

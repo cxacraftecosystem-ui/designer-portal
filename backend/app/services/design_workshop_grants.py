@@ -492,8 +492,8 @@ def decode_join_code(raw: str) -> tuple[str, str, str]:
                 "them the tag and ask to be added."
             )
         raise ScannedCodeRefused(
-            f"That card was printed against a newer code format ({version}) than this server reads. "
-            f"Update the app, or ask an administrator to add you from the workshop's viewers screen."
+            f"That card uses a newer code format ({version}). Update the app, or ask an "
+            f"administrator to add you to the workshop."
         )
 
     if parts[1] != JOIN_LETTER:
@@ -501,7 +501,7 @@ def decode_join_code(raw: str) -> tuple[str, str, str]:
         # separately from "not one of ours" because somebody scanning the wrong card off a lanyard
         # needs to be told to find the join card, not that their scanner is broken.
         raise ScannedCodeRefused(
-            "That code belongs to this application but is not a join card — it names a record. Scan "
+            "That code is not a join card — it names a record. Scan "
             "the join card you were handed, the one printed to let somebody in."
         )
 

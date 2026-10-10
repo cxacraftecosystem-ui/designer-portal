@@ -526,8 +526,8 @@ class ReportGenerateIn(APIModel):
             # answer to a request this endpoint cannot serve, and it names the remedy because a
             # designer's integration script is the caller that will hit it.
             raise ValueError(
-                "ask for one format per request: this endpoint returns a single file. Send "
-                '{"formats": ["DOCX"]} and {"formats": ["PDF"]} as two requests.'
+                "Choose one format at a time: the Word document and the PDF are downloaded "
+                "separately."
             )
         # Still `sorted(...)` over the set, on a one-element list, so the stored value is normalised
         # (upper-cased, de-duplicated) exactly as it always was.
@@ -647,9 +647,8 @@ class AiLayerRegisterIn(APIModel):
             datetime.fromisoformat(str(self.producedAt))
         except ValueError:
             raise ValueError(
-                "producedAt must be an ISO-8601 moment such as 2026-03-04T11:20:00Z. Leave it out "
-                "entirely if the time the model ran is not known — that is recorded honestly as "
-                "unknown."
+                "producedAt must be a date and time such as 2026-03-04T11:20:00Z. Leave it out if "
+                "the time is not known."
             ) from None
         return self
 
@@ -1034,8 +1033,7 @@ class DictationConsentIn(APIModel):
             datetime.fromisoformat(str(self.recordedAt))
         except ValueError:
             raise ValueError(
-                "recordedAt must be an ISO-8601 moment such as 2026-08-11T16:40:00+05:30. Leave it "
-                "out entirely if the answer is being recorded now — the server's own clock is used "
-                "then, which is the honest reading."
+                "recordedAt must be a date and time such as 2026-08-11T16:40:00+05:30. Leave it "
+                "out if the answer is being recorded now."
             ) from None
         return self

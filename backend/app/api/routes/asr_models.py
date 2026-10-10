@@ -213,7 +213,7 @@ async def read_asr_model(
     if artifact is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"This deployment publishes no speech model called “{artifact_id}”.",
+            detail=f"There is no speech model called “{artifact_id}”.",
         )
     return _no_store(_artifact_payload(request, await asr_artifacts.verify_artifact(artifact)))
 
@@ -251,7 +251,7 @@ async def download_asr_model_file(
     if artifact is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"This deployment publishes no speech model called “{artifact_id}”.",
+            detail=f"There is no speech model called “{artifact_id}”.",
         )
     spec = artifact.file(file_name)
     if spec is None:

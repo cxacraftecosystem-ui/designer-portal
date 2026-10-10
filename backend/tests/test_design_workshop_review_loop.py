@@ -229,7 +229,7 @@ def test_a_no_op_is_never_a_refusal():
 def test_an_unknown_current_status_fails_closed():
     """A row written by a newer deployment refuses every move rather than falling through."""
     refusal = loop.transition_refusal("SOMETHING_NEW", loop.APPROVED)
-    assert refusal and "does not recognise" in refusal
+    assert refusal and "isn't recognised" in refusal
 
 
 # --------------------------------------------------------------------------------------
@@ -384,8 +384,10 @@ def test_a_round_of_zero_is_refused_by_the_plan():
     with pytest.raises(loop.InspectionRuleViolation) as raised:
         loop.feedback_plan(**_plan_kwargs(round=0))
     message = str(raised.value)
-    assert "submissionRound" in message
-    assert "DwInspectionFeedback_round_check" in message
+    # Field copy for the officer: the constraint and the column stay out of the sentence.
+    assert "submissionRound" not in message
+    assert "DwInspectionFeedback_round_check" not in message
+    assert "couldn't be filed" in message
 
 
 def test_the_review_log_row_uses_a_recordstatus_token_that_exists_in_both_enums():

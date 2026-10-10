@@ -319,8 +319,8 @@ def transcript_body_blocks(text: str) -> list[Block]:
         blocks.append(
             ParagraphBlock(
                 runs=runs_of(
-                    f"[Transcript truncated after {MAX_PARAGRAPHS_PER_TRANSCRIPT} paragraphs. The "
-                    f"full text is held against the recording in the repository.]"
+                    f"[Transcript shortened to the first {MAX_PARAGRAPHS_PER_TRANSCRIPT} paragraphs. "
+                    f"The full text is in the online workshop record.]"
                 ),
                 style=ParaStyle.NOTE,
             )

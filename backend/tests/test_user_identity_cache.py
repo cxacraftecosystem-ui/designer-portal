@@ -194,7 +194,7 @@ def test_a_deleted_account_stops_authenticating_immediately(identity) -> None:
     before, after = asyncio.run(scenario())
 
     assert (before.status_code, after.status_code) == (200, 401)
-    assert after.json()["detail"] == "User no longer exists"
+    assert after.json()["detail"] == "This account no longer exists. Sign in again."
 
 
 def test_a_missing_user_is_never_cached_so_it_401s_every_single_time(identity) -> None:

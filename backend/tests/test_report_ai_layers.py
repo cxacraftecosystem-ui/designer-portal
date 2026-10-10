@@ -301,7 +301,7 @@ def test_the_tier_is_printed_in_words_and_never_as_a_bare_number():
     An officer has no reason to know what "tier 2" means, and would not guess that tier 1 is the
     one that works without a connection rather than the weakest one.
     """
-    for tier, expected in (("TIER_1", "handset"), ("TIER_2", "handset"), ("TIER_3", "server")):
+    for tier, expected in (("TIER_1", "handset"), ("TIER_2", "handset"), ("TIER_3", "online")):
         assert expected in tier_words(tier)
         assert "Tier" not in tier_words(tier)
     assert "cannot identify" in tier_words("TIER_9")
@@ -309,7 +309,7 @@ def test_the_tier_is_printed_in_words_and_never_as_a_bare_number():
 
 def test_the_index_table_names_the_tier_and_the_acceptor_for_every_row():
     text = _text_of(ai_layer_annexure_blocks([_layer()]))
-    assert "on the server, by a hosted model" in text
+    assert "online, by a hosted model" in text
     assert "A. Designer" in text
 
 
@@ -381,7 +381,7 @@ def test_a_withheld_layer_keeps_its_provenance_and_loses_only_the_recordings_con
     text = _text_of(blocks)
     # It is LISTED — heading, provenance, index row — so the reader knows the passage exists.
     assert "AI-cleaned transcript" in text
-    assert "on the server, by a hosted model" in text
+    assert "online, by a hosted model" in text
     assert "A. Designer" in text
     # And the reason is stated in the document rather than left as a gap under a heading.
     assert "may not read" in text

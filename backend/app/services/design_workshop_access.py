@@ -386,8 +386,8 @@ def decode_design_workshop_code(raw: str) -> tuple[str, str]:
         # Its own answer rather than "malformed": the card is fine and this server is old, and
         # "update the app" and "the tag is damaged" send a designer to two different places.
         raise ScannedCodeRefused(
-            f"That card was printed against a newer code format ({version}) than this server reads. "
-            f"Update the app, or ask an administrator to add you from the workshop's viewers screen."
+            f"That card uses a newer code format ({version}). Update the app, or ask an "
+            f"administrator to add you to the workshop."
         )
 
     if parts[1] != _DESIGN_WORKSHOP_LETTER:
@@ -395,7 +395,7 @@ def decode_design_workshop_code(raw: str) -> tuple[str, str]:
         # points at an artisan, a tool or a prototype. Somebody scanning the wrong card off a lanyard
         # needs to be told to find the workshop's card, not that their scanner is broken.
         raise ScannedCodeRefused(
-            "That code belongs to this application but does not name a design workshop — it points "
+            "That code does not name a design workshop — it points "
             "at a different kind of record. Scan the workshop's own card, the one the person who "
             "created it printed."
         )

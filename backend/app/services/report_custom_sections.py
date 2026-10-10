@@ -515,8 +515,8 @@ def custom_section_blocks(
         blocks.append(
             ParagraphBlock(
                 runs=runs_of(
-                    f"[Answers truncated after {MAX_ROWS_PER_SECTION} questions. The full set is held "
-                    f"against the workshop in the repository.]"
+                    f"[Answers truncated after {MAX_ROWS_PER_SECTION} questions. The full set is in "
+                    f"the online workshop record.]"
                 ),
                 style=ParaStyle.NOTE,
             )

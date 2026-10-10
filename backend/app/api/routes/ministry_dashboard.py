@@ -1003,8 +1003,8 @@ def _people_envelope(
         None
         if scoring_read
         else (
-            "Progress could not be read for this request, so no percentage below is a measurement. "
-            "Each row says so under progressReason rather than showing 0%."
+            "Progress couldn't be read just now, so no percentage below is a measurement. Each "
+            "entry says so instead of showing 0%."
         )
     )
     # MEASURED AND REPORTED, NEVER SILENT. The withheld accounts' workshops are still inside
@@ -1015,8 +1015,7 @@ def _people_envelope(
         None
         if withheld == 0
         else (
-            f"{withheld} account(s) holding a row on these workshops are not named here because "
-            "they are platform administrator accounts, which this register never lists. Their "
+            f"{withheld} administrator account(s) on these workshops are not named here. Their "
             "workshops are still counted in the totals above."
         )
     )
@@ -1204,9 +1203,8 @@ async def list_designers(
             "Empanelled designers holding no workshop in this scope are listed with a measured zero, "
             "so somebody who has been given nothing is visible rather than absent."
             if roster is not None
-            else "The empanelled designer roster could not be read for this request, so a designer "
-            "who holds no workshop in this scope is missing from this list entirely. This is not "
-            "the same as there being none."
+            else "The designer roster couldn't be read just now, so a designer with no workshop "
+            "in this scope may be missing from this list."
         ),
     )
     # The roster read has a ceiling of its own (`designers.DIRECTORY_TAKE`) and a list that stopped
@@ -1391,19 +1389,15 @@ async def list_officers(
         includes_unposted=directory is not None,
         unposted_note=(
             "Assistant Directors and Regional Directors posted to nothing in this scope are listed "
-            "with a measured zero. An administrator — a Ministry Administrator included — may be "
-            "named to either slot, and is listed only where one names them: supervising is not "
-            "their job, so holding no slot is not a gap in their work."
+            "with a measured zero. An administrator, including a Ministry Administrator, is listed "
+            "only where a workshop names them."
             if directory is not None
             else (
-                "This list is only the officers posted to workshops you can see. The directory of "
-                "every ministry post is read on Workshop oversight, which an Assistant Director and "
-                "a Regional Director are not admitted to, so an officer with no posting here is "
-                "absent from this list rather than shown with a zero."
+                "This list shows only the officers posted to workshops you can see, so an officer "
+                "with no posting here is not listed."
                 if not offered
-                else "The directory of ministry posts could not be read for this request, so an "
-                "officer posted to nothing is missing from this list entirely. This is not the same "
-                "as there being none."
+                else "The list of ministry posts couldn't be read just now, so an officer posted "
+                "to nothing may be missing from this list."
             )
         ),
     )
@@ -1555,14 +1549,11 @@ async def list_inspectors(
             "an inspection names them."
             if directory is not None
             else (
-                "This list is only the inspectors assigned to workshops you can see. The directory "
-                "of every account that may be assigned an inspection is read on Workshop oversight, "
-                "which an Assistant Director and a Regional Director are not admitted to, so an "
-                "inspector with no assignment here is absent rather than shown with a zero."
+                "This list shows only the inspectors assigned to workshops you can see, so an "
+                "inspector with no assignment here is not listed."
                 if not offered
-                else "The directory of assignable inspectors could not be read for this request, so "
-                "an inspector holding no assignment is missing from this list entirely. This is not "
-                "the same as there being none."
+                else "The list of inspectors couldn't be read just now, so an inspector with no "
+                "assignment may be missing from this list."
             )
         ),
     )
@@ -1581,15 +1572,15 @@ async def list_inspectors(
     )
     payload["feedbackNote"] = (
         (
-            "Suggestion counts cover the workshops read for this register only. "
-            "feedbackByAccountsNotListed is feedback on those workshops filed by accounts this "
-            "list does not name: anyone holding no inspector row on them, and the administrator "
-            "accounts this register never lists. It is a measured figure and is usually zero."
+            "Suggestion counts cover the workshops read for this register only. Suggestions "
+            "filed by people this list does not name — anyone who is not an inspector on those "
+            "workshops, and administrators — are counted separately, and that count is usually "
+            "zero."
         )
         if feedback_read
         else (
-            "Inspection feedback could not be counted for this request. The columns are empty "
-            "because nothing was read, not because nothing was filed."
+            "Inspection feedback couldn't be counted just now, so these counts are empty. "
+            "Suggestions may still have been filed."
         )
     )
     return payload

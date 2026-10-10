@@ -269,17 +269,15 @@ def _in_use_message(label: str, named: list[tuple[Noun, int]], uncounted: list[N
             # "there might be some": the count did not run, and that is a deployment problem with a
             # log line behind it.
             sentence += (
-                " This server could also not check "
+                " There may also be "
                 + ", ".join(noun.many for noun in uncounted)
-                + ", so there may be more."
+                + " filed under it that couldn't be counted just now."
             )
         return sentence + _DEACTIVATE_INSTEAD
     return (
-        f"“{label}” cannot be deleted: this server could not check whether any "
+        f"“{label}” can't be deleted right now: it couldn't be checked whether any "
         + ", ".join(noun.many for noun in uncounted)
-        + " are filed under it, so the delete was refused rather than performed unchecked. The "
-        "cause is on this server rather than in the data — usually a migration that has not been "
-        "applied here, or a Prisma client behind schema.prisma — and it is in the logs."
+        + " are filed under it. Try again later."
         + _DEACTIVATE_INSTEAD
     )
 
@@ -333,9 +331,8 @@ async def create_workshop_type(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=(
-                f"A workshop type with the key {payload.key} already exists. Keys are permanent "
-                "because other tables store them, so edit that type's label rather than adding a "
-                "second type under the same key."
+                f"A workshop type with the code {payload.key} already exists. Edit that type's "
+                "label instead of adding a second one with the same code."
             ),
         ) from exc
     return _payload(created)
@@ -368,16 +365,14 @@ async def reorder_workshop_types(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=(
-                "Cannot reorder: this server has no workshop type with "
-                + ("id " if len(missing) == 1 else "ids ")
-                + ", ".join(missing)
-                + ". Reload the list — somebody else may have removed one."
+                "The list couldn't be reordered: a workshop type in it no longer exists. "
+                "Reload the list — somebody else may have removed one."
             ),
         )
     if len(set(payload.ids)) != len(payload.ids):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Cannot reorder: the same workshop type is named twice in one request.",
+            detail="The list couldn't be reordered: the same workshop type appears twice.",
         )
     async with db.tx() as tx:
         for index, type_id in enumerate(payload.ids):

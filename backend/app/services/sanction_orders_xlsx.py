@@ -800,8 +800,7 @@ def _read_rows(
                     (
                         f"This sheet has more than {MAX_SANCTION_ROWS} rows. The first "
                         f"{MAX_SANCTION_ROWS} were read and everything from row {row_number} down "
-                        "was not. Each order opens a workshop and may create an account, so a sheet "
-                        "is bounded on purpose; split this one and upload each part."
+                        "was not. Split this sheet and upload each part."
                     ),
                     None,
                 )
@@ -972,8 +971,7 @@ _HELP_LINES: tuple[tuple[str, str], ...] = (
         "p",
         "THE FIRST DESIGNER IS THE LEAD. Their name is the one that goes on the report cover and "
         "into the workshop's first stage; every designer named gets an account, an empanelment and "
-        "access to the workshop. Put the lead first deliberately rather than leaving it to the "
-        "order the names happened to be typed in.",
+        "access to the workshop. Make sure the lead is typed first.",
     ),
     (
         "p",

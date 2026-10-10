@@ -86,7 +86,7 @@ def _review_type_or_404(record_type: str) -> tuple[str, str, str]:
     key = record_type.lower()
     if key not in _REVIEW_TYPES:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Unsupported review record type"
+            status_code=status.HTTP_404_NOT_FOUND, detail="This kind of record can't be reviewed here."
         )
     return _REVIEW_TYPES[key]
 
@@ -314,7 +314,7 @@ async def set_review_status(
     if not can_review_record(reviewer, get_value(creator, "role") if creator else None):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="You can only review records created by users below your own tier",
+            detail="You can only review records created by people with a role below your own",
         )
     # A record submitted after its workshop ended carries needsAdminApproval in its extraMetadata.
     # ONLY an admin or master admin may approve it — the normal review ladder would otherwise let a
@@ -510,13 +510,13 @@ async def edit_reviewed_record(
     schema = _EDIT_SCHEMAS.get(key)
     if schema is None:  # pragma: no cover - delegate_for already rejects unknown types
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Unsupported review record type"
+            status_code=status.HTTP_404_NOT_FOUND, detail="This kind of record can't be reviewed here."
         )
 
     if not payload.fields:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Send at least one field to change in 'fields'",
+            detail="Change at least one field before saving.",
         )
     blocked = sorted(set(payload.fields) & _NOT_REVIEW_EDITABLE)
     if blocked:
@@ -524,7 +524,7 @@ async def edit_reviewed_record(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=(
                 f"These fields cannot be changed from a review edit: {', '.join(blocked)}. "
-                "Use approve/reject/revise for the status, and the record's own edit screen for "
+                "Use Approve, Reject or Send for revision for the status, and the record's own edit screen for "
                 "its workshop, location and linked records."
             ),
         )
@@ -545,8 +545,8 @@ async def edit_reviewed_record(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=(
                 "Editing someone else's record needs Professor access or above, and only for a "
-                "record created below your own tier. Approve, reject, or send it back for revision "
-                "with your comments instead."
+                "record created by someone with a role below your own. Approve, reject, or send it "
+                "back for revision with your comments instead."
             ),
         )
     if record_needs_admin_approval(record) and not is_admin(reviewer):
@@ -577,7 +577,7 @@ async def edit_reviewed_record(
     if not data:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Send at least one field to change in 'fields'",
+            detail="Change at least one field before saving.",
         )
     changed = sorted(
         field for field, value in data.items() if not values_match(get_value(record, field), value)

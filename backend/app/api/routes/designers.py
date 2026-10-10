@@ -613,8 +613,8 @@ async def add_to_roster(
             ""
             if stored == typed
             else (
-                f" You typed {typed} and the row is stored as {stored}; Google delivers both to "
-                "the same mailbox, so this application treats them as one address."
+                f" You typed {typed} and it is saved as {stored}; Google delivers both to the "
+                "same mailbox, so they count as one address."
             )
         )
         raise HTTPException(
@@ -622,7 +622,7 @@ async def add_to_roster(
             detail=(
                 f"{stored} is already on the roster"
                 f"{'' if existing.isActive else ' (suspended)'}. "
-                f"Update or restore roster entry {existing.id} instead of adding it again."
+                "Update or restore that roster entry instead of adding it again."
                 f"{same_mailbox}"
             ),
         )
@@ -763,7 +763,7 @@ async def update_roster_entry(
             if clash is not None:
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
-                    detail=f"{normalise_email(clash.email)} is already on the roster as entry {clash.id}.",
+                    detail=f"{normalise_email(clash.email)} is already on the roster.",
                 )
             data["email"] = email
     for key in ("fullName", "institution", "notes"):

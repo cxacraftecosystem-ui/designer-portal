@@ -549,7 +549,7 @@ async def _defer_rate_limited_job(job: Any, until: datetime) -> None:
             "lockedBy": None,
             "attempts": job.attempts,
             "runAfter": until,
-            "error": "Rate-limited; awaiting cooldown before automatic retry.",
+            "error": "The service is busy; will retry automatically.",
         },
     )
 
@@ -588,6 +588,12 @@ async def _park_transcription_jobs_until(until: datetime) -> None:
     )
 
 
+def _size_label(size_bytes: int) -> str:
+    """A byte count as a person reads it on screen."""
+    megabytes = size_bytes / (1024 * 1024)
+    return f"{megabytes:.1f} MB" if megabytes < 10 else f"{megabytes:,.0f} MB"
+
+
 async def _oversize_reason(media: Any, ceiling: int, *, what: str) -> str | None:
     """Why this object is too big for *what*, or ``None`` to go ahead. Cheap claim, then the fact.
 
@@ -618,14 +624,14 @@ async def _oversize_reason(media: Any, ceiling: int, *, what: str) -> str | None
         declared = 0
     if declared > ceiling:
         return (
-            f"This file declares {declared} bytes, over the {ceiling}-byte limit this server will "
-            f"{what}. Nothing was fetched and nothing was spent."
+            f"This file is too large to {what} (the limit is {_size_label(ceiling)}). Nothing "
+            "was spent."
         )
     head = await asyncio.to_thread(head_object, _value(media, "objectKey"))
     if head is not None and head.size_bytes > ceiling:
         return (
-            f"This file is {head.size_bytes} bytes, over the {ceiling}-byte limit this server will "
-            f"{what}. Nothing was fetched and nothing was spent."
+            f"This file is too large to {what} (the limit is {_size_label(ceiling)}). Nothing "
+            "was spent."
         )
     return None
 
@@ -692,8 +698,8 @@ async def transcribe_media_now(media: Any, settings: Settings | None = None) -> 
         # `head_object` could not size it and the transfer itself hit the bound. Same terminal
         # answer as the gate above, with the real number in it.
         message = (
-            f"This file is {exc.size_bytes} bytes, over the {exc.limit_bytes}-byte limit this "
-            f"server will transcribe. Nothing was sent to a provider and nothing was spent."
+            f"This file is too large to transcribe (the limit is "
+            f"{_size_label(exc.limit_bytes)}). Nothing was spent."
         )
         await db.mediafile.update(
             where={"id": media_id},
@@ -851,11 +857,14 @@ async def recover_stale_processing_jobs() -> int:
     for job in stale_jobs:
         now = datetime.now(UTC)
         if _attempts_exhausted(job):
-            error = (
-                f"Interrupted while held by {_value(job, 'lockedBy') or 'an unnamed worker'} and "
-                f"out of attempts ({_value(job, 'attempts')} of {_value(job, 'maxAttempts')}). "
-                "The worker did not survive this job; it will not be retried automatically."
-            )[:2000]
+            logger.warning(
+                "Job %s was interrupted while held by %s and is out of attempts (%s of %s)",
+                job.id,
+                _value(job, "lockedBy") or "an unnamed worker",
+                _value(job, "attempts"),
+                _value(job, "maxAttempts"),
+            )
+            error = "Processing was interrupted and has stopped. Retry it to try again."
             await db.mediaprocessingjob.update(
                 where={"id": job.id},
                 data={
@@ -875,7 +884,7 @@ async def recover_stale_processing_jobs() -> int:
                 "lockedAt": None,
                 "lockedBy": None,
                 "runAfter": now,
-                "error": "Recovered after worker interruption.",
+                "error": "Restarted after an interruption.",
             },
         )
         requeued += 1
@@ -991,8 +1000,8 @@ async def _process_job(job: Any, settings: Settings) -> None:
                     "text": None,
                     "formattedTranscript": None,
                     "message": (
-                        f"This file is {exc.size_bytes} bytes, over the {exc.limit_bytes}-byte "
-                        f"limit this server will transcribe. Nothing was sent to a provider."
+                        f"This file is too large to transcribe (the limit is "
+                        f"{_size_label(exc.limit_bytes)}). Nothing was spent."
                     ),
                 },
             )
@@ -1062,7 +1071,7 @@ async def _process_job(job: Any, settings: Settings) -> None:
         # terminates the job with a message instead of letting an oversized photograph OOM the
         # worker on every attempt.
         ceiling = budget_bytes(MAX_MEASUREMENT_BYTES)
-        oversize = await _oversize_reason(media, ceiling, what="analyse in one piece")
+        oversize = await _oversize_reason(media, ceiling, what="measure")
         if oversize is not None:
             await _apply_measurement_result(
                 job,
@@ -1095,9 +1104,8 @@ async def _process_job(job: Any, settings: Settings) -> None:
                     "status": UNAVAILABLE,
                     "analysis": None,
                     "message": (
-                        f"This image is at least {exc.size_bytes} bytes, over the "
-                        f"{exc.limit_bytes}-byte limit this server will analyse in one piece. "
-                        "Nothing was sent to a provider and nothing was spent."
+                        f"This image is too large to measure (the limit is "
+                        f"{_size_label(exc.limit_bytes)}). Nothing was spent."
                     ),
                 },
             )
@@ -1251,7 +1259,10 @@ async def _finalize_unavailable_job(job_id: str, result: dict[str, Any], message
             "lockedBy": None,
             "completedAt": datetime.now(UTC),
             "result": Json(jsonable_encoder(result)),
-            "error": str(message or "Required AI API key is not configured."),
+            "error": str(
+                message
+                or "This isn't available right now. An administrator can turn it on in Settings."
+            ),
         },
     )
 

@@ -618,7 +618,7 @@ async def complete_multipart(
     )
     if not parts:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="No parts to complete"
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="The upload didn't finish. Try again."
         )
     await asyncio.to_thread(complete_multipart_upload, payload.objectKey, payload.uploadId, parts)
     return {
@@ -799,7 +799,7 @@ async def analyze_media_measurement(
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=str(
-                result.get("message") or "Grid measurement is not configured on this server."
+                result.get("message") or "Grid measurement isn't available right now."
             ),
         )
     # ``content`` goes out of scope here. A FAILED read still returns 200: the provider was reachable
@@ -975,10 +975,8 @@ def _assert_enqueueable(processing_requests: list[str] | None) -> None:
     raise HTTPException(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
         detail=(
-            f"This upload asked for {', '.join(unsupported)}, which this server does not queue. "
-            "Upload the photograph on its own, then read the measurement with "
-            "POST /media/analyze-measurement and save the value a person has confirmed — a dimension "
-            "no human ever saw must not be written onto a record that is used for costing."
+            "A measurement can't be requested with the upload. Upload the photo, then use "
+            "Measure and save the value once you have checked it."
         ),
     )
 
@@ -1542,7 +1540,7 @@ async def relink_media(
     delegate = _relink_delegate(rec_type)
     if delegate is None:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported record type for re-linking"
+            status_code=status.HTTP_400_BAD_REQUEST, detail="This kind of record can't be linked to a file."
         )
     target = await delegate.find_unique(where={"id": payload.linkedRecordId})
     if target is None:
@@ -1910,7 +1908,7 @@ async def delete_staged_object(
     if existing is not None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Object is attached to a saved media file; delete that record instead",
+            detail="This upload is attached to a saved file. Delete that file instead.",
         )
     await asyncio.to_thread(delete_object, objectKey)
 

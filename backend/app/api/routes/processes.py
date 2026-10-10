@@ -498,7 +498,7 @@ async def update_process(
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=(
-                    "A process must belong to a product. Send another product's id to move it, or "
+                    "A process must belong to a product. Choose another product to move it to, or "
                     "delete the process."
                 ),
             )

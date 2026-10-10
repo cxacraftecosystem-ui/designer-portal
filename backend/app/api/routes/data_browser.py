@@ -1918,8 +1918,9 @@ async def _list_design_workshops_level(segs: list[str], parent: str, scope: Scop
         # corpus while looking complete.
         if unknown:
             note = "\n".join(
-                f"{item.rows} row(s) under '{item.entity_key}' were written against a newer "
-                "version of the form and cannot be shown by this server."
+                f"{item.rows} {'entry' if item.rows == 1 else 'entries'} under "
+                f"'{item.entity_key}' come from a newer version of the form and can't be "
+                "shown here."
                 for item in unknown
             )
             future = _text(parent, "not-shown.txt", note)
@@ -4057,7 +4058,7 @@ def _dw_index_sheet(
         rows.append(
             [
                 "",
-                "Unknown to this server",
+                "From a newer version of the form",
                 entity_key,
                 count,
                 "Not shown — written against a newer version of the form",
@@ -4085,8 +4086,8 @@ def _dw_index_sheet(
         )
     if entries_truncated:
         notes.append(
-            f"Stage rows capped at {REPORT_TAKE} — the Rows column is the true total, "
-            "the sheets are partial."
+            f"Stage rows capped at {REPORT_TAKE}: the Rows column shows the true total, "
+            f"and the sheets show only the first {REPORT_TAKE}."
         )
     if not notes:
         return sheet
@@ -4504,7 +4505,7 @@ async def download_media(
         except Exception as exc:  # pragma: no cover - environment-dependent
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="Audio conversion unavailable: pydub is not installed on the server.",
+                detail="This recording can't be converted right now. Download the original instead.",
             ) from exc
         # THREE CHECKS, BECAUSE THE COLUMN IS A CLAIM AND THE LENGTH IS A FACT — and the fact is now
         # available, which it was not when this comment was first written and said "two".
@@ -4535,7 +4536,7 @@ async def download_media(
         if declared > ceiling:
             raise HTTPException(
                 status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                detail="This recording is too large to convert in-process; download the original.",
+                detail="This recording is too large to convert. Download the original instead.",
             )
         head = await asyncio.to_thread(head_object, media.objectKey)
         if head is not None and head.size_bytes > ceiling:
@@ -4544,7 +4545,7 @@ async def download_media(
             # the server's business.
             raise HTTPException(
                 status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                detail="This recording is too large to convert in-process; download the original.",
+                detail="This recording is too large to convert. Download the original instead.",
             )
         try:
             # Blocking S3 transfer off the event loop — this is the single-worker web process.
@@ -4554,12 +4555,12 @@ async def download_media(
         except ObjectTooLarge as exc:
             raise HTTPException(
                 status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                detail="This recording is too large to convert in-process; download the original.",
+                detail="This recording is too large to convert. Download the original instead.",
             ) from exc
         except Exception as exc:
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
-                detail="Could not fetch the audio bytes from object storage.",
+                detail="The recording couldn't be fetched just now. Try again.",
             ) from exc
         try:
             # ffmpeg decode + AAC encode runs in a worker thread so requests keep flowing.
@@ -4567,7 +4568,7 @@ async def download_media(
         except Exception as exc:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail=f"Audio conversion to mp4 failed (is ffmpeg installed?): {exc}",
+                detail="This recording couldn't be converted. Download the original instead.",
             ) from exc
         finally:
             # The .mp4 is fully built in ``out`` by now, so the source is dead either way — and it
@@ -4597,14 +4598,14 @@ async def download_media(
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             detail=(
-                f"This file is {exc.size_bytes} bytes, over the {exc.limit_bytes}-byte limit this "
-                f"server will spool for a download. Fetch it from object storage directly."
+                f"This file is larger than the {exc.limit_bytes // (1024 * 1024)} MB download "
+                "limit, so it can't be downloaded here."
             ),
         ) from exc
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Could not fetch the media bytes from object storage.",
+            detail="The file couldn't be fetched just now. Try again.",
         ) from exc
     name = display_filename(media, fallback=media.id)
     # ``background=`` and NOT a ``finally``: the file has to outlive this function, because

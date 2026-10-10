@@ -659,7 +659,7 @@ async def _write_roster(workshop: Any, artisan_ids: list[str], *, actor: Any, wa
 
     spec = next((s for s in stages() if s.key == STAGE_PARTICIPANTS), None)
     if spec is None:  # pragma: no cover - the registry disagreeing with itself
-        warn(None, "The workshop's participant stage is missing from this server's registry.")
+        warn(None, "The workshop's participant stage couldn't be found, so participants weren't added.")
         return 0
 
     existing = await db.dwstageentry.find_many(

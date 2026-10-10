@@ -548,10 +548,7 @@ async def verify_file(artifact: AsrArtifact, spec: AsrArtifactFile) -> FileVerdi
             artifact=artifact,
             spec=spec,
             refusal=ArtifactRefusal.NO_STORE_CONFIGURED,
-            detail=(
-                "This deployment is not configured to serve speech models: ASR_MODEL_DIR is unset. "
-                "Whoever administers it has to publish the artifact first."
-            ),
+            detail="The offline speech model isn't available to download right now.",
         )
 
     path = root_dir / spec.file_name
@@ -567,10 +564,7 @@ async def verify_file(artifact: AsrArtifact, spec: AsrArtifactFile) -> FileVerdi
                 spec=spec,
                 path=path,
                 refusal=ArtifactRefusal.NOT_ON_DISK,
-                detail=(
-                    f"{spec.file_name} of the {artifact.artifact_id} speech model has not been "
-                    "published to this deployment yet."
-                ),
+                detail="The offline speech model isn't available to download right now.",
             )
         logger.warning(
             "ASR artifact %s/%s could not be stat'ed", artifact.artifact_id, spec.file_name
@@ -580,11 +574,7 @@ async def verify_file(artifact: AsrArtifact, spec: AsrArtifactFile) -> FileVerdi
             spec=spec,
             path=path,
             refusal=ArtifactRefusal.UNREADABLE,
-            detail=(
-                f"{spec.file_name} of the {artifact.artifact_id} speech model is on this "
-                "deployment but cannot be read. Whoever administers it should check the volume "
-                "and its permissions."
-            ),
+            detail="The offline speech model can't be downloaded right now. Try again later.",
         )
 
     # Read off the stat already taken rather than with a second `os.path.isfile`: one syscall instead
@@ -596,10 +586,7 @@ async def verify_file(artifact: AsrArtifact, spec: AsrArtifactFile) -> FileVerdi
             path=path,
             stat=stat,
             refusal=ArtifactRefusal.NOT_A_FILE,
-            detail=(
-                f"What is published as {spec.file_name} of the {artifact.artifact_id} speech model "
-                "is not a regular file."
-            ),
+            detail="The offline speech model can't be downloaded right now. Try again later.",
         )
 
     if stat.st_size != spec.bytes:
@@ -620,11 +607,7 @@ async def verify_file(artifact: AsrArtifact, spec: AsrArtifactFile) -> FileVerdi
             path=path,
             stat=stat,
             refusal=ArtifactRefusal.WRONG_SIZE,
-            detail=(
-                f"{spec.file_name} of the {artifact.artifact_id} speech model is "
-                f"{stat.st_size:,} bytes on this deployment where the published artifact is "
-                f"{spec.bytes:,}. It is being refused rather than served short."
-            ),
+            detail="The offline speech model can't be downloaded right now. Try again later.",
         )
 
     try:
@@ -637,11 +620,7 @@ async def verify_file(artifact: AsrArtifact, spec: AsrArtifactFile) -> FileVerdi
             path=path,
             stat=stat,
             refusal=ArtifactRefusal.UNREADABLE,
-            detail=(
-                f"{spec.file_name} of the {artifact.artifact_id} speech model is on this "
-                "deployment but cannot be read. Whoever administers it should check the volume "
-                "and its permissions."
-            ),
+            detail="The offline speech model can't be downloaded right now. Try again later.",
         )
 
     if read != stat.st_size or digest != spec.sha256:
@@ -660,11 +639,7 @@ async def verify_file(artifact: AsrArtifact, spec: AsrArtifactFile) -> FileVerdi
             stat=stat,
             sha256=digest,
             refusal=ArtifactRefusal.WRONG_DIGEST,
-            detail=(
-                f"{spec.file_name} of the {artifact.artifact_id} speech model is the right length "
-                "on this deployment but not the right bytes: it does not hash to the digest the "
-                "artifact was published with. It is being refused."
-            ),
+            detail="The offline speech model can't be downloaded right now. Try again later.",
         )
 
     return FileVerdict(artifact=artifact, spec=spec, path=path, stat=stat, sha256=digest)

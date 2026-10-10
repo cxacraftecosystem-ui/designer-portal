@@ -53,7 +53,7 @@ SEARCH_TYPES: tuple[str, ...] = _SEARCH_TYPES
 #:
 #: TERSE, PER THE HOUSE RULE. The reasoning is here; the screen gets two clauses.
 DESIGN_WORKSHOP_SEARCH_SCOPE = (
-    "Matched on the workshop's own columns and on text answers in its 22 stages. "
+    "Matched on the workshop's details and on text answers in its 22 stages. "
     "Numbers, dates and contact details are not searched."
 )
 

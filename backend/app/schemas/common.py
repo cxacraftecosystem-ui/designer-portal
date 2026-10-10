@@ -90,8 +90,8 @@ class LocationInput(APIModel):
         """
         if (self.subjectLatitude is None) != (self.subjectLongitude is None):
             raise ValueError(
-                "A map pin needs both subjectLatitude and subjectLongitude. Send the pair, or omit "
-                "both — the pin is optional."
+                "A map pin needs both a latitude and a longitude. Enter both, or leave the pin "
+                "out — it is optional."
             )
         return self
 
@@ -109,15 +109,12 @@ LOCATION_REQUIRED_MESSAGE = (
 # reaches it — an old client, a hand-written request — is told which two boxes to fill and where the
 # names come from, rather than being told a field is missing.
 STATED_ADDRESS_REQUIRED_MESSAGE = (
-    "The state and the district of the place this record is about are required. They are a "
-    "STATEMENT about the subject, not a reading from the device: the coordinates say where the "
-    "device was when the record was made, which is often a desk in another state. Choose both from "
-    "the lists GET /reference/address serves."
+    "The state and the district of the place this record is about are required. Choose the state "
+    "and district from the lists."
 )
 
 LOCATION_NOT_CLEARABLE_MESSAGE = (
-    "This record's location cannot be removed. Send a replacement location, or leave the field out "
-    "of the request to keep the stored one."
+    "This record's location can't be removed. Enter a new location instead, or leave it as it is."
 )
 
 

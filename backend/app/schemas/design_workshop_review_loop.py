@@ -274,10 +274,8 @@ def transition_refusal(current: str, nxt: str, *, by_decision_route: bool = Fals
         return None
     if current not in LEGAL_TRANSITIONS:
         return (
-            f"This workshop's status is {current!r}, which this server does not recognise, so it "
-            f"can only be read here and not moved. That normally means the row was written by a "
-            f"newer deployment than this one; reload, and if it persists this server needs the "
-            f"release the workshop was written under."
+            "This workshop's status isn't recognised, so it can't be changed right now. Reload "
+            "the page and try again."
         )
     if (current, nxt) in DECISION_EDGES:
         if by_decision_route:
@@ -461,9 +459,8 @@ def _clean_stage_key(stage_key: str | None) -> str | None:
         return None
     if key not in {spec.key for spec in stages()}:
         raise InspectionRuleViolation(
-            f"{key!r} is not a stage of this report. The stage list is the field registry's, which "
-            f"both clients draw from GET /design-workshops/schema; leave it out to file the "
-            f"suggestion against the report as a whole."
+            f"{key!r} isn't a stage of this report. Leave the stage out to file the suggestion "
+            f"against the whole report."
         )
     return key
 
@@ -495,17 +492,13 @@ def feedback_plan(
     """
     if round < 1:
         raise InspectionRuleViolation(
-            "A correction suggestion belongs to a submission cycle, and this workshop's counter "
-            "reads zero — which can only mean the copy from DesignWorkshop.submissionRound was "
-            "skipped. The CHECK constraint DwInspectionFeedback_round_check refuses the row for "
-            "the same reason, and a database refusing it reaches the officer as a 500."
+            "This suggestion couldn't be filed because the workshop's submission couldn't be "
+            "read. Reload the workshop and try again."
         )
     if recorded_at is not None and recorded_at > at + MAX_DEVICE_CLOCK_SKEW:
         raise InspectionRuleViolation(
-            "The device that filed this suggestion reports a time further ahead of this server "
-            "than a clock should drift, so it is refused rather than stored with a corrected time: "
-            "a suggestion filed at a moment nobody chose is a record of something that did not "
-            "happen. Correct the device's clock and file it again."
+            "The device that filed this suggestion has its clock set ahead of the real time. "
+            "Correct the device's date and time and file it again."
         )
     return InspectionWritePlan(
         table="DwInspectionFeedback",

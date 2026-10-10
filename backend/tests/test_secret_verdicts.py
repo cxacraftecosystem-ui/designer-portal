@@ -455,7 +455,7 @@ def test_testing_an_unreadable_override_leaves_the_re_enter_flag_alone(stack) ->
     # ...and the answer says both things, because the admin asked a question and deserves an answer.
     assert described["lastStatus"] == "FAILED"
     assert managed_secrets._UNDECRYPTABLE_ERROR in described["lastError"]
-    assert "environment value" in described["lastError"]
+    assert "default value" in described["lastError"]
     assert described["source"] == managed_secrets.SOURCE_ENVIRONMENT
     assert described["overrideUnreadable"] is True
 

@@ -1426,9 +1426,11 @@ def test_the_retirement_names_the_url_that_replaced_it(dictation):
         )
     detail = str(exc.value.detail)
     assert_sentence(detail)
-    assert "/design-workshops/{workshop_id}/dictate" in detail
+    # The designer is told the next move in plain words; the replacement URL is not field copy.
+    assert "/design-workshops/{workshop_id}/dictate" not in detail
+    assert "update the app to use dictation" in detail.lower()
     assert "try again" not in detail.lower()
-    assert "type the words in" in detail.lower()
+    assert "type the answer instead" in detail.lower()
 
 
 def test_the_probe_answers_without_a_workshop_and_names_where_a_clip_goes(dictation):

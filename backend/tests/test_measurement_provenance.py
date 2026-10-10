@@ -536,7 +536,8 @@ def test_an_unconfigured_server_still_names_the_model_it_would_have_used(monkeyp
     assert result["method"] == "VISION_MODEL"
     assert result["selfReportedConfidence"] is None
     assert_sentence(result["message"])
-    assert "GEMINI_API_KEY" in result["message"], "the operator cannot act on an unnamed setting"
+    assert "An administrator can turn it on in Settings." in result["message"]
+    assert "GEMINI_API_KEY" not in result["message"]
 
 
 # --------------------------------------------------------------------------------------
@@ -776,15 +777,14 @@ def test_an_unconfigured_provider_is_a_503_naming_the_setting_and_not_a_cheerful
         "status": "UNAVAILABLE",
         "analysis": None,
         "message": (
-            "Grid measurement is unavailable because no Gemini API key is configured. Measure the "
-            "object and type the value in, or ask whoever administers the server to add "
-            "GEMINI_API_KEY in the Settings hub."
+            "Grid measurement isn't available right now. Measure the object and type the "
+            "value in. An administrator can turn it on in Settings."
         ),
     }
     outcome = api.call("RESEARCHER", "POST", "/media/analyze-measurement", files=_grid())
     assert outcome.status_code == 503
     assert_sentence(outcome.detail)
-    assert "GEMINI_API_KEY" in outcome.detail
+    assert "An administrator can turn it on in Settings." in outcome.detail
 
 
 def test_a_provider_that_answered_and_failed_is_still_a_200(api):
@@ -795,7 +795,8 @@ def test_a_provider_that_answered_and_failed_is_still_a_200(api):
         "available": True,
         "status": "FAILED",
         "analysis": None,
-        "message": "Measurement analysis failed (HTTP 500); measure the object and enter it manually.",
+        "message": "Measurement analysis failed: the service had a problem. Measure the object and "
+        "enter the value manually.",
         "method": "VISION_MODEL",
     }
     outcome = api.call("RESEARCHER", "POST", "/media/analyze-measurement", files=_grid())

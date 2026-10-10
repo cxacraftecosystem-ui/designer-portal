@@ -38,7 +38,7 @@ class LoginRequest(APIModel):
         has_password_login = bool(self.email and self.password)
         has_google_login = bool(self.googleIdToken)
         if has_password_login == has_google_login:
-            raise ValueError("Provide either email/password or a Google ID token")
+            raise ValueError("Enter your email and password, or sign in with Google.")
         return self
 
 

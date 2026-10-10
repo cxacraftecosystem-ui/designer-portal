@@ -203,9 +203,8 @@ def cap_refusal(allowance: Allowance) -> str | None:
         return None
     if allowance.limit == 0:
         return (
-            "This server is not sending any dictation to the transcription service at the moment — "
-            "the daily allowance is set to none. Type the words in instead. Whoever administers the "
-            "server can raise the allowance in the settings; nothing on this phone can."
+            "Dictation isn't available right now — the daily allowance is set to none. Type the "
+            "words in instead. An administrator can raise the allowance in Settings."
         )
     return (
         f"You have used all {allowance.limit} of today's dictations that go to the transcription "

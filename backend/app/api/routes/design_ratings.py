@@ -90,8 +90,7 @@ def _rated_at_or_422(raw: str | None) -> datetime | None:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=(
-                "ratedAt must be an ISO-8601 date and time — when the designer actually judged the "
-                f"piece, as this device recorded it. Received {raw!r}."
+                "The time on this rating couldn't be read. Update the app and rate the piece again."
             ),
         ) from exc
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
@@ -103,9 +102,8 @@ def _entity_or_422(raw: str) -> str:
     raise HTTPException(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
         detail=(
-            f"Only {', '.join(sorted(RATEABLE_ENTITIES))} are ranked. The child rows of a "
-            f"prototype — its stage logs and its materials — are parts of one, not things a "
-            f"designer ranks against each other."
+            f"Only {', '.join(sorted(RATEABLE_ENTITIES))} can be ranked. A prototype's stage "
+            f"logs and materials are part of the prototype and aren't ranked on their own."
         ),
     )
 
@@ -117,7 +115,10 @@ def _ledger_or_503(exc: RatingLedgerUnavailable) -> HTTPException:
     a restart does not fix and a migration does, and an opaque 500 sends whoever is on call reading
     tracebacks for a schema that is simply not there yet.
     """
-    return HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc))
+    return HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail="Ratings aren't available right now. Please try later.",
+    )
 
 
 # --------------------------------------------------------------------------------------

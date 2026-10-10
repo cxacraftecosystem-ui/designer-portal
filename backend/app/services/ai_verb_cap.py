@@ -126,17 +126,16 @@ def cap_refusal(allowance: VerbAllowance) -> str | None:
         return None
     if allowance.limit == 0:
         return (
-            "This server is not sending anything to the writing and captioning models at the moment "
-            "— that daily allowance is set to none. Everything else still works, including "
-            "dictation, which has its own separate allowance. Whoever administers the server can "
-            "raise it in the settings; nothing on this device can."
+            "Writing and captioning help is switched off — its daily allowance is set to none. "
+            "Everything else still works, including dictation, which has its own separate "
+            "allowance. An administrator can raise it in Settings."
         )
     breakdown = ", ".join(f"{count} × {verb.lower()}" for verb, count in allowance.by_verb)
     spent_on = f" Today's runs: {breakdown}." if breakdown else ""
     return (
         f"You have used all {allowance.limit} of today's runs of the writing and captioning models, "
         f"so this one cannot be done.{spent_on} Dictation has its own separate allowance and is "
-        f"unaffected. Write the words yourself for now — your allowance starts again after "
+        f"unaffected. Write the words yourself — your allowance starts again after "
         f"{DAY_BOUNDARY_PHRASE}."
     )
 

@@ -600,7 +600,7 @@ def test_asking_for_two_formats_is_refused_rather_than_half_served():
 
     with pytest.raises(ValidationError) as raised:
         ReportGenerateIn(formats=["DOCX", "PDF"])
-    assert "one format per request" in str(raised.value)
+    assert "Choose one format at a time" in str(raised.value)
 
     # The arms that must not have been broken to get there: one format, either case, and the
     # duplicate a client with a checkbox bug sends, which is still one file.
